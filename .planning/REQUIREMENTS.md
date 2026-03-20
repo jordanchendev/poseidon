@@ -99,12 +99,43 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| INFRA-01 | 1 | not started |
+| INFRA-02 | 1 | not started |
+| INFRA-03 | 1 | not started |
+| DATA-01 | 1 | not started |
+| DATA-02 | 1 | not started |
+| DATA-03 | 1 | not started |
+| DATA-04 | 1 | not started |
+| DATA-05 | 1 | not started |
+| DATA-06 | 1 | not started |
+| FEAT-01 | 2 | not started |
+| FEAT-02 | 2 | not started |
+| MOD-01 | 3 | not started |
+| MOD-02 | 3 | not started |
+| MOD-03 | 3 | not started |
+| MOD-04 | 3 | not started |
+| STRAT-01 | 4 | not started |
+| STRAT-02 | 4 | not started |
+| STRAT-03 | 4 | not started |
+| STRAT-04 | 4 | not started |
+| BT-01 | 6 | not started |
+| BT-02 | 6 | not started |
+| BT-03 | 6 | not started |
+| BT-04 | 6 | not started |
+| BT-05 | 6 | not started |
+| RISK-01 | 5 | not started |
+| RISK-02 | 5 | not started |
+| RISK-03 | 5 | not started |
+| SIG-01 | 5 | not started |
+| SIG-02 | 5 | not started |
+| API-01 | 7 | not started |
+| API-02 | 1 | not started |
 
 **Coverage:**
-- v1 requirements: 27 total
-- Mapped to phases: 0
-- Unmapped: 27 ⚠️
+- v1 requirements: 31 total
+- Mapped to phases: 31
+- Unmapped: 0 ✅
 
 ---
 *Requirements defined: 2026-03-20*
-*Last updated: 2026-03-20 after initial definition*
+*Last updated: 2026-03-20 after roadmap creation*
