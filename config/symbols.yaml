@@ -1,0 +1,80 @@
+# Poseidon Symbol Watchlist
+# Seed configuration. Thalassa can add/remove symbols via API.
+
+markets:
+  tw_stock:
+    instrument: spot
+    intervals: ["1d"]
+    symbols:
+      - { id: "2330", name: "TSMC" }
+      - { id: "2317", name: "Hon Hai" }
+      - { id: "2454", name: "MediaTek" }
+      - { id: "2308", name: "Delta Electronics" }
+      - { id: "2881", name: "Fubon FHC" }
+      - { id: "2882", name: "Cathay FHC" }
+      - { id: "2891", name: "CTBC FHC" }
+      - { id: "2303", name: "UMC" }
+      - { id: "1301", name: "Formosa Plastics" }
+      - { id: "1303", name: "Nan Ya Plastics" }
+      - { id: "2002", name: "China Steel" }
+      - { id: "2412", name: "Chunghwa Telecom" }
+      - { id: "3711", name: "ASE Technology" }
+      - { id: "2886", name: "Mega FHC" }
+      - { id: "6505", name: "Formosa Chemicals" }
+      - { id: "2892", name: "First FHC" }
+      - { id: "3008", name: "LARGAN Precision" }
+      - { id: "2382", name: "Quanta Computer" }
+      - { id: "2357", name: "ASUS" }
+      - { id: "3045", name: "Taiwan Mobile" }
+      - { id: "2603", name: "Evergreen Marine" }
+      - { id: "2880", name: "Hua Nan FHC" }
+
+  tw_futures:
+    instrument: futures
+    intervals: ["1d"]
+    symbols:
+      - { id: "TX", name: "TAIEX Futures" }
+      - { id: "MTX", name: "Mini TAIEX Futures" }
+      - { id: "TE", name: "Electronics Futures" }
+      - { id: "TF", name: "Finance Futures" }
+
+  us_stock:
+    instrument: spot
+    intervals: ["1d"]
+    symbols:
+      - { id: "AAPL", name: "Apple" }
+      - { id: "MSFT", name: "Microsoft" }
+      - { id: "GOOGL", name: "Alphabet" }
+      - { id: "AMZN", name: "Amazon" }
+      - { id: "NVDA", name: "NVIDIA" }
+      - { id: "META", name: "Meta Platforms" }
+      - { id: "TSLA", name: "Tesla" }
+      - { id: "TSM", name: "TSMC ADR" }
+      - { id: "JPM", name: "JPMorgan Chase" }
+      - { id: "V", name: "Visa" }
+      - { id: "UNH", name: "UnitedHealth" }
+      - { id: "JNJ", name: "Johnson & Johnson" }
+      - { id: "XOM", name: "ExxonMobil" }
+      - { id: "PG", name: "Procter & Gamble" }
+      - { id: "MA", name: "Mastercard" }
+      - { id: "HD", name: "Home Depot" }
+      - { id: "COST", name: "Costco" }
+      - { id: "ABBV", name: "AbbVie" }
+      - { id: "AMD", name: "AMD" }
+      - { id: "CRM", name: "Salesforce" }
+      - { id: "NFLX", name: "Netflix" }
+
+  crypto_spot:
+    instrument: spot
+    intervals: ["1d", "1h"]
+    symbols:
+      - { id: "BTCUSDT", name: "Bitcoin", ccxt_symbol: "BTC/USDT" }
+      - { id: "ETHUSDT", name: "Ethereum", ccxt_symbol: "ETH/USDT" }
+      - { id: "SOLUSDT", name: "Solana", ccxt_symbol: "SOL/USDT" }
+      - { id: "BNBUSDT", name: "BNB", ccxt_symbol: "BNB/USDT" }
+      - { id: "XRPUSDT", name: "XRP", ccxt_symbol: "XRP/USDT" }
+      - { id: "ADAUSDT", name: "Cardano", ccxt_symbol: "ADA/USDT" }
+      - { id: "DOGEUSDT", name: "Dogecoin", ccxt_symbol: "DOGE/USDT" }
+      - { id: "AVAXUSDT", name: "Avalanche", ccxt_symbol: "AVAX/USDT" }
+      - { id: "DOTUSDT", name: "Polkadot", ccxt_symbol: "DOT/USDT" }
+      - { id: "LINKUSDT", name: "Chainlink", ccxt_symbol: "LINK/USDT" }

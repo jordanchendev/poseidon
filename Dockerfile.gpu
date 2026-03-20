@@ -1,0 +1,20 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml .
+RUN pip install --no-cache-dir .
+
+COPY src/ src/
+COPY config/ config/
+COPY alembic/ alembic/
+COPY alembic.ini .
+
+COPY scripts/ scripts/
+
+# GPU worker command (overridden in docker-compose.yml)
+CMD ["celery", "-A", "poseidon.workers.celery_app", "worker", "-Q", "gpu", "-c", "1", "--loglevel=info"]

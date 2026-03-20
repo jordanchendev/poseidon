@@ -1,0 +1,110 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8001:8000"
+    environment:
+      - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@postgres:5432/poseidon
+      - POSEIDON_REDIS_URL=redis://redis:6379/0
+      - POSEIDON_API_KEY=${POSEIDON_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  beat:
+    build: .
+    command: celery -A poseidon.workers.celery_app beat --loglevel=info
+    environment:
+      - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@postgres:5432/poseidon
+      - POSEIDON_REDIS_URL=redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  gpu-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    command: celery -A poseidon.workers.celery_app worker -Q gpu -c 1 --loglevel=info
+    environment:
+      - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@postgres:5432/poseidon
+      - POSEIDON_REDIS_URL=redis://redis:6379/0
+    volumes:
+      - model-artifacts:/data/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  cpu-worker:
+    build: .
+    command: celery -A poseidon.workers.celery_app worker -Q cpu -c 4 --loglevel=info
+    environment:
+      - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@postgres:5432/poseidon
+      - POSEIDON_REDIS_URL=redis://redis:6379/0
+      - POSEIDON_FINMIND_TOKEN=${FINMIND_TOKEN}
+    volumes:
+      - model-artifacts:/data/models
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - poseidon-redis:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: poseidon
+      POSTGRES_PASSWORD: poseidon
+      POSTGRES_DB: poseidon
+    volumes:
+      - poseidon-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U poseidon"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  poseidon-redis:
+  poseidon-pgdata:
+  model-artifacts:
