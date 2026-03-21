@@ -69,5 +69,6 @@ celery_app.conf.update(
     # Auto-discover task modules
     imports=[
         "poseidon.workers.cpu_tasks",
+        "poseidon.workers.gpu_tasks",
     ],
 )
