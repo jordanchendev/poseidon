@@ -22,8 +22,11 @@ async def trigger_fetch(request: FetchRequest):
 
     Dispatches a Celery task to fetch latest data for all symbols in the market.
     """
-    task = fetch_market_data.delay(request.market, request.interval)
-    return MessageResponse(message=f"Fetch task dispatched for {request.market}/{request.interval}", task_id=task.id)
+    task = fetch_market_data.delay(request.market, request.interval, request.symbol)
+    label = f"{request.market}/{request.interval}"
+    if request.symbol:
+        label += f" (symbol={request.symbol})"
+    return MessageResponse(message=f"Fetch task dispatched for {label}", task_id=task.id)
 
 
 @router.post("/backfill", response_model=MessageResponse, status_code=202)
@@ -33,8 +36,10 @@ async def trigger_backfill_endpoint(request: BackfillRequest):
     If market is specified, backfills only that market.
     If both market and symbol are None, backfills all configured symbols.
     """
-    task = trigger_backfill.delay(request.market)
+    task = trigger_backfill.delay(request.market, request.symbol)
     market_label = request.market or "all markets"
+    if request.symbol:
+        market_label += f" (symbol={request.symbol})"
     return MessageResponse(message=f"Backfill task dispatched for {market_label}", task_id=task.id)
 
 

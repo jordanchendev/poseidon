@@ -43,14 +43,23 @@ BATCH_DAYS_DAILY = {
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.fetch_market_data")
-def fetch_market_data(market: str, interval: str) -> dict:
-    """Fetch latest data for all symbols in a market.
+def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> dict:
+    """Fetch latest data for all symbols (or a specific symbol) in a market.
 
     This is the task called by Celery Beat on schedule.
+
+    Args:
+        market: Market name (e.g., "crypto_spot", "tw_stock").
+        interval: Candle interval ("1d" or "1h").
+        symbol: Optional symbol ID to fetch. If None, fetches all symbols in the market.
     """
     config = load_symbols()
     symbols = get_symbols_for_market(market, config)
     market_cfg = get_market_config(market, config)
+
+    # Filter to specific symbol if requested
+    if symbol and symbols:
+        symbols = [s for s in symbols if s.id == symbol or s.ccxt_symbol == symbol]
 
     if not symbols:
         logger.warning("No symbols configured for market: %s", market)
@@ -173,10 +182,14 @@ def backfill_symbol(self, symbol: str, market: str, interval: str) -> dict:
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.trigger_backfill")
-def trigger_backfill(market: str | None = None) -> dict:
-    """Trigger backfill for all symbols (or a specific market).
+def trigger_backfill(market: str | None = None, symbol: str | None = None) -> dict:
+    """Trigger backfill for all symbols (or a specific market/symbol).
 
     Dispatches individual backfill_symbol tasks for each symbol/interval combo.
+
+    Args:
+        market: Optional market to limit backfill to.
+        symbol: Optional symbol ID to limit backfill to.
     """
     config = load_symbols()
     dispatched = 0
@@ -188,6 +201,9 @@ def trigger_backfill(market: str | None = None) -> dict:
         if not market_cfg:
             continue
         for sym in market_cfg.symbols:
+            # Filter to specific symbol if requested
+            if symbol and sym.id != symbol:
+                continue
             for interval in market_cfg.intervals:
                 backfill_symbol.delay(sym.id, m, interval)
                 dispatched += 1
