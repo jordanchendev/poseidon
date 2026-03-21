@@ -56,6 +56,7 @@ def train_model(
     from poseidon.models.base import SessionLocal
 
     session = SessionLocal()
+    manager = None
     try:
         manager = ModelManager(session)
         vid = UUID(version_id)
@@ -124,15 +125,16 @@ def train_model(
 
     except Exception:
         logger.exception("Training failed for version %s", version_id)
-        # Best-effort transition to failed
-        try:
-            manager.transition(
-                UUID(version_id),
-                "failed",
-                error_message=traceback.format_exc()[-500:],
-            )
-        except Exception:
-            logger.exception("Failed to transition version %s to 'failed'", version_id)
+        # Best-effort transition to failed (guard against manager not yet assigned)
+        if manager is not None:
+            try:
+                manager.transition(
+                    UUID(version_id),
+                    "failed",
+                    error_message=traceback.format_exc()[-500:],
+                )
+            except Exception:
+                logger.exception("Failed to transition version %s to 'failed'", version_id)
         raise
     finally:
         session.close()
