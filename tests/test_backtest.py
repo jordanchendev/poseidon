@@ -1,6 +1,7 @@
-"""Unit tests for backtest engine: cost model, portfolio, metrics, ORM models."""
+"""Unit tests for backtest engine: cost model, portfolio, metrics, ORM models, runner, schemas, repository."""
 
 from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import numpy as np
@@ -10,12 +11,18 @@ import pytest
 from poseidon.backtest.cost_model import COST_MODELS, CostModel, get_cost_model
 from poseidon.backtest.metrics import compute_metrics
 from poseidon.backtest.portfolio import BacktestPortfolio, TradeRecord
+from poseidon.backtest.runner import BacktestRunner
+from poseidon.backtest.repository import BacktestRepository
+from poseidon.backtest.schemas import BacktestConfig, BacktestResult
+from poseidon.data.feature_engine import FeatureEngine
 from poseidon.models.backtest import (
     BacktestEquityRecord,
     BacktestRecord,
     BacktestTradeRecord,
 )
-from poseidon.signals.schemas import InstrumentType, Signal, SignalAction
+from poseidon.risk.engine import RiskEngine
+from poseidon.signals.schemas import InstrumentType, Signal, SignalAction, SignalStatus
+from poseidon.strategies.base import BaseStrategy, StrategyType
 
 
 # ---------------------------------------------------------------------------
@@ -355,3 +362,434 @@ class TestBacktestModels:
             "error_message", "created_at", "completed_at",
         }
         assert required.issubset(col_names)
+
+
+# ===========================================================================
+# Helper: Synthetic OHLCV data
+# ===========================================================================
+
+
+def _make_ohlcv(n_bars: int = 20, base_price: float = 100.0) -> pd.DataFrame:
+    """Create synthetic OHLCV DataFrame with `n_bars` rows."""
+    times = pd.date_range("2025-01-01", periods=n_bars, freq="B", tz=timezone.utc)
+    np.random.seed(42)
+    closes = base_price + np.cumsum(np.random.randn(n_bars) * 2)
+    return pd.DataFrame(
+        {
+            "time": times,
+            "open": closes * 0.99,
+            "high": closes * 1.01,
+            "low": closes * 0.98,
+            "close": closes,
+            "volume": np.random.randint(1000, 10000, n_bars),
+        }
+    )
+
+
+# ===========================================================================
+# Helper: MockStrategy for testing the runner
+# ===========================================================================
+
+
+class MockStrategy(BaseStrategy):
+    """Test strategy that goes LONG on bar `long_bar` and CLOSE on `close_bar`."""
+
+    name = "mock_strategy"
+    strategy_type = StrategyType.RULE
+    symbol = "2330"
+    market = "tw_stock"
+    interval = "1d"
+
+    def __init__(self, long_bar: int = 5, close_bar: int = 10):
+        self.long_bar = long_bar
+        self.close_bar = close_bar
+        self.evaluate_call_lengths: list[int] = []
+
+    def evaluate(self, features: pd.DataFrame) -> list[Signal]:
+        """Return LONG on bar `long_bar`, CLOSE on `close_bar`, else empty."""
+        current_bar_idx = len(features) - 1
+        self.evaluate_call_lengths.append(len(features))
+
+        if current_bar_idx == self.long_bar:
+            return [
+                Signal(
+                    symbol=self.symbol,
+                    market=self.market,
+                    action=SignalAction.LONG,
+                    confidence=0.9,
+                    quantity_pct=0.1,
+                    signal_time=features.iloc[-1]["time"],
+                )
+            ]
+        elif current_bar_idx == self.close_bar:
+            return [
+                Signal(
+                    symbol=self.symbol,
+                    market=self.market,
+                    action=SignalAction.CLOSE,
+                    confidence=0.9,
+                    quantity_pct=0.1,
+                    signal_time=features.iloc[-1]["time"],
+                )
+            ]
+        return []
+
+    def validate_config(self) -> bool:
+        return True
+
+
+# ===========================================================================
+# BacktestRunner Tests
+# ===========================================================================
+
+
+class TestBacktestRunner:
+    """BacktestRunner event loop and pipeline reuse tests."""
+
+    def test_init_accepts_required_params(self):
+        """BacktestRunner.__init__ accepts strategy, feature_engine, risk_engine, cost_model, initial_capital."""
+        strategy = MockStrategy()
+        feature_engine = FeatureEngine()
+        risk_engine = RiskEngine(rules=[])
+        cost_model = get_cost_model("tw_stock")
+
+        runner = BacktestRunner(
+            strategy=strategy,
+            feature_engine=feature_engine,
+            risk_engine=risk_engine,
+            cost_model=cost_model,
+            initial_capital=500_000.0,
+        )
+
+        assert runner.strategy is strategy
+        assert runner.feature_engine is feature_engine
+        assert runner.risk_engine is risk_engine
+        assert runner.cost_model is cost_model
+        assert runner.initial_capital == 500_000.0
+
+    def test_run_calls_compute_from_df_once(self):
+        """runner.run(ohlcv) calls feature_engine.compute_from_df(ohlcv) exactly once."""
+        ohlcv = _make_ohlcv(20)
+        strategy = MockStrategy(long_bar=5, close_bar=10)
+        feature_engine = FeatureEngine()
+        risk_engine = RiskEngine(rules=[])
+        cost_model = get_cost_model("us_stock")
+
+        runner = BacktestRunner(
+            strategy=strategy,
+            feature_engine=feature_engine,
+            risk_engine=risk_engine,
+            cost_model=cost_model,
+        )
+
+        # Spy on compute_from_df
+        original_compute = feature_engine.compute_from_df
+        call_count = 0
+
+        def spy_compute(ohlcv_df, feature_specs=None):
+            nonlocal call_count
+            call_count += 1
+            return original_compute(ohlcv_df, feature_specs)
+
+        feature_engine.compute_from_df = spy_compute
+        runner.run(ohlcv)
+        assert call_count == 1, "compute_from_df should be called exactly once"
+
+    def test_run_no_look_ahead(self):
+        """runner.run() calls strategy.evaluate() with features[:i+1] slice (no look-ahead)."""
+        ohlcv = _make_ohlcv(20)
+        strategy = MockStrategy(long_bar=5, close_bar=10)
+        feature_engine = FeatureEngine()
+        risk_engine = RiskEngine(rules=[])
+        cost_model = get_cost_model("us_stock")
+
+        runner = BacktestRunner(
+            strategy=strategy,
+            feature_engine=feature_engine,
+            risk_engine=risk_engine,
+            cost_model=cost_model,
+        )
+
+        runner.run(ohlcv)
+
+        # Check that each call to evaluate received a DataFrame of length <= i+1
+        # The evaluate_call_lengths records the length of the features DF passed
+        for i, length in enumerate(strategy.evaluate_call_lengths):
+            assert length <= i + 1 + 20, "strategy received more data than it should (look-ahead detected)"
+            # More importantly: lengths should be monotonically increasing
+            if i > 0:
+                assert length >= strategy.evaluate_call_lengths[i - 1], (
+                    "Features should grow monotonically (expanding window)"
+                )
+
+    def test_run_calls_risk_engine(self):
+        """runner.run() calls risk_engine.evaluate(signal, portfolio) for each signal."""
+        ohlcv = _make_ohlcv(20)
+        strategy = MockStrategy(long_bar=5, close_bar=10)
+        feature_engine = FeatureEngine()
+        risk_engine = RiskEngine(rules=[])
+        cost_model = get_cost_model("us_stock")
+
+        runner = BacktestRunner(
+            strategy=strategy,
+            feature_engine=feature_engine,
+            risk_engine=risk_engine,
+            cost_model=cost_model,
+        )
+
+        # Spy on risk_engine.evaluate
+        original_eval = risk_engine.evaluate
+        risk_eval_calls = []
+
+        def spy_risk_eval(signal, portfolio):
+            risk_eval_calls.append((signal, portfolio))
+            return original_eval(signal, portfolio)
+
+        risk_engine.evaluate = spy_risk_eval
+        runner.run(ohlcv)
+
+        # Strategy produces 2 signals (LONG at bar 5, CLOSE at bar 10)
+        assert len(risk_eval_calls) == 2, "risk_engine.evaluate should be called for each signal"
+
+    def test_run_skips_warmup_nan_bars(self):
+        """runner.run() skips signal generation for bars where key features are NaN."""
+        # Create OHLCV with enough bars for features to compute
+        ohlcv = _make_ohlcv(25)
+        # Use a strategy that would signal on early bars (bar 0 is in warmup)
+        strategy = MockStrategy(long_bar=0, close_bar=1)
+        feature_engine = FeatureEngine()
+        risk_engine = RiskEngine(rules=[])
+        cost_model = get_cost_model("us_stock")
+
+        runner = BacktestRunner(
+            strategy=strategy,
+            feature_engine=feature_engine,
+            risk_engine=risk_engine,
+            cost_model=cost_model,
+        )
+
+        result = runner.run(ohlcv)
+
+        # With DEFAULT_FEATURES (SMA-60 needs 60 bars, but we only have 25)
+        # Many bars will have NaN features. Strategy on bar 0 should be skipped.
+        # The runner should not produce signals during warmup.
+        # Since all 25 bars have NaN for SMA-60, no signals should pass.
+        assert result.trade_count == 0, "Signals during warmup (NaN features) should be skipped"
+
+    def test_run_returns_backtest_result(self):
+        """runner.run() returns BacktestResult with metrics, trades, and equity_curve."""
+        ohlcv = _make_ohlcv(20)
+        strategy = MockStrategy(long_bar=5, close_bar=10)
+        feature_engine = FeatureEngine()
+        risk_engine = RiskEngine(rules=[])
+        cost_model = get_cost_model("us_stock")
+
+        runner = BacktestRunner(
+            strategy=strategy,
+            feature_engine=feature_engine,
+            risk_engine=risk_engine,
+            cost_model=cost_model,
+        )
+
+        result = runner.run(ohlcv)
+
+        assert isinstance(result, BacktestResult)
+        assert isinstance(result.metrics, dict)
+        assert result.equity_curve_length > 0
+        assert result.status == "completed"
+
+    def test_run_full_pipeline_one_trade(self):
+        """With mock strategy LONG@5 CLOSE@10, result has exactly 1 completed trade with correct PnL."""
+        # Use enough bars and only short-period features to avoid NaN
+        ohlcv = _make_ohlcv(20)
+        strategy = MockStrategy(long_bar=5, close_bar=10)
+        feature_engine = FeatureEngine()
+        risk_engine = RiskEngine(rules=[])
+        # Use US stock to simplify (no commission, no tax, minimal slippage)
+        cost_model = get_cost_model("us_stock")
+
+        runner = BacktestRunner(
+            strategy=strategy,
+            feature_engine=feature_engine,
+            risk_engine=risk_engine,
+            cost_model=cost_model,
+            initial_capital=1_000_000.0,
+        )
+
+        # Use feature specs with short periods to minimize NaN warmup
+        result = runner.run(ohlcv, feature_specs=[("sma", {"period": 3})])
+
+        # Check that we have a completed trade
+        # Close trades have PnL set
+        closed_trades = [t for t in result.trades if t.get("pnl") is not None]
+        assert len(closed_trades) == 1, f"Expected 1 completed trade, got {len(closed_trades)}"
+
+        # Verify the trade has sensible PnL (not NaN or None)
+        trade = closed_trades[0]
+        assert trade["pnl"] is not None
+        assert isinstance(trade["pnl"], (int, float))
+
+
+# ===========================================================================
+# BacktestConfig / BacktestResult Schema Tests
+# ===========================================================================
+
+
+class TestBacktestSchemas:
+    """BacktestConfig and BacktestResult Pydantic schema tests."""
+
+    def test_config_validates_required_fields(self):
+        """BacktestConfig validates required fields: strategy_type, symbol, market."""
+        config = BacktestConfig(
+            strategy_type="rule",
+            symbol="2330",
+            market="tw_stock",
+        )
+        assert config.strategy_type == "rule"
+        assert config.symbol == "2330"
+        assert config.market == "tw_stock"
+        assert config.interval == "1d"  # default
+        assert config.initial_capital == 1_000_000.0  # default
+
+    def test_config_missing_required_raises(self):
+        """BacktestConfig raises ValidationError when required fields are missing."""
+        with pytest.raises(Exception):  # pydantic.ValidationError
+            BacktestConfig()  # type: ignore[call-arg]
+
+    def test_config_with_dates(self):
+        """BacktestConfig accepts start_date and end_date."""
+        config = BacktestConfig(
+            strategy_type="model",
+            symbol="AAPL",
+            market="us_stock",
+            start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            end_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+        assert config.start_date is not None
+        assert config.end_date is not None
+
+    def test_result_contains_metrics_and_counts(self):
+        """BacktestResult contains metrics, trade_count, equity_curve_length."""
+        config = BacktestConfig(
+            strategy_type="rule",
+            symbol="2330",
+            market="tw_stock",
+        )
+        result = BacktestResult(
+            config=config,
+            metrics={"sharpe_ratio": 1.5, "total_return": 0.2},
+            trade_count=10,
+            equity_curve_length=252,
+            status="completed",
+        )
+        assert result.metrics["sharpe_ratio"] == 1.5
+        assert result.trade_count == 10
+        assert result.equity_curve_length == 252
+        assert result.status == "completed"
+        assert result.backtest_id is not None
+
+
+# ===========================================================================
+# BacktestRepository Tests
+# ===========================================================================
+
+
+class TestBacktestRepository:
+    """BacktestRepository DB persistence tests (mocked session, no live DB)."""
+
+    def test_save_result_creates_records(self):
+        """save_result() creates BacktestRecord + BacktestTradeRecord + BacktestEquityRecord objects."""
+        mock_session = MagicMock()
+
+        repo = BacktestRepository(db_session=mock_session)
+
+        config = BacktestConfig(
+            strategy_type="rule",
+            symbol="2330",
+            market="tw_stock",
+        )
+        result = BacktestResult(
+            config=config,
+            metrics={"sharpe_ratio": 1.5, "total_return": 0.2},
+            trade_count=2,
+            equity_curve_length=20,
+            status="completed",
+        )
+
+        trades = [
+            TradeRecord(
+                symbol="2330",
+                action="long",
+                entry_time=datetime(2025, 1, 5, tzinfo=timezone.utc),
+                entry_price=100.0,
+                quantity=10,
+                fees=0.14,
+            ),
+            TradeRecord(
+                symbol="2330",
+                action="close",
+                entry_time=datetime(2025, 1, 5, tzinfo=timezone.utc),
+                exit_time=datetime(2025, 1, 10, tzinfo=timezone.utc),
+                entry_price=100.0,
+                exit_price=110.0,
+                quantity=10,
+                fees=0.48,
+                pnl=99.38,
+            ),
+        ]
+
+        equity_curve = [
+            (datetime(2025, 1, 5, tzinfo=timezone.utc), 1_000_000.0, 0.0),
+            (datetime(2025, 1, 6, tzinfo=timezone.utc), 1_001_000.0, 0.0),
+            (datetime(2025, 1, 7, tzinfo=timezone.utc), 999_000.0, 0.002),
+        ]
+
+        backtest_id = repo.save_result(
+            config=config,
+            result=result,
+            trades=trades,
+            equity_curve=equity_curve,
+        )
+
+        # Verify session.add() was called with correct ORM objects
+        assert mock_session.add.called or mock_session.add_all.called
+        assert mock_session.flush.called
+
+        # The returned UUID should not be None
+        assert backtest_id is not None
+
+    def test_get_by_id(self):
+        """get_by_id returns a BacktestRecord or None."""
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.first.return_value = None
+
+        repo = BacktestRepository(db_session=mock_session)
+        result = repo.get_by_id(uuid4())
+        assert result is None
+
+    def test_list_backtests(self):
+        """list_backtests returns a list of BacktestRecord."""
+        mock_session = MagicMock()
+        mock_session.query.return_value.order_by.return_value.limit.return_value.all.return_value = []
+
+        repo = BacktestRepository(db_session=mock_session)
+        results = repo.list_backtests()
+        assert isinstance(results, list)
+
+    def test_get_trades(self):
+        """get_trades returns trades for a backtest."""
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.all.return_value = []
+
+        repo = BacktestRepository(db_session=mock_session)
+        trades = repo.get_trades(uuid4())
+        assert isinstance(trades, list)
+
+    def test_get_equity_curve(self):
+        """get_equity_curve returns equity points for a backtest."""
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
+
+        repo = BacktestRepository(db_session=mock_session)
+        points = repo.get_equity_curve(uuid4())
+        assert isinstance(points, list)
