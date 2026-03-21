@@ -190,11 +190,12 @@ def run_model_backtest(
         if mv is None or mv.status != "ready":
             raise ValueError(f"Model version {record.model_version_id} not ready")
 
-        # Instantiate and load model
+        # Load model from artifacts
         model_cls = get_model(mv.name)
-        model_instance = model_cls()
         if mv.artifact_path:
-            model_instance.load(Path(mv.artifact_path))
+            model_instance = model_cls.load(Path(mv.artifact_path))
+        else:
+            raise ValueError(f"Model version {mv.id} has no artifact path")
 
         # Build strategy
         strategy = ModelStrategy(
