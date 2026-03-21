@@ -1,8 +1,15 @@
-"""CPU worker Celery tasks for data fetching and backfill."""
+"""CPU worker Celery tasks for data fetching, backfill, backtest, and optimization."""
 
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
+from poseidon.backtest.cost_model import COST_MODELS, CostModel
+from poseidon.backtest.optimizer import BayesianOptimizer, GridSearchOptimizer
+from poseidon.backtest.repository import BacktestRepository
+from poseidon.backtest.runner import BacktestRunner
+from poseidon.backtest.schemas import BacktestConfig
+from poseidon.data.feature_engine import FeatureEngine
 from poseidon.data.fetchers import get_fetcher
 from poseidon.data.storage import (
     get_or_create_backfill_progress,
@@ -11,7 +18,11 @@ from poseidon.data.storage import (
     upsert_ohlcv,
 )
 from poseidon.data.symbols import get_market_config, get_symbols_for_market, load_symbols
+from poseidon.models.backtest import BacktestRecord
 from poseidon.models.base import SessionLocal
+from poseidon.models.strategy import StrategyRecord
+from poseidon.risk.engine import RiskEngine
+from poseidon.strategies.rule_strategy import RuleStrategy
 from poseidon.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -183,3 +194,305 @@ def trigger_backfill(market: str | None = None) -> dict:
 
     logger.info("Dispatched %d backfill tasks", dispatched)
     return {"dispatched": dispatched}
+
+
+@celery_app.task(
+    name="poseidon.workers.cpu_tasks.run_backtest_task",
+    bind=True,
+    max_retries=0,
+)
+def run_backtest_task(
+    self,
+    strategy_id: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    initial_capital: float = 1_000_000.0,
+) -> dict:
+    """Run a backtest for an existing strategy.
+
+    Loads the strategy from the DB, fetches OHLCV data, runs BacktestRunner,
+    and persists results to BacktestRecord.
+
+    Args:
+        strategy_id: UUID string of the strategy to backtest.
+        start_date: ISO date string for backtest start (optional).
+        end_date: ISO date string for backtest end (optional).
+        initial_capital: Starting capital for the backtest.
+
+    Returns:
+        Dict with backtest_id, status, and trade_count.
+    """
+    session = SessionLocal()
+    backtest_id = uuid.uuid4()
+    try:
+        # Load strategy record from DB
+        sid = uuid.UUID(strategy_id)
+        record = session.get(StrategyRecord, sid)
+        if not record:
+            raise ValueError(f"Strategy {strategy_id} not found")
+
+        # Reconstruct strategy object
+        if record.strategy_type == "rule":
+            strategy = RuleStrategy(config=record.config, strategy_id=record.id)
+        elif record.strategy_type == "model":
+            raise NotImplementedError(
+                "Model backtest via API not yet supported (requires GPU model loading)"
+            )
+        else:
+            raise ValueError(f"Unknown strategy_type: {record.strategy_type!r}")
+
+        # Parse date filters
+        parsed_start = datetime.fromisoformat(start_date) if start_date else None
+        parsed_end = datetime.fromisoformat(end_date) if end_date else None
+
+        # Load OHLCV data
+        ohlcv_df = read_ohlcv(
+            session, record.symbol, record.market, record.interval,
+            start=parsed_start, end=parsed_end,
+        )
+        if ohlcv_df.empty:
+            raise ValueError(
+                f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}"
+            )
+
+        # Build pipeline components
+        feature_engine = FeatureEngine()
+        risk_engine = RiskEngine()
+        cost_model = COST_MODELS.get(record.market, CostModel())
+
+        # Run backtest
+        runner = BacktestRunner(
+            strategy=strategy,
+            feature_engine=feature_engine,
+            risk_engine=risk_engine,
+            cost_model=cost_model,
+            initial_capital=initial_capital,
+        )
+        result = runner.run(ohlcv_df)
+        backtest_id = result.backtest_id
+
+        # Build config dict for persistence
+        config_dict = {
+            "strategy_type": record.strategy_type,
+            "symbol": record.symbol,
+            "market": record.market,
+            "interval": record.interval,
+            "initial_capital": initial_capital,
+            "start_date": start_date,
+            "end_date": end_date,
+            "strategy_params": record.config,
+        }
+
+        # Persist to BacktestRecord directly (the repository expects TradeRecord
+        # objects, but we only have trade dicts from BacktestResult; persist
+        # the main record with metrics for the API to query)
+        bt_record = BacktestRecord(
+            id=backtest_id,
+            strategy_id=sid,
+            strategy_type=record.strategy_type,
+            symbol=record.symbol,
+            market=record.market,
+            interval=record.interval,
+            config=config_dict,
+            metrics=result.metrics,
+            status=result.status,
+            error_message=result.error_message,
+            completed_at=datetime.now(timezone.utc),
+        )
+        session.add(bt_record)
+        session.commit()
+
+        logger.info(
+            "Backtest completed: %s (strategy=%s, trades=%d)",
+            backtest_id, strategy_id, result.trade_count,
+        )
+        return {
+            "backtest_id": str(backtest_id),
+            "status": result.status,
+            "trade_count": result.trade_count,
+        }
+
+    except Exception as exc:
+        # Persist error state
+        try:
+            error_record = BacktestRecord(
+                id=backtest_id,
+                strategy_id=uuid.UUID(strategy_id) if strategy_id else None,
+                strategy_type="unknown",
+                symbol="",
+                market="",
+                interval="1d",
+                config={},
+                status="failed",
+                error_message=str(exc),
+            )
+            session.rollback()
+            session.add(error_record)
+            session.commit()
+        except Exception:
+            logger.exception("Failed to persist error backtest record")
+        logger.exception("Backtest task failed for strategy %s", strategy_id)
+        raise
+
+    finally:
+        session.close()
+
+
+@celery_app.task(
+    name="poseidon.workers.cpu_tasks.run_optimization_task",
+    bind=True,
+    max_retries=0,
+)
+def run_optimization_task(
+    self,
+    strategy_id: str,
+    param_grid: dict,
+    method: str = "grid",
+    n_trials: int = 50,
+    target_metric: str = "sharpe_ratio",
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
+    """Run parameter optimization for an existing strategy.
+
+    Loads the strategy template from the DB, runs grid or Bayesian optimization
+    over the param_grid, and persists the best result to BacktestRecord.
+
+    Args:
+        strategy_id: UUID string of the strategy to optimize.
+        param_grid: Parameter grid/space to search.
+        method: Optimization method ("grid" or "bayesian").
+        n_trials: Number of trials for Bayesian optimization.
+        target_metric: Metric to maximize (default: sharpe_ratio).
+        start_date: ISO date string for backtest start (optional).
+        end_date: ISO date string for backtest end (optional).
+
+    Returns:
+        Dict with trial count, best params, and best metric value.
+    """
+    session = SessionLocal()
+    try:
+        # Load strategy record from DB
+        sid = uuid.UUID(strategy_id)
+        record = session.get(StrategyRecord, sid)
+        if not record:
+            raise ValueError(f"Strategy {strategy_id} not found")
+
+        if record.strategy_type != "rule":
+            raise NotImplementedError(
+                f"Optimization for strategy_type={record.strategy_type!r} not yet supported"
+            )
+
+        # Parse date filters
+        parsed_start = datetime.fromisoformat(start_date) if start_date else None
+        parsed_end = datetime.fromisoformat(end_date) if end_date else None
+
+        # Load OHLCV data
+        ohlcv_df = read_ohlcv(
+            session, record.symbol, record.market, record.interval,
+            start=parsed_start, end=parsed_end,
+        )
+        if ohlcv_df.empty:
+            raise ValueError(
+                f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}"
+            )
+
+        # Build pipeline components
+        feature_engine = FeatureEngine()
+        risk_engine = RiskEngine()
+        cost_model = COST_MODELS.get(record.market, CostModel())
+
+        # Strategy factory: merges param_grid values into the base config
+        base_config = dict(record.config) if record.config else {}
+
+        def strategy_factory(params: dict) -> RuleStrategy:
+            merged = {**base_config, **params}
+            return RuleStrategy(config=merged, strategy_id=record.id)
+
+        # Run optimization
+        if method == "grid":
+            optimizer = GridSearchOptimizer(
+                feature_engine=feature_engine,
+                risk_engine=risk_engine,
+                cost_model=cost_model,
+                initial_capital=1_000_000.0,
+            )
+            trials = optimizer.optimize(
+                strategy_factory=strategy_factory,
+                ohlcv=ohlcv_df,
+                param_grid=param_grid,
+                metric=target_metric,
+            )
+        elif method == "bayesian":
+            optimizer = BayesianOptimizer(
+                feature_engine=feature_engine,
+                risk_engine=risk_engine,
+                cost_model=cost_model,
+                initial_capital=1_000_000.0,
+            )
+            # Convert param_grid to Bayesian param_space format
+            # Expected input: {"param": [low, high, "int"|"float"]}
+            param_space = {}
+            for key, spec in param_grid.items():
+                if isinstance(spec, (list, tuple)) and len(spec) == 3:
+                    param_space[key] = (spec[0], spec[1], spec[2])
+                else:
+                    raise ValueError(
+                        f"Bayesian param_grid[{key!r}] must be [low, high, type], "
+                        f"got {spec!r}"
+                    )
+            trials = optimizer.optimize(
+                strategy_factory=strategy_factory,
+                ohlcv=ohlcv_df,
+                param_space=param_space,
+                n_trials=n_trials,
+                metric=target_metric,
+            )
+        else:
+            raise ValueError(f"Unknown optimization method: {method!r}. Use 'grid' or 'bayesian'.")
+
+        # Persist best result as a BacktestRecord with walk_forward metadata
+        best = trials[0] if trials else None
+        if best:
+            bt_record = BacktestRecord(
+                id=uuid.uuid4(),
+                strategy_id=sid,
+                strategy_type=record.strategy_type,
+                symbol=record.symbol,
+                market=record.market,
+                interval=record.interval,
+                config={
+                    "optimization_method": method,
+                    "param_grid": param_grid,
+                    "target_metric": target_metric,
+                    "strategy_params": record.config,
+                },
+                metrics=best.metrics,
+                walk_forward={
+                    "best_params": best.params,
+                    "best_metric_value": best.metric_value,
+                    "total_trials": len(trials),
+                },
+                status="completed",
+                completed_at=datetime.now(timezone.utc),
+            )
+            session.add(bt_record)
+            session.commit()
+
+        logger.info(
+            "Optimization completed: strategy=%s method=%s trials=%d best_metric=%.4f",
+            strategy_id, method, len(trials),
+            best.metric_value if best else 0.0,
+        )
+        return {
+            "trials": len(trials),
+            "best_params": best.params if best else {},
+            "best_metric": best.metric_value if best else 0.0,
+        }
+
+    except Exception as exc:
+        logger.exception("Optimization task failed for strategy %s", strategy_id)
+        raise
+
+    finally:
+        session.close()
