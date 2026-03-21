@@ -1,4 +1,4 @@
-"""Backtest engine: portfolio simulation, cost models, metrics, runner, and walk-forward analysis.
+"""Backtest engine: portfolio simulation, cost models, metrics, runner, walk-forward, and optimization.
 
 Public API:
     BacktestPortfolio    - Portfolio simulator with fee/slippage
@@ -15,10 +15,18 @@ Public API:
     WalkForwardResult    - Walk-forward analysis result
     WalkForwardAnalyzer  - Walk-forward analysis engine
     compute_wfe          - Walk-Forward Efficiency computation
+    GridSearchOptimizer  - Exhaustive parameter search
+    BayesianOptimizer    - Optuna TPE Bayesian optimization
+    OptimizationTrial    - Single optimization trial result
 """
 
 from poseidon.backtest.cost_model import COST_MODELS, CostModel, get_cost_model
 from poseidon.backtest.metrics import compute_metrics
+from poseidon.backtest.optimizer import (
+    BayesianOptimizer,
+    GridSearchOptimizer,
+    OptimizationTrial,
+)
 from poseidon.backtest.portfolio import BacktestPortfolio, TradeRecord
 from poseidon.backtest.repository import BacktestRepository
 from poseidon.backtest.runner import BacktestRunner
@@ -45,4 +53,7 @@ __all__ = [
     "WalkForwardResult",
     "WalkForwardAnalyzer",
     "compute_wfe",
+    "GridSearchOptimizer",
+    "BayesianOptimizer",
+    "OptimizationTrial",
 ]
