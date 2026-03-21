@@ -53,6 +53,12 @@ Plans:
 ### Phase 5: Risk Engine & Signal Delivery
 **Goal:** Ensure every signal passes through configurable risk checks before being reliably delivered to Thalassa via Redis Streams.
 **Requirements:** RISK-01, RISK-02, RISK-03, SIG-01, SIG-02
+**Plans:** 4 plans
+Plans:
+- [ ] 05-01-PLAN.md — DB schemas (SignalRecord, RiskRuleRecord, VirtualPositionRecord) + Alembic migration 004
+- [ ] 05-02-PLAN.md — Risk engine (BaseRule ABC, 5 concrete rules, RiskEngine chain, VirtualPortfolio)
+- [ ] 05-03-PLAN.md — Signal delivery (Redis Streams publisher, consumer group, retention, SignalRepository)
+- [ ] 05-04-PLAN.md — Integration (SignalPipeline wiring, risk rule CRUD API)
 **Success Criteria:**
 1. Risk engine applies a chain of `BaseRule` checks (position control, loss control, frequency control, confidence threshold, leverage cap) and correctly rejects signals that violate any rule.
 2. Virtual portfolio state is persisted in PostgreSQL and can be rebuilt from signal history after a restart.
