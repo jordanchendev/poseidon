@@ -65,7 +65,7 @@ services:
     environment:
       - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@postgres:5432/poseidon
       - POSEIDON_REDIS_URL=redis://redis:6379/0
-      - POSEIDON_FINMIND_TOKEN=${FINMIND_TOKEN}
+      - POSEIDON_FINMIND_TOKEN=${POSEIDON_FINMIND_TOKEN}
     volumes:
       - model-artifacts:/data/models
     depends_on:
