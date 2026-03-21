@@ -62,6 +62,20 @@ class RiskRuleResponse(PydanticBase):
     updated_at: datetime
 
 
+class VirtualPositionResponse(PydanticBase):
+    """Response model for a virtual portfolio position."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    symbol: str
+    market: str
+    instrument: str
+    side: str
+    quantity_pct: float
+    entry_time: datetime
+
+
 # --------------- Endpoints ---------------
 
 
@@ -173,3 +187,22 @@ async def delete_rule(
         raise HTTPException(status_code=404, detail="Rule not found")
     db.delete(record)
     db.commit()
+
+
+@router.get("/portfolio", response_model=list[VirtualPositionResponse])
+async def get_portfolio(
+    market: str | None = None,
+    db: Session = Depends(get_db),
+) -> list[VirtualPositionResponse]:
+    """Get current virtual portfolio positions from DB.
+
+    Returns open (non-closed) positions, optionally filtered by market.
+    """
+    from poseidon.models.virtual_position import VirtualPositionRecord
+
+    query = db.query(VirtualPositionRecord).filter(
+        VirtualPositionRecord.closed == False  # noqa: E712
+    )
+    if market:
+        query = query.filter(VirtualPositionRecord.market == market)
+    return query.all()
