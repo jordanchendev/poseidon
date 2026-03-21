@@ -1,4 +1,4 @@
-"""GPU worker Celery tasks for model training.
+"""GPU worker Celery tasks for model training and model-based backtesting.
 
 Tasks in this module are routed to the ``gpu`` queue via the
 ``poseidon.workers.gpu_tasks.*`` routing rule in ``celery_app.py``.
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import traceback
+import uuid as uuid_mod
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
@@ -138,6 +139,146 @@ def train_model(
                 )
             except Exception:
                 logger.exception("Failed to transition version %s to 'failed'", version_id)
+        raise
+    finally:
+        session.close()
+
+
+@celery_app.task(
+    name="poseidon.workers.gpu_tasks.run_model_backtest",
+    bind=True,
+    max_retries=0,
+)
+def run_model_backtest(
+    self,
+    strategy_id: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    initial_capital: float = 1_000_000.0,
+) -> dict:
+    """Run a backtest for a model-based strategy on the GPU worker.
+
+    Loads the model from artifacts, runs predictions on historical data,
+    and executes the backtest via BacktestRunner.
+    """
+    from poseidon.backtest.cost_model import COST_MODELS
+    from poseidon.backtest.runner import BacktestRunner
+    from poseidon.data.feature_engine import FeatureEngine
+    from poseidon.data.storage import read_ohlcv
+    from poseidon.ml.manager import ModelManager
+    from poseidon.ml.registry import get_model
+    from poseidon.models.backtest import BacktestRecord
+    from poseidon.models.base import SessionLocal
+    from poseidon.models.strategy import StrategyRecord
+    from poseidon.risk.engine import RiskEngine
+    from poseidon.strategies.model_strategy import ModelStrategy
+
+    session = SessionLocal()
+    backtest_id = uuid_mod.uuid4()
+    try:
+        sid = UUID(strategy_id)
+        record = session.get(StrategyRecord, sid)
+        if not record:
+            raise ValueError(f"Strategy {strategy_id} not found")
+
+        if record.strategy_type != "model":
+            raise ValueError(f"Strategy {strategy_id} is not a model strategy")
+
+        # Load model version
+        manager = ModelManager(session)
+        mv = manager.get_version(record.model_version_id)
+        if mv is None or mv.status != "ready":
+            raise ValueError(f"Model version {record.model_version_id} not ready")
+
+        # Instantiate and load model
+        model_cls = get_model(mv.name)
+        model_instance = model_cls()
+        if mv.artifact_path:
+            model_instance.load(Path(mv.artifact_path))
+
+        # Build strategy
+        strategy = ModelStrategy(
+            name=record.name,
+            model=model_instance,
+            symbol=record.symbol,
+            market=record.market,
+            interval=record.interval,
+            strategy_id=record.id,
+        )
+
+        # Parse dates and load data
+        parsed_start = datetime.fromisoformat(start_date) if start_date else None
+        parsed_end = datetime.fromisoformat(end_date) if end_date else None
+        ohlcv_df = read_ohlcv(
+            session, record.symbol, record.market, record.interval,
+            start=parsed_start, end=parsed_end,
+        )
+        if ohlcv_df.empty:
+            raise ValueError(f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}")
+
+        # Run backtest
+        feature_engine = FeatureEngine()
+        risk_engine = RiskEngine()
+        cost_model = COST_MODELS[record.market]
+
+        runner = BacktestRunner(
+            strategy=strategy,
+            feature_engine=feature_engine,
+            risk_engine=risk_engine,
+            cost_model=cost_model,
+            initial_capital=initial_capital,
+        )
+        result = runner.run(ohlcv_df)
+
+        # Persist result
+        bt_record = BacktestRecord(
+            id=backtest_id,
+            strategy_id=sid,
+            strategy_type=record.strategy_type,
+            symbol=record.symbol,
+            market=record.market,
+            interval=record.interval,
+            config={
+                "strategy_type": "model",
+                "model_version_id": str(record.model_version_id),
+                "model_name": mv.name,
+                "model_version": mv.version,
+                "start_date": start_date,
+                "end_date": end_date,
+                "initial_capital": initial_capital,
+            },
+            metrics=result.metrics,
+            status=result.status,
+            error_message=result.error_message,
+            completed_at=datetime.now(),
+        )
+        session.add(bt_record)
+        session.commit()
+
+        logger.info(
+            "Model backtest completed: %s (strategy=%s, trades=%d)",
+            backtest_id, strategy_id, result.metrics.get("trade_count", 0),
+        )
+        return {
+            "backtest_id": str(backtest_id),
+            "status": "completed",
+            "trade_count": result.metrics.get("trade_count", 0),
+        }
+
+    except Exception:
+        logger.exception("Model backtest failed for strategy %s", strategy_id)
+        session.rollback()
+        try:
+            failed_record = BacktestRecord(
+                id=backtest_id,
+                strategy_id=UUID(strategy_id),
+                status="failed",
+                error_message=traceback.format_exc()[-500:],
+            )
+            session.add(failed_record)
+            session.commit()
+        except Exception:
+            logger.exception("Failed to save failed backtest record")
         raise
     finally:
         session.close()

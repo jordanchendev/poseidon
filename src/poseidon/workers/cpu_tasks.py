@@ -271,9 +271,11 @@ def run_backtest_task(
         if record.strategy_type == "rule":
             strategy = RuleStrategy(config=record.config, strategy_id=record.id)
         elif record.strategy_type == "model":
-            raise NotImplementedError(
-                "Model backtest via API not yet supported (requires GPU model loading)"
-            )
+            # Route to GPU worker which has model dependencies
+            from poseidon.workers.gpu_tasks import run_model_backtest
+            result = run_model_backtest.delay(strategy_id, start_date, end_date, initial_capital)
+            logger.info("Routed model backtest to GPU worker: %s", result.id)
+            return {"backtest_id": result.id, "status": "routed_to_gpu", "trade_count": 0}
         else:
             raise ValueError(f"Unknown strategy_type: {record.strategy_type!r}")
 
