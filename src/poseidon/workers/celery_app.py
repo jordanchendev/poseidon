@@ -25,6 +25,7 @@ celery_app.conf.update(
 
     # Task tracking
     task_track_started=True,
+    task_acks_late=True,
     worker_prefetch_multiplier=1,
 
     # RedBeat scheduler (persists schedule state in Redis)
