@@ -8,12 +8,16 @@ re-read from the DB on every evaluation cycle.
 
 from __future__ import annotations
 
+import logging
+
 from poseidon.core.config import settings
 from poseidon.risk.engine import RiskEngine
 from poseidon.risk.portfolio import VirtualPortfolio
 from poseidon.signals.delivery import SignalDeliveryService
 from poseidon.signals.repository import SignalRepository
 from poseidon.signals.schemas import Signal, SignalStatus
+
+logger = logging.getLogger(__name__)
 
 
 class SignalPipeline:
@@ -56,7 +60,14 @@ class SignalPipeline:
         # 4 - post-pass actions
         if signal.status == SignalStatus.PASSED:
             self._portfolio.apply_signal(signal)
-            self._delivery.deliver(signal)
+            try:
+                self._delivery.deliver(signal)
+            except Exception:
+                logger.exception(
+                    "Redis delivery failed for signal %s — "
+                    "signal is already persisted and will be committed.",
+                    signal.id,
+                )
 
         # 5 - commit
         self._db.commit()
