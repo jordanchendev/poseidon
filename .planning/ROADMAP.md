@@ -39,6 +39,11 @@
 ### Phase 4: Strategy Layer
 **Goal:** Unify model-based and rule-based strategies under a single interface, including the JSON DSL condition engine for rule strategies.
 **Requirements:** STRAT-01, STRAT-02, STRAT-03, STRAT-04
+**Plans:** 3 plans
+Plans:
+- [ ] 04-01-PLAN.md — Signal schema + BaseStrategy ABC contracts
+- [ ] 04-02-PLAN.md — ModelStrategy wraps BaseModel, converts predictions to Signals
+- [ ] 04-03-PLAN.md — RuleStrategy + DSL condition engine (schema, conditions, executor)
 **Success Criteria:**
 1. `BaseStrategy` ABC defines a shared interface and both `ModelStrategy` and `RuleStrategy` implement it.
 2. `ModelStrategy` wraps a `BaseModel`, calls `predict()`, and converts the raw DataFrame output into standardized `Signal` objects.
