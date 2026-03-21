@@ -76,7 +76,7 @@ class XGBoostModel(BaseModel):
             raise RuntimeError("Model not trained or loaded")
 
         feature_cols = [c for c in self._feature_list if c in features.columns]
-        X = features[feature_cols]
+        X = features[feature_cols].dropna()
 
         # Get class probabilities
         proba = self._model.predict_proba(X)
@@ -85,10 +85,12 @@ class XGBoostModel(BaseModel):
         predictions = [LABEL_MAP.get(i, "hold") for i in pred_indices]
         confidences = np.max(proba, axis=1)
 
-        return pd.DataFrame(
+        # Build result for clean rows, then reindex to original to fill NaN rows
+        result = pd.DataFrame(
             {"prediction": predictions, "confidence": confidences},
-            index=features.index,
+            index=X.index,
         )
+        return result.reindex(features.index, fill_value="hold")
 
     def validate(self, features: pd.DataFrame, targets: pd.Series) -> dict[str, float]:
         if self._model is None:
@@ -143,7 +145,6 @@ class XGBoostModel(BaseModel):
             "objective": "multi:softprob",
             "num_class": 3,
             "eval_metric": "mlogloss",
-            "use_label_encoder": False,
         }
 
     def get_feature_list(self) -> list[str]:
