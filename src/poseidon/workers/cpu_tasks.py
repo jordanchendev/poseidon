@@ -61,7 +61,12 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
     if symbol and symbols:
         symbols = [s for s in symbols if s.id == symbol or s.ccxt_symbol == symbol]
 
-    if not symbols:
+    # If a specific symbol was requested but not found in config, create an ad-hoc entry
+    if not symbols and symbol:
+        from poseidon.data.symbols import SymbolInfo
+        symbols = [SymbolInfo(id=symbol, name=symbol)]
+        logger.info("Symbol %s not in config, fetching ad-hoc for market %s", symbol, market)
+    elif not symbols:
         logger.warning("No symbols configured for market: %s", market)
         return {"market": market, "interval": interval, "fetched": 0}
 
@@ -186,6 +191,8 @@ def trigger_backfill(market: str | None = None, symbol: str | None = None) -> di
     """Trigger backfill for all symbols (or a specific market/symbol).
 
     Dispatches individual backfill_symbol tasks for each symbol/interval combo.
+    If a specific symbol is requested but not in config, it is still backfilled
+    with the default interval ("1d").
 
     Args:
         market: Optional market to limit backfill to.
@@ -199,15 +206,27 @@ def trigger_backfill(market: str | None = None, symbol: str | None = None) -> di
     for m in markets_to_process:
         market_cfg = config.markets.get(m)
         if not market_cfg:
+            # Market not in config but symbol explicitly requested — backfill with default interval
+            if symbol and market:
+                backfill_symbol.delay(symbol, m, "1d")
+                dispatched += 1
+                logger.info("Dispatched backfill for %s/%s/1d (not in config)", m, symbol)
             continue
+        configured_ids = {sym.id for sym in market_cfg.symbols}
         for sym in market_cfg.symbols:
-            # Filter to specific symbol if requested
             if symbol and sym.id != symbol:
                 continue
             for interval in market_cfg.intervals:
                 backfill_symbol.delay(sym.id, m, interval)
                 dispatched += 1
                 logger.info("Dispatched backfill for %s/%s/%s", m, sym.id, interval)
+
+        # Symbol requested but not in this market's config — backfill anyway
+        if symbol and symbol not in configured_ids:
+            for interval in market_cfg.intervals:
+                backfill_symbol.delay(symbol, m, interval)
+                dispatched += 1
+                logger.info("Dispatched backfill for %s/%s/%s (not in config)", m, symbol, interval)
 
     logger.info("Dispatched %d backfill tasks", dispatched)
     return {"dispatched": dispatched}
