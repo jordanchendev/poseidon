@@ -1,6 +1,6 @@
 # Poseidon
 
-Trading signal platform for the OpenClaw investment analysis system. Fetches multi-market data, computes features, trains ML models, evaluates rule-based strategies, runs backtests with walk-forward analysis, applies risk controls, and delivers standardized signals via Redis Streams.
+Trading signal platform that fetches multi-market data, computes features, trains ML models, evaluates rule-based strategies, runs backtests with walk-forward analysis, applies risk controls, and delivers standardized trading signals via Redis Streams.
 
 ## Architecture
 
