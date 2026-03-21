@@ -71,6 +71,12 @@ Plans:
 ### Phase 6: Backtest Engine
 **Goal:** Enable realistic historical strategy evaluation using the exact same pipeline (features, strategy, risk) as live prediction, with walk-forward validation and parameter optimization.
 **Requirements:** BT-01, BT-02, BT-03, BT-04, BT-05
+**Plans:** 4 plans
+Plans:
+- [ ] 06-01-PLAN.md — DB schemas (BacktestRecord, BacktestTradeRecord, BacktestEquityRecord) + Alembic migration 005 + CostModel + BacktestPortfolio + metrics
+- [ ] 06-02-PLAN.md — BacktestRunner bar-by-bar simulation using existing FeatureEngine + Strategy + RiskEngine pipeline
+- [ ] 06-03-PLAN.md — Walk-forward analysis engine with WFE calculation and flagging
+- [ ] 06-04-PLAN.md — Parameter optimization (Grid Search + Bayesian/Optuna)
 **Success Criteria:**
 1. Backtest runner uses the identical `FeatureEngine` + `Strategy.evaluate()` + `RiskEngine` code path as live prediction — no separate backtest-only logic.
 2. Virtual portfolio simulator correctly applies market-specific fee schedules (TW stock tax rates for stock/ETF/day trade, crypto maker/taker) and configurable slippage.
