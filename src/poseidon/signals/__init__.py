@@ -1,5 +1,7 @@
-"""Signal schemas for Poseidon trading signals."""
+"""Signal schemas and delivery for Poseidon trading signals."""
 
+from poseidon.signals.delivery import SignalDeliveryService
+from poseidon.signals.repository import SignalRepository
 from poseidon.signals.schemas import (
     InstrumentType,
     Signal,
@@ -7,4 +9,11 @@ from poseidon.signals.schemas import (
     SignalStatus,
 )
 
-__all__ = ["Signal", "SignalAction", "InstrumentType", "SignalStatus"]
+__all__ = [
+    "Signal",
+    "SignalAction",
+    "InstrumentType",
+    "SignalStatus",
+    "SignalDeliveryService",
+    "SignalRepository",
+]
