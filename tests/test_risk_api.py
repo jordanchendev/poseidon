@@ -22,6 +22,12 @@ def _compile_uuid_sqlite(type_, compiler, **kw):
     return "VARCHAR(36)"
 
 
+# --- Patch settings before importing app so verify_api_key uses our test key ---
+from poseidon.core.config import settings  # noqa: E402
+
+_TEST_API_KEY = "test-api-key-for-risk-tests"
+settings.api_key = _TEST_API_KEY
+
 # --- Now import models (registers them with Base.metadata) ---
 from poseidon.models.base import Base, get_db  # noqa: E402
 from poseidon.models.risk_rule import RiskRuleRecord  # noqa: E402,F401
@@ -49,18 +55,24 @@ def override_get_db():
         db.close()
 
 
-app.dependency_overrides[get_db] = override_get_db
-
-
 @pytest.fixture(autouse=True)
 def setup_db():
-    """Create tables before each test, drop after."""
+    """Create tables before each test, drop after.
+
+    Re-applies the dependency override and API key on every test to
+    guard against other test modules overwriting them on the shared
+    ``app`` and ``settings`` singletons.
+    """
+    settings.api_key = _TEST_API_KEY
+    app.dependency_overrides[get_db] = override_get_db
     Base.metadata.create_all(bind=_engine)
     yield
     Base.metadata.drop_all(bind=_engine)
 
 
-client = TestClient(app)
+_AUTH_HEADER = {"X-API-Key": _TEST_API_KEY}
+
+client = TestClient(app, headers=_AUTH_HEADER)
 
 PREFIX = "/api/risk-rules"
 
