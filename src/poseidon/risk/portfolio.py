@@ -6,11 +6,14 @@ on startup (RISK-02 requirement).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from poseidon.signals.schemas import Signal, SignalAction
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -55,6 +58,8 @@ class VirtualPortfolio:
         """
         key = f"{signal.market}:{signal.symbol}"
         if signal.action in (SignalAction.LONG, SignalAction.SHORT):
+            if key in self.positions:
+                logger.warning("Replacing existing position for %s", key)
             self.positions[key] = PositionEntry(
                 symbol=signal.symbol,
                 market=signal.market,
