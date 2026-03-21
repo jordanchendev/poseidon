@@ -4,7 +4,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from poseidon.backtest.cost_model import COST_MODELS, CostModel
+from poseidon.backtest.cost_model import COST_MODELS
 from poseidon.backtest.optimizer import BayesianOptimizer, GridSearchOptimizer
 from poseidon.backtest.repository import BacktestRepository
 from poseidon.backtest.runner import BacktestRunner
@@ -275,7 +275,7 @@ def run_backtest_task(
         # Build pipeline components
         feature_engine = FeatureEngine()
         risk_engine = RiskEngine()
-        cost_model = COST_MODELS.get(record.market, CostModel())
+        cost_model = COST_MODELS[record.market]
 
         # Run backtest
         runner = BacktestRunner(
@@ -417,7 +417,7 @@ def run_optimization_task(
         # Build pipeline components
         feature_engine = FeatureEngine()
         risk_engine = RiskEngine()
-        cost_model = COST_MODELS.get(record.market, CostModel())
+        cost_model = COST_MODELS[record.market]
 
         # Strategy factory: merges param_grid values into the base config
         base_config = dict(record.config) if record.config else {}
