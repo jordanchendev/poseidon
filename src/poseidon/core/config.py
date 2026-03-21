@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     api_key: str = ""
     finmind_token: str = ""
     symbols_config: str = "config/symbols.yaml"
+    model_artifact_dir: str = "/data/models"
 
     model_config = {"env_prefix": "POSEIDON_", "env_file": ".env"}
 
