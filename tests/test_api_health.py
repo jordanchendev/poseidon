@@ -1,0 +1,219 @@
+"""Tests for the enhanced health check endpoint."""
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from poseidon.api.health import router as health_router
+
+# --------------- Test app setup ---------------
+
+_test_app = FastAPI()
+_test_app.include_router(health_router, tags=["health"])
+
+client = TestClient(_test_app)
+
+
+# --------------- Helpers ---------------
+
+
+def _mock_all_healthy():
+    """Return context managers that mock all external dependencies as healthy."""
+    # Mock DB session
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar.return_value = None  # no OHLCV data
+
+    mock_session_local = MagicMock(return_value=mock_db)
+
+    # Mock Redis
+    mock_redis_instance = MagicMock()
+    mock_redis_instance.ping.return_value = True
+
+    # Mock Celery inspect
+    mock_inspect = MagicMock()
+    mock_inspect.active.return_value = {"worker1": []}
+    mock_inspect.reserved.return_value = {"worker1": []}
+
+    mock_celery = MagicMock()
+    mock_celery.control.inspect.return_value = mock_inspect
+
+    return mock_session_local, mock_redis_instance, mock_celery
+
+
+# --------------- Tests ---------------
+
+
+@patch("poseidon.api.health.celery_app")
+@patch("poseidon.api.health.redis")
+@patch("poseidon.api.health.SessionLocal")
+def test_health_returns_200(mock_session_local, mock_redis_mod, mock_celery):
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar.return_value = None
+    mock_session_local.return_value = mock_db
+
+    mock_redis_instance = MagicMock()
+    mock_redis_instance.ping.return_value = True
+    mock_redis_mod.from_url.return_value = mock_redis_instance
+
+    mock_inspect = MagicMock()
+    mock_inspect.active.return_value = {}
+    mock_inspect.reserved.return_value = {}
+    mock_celery.control.inspect.return_value = mock_inspect
+
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "status" in data
+
+
+@patch("poseidon.api.health.celery_app")
+@patch("poseidon.api.health.redis")
+@patch("poseidon.api.health.SessionLocal")
+def test_health_response_structure(mock_session_local, mock_redis_mod, mock_celery):
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar.return_value = None
+    mock_session_local.return_value = mock_db
+
+    mock_redis_instance = MagicMock()
+    mock_redis_instance.ping.return_value = True
+    mock_redis_mod.from_url.return_value = mock_redis_instance
+
+    mock_inspect = MagicMock()
+    mock_inspect.active.return_value = {}
+    mock_inspect.reserved.return_value = {}
+    mock_celery.control.inspect.return_value = mock_inspect
+
+    resp = client.get("/health")
+    data = resp.json()
+
+    assert "components" in data
+    components = data["components"]
+    assert "database" in components
+    assert "redis" in components
+    assert "celery" in components
+    assert "gpu" in components
+    assert "data_freshness" in components
+
+
+@patch("poseidon.api.health.celery_app")
+@patch("poseidon.api.health.redis")
+@patch("poseidon.api.health.SessionLocal")
+def test_health_all_ok(mock_session_local, mock_redis_mod, mock_celery):
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar.return_value = None
+    mock_session_local.return_value = mock_db
+
+    mock_redis_instance = MagicMock()
+    mock_redis_instance.ping.return_value = True
+    mock_redis_mod.from_url.return_value = mock_redis_instance
+
+    mock_inspect = MagicMock()
+    mock_inspect.active.return_value = {"worker1": []}
+    mock_inspect.reserved.return_value = {"worker1": []}
+    mock_celery.control.inspect.return_value = mock_inspect
+
+    resp = client.get("/health")
+    data = resp.json()
+
+    assert data["status"] == "ok"
+    assert data["components"]["database"] == "ok"
+    assert data["components"]["redis"] == "ok"
+    assert isinstance(data["components"]["celery"], dict)
+    assert "active_tasks" in data["components"]["celery"]
+    assert "reserved_tasks" in data["components"]["celery"]
+
+
+@patch("poseidon.api.health.celery_app")
+@patch("poseidon.api.health.redis")
+@patch("poseidon.api.health.SessionLocal")
+def test_health_degraded_on_db_error(mock_session_local, mock_redis_mod, mock_celery):
+    mock_session_local.return_value.execute.side_effect = Exception("connection refused")
+
+    mock_redis_instance = MagicMock()
+    mock_redis_instance.ping.return_value = True
+    mock_redis_mod.from_url.return_value = mock_redis_instance
+
+    mock_inspect = MagicMock()
+    mock_inspect.active.return_value = {}
+    mock_inspect.reserved.return_value = {}
+    mock_celery.control.inspect.return_value = mock_inspect
+
+    resp = client.get("/health")
+    data = resp.json()
+
+    assert data["status"] == "degraded"
+    assert data["components"]["database"].startswith("error:")
+
+
+@patch("poseidon.api.health.celery_app")
+@patch("poseidon.api.health.redis")
+@patch("poseidon.api.health.SessionLocal")
+def test_health_degraded_on_redis_error(mock_session_local, mock_redis_mod, mock_celery):
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar.return_value = None
+    mock_session_local.return_value = mock_db
+
+    mock_redis_mod.from_url.side_effect = Exception("redis down")
+
+    mock_inspect = MagicMock()
+    mock_inspect.active.return_value = {}
+    mock_inspect.reserved.return_value = {}
+    mock_celery.control.inspect.return_value = mock_inspect
+
+    resp = client.get("/health")
+    data = resp.json()
+
+    assert data["status"] == "degraded"
+    assert data["components"]["redis"].startswith("error:")
+
+
+@patch("poseidon.api.health.celery_app")
+@patch("poseidon.api.health.redis")
+@patch("poseidon.api.health.SessionLocal")
+def test_health_gpu_not_installed(mock_session_local, mock_redis_mod, mock_celery):
+    """GPU component reports unavailable when torch is not installed."""
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar.return_value = None
+    mock_session_local.return_value = mock_db
+
+    mock_redis_instance = MagicMock()
+    mock_redis_instance.ping.return_value = True
+    mock_redis_mod.from_url.return_value = mock_redis_instance
+
+    mock_inspect = MagicMock()
+    mock_inspect.active.return_value = {}
+    mock_inspect.reserved.return_value = {}
+    mock_celery.control.inspect.return_value = mock_inspect
+
+    resp = client.get("/health")
+    data = resp.json()
+
+    gpu = data["components"]["gpu"]
+    assert gpu["available"] is False
+
+
+@patch("poseidon.api.health.celery_app")
+@patch("poseidon.api.health.redis")
+@patch("poseidon.api.health.SessionLocal")
+def test_health_data_freshness_null_when_no_data(
+    mock_session_local, mock_redis_mod, mock_celery
+):
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar.return_value = None
+    mock_session_local.return_value = mock_db
+
+    mock_redis_instance = MagicMock()
+    mock_redis_instance.ping.return_value = True
+    mock_redis_mod.from_url.return_value = mock_redis_instance
+
+    mock_inspect = MagicMock()
+    mock_inspect.active.return_value = {}
+    mock_inspect.reserved.return_value = {}
+    mock_celery.control.inspect.return_value = mock_inspect
+
+    resp = client.get("/health")
+    data = resp.json()
+
+    assert data["components"]["data_freshness"]["latest_ohlcv"] is None
