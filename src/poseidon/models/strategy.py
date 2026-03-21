@@ -21,7 +21,9 @@ class StrategyRecord(Base):
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     market: Mapped[str] = mapped_column(String(32), nullable=False)
     interval: Mapped[str] = mapped_column(String(8), nullable=False, server_default="1d")
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     model_version_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("model_versions.id"),
