@@ -12,30 +12,36 @@ import pandas as pd
 from poseidon.backtest.portfolio import TradeRecord
 
 
-def compute_metrics(equity_series: pd.Series, trades: list[TradeRecord]) -> dict:
+def compute_metrics(
+    equity_series: pd.Series,
+    trades: list[TradeRecord],
+    bars_per_year: int = 252,
+) -> dict:
     """Compute standard backtest performance metrics.
 
     Args:
         equity_series: Time series of portfolio equity values (one per bar).
         trades: List of completed TradeRecord objects.
+        bars_per_year: Trading bars per year. 252 for daily, 252*6.5 for hourly, etc.
 
     Returns:
-        Dictionary with 10 standard metrics:
+        Dictionary with 11 metrics:
         total_return, annualized_return, sharpe_ratio, max_drawdown,
-        calmar_ratio, win_rate, profit_factor, avg_win, avg_loss, trade_count.
+        calmar_ratio, win_rate, profit_factor, avg_win, avg_loss,
+        trade_count, closed_trade_count.
     """
     returns = equity_series.pct_change().dropna()
     total_return = (equity_series.iloc[-1] / equity_series.iloc[0]) - 1
-    n_years = len(equity_series) / 252
+    n_years = len(equity_series) / bars_per_year
 
     if n_years > 0:
         ann_return = (1 + total_return) ** (1 / n_years) - 1
     else:
         ann_return = 0.0
 
-    # Sharpe ratio (risk-free rate = 0)
+    # Sharpe ratio (risk-free rate = 0, sample std ddof=1)
     if len(returns) > 0 and returns.std() > 0:
-        sharpe = (returns.mean() / returns.std()) * np.sqrt(252)
+        sharpe = (returns.mean() / returns.std()) * np.sqrt(bars_per_year)
     else:
         sharpe = 0.0
 
@@ -47,9 +53,10 @@ def compute_metrics(equity_series: pd.Series, trades: list[TradeRecord]) -> dict
     # Calmar ratio
     calmar = ann_return / max_drawdown if max_drawdown > 0 else 0.0
 
-    # Trade-level metrics
-    if trades:
-        pnls = [t.pnl for t in trades if t.pnl is not None]
+    # Trade-level metrics (only closed trades have pnl set)
+    closed_trades = [t for t in trades if t.pnl is not None]
+    if closed_trades:
+        pnls = [t.pnl for t in closed_trades]
         if pnls:
             wins = [p for p in pnls if p > 0]
             losses = [p for p in pnls if p < 0]
@@ -73,4 +80,5 @@ def compute_metrics(equity_series: pd.Series, trades: list[TradeRecord]) -> dict
         "avg_win": float(avg_win),
         "avg_loss": float(avg_loss),
         "trade_count": len(trades),
+        "closed_trade_count": len(closed_trades) if trades else 0,
     }

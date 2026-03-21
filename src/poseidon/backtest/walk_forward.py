@@ -144,6 +144,14 @@ class WalkForwardAnalyzer:
         Returns:
             List of ((train_start, train_end), (test_start, test_end)) tuples.
         """
+        if config.step_days < config.test_days:
+            logger.warning(
+                "step_days (%d) < test_days (%d): OOS windows will overlap. "
+                "Set step_days >= test_days for non-overlapping OOS segments.",
+                config.step_days,
+                config.test_days,
+            )
+
         windows: list[tuple[tuple[int, int], tuple[int, int]]] = []
         offset = 0
 

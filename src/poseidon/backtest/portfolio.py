@@ -88,12 +88,22 @@ class BacktestPortfolio:
         """Apply slippage to fill price.
 
         Buy side: price goes up (worse fill). Sell side: price goes down.
+        Supports both percentage-based and tick-based slippage.
+        Tick-based slippage is approximated as ticks * (price * 0.001) for
+        markets without explicit tick size tables.
         """
+        slippage = 0.0
         if self.cost_model.slippage_pct > 0:
-            if is_buy:
-                price *= 1 + self.cost_model.slippage_pct
-            else:
-                price *= 1 - self.cost_model.slippage_pct
+            slippage += price * self.cost_model.slippage_pct
+        if self.cost_model.slippage_ticks > 0:
+            # Approximate tick value as 0.1% of price (conservative estimate)
+            tick_value = price * 0.001
+            slippage += self.cost_model.slippage_ticks * tick_value
+
+        if is_buy:
+            price += slippage
+        else:
+            price -= slippage
         return price
 
     def _execute_long(self, signal: Signal, price: float, key: str) -> TradeRecord | None:
@@ -117,6 +127,7 @@ class BacktestPortfolio:
             "quantity": quantity,
             "entry_price": fill_price,
             "entry_time": signal.signal_time,
+            "entry_fees": fees,
         }
 
         trade = TradeRecord(
@@ -147,6 +158,7 @@ class BacktestPortfolio:
             "quantity": quantity,
             "entry_price": fill_price,
             "entry_time": signal.signal_time,
+            "entry_fees": fees,
         }
 
         trade = TradeRecord(
@@ -161,26 +173,37 @@ class BacktestPortfolio:
         return trade
 
     def _execute_close(self, signal: Signal, price: float, key: str) -> TradeRecord | None:
-        """Close an existing position."""
+        """Close an existing position.
+
+        Slippage direction depends on position side:
+        - Long close = selling → slippage moves price down (is_buy=False)
+        - Short close = buying to cover → slippage moves price up (is_buy=True)
+
+        PnL includes both entry and exit fees for accurate round-trip cost.
+        """
         if key not in self.positions:
             return None
 
         pos = self.positions.pop(key)
         quantity = pos["quantity"]
         entry_price = pos["entry_price"]
-        fill_price = self._apply_slippage(price, is_buy=False)
+        entry_fees = pos.get("entry_fees", 0.0)
+
+        # Slippage direction: closing long = sell, closing short = buy
+        is_buy = pos["side"] == "short"
+        fill_price = self._apply_slippage(price, is_buy=is_buy)
 
         trade_value = fill_price * quantity
-        fees = trade_value * (self.cost_model.sell_commission_rate + self.cost_model.tax_rate)
+        exit_fees = trade_value * (self.cost_model.sell_commission_rate + self.cost_model.tax_rate)
+        total_fees = entry_fees + exit_fees
 
-        # PnL for long close: (exit_price - entry_price) * quantity - total_fees
         if pos["side"] == "long":
-            pnl = (fill_price - entry_price) * quantity - fees
-            self.cash += trade_value - fees
+            pnl = (fill_price - entry_price) * quantity - total_fees
+            self.cash += trade_value - exit_fees
         else:
             # Short close: buy to cover
-            pnl = (entry_price - fill_price) * quantity - fees
-            self.cash -= trade_value + fees
+            pnl = (entry_price - fill_price) * quantity - total_fees
+            self.cash -= trade_value + exit_fees
 
         trade = TradeRecord(
             symbol=signal.symbol,
@@ -190,7 +213,7 @@ class BacktestPortfolio:
             entry_price=entry_price,
             exit_price=fill_price,
             quantity=quantity,
-            fees=fees,
+            fees=total_fees,
             pnl=pnl,
         )
         self.trades.append(trade)

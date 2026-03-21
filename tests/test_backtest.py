@@ -319,6 +319,7 @@ class TestMetrics:
             "avg_win",
             "avg_loss",
             "trade_count",
+            "closed_trade_count",
         }
         assert set(result.keys()) == expected_keys
 
