@@ -97,18 +97,21 @@ def train_model(
         model_instance = model_cls()
         effective_params = params or model_instance.get_default_params()
 
-        # 4. Train — targets are typically close-based future returns
-        # The model.train() signature expects (features, targets, params).
-        # We use the "close" column as the target proxy; real target
-        # construction is model-specific but this keeps the pipeline generic.
-        if "close" in ohlcv_df.columns:
-            targets = ohlcv_df["close"].pct_change().shift(-1).dropna()
-            # Align features with targets
-            common_idx = features_df.index.intersection(targets.index)
-            features_df = features_df.loc[common_idx]
-            targets = targets.loc[common_idx]
-        else:
+        # 4. Build classification targets from future returns.
+        # Convert continuous returns to 3-class labels: 0=hold, 1=long, 2=short
+        # using a threshold (default 0.5% move).
+        if "close" not in ohlcv_df.columns:
             raise ValueError("OHLCV data missing 'close' column for target construction")
+
+        threshold = effective_params.pop("label_threshold", 0.005)
+        future_returns = ohlcv_df["close"].pct_change().shift(-1).dropna()
+        # Classify: long if return > threshold, short if < -threshold, else hold
+        targets = future_returns.map(
+            lambda r: 1 if r > threshold else (2 if r < -threshold else 0)
+        )
+        common_idx = features_df.index.intersection(targets.index)
+        features_df = features_df.loc[common_idx]
+        targets = targets.loc[common_idx]
 
         metrics = model_instance.train(features_df, targets, effective_params)
 
