@@ -190,6 +190,40 @@ class TestDSLExecutor:
         with pytest.raises(ValueError, match="Unknown condition type"):
             evaluate_condition(cond, sample_features, 0)
 
+    def test_indicator_crosses_respects_indicator_param(self, sample_features):
+        """indicator_crosses should use the 'indicator' field, not hardcode sma."""
+        cond = {
+            "type": "indicator_crosses",
+            "indicator": "sma",
+            "params": {"fast": 5, "slow": 20},
+            "direction": "up",
+        }
+        # Row 1: sma_5=100.5 > sma_20=99.2, prev: sma_5=100.0 > sma_20=99.0
+        # Already above so not a cross-up
+        assert evaluate_condition(cond, sample_features, 1) is False
+
+    def test_indicator_crosses_missing_fast_raises(self, sample_features):
+        """Missing fast param should raise ValueError."""
+        cond = {
+            "type": "indicator_crosses",
+            "indicator": "sma",
+            "params": {"slow": 20},
+            "direction": "up",
+        }
+        with pytest.raises(ValueError, match="requires params.fast and params.slow"):
+            evaluate_condition(cond, sample_features, 1)
+
+    def test_indicator_crosses_missing_slow_raises(self, sample_features):
+        """Missing slow param should raise ValueError."""
+        cond = {
+            "type": "indicator_crosses",
+            "indicator": "sma",
+            "params": {"fast": 5},
+            "direction": "up",
+        }
+        with pytest.raises(ValueError, match="requires params.fast and params.slow"):
+            evaluate_condition(cond, sample_features, 1)
+
     def test_max_depth_exceeded_raises(self, sample_features):
         # Build deeply nested condition
         cond = {"type": "indicator_above", "indicator": "rsi", "params": {"period": 14}, "threshold": 50}

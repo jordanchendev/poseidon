@@ -110,9 +110,13 @@ def eval_indicator_crosses(condition: dict, features: pd.DataFrame, row_idx: int
         return False
 
     params = condition.get("params", {})
+    if params.get("fast") is None or params.get("slow") is None:
+        raise ValueError("indicator_crosses requires params.fast and params.slow")
+
+    indicator = condition.get("indicator", "sma")
     direction = condition.get("direction", "up")
-    fast_col = resolve_column_name("sma", {"period": params.get("fast")})
-    slow_col = resolve_column_name("sma", {"period": params.get("slow")})
+    fast_col = resolve_column_name(indicator, {"period": params.get("fast")})
+    slow_col = resolve_column_name(indicator, {"period": params.get("slow")})
 
     curr_fast = float(features.iloc[row_idx][fast_col])
     prev_fast = float(features.iloc[row_idx - 1][fast_col])
