@@ -1,5 +1,5 @@
 # Poseidon Symbol Watchlist
-# Seed configuration. Thalassa can add/remove symbols via API.
+# Seed configuration. Symbols can be added/removed via API.
 
 markets:
   tw_stock:

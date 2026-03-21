@@ -1,7 +1,7 @@
 """RuleStrategy — evaluates JSON DSL conditions against feature data.
 
 Data flow:
-    DSL JSON (from Thalassa or manual) -> RuleConfig (validated)
+    DSL JSON -> RuleConfig (validated)
         -> For each rule: evaluate_condition(rule.condition, features, last_row)
         -> If True: emit Signal with rule's action and quantity_pct
 """

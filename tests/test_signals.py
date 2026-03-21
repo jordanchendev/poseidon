@@ -159,7 +159,7 @@ class TestSignalDelivery:
 
         mock_client.xgroup_create.assert_called_once_with(
             name="poseidon:signals:crypto_spot",
-            groupname="thalassa",
+            groupname="default",
             id="0",
             mkstream=True,
         )

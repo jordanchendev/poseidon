@@ -6,8 +6,8 @@ Trading signal platform that fetches multi-market data, computes features, train
 
 ```
 ┌──────────────┐    ┌──────────────┐    ┌─────────────┐
-│  FastAPI     │    │ Celery Beat  │    │ Thalassa    │
-│  (API :8001) │    │ (scheduler)  │    │ (consumer)  │
+│  FastAPI     │    │ Celery Beat  │    │  Consumer   │
+│  (API :8001) │    │ (scheduler)  │    │ (external)  │
 └──────┬───────┘    └──────┬───────┘    └──────▲──────┘
        │                   │                   │
        │            ┌──────▼───────┐    Redis Streams
@@ -64,7 +64,7 @@ docker compose up -d
 | US Stocks | 21 (AAPL, NVDA, TSLA...) | yfinance | 1d |
 | Crypto Spot | 10 (BTC, ETH, SOL...) | CCXT | 1d, 1h |
 
-Symbol watchlist defined in `config/symbols.yaml`. Thalassa can modify via API.
+Symbol watchlist defined in `config/symbols.yaml`. Can be modified via API.
 
 ## API Endpoints
 

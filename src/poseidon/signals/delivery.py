@@ -17,7 +17,7 @@ class SignalDeliveryService:
     """Delivers passed signals to Redis Streams."""
 
     STREAM_PREFIX = "poseidon:signals"
-    CONSUMER_GROUP = "thalassa"
+    CONSUMER_GROUP = "default"
     RETENTION_DAYS = 7
 
     def __init__(self, redis_url: str):

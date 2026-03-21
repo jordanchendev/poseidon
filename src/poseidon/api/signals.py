@@ -2,7 +2,7 @@
 
 Provides read-only REST endpoints for querying trading signals (API-01).
 Signals are created by the evaluation pipeline; this router exposes
-them for monitoring and review by Thalassa.
+them for monitoring and review.
 """
 
 from __future__ import annotations

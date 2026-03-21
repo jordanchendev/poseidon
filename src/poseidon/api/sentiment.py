@@ -15,7 +15,7 @@ async def create_sentiment(
     body: SentimentCreate,
     db: Session = Depends(get_db),
 ):
-    """Receive a sentiment score from Thalassa and persist it.
+    """Receive a sentiment score and persist it.
 
     The score must be between -1.0 (most negative) and 1.0 (most positive).
     """
