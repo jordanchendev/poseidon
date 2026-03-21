@@ -124,6 +124,19 @@ class TestRiskRules:
 
         assert result.passed is True
 
+    def test_position_limit_allows_close_at_max(self) -> None:
+        """CLOSE signals must pass even when positions are at max capacity."""
+        rule = PositionLimitRule()
+        rule.load_params({"max_positions": 10})
+        signal = make_signal(action=SignalAction.CLOSE)
+        portfolio = VirtualPortfolio()
+        _fill_portfolio(portfolio, 10)
+
+        result = rule.check(signal, portfolio)
+
+        assert result.passed is True
+        assert result.rule_name == "position_limit"
+
     # -- LeverageCapRule --
 
     def test_leverage_cap_rejects_over_exposure(self) -> None:
@@ -157,6 +170,23 @@ class TestRiskRules:
         result = rule.check(signal, portfolio)
 
         assert result.passed is True
+
+    def test_leverage_cap_allows_close_at_max(self) -> None:
+        """CLOSE signals must pass even when exposure is at/over cap."""
+        rule = LeverageCapRule()
+        rule.load_params({"max_total_exposure": 1.0})
+        portfolio = VirtualPortfolio()
+        # Fill to exactly 1.0 exposure
+        for i in range(10):
+            portfolio.apply_signal(
+                make_signal(symbol=f"S{i}", quantity_pct=0.1)
+            )
+        signal = make_signal(symbol="S0", action=SignalAction.CLOSE, quantity_pct=0.1)
+
+        result = rule.check(signal, portfolio)
+
+        assert result.passed is True
+        assert result.rule_name == "leverage_cap"
 
     # -- FrequencyRule (placeholder) --
 

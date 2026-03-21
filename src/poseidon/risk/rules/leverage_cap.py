@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from poseidon.risk.base import BaseRule, RuleResult
-from poseidon.signals.schemas import Signal
+from poseidon.signals.schemas import Signal, SignalAction
 
 if TYPE_CHECKING:
     from poseidon.risk.portfolio import VirtualPortfolio
@@ -28,6 +28,11 @@ class LeverageCapRule(BaseRule):
         self.max_total_exposure = params.get("max_total_exposure", 1.0)
 
     def check(self, signal: Signal, portfolio: VirtualPortfolio) -> RuleResult:
+        # CLOSE signals reduce exposure — they must never be blocked
+        # by the leverage cap.
+        if signal.action == SignalAction.CLOSE:
+            return RuleResult(passed=True, rule_name=self.name)
+
         current_exposure = portfolio.total_exposure()
         new_qty = signal.quantity_pct or 0.0
         projected = current_exposure + new_qty

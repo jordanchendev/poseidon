@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from poseidon.risk.base import BaseRule, RuleResult
-from poseidon.signals.schemas import Signal
+from poseidon.signals.schemas import Signal, SignalAction
 
 if TYPE_CHECKING:
     from poseidon.risk.portfolio import VirtualPortfolio
@@ -26,6 +26,11 @@ class PositionLimitRule(BaseRule):
         self.max_positions = params.get("max_positions", 10)
 
     def check(self, signal: Signal, portfolio: VirtualPortfolio) -> RuleResult:
+        # CLOSE signals must always pass — blocking them creates a deadlock
+        # where positions can never be reduced once the limit is reached.
+        if signal.action == SignalAction.CLOSE:
+            return RuleResult(passed=True, rule_name=self.name)
+
         count = portfolio.open_position_count
         if count >= self.max_positions:
             return RuleResult(
