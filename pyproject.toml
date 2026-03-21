@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "celery[redis]>=5.4",
     "celery-redbeat>=2.2",
+    "optuna>=4.8",
     "redis>=5.0",
     "pandas>=2.2",
     "yfinance>=0.2.40",
