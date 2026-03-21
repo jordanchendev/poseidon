@@ -87,6 +87,13 @@ Plans:
 ### Phase 7: API & Integration
 **Goal:** Expose the full REST API surface for Thalassa to manage data, models, strategies, backtests, risk rules, and signals — completing the end-to-end platform.
 **Requirements:** API-01
+**Plans:** 5 plans
+Plans:
+- [ ] 07-01-PLAN.md — StrategyRecord DB model + migration 006 + strategy CRUD API + error handler module
+- [ ] 07-02-PLAN.md — Model API (train/shadow/activate/predict) + GPU Celery tasks
+- [ ] 07-03-PLAN.md — Backtest API (run/optimize/results) + backtest/optimization Celery tasks
+- [ ] 07-04-PLAN.md — Signal API (list/detail) + enhanced health endpoint
+- [ ] 07-05-PLAN.md — Integration wiring (all routers in main.py, auth on all, error handlers, portfolio endpoint)
 **Success Criteria:**
 1. All endpoint groups are functional: data management, strategies (CRUD + activate/deactivate), models (train/shadow/activate/predict), backtests (run/optimize/results), risk rules (list/update/portfolio), signals (list/detail), and health check.
 2. Thalassa can execute the full signal flow via API: create strategy -> run backtest -> activate strategy -> receive signals on Redis Stream.
