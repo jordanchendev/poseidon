@@ -78,6 +78,7 @@ def fetch_market_data(market: str, interval: str) -> dict:
                 else:
                     logger.info("No new data for %s/%s/%s", market, sym_info.id, interval)
             except Exception as exc:
+                session.rollback()
                 logger.error("Failed to fetch %s/%s/%s: %s", market, sym_info.id, interval, exc)
     finally:
         session.close()
