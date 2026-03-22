@@ -31,11 +31,11 @@ FINMIND_TW_STOCK_COLUMN_MAP = {
 
 FINMIND_TW_FUTURES_COLUMN_MAP = {
     "date": "time",
-    "Open": "open",
-    "High": "high",
-    "Low": "low",
-    "Close": "close",
-    "Volume": "volume",
+    "open": "open",
+    "max": "high",
+    "min": "low",
+    "close": "close",
+    "volume": "volume",
 }
 
 # Delay between requests to be respectful to the free API
@@ -92,6 +92,10 @@ class FinMindFetcher(BaseFetcher):
 
         df = pd.DataFrame(data)
 
+        # Futures-specific filtering: multiple rows per day (contract months + sessions)
+        if self.market == "tw_futures":
+            df = self._filter_futures(df)
+
         # Rename columns to canonical OHLCV names
         df = df.rename(columns=self.column_map)
         df = df[["time", "open", "high", "low", "close", "volume"]]
@@ -108,6 +112,27 @@ class FinMindFetcher(BaseFetcher):
 
         # Add delay between requests to respect rate limits
         time.sleep(REQUEST_DELAY_SECONDS)
+
+        return df
+
+    @staticmethod
+    def _filter_futures(df: pd.DataFrame) -> pd.DataFrame:
+        """Filter futures data to front-month contract and a single trading session.
+
+        FinMind TaiwanFuturesDaily returns multiple rows per date:
+        - Multiple contract months (contract_date: 202603, 202604, ...)
+        - Multiple trading sessions (trading_session: 'after_market', etc.)
+
+        We keep only the front-month (smallest contract_date per date)
+        and the after_market session (contains the full-day settlement).
+        """
+        if "trading_session" in df.columns:
+            df = df[df["trading_session"] == "after_market"]
+
+        if "contract_date" in df.columns and "date" in df.columns:
+            # Per date, keep only the nearest contract month
+            front_month = df.groupby("date")["contract_date"].transform("min")
+            df = df[df["contract_date"] == front_month]
 
         return df
 
