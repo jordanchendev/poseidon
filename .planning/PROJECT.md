@@ -81,7 +81,7 @@ Reliably produce quality trading signals and deliver them to Thalassa for human 
 
 ## Current State
 
-Phase 8 complete — volume features (VolumeSMA, VolumeRatio, OBV) added to feature engine, 5m crypto candle interval enabled.
+Phase 9 complete — PatchTST Transformer model implemented (582 lines), all 7 BaseModel methods, mixed precision training, 57 tests passing. This is the last phase in milestone v1.0.
 
 ---
-*Last updated: 2026-03-22 after Phase 8 completion*
+*Last updated: 2026-03-22 after Phase 9 completion*
