@@ -109,7 +109,7 @@ Plans:
 
 Plans:
 - [ ] 08-01-PLAN.md — Volume features (VolumeSMA, VolumeRatio, OBV) + DEFAULT_FEATURES updates + tests
-- [ ] 08-02-PLAN.md — 5m crypto interval config + BATCH_DAYS_5M + BaseFetcher docstring
+- [x] 08-02-PLAN.md — 5m crypto interval config + BATCH_DAYS_5M + BaseFetcher docstring
 
 **Success Criteria:**
 1. FeatureEngine computes volume_sma, volume_ratio, and obv features from OHLCV data via the standard BaseFeature pattern.
