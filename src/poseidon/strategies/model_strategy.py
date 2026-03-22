@@ -61,11 +61,16 @@ class ModelStrategy(BaseStrategy):
         if features.empty:
             return []
 
-        last_row = features.iloc[[-1]]
-        predictions = self.model.predict(last_row)
+        # Pass the full feature history — Transformer models need a lookback
+        # window of multiple rows, not just the last bar. XGBoost handles
+        # multi-row input fine too (predict returns one row per input row).
+        predictions = self.model.predict(features)
+
+        # Only act on the last prediction (current bar)
+        last_pred = predictions.iloc[[-1]]
 
         signals: list[Signal] = []
-        for idx, row in predictions.iterrows():
+        for idx, row in last_pred.iterrows():
             action_str = row["prediction"]
             confidence = float(row["confidence"])
 
