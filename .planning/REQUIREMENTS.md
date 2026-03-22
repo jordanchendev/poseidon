@@ -31,8 +31,16 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [ ] **MOD-01**: BaseModel ABC with train/predict/validate/save/load/get_default_params/get_feature_list interface
 - [ ] **MOD-02**: Model Registry for registration, lookup, and version management
-- [ ] **MOD-03**: Model lifecycle: training → failed → ready → shadow → active → retired
+- [ ] **MOD-03**: Model lifecycle: training -> failed -> ready -> shadow -> active -> retired
 - [ ] **MOD-04**: Model artifacts stored on filesystem with versioned directories and symlink for active version
+
+### Transformer Model
+
+- [ ] **TRANS-01**: TransformerModel implements BaseModel ABC with all 7 required methods (train/predict/validate/save/load/get_default_params/get_feature_list)
+- [ ] **TRANS-02**: PatchTST encoder-only Transformer architecture with patching on time-series input, registered in model registry via @register_model
+- [ ] **TRANS-03**: Mixed precision training (fp16) via torch.amp when CUDA available, with CPU fallback for environments without GPU
+- [ ] **TRANS-04**: predict() returns DataFrame with prediction (long/short/hold) and confidence (0.0-1.0) columns, identical contract to XGBoostModel
+- [ ] **TRANS-05**: Model persistence via torch.save (model.pt) + JSON (features.json, metadata.json), compatible with ArtifactManager versioned directory structure
 
 ### Strategy
 
@@ -45,7 +53,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [ ] **BT-01**: Backtest engine shares exact same FeatureEngine + Strategy + Risk pipeline as live prediction
 - [ ] **BT-02**: Virtual portfolio simulator with configurable fees and slippage per market (TW stock tax rates for stock/ETF/day trade, crypto maker/taker, etc.)
-- [ ] **BT-03**: Walk-forward analysis with WFE (Walk-Forward Efficiency) ≥ 50% pass criteria and minimum 30 trades per OOS segment
+- [ ] **BT-03**: Walk-forward analysis with WFE (Walk-Forward Efficiency) >= 50% pass criteria and minimum 30 trades per OOS segment
 - [ ] **BT-04**: Parameter optimization via Grid Search and Bayesian Optimization
 - [ ] **BT-05**: Backtest trades and equity curves stored in separate queryable tables (not JSONB blobs)
 
@@ -114,6 +122,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MOD-02 | 3 | not started |
 | MOD-03 | 3 | not started |
 | MOD-04 | 3 | not started |
+| TRANS-01 | 9 | not started |
+| TRANS-02 | 9 | not started |
+| TRANS-03 | 9 | not started |
+| TRANS-04 | 9 | not started |
+| TRANS-05 | 9 | not started |
 | STRAT-01 | 4 | not started |
 | STRAT-02 | 4 | not started |
 | STRAT-03 | 4 | not started |
@@ -132,10 +145,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-02 | 1 | not started |
 
 **Coverage:**
-- v1 requirements: 31 total
-- Mapped to phases: 31
-- Unmapped: 0 ✅
+- v1 requirements: 36 total
+- Mapped to phases: 36
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-20*
-*Last updated: 2026-03-20 after roadmap creation*
+*Last updated: 2026-03-22 after Phase 9 planning*

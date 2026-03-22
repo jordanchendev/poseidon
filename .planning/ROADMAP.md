@@ -120,13 +120,22 @@ Plans:
 
 ### Phase 9: Transformer Model
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Implement a PatchTST (Patch Time Series Transformer) deep learning model as a second BaseModel implementation, using the same FeatureEngine output and producing the same prediction+confidence DataFrame contract as XGBoost, with mixed precision GPU training and CPU fallback.
+**Requirements:** TRANS-01, TRANS-02, TRANS-03, TRANS-04, TRANS-05
 **Depends on:** Phase 8
-**Plans:** 0 plans
+**Plans:** 2 plans
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 9 to break down)
+- [ ] 09-01-PLAN.md — PatchTST architecture + TimeSeriesDataset + TransformerModel (all 7 BaseModel methods) + registry registration
+- [ ] 09-02-PLAN.md — Comprehensive test suite for TransformerModel (PatchTST forward, dataset, contract, save/load, registry)
+
+**Success Criteria:**
+1. TransformerModel implements all 7 BaseModel ABC methods (train/predict/validate/save/load/get_default_params/get_feature_list) and is registered via `@register_model`.
+2. PatchTST encoder-only architecture with patching correctly processes [batch, lookback_window, num_features] tensors and outputs [batch, 3] logits.
+3. Training uses mixed precision (fp16) via `torch.amp` when CUDA available, falls back to CPU gracefully.
+4. `predict()` returns DataFrame with "prediction" (long/short/hold) and "confidence" (0.0-1.0) columns, identical contract to XGBoostModel.
+5. Model persistence saves `model.pt` + `features.json` + `metadata.json`, and `load()` restores a working model that can predict.
+6. All new tests pass and no existing tests are broken.
 
 ---
 *Roadmap created: 2026-03-20*
