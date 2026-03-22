@@ -39,6 +39,9 @@ DEFAULT_FEATURES = [
     "atr_14",
     "return_1d", "log_return_1d",
     "std_vol_20",
+    "volume_sma_20",
+    "volume_ratio_20",
+    "obv",
 ]
 
 

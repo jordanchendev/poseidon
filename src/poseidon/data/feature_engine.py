@@ -30,6 +30,9 @@ DEFAULT_FEATURES: list[tuple[str, dict]] = [
     ("atr", {"period": 14}),
     ("returns", {}),
     ("std_vol", {"period": 20}),
+    ("volume_sma", {"period": 20}),
+    ("volume_ratio", {"period": 20}),
+    ("obv", {}),
 ]
 
 
