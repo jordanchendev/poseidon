@@ -16,9 +16,11 @@ from dataclasses import asdict
 
 import pandas as pd
 
+import numpy as np
+
 from poseidon.backtest.cost_model import CostModel
 from poseidon.backtest.metrics import compute_metrics
-from poseidon.backtest.portfolio import BacktestPortfolio
+from poseidon.backtest.portfolio import BacktestPortfolio, SizingConfig, SizingMode
 from poseidon.backtest.schemas import BacktestConfig, BacktestResult
 from poseidon.data.feature_engine import FeatureEngine
 from poseidon.risk.engine import RiskEngine
@@ -104,12 +106,14 @@ class BacktestRunner:
         risk_engine: RiskEngine,
         cost_model: CostModel,
         initial_capital: float = 1_000_000.0,
+        sizing_config: SizingConfig | None = None,
     ) -> None:
         self.strategy = strategy
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
         self.cost_model = cost_model
         self.initial_capital = initial_capital
+        self.sizing_config = sizing_config or SizingConfig()
 
     def run(
         self,
@@ -169,7 +173,9 @@ class BacktestRunner:
         warmup_end = self._find_warmup_end(features, feature_cols)
 
         # Step 3: Create portfolio
-        portfolio = BacktestPortfolio(self.initial_capital, self.cost_model)
+        portfolio = BacktestPortfolio(
+            self.initial_capital, self.cost_model, self.sizing_config,
+        )
         adapter = _PortfolioAdapter(portfolio)
 
         # Step 4: Bar-by-bar loop
@@ -193,10 +199,15 @@ class BacktestRunner:
             # Step 4b: Strategy evaluate -- same code path as live (BT-01)
             signals = self.strategy.evaluate(features_slice)
 
-            # Step 4c: Risk check + fill for each signal
+            # Step 4c: Compute sizing, risk check, and fill for each signal
             for signal in signals:
                 if signal.action == SignalAction.HOLD:
                     continue
+
+                # Compute position size based on SizingConfig (before risk check)
+                signal.quantity_pct = self._compute_sizing(
+                    signal, features_slice,
+                )
 
                 # Same risk engine code path as live (BT-01)
                 signal = self.risk_engine.evaluate(signal, adapter)
@@ -250,6 +261,47 @@ class BacktestRunner:
             status="completed",
             trades=trades_dicts,
         )
+
+    def _compute_sizing(
+        self,
+        signal,  # noqa: ANN001
+        features_slice: pd.DataFrame,
+    ) -> float:
+        """Compute position size as quantity_pct based on SizingConfig.
+
+        Called before risk checks so that RiskEngine sees the correct
+        quantity_pct for leverage/exposure calculations.
+
+        Returns:
+            quantity_pct value to set on the signal.
+        """
+        if signal.action == SignalAction.CLOSE:
+            return 1.0
+
+        cfg = self.sizing_config
+
+        if cfg.mode == SizingMode.FIXED_PCT:
+            return signal.quantity_pct or cfg.quantity_pct
+
+        if cfg.mode == SizingMode.FIXED_NOTIONAL:
+            # Portfolio._sizing_base() returns initial_capital for this mode,
+            # so notional_pct * initial_capital / price gives fixed notional.
+            return cfg.notional_pct
+
+        if cfg.mode == SizingMode.VOL_TARGET:
+            closes = features_slice["close"].tail(cfg.vol_lookback + 1)
+            if len(closes) < 3:
+                return cfg.notional_pct  # fallback
+
+            returns = closes.pct_change().dropna()
+            realized_vol = float(returns.std()) * np.sqrt(252)
+            if realized_vol <= 0:
+                return cfg.notional_pct  # fallback
+
+            raw_pct = cfg.target_vol / realized_vol
+            return min(raw_pct, cfg.max_position_pct)
+
+        return 0.1  # unreachable fallback
 
     @staticmethod
     def _find_warmup_end(features: pd.DataFrame, feature_cols: list[str]) -> int:

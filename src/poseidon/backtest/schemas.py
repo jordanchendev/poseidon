@@ -21,6 +21,8 @@ class BacktestConfig(BaseModel):
     cost_model_key: str | None = None  # key into COST_MODELS; defaults to market
     strategy_params: dict = Field(default_factory=dict)
     feature_specs: list[tuple[str, dict]] | None = None
+    sizing_mode: str = "fixed_notional"  # SizingMode value
+    sizing_params: dict = Field(default_factory=dict)  # extra SizingConfig fields
 
 
 class BacktestResult(BaseModel):

@@ -22,6 +22,7 @@ import optuna
 import pandas as pd
 
 from poseidon.backtest.cost_model import CostModel
+from poseidon.backtest.portfolio import SizingConfig
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.data.feature_engine import FeatureEngine
 from poseidon.risk.engine import RiskEngine
@@ -58,11 +59,13 @@ class GridSearchOptimizer:
         risk_engine: RiskEngine,
         cost_model: CostModel,
         initial_capital: float = 1_000_000.0,
+        sizing_config: SizingConfig | None = None,
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
         self.cost_model = cost_model
         self.initial_capital = initial_capital
+        self.sizing_config = sizing_config or SizingConfig()
 
     def optimize(
         self,
@@ -104,6 +107,7 @@ class GridSearchOptimizer:
                 risk_engine=self.risk_engine,
                 cost_model=self.cost_model,
                 initial_capital=self.initial_capital,
+                sizing_config=self.sizing_config,
             )
             result = runner.run(ohlcv)
 
@@ -134,11 +138,13 @@ class BayesianOptimizer:
         risk_engine: RiskEngine,
         cost_model: CostModel,
         initial_capital: float = 1_000_000.0,
+        sizing_config: SizingConfig | None = None,
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
         self.cost_model = cost_model
         self.initial_capital = initial_capital
+        self.sizing_config = sizing_config or SizingConfig()
 
     def optimize(
         self,
@@ -191,6 +197,7 @@ class BayesianOptimizer:
                 risk_engine=self.risk_engine,
                 cost_model=self.cost_model,
                 initial_capital=self.initial_capital,
+                sizing_config=self.sizing_config,
             )
             result = runner.run(ohlcv)
 

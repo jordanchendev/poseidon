@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from poseidon.backtest.cost_model import COST_MODELS
 from poseidon.backtest.optimizer import BayesianOptimizer, GridSearchOptimizer
+from poseidon.backtest.portfolio import SizingConfig, SizingMode
 from poseidon.backtest.repository import BacktestRepository
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.backtest.schemas import BacktestConfig
@@ -243,6 +244,8 @@ def run_backtest_task(
     start_date: str | None = None,
     end_date: str | None = None,
     initial_capital: float = 1_000_000.0,
+    sizing_mode: str = "fixed_notional",
+    sizing_params: dict | None = None,
 ) -> dict:
     """Run a backtest for an existing strategy.
 
@@ -273,7 +276,10 @@ def run_backtest_task(
         elif record.strategy_type == "model":
             # Route to GPU worker which has model dependencies
             from poseidon.workers.gpu_tasks import run_model_backtest
-            result = run_model_backtest.delay(strategy_id, start_date, end_date, initial_capital)
+            result = run_model_backtest.delay(
+                strategy_id, start_date, end_date, initial_capital,
+                sizing_mode, sizing_params,
+            )
             logger.info("Routed model backtest to GPU worker: %s", result.id)
             return {"backtest_id": result.id, "status": "routed_to_gpu", "trade_count": 0}
         else:
@@ -297,6 +303,10 @@ def run_backtest_task(
         feature_engine = FeatureEngine()
         risk_engine = RiskEngine()
         cost_model = COST_MODELS[record.market]
+        sizing_cfg = SizingConfig(
+            mode=SizingMode(sizing_mode),
+            **(sizing_params or {}),
+        )
 
         # Run backtest
         runner = BacktestRunner(
@@ -305,6 +315,7 @@ def run_backtest_task(
             risk_engine=risk_engine,
             cost_model=cost_model,
             initial_capital=initial_capital,
+            sizing_config=sizing_cfg,
         )
         result = runner.run(ohlcv_df)
         backtest_id = result.backtest_id
@@ -390,6 +401,8 @@ def run_optimization_task(
     target_metric: str = "sharpe_ratio",
     start_date: str | None = None,
     end_date: str | None = None,
+    sizing_mode: str = "fixed_notional",
+    sizing_params: dict | None = None,
 ) -> dict:
     """Run parameter optimization for an existing strategy.
 
@@ -439,6 +452,10 @@ def run_optimization_task(
         feature_engine = FeatureEngine()
         risk_engine = RiskEngine()
         cost_model = COST_MODELS[record.market]
+        sizing_cfg = SizingConfig(
+            mode=SizingMode(sizing_mode),
+            **(sizing_params or {}),
+        )
 
         # Strategy factory: merges param_grid values into the base config
         base_config = dict(record.config) if record.config else {}
@@ -454,6 +471,7 @@ def run_optimization_task(
                 risk_engine=risk_engine,
                 cost_model=cost_model,
                 initial_capital=1_000_000.0,
+                sizing_config=sizing_cfg,
             )
             trials = optimizer.optimize(
                 strategy_factory=strategy_factory,
@@ -467,6 +485,7 @@ def run_optimization_task(
                 risk_engine=risk_engine,
                 cost_model=cost_model,
                 initial_capital=1_000_000.0,
+                sizing_config=sizing_cfg,
             )
             # Convert param_grid to Bayesian param_space format
             # Expected input: {"param": [low, high, "int"|"float"]}

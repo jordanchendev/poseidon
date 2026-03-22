@@ -27,7 +27,12 @@ from poseidon.backtest.optimizer import (
     GridSearchOptimizer,
     OptimizationTrial,
 )
-from poseidon.backtest.portfolio import BacktestPortfolio, TradeRecord
+from poseidon.backtest.portfolio import (
+    BacktestPortfolio,
+    SizingConfig,
+    SizingMode,
+    TradeRecord,
+)
 from poseidon.backtest.repository import BacktestRepository
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.backtest.schemas import BacktestConfig, BacktestResult
@@ -40,6 +45,8 @@ from poseidon.backtest.walk_forward import (
 
 __all__ = [
     "BacktestPortfolio",
+    "SizingConfig",
+    "SizingMode",
     "CostModel",
     "COST_MODELS",
     "get_cost_model",

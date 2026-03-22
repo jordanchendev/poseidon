@@ -175,6 +175,8 @@ def run_model_backtest(
     start_date: str | None = None,
     end_date: str | None = None,
     initial_capital: float = 1_000_000.0,
+    sizing_mode: str = "fixed_notional",
+    sizing_params: dict | None = None,
 ) -> dict:
     """Run a backtest for a model-based strategy on the GPU worker.
 
@@ -238,9 +240,15 @@ def run_model_backtest(
             raise ValueError(f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}")
 
         # Run backtest
+        from poseidon.backtest.portfolio import SizingConfig, SizingMode
+
         feature_engine = FeatureEngine()
         risk_engine = RiskEngine()
         cost_model = COST_MODELS[record.market]
+        sizing_cfg = SizingConfig(
+            mode=SizingMode(sizing_mode),
+            **(sizing_params or {}),
+        )
 
         runner = BacktestRunner(
             strategy=strategy,
@@ -248,6 +256,7 @@ def run_model_backtest(
             risk_engine=risk_engine,
             cost_model=cost_model,
             initial_capital=initial_capital,
+            sizing_config=sizing_cfg,
         )
         result = runner.run(ohlcv_df)
 

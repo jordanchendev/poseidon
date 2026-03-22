@@ -9,12 +9,42 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
 import pandas as pd
 
 from poseidon.backtest.cost_model import CostModel
 from poseidon.signals.schemas import Signal, SignalAction
+
+
+class SizingMode(str, Enum):
+    """Position sizing mode for backtests."""
+
+    FIXED_PCT = "fixed_pct"
+    FIXED_NOTIONAL = "fixed_notional"
+    VOL_TARGET = "vol_target"
+
+
+@dataclass(frozen=True)
+class SizingConfig:
+    """Configuration for position sizing in backtests.
+
+    Attributes:
+        mode: Sizing strategy to use.
+        notional_pct: Fraction of initial capital per trade (fixed_notional mode).
+        quantity_pct: Fraction of current cash per trade (fixed_pct mode).
+        target_vol: Annualized target volatility (vol_target mode).
+        vol_lookback: Lookback bars for realized volatility (vol_target mode).
+        max_position_pct: Hard cap on position size as fraction of capital (vol_target mode).
+    """
+
+    mode: SizingMode = SizingMode.FIXED_NOTIONAL
+    notional_pct: float = 0.1
+    quantity_pct: float = 0.5
+    target_vol: float = 0.15
+    vol_lookback: int = 20
+    max_position_pct: float = 0.3
 
 
 @dataclass
@@ -39,9 +69,15 @@ class BacktestPortfolio:
     Tracks cash, positions, equity curve (per bar), and completed trades.
     """
 
-    def __init__(self, initial_capital: float, cost_model: CostModel) -> None:
+    def __init__(
+        self,
+        initial_capital: float,
+        cost_model: CostModel,
+        sizing_config: SizingConfig | None = None,
+    ) -> None:
         self.initial_capital = initial_capital
         self.cost_model = cost_model
+        self.sizing_config = sizing_config or SizingConfig()
         self.cash: float = initial_capital
         self.positions: dict[str, dict] = {}  # key -> {side, quantity, entry_price, entry_time}
         self.equity_curve: list[tuple[datetime, float, float]] = []  # (time, equity, drawdown)
@@ -106,11 +142,21 @@ class BacktestPortfolio:
             price -= slippage
         return price
 
+    def _sizing_base(self) -> float:
+        """Return the capital base for quantity calculation.
+
+        fixed_pct uses current cash (compounding). All other modes use
+        initial capital to avoid compounding distortion.
+        """
+        if self.sizing_config.mode == SizingMode.FIXED_PCT:
+            return self.cash
+        return self.initial_capital
+
     def _execute_long(self, signal: Signal, price: float, key: str) -> TradeRecord | None:
         """Open a long position."""
         fill_price = self._apply_slippage(price, is_buy=True)
         quantity_pct = signal.quantity_pct or 0.1
-        quantity = int(self.cash * quantity_pct / fill_price)
+        quantity = int(self._sizing_base() * quantity_pct / fill_price)
         if quantity <= 0:
             return None
 
@@ -145,7 +191,7 @@ class BacktestPortfolio:
         """Open a short position."""
         fill_price = self._apply_slippage(price, is_buy=False)
         quantity_pct = signal.quantity_pct or 0.1
-        quantity = int(self.cash * quantity_pct / fill_price)
+        quantity = int(self._sizing_base() * quantity_pct / fill_price)
         if quantity <= 0:
             return None
 
