@@ -100,5 +100,33 @@ Plans:
 3. Health endpoint reports GPU status, Celery queue lengths, and data freshness.
 4. Error responses follow a consistent JSON format with appropriate HTTP status codes.
 
+### Phase 8: Volume Features & 5m Crypto Data
+
+**Goal:** Add volume-based features (volume_sma, volume_ratio, obv) to the feature engine and enable 5-minute candle interval for crypto spot data via CCXT, with updated batch configuration for 5m data ingestion.
+**Requirements:** PHASE8-01, PHASE8-02, PHASE8-03
+**Depends on:** Phase 7
+**Plans:** 2 plans
+
+Plans:
+- [ ] 08-01-PLAN.md — Volume features (VolumeSMA, VolumeRatio, OBV) + DEFAULT_FEATURES updates + tests
+- [ ] 08-02-PLAN.md — 5m crypto interval config + BATCH_DAYS_5M + BaseFetcher docstring
+
+**Success Criteria:**
+1. FeatureEngine computes volume_sma, volume_ratio, and obv features from OHLCV data via the standard BaseFeature pattern.
+2. All 3 volume features are included in both FeatureEngine and XGBoost DEFAULT_FEATURES lists.
+3. crypto_spot intervals in symbols.yaml include "5m" alongside "1d" and "1h".
+4. Backfill pagination for 5m candles uses BATCH_DAYS_5M with ~3 days per batch.
+5. All existing and new tests pass.
+
+### Phase 9: Transformer Model
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 8
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 9 to break down)
+
 ---
 *Roadmap created: 2026-03-20*
