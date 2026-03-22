@@ -28,7 +28,7 @@ class BaseFetcher(ABC):
 
         Args:
             symbol: Symbol identifier (e.g., "2330", "AAPL", "BTC/USDT")
-            interval: Candle interval ("1d", "1h")
+            interval: Candle interval ("1d", "1h", "5m")
             start: Start date as ISO string "YYYY-MM-DD"
             end: End date as ISO string "YYYY-MM-DD"
 
