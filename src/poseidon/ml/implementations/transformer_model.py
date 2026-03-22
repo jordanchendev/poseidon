@@ -279,7 +279,22 @@ class TransformerModel(BaseModel):
             lr=float(merged["lr"]),
             weight_decay=float(merged["weight_decay"]),
         )
-        criterion = nn.CrossEntropyLoss()
+
+        # Class weight balancing — inverse frequency so minority classes
+        # (long/short) get higher loss weight than the dominant class (hold).
+        train_targets = y_np[lookback_window : n_train + lookback_window]
+        class_counts = np.bincount(train_targets, minlength=3).astype(np.float32)
+        class_counts[class_counts == 0] = 1.0  # avoid division by zero
+        class_weights = 1.0 / class_counts
+        class_weights = class_weights / class_weights.sum() * len(class_weights)
+        logger.info(
+            "Class weights: hold=%.3f, long=%.3f, short=%.3f (counts: %s)",
+            class_weights[0], class_weights[1], class_weights[2],
+            class_counts.astype(int).tolist(),
+        )
+        criterion = nn.CrossEntropyLoss(
+            weight=torch.tensor(class_weights, dtype=torch.float32).to(self._device),
+        )
 
         use_amp = self._device == "cuda"
         scaler = torch.amp.GradScaler("cuda") if use_amp else None
