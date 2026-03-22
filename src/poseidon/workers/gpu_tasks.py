@@ -105,6 +105,7 @@ def train_model(
             raise ValueError("OHLCV data missing 'close' column for target construction")
 
         threshold = effective_params.pop("label_threshold", 0.005)
+        test_ratio = effective_params.pop("test_ratio", 0.2)
         future_returns = ohlcv_df["close"].pct_change().shift(-1).dropna()
         # Classify: long if return > threshold, short if < -threshold, else hold
         targets = future_returns.map(
@@ -114,7 +115,26 @@ def train_model(
         features_df = features_df.loc[common_idx]
         targets = targets.loc[common_idx]
 
-        metrics = model_instance.train(features_df, targets, effective_params)
+        # Time-based train/test split — train on earlier data, validate on later
+        split_idx = int(len(features_df) * (1 - test_ratio))
+        train_features = features_df.iloc[:split_idx]
+        train_targets = targets.iloc[:split_idx]
+        test_features = features_df.iloc[split_idx:]
+        test_targets = targets.iloc[split_idx:]
+
+        if len(train_features) < 50:
+            raise ValueError(f"Not enough training data: {len(train_features)} rows (need >= 50)")
+
+        metrics = model_instance.train(train_features, train_targets, effective_params)
+
+        # Out-of-sample validation
+        if len(test_features) > 0:
+            oos_metrics = model_instance.validate(test_features, test_targets)
+            metrics["train_accuracy"] = metrics.pop("accuracy", 0)
+            metrics["train_samples"] = metrics.pop("n_samples", 0)
+            metrics["oos_accuracy"] = oos_metrics.get("accuracy", 0)
+            metrics["oos_samples"] = oos_metrics.get("n_samples", 0)
+            metrics["split_ratio"] = f"{split_idx}/{len(features_df)}"
 
         # 5. Save artifacts
         artifact_path = mv.artifact_path
