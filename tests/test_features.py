@@ -13,6 +13,7 @@ from poseidon.data.features.volatility import (
     ParkinsonVolatility,
     StandardVolatility,
 )
+from poseidon.data.features.volume import OBV, VolumeSMA, VolumeRatio
 
 
 @pytest.fixture
@@ -46,12 +47,13 @@ def empty_ohlcv() -> pd.DataFrame:
 
 
 def test_all_features_registered():
-    """All 11 features should be registered."""
+    """All 14 features should be registered."""
     names = list_features()
-    assert len(names) == 11
+    assert len(names) == 14
     expected = {
         "sma", "ema", "rsi", "macd", "bollinger", "atr",
         "returns", "cum_return", "std_vol", "parkinson_vol", "garman_klass_vol",
+        "volume_sma", "volume_ratio", "obv",
     }
     assert set(names) == expected
 
@@ -207,3 +209,85 @@ def test_garman_klass_vol_positive(sample_ohlcv):
     assert result.name == "garman_klass_vol_20"
     valid = result.dropna()
     assert (valid >= 0).all()
+
+
+# --- Volume SMA ---
+
+
+def test_volume_sma_basic():
+    df = pd.DataFrame({
+        "time": pd.date_range("2024-01-01", periods=5, freq="D"),
+        "open": [1, 2, 3, 4, 5],
+        "high": [1, 2, 3, 4, 5],
+        "low": [1, 2, 3, 4, 5],
+        "close": [1.0, 2.0, 3.0, 4.0, 5.0],
+        "volume": [100.0, 200.0, 300.0, 400.0, 500.0],
+    })
+    result = VolumeSMA().compute(df, period=3)
+    assert result.name == "volume_sma_3"
+    assert np.isnan(result.iloc[0])
+    assert np.isnan(result.iloc[1])
+    assert result.iloc[2] == pytest.approx(200.0)
+    assert result.iloc[3] == pytest.approx(300.0)
+    assert result.iloc[4] == pytest.approx(400.0)
+
+
+def test_volume_sma_empty(empty_ohlcv):
+    result = VolumeSMA().compute(empty_ohlcv, period=20)
+    assert isinstance(result, pd.Series)
+    assert len(result) == 0
+
+
+# --- Volume Ratio ---
+
+
+def test_volume_ratio_basic():
+    df = pd.DataFrame({
+        "time": pd.date_range("2024-01-01", periods=5, freq="D"),
+        "open": [1, 2, 3, 4, 5],
+        "high": [1, 2, 3, 4, 5],
+        "low": [1, 2, 3, 4, 5],
+        "close": [1.0, 2.0, 3.0, 4.0, 5.0],
+        "volume": [100.0, 100.0, 100.0, 100.0, 100.0],
+    })
+    result = VolumeRatio().compute(df, period=3)
+    assert result.name == "volume_ratio_3"
+    # Constant volume => ratio should be 1.0 once window is full
+    assert result.iloc[2] == pytest.approx(1.0)
+    assert result.iloc[4] == pytest.approx(1.0)
+
+
+def test_volume_ratio_empty(empty_ohlcv):
+    result = VolumeRatio().compute(empty_ohlcv, period=20)
+    assert isinstance(result, pd.Series)
+    assert len(result) == 0
+
+
+# --- OBV ---
+
+
+def test_obv_basic():
+    df = pd.DataFrame({
+        "time": pd.date_range("2024-01-01", periods=5, freq="D"),
+        "open": [1, 2, 3, 4, 5],
+        "high": [1, 2, 3, 4, 5],
+        "low": [1, 2, 3, 4, 5],
+        "close": [10.0, 12.0, 11.0, 13.0, 14.0],
+        "volume": [100.0, 200.0, 150.0, 300.0, 250.0],
+    })
+    result = OBV().compute(df)
+    assert result.name == "obv"
+    # direction: NaN, +1, -1, +1, +1
+    # signed vol: NaN, 200, -150, 300, 250
+    # cumsum: NaN, 200, 50, 350, 600
+    assert np.isnan(result.iloc[0])
+    assert result.iloc[1] == pytest.approx(200.0)
+    assert result.iloc[2] == pytest.approx(50.0)
+    assert result.iloc[3] == pytest.approx(350.0)
+    assert result.iloc[4] == pytest.approx(600.0)
+
+
+def test_obv_empty(empty_ohlcv):
+    result = OBV().compute(empty_ohlcv)
+    assert isinstance(result, pd.Series)
+    assert len(result) == 0
