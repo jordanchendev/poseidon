@@ -117,6 +117,7 @@ class ModelStrategy(BaseStrategy):
             instrument=self.instrument,
             action=action,
             confidence=confidence,
+            quantity_pct=0.5 if action != SignalAction.CLOSE else 1.0,
             interval=self.interval,
             signal_time=signal_time,
         )
