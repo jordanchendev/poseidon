@@ -47,8 +47,13 @@ class ModelStrategy(BaseStrategy):
         self.model_id: UUID | None = None
 
     def evaluate(self, features: pd.DataFrame) -> list[Signal]:
-        """Call model.predict() and convert actionable predictions to Signals."""
-        predictions = self.model.predict(features)
+        """Call model.predict() on the last row and convert to Signal if actionable."""
+        if features.empty:
+            return []
+
+        # Only predict the last row — same pattern as RuleStrategy
+        last_row = features.iloc[[-1]]
+        predictions = self.model.predict(last_row)
 
         signals: list[Signal] = []
         for idx, row in predictions.iterrows():
@@ -77,9 +82,8 @@ class ModelStrategy(BaseStrategy):
             )
 
         logger.info(
-            "ModelStrategy '%s' evaluated %d rows -> %d signals",
+            "ModelStrategy '%s' evaluated -> %d signals",
             self.name,
-            len(predictions),
             len(signals),
         )
         return signals
