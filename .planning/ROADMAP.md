@@ -127,7 +127,7 @@ Plans:
 
 Plans:
 - [x] 09-01-PLAN.md — PatchTST architecture + TimeSeriesDataset + TransformerModel (all 7 BaseModel methods) + registry registration
-- [ ] 09-02-PLAN.md — Comprehensive test suite for TransformerModel (PatchTST forward, dataset, contract, save/load, registry)
+- [x] 09-02-PLAN.md — Comprehensive test suite for TransformerModel (PatchTST forward, dataset, contract, save/load, registry)
 
 **Success Criteria:**
 1. TransformerModel implements all 7 BaseModel ABC methods (train/predict/validate/save/load/get_default_params/get_feature_list) and is registered via `@register_model`.
