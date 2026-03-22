@@ -36,11 +36,11 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Transformer Model
 
-- [ ] **TRANS-01**: TransformerModel implements BaseModel ABC with all 7 required methods (train/predict/validate/save/load/get_default_params/get_feature_list)
-- [ ] **TRANS-02**: PatchTST encoder-only Transformer architecture with patching on time-series input, registered in model registry via @register_model
-- [ ] **TRANS-03**: Mixed precision training (fp16) via torch.amp when CUDA available, with CPU fallback for environments without GPU
-- [ ] **TRANS-04**: predict() returns DataFrame with prediction (long/short/hold) and confidence (0.0-1.0) columns, identical contract to XGBoostModel
-- [ ] **TRANS-05**: Model persistence via torch.save (model.pt) + JSON (features.json, metadata.json), compatible with ArtifactManager versioned directory structure
+- [x] **TRANS-01**: TransformerModel implements BaseModel ABC with all 7 required methods (train/predict/validate/save/load/get_default_params/get_feature_list)
+- [x] **TRANS-02**: PatchTST encoder-only Transformer architecture with patching on time-series input, registered in model registry via @register_model
+- [x] **TRANS-03**: Mixed precision training (fp16) via torch.amp when CUDA available, with CPU fallback for environments without GPU
+- [x] **TRANS-04**: predict() returns DataFrame with prediction (long/short/hold) and confidence (0.0-1.0) columns, identical contract to XGBoostModel
+- [x] **TRANS-05**: Model persistence via torch.save (model.pt) + JSON (features.json, metadata.json), compatible with ArtifactManager versioned directory structure
 
 ### Strategy
 

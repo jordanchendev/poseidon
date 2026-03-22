@@ -126,7 +126,7 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 09-01-PLAN.md — PatchTST architecture + TimeSeriesDataset + TransformerModel (all 7 BaseModel methods) + registry registration
+- [x] 09-01-PLAN.md — PatchTST architecture + TimeSeriesDataset + TransformerModel (all 7 BaseModel methods) + registry registration
 - [ ] 09-02-PLAN.md — Comprehensive test suite for TransformerModel (PatchTST forward, dataset, contract, save/load, registry)
 
 **Success Criteria:**
