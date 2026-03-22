@@ -79,5 +79,9 @@ Reliably produce quality trading signals and deliver them to Thalassa for human 
 | Backtest trades/equity in separate tables (not JSONB) | Enables cross-backtest comparison queries | — Pending |
 | Virtual portfolio persisted in PostgreSQL | Survives restarts; rebuilt from signal history | — Pending |
 
+## Current State
+
+Phase 8 complete — volume features (VolumeSMA, VolumeRatio, OBV) added to feature engine, 5m crypto candle interval enabled.
+
 ---
-*Last updated: 2026-03-20 after initialization*
+*Last updated: 2026-03-22 after Phase 8 completion*
