@@ -108,7 +108,7 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 08-01-PLAN.md — Volume features (VolumeSMA, VolumeRatio, OBV) + DEFAULT_FEATURES updates + tests
+- [x] 08-01-PLAN.md — Volume features (VolumeSMA, VolumeRatio, OBV) + DEFAULT_FEATURES updates + tests
 - [x] 08-02-PLAN.md — 5m crypto interval config + BATCH_DAYS_5M + BaseFetcher docstring
 
 **Success Criteria:**
