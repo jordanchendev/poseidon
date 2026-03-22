@@ -41,6 +41,9 @@ BATCH_DAYS = {
 BATCH_DAYS_DAILY = {
     "crypto_spot": 900,    # CCXT 1d: ~2.7 years per 1000 candles
 }
+BATCH_DAYS_5M = {
+    "crypto_spot": 3,      # CCXT 5m: ~3.47 days per 1000 candles
+}
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.fetch_market_data")
@@ -151,6 +154,8 @@ def backfill_symbol(self, symbol: str, market: str, interval: str) -> dict:
         # Choose batch size based on market and interval
         if interval == "1d" and market in BATCH_DAYS_DAILY:
             batch_days = BATCH_DAYS_DAILY[market]
+        elif interval == "5m" and market in BATCH_DAYS_5M:
+            batch_days = BATCH_DAYS_5M[market]
         else:
             batch_days = BATCH_DAYS.get(market, 365)
 
