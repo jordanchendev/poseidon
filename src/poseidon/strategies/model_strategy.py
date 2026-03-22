@@ -45,21 +45,29 @@ class ModelStrategy(BaseStrategy):
         self.instrument = instrument
         self.strategy_id = strategy_id or uuid4()
         self.model_id: UUID | None = None
+        self._current_position: str | None = None  # Track: "long", "short", or None
 
     def evaluate(self, features: pd.DataFrame) -> list[Signal]:
-        """Call model.predict() on the last row and convert to Signal if actionable."""
+        """Call model.predict() on the last row and convert to entry/exit signals.
+
+        Tracks current position to avoid duplicate entries and generates
+        'close' signals when direction changes:
+        - No position + long prediction → emit long
+        - No position + short prediction → emit short
+        - In long + short prediction → emit close (reverse next bar)
+        - In long + long prediction → no signal (already in position)
+        - In position + hold prediction → no signal
+        """
         if features.empty:
             return []
 
-        # Only predict the last row — same pattern as RuleStrategy
         last_row = features.iloc[[-1]]
         predictions = self.model.predict(last_row)
 
         signals: list[Signal] = []
         for idx, row in predictions.iterrows():
             action_str = row["prediction"]
-            if action_str == "hold":
-                continue
+            confidence = float(row["confidence"])
 
             signal_time = (
                 idx
@@ -67,26 +75,51 @@ class ModelStrategy(BaseStrategy):
                 else datetime.now(timezone.utc)
             )
 
-            signals.append(
-                Signal(
-                    strategy_id=self.strategy_id,
-                    model_id=self.model_id,
-                    symbol=self.symbol,
-                    market=self.market,
-                    instrument=self.instrument,
-                    action=SignalAction(action_str),
-                    confidence=float(row["confidence"]),
-                    interval=self.interval,
-                    signal_time=signal_time,
-                )
-            )
+            if action_str == "hold":
+                continue
+
+            # Determine actual signal based on current position
+            if self._current_position is None:
+                # No position → enter
+                self._current_position = action_str
+                signals.append(self._make_signal(
+                    SignalAction(action_str), confidence, signal_time,
+                ))
+            elif self._current_position != action_str:
+                # Direction changed → close first
+                signals.append(self._make_signal(
+                    SignalAction.CLOSE, confidence, signal_time,
+                ))
+                # Then enter new direction (if not just closing)
+                if action_str in ("long", "short"):
+                    self._current_position = action_str
+                    signals.append(self._make_signal(
+                        SignalAction(action_str), confidence, signal_time,
+                    ))
+                else:
+                    self._current_position = None
+            # else: same direction, already in position → no signal
 
         logger.info(
-            "ModelStrategy '%s' evaluated -> %d signals",
+            "ModelStrategy '%s' pos=%s -> %d signals",
             self.name,
+            self._current_position,
             len(signals),
         )
         return signals
+
+    def _make_signal(self, action: SignalAction, confidence: float, signal_time: datetime) -> Signal:
+        return Signal(
+            strategy_id=self.strategy_id,
+            model_id=self.model_id,
+            symbol=self.symbol,
+            market=self.market,
+            instrument=self.instrument,
+            action=action,
+            confidence=confidence,
+            interval=self.interval,
+            signal_time=signal_time,
+        )
 
     def validate_config(self) -> bool:
         if self.model is None:
