@@ -13,6 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
+import numpy as np
+
 from poseidon.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -98,19 +100,44 @@ def train_model(
         model_instance = model_cls()
         effective_params = params or model_instance.get_default_params()
 
-        # 4. Build classification targets from future returns.
-        # Convert continuous returns to 3-class labels: 0=hold, 1=long, 2=short
-        # using a threshold (default 0.5% move).
+        # 4. Build classification targets.
         if "close" not in ohlcv_df.columns:
             raise ValueError("OHLCV data missing 'close' column for target construction")
 
-        threshold = effective_params.pop("label_threshold", 0.005)
+        label_mode = effective_params.pop("label_mode", "direction")
         test_ratio = effective_params.pop("test_ratio", 0.2)
-        future_returns = ohlcv_df["close"].pct_change().shift(-1).dropna()
-        # Classify: long if return > threshold, short if < -threshold, else hold
-        targets = future_returns.map(
-            lambda r: 1 if r > threshold else (2 if r < -threshold else 0)
-        )
+
+        if label_mode == "direction":
+            # Direction labels: 0=hold, 1=long, 2=short
+            threshold = effective_params.pop("label_threshold", 0.005)
+            future_returns = ohlcv_df["close"].pct_change().shift(-1).dropna()
+            targets = future_returns.map(
+                lambda r: 1 if r > threshold else (2 if r < -threshold else 0)
+            )
+        elif label_mode == "regime":
+            # Volatility regime labels: 0=low_vol, 1=medium_vol, 2=high_vol
+            regime_horizon = effective_params.pop("regime_horizon", 10)
+            log_returns = np.log(ohlcv_df["close"] / ohlcv_df["close"].shift(1))
+            # Forward-looking realized vol: std of next N log returns
+            forward_vol = (
+                log_returns.shift(-1)
+                .rolling(window=regime_horizon)
+                .std()
+                .shift(-(regime_horizon - 1))
+            )
+            forward_vol = forward_vol.dropna()
+
+            # Classify into 3 regimes using percentile thresholds
+            low_pct = effective_params.pop("regime_low_percentile", 33)
+            high_pct = effective_params.pop("regime_high_percentile", 67)
+            low_threshold = forward_vol.quantile(low_pct / 100)
+            high_threshold = forward_vol.quantile(high_pct / 100)
+
+            targets = forward_vol.map(
+                lambda v: 0 if v <= low_threshold else (2 if v >= high_threshold else 1)
+            )
+        else:
+            raise ValueError(f"Unknown label_mode: {label_mode}. Use 'direction' or 'regime'.")
         common_idx = features_df.index.intersection(targets.index)
         features_df = features_df.loc[common_idx]
         targets = targets.loc[common_idx]

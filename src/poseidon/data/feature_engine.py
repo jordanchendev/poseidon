@@ -36,6 +36,28 @@ DEFAULT_FEATURES: list[tuple[str, dict]] = [
 ]
 
 
+REGIME_FEATURES: list[tuple[str, dict]] = [
+    # Existing TA features relevant to volatility prediction
+    ("rsi", {"period": 14}),
+    ("atr", {"period": 14}),
+    ("bollinger", {"period": 20}),
+    ("returns", {}),
+    ("std_vol", {"period": 20}),
+    ("std_vol", {"period": 5}),
+    ("std_vol", {"period": 10}),
+    # Regime-specific features
+    ("vol_ratio", {"short_period": 5, "long_period": 20}),
+    ("realized_vol", {"period": 5}),
+    ("realized_vol", {"period": 10}),
+    ("realized_vol", {"period": 20}),
+    ("vol_of_vol", {"vol_period": 20, "meta_period": 10}),
+    ("return_autocorr", {"period": 20}),
+    ("volume_ratio", {"period": 20}),
+    ("parkinson_vol", {"period": 20}),
+    ("garman_klass_vol", {"period": 20}),
+]
+
+
 class FeatureEngine:
     """Compute features from OHLCV data.
 

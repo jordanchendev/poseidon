@@ -39,6 +39,7 @@ class TrainRequest(PydanticBase):
     feature_list: list[str] = []
     start_date: str | None = None
     end_date: str | None = None
+    label_mode: str = "direction"  # "direction" or "regime"
 
 
 class ModelVersionResponse(PydanticBase):
@@ -101,7 +102,7 @@ async def start_training(
         symbol=body.symbol,
         market=body.market,
         interval=body.interval,
-        params=body.params,
+        params={**body.params, "label_mode": body.label_mode},
         feature_list=body.feature_list,
         start_date=body.start_date,
         end_date=body.end_date,
