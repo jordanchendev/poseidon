@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     api_port: int = 8000
     api_key: str = ""
     finmind_token: str = ""
+    finlab_api_token: str = ""
     symbols_config: str = "config/symbols.yaml"
     model_artifact_dir: str = "/data/models"
 
