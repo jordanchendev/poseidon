@@ -44,6 +44,15 @@ FINLAB_MARKET_CODES = {
     "us_stock": "us",
 }
 
+# FinLab futures use "TX一般" format instead of plain "TX".
+# Map Poseidon symbol codes to FinLab column names.
+FINLAB_FUTURES_SYMBOL_MAP = {
+    "TX": "TX一般",
+    "MTX": "MTX一般",
+    "TE": "TE一般",
+    "TF": "TF一般",
+}
+
 
 class FinLabFetcher(BaseFetcher):
     """Fetcher using FinLab API for TW stocks, TW futures, and US stocks.
@@ -116,17 +125,23 @@ class FinLabFetcher(BaseFetcher):
             logger.warning("FinLab only supports daily data. Requested: %s", interval)
             return empty
 
+        # Map Poseidon symbol to FinLab column name (futures use "TX一般" format)
+        finlab_symbol = symbol
+        if self.market == "tw_futures":
+            finlab_symbol = FINLAB_FUTURES_SYMBOL_MAP.get(symbol, f"{symbol}一般")
+
         datasets = FINLAB_DATASETS[self.market]
         ohlcv_parts = {}
 
         for col_name, dataset_key in datasets.items():
             wide_df = self._get_wide_df(dataset_key)
-            if wide_df.empty or symbol not in wide_df.columns:
+            if wide_df.empty or finlab_symbol not in wide_df.columns:
                 logger.warning(
-                    "Symbol %s not found in FinLab dataset %s", symbol, dataset_key
+                    "Symbol %s (%s) not found in FinLab dataset %s",
+                    symbol, finlab_symbol, dataset_key,
                 )
                 return empty
-            ohlcv_parts[col_name] = wide_df[symbol]
+            ohlcv_parts[col_name] = wide_df[finlab_symbol]
 
         # Combine into single DataFrame
         df = pd.DataFrame(ohlcv_parts)
