@@ -93,6 +93,10 @@ def train_model(
         if feature_list:
             # Convert simple feature names to (name, {}) tuples if needed
             feature_specs = [(f, {}) for f in feature_list]
+        elif params and params.get("label_mode") == "regime":
+            # Auto-select regime-optimized features when no explicit list given
+            from poseidon.data.feature_engine import REGIME_FEATURES
+            feature_specs = REGIME_FEATURES
         features_df = engine.compute_from_df(ohlcv_df, feature_specs=feature_specs)
 
         # 3. Instantiate model
