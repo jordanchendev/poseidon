@@ -1,45 +1,41 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: unknown
-stopped_at: Completed 09-02-PLAN.md
-last_updated: "2026-03-22T14:21:51.977Z"
+milestone: v2.0
+milestone_name: Strategy Pivot — Rule-Based Voting + Automated Search
+status: defining_requirements
+stopped_at: Milestone v2.0 started
+last_updated: "2026-03-25"
 progress:
-  total_phases: 9
-  completed_phases: 2
-  total_plans: 17
-  completed_plans: 4
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # State: Poseidon
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-20)
+See: .planning/PROJECT.md (updated 2026-03-25)
 **Core value:** Reliably produce quality trading signals and deliver them to Thalassa
-**Current focus:** Phase 09 — transformer-model
+**Current focus:** Defining requirements for v2.0 Strategy Pivot
 
 ## Position
 
-- Current phase: 2 (context gathering)
-- Phases complete: 1/7
-- Requirements complete: 10/31
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-25 — Milestone v2.0 started
 
 ## Velocity
 
-- Phase 1: 5 plans, 33 tasks, completed 2026-03-21
+- v1.0: 9 phases completed (infrastructure through transformer model)
 
 ## Decisions
 
-- Phase 1 context gathered (2026-03-20): symbol watchlist scope, fetch intervals, backfill strategy, fundamentals/sentiment scope, Triton reference patterns
-- Phase 1 completed (2026-03-21): all 7 success criteria verified, pushed to GitHub
-- Phase 2 context gathering (2026-03-21): feature engine design, indicator library research
-- [Phase 08]: BATCH_DAYS_5M uses 3 days per batch for 5m crypto candles
-- [Phase 08]: Volume features follow BaseFeature pattern with volume_sma, volume_ratio, obv naming convention
-- [Phase 09]: PatchTST architecture with d_model=64, nhead=4, num_layers=2 as Transformer defaults
-- [Phase 09]: Per-feature z-score normalization stored from training for prediction-time reuse
-- [Phase 09]: 21-test suite for TransformerModel verified on GPU (PatchTST forward, dataset, contract, registry)
+- [v2.0]: Pure TA prediction confirmed dead end — pivot to rule-based voting + automated search
+- [v2.0]: Nunchi auto-researchtrading validated approach: simple signals + automated iteration (Sharpe 2.7→21.4)
+- [v2.0]: XGBoost repurposed from direction prediction to regime classification
 
 ## Blockers
 
@@ -49,15 +45,22 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 
 ### Roadmap Evolution
 
-- Phase 8 added: Volume Features & 5m Crypto Data
-- Phase 9 added: Transformer Model
+- v1.0: 9 phases (01-infrastructure through 09-transformer-model)
+- v2.0: Strategy pivot milestone started
+
+### Strategy Pivot Research (2026-03-25)
+
+- **autoresearch** (karpathy): 3-layer pattern — prepare.py (fixed), train.py (AI-modifiable), program.md (guidance)
+- **auto-researchtrading** (Nunchi): 103 experiments, Sharpe 21.4, 6-signal voting, simplification > complexity
+- **Key signals**: Momentum×2, EMA crossover, RSI(8), MACD(14,23,9), Bollinger squeeze
+- **Voting rule**: 4/6 majority with fixed 8% position sizing
 
 ## Last Session
 
-- **Stopped at:** Completed 09-02-PLAN.md
+- **Stopped at:** Milestone v2.0 started
 - **Resume file:** None
-- **Next step:** Phase 09 complete, all plans done
+- **Next step:** Define requirements
 
 ---
 *State created: 2026-03-20*
-*Last updated: 2026-03-21 after Phase 1 completion and Phase 2 context gathering*
+*Last updated: 2026-03-25 after Milestone v2.0 started*

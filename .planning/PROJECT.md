@@ -79,9 +79,38 @@ Reliably produce quality trading signals and deliver them to Thalassa for human 
 | Backtest trades/equity in separate tables (not JSONB) | Enables cross-backtest comparison queries | — Pending |
 | Virtual portfolio persisted in PostgreSQL | Survives restarts; rebuilt from signal history | — Pending |
 
+## Current Milestone: v2.0 Strategy Pivot — Rule-Based Voting + Automated Search
+
+**Goal:** 放棄 ML 預測方向，改用簡單信號投票 + autoresearch 自動化迭代搜索，解決已確認的「純 TA 預測死胡同」。
+
+**Target features:**
+- Nunchi 6-Signal Voting Strategy — 移植 Momentum×2、EMA crossover、RSI(8)、MACD(14,23,9)、Bollinger squeeze 到 RuleStrategy DSL，4/6 多數決
+- AutoResearch 迭代框架 — 固定層(FeatureEngine+BacktestRunner) + 可變層(RuleStrategy JSON) + 指引層(program.md)，AI 自動迭代實驗
+- Regime 分類器 — XGBoost 從預測方向轉為分類市場狀態，根據 regime 選擇策略配置
+- 參數搜索自動化 — Optuna + Walk-Forward 驗證，自動搜索投票策略最佳參數
+
+**Key insight:** 問題不是 TA 沒用，而是用 ML 預測方向沒用。簡單規則投票 + 自動化迭代搜索才是正解。(Nunchi 103 次自動實驗: Sharpe 2.7→21.4)
+
 ## Current State
 
-Phase 9 complete — PatchTST Transformer model implemented (582 lines), all 7 BaseModel methods, mixed precision training, 57 tests passing. This is the last phase in milestone v1.0.
+v1.0 complete (9 phases) — full trading signal platform with data ingestion, feature engine, XGBoost + Transformer models, strategy DSL, risk engine, backtest engine, and REST API. Now pivoting strategy approach in v2.0.
+
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd:transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd:complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
 
 ---
-*Last updated: 2026-03-22 after Phase 9 completion*
+*Last updated: 2026-03-25 after Milestone v2.0 started*
