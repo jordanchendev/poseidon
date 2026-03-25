@@ -98,7 +98,7 @@ Strategy pivot from ML direction prediction to rule-based voting + automated par
 - [ ] **AUTO-02**: VotingStrategyFactory generates VotingStrategy instances from JSON config files (the "variable layer")
 - [ ] **AUTO-03**: StrategyMutator varies strategy parameters within defined bounds (signal periods, thresholds, vote counts)
 - [ ] **AUTO-04**: 3-layer architecture enforced: immutable layer (FeatureEngine+BacktestRunner+RiskEngine), mutable layer (strategy JSON config), guidance layer (program.md)
-- [ ] **AUTO-05**: AutoResearchRunner as Celery task that iterates: mutate config → backtest → evaluate → log → repeat
+- [ ] **AUTO-05**: AutoResearchRunner as Celery task that iterates: mutate config -> backtest -> evaluate -> log -> repeat
 - [ ] **AUTO-06**: Immutability boundary enforced — autoresearch cannot modify scoring formula, backtest runner, or feature engine code
 
 ### Regime Classification (Optional — Gated)
@@ -151,32 +151,32 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| VOTE-01 | TBD | Pending |
-| VOTE-02 | TBD | Pending |
-| VOTE-03 | TBD | Pending |
-| VOTE-04 | TBD | Pending |
-| VOTE-05 | TBD | Pending |
-| VOTE-06 | TBD | Pending |
-| AUTO-01 | TBD | Pending |
-| AUTO-02 | TBD | Pending |
-| AUTO-03 | TBD | Pending |
-| AUTO-04 | TBD | Pending |
-| AUTO-05 | TBD | Pending |
-| AUTO-06 | TBD | Pending |
-| RGME-01 | TBD | Pending |
-| RGME-02 | TBD | Pending |
-| RGME-03 | TBD | Pending |
-| PARM-01 | TBD | Pending |
-| PARM-02 | TBD | Pending |
-| PARM-03 | TBD | Pending |
-| PARM-04 | TBD | Pending |
-| PARM-05 | TBD | Pending |
+| VOTE-01 | Phase 10 | Pending |
+| VOTE-02 | Phase 10 | Pending |
+| VOTE-03 | Phase 10 | Pending |
+| VOTE-04 | Phase 10 | Pending |
+| VOTE-05 | Phase 10 | Pending |
+| VOTE-06 | Phase 10 | Pending |
+| AUTO-01 | Phase 11 | Pending |
+| AUTO-02 | Phase 11 | Pending |
+| AUTO-03 | Phase 12 | Pending |
+| AUTO-04 | Phase 12 | Pending |
+| AUTO-05 | Phase 12 | Pending |
+| AUTO-06 | Phase 12 | Pending |
+| RGME-01 | Phase 13 | Pending |
+| RGME-02 | Phase 13 | Pending |
+| RGME-03 | Phase 13 | Pending |
+| PARM-01 | Phase 11 | Pending |
+| PARM-02 | Phase 11 | Pending |
+| PARM-03 | Phase 11 | Pending |
+| PARM-04 | Phase 11 | Pending |
+| PARM-05 | Phase 11 | Pending |
 
 **Coverage:**
 - v2.0 requirements: 20 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 20
+- Mapped to phases: 20/20
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-20*
-*Last updated: 2026-03-25 after Milestone v2.0 requirements definition*
+*Last updated: 2026-03-25 after v2.0 roadmap creation*
