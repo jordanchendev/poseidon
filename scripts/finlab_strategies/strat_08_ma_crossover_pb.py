@@ -1,4 +1,4 @@
-"""策略 8: SMA 交叉 + PB 排序 (SMA20/60 crossover + PB rank)"""
+"""策略 8: SMA 交叉 + PB 排序 (SMA20/60 crossover + low PB top 10)"""
 
 from finlab import data
 from finlab.backtest import sim
@@ -11,9 +11,12 @@ def run():
     sma20 = close.average(20)
     sma60 = close.average(60)
 
-    # Simple signal: buy when close > SMA20, rank by low PB
-    position = (close > sma20) & (close > sma60)
-    position = position.is_smallest(10, value=pb)
+    # 均線多頭排列 + PB 最低的 10 檔
+    trend_up = (close > sma20) & (close > sma60)
 
-    report = sim(position, resample="M", stop_loss=0.2, take_profit=0.4, upload=False)
+    # 用 PB 排序：先把非多頭的設為 NaN，再選最小的 10 檔
+    ranked = pb.where(trend_up)
+    position = ranked.is_smallest(10)
+
+    report = sim(position, resample="M", upload=False)
     return report
