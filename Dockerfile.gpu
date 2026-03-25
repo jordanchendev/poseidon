@@ -2,8 +2,13 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
+# Install system dependencies for psycopg2, uv, and TA-Lib
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libpq-dev && \
+    gcc libpq-dev wget make && \
+    wget -q https://github.com/ta-lib/ta-lib/releases/download/v0.6.4/ta-lib-0.6.4-src.tar.gz && \
+    tar xzf ta-lib-0.6.4-src.tar.gz && \
+    cd ta-lib-0.6.4 && ./configure --prefix=/usr && make -j$(nproc) && make install && \
+    cd .. && rm -rf ta-lib-0.6.4 ta-lib-0.6.4-src.tar.gz && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/

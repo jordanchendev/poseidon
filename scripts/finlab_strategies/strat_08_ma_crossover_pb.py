@@ -5,15 +5,15 @@ from finlab.backtest import sim
 
 
 def run():
-    close = data.get("price:收盤價").copy()
-    pb = data.get("price_earning_ratio:股價淨值比").copy()
+    close = data.get("price:收盤價")
+    pb = data.get("price_earning_ratio:股價淨值比")
 
     sma20 = close.average(20)
     sma60 = close.average(60)
 
-    entries = (close > sma20).copy()
-    exits = (close < sma60).copy()
+    # Simple signal: buy when close > SMA20, rank by low PB
+    position = (close > sma20) & (close > sma60)
+    position = position.is_smallest(10, value=pb)
 
-    position = entries.hold_until(exits, nstocks_limit=10, rank=-pb, take_profit=0.4)
-    report = sim(position, upload=False)
+    report = sim(position, resample="M", stop_loss=0.2, take_profit=0.4, upload=False)
     return report
