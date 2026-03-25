@@ -160,6 +160,41 @@ def test_train_returns_202(mock_train):
     assert call_kwargs.kwargs["symbol"] == "2330"
 
 
+@patch("poseidon.api.models.train_model")
+def test_train_passes_label_mode_to_celery_params(mock_train):
+    """POST /models/train injects label_mode into Celery params."""
+    fake_task = MagicMock()
+    fake_task.id = "celery-task-id-456"
+    mock_train.delay.return_value = fake_task
+
+    mv_id = uuid.uuid4()
+    fake_mv = MagicMock()
+    fake_mv.id = mv_id
+    fake_mv.version = 1
+    fake_mv.name = "xgboost_tw_stock"
+
+    with patch("poseidon.api.models.ModelManager") as MockMM:
+        MockMM.return_value.create_version.return_value = fake_mv
+
+        resp = client.post(
+            f"{PREFIX}/train",
+            json={
+                "model_name": "xgboost_tw_stock",
+                "symbol": "2330",
+                "market": "tw_stock",
+                "params": {"n_estimators": 100},
+                "label_mode": "regime",
+            },
+        )
+
+    assert resp.status_code == 202
+    mock_train.delay.assert_called_once()
+    assert mock_train.delay.call_args.kwargs["params"] == {
+        "n_estimators": 100,
+        "label_mode": "regime",
+    }
+
+
 def test_list_models_empty():
     resp = client.get(PREFIX)
     assert resp.status_code == 200

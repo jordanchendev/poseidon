@@ -100,10 +100,11 @@ class FinMindFetcher(BaseFetcher):
         df = df.rename(columns=self.column_map)
         df = df[["time", "open", "high", "low", "close", "volume"]]
 
-        # Convert date strings to timezone-aware UTC datetimes
-        # Taiwan market dates are in Asia/Taipei timezone
-        # Use 13:30 (market close) as the canonical time for daily candles
+        # Convert to timezone-aware UTC datetimes
         df["time"] = pd.to_datetime(df["time"])
+        if interval == "1d":
+            # Daily: anchor to market close (13:30 Asia/Taipei) to avoid date shift
+            df["time"] = df["time"] + pd.Timedelta(hours=13, minutes=30)
         df["time"] = df["time"].dt.tz_localize("Asia/Taipei").dt.tz_convert("UTC")
 
         # Ensure numeric types
