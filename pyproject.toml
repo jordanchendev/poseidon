@@ -2,7 +2,7 @@
 name = "poseidon"
 version = "0.1.0"
 description = "Trading signal platform for OpenClaw"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -19,6 +19,7 @@ dependencies = [
     "ccxt>=4.0",
     "requests>=2.31",
     "finlab>=0.4",
+    "pandas_ta>=0.3",
     "pyyaml>=6.0",
     "python-multipart>=0.0.9",
 ]
