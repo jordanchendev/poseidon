@@ -170,7 +170,7 @@ class BacktestRunner:
 
         # Step 2: Determine warmup period
         # Feature columns are those not in the original OHLCV
-        ohlcv_cols = {"time", "open", "high", "low", "close", "volume"}
+        ohlcv_cols = {"open", "high", "low", "close", "volume"}
         feature_cols = [c for c in features.columns if c not in ohlcv_cols]
         warmup_end = self._find_warmup_end(features, feature_cols)
 
@@ -192,7 +192,7 @@ class BacktestRunner:
 
             # Skip warmup bars (features still have NaN)
             if i < warmup_end:
-                portfolio.record_equity_point(bar["time"], float(bar["close"]))
+                portfolio.record_equity_point(bar.name, float(bar["close"]))
                 continue
 
             # Step 4a: Expanding window slice -- no look-ahead (BT-01)
@@ -218,7 +218,7 @@ class BacktestRunner:
                     portfolio.execute_fill(signal, bar)
 
             # Step 4d: Record equity point at every bar
-            portfolio.record_equity_point(bar["time"], float(bar["close"]))
+            portfolio.record_equity_point(bar.name, float(bar["close"]))
 
         # Step 5: Compute metrics
         if portfolio.equity_curve:
