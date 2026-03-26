@@ -93,7 +93,7 @@ Reliably produce quality trading signals and deliver them to Thalassa for human 
 
 ## Current State
 
-v1.0 complete (9 phases) — full trading signal platform with data ingestion, feature engine, XGBoost + Transformer models, strategy DSL, risk engine, backtest engine, and REST API. v2.0 strategy pivot complete: Phase 10 (voting strategy foundation), Phase 11 (experiment infrastructure), Phase 12 (autoresearch loop), and Phase 13 (regime classification, gated) all complete. Phase 13 added RegimeRouter with percentile-based regime labels, per-regime Optuna search (min_votes/position_pct only), and outperformance gate that auto-disables regime routing if it doesn't strictly beat static baseline on holdout data. v2.0 milestone ready for completion review.
+v1.0 complete (9 phases) — full trading signal platform with data ingestion, feature engine, XGBoost + Transformer models, strategy DSL, risk engine, backtest engine, and REST API. v2.0 strategy pivot complete: Phase 10 (voting strategy foundation), Phase 11 (experiment infrastructure), Phase 12 (autoresearch loop), Phase 13 (regime classification, gated), and Phase 14 (Nunchi signal alignment) all complete. Phase 14 aligned VotingStrategy with Nunchi auto-research proven logic: composite score formula with lenient DD penalty and capital turnover ratio, bidirectional trading (bear_sub_signals + SHORT emission), RSI exit/signal flip/cooldown exit mechanisms, ATR multiplier 5.5, BB squeeze threshold 0.85, factory PARAM_BOUNDS expanded with bear params, RegimeRouter 4-param overrides, and RegimeSearchPipeline 4-param search. v2.0 milestone ready for completion review.
 
 ## Evolution
 
@@ -113,4 +113,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-26 after Phase 13 regime-classification-optional-gated complete*
+*Last updated: 2026-03-26 after Phase 14 nunchi-signal-alignment complete*
