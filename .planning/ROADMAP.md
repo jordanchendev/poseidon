@@ -24,7 +24,7 @@ Phases 1-9 delivered the full trading signal platform: Docker infrastructure, da
 
 - [x] **Phase 10: Voting Strategy Foundation** - VotingStrategy class, DSL vote type, Nunchi 6-signal config, composite scoring, exit logic (completed 2026-03-26)
 - [x] **Phase 11: Experiment Infrastructure** - Optuna RDBStorage, ExperimentTracker, VotingStrategyFactory, holdout protocol, parameter search pipeline (completed 2026-03-26)
-- [ ] **Phase 12: AutoResearch Loop** - StrategyMutator, 3-layer architecture enforcement, AutoResearchRunner Celery task, immutability boundary
+- [x] **Phase 12: AutoResearch Loop** - StrategyMutator, 3-layer architecture enforcement, AutoResearchRunner Celery task, immutability boundary (completed 2026-03-26)
 - [ ] **Phase 13: Regime Classification (Optional, Gated)** - XGBoostRegimeModel classifier, RegimeRouter, outperformance gate vs static baseline
 
 ## Phase Details
@@ -70,7 +70,7 @@ Plans:
   2. Three-layer architecture is enforced at runtime: FeatureEngine, BacktestRunner, and RiskEngine code paths are read-only during any autoresearch run; only RuleConfig JSON is mutable
   3. AutoResearchRunner executes as a Celery task that completes a full cycle (mutate config -> backtest -> evaluate -> log) and writes results to ExperimentTracker -- at least 10 consecutive experiments run unattended without error
   4. Immutability boundary is provably enforced: attempting to import or call any evaluation-layer modification API from within the autoresearch context raises an explicit error
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 12-01-PLAN.md -- Immutability guard (contextvar + decorator), StrategyMutator thin wrapper
 - [ ] 12-02-PLAN.md -- AutoResearchRunner Celery task, report generation, integration tests
@@ -93,7 +93,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 10. Voting Strategy Foundation | 2/2 | Complete    | 2026-03-26 |
 | 11. Experiment Infrastructure | 3/3 | Complete    | 2026-03-26 |
-| 12. AutoResearch Loop | 1/2 | In Progress|  |
+| 12. AutoResearch Loop | 1/2 | Complete    | 2026-03-26 |
 | 13. Regime Classification | 0/TBD | Not started | - |
 
 ---
