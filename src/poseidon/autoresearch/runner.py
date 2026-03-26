@@ -1,0 +1,130 @@
+"""AutoResearchRunner -- orchestrates per-market parameter search runs.
+
+Per D-09: single orchestration class, NOT one run per experiment.
+Per D-10: receives SearchConfig + market list, loops ParameterSearchPipeline.run() per market.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from poseidon.autoresearch.guard import autoresearch_context
+from poseidon.backtest.cost_model import COST_MODELS, CostModel
+from poseidon.backtest.experiment_tracker import ExperimentTracker
+from poseidon.backtest.param_search import ParameterSearchPipeline, SearchConfig, SearchResult
+from poseidon.backtest.portfolio import SizingConfig
+from poseidon.data.feature_engine import FeatureEngine
+from poseidon.data.storage import read_ohlcv
+from poseidon.risk.engine import RiskEngine
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MarketSpec:
+    """Specification for a single market to search."""
+
+    symbol: str
+    market: str
+    interval: str
+
+
+@dataclass
+class MarketResult:
+    """Result of parameter search for a single market."""
+
+    spec: MarketSpec
+    search_result: SearchResult | None = None
+    error: str | None = None
+
+
+class AutoResearchRunner:
+    """Runs parameter search across multiple markets with autoresearch guard active."""
+
+    def __init__(
+        self,
+        db_session: Any,
+        search_config: SearchConfig,
+        *,
+        initial_capital: float = 1_000_000.0,
+        sizing_config: SizingConfig | None = None,
+        stop_check: Callable[[], bool] | None = None,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> None:
+        self.db_session = db_session
+        self.search_config = search_config
+        self.initial_capital = initial_capital
+        self.sizing_config = sizing_config or SizingConfig()
+        self.stop_check = stop_check
+        self.progress_callback = progress_callback
+
+    def run(self, markets: list[MarketSpec]) -> list[MarketResult]:
+        """Run parameter search across all markets with immutability guard active.
+
+        Per D-13: per-market failure isolation -- catch exception + log + continue.
+        """
+        results: list[MarketResult] = []
+
+        with autoresearch_context():
+            feature_engine = FeatureEngine()
+            risk_engine = RiskEngine()
+            tracker = ExperimentTracker(self.db_session)
+
+            for i, spec in enumerate(markets):
+                # D-12: graceful stop check
+                if self.stop_check and self.stop_check():
+                    logger.info("Graceful stop requested, stopping after %d markets", i)
+                    break
+
+                # D-11: heartbeat
+                if self.progress_callback:
+                    self.progress_callback(i, len(markets), spec.symbol)
+
+                try:
+                    cost_model = COST_MODELS.get(spec.market)
+                    if cost_model is None:
+                        # Fallback: zero-cost model for unknown markets
+                        cost_model = CostModel(
+                            market=spec.market,
+                            buy_commission_rate=0.0,
+                            sell_commission_rate=0.0,
+                            tax_rate=0.0,
+                            slippage_pct=0.0,
+                            slippage_ticks=0.0,
+                            description=f"Default zero-cost model for {spec.market}",
+                        )
+
+                    ohlcv = read_ohlcv(
+                        self.db_session, spec.symbol, spec.market, spec.interval,
+                    )
+                    if ohlcv.empty:
+                        logger.warning(
+                            "No OHLCV data for %s/%s/%s, skipping",
+                            spec.symbol, spec.market, spec.interval,
+                        )
+                        results.append(MarketResult(spec=spec, error="No OHLCV data"))
+                        continue
+
+                    pipeline = ParameterSearchPipeline(
+                        feature_engine=feature_engine,
+                        risk_engine=risk_engine,
+                        cost_model=cost_model,
+                        tracker=tracker,
+                        initial_capital=self.initial_capital,
+                        sizing_config=self.sizing_config,
+                    )
+                    search_result = pipeline.run(
+                        ohlcv, spec.symbol, spec.market, spec.interval, self.search_config,
+                    )
+                    results.append(MarketResult(spec=spec, search_result=search_result))
+                    self.db_session.commit()
+                except Exception as exc:
+                    logger.error(
+                        "Market %s/%s failed: %s", spec.symbol, spec.market, exc, exc_info=True,
+                    )
+                    self.db_session.rollback()
+                    results.append(MarketResult(spec=spec, error=str(exc)))
+
+        return results

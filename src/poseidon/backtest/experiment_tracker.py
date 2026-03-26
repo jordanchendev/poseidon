@@ -139,6 +139,31 @@ class ExperimentTracker:
             .all()
         )
 
+    def query_passed_by_study(
+        self, study_name: str, limit: int = 10
+    ) -> list[ExperimentRecord]:
+        """Query passed experiments for a study, ranked by composite_score.
+
+        Used by report generation (D-15) to find best configs per market.
+
+        Args:
+            study_name: Study name to filter by.
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of ExperimentRecord with status='passed', ordered by composite_score desc.
+        """
+        return (
+            self._db.query(ExperimentRecord)
+            .filter(
+                ExperimentRecord.study_name == study_name,
+                ExperimentRecord.status == "passed",
+            )
+            .order_by(ExperimentRecord.composite_score.desc().nulls_last())
+            .limit(limit)
+            .all()
+        )
+
     def mark_rejected(self, experiment_id: uuid.UUID) -> None:
         """Mark an experiment as rejected.
 
