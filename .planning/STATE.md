@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Strategy Pivot
 status: Milestone complete
-stopped_at: Phase 14 context gathered
-last_updated: "2026-03-26T09:56:32.665Z"
+stopped_at: Completed 14-03-PLAN.md
+last_updated: "2026-03-26T10:42:25.791Z"
 progress:
   total_phases: 5
-  completed_phases: 4
-  total_plans: 9
-  completed_plans: 9
+  completed_phases: 5
+  total_plans: 12
+  completed_plans: 12
 ---
 
 # State: Poseidon
@@ -18,11 +18,11 @@ progress:
 
 See: .planning/PROJECT.md (updated 2026-03-25)
 **Core value:** Reliably produce quality trading signals and deliver them to Thalassa
-**Current focus:** Phase 13 — regime-classification-optional-gated
+**Current focus:** Phase 14 — nunchi-signal-alignment
 
 ## Current Position
 
-Phase: 13
+Phase: 14
 Plan: Not started
 
 ## Velocity
@@ -49,6 +49,15 @@ Plan: Not started
 - [Phase 13-regime-classification-optional-gated]: RegimeRouter mutates strategy attributes (not re-instantiate) for trailing stop state preservation
 - [Phase 13-regime-classification-optional-gated]: Per-regime search varies only min_votes/position_pct (2 params), not full PARAM_BOUNDS
 - [Phase 13-regime-classification-optional-gated]: Outperformance gate uses strict comparison (>) -- equal scores disable regime routing
+- [Phase 14]: Composite score dd_penalty uses 15% threshold (max(0, dd-0.15)*0.05) per Nunchi D-15
+- [Phase 14]: Turnover penalty uses capital turnover ratio, not raw trade count per D-16
+- [Phase 14]: Short equity valuation: (entry_price - current_price) * qty per D-12
+- [Phase 14]: Default atr_multiplier changed from 2.0 to 5.5 per D-05 (Nunchi alignment)
+- [Phase 14]: Cooldown uses <= 2 check (blocks 2 full bars after exit)
+- [Phase 14]: Bear sub_signals use indicator_below DSL condition type
+- [Phase 14]: Bear sub_signals use indicator_below DSL condition type with inverted thresholds
+- [Phase 14]: Factory BB threshold corrected 0.2->0.85, ATR range 1.5-3.0->3.0-8.0, default 2.0->5.5
+- [Phase 14]: RegimeRouter+Search expanded from 2 to 4 params per regime (adding bear_min_votes, bear_position_pct)
 
 ## Blockers
 
@@ -71,8 +80,8 @@ Plan: Not started
 
 ## Last Session
 
-- **Stopped at:** Phase 14 context gathered
-- **Resume file:** .planning/phases/14-nunchi-signal-alignment/14-CONTEXT.md
+- **Stopped at:** Completed 14-03-PLAN.md
+- **Resume file:** None
 - **Next step:** `/gsd:plan-phase 10`
 
 ---

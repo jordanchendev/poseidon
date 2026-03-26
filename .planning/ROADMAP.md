@@ -26,7 +26,7 @@ Phases 1-9 delivered the full trading signal platform: Docker infrastructure, da
 - [x] **Phase 11: Experiment Infrastructure** - Optuna RDBStorage, ExperimentTracker, VotingStrategyFactory, holdout protocol, parameter search pipeline (completed 2026-03-26)
 - [x] **Phase 12: AutoResearch Loop** - StrategyMutator, 3-layer architecture enforcement, AutoResearchRunner Celery task, immutability boundary (completed 2026-03-26)
 - [x] **Phase 13: Regime Classification (Optional, Gated)** - XGBoostRegimeModel classifier, RegimeRouter, outperformance gate vs static baseline (completed 2026-03-26)
-- [ ] **Phase 14: Nunchi Signal Alignment** - Fix scoring formula, ATR/BB defaults, add SHORT support, RSI exit, signal flip, cooldown, update factory/router/search
+- [x] **Phase 14: Nunchi Signal Alignment** - Fix scoring formula, ATR/BB defaults, add SHORT support, RSI exit, signal flip, cooldown, update factory/router/search (completed 2026-03-26)
 
 ## Phase Details
 
@@ -100,11 +100,11 @@ Plans:
   4. RSI exit, signal flip, and cooldown exit mechanisms fire correctly with documented priority order
   5. ATR trailing stop works bidirectionally (high watermark for longs, low watermark for shorts)
   6. Factory PARAM_BOUNDS, RegimeRouter, and RegimeSearchPipeline all support bear parameters
-**Plans:** 3 plans
+**Plans:** 3/3 plans complete
 
 Plans:
-- [ ] 14-01-PLAN.md -- Composite score formula fix, short equity valuation fix, Nunchi config defaults
-- [ ] 14-02-PLAN.md -- VotingStrategy overhaul: bear signals, RSI exit, signal flip, cooldown, short trailing stop
+- [x] 14-01-PLAN.md -- Composite score formula fix, short equity valuation fix, Nunchi config defaults
+- [x] 14-02-PLAN.md -- VotingStrategy overhaul: bear signals, RSI exit, signal flip, cooldown, short trailing stop
 - [ ] 14-03-PLAN.md -- Factory PARAM_BOUNDS/bear generation, RegimeRouter 4-param overrides, RegimeSearch 4-param search
 
 ## Progress
@@ -117,7 +117,7 @@ Plans:
 | 11. Experiment Infrastructure | 3/3 | Complete    | 2026-03-26 |
 | 12. AutoResearch Loop | 1/2 | Complete    | 2026-03-26 |
 | 13. Regime Classification | 1/2 | Complete    | 2026-03-26 |
-| 14. Nunchi Signal Alignment | 0/3 | Not started | -- |
+| 14. Nunchi Signal Alignment | 2/3 | Complete    | 2026-03-26 |
 
 ---
 *Roadmap created: 2026-03-20*
