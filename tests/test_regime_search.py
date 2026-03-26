@@ -252,3 +252,248 @@ class TestRegimeSearchPipeline:
         train_ohlcv = call_args[0][0]
         # 500 bars * 0.80 = 400 bars for training
         assert len(train_ohlcv) == 400
+
+
+# ---------------------------------------------------------------------------
+# Task 2: Outperformance gate tests
+# ---------------------------------------------------------------------------
+
+class TestRegimeGate:
+    """Tests for evaluate_regime_gate outperformance gate."""
+
+    def _make_regime_router(self, enabled: bool = True) -> MagicMock:
+        """Create a mock RegimeRouter with enabled attribute."""
+        router = MagicMock()
+        router.enabled = enabled
+        router._regime_model = MagicMock()  # model should be preserved
+        return router
+
+    def test_gate_enables_on_outperformance(self):
+        """When regime score > static score, gate passes and enables router."""
+        from poseidon.backtest.regime_gate import evaluate_regime_gate, GateResult
+
+        ohlcv = _make_ohlcv(500)
+        base_config = _minimal_base_config()
+        router = self._make_regime_router()
+
+        feature_engine = MagicMock()
+        risk_engine = MagicMock()
+        cost_model = MagicMock()
+
+        # Static backtest result: composite_score = 1.0
+        # Regime backtest result: composite_score = 1.5
+        static_result = MagicMock()
+        static_result.metrics = {"sharpe_ratio": 1.0, "max_drawdown": 0.10, "total_return": 0.10, "trade_count": 20}
+        regime_result = MagicMock()
+        regime_result.metrics = {"sharpe_ratio": 2.0, "max_drawdown": 0.05, "total_return": 0.30, "trade_count": 30}
+
+        with patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner, \
+             patch("poseidon.backtest.regime_gate.VotingStrategyFactory") as MockFactory, \
+             patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score:
+            # First call = static, second call = regime
+            MockRunner.return_value.run.side_effect = [static_result, regime_result]
+            mock_score.side_effect = [1.0, 1.5]
+
+            gate_result = evaluate_regime_gate(
+                ohlcv=ohlcv,
+                base_config=base_config,
+                regime_router=router,
+                feature_engine=feature_engine,
+                risk_engine=risk_engine,
+                cost_model=cost_model,
+            )
+
+        assert gate_result.passed is True
+        assert gate_result.static_score == 1.0
+        assert gate_result.regime_score == 1.5
+        assert router.enabled is True
+
+    def test_gate_disables_on_underperformance(self):
+        """When regime score <= static score, gate fails and disables router."""
+        from poseidon.backtest.regime_gate import evaluate_regime_gate
+
+        ohlcv = _make_ohlcv(500)
+        base_config = _minimal_base_config()
+        router = self._make_regime_router()
+
+        feature_engine = MagicMock()
+        risk_engine = MagicMock()
+        cost_model = MagicMock()
+
+        static_result = MagicMock()
+        static_result.metrics = {}
+        regime_result = MagicMock()
+        regime_result.metrics = {}
+
+        with patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner, \
+             patch("poseidon.backtest.regime_gate.VotingStrategyFactory") as MockFactory, \
+             patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score:
+            MockRunner.return_value.run.side_effect = [static_result, regime_result]
+            mock_score.side_effect = [1.0, 0.8]  # regime < static
+
+            gate_result = evaluate_regime_gate(
+                ohlcv=ohlcv,
+                base_config=base_config,
+                regime_router=router,
+                feature_engine=feature_engine,
+                risk_engine=risk_engine,
+                cost_model=cost_model,
+            )
+
+        assert gate_result.passed is False
+        assert router.enabled is False
+
+    def test_gate_disables_on_equal_score(self):
+        """When regime == static score, gate fails (must be STRICTLY greater)."""
+        from poseidon.backtest.regime_gate import evaluate_regime_gate
+
+        ohlcv = _make_ohlcv(500)
+        base_config = _minimal_base_config()
+        router = self._make_regime_router()
+
+        feature_engine = MagicMock()
+        risk_engine = MagicMock()
+        cost_model = MagicMock()
+
+        static_result = MagicMock()
+        static_result.metrics = {}
+        regime_result = MagicMock()
+        regime_result.metrics = {}
+
+        with patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner, \
+             patch("poseidon.backtest.regime_gate.VotingStrategyFactory") as MockFactory, \
+             patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score:
+            MockRunner.return_value.run.side_effect = [static_result, regime_result]
+            mock_score.side_effect = [1.0, 1.0]  # equal scores
+
+            gate_result = evaluate_regime_gate(
+                ohlcv=ohlcv,
+                base_config=base_config,
+                regime_router=router,
+                feature_engine=feature_engine,
+                risk_engine=risk_engine,
+                cost_model=cost_model,
+            )
+
+        assert gate_result.passed is False
+        assert router.enabled is False
+
+    def test_gate_preserves_model_on_failure(self):
+        """After gate failure, regime_router._regime_model still present (D-08)."""
+        from poseidon.backtest.regime_gate import evaluate_regime_gate
+
+        ohlcv = _make_ohlcv(500)
+        base_config = _minimal_base_config()
+        router = self._make_regime_router()
+        original_model = router._regime_model
+
+        feature_engine = MagicMock()
+        risk_engine = MagicMock()
+        cost_model = MagicMock()
+
+        static_result = MagicMock()
+        static_result.metrics = {}
+        regime_result = MagicMock()
+        regime_result.metrics = {}
+
+        with patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner, \
+             patch("poseidon.backtest.regime_gate.VotingStrategyFactory") as MockFactory, \
+             patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score:
+            MockRunner.return_value.run.side_effect = [static_result, regime_result]
+            mock_score.side_effect = [1.0, 0.5]  # gate fails
+
+            evaluate_regime_gate(
+                ohlcv=ohlcv,
+                base_config=base_config,
+                regime_router=router,
+                feature_engine=feature_engine,
+                risk_engine=risk_engine,
+                cost_model=cost_model,
+            )
+
+        # Model preserved -- not deleted
+        assert router._regime_model is original_model
+
+    def test_gate_uses_holdout_data(self):
+        """Gate runs backtests on holdout portion (after boundary), not full data."""
+        from poseidon.backtest.regime_gate import evaluate_regime_gate
+        from poseidon.backtest.holdout import HoldoutConfig
+
+        ohlcv = _make_ohlcv(500)
+        base_config = _minimal_base_config()
+        router = self._make_regime_router()
+
+        feature_engine = MagicMock()
+        risk_engine = MagicMock()
+        cost_model = MagicMock()
+
+        static_result = MagicMock()
+        static_result.metrics = {}
+        regime_result = MagicMock()
+        regime_result.metrics = {}
+
+        holdout_cfg = HoldoutConfig(holdout_pct=0.20)
+
+        with patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner, \
+             patch("poseidon.backtest.regime_gate.VotingStrategyFactory") as MockFactory, \
+             patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score:
+            MockRunner.return_value.run.side_effect = [static_result, regime_result]
+            mock_score.side_effect = [1.0, 1.5]
+
+            gate_result = evaluate_regime_gate(
+                ohlcv=ohlcv,
+                base_config=base_config,
+                regime_router=router,
+                feature_engine=feature_engine,
+                risk_engine=risk_engine,
+                cost_model=cost_model,
+                holdout_config=holdout_cfg,
+            )
+
+        # BacktestRunner.run() should receive holdout portion only
+        # 500 * 0.20 = 100 bars for holdout
+        run_calls = MockRunner.return_value.run.call_args_list
+        for call in run_calls:
+            holdout_ohlcv = call[0][0]
+            assert len(holdout_ohlcv) == 100, f"Expected 100 holdout bars, got {len(holdout_ohlcv)}"
+
+        assert gate_result.holdout_bars == 100
+
+    def test_gate_returns_result_dataclass(self):
+        """GateResult has fields: passed, static_score, regime_score, holdout_start, holdout_bars."""
+        from poseidon.backtest.regime_gate import evaluate_regime_gate, GateResult
+
+        ohlcv = _make_ohlcv(500)
+        base_config = _minimal_base_config()
+        router = self._make_regime_router()
+
+        feature_engine = MagicMock()
+        risk_engine = MagicMock()
+        cost_model = MagicMock()
+
+        static_result = MagicMock()
+        static_result.metrics = {}
+        regime_result = MagicMock()
+        regime_result.metrics = {}
+
+        with patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner, \
+             patch("poseidon.backtest.regime_gate.VotingStrategyFactory") as MockFactory, \
+             patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score:
+            MockRunner.return_value.run.side_effect = [static_result, regime_result]
+            mock_score.side_effect = [1.0, 1.5]
+
+            gate_result = evaluate_regime_gate(
+                ohlcv=ohlcv,
+                base_config=base_config,
+                regime_router=router,
+                feature_engine=feature_engine,
+                risk_engine=risk_engine,
+                cost_model=cost_model,
+            )
+
+        assert isinstance(gate_result, GateResult)
+        assert hasattr(gate_result, "passed")
+        assert hasattr(gate_result, "static_score")
+        assert hasattr(gate_result, "regime_score")
+        assert hasattr(gate_result, "holdout_start")
+        assert hasattr(gate_result, "holdout_bars")
