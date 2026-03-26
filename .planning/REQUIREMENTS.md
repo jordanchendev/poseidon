@@ -86,9 +86,9 @@ Strategy pivot from ML direction prediction to rule-based voting + automated par
 ### Voting Strategy
 
 - [ ] **VOTE-01**: VotingStrategy extends BaseStrategy, accepts N child RuleStrategy instances, emits signal when >= min_votes threshold (default 4/6)
-- [ ] **VOTE-02**: DSL condition engine supports new `vote` condition type with `min_votes` parameter, enabling "M of N conditions true" without combinatorial explosion
+- [x] **VOTE-02**: DSL condition engine supports new `vote` condition type with `min_votes` parameter, enabling "M of N conditions true" without combinatorial explosion
 - [ ] **VOTE-03**: Six Nunchi-derived signal strategies implemented as RuleStrategy JSON configs: dual Momentum, EMA crossover, RSI(8), MACD(14,23,9), Bollinger squeeze
-- [ ] **VOTE-04**: Composite scoring calculates confidence from vote count and individual signal strengths, with hard cutoffs for low-quality signals
+- [x] **VOTE-04**: Composite scoring calculates confidence from vote count and individual signal strengths, with hard cutoffs for low-quality signals
 - [ ] **VOTE-05**: ATR-based trailing stop exit logic integrated into VotingStrategy evaluation
 - [ ] **VOTE-06**: Fixed position sizing (default 8%, configurable) applied uniformly — no adaptive sizing mechanisms
 
@@ -152,9 +152,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | VOTE-01 | Phase 10 | Pending |
-| VOTE-02 | Phase 10 | Pending |
+| VOTE-02 | Phase 10 | Complete |
 | VOTE-03 | Phase 10 | Pending |
-| VOTE-04 | Phase 10 | Pending |
+| VOTE-04 | Phase 10 | Complete |
 | VOTE-05 | Phase 10 | Pending |
 | VOTE-06 | Phase 10 | Pending |
 | AUTO-01 | Phase 11 | Pending |
