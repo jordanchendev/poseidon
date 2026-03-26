@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from poseidon.api import (
+    autoresearch,
     backtests,
     data,
     health,
@@ -40,3 +41,4 @@ app.include_router(strategies.router, prefix="/strategies", tags=["strategies"],
 app.include_router(models_api.router, prefix="/models", tags=["models"], dependencies=secured)
 app.include_router(backtests.router, prefix="/backtest", tags=["backtest"], dependencies=secured)
 app.include_router(signals.router, prefix="/signals", tags=["signals"], dependencies=secured)
+app.include_router(autoresearch.router, prefix="/autoresearch", tags=["autoresearch"], dependencies=secured)
