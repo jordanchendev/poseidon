@@ -343,11 +343,11 @@ class VotingStrategy(BaseStrategy):
             indicator = cond.get("indicator", "")
             params = cond.get("params", {})
 
-            if cond_type == "indicator_above" and indicator == "cum_return":
+            if cond_type in ("indicator_above", "indicator_below") and indicator == "cum_return":
                 _add("cum_return", {"period": params.get("period", 6)})
-            elif cond_type == "indicator_above" and indicator == "rsi":
+            elif cond_type in ("indicator_above", "indicator_below") and indicator == "rsi":
                 _add("rsi", {"period": params.get("period", 8)})
-            elif cond_type == "indicator_above" and indicator == "macd_histogram":
+            elif cond_type in ("indicator_above", "indicator_below") and indicator == "macd_histogram":
                 _add(
                     "macd",
                     {

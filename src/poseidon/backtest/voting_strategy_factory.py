@@ -34,8 +34,10 @@ PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "momentum_short": (3, 10, "int"),
     "momentum_long": (8, 20, "int"),
     "min_votes": (3, 6, "int"),
-    "atr_multiplier": (1.5, 3.0, "float"),
+    "atr_multiplier": (3.0, 8.0, "float"),             # D-06: was (1.5, 3.0)
     "position_pct": (0.05, 0.15, "float"),
+    "bear_min_votes": (3, 6, "int"),                    # D-22: new
+    "bear_position_pct": (0.03, 0.12, "float"),         # D-22: new
 }
 
 
@@ -92,11 +94,61 @@ def _build_config_from_params(
             },
             "threshold": 0,
         },
-        # 6. Bollinger width percentile squeeze
+        # 6. Bollinger width percentile squeeze (D-14: threshold 0.85)
         {
             "type": "bollinger_width_percentile",
             "params": {"period": params["bollinger_period"], "lookback": 168},
-            "threshold": 0.2,
+            "threshold": 0.85,
+        },
+    ]
+
+    # D-23: Bear sub_signals with inverted conditions (D-08)
+    bear_sub_signals = [
+        # 1. cum_return short momentum (BELOW zero -- price falling)
+        {
+            "type": "indicator_below",
+            "indicator": "cum_return",
+            "params": {"period": params["momentum_short"]},
+            "threshold": 0,
+        },
+        # 2. cum_return long momentum (BELOW zero)
+        {
+            "type": "indicator_below",
+            "indicator": "cum_return",
+            "params": {"period": params["momentum_long"]},
+            "threshold": 0,
+        },
+        # 3. EMA crossover inverted (short BELOW long)
+        {
+            "type": "indicator_comparison",
+            "indicator_a": "ema",
+            "indicator_b": "ema",
+            "params": {"period_a": params["ema_short"], "period_b": params["ema_long"]},
+            "direction": "below",
+        },
+        # 4. RSI below 50 (bearish)
+        {
+            "type": "indicator_below",
+            "indicator": "rsi",
+            "params": {"period": params["rsi_period"]},
+            "threshold": 50,
+        },
+        # 5. MACD histogram below zero (bearish)
+        {
+            "type": "indicator_below",
+            "indicator": "macd_histogram",
+            "params": {
+                "fast_period": params["macd_fast"],
+                "slow_period": params["macd_slow"],
+                "signal_period": params["macd_signal"],
+            },
+            "threshold": 0,
+        },
+        # 6. Bollinger width percentile squeeze (same as bull -- acts as filter)
+        {
+            "type": "bollinger_width_percentile",
+            "params": {"period": params["bollinger_period"], "lookback": 168},
+            "threshold": 0.85,
         },
     ]
 
@@ -107,7 +159,10 @@ def _build_config_from_params(
         "interval": interval,
         "min_votes": params["min_votes"],
         "position_pct": params["position_pct"],
+        "bear_min_votes": params["bear_min_votes"],
+        "bear_position_pct": params["bear_position_pct"],
         "sub_signals": sub_signals,
+        "bear_sub_signals": bear_sub_signals,
     }
 
 
@@ -123,7 +178,7 @@ class VotingStrategyFactory:
         passing them as constructor kwargs.
         """
         config = copy.deepcopy(config)
-        atr_multiplier = config.pop("atr_multiplier", 2.0)
+        atr_multiplier = config.pop("atr_multiplier", 5.5)  # D-05: default 5.5
         atr_period = config.pop("atr_period", 14)
         strategy = VotingStrategy(
             config=config,
@@ -172,7 +227,10 @@ class VotingStrategyFactory:
             "interval": strategy.interval,
             "min_votes": strategy._min_votes,
             "position_pct": strategy._position_pct,
+            "bear_min_votes": strategy._bear_min_votes,
+            "bear_position_pct": strategy._bear_position_pct,
             "sub_signals": copy.deepcopy(strategy._sub_signals),
+            "bear_sub_signals": copy.deepcopy(strategy._bear_sub_signals),
             "atr_multiplier": strategy._atr_multiplier,
             "atr_period": strategy._atr_period,
         }
