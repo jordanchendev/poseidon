@@ -18,6 +18,8 @@ Public API:
     GridSearchOptimizer  - Exhaustive parameter search
     BayesianOptimizer    - Optuna TPE Bayesian optimization
     OptimizationTrial    - Single optimization trial result
+    VotingStrategyFactory - Create VotingStrategy from config or Optuna trial
+    PARAM_BOUNDS         - Searchable parameter bounds for optimization
 """
 
 from poseidon.backtest.cost_model import COST_MODELS, CostModel, get_cost_model
@@ -36,6 +38,10 @@ from poseidon.backtest.portfolio import (
 from poseidon.backtest.repository import BacktestRepository
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.backtest.schemas import BacktestConfig, BacktestResult
+from poseidon.backtest.voting_strategy_factory import (
+    PARAM_BOUNDS,
+    VotingStrategyFactory,
+)
 from poseidon.backtest.walk_forward import (
     WalkForwardAnalyzer,
     WalkForwardConfig,
@@ -64,4 +70,6 @@ __all__ = [
     "GridSearchOptimizer",
     "BayesianOptimizer",
     "OptimizationTrial",
+    "VotingStrategyFactory",
+    "PARAM_BOUNDS",
 ]
