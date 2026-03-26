@@ -20,14 +20,24 @@ Public API:
     OptimizationTrial    - Single optimization trial result
     VotingStrategyFactory - Create VotingStrategy from config or Optuna trial
     PARAM_BOUNDS         - Searchable parameter bounds for optimization
+    ParameterSearchPipeline - Holdout + Optuna search + WFE gate + experiment logging
+    SearchConfig         - Configuration for parameter search runs
+    SearchResult         - Result of parameter search runs
 """
 
 from poseidon.backtest.cost_model import COST_MODELS, CostModel, get_cost_model
+from poseidon.backtest.experiment_tracker import ExperimentTracker
+from poseidon.backtest.holdout import HoldoutConfig, HoldoutViolationError
 from poseidon.backtest.metrics import compute_composite_score, compute_metrics
 from poseidon.backtest.optimizer import (
     BayesianOptimizer,
     GridSearchOptimizer,
     OptimizationTrial,
+)
+from poseidon.backtest.param_search import (
+    ParameterSearchPipeline,
+    SearchConfig,
+    SearchResult,
 )
 from poseidon.backtest.portfolio import (
     BacktestPortfolio,
@@ -50,6 +60,9 @@ from poseidon.backtest.walk_forward import (
 )
 
 __all__ = [
+    "ExperimentTracker",
+    "HoldoutConfig",
+    "HoldoutViolationError",
     "BacktestPortfolio",
     "SizingConfig",
     "SizingMode",
@@ -72,4 +85,7 @@ __all__ = [
     "OptimizationTrial",
     "VotingStrategyFactory",
     "PARAM_BOUNDS",
+    "ParameterSearchPipeline",
+    "SearchConfig",
+    "SearchResult",
 ]
