@@ -203,7 +203,7 @@ class TestATRTrailingStop:
         assert strategy._position_high_watermark is None
 
     def test_reentry_after_close(self):
-        """After CLOSE, new vote threshold met -> can re-enter (new LONG)."""
+        """After CLOSE + cooldown, new vote threshold met -> can re-enter (new LONG)."""
         config = _make_all_true_config(min_votes=4)
         strategy = VotingStrategy(config=config, atr_multiplier=2.0, atr_period=14)
 
@@ -212,6 +212,10 @@ class TestATRTrailingStop:
         # Trigger stop
         strategy.evaluate(make_features(close=110.0, atr_14=2.0))
         strategy.evaluate(make_features(close=105.0, atr_14=2.0))
+
+        # Wait 2 bars for cooldown to expire (same direction block)
+        strategy.evaluate(make_features(rsi_8=45.0, macd_histogram=-0.1, cum_return_6d=-0.01))  # bar 1, no entry
+        strategy.evaluate(make_features(rsi_8=45.0, macd_histogram=-0.1, cum_return_6d=-0.01))  # bar 2, cooldown expires
 
         # Re-enter (all conditions true again)
         signals_reentry = strategy.evaluate(make_features())
@@ -390,16 +394,12 @@ def _make_bear_config() -> dict:
             {"type": "bollinger_width_percentile", "params": {"period": 20, "lookback": 168}, "threshold": 0.2},
         ],
         "bear_sub_signals": [
-            {"type": "indicator_above", "indicator": "cum_return", "params": {"period": 6}, "threshold": 0,
-             "negate": True},  # cum_return < 0
-            {"type": "indicator_above", "indicator": "cum_return", "params": {"period": 12}, "threshold": 0,
-             "negate": True},  # cum_return < 0
+            {"type": "indicator_below", "indicator": "cum_return", "params": {"period": 6}, "threshold": 0},
+            {"type": "indicator_below", "indicator": "cum_return", "params": {"period": 12}, "threshold": 0},
             {"type": "indicator_comparison", "indicator_a": "ema", "indicator_b": "ema",
              "params": {"period_a": 7, "period_b": 26}, "direction": "below"},
-            {"type": "indicator_above", "indicator": "rsi", "params": {"period": 8}, "threshold": 50,
-             "negate": True},  # rsi < 50
-            {"type": "indicator_above", "indicator": "macd_histogram", "params": {}, "threshold": 0,
-             "negate": True},  # macd < 0
+            {"type": "indicator_below", "indicator": "rsi", "params": {"period": 8}, "threshold": 50},
+            {"type": "indicator_below", "indicator": "macd_histogram", "params": {}, "threshold": 0},
             {"type": "bollinger_width_percentile", "params": {"period": 20, "lookback": 168}, "threshold": 0.2},
         ],
         "bear_min_votes": 4,
