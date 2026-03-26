@@ -152,8 +152,10 @@ class BayesianOptimizer:
         ohlcv: pd.DataFrame,
         param_space: dict[str, tuple[Any, Any, str]],
         n_trials: int = 100,
-        metric: str = "sharpe_ratio",
+        metric: str = "composite_score",
         seed: int = 42,
+        storage: str | None = None,
+        study_name: str | None = None,
     ) -> list[OptimizationTrial]:
         """Run Bayesian optimization with Optuna TPE sampler.
 
@@ -166,8 +168,13 @@ class BayesianOptimizer:
                 E.g. {"period": (5, 60, "int"), "threshold": (0.5, 0.9, "float")}.
             n_trials: Number of optimization trials. Default: 100.
             metric: Metric name from BacktestResult.metrics to maximize.
-                Default: "sharpe_ratio".
+                Default: "composite_score" (composite optimization metric).
             seed: Random seed for TPE sampler reproducibility. Default: 42.
+            storage: Optional Optuna storage URL (e.g. PostgreSQL connection
+                string with ``?options=-csearch_path=optuna``). When None,
+                study runs in-memory (backward compatible).
+            study_name: Optional study name for persistent storage. Defaults
+                to ``study_{seed}`` when storage is provided.
 
         Returns:
             List of OptimizationTrial sorted by metric_value descending.
@@ -176,7 +183,12 @@ class BayesianOptimizer:
         optuna.logging.set_verbosity(optuna.logging.WARNING)
 
         sampler = optuna.samplers.TPESampler(seed=seed)
-        study = optuna.create_study(direction="maximize", sampler=sampler)
+        study_kwargs: dict[str, Any] = {"direction": "maximize", "sampler": sampler}
+        if storage is not None:
+            study_kwargs["storage"] = storage
+            study_kwargs["study_name"] = study_name or f"study_{seed}"
+            study_kwargs["load_if_exists"] = True
+        study = optuna.create_study(**study_kwargs)
 
         def objective(trial: optuna.Trial) -> float:
             params: dict[str, Any] = {}
