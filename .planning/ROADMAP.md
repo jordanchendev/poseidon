@@ -84,7 +84,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 10. Voting Strategy Foundation | 2/2 | Complete   | 2026-03-26 |
+| 10. Voting Strategy Foundation | 2/2 | Complete    | 2026-03-26 |
 | 11. Experiment Infrastructure | 0/TBD | Not started | - |
 | 12. AutoResearch Loop | 0/TBD | Not started | - |
 | 13. Regime Classification | 0/TBD | Not started | - |
