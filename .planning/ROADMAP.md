@@ -1,7 +1,7 @@
 # Roadmap: Poseidon
 
 **Created:** 2026-03-20
-**Updated:** 2026-03-25
+**Updated:** 2026-03-26
 **Granularity:** standard
 
 ## Milestones
@@ -39,7 +39,10 @@ Phases 1-9 delivered the full trading signal platform: Docker infrastructure, da
   3. All six Nunchi-derived signal configs (dual momentum, EMA crossover, RSI(8), MACD(14,23,9), Bollinger squeeze) are loadable as RuleStrategy JSON and produce non-trivial signals on historical crypto data
   4. Composite scoring formula (sharpe * sqrt(min(trades/50,1.0)) - dd_penalty - turnover_penalty, with hard cutoffs at <10 trades / >50% drawdown / >50% capital loss) is callable from backtest metrics and returns expected scores on known inputs
   5. ATR-based trailing stop exit fires correctly during backtest bar-by-bar simulation, and fixed position sizing (default 8%) is applied uniformly to all entries
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 10-01-PLAN.md -- DSL vote combinator, new condition evaluators, column resolution fixes, composite scoring
+- [ ] 10-02-PLAN.md -- VotingStrategy class with ATR trailing stop, Nunchi 6-signal JSON config, integration
 
 ### Phase 11: Experiment Infrastructure
 **Goal**: Persistent experiment tracking and parameter search pipeline are operational so that every Optuna trial and experiment run is recorded, resumable, and validated against walk-forward and holdout gates
@@ -81,7 +84,7 @@ Phases 1-9 delivered the full trading signal platform: Docker infrastructure, da
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 10. Voting Strategy Foundation | 0/TBD | Not started | - |
+| 10. Voting Strategy Foundation | 0/2 | Planning complete | - |
 | 11. Experiment Infrastructure | 0/TBD | Not started | - |
 | 12. AutoResearch Loop | 0/TBD | Not started | - |
 | 13. Regime Classification | 0/TBD | Not started | - |
@@ -89,3 +92,4 @@ Phases 1-9 delivered the full trading signal platform: Docker infrastructure, da
 ---
 *Roadmap created: 2026-03-20*
 *Updated for v2.0: 2026-03-25*
+*Phase 10 planned: 2026-03-26*
