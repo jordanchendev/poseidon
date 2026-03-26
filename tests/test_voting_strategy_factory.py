@@ -19,6 +19,7 @@ import pytest
 from poseidon.backtest.voting_strategy_factory import (
     PARAM_BOUNDS,
     VotingStrategyFactory,
+    _build_config_from_params,
 )
 from poseidon.strategies.voting_strategy import VotingStrategy
 
@@ -65,8 +66,10 @@ class TestFromTrial:
             "momentum_short": 6,
             "momentum_long": 12,
             "min_votes": 4,
-            "atr_multiplier": 2.0,
+            "atr_multiplier": 5.5,
             "position_pct": 0.08,
+            "bear_min_votes": 4,
+            "bear_position_pct": 0.06,
         }
         return optuna.trial.FixedTrial(params)
 
@@ -84,7 +87,7 @@ class TestFromTrial:
         assert strategy.symbol == "ETHUSDT"
         assert strategy._min_votes == 4
         assert strategy._position_pct == 0.08
-        assert strategy._atr_multiplier == 2.0
+        assert strategy._atr_multiplier == 5.5
 
     def test_from_trial_builds_six_sub_signals(self, fixed_trial: optuna.trial.FixedTrial) -> None:
         strategy = VotingStrategyFactory.from_trial(
@@ -127,10 +130,193 @@ class TestRoundTrip:
 class TestParamBounds:
     """PARAM_BOUNDS definition coverage."""
 
-    def test_param_bounds_has_twelve_entries(self) -> None:
-        assert len(PARAM_BOUNDS) == 12
+    def test_param_bounds_has_fourteen_entries(self) -> None:
+        """14 entries: 12 original + bear_min_votes + bear_position_pct."""
+        assert len(PARAM_BOUNDS) == 14
 
     def test_param_bounds_types_valid(self) -> None:
         for name, (low, high, ptype) in PARAM_BOUNDS.items():
             assert ptype in ("int", "float"), f"{name} has invalid type {ptype}"
             assert low < high, f"{name}: low ({low}) >= high ({high})"
+
+    def test_param_bounds_atr_multiplier_range(self) -> None:
+        """ATR multiplier range should be (3.0, 8.0) per D-06."""
+        assert PARAM_BOUNDS["atr_multiplier"] == (3.0, 8.0, "float")
+
+    def test_param_bounds_bear_min_votes(self) -> None:
+        """Bear min_votes range should be (3, 6, int) per D-22."""
+        assert PARAM_BOUNDS["bear_min_votes"] == (3, 6, "int")
+
+    def test_param_bounds_bear_position_pct(self) -> None:
+        """Bear position_pct range should be (0.03, 0.12, float) per D-22."""
+        assert PARAM_BOUNDS["bear_position_pct"] == (0.03, 0.12, "float")
+
+
+class TestBearSignalGeneration:
+    """_build_config_from_params generates bear_sub_signals with inverted conditions."""
+
+    def _default_params(self) -> dict:
+        """Minimal params dict for _build_config_from_params."""
+        return {
+            "rsi_period": 10,
+            "ema_short": 7,
+            "ema_long": 26,
+            "macd_fast": 14,
+            "macd_slow": 23,
+            "macd_signal": 9,
+            "bollinger_period": 20,
+            "momentum_short": 6,
+            "momentum_long": 12,
+            "min_votes": 4,
+            "position_pct": 0.08,
+            "bear_min_votes": 4,
+            "bear_position_pct": 0.06,
+        }
+
+    def test_build_config_contains_bear_sub_signals(self) -> None:
+        """Config output must contain bear_sub_signals key."""
+        params = self._default_params()
+        config = _build_config_from_params(
+            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+        )
+        assert "bear_sub_signals" in config
+        assert len(config["bear_sub_signals"]) == 6
+
+    def test_bear_rsi_inverted(self) -> None:
+        """Bear RSI signal (index 3) should use indicator_below with threshold=50."""
+        params = self._default_params()
+        config = _build_config_from_params(
+            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+        )
+        bear_rsi = config["bear_sub_signals"][3]
+        assert bear_rsi["type"] == "indicator_below"
+        assert bear_rsi["indicator"] == "rsi"
+        assert bear_rsi["threshold"] == 50
+
+    def test_bear_macd_inverted(self) -> None:
+        """Bear MACD signal (index 4) should use indicator_below with threshold=0."""
+        params = self._default_params()
+        config = _build_config_from_params(
+            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+        )
+        bear_macd = config["bear_sub_signals"][4]
+        assert bear_macd["type"] == "indicator_below"
+        assert bear_macd["indicator"] == "macd_histogram"
+        assert bear_macd["threshold"] == 0
+
+    def test_bull_bb_threshold_085(self) -> None:
+        """Bull BB squeeze threshold should be 0.85 (not 0.2) per D-14."""
+        params = self._default_params()
+        config = _build_config_from_params(
+            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+        )
+        bull_bb = config["sub_signals"][5]
+        assert bull_bb["type"] == "bollinger_width_percentile"
+        assert bull_bb["threshold"] == 0.85
+
+    def test_build_config_includes_bear_params(self) -> None:
+        """Config output includes bear_min_votes and bear_position_pct."""
+        params = self._default_params()
+        config = _build_config_from_params(
+            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+        )
+        assert config["bear_min_votes"] == 4
+        assert config["bear_position_pct"] == 0.06
+
+    def test_bear_ema_crossover_inverted(self) -> None:
+        """Bear EMA crossover (index 2) should have direction='below'."""
+        params = self._default_params()
+        config = _build_config_from_params(
+            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+        )
+        bear_ema = config["bear_sub_signals"][2]
+        assert bear_ema["type"] == "indicator_comparison"
+        assert bear_ema["direction"] == "below"
+
+
+class TestToConfigDictBear:
+    """to_config_dict includes bear fields."""
+
+    def test_to_config_dict_includes_bear_fields(self) -> None:
+        """to_config_dict output must include bear_sub_signals, bear_min_votes, bear_position_pct."""
+        config = {
+            "name": "test",
+            "symbol": "BTCUSDT",
+            "market": "crypto_spot",
+            "interval": "1h",
+            "min_votes": 4,
+            "position_pct": 0.08,
+            "bear_min_votes": 4,
+            "bear_position_pct": 0.06,
+            "sub_signals": [
+                {"type": "indicator_above", "indicator": "rsi", "params": {"period": 14}, "threshold": 50},
+                {"type": "indicator_above", "indicator": "rsi", "params": {"period": 14}, "threshold": 40},
+                {"type": "indicator_above", "indicator": "rsi", "params": {"period": 14}, "threshold": 30},
+                {"type": "indicator_above", "indicator": "rsi", "params": {"period": 14}, "threshold": 20},
+            ],
+            "bear_sub_signals": [
+                {"type": "indicator_below", "indicator": "rsi", "params": {"period": 14}, "threshold": 50},
+                {"type": "indicator_below", "indicator": "rsi", "params": {"period": 14}, "threshold": 40},
+                {"type": "indicator_below", "indicator": "rsi", "params": {"period": 14}, "threshold": 30},
+                {"type": "indicator_below", "indicator": "rsi", "params": {"period": 14}, "threshold": 20},
+            ],
+        }
+        strategy = VotingStrategyFactory.from_config(config)
+        extracted = VotingStrategyFactory.to_config_dict(strategy)
+        assert "bear_sub_signals" in extracted
+        assert extracted["bear_min_votes"] == 4
+        assert extracted["bear_position_pct"] == 0.06
+        assert len(extracted["bear_sub_signals"]) == 4
+
+
+class TestFromConfigAtrDefault:
+    """from_config atr_multiplier default is 5.5."""
+
+    def test_from_config_atr_default_5_5(self) -> None:
+        """When no atr_multiplier in config, default should be 5.5."""
+        config = {
+            "name": "test",
+            "symbol": "BTCUSDT",
+            "market": "crypto_spot",
+            "interval": "1h",
+            "min_votes": 4,
+            "position_pct": 0.08,
+            "sub_signals": [
+                {"type": "indicator_above", "indicator": "rsi", "params": {"period": 14}, "threshold": 50},
+                {"type": "indicator_above", "indicator": "rsi", "params": {"period": 14}, "threshold": 40},
+                {"type": "indicator_above", "indicator": "rsi", "params": {"period": 14}, "threshold": 30},
+                {"type": "indicator_above", "indicator": "rsi", "params": {"period": 14}, "threshold": 20},
+            ],
+        }
+        strategy = VotingStrategyFactory.from_config(config)
+        assert strategy._atr_multiplier == 5.5
+
+
+class TestFromTrialBear:
+    """from_trial suggests bear_min_votes and bear_position_pct."""
+
+    def test_from_trial_suggests_bear_params(self) -> None:
+        """from_trial should suggest bear_min_votes and bear_position_pct from PARAM_BOUNDS."""
+        params = {
+            "rsi_period": 10,
+            "ema_short": 7,
+            "ema_long": 26,
+            "macd_fast": 14,
+            "macd_slow": 23,
+            "macd_signal": 9,
+            "bollinger_period": 20,
+            "momentum_short": 6,
+            "momentum_long": 12,
+            "min_votes": 4,
+            "atr_multiplier": 5.5,
+            "position_pct": 0.08,
+            "bear_min_votes": 4,
+            "bear_position_pct": 0.06,
+        }
+        trial = optuna.trial.FixedTrial(params)
+        strategy = VotingStrategyFactory.from_trial(
+            trial, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+        )
+        assert strategy._bear_min_votes == 4
+        assert strategy._bear_position_pct == 0.06
+        assert len(strategy._bear_sub_signals) == 6
