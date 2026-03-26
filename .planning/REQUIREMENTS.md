@@ -109,11 +109,11 @@ Strategy pivot from ML direction prediction to rule-based voting + automated par
 
 ### Parameter Search
 
-- [ ] **PARM-01**: Optuna studies persist to PostgreSQL via RDBStorage (not in-memory)
-- [ ] **PARM-02**: Walk-forward validation is mandatory gate for all parameter search results (WFE >= 50%)
+- [x] **PARM-01**: Optuna studies persist to PostgreSQL via RDBStorage (not in-memory)
+- [x] **PARM-02**: Walk-forward validation is mandatory gate for all parameter search results (WFE >= 50%)
 - [ ] **PARM-03**: Holdout data split defined and locked before any experiments run (irreversible decision point)
-- [ ] **PARM-04**: Per-market/timeframe parameter search discovers optimal signal parameters independently
-- [ ] **PARM-05**: Trial count limited (50-100 per search) to prevent overfitting on finite data
+- [x] **PARM-04**: Per-market/timeframe parameter search discovers optimal signal parameters independently
+- [x] **PARM-05**: Trial count limited (50-100 per search) to prevent overfitting on finite data
 
 ## Future Requirements
 
@@ -166,11 +166,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RGME-01 | Phase 13 | Pending |
 | RGME-02 | Phase 13 | Pending |
 | RGME-03 | Phase 13 | Pending |
-| PARM-01 | Phase 11 | Pending |
-| PARM-02 | Phase 11 | Pending |
+| PARM-01 | Phase 11 | Complete |
+| PARM-02 | Phase 11 | Complete |
 | PARM-03 | Phase 11 | Pending |
-| PARM-04 | Phase 11 | Pending |
-| PARM-05 | Phase 11 | Pending |
+| PARM-04 | Phase 11 | Complete |
+| PARM-05 | Phase 11 | Complete |
 
 **Coverage:**
 - v2.0 requirements: 20 total

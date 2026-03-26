@@ -23,7 +23,7 @@ Phases 1-9 delivered the full trading signal platform: Docker infrastructure, da
 ## Phases
 
 - [x] **Phase 10: Voting Strategy Foundation** - VotingStrategy class, DSL vote type, Nunchi 6-signal config, composite scoring, exit logic (completed 2026-03-26)
-- [ ] **Phase 11: Experiment Infrastructure** - Optuna RDBStorage, ExperimentTracker, VotingStrategyFactory, holdout protocol, parameter search pipeline
+- [x] **Phase 11: Experiment Infrastructure** - Optuna RDBStorage, ExperimentTracker, VotingStrategyFactory, holdout protocol, parameter search pipeline (completed 2026-03-26)
 - [ ] **Phase 12: AutoResearch Loop** - StrategyMutator, 3-layer architecture enforcement, AutoResearchRunner Celery task, immutability boundary
 - [ ] **Phase 13: Regime Classification (Optional, Gated)** - XGBoostRegimeModel classifier, RegimeRouter, outperformance gate vs static baseline
 
@@ -55,11 +55,11 @@ Plans:
   4. Walk-forward validation (WFE >= 50%) is enforced as a mandatory gate on all parameter search results -- trials failing WFE are recorded but marked as rejected
   5. Holdout data split (last 20% of each dataset) is defined, documented, and enforced before any experiment runs -- code raises an error if optimization touches holdout date ranges
   6. Per-market/timeframe parameter search runs independently and trial count is capped (50-100 per search) to prevent overfitting
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 Plans:
 - [x] 11-01-PLAN.md -- ExperimentRecord model, Alembic migration (experiments table + optuna schema), ExperimentTracker repository, HoldoutConfig
 - [x] 11-02-PLAN.md -- VotingStrategyFactory with from_config/from_trial, PARAM_BOUNDS, round-trip tests
-- [ ] 11-03-PLAN.md -- BayesianOptimizer RDBStorage upgrade, ParameterSearchPipeline with WFE gate and holdout enforcement
+- [x] 11-03-PLAN.md -- BayesianOptimizer RDBStorage upgrade, ParameterSearchPipeline with WFE gate and holdout enforcement
 
 ### Phase 12: AutoResearch Loop
 **Goal**: An autonomous experiment runner iterates strategy mutations, evaluates them via backtest, and logs results -- all without modifying the scoring formula, backtest runner, or feature engine code
@@ -89,7 +89,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 10. Voting Strategy Foundation | 2/2 | Complete    | 2026-03-26 |
-| 11. Experiment Infrastructure | 2/3 | In Progress|  |
+| 11. Experiment Infrastructure | 3/3 | Complete   | 2026-03-26 |
 | 12. AutoResearch Loop | 0/TBD | Not started | - |
 | 13. Regime Classification | 0/TBD | Not started | - |
 
