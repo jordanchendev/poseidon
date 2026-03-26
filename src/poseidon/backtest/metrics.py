@@ -91,6 +91,12 @@ def compute_composite_score(metrics: dict) -> float:
 
     Formula: sharpe * sqrt(min(trades/50, 1.0)) - dd_penalty - turnover_penalty
 
+    dd_penalty = max(0, max_drawdown - 0.15) * 0.05
+        Drawdown under 15% incurs zero penalty (Nunchi D-15).
+
+    turnover_penalty = max(0, turnover_ratio - 500) * 0.001
+        where turnover_ratio = trade_count * avg_trade_value / capital (D-16).
+
     Hard cutoffs (return 0.0 immediately):
     - trade_count < 10
     - max_drawdown > 0.50
@@ -107,7 +113,11 @@ def compute_composite_score(metrics: dict) -> float:
         return 0.0
 
     trade_factor = math.sqrt(min(trade_count / 50.0, 1.0))
-    dd_penalty = max_drawdown ** 2
-    turnover_penalty = max(0, (trade_count - 200) / 1000.0)
+    dd_penalty = max(0, max_drawdown - 0.15) * 0.05
+
+    avg_trade_value = metrics.get("avg_trade_value", 0.0)
+    capital = metrics.get("initial_capital", 100000.0)
+    turnover_ratio = (trade_count * avg_trade_value / capital) if capital > 0 else 0.0
+    turnover_penalty = max(0, turnover_ratio - 500) * 0.001
 
     return sharpe * trade_factor - dd_penalty - turnover_penalty
