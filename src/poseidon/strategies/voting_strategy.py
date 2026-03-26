@@ -70,6 +70,7 @@ class VotingStrategy(BaseStrategy):
         # Trailing stop state
         self._in_position: bool = False
         self._position_high_watermark: float | None = None
+        self._warned_signals: set[str] = set()  # deduplicate sub-signal warnings
 
     def evaluate(self, features: pd.DataFrame) -> list[Signal]:
         """Evaluate voting conditions and trailing stop against feature data."""
@@ -121,7 +122,10 @@ class VotingStrategy(BaseStrategy):
                 if evaluate_condition(cond, features, row_idx):
                     vote_count += 1
             except (ValueError, KeyError) as e:
-                logger.warning("VotingStrategy '%s' sub-signal error: %s", self.name, e)
+                err_key = str(e)
+                if err_key not in self._warned_signals:
+                    self._warned_signals.add(err_key)
+                    logger.warning("VotingStrategy '%s' sub-signal error: %s", self.name, e)
 
         # 3. Emit LONG if threshold met and not already in position
         if vote_count >= self._min_votes and not self._in_position:
@@ -141,11 +145,59 @@ class VotingStrategy(BaseStrategy):
             self._in_position = True
             self._position_high_watermark = close
 
-        logger.info(
+        logger.debug(
             "VotingStrategy '%s': %d/%d votes (need %d) | in_position=%s",
             self.name, vote_count, len(self._sub_signals), self._min_votes, self._in_position,
         )
         return signals
+
+    def get_feature_specs(self) -> list[tuple[str, dict]]:
+        """Build feature specs dynamically from sub_signals config.
+
+        Ensures FeatureEngine computes exactly the features this strategy
+        needs, regardless of what periods Optuna chose.
+        """
+        specs: list[tuple[str, dict]] = []
+        seen: set[str] = set()
+
+        def _add(name: str, params: dict) -> None:
+            key = f"{name}:{sorted(params.items())}"
+            if key not in seen:
+                seen.add(key)
+                specs.append((name, params))
+
+        for cond in self._sub_signals:
+            cond_type = cond.get("type", "")
+            indicator = cond.get("indicator", "")
+            params = cond.get("params", {})
+
+            if cond_type == "indicator_above" and indicator == "cum_return":
+                _add("cum_return", {"period": params.get("period", 6)})
+            elif cond_type == "indicator_above" and indicator == "rsi":
+                _add("rsi", {"period": params.get("period", 8)})
+            elif cond_type == "indicator_above" and indicator == "macd_histogram":
+                _add("macd", {
+                    "fast_period": params.get("fast_period", 14),
+                    "slow_period": params.get("slow_period", 23),
+                    "signal_period": params.get("signal_period", 9),
+                })
+            elif cond_type == "indicator_comparison":
+                period_a = params.get("period_a")
+                period_b = params.get("period_b")
+                ind_a = cond.get("indicator_a", "ema")
+                ind_b = cond.get("indicator_b", "ema")
+                if period_a is not None:
+                    _add(ind_a, {"period": period_a})
+                if period_b is not None:
+                    _add(ind_b, {"period": period_b})
+            elif cond_type == "bollinger_width_percentile":
+                _add("bollinger", {"period": params.get("period", 20), "num_std": 2.0})
+
+        # Always need ATR for trailing stop and returns
+        _add("atr", {"period": self._atr_period})
+        _add("returns", {})
+
+        return specs
 
     def validate_config(self) -> bool:
         """Validate that the strategy configuration is complete and correct."""
@@ -167,3 +219,4 @@ class VotingStrategy(BaseStrategy):
         """Reset trailing stop state between backtest runs."""
         self._in_position = False
         self._position_high_watermark = None
+        self._warned_signals.clear()

@@ -166,6 +166,9 @@ class BacktestRunner:
     ) -> BacktestResult:
         """Core event loop implementation."""
         # Step 1: Compute features ONCE -- same code path as live prediction (BT-01)
+        # If no feature_specs given, ask the strategy for its required specs
+        if feature_specs is None and hasattr(self.strategy, "get_feature_specs"):
+            feature_specs = self.strategy.get_feature_specs()
         features = self.feature_engine.compute_from_df(ohlcv, feature_specs)
 
         # Step 2: Determine warmup period
