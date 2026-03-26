@@ -271,10 +271,18 @@ class BacktestPortfolio:
         Args:
             time: Timestamp for this equity point.
             current_price: Current market price for mark-to-market valuation.
+
+        Short positions are valued as (entry_price - current_price) * quantity,
+        reflecting profit when price drops and loss when price rises (D-12).
         """
-        position_value = sum(
-            pos["quantity"] * current_price for pos in self.positions.values()
-        )
+        position_value = 0.0
+        for pos in self.positions.values():
+            if pos.get("side") == "short":
+                # Short: value = (entry_price - current_price) * quantity
+                position_value += (pos["entry_price"] - current_price) * pos["quantity"]
+            else:
+                # Long: value = quantity * current_price
+                position_value += pos["quantity"] * current_price
         current_equity = self.cash + position_value
 
         self._peak_equity = max(self._peak_equity, current_equity)
