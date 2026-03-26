@@ -76,7 +76,9 @@ def read_ohlcv(
 
     rows = query.all()
     if not rows:
-        return pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"])
+        df = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        df.index = pd.DatetimeIndex([], name="time")
+        return df
 
     data = [
         {
@@ -89,7 +91,10 @@ def read_ohlcv(
         }
         for r in rows
     ]
-    return pd.DataFrame(data)
+    df = pd.DataFrame(data)
+    df = df.set_index("time")
+    df.index = pd.DatetimeIndex(df.index)
+    return df
 
 
 def write_fundamentals(session: Session, symbol: str, market: str, report_date: date, data: dict) -> Fundamentals:
