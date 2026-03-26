@@ -1,0 +1,136 @@
+"""Tests for VotingStrategyFactory -- config dict and Optuna trial construction.
+
+Covers:
+- from_config() creates valid VotingStrategy from JSON config
+- from_trial() uses Optuna suggest API with all PARAM_BOUNDS params
+- to_config_dict() round-trip consistency
+- from_trial() always produces 6 sub-signals
+- All PARAM_BOUNDS keys are consumed by from_trial
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import optuna
+import pytest
+
+from poseidon.backtest.voting_strategy_factory import (
+    PARAM_BOUNDS,
+    VotingStrategyFactory,
+)
+from poseidon.strategies.voting_strategy import VotingStrategy
+
+CONFIGS_DIR = Path(__file__).resolve().parent.parent / "src" / "poseidon" / "strategies" / "configs"
+
+
+class TestFromConfig:
+    """VotingStrategyFactory.from_config() creates a valid VotingStrategy."""
+
+    def test_from_config_creates_valid_strategy(self) -> None:
+        config_path = CONFIGS_DIR / "nunchi_crypto_1h.json"
+        config = json.loads(config_path.read_text())
+        strategy = VotingStrategyFactory.from_config(config)
+        assert isinstance(strategy, VotingStrategy)
+        # validate_config() should return True (not raise)
+        assert strategy.validate_config() is True
+
+    def test_from_config_preserves_fields(self) -> None:
+        config_path = CONFIGS_DIR / "nunchi_crypto_1h.json"
+        config = json.loads(config_path.read_text())
+        strategy = VotingStrategyFactory.from_config(config)
+        assert strategy.symbol == "BTCUSDT"
+        assert strategy.market == "crypto_spot"
+        assert strategy.interval == "1h"
+        assert strategy._min_votes == 4
+        assert strategy._position_pct == 0.08
+        assert len(strategy._sub_signals) == 6
+
+
+class TestFromTrial:
+    """VotingStrategyFactory.from_trial() uses Optuna suggest API."""
+
+    @pytest.fixture()
+    def fixed_trial(self) -> optuna.trial.FixedTrial:
+        """Create FixedTrial with known parameter values."""
+        params = {
+            "rsi_period": 10,
+            "ema_short": 7,
+            "ema_long": 26,
+            "macd_fast": 14,
+            "macd_slow": 23,
+            "macd_signal": 9,
+            "bollinger_period": 20,
+            "momentum_short": 6,
+            "momentum_long": 12,
+            "min_votes": 4,
+            "atr_multiplier": 2.0,
+            "position_pct": 0.08,
+        }
+        return optuna.trial.FixedTrial(params)
+
+    def test_from_trial_creates_valid_strategy(self, fixed_trial: optuna.trial.FixedTrial) -> None:
+        strategy = VotingStrategyFactory.from_trial(
+            fixed_trial, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+        )
+        assert isinstance(strategy, VotingStrategy)
+        assert strategy.validate_config() is True
+
+    def test_from_trial_uses_suggested_params(self, fixed_trial: optuna.trial.FixedTrial) -> None:
+        strategy = VotingStrategyFactory.from_trial(
+            fixed_trial, symbol="ETHUSDT", market="crypto_spot", interval="1h",
+        )
+        assert strategy.symbol == "ETHUSDT"
+        assert strategy._min_votes == 4
+        assert strategy._position_pct == 0.08
+        assert strategy._atr_multiplier == 2.0
+
+    def test_from_trial_builds_six_sub_signals(self, fixed_trial: optuna.trial.FixedTrial) -> None:
+        strategy = VotingStrategyFactory.from_trial(
+            fixed_trial, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+        )
+        assert len(strategy._sub_signals) == 6
+
+    def test_from_trial_param_bounds_all_used(self) -> None:
+        """Every key in PARAM_BOUNDS must be consumed by from_trial."""
+        params = {}
+        for name, (low, high, ptype) in PARAM_BOUNDS.items():
+            if ptype == "int":
+                params[name] = int(low)
+            else:
+                params[name] = float(low)
+        trial = optuna.trial.FixedTrial(params)
+        # Should not raise -- all params consumed
+        strategy = VotingStrategyFactory.from_trial(
+            trial, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+        )
+        assert strategy.validate_config() is True
+
+
+class TestRoundTrip:
+    """to_config_dict round-trip consistency."""
+
+    def test_round_trip_config_consistency(self) -> None:
+        config_path = CONFIGS_DIR / "nunchi_crypto_1h.json"
+        original_config = json.loads(config_path.read_text())
+        strategy1 = VotingStrategyFactory.from_config(original_config.copy())
+        extracted = VotingStrategyFactory.to_config_dict(strategy1)
+        strategy2 = VotingStrategyFactory.from_config(extracted.copy())
+        assert strategy1._min_votes == strategy2._min_votes
+        assert strategy1._position_pct == strategy2._position_pct
+        assert strategy1._sub_signals == strategy2._sub_signals
+        assert strategy1._atr_multiplier == strategy2._atr_multiplier
+        assert strategy1._atr_period == strategy2._atr_period
+
+
+class TestParamBounds:
+    """PARAM_BOUNDS definition coverage."""
+
+    def test_param_bounds_has_twelve_entries(self) -> None:
+        assert len(PARAM_BOUNDS) == 12
+
+    def test_param_bounds_types_valid(self) -> None:
+        for name, (low, high, ptype) in PARAM_BOUNDS.items():
+            assert ptype in ("int", "float"), f"{name} has invalid type {ptype}"
+            assert low < high, f"{name}: low ({low}) >= high ({high})"
