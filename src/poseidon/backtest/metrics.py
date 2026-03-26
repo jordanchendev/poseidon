@@ -36,10 +36,10 @@ def compute_metrics(
     total_return = (equity_series.iloc[-1] / equity_series.iloc[0]) - 1
     n_years = len(equity_series) / bars_per_year
 
-    if n_years > 0:
+    if n_years > 0 and (1 + total_return) > 0:
         ann_return = (1 + total_return) ** (1 / n_years) - 1
     else:
-        ann_return = 0.0
+        ann_return = -1.0 if total_return <= -1 else 0.0
 
     # Sharpe ratio (risk-free rate = 0, sample std ddof=1)
     if len(returns) > 0 and returns.std() > 0:
@@ -71,16 +71,23 @@ def compute_metrics(
     else:
         win_rate = avg_win = avg_loss = profit_factor = 0.0
 
+    def _safe(v: float) -> float:
+        """Replace NaN/Inf with 0.0 for JSON/DB safety."""
+        v = float(v)
+        if np.isnan(v) or np.isinf(v):
+            return 0.0
+        return v
+
     return {
-        "total_return": float(total_return),
-        "annualized_return": float(ann_return),
-        "sharpe_ratio": float(sharpe),
-        "max_drawdown": max_drawdown,
-        "calmar_ratio": float(calmar),
-        "win_rate": float(win_rate),
-        "profit_factor": float(profit_factor) if not np.isinf(profit_factor) else float("inf"),
-        "avg_win": float(avg_win),
-        "avg_loss": float(avg_loss),
+        "total_return": _safe(total_return),
+        "annualized_return": _safe(ann_return),
+        "sharpe_ratio": _safe(sharpe),
+        "max_drawdown": _safe(max_drawdown),
+        "calmar_ratio": _safe(calmar),
+        "win_rate": _safe(win_rate),
+        "profit_factor": _safe(profit_factor),
+        "avg_win": _safe(avg_win),
+        "avg_loss": _safe(avg_loss),
         "trade_count": len(trades),
         "closed_trade_count": len(closed_trades) if trades else 0,
     }
