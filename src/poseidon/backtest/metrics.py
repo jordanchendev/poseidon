@@ -6,6 +6,8 @@ and a list of completed trades.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 
@@ -82,3 +84,30 @@ def compute_metrics(
         "trade_count": len(trades),
         "closed_trade_count": len(closed_trades) if trades else 0,
     }
+
+
+def compute_composite_score(metrics: dict) -> float:
+    """Compute composite optimization score from backtest metrics.
+
+    Formula: sharpe * sqrt(min(trades/50, 1.0)) - dd_penalty - turnover_penalty
+
+    Hard cutoffs (return 0.0 immediately):
+    - trade_count < 10
+    - max_drawdown > 0.50
+    - total_return < -0.50 (>50% capital loss)
+
+    This is the single optimization metric for autoresearch (D-08).
+    """
+    trade_count = metrics.get("trade_count", 0)
+    max_drawdown = metrics.get("max_drawdown", 1.0)
+    total_return = metrics.get("total_return", -1.0)
+    sharpe = metrics.get("sharpe_ratio", 0.0)
+
+    if trade_count < 10 or max_drawdown > 0.50 or total_return < -0.50:
+        return 0.0
+
+    trade_factor = math.sqrt(min(trade_count / 50.0, 1.0))
+    dd_penalty = max_drawdown ** 2
+    turnover_penalty = max(0, (trade_count - 200) / 1000.0)
+
+    return sharpe * trade_factor - dd_penalty - turnover_penalty
