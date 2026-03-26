@@ -70,9 +70,9 @@ Plans:
   2. Three-layer architecture is enforced at runtime: FeatureEngine, BacktestRunner, and RiskEngine code paths are read-only during any autoresearch run; only RuleConfig JSON is mutable
   3. AutoResearchRunner executes as a Celery task that completes a full cycle (mutate config -> backtest -> evaluate -> log) and writes results to ExperimentTracker -- at least 10 consecutive experiments run unattended without error
   4. Immutability boundary is provably enforced: attempting to import or call any evaluation-layer modification API from within the autoresearch context raises an explicit error
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
-- [ ] 12-01-PLAN.md -- Immutability guard (contextvar + decorator), StrategyMutator thin wrapper
+- [x] 12-01-PLAN.md -- Immutability guard (contextvar + decorator), StrategyMutator thin wrapper
 - [ ] 12-02-PLAN.md -- AutoResearchRunner Celery task, report generation, integration tests
 
 ### Phase 13: Regime Classification (Optional, Gated)
@@ -93,7 +93,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 10. Voting Strategy Foundation | 2/2 | Complete    | 2026-03-26 |
 | 11. Experiment Infrastructure | 3/3 | Complete    | 2026-03-26 |
-| 12. AutoResearch Loop | 0/2 | Planned | - |
+| 12. AutoResearch Loop | 1/2 | In Progress|  |
 | 13. Regime Classification | 0/TBD | Not started | - |
 
 ---

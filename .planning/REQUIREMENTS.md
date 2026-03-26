@@ -96,10 +96,10 @@ Strategy pivot from ML direction prediction to rule-based voting + automated par
 
 - [ ] **AUTO-01**: ExperimentTracker persists experiment runs (config, metrics, timestamps) in PostgreSQL with unique experiment IDs
 - [ ] **AUTO-02**: VotingStrategyFactory generates VotingStrategy instances from JSON config files (the "variable layer")
-- [ ] **AUTO-03**: StrategyMutator varies strategy parameters within defined bounds (signal periods, thresholds, vote counts)
-- [ ] **AUTO-04**: 3-layer architecture enforced: immutable layer (FeatureEngine+BacktestRunner+RiskEngine), mutable layer (strategy JSON config), guidance layer (program.md)
-- [ ] **AUTO-05**: AutoResearchRunner as Celery task that iterates: mutate config -> backtest -> evaluate -> log -> repeat
-- [ ] **AUTO-06**: Immutability boundary enforced — autoresearch cannot modify scoring formula, backtest runner, or feature engine code
+- [x] **AUTO-03**: StrategyMutator varies strategy parameters within defined bounds (signal periods, thresholds, vote counts)
+- [x] **AUTO-04**: 3-layer architecture enforced: immutable layer (FeatureEngine+BacktestRunner+RiskEngine), mutable layer (strategy JSON config), guidance layer (program.md)
+- [x] **AUTO-05**: AutoResearchRunner as Celery task that iterates: mutate config -> backtest -> evaluate -> log -> repeat
+- [x] **AUTO-06**: Immutability boundary enforced — autoresearch cannot modify scoring formula, backtest runner, or feature engine code
 
 ### Regime Classification (Optional — Gated)
 
@@ -159,10 +159,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VOTE-06 | Phase 10 | Complete |
 | AUTO-01 | Phase 11 | Pending |
 | AUTO-02 | Phase 11 | Pending |
-| AUTO-03 | Phase 12 | Pending |
-| AUTO-04 | Phase 12 | Pending |
-| AUTO-05 | Phase 12 | Pending |
-| AUTO-06 | Phase 12 | Pending |
+| AUTO-03 | Phase 12 | Complete |
+| AUTO-04 | Phase 12 | Complete |
+| AUTO-05 | Phase 12 | Complete |
+| AUTO-06 | Phase 12 | Complete |
 | RGME-01 | Phase 13 | Pending |
 | RGME-02 | Phase 13 | Pending |
 | RGME-03 | Phase 13 | Pending |
