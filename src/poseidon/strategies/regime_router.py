@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_REGIME_CONFIGS: dict[str, dict] = {
-    "high_vol": {"min_votes": 5, "position_pct": 0.05},
-    "medium_vol": {"min_votes": 4, "position_pct": 0.08},
-    "low_vol": {"min_votes": 3, "position_pct": 0.10},
+    "high_vol": {"min_votes": 5, "position_pct": 0.05, "bear_min_votes": 4, "bear_position_pct": 0.04},
+    "medium_vol": {"min_votes": 4, "position_pct": 0.08, "bear_min_votes": 4, "bear_position_pct": 0.06},
+    "low_vol": {"min_votes": 3, "position_pct": 0.10, "bear_min_votes": 5, "bear_position_pct": 0.05},
 }
 
 
@@ -66,7 +66,7 @@ class RegimeRouter(BaseStrategy):
         self.interval = self._strategy.interval
 
     def evaluate(self, features: pd.DataFrame) -> list[Signal]:
-        """Evaluate with per-regime parameter overrides."""
+        """Evaluate with per-regime parameter overrides (4 params: bull + bear)."""
         if self.enabled and not features.empty:
             regime_pred = self._regime_model.predict(features)
             current_regime = regime_pred.iloc[-1]["prediction"]
@@ -77,10 +77,18 @@ class RegimeRouter(BaseStrategy):
             self._strategy._position_pct = overrides.get(
                 "position_pct", self._base_config.get("position_pct", 0.08)
             )
+            self._strategy._bear_min_votes = overrides.get(
+                "bear_min_votes", self._base_config.get("bear_min_votes", 4)
+            )
+            self._strategy._bear_position_pct = overrides.get(
+                "bear_position_pct", self._base_config.get("bear_position_pct", 0.06)
+            )
         else:
             # Disabled: reset to base config values
             self._strategy._min_votes = self._base_config.get("min_votes", 4)
             self._strategy._position_pct = self._base_config.get("position_pct", 0.08)
+            self._strategy._bear_min_votes = self._base_config.get("bear_min_votes", 4)
+            self._strategy._bear_position_pct = self._base_config.get("bear_position_pct", 0.06)
 
         return self._strategy.evaluate(features)
 
