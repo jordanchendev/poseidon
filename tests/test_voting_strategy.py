@@ -266,3 +266,102 @@ class TestPositionSizing:
         close_signals = [s for s in signals if s.action == SignalAction.CLOSE]
         assert len(close_signals) == 1
         assert close_signals[0].quantity_pct is None
+
+
+# ---------------------------------------------------------------------------
+# TestNunchiSignals — Nunchi 6-signal config integration tests
+# ---------------------------------------------------------------------------
+
+_CONFIG_PATH = Path(__file__).parent.parent / "src" / "poseidon" / "strategies" / "configs" / "nunchi_crypto_1h.json"
+
+
+def _load_nunchi_config() -> dict:
+    with open(_CONFIG_PATH) as f:
+        return json.load(f)
+
+
+class TestNunchiSignals:
+    """Nunchi 6-signal config integration tests."""
+
+    def test_json_loads_without_error(self):
+        """The JSON file is valid JSON."""
+        config = _load_nunchi_config()
+        assert isinstance(config, dict)
+
+    def test_config_creates_valid_strategy(self):
+        """Load config, create VotingStrategy, validate_config() returns True."""
+        config = _load_nunchi_config()
+        strategy = VotingStrategy(config=config)
+        assert strategy.validate_config() is True
+
+    def test_strategy_name(self):
+        """VotingStrategy.name == 'nunchi_voting_crypto_1h'."""
+        config = _load_nunchi_config()
+        strategy = VotingStrategy(config=config)
+        assert strategy.name == "nunchi_voting_crypto_1h"
+
+    def test_strategy_metadata(self):
+        """VotingStrategy has correct symbol, market, interval."""
+        config = _load_nunchi_config()
+        strategy = VotingStrategy(config=config)
+        assert strategy.symbol == "BTCUSDT"
+        assert strategy.market == "crypto_spot"
+        assert strategy.interval == "1h"
+
+    def test_strategy_has_6_sub_signals(self):
+        """len(strategy._sub_signals) == 6."""
+        config = _load_nunchi_config()
+        strategy = VotingStrategy(config=config)
+        assert len(strategy._sub_signals) == 6
+
+    def test_all_6_true_emits_long(self):
+        """evaluate() with all 6 conditions true -> emits LONG signal."""
+        config = _load_nunchi_config()
+        strategy = VotingStrategy(config=config)
+
+        # Build features where all 6 conditions are true
+        n_rows = 200
+        df = pd.DataFrame({
+            "close": [100.0] * n_rows,
+            "ema_7": [105.0] * n_rows,
+            "ema_26": [100.0] * n_rows,
+            "rsi_8": [55.0] * n_rows,
+            "macd_histogram": [0.5] * n_rows,
+            "bb_upper_20": [110.0] * n_rows,
+            "bb_lower_20": [90.0] * n_rows,
+            "atr_14": [2.0] * n_rows,
+            "cum_return_6d": [0.01] * n_rows,
+            "cum_return_12d": [0.02] * n_rows,
+        })
+        # Last row: narrow BB (squeeze) for signal 6
+        df.loc[df.index[-1], "bb_upper_20"] = 101.0
+        df.loc[df.index[-1], "bb_lower_20"] = 99.0
+
+        signals = strategy.evaluate(df)
+        assert len(signals) == 1
+        assert signals[0].action == SignalAction.LONG
+
+    def test_only_2_true_emits_nothing(self):
+        """evaluate() with only 2 conditions true -> emits no signal."""
+        config = _load_nunchi_config()
+        strategy = VotingStrategy(config=config)
+
+        n_rows = 200
+        df = pd.DataFrame({
+            "close": [100.0] * n_rows,
+            "ema_7": [95.0] * n_rows,       # ema_7 < ema_26 -> signal 3 false
+            "ema_26": [100.0] * n_rows,
+            "rsi_8": [45.0] * n_rows,        # < 50 -> signal 4 false
+            "macd_histogram": [0.5] * n_rows, # > 0 -> signal 5 true
+            "bb_upper_20": [110.0] * n_rows,
+            "bb_lower_20": [90.0] * n_rows,
+            "atr_14": [2.0] * n_rows,
+            "cum_return_6d": [-0.01] * n_rows,  # < 0 -> signal 1 false
+            "cum_return_12d": [-0.02] * n_rows,  # < 0 -> signal 2 false
+        })
+        # Last row: narrow BB (squeeze) for signal 6 -> true
+        df.loc[df.index[-1], "bb_upper_20"] = 101.0
+        df.loc[df.index[-1], "bb_lower_20"] = 99.0
+
+        signals = strategy.evaluate(df)
+        assert len(signals) == 0
