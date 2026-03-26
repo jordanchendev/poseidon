@@ -65,6 +65,9 @@ Plan: Not started
 - **Anti-features**: pyramiding, variable sizing, multi-timeframe, funding overlay all hurt performance
 - **Realistic target**: Sharpe 1.0-3.0 on properly validated strategies (Nunchi 21.4 is overfit)
 
+### Roadmap Evolution
+- Phase 14 added: Nunchi Signal Alignment — autoresearch 0% pass rate root cause traced to implementation gaps vs Nunchi original (ATR 2.0 vs 5.5, missing RSI exit/signal flip/cooldown, BB threshold reversed, composite score formula too harsh, no SHORT support)
+
 ## Last Session
 
 - **Stopped at:** Completed 13-02-PLAN.md

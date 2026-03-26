@@ -7,7 +7,7 @@
 ## Milestones
 
 - **v1.0 Core Trading Signal Platform** - Phases 1-9 (complete)
-- **v2.0 Strategy Pivot -- Rule-Based Voting + Automated Search** - Phases 10-13 (in progress)
+- **v2.0 Strategy Pivot -- Rule-Based Voting + Automated Search** - Phases 10-14 (in progress)
 
 <details>
 <summary>v1.0 Core Platform (Phases 1-9) -- COMPLETE</summary>
@@ -98,6 +98,17 @@ Plans:
 | 11. Experiment Infrastructure | 3/3 | Complete    | 2026-03-26 |
 | 12. AutoResearch Loop | 1/2 | Complete    | 2026-03-26 |
 | 13. Regime Classification | 1/2 | Complete    | 2026-03-26 |
+| 14. Nunchi Signal Alignment | 0/0 | Not started | — |
+
+### Phase 14: Nunchi Signal Alignment
+
+**Goal:** Align VotingStrategy with Nunchi auto-research proven logic — fix ATR multiplier (2.0→5.5), add RSI exit/signal flip/cooldown exit mechanisms, correct BB squeeze threshold (20th→85th pct), fix composite_score formula to match Nunchi, and add SHORT signal support
+**Requirements**: TBD
+**Depends on:** Phase 13
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 14 to break down)
 
 ---
 *Roadmap created: 2026-03-20*
