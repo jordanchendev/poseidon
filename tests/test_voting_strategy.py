@@ -203,7 +203,7 @@ class TestATRTrailingStop:
         assert strategy._position_high_watermark is None
 
     def test_reentry_after_close(self):
-        """After CLOSE, new vote threshold met -> can re-enter (new LONG)."""
+        """After CLOSE + cooldown, new vote threshold met -> can re-enter (new LONG)."""
         config = _make_all_true_config(min_votes=4)
         strategy = VotingStrategy(config=config, atr_multiplier=2.0, atr_period=14)
 
@@ -212,6 +212,10 @@ class TestATRTrailingStop:
         # Trigger stop
         strategy.evaluate(make_features(close=110.0, atr_14=2.0))
         strategy.evaluate(make_features(close=105.0, atr_14=2.0))
+
+        # Wait 2 bars for cooldown to expire (same direction block)
+        strategy.evaluate(make_features(rsi_8=45.0, macd_histogram=-0.1, cum_return_6d=-0.01))  # bar 1, no entry
+        strategy.evaluate(make_features(rsi_8=45.0, macd_histogram=-0.1, cum_return_6d=-0.01))  # bar 2, cooldown expires
 
         # Re-enter (all conditions true again)
         signals_reentry = strategy.evaluate(make_features())
@@ -365,3 +369,374 @@ class TestNunchiSignals:
 
         signals = strategy.evaluate(df)
         assert len(signals) == 0
+
+
+# ---------------------------------------------------------------------------
+# Bear sub_signals config helper
+# ---------------------------------------------------------------------------
+
+def _make_bear_config() -> dict:
+    """Config with both bull and bear sub_signals."""
+    return {
+        "name": "test_bidirectional",
+        "symbol": "BTCUSDT",
+        "market": "crypto_spot",
+        "interval": "1h",
+        "min_votes": 4,
+        "position_pct": 0.08,
+        "sub_signals": [
+            {"type": "indicator_above", "indicator": "cum_return", "params": {"period": 6}, "threshold": 0},
+            {"type": "indicator_above", "indicator": "cum_return", "params": {"period": 12}, "threshold": 0},
+            {"type": "indicator_comparison", "indicator_a": "ema", "indicator_b": "ema",
+             "params": {"period_a": 7, "period_b": 26}, "direction": "above"},
+            {"type": "indicator_above", "indicator": "rsi", "params": {"period": 8}, "threshold": 50},
+            {"type": "indicator_above", "indicator": "macd_histogram", "params": {}, "threshold": 0},
+            {"type": "bollinger_width_percentile", "params": {"period": 20, "lookback": 168}, "threshold": 0.2},
+        ],
+        "bear_sub_signals": [
+            {"type": "indicator_below", "indicator": "cum_return", "params": {"period": 6}, "threshold": 0},
+            {"type": "indicator_below", "indicator": "cum_return", "params": {"period": 12}, "threshold": 0},
+            {"type": "indicator_comparison", "indicator_a": "ema", "indicator_b": "ema",
+             "params": {"period_a": 7, "period_b": 26}, "direction": "below"},
+            {"type": "indicator_below", "indicator": "rsi", "params": {"period": 8}, "threshold": 50},
+            {"type": "indicator_below", "indicator": "macd_histogram", "params": {}, "threshold": 0},
+            {"type": "bollinger_width_percentile", "params": {"period": 20, "lookback": 168}, "threshold": 0.2},
+        ],
+        "bear_min_votes": 4,
+        "bear_position_pct": 0.06,
+    }
+
+
+def _make_bear_features(**overrides):
+    """Features where bear conditions are true (bearish market)."""
+    n_rows = 200
+    df = pd.DataFrame({
+        "close": [100.0] * n_rows,
+        "ema_7": [95.0] * n_rows,       # ema_7 < ema_26 -> bearish
+        "ema_26": [100.0] * n_rows,
+        "rsi_8": [35.0] * n_rows,        # < 50 -> bearish
+        "macd_histogram": [-0.5] * n_rows, # < 0 -> bearish
+        "bb_upper_20": [110.0] * n_rows,
+        "bb_lower_20": [90.0] * n_rows,
+        "atr_14": [2.0] * n_rows,
+        "cum_return_6d": [-0.02] * n_rows,   # < 0 -> bearish
+        "cum_return_12d": [-0.03] * n_rows,  # < 0 -> bearish
+    })
+    # Last row: narrow BB (squeeze) for signal 6 -> true
+    df.loc[df.index[-1], "bb_upper_20"] = 101.0
+    df.loc[df.index[-1], "bb_lower_20"] = 99.0
+    for col, val in overrides.items():
+        df.loc[df.index[-1], col] = val
+    return df
+
+
+# ---------------------------------------------------------------------------
+# TestBearShortSignals — SHORT signal emission
+# ---------------------------------------------------------------------------
+
+class TestBearShortSignals:
+    """Bear sub_signals and SHORT signal emission tests."""
+
+    def test_bear_sub_signals_evaluated_independently(self):
+        """Bear sub_signals evaluated independently from bull sub_signals."""
+        config = _make_bear_config()
+        strategy = VotingStrategy(config=config, atr_multiplier=5.5)
+        # Bearish features: bull signals should NOT fire, bear signals SHOULD fire
+        features = _make_bear_features()
+        signals = strategy.evaluate(features)
+        assert len(signals) == 1
+        assert signals[0].action == SignalAction.SHORT
+
+    def test_short_emitted_when_bear_votes_meet_threshold(self):
+        """SHORT signal emitted when bear_votes >= bear_min_votes and not in position."""
+        config = _make_bear_config()
+        strategy = VotingStrategy(config=config, atr_multiplier=5.5)
+        features = _make_bear_features()
+        signals = strategy.evaluate(features)
+        assert len(signals) == 1
+        assert signals[0].action == SignalAction.SHORT
+
+    def test_short_uses_bear_position_pct(self):
+        """SHORT signal uses bear_position_pct for quantity_pct."""
+        config = _make_bear_config()
+        strategy = VotingStrategy(config=config, atr_multiplier=5.5)
+        features = _make_bear_features()
+        signals = strategy.evaluate(features)
+        assert len(signals) == 1
+        assert signals[0].quantity_pct == 0.06
+
+    def test_no_short_when_already_in_position(self):
+        """No SHORT emitted when already in short position."""
+        config = _make_bear_config()
+        strategy = VotingStrategy(config=config, atr_multiplier=5.5)
+        features = _make_bear_features()
+        # Enter short
+        signals1 = strategy.evaluate(features)
+        assert len(signals1) == 1
+        assert signals1[0].action == SignalAction.SHORT
+
+        # Second eval -- already in short position
+        signals2 = strategy.evaluate(features)
+        assert len(signals2) == 0
+
+    def test_no_long_when_in_short_position(self):
+        """No LONG emitted when in short position."""
+        config = _make_bear_config()
+        strategy = VotingStrategy(config=config, atr_multiplier=5.5)
+        # Enter short first
+        features_bear = _make_bear_features()
+        strategy.evaluate(features_bear)
+
+        # Now bullish features -- should not emit LONG because in position
+        features_bull = make_features()
+        signals = strategy.evaluate(features_bull)
+        # Should not contain LONG (may contain CLOSE from exit checks)
+        long_signals = [s for s in signals if s.action == SignalAction.LONG]
+        assert len(long_signals) == 0
+
+    def test_backward_compat_no_bear_sub_signals(self):
+        """Config without bear_sub_signals works as before (long-only)."""
+        config = _make_all_true_config(min_votes=4)
+        strategy = VotingStrategy(config=config, atr_multiplier=5.5)
+        features = make_features()
+        signals = strategy.evaluate(features)
+        assert len(signals) == 1
+        assert signals[0].action == SignalAction.LONG
+
+
+# ---------------------------------------------------------------------------
+# TestDefaultATRMultiplier
+# ---------------------------------------------------------------------------
+
+class TestDefaultATRMultiplier:
+    """Default atr_multiplier should be 5.5 per D-05."""
+
+    def test_default_atr_multiplier_is_5_5(self):
+        """Default atr_multiplier is 5.5."""
+        config = _make_all_true_config()
+        strategy = VotingStrategy(config=config)
+        assert strategy._atr_multiplier == 5.5
+
+
+# ---------------------------------------------------------------------------
+# TestRSIExit — RSI mean-reversion exits
+# ---------------------------------------------------------------------------
+
+class TestRSIExit:
+    """RSI exit tests -- long exits at RSI > 69, short exits at RSI < 31."""
+
+    def test_long_rsi_exit_above_69(self):
+        """Exit longs when RSI > 69."""
+        config = _make_all_true_config(min_votes=4)
+        strategy = VotingStrategy(config=config, atr_multiplier=5.5)
+        # Enter long
+        strategy.evaluate(make_features())
+        assert strategy._position_direction == "long"
+
+        # RSI goes above 69 -- should trigger RSI exit
+        features = make_features(rsi_8=72.0, close=100.0, atr_14=2.0)
+        signals = strategy.evaluate(features)
+        close_signals = [s for s in signals if s.action == SignalAction.CLOSE]
+        assert len(close_signals) == 1
+        assert close_signals[0].metadata["reason"] == "rsi_exit"
+
+    def test_short_rsi_exit_below_31(self):
+        """Exit shorts when RSI < 31."""
+        config = _make_bear_config()
+        strategy = VotingStrategy(config=config, atr_multiplier=5.5)
+        # Enter short
+        strategy.evaluate(_make_bear_features())
+        assert strategy._position_direction == "short"
+
+        # RSI drops below 31 -- should trigger RSI exit
+        features = _make_bear_features(rsi_8=28.0, close=100.0, atr_14=2.0)
+        signals = strategy.evaluate(features)
+        close_signals = [s for s in signals if s.action == SignalAction.CLOSE]
+        assert len(close_signals) == 1
+        assert close_signals[0].metadata["reason"] == "rsi_exit"
+
+    def test_long_rsi_at_69_no_exit(self):
+        """RSI exactly at 69 does NOT trigger exit (need > 69)."""
+        config = _make_all_true_config(min_votes=4)
+        strategy = VotingStrategy(config=config, atr_multiplier=5.5)
+        # Enter long
+        strategy.evaluate(make_features())
+
+        features = make_features(rsi_8=69.0, close=100.0, atr_14=2.0)
+        signals = strategy.evaluate(features)
+        close_signals = [s for s in signals if s.action == SignalAction.CLOSE]
+        assert len(close_signals) == 0
+
+
+# ---------------------------------------------------------------------------
+# TestSignalFlip — signal flip exits
+# ---------------------------------------------------------------------------
+
+class TestSignalFlip:
+    """Signal flip exit tests -- opposing ensemble fires while in position."""
+
+    def test_bear_fires_while_in_long_emits_close(self):
+        """Bear ensemble fires while in long position -> CLOSE (signal flip)."""
+        config = _make_bear_config()
+        strategy = VotingStrategy(config=config, atr_multiplier=5.5)
+        # Enter long
+        strategy.evaluate(make_features())
+        assert strategy._position_direction == "long"
+
+        # Now bear conditions fire -- should signal flip (CLOSE)
+        features = _make_bear_features(close=100.0, atr_14=2.0)
+        signals = strategy.evaluate(features)
+        close_signals = [s for s in signals if s.action == SignalAction.CLOSE]
+        assert len(close_signals) == 1
+        assert close_signals[0].metadata["reason"] == "signal_flip"
+
+    def test_bull_fires_while_in_short_emits_close(self):
+        """Bull ensemble fires while in short position -> CLOSE (signal flip)."""
+        config = _make_bear_config()
+        strategy = VotingStrategy(config=config, atr_multiplier=5.5)
+        # Enter short
+        strategy.evaluate(_make_bear_features())
+        assert strategy._position_direction == "short"
+
+        # Now bull conditions fire -- should signal flip
+        features = make_features(close=100.0, atr_14=2.0)
+        signals = strategy.evaluate(features)
+        close_signals = [s for s in signals if s.action == SignalAction.CLOSE]
+        assert len(close_signals) == 1
+        assert close_signals[0].metadata["reason"] == "signal_flip"
+
+
+# ---------------------------------------------------------------------------
+# TestCooldown — 2-bar cooldown mechanism
+# ---------------------------------------------------------------------------
+
+class TestCooldown:
+    """2-bar cooldown prevents re-entry to same direction after exit."""
+
+    def test_no_reentry_within_2_bars_same_direction(self):
+        """Cannot re-enter long within 2 bars of long exit."""
+        config = _make_all_true_config(min_votes=4)
+        strategy = VotingStrategy(config=config, atr_multiplier=2.0)
+        # Enter long
+        strategy.evaluate(make_features())
+
+        # Trigger ATR trailing stop exit
+        strategy.evaluate(make_features(close=110.0, atr_14=2.0))
+        signals_close = strategy.evaluate(make_features(close=105.0, atr_14=2.0))
+        assert any(s.action == SignalAction.CLOSE for s in signals_close)
+
+        # Immediately try to re-enter (bar 0 after exit) -- should be blocked
+        signals_bar0 = strategy.evaluate(make_features())
+        long_signals_0 = [s for s in signals_bar0 if s.action == SignalAction.LONG]
+        assert len(long_signals_0) == 0
+
+        # Bar 1 after exit -- still blocked
+        signals_bar1 = strategy.evaluate(make_features())
+        long_signals_1 = [s for s in signals_bar1 if s.action == SignalAction.LONG]
+        assert len(long_signals_1) == 0
+
+        # Bar 2 after exit -- cooldown expired, can re-enter
+        signals_bar2 = strategy.evaluate(make_features())
+        long_signals_2 = [s for s in signals_bar2 if s.action == SignalAction.LONG]
+        assert len(long_signals_2) == 1
+
+    def test_cooldown_does_not_block_opposite_direction(self):
+        """After long exit, SHORT entry is not blocked by cooldown."""
+        config = _make_bear_config()
+        strategy = VotingStrategy(config=config, atr_multiplier=2.0)
+        # Enter long
+        strategy.evaluate(make_features())
+
+        # Trigger ATR trailing stop exit from long
+        strategy.evaluate(make_features(close=110.0, atr_14=2.0))
+        strategy.evaluate(make_features(close=105.0, atr_14=2.0))
+
+        # Immediately try bear entry -- should NOT be blocked (different direction)
+        signals = strategy.evaluate(_make_bear_features())
+        short_signals = [s for s in signals if s.action == SignalAction.SHORT]
+        assert len(short_signals) == 1
+
+
+# ---------------------------------------------------------------------------
+# TestShortTrailingStop — short-side trailing stop
+# ---------------------------------------------------------------------------
+
+class TestShortTrailingStop:
+    """Short trailing stop tracks low watermark."""
+
+    def test_short_trailing_stop_tracks_low_watermark(self):
+        """Short trailing stop tracks _position_low_watermark."""
+        config = _make_bear_config()
+        strategy = VotingStrategy(config=config, atr_multiplier=2.0)
+        # Enter short at 100
+        strategy.evaluate(_make_bear_features(close=100.0))
+        assert strategy._position_direction == "short"
+        assert strategy._position_low_watermark == 100.0
+
+        # Price drops to 90 -- update low watermark
+        strategy.evaluate(_make_bear_features(close=90.0, atr_14=2.0))
+        assert strategy._position_low_watermark == 90.0
+
+    def test_short_trailing_stop_exits_when_price_above_stop(self):
+        """Short exit when close > low_watermark + atr_multiplier * atr."""
+        config = _make_bear_config()
+        strategy = VotingStrategy(config=config, atr_multiplier=2.0)
+        # Enter short at 100
+        strategy.evaluate(_make_bear_features(close=100.0))
+        # Price drops to 90 (lwm=90)
+        strategy.evaluate(_make_bear_features(close=90.0, atr_14=2.0))
+        # Price rises to 95: stop = 90 + 2*2 = 94, 95 > 94 -> CLOSE
+        signals = strategy.evaluate(_make_bear_features(close=95.0, atr_14=2.0))
+        close_signals = [s for s in signals if s.action == SignalAction.CLOSE]
+        assert len(close_signals) == 1
+        assert close_signals[0].metadata["reason"] == "atr_trailing_stop"
+
+    def test_long_trailing_stop_still_works(self):
+        """Long trailing stop unchanged (tracks high watermark)."""
+        config = _make_all_true_config(min_votes=4)
+        strategy = VotingStrategy(config=config, atr_multiplier=2.0)
+        # Enter long
+        strategy.evaluate(make_features(close=100.0))
+        # Price rises to 110
+        strategy.evaluate(make_features(close=110.0, atr_14=2.0))
+        # Price drops to 105: stop = 110 - 2*2 = 106, 105 < 106 -> CLOSE
+        signals = strategy.evaluate(make_features(close=105.0, atr_14=2.0))
+        close_signals = [s for s in signals if s.action == SignalAction.CLOSE]
+        assert len(close_signals) == 1
+        assert close_signals[0].metadata["reason"] == "atr_trailing_stop"
+
+
+# ---------------------------------------------------------------------------
+# TestExitPriority — ATR > RSI > signal flip
+# ---------------------------------------------------------------------------
+
+class TestExitPriority:
+    """Exit priority: ATR trailing stop > RSI exit > signal flip."""
+
+    def test_atr_takes_priority_over_rsi(self):
+        """When both ATR stop and RSI exit trigger, ATR wins."""
+        config = _make_all_true_config(min_votes=4)
+        strategy = VotingStrategy(config=config, atr_multiplier=2.0)
+        # Enter long
+        strategy.evaluate(make_features(close=100.0))
+        # Push hwm to 110
+        strategy.evaluate(make_features(close=110.0, atr_14=2.0))
+        # Price drops below stop AND RSI > 69
+        features = make_features(close=105.0, atr_14=2.0, rsi_8=72.0)
+        signals = strategy.evaluate(features)
+        close_signals = [s for s in signals if s.action == SignalAction.CLOSE]
+        assert len(close_signals) == 1
+        assert close_signals[0].metadata["reason"] == "atr_trailing_stop"
+
+    def test_rsi_takes_priority_over_signal_flip(self):
+        """When both RSI exit and signal flip trigger, RSI wins."""
+        config = _make_bear_config()
+        strategy = VotingStrategy(config=config, atr_multiplier=5.5)
+        # Enter long
+        strategy.evaluate(make_features(close=100.0))
+        # RSI > 69 AND bear ensemble fires -- RSI should win
+        features = _make_bear_features(close=100.0, atr_14=2.0, rsi_8=72.0)
+        signals = strategy.evaluate(features)
+        close_signals = [s for s in signals if s.action == SignalAction.CLOSE]
+        assert len(close_signals) == 1
+        assert close_signals[0].metadata["reason"] == "rsi_exit"
