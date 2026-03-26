@@ -107,8 +107,8 @@ def _minimal_base_config() -> dict:
 class TestRegimeSearchPipeline:
     """Tests for RegimeSearchPipeline."""
 
-    def test_regime_search_only_varies_min_votes_and_position_pct(self):
-        """Optuna objective only suggests min_votes and position_pct -- no other params."""
+    def test_regime_search_varies_four_params(self):
+        """Optuna objective suggests 4 params: min_votes, position_pct, bear_min_votes, bear_position_pct."""
         from poseidon.backtest.regime_search import RegimeSearchConfig, RegimeSearchPipeline
 
         ohlcv = _make_ohlcv(500)
@@ -132,23 +132,19 @@ class TestRegimeSearchPipeline:
         config = RegimeSearchConfig(n_trials_per_regime=3, seed=42)
         pipeline = RegimeSearchPipeline(feature_engine, risk_engine, cost_model)
 
-        # Track what Optuna suggests
-        suggested_params = []
-
         with patch("poseidon.backtest.regime_search.BacktestRunner") as MockRunner:
             MockRunner.return_value.run.return_value = mock_result
             result = pipeline.run(ohlcv, base_config, regime_model, config=config)
 
-        # Check that only min_votes and position_pct were in the study params
-        # The result should be a dict of 3 regimes
+        # The result should be a dict of 3 regimes with 4 params each
         assert len(result) == 3
         for regime_name, params in result.items():
-            assert set(params.keys()) == {"min_votes", "position_pct"}, (
+            assert set(params.keys()) == {"min_votes", "position_pct", "bear_min_votes", "bear_position_pct"}, (
                 f"Regime {regime_name} has unexpected params: {params.keys()}"
             )
 
-    def test_regime_search_produces_per_regime_configs(self):
-        """run() returns a dict mapping regime names to param dicts."""
+    def test_regime_search_produces_per_regime_configs_with_bear(self):
+        """run() returns a dict mapping regime names to param dicts with all 4 params."""
         from poseidon.backtest.regime_search import RegimeSearchConfig, RegimeSearchPipeline
 
         ohlcv = _make_ohlcv(500)
@@ -183,6 +179,16 @@ class TestRegimeSearchPipeline:
             params = result[regime_name]
             assert isinstance(params["min_votes"], int)
             assert isinstance(params["position_pct"], float)
+            assert isinstance(params["bear_min_votes"], int)
+            assert isinstance(params["bear_position_pct"], float)
+
+    def test_regime_search_config_has_bear_ranges(self):
+        """RegimeSearchConfig has bear_min_votes_range and bear_position_pct_range."""
+        from poseidon.backtest.regime_search import RegimeSearchConfig
+
+        cfg = RegimeSearchConfig()
+        assert cfg.bear_min_votes_range == (2, 6)
+        assert cfg.bear_position_pct_range == (0.03, 0.12)
 
     def test_regime_search_uses_precomputed_predictions(self):
         """Regime model predict() called once before search, not inside trial."""

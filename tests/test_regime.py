@@ -176,10 +176,83 @@ class TestRegimeRouter:
         )
 
         # Set some trailing stop state on the inner strategy
-        router._strategy._in_position = True
+        router._strategy._position_direction = "long"
         router._strategy._position_high_watermark = 100.0
 
         router.reset()
 
-        assert router._strategy._in_position is False
+        assert router._strategy._position_direction is None
         assert router._strategy._position_high_watermark is None
+
+
+class TestRegimeRouterBear:
+    """Tests for RegimeRouter bear parameter overrides."""
+
+    def test_default_regime_configs_have_bear_params(self):
+        """All 3 regime configs must include bear_min_votes and bear_position_pct."""
+        for regime_name, cfg in DEFAULT_REGIME_CONFIGS.items():
+            assert "bear_min_votes" in cfg, f"{regime_name} missing bear_min_votes"
+            assert "bear_position_pct" in cfg, f"{regime_name} missing bear_position_pct"
+
+    def test_high_vol_regime_config(self):
+        """High vol regime config per D-20."""
+        expected = {"min_votes": 5, "position_pct": 0.05, "bear_min_votes": 4, "bear_position_pct": 0.04}
+        assert DEFAULT_REGIME_CONFIGS["high_vol"] == expected
+
+    def test_medium_vol_regime_config(self):
+        """Medium vol regime config per D-20."""
+        expected = {"min_votes": 4, "position_pct": 0.08, "bear_min_votes": 4, "bear_position_pct": 0.06}
+        assert DEFAULT_REGIME_CONFIGS["medium_vol"] == expected
+
+    def test_low_vol_regime_config(self):
+        """Low vol regime config per D-20."""
+        expected = {"min_votes": 3, "position_pct": 0.10, "bear_min_votes": 5, "bear_position_pct": 0.05}
+        assert DEFAULT_REGIME_CONFIGS["low_vol"] == expected
+
+    def test_evaluate_sets_bear_min_votes(self):
+        """RegimeRouter.evaluate() sets _bear_min_votes from regime config."""
+        config = _minimal_voting_config()
+        mock_model = _make_mock_regime_model("high_vol")
+
+        router = RegimeRouter(
+            base_config=config,
+            regime_model=mock_model,
+            enabled=True,
+        )
+
+        features = pd.DataFrame({"close": [100.0], "rsi_14": [55.0], "atr_14": [2.0]})
+        router.evaluate(features)
+        assert router._strategy._bear_min_votes == DEFAULT_REGIME_CONFIGS["high_vol"]["bear_min_votes"]
+
+    def test_evaluate_sets_bear_position_pct(self):
+        """RegimeRouter.evaluate() sets _bear_position_pct from regime config."""
+        config = _minimal_voting_config()
+        mock_model = _make_mock_regime_model("high_vol")
+
+        router = RegimeRouter(
+            base_config=config,
+            regime_model=mock_model,
+            enabled=True,
+        )
+
+        features = pd.DataFrame({"close": [100.0], "rsi_14": [55.0], "atr_14": [2.0]})
+        router.evaluate(features)
+        assert router._strategy._bear_position_pct == DEFAULT_REGIME_CONFIGS["high_vol"]["bear_position_pct"]
+
+    def test_disabled_router_sets_bear_from_base_config(self):
+        """Disabled RegimeRouter uses base_config bear values."""
+        config = _minimal_voting_config()
+        config["bear_min_votes"] = 3
+        config["bear_position_pct"] = 0.05
+        mock_model = _make_mock_regime_model("high_vol")
+
+        router = RegimeRouter(
+            base_config=config,
+            regime_model=mock_model,
+            enabled=False,
+        )
+
+        features = pd.DataFrame({"close": [100.0], "rsi_14": [55.0], "atr_14": [2.0]})
+        router.evaluate(features)
+        assert router._strategy._bear_min_votes == 3
+        assert router._strategy._bear_position_pct == 0.05
