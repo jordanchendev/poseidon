@@ -55,10 +55,10 @@ Plans:
   4. Walk-forward validation (WFE >= 50%) is enforced as a mandatory gate on all parameter search results -- trials failing WFE are recorded but marked as rejected
   5. Holdout data split (last 20% of each dataset) is defined, documented, and enforced before any experiment runs -- code raises an error if optimization touches holdout date ranges
   6. Per-market/timeframe parameter search runs independently and trial count is capped (50-100 per search) to prevent overfitting
-**Plans:** 3 plans
+**Plans:** 2/3 plans executed
 Plans:
-- [ ] 11-01-PLAN.md -- ExperimentRecord model, Alembic migration (experiments table + optuna schema), ExperimentTracker repository, HoldoutConfig
-- [ ] 11-02-PLAN.md -- VotingStrategyFactory with from_config/from_trial, PARAM_BOUNDS, round-trip tests
+- [x] 11-01-PLAN.md -- ExperimentRecord model, Alembic migration (experiments table + optuna schema), ExperimentTracker repository, HoldoutConfig
+- [x] 11-02-PLAN.md -- VotingStrategyFactory with from_config/from_trial, PARAM_BOUNDS, round-trip tests
 - [ ] 11-03-PLAN.md -- BayesianOptimizer RDBStorage upgrade, ParameterSearchPipeline with WFE gate and holdout enforcement
 
 ### Phase 12: AutoResearch Loop
@@ -89,7 +89,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 10. Voting Strategy Foundation | 2/2 | Complete    | 2026-03-26 |
-| 11. Experiment Infrastructure | 0/3 | Planned | - |
+| 11. Experiment Infrastructure | 2/3 | In Progress|  |
 | 12. AutoResearch Loop | 0/TBD | Not started | - |
 | 13. Regime Classification | 0/TBD | Not started | - |
 
