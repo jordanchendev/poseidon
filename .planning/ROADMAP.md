@@ -83,7 +83,10 @@ Plans:
   1. XGBoostRegimeModel classifies market state into regime categories (trending/ranging/volatile/low-vol) from feature data with measurable accuracy on held-out periods
   2. RegimeRouter maps detected regime to a specific VotingStrategy configuration (min_votes, position size multiplier) and the correct config is applied during backtest and live evaluation
   3. Outperformance gate enforced: regime-conditional strategy must beat static VotingStrategy baseline on OOS data by a positive margin, or regime routing is automatically disabled and the system falls back to the static configuration
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 13-01-PLAN.md -- Regime label generator, RegimeRouter strategy wrapper, core tests
+- [ ] 13-02-PLAN.md -- Per-regime Optuna search pipeline, outperformance gate evaluation
 
 ## Progress
 
@@ -94,7 +97,7 @@ Plans:
 | 10. Voting Strategy Foundation | 2/2 | Complete    | 2026-03-26 |
 | 11. Experiment Infrastructure | 3/3 | Complete    | 2026-03-26 |
 | 12. AutoResearch Loop | 1/2 | Complete    | 2026-03-26 |
-| 13. Regime Classification | 0/TBD | Not started | - |
+| 13. Regime Classification | 0/2 | Not started | - |
 
 ---
 *Roadmap created: 2026-03-20*
@@ -102,3 +105,4 @@ Plans:
 *Phase 10 planned: 2026-03-26*
 *Phase 11 planned: 2026-03-26*
 *Phase 12 planned: 2026-03-26*
+*Phase 13 planned: 2026-03-26*
