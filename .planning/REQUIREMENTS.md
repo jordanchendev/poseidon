@@ -103,9 +103,9 @@ Strategy pivot from ML direction prediction to rule-based voting + automated par
 
 ### Regime Classification (Optional — Gated)
 
-- [ ] **RGME-01**: XGBoostRegimeModel classifies market regime (trending/ranging/volatile/low-vol) from feature data
-- [ ] **RGME-02**: RegimeRouter selects VotingStrategy configuration based on detected regime
-- [ ] **RGME-03**: Outperformance gate — regime routing must beat static no-regime baseline on OOS data, auto-disabled if fails
+- [x] **RGME-01**: XGBoostRegimeModel classifies market regime (trending/ranging/volatile/low-vol) from feature data
+- [x] **RGME-02**: RegimeRouter selects VotingStrategy configuration based on detected regime
+- [x] **RGME-03**: Outperformance gate — regime routing must beat static no-regime baseline on OOS data, auto-disabled if fails
 
 ### Parameter Search
 
@@ -114,6 +114,19 @@ Strategy pivot from ML direction prediction to rule-based voting + automated par
 - [ ] **PARM-03**: Holdout data split defined and locked before any experiments run (irreversible decision point)
 - [x] **PARM-04**: Per-market/timeframe parameter search discovers optimal signal parameters independently
 - [x] **PARM-05**: Trial count limited (50-100 per search) to prevent overfitting on finite data
+
+### Nunchi Signal Alignment
+
+- [ ] **ALIGN-01**: Composite score formula uses lenient drawdown penalty (max(0, dd-0.15)*0.05) and capital turnover ratio penalty instead of quadratic dd and raw trade count
+- [ ] **ALIGN-02**: BacktestPortfolio equity curve correctly values short positions using entry_price - current_price direction
+- [ ] **ALIGN-03**: Nunchi baseline config uses ATR multiplier 5.5 and BB squeeze threshold 0.85
+- [ ] **ALIGN-04**: VotingStrategy supports separate bear_sub_signals list with independent bear_min_votes threshold, emitting SHORT signals
+- [ ] **ALIGN-05**: VotingStrategy implements RSI mean-reversion exit (long exit at RSI > 69, short exit at RSI < 31)
+- [ ] **ALIGN-06**: VotingStrategy implements signal flip exit (opposing ensemble fires -> close and reverse) and 2-bar cooldown
+- [ ] **ALIGN-07**: ATR trailing stop works bidirectionally: high watermark for longs, low watermark for shorts
+- [ ] **ALIGN-08**: PARAM_BOUNDS expanded with bear_min_votes, bear_position_pct, and ATR range (3.0, 8.0); factory generates bear_sub_signals with inverted conditions
+- [ ] **ALIGN-09**: RegimeRouter overrides 4 strategy attributes per regime (min_votes, position_pct, bear_min_votes, bear_position_pct)
+- [ ] **ALIGN-10**: RegimeSearchPipeline searches 4 params per regime instead of 2
 
 ## Future Requirements
 
@@ -163,20 +176,30 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUTO-04 | Phase 12 | Complete |
 | AUTO-05 | Phase 12 | Complete |
 | AUTO-06 | Phase 12 | Complete |
-| RGME-01 | Phase 13 | Pending |
-| RGME-02 | Phase 13 | Pending |
-| RGME-03 | Phase 13 | Pending |
+| RGME-01 | Phase 13 | Complete |
+| RGME-02 | Phase 13 | Complete |
+| RGME-03 | Phase 13 | Complete |
 | PARM-01 | Phase 11 | Complete |
 | PARM-02 | Phase 11 | Complete |
 | PARM-03 | Phase 11 | Pending |
 | PARM-04 | Phase 11 | Complete |
 | PARM-05 | Phase 11 | Complete |
+| ALIGN-01 | Phase 14 | Pending |
+| ALIGN-02 | Phase 14 | Pending |
+| ALIGN-03 | Phase 14 | Pending |
+| ALIGN-04 | Phase 14 | Pending |
+| ALIGN-05 | Phase 14 | Pending |
+| ALIGN-06 | Phase 14 | Pending |
+| ALIGN-07 | Phase 14 | Pending |
+| ALIGN-08 | Phase 14 | Pending |
+| ALIGN-09 | Phase 14 | Pending |
+| ALIGN-10 | Phase 14 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 20 total
-- Mapped to phases: 20/20
+- v2.0 requirements: 30 total
+- Mapped to phases: 30/30
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-20*
-*Last updated: 2026-03-25 after v2.0 roadmap creation*
+*Last updated: 2026-03-26 after Phase 14 planning*

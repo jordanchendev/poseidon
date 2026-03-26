@@ -16,7 +16,7 @@ Phases 1-9 delivered the full trading signal platform: Docker infrastructure, da
 
 </details>
 
-## v2.0 Strategy Pivot (Phases 10-13)
+## v2.0 Strategy Pivot (Phases 10-14)
 
 **Milestone Goal:** Pivot from ML direction prediction (confirmed dead end) to rule-based voting strategies with automated parameter search. Deliver a working Nunchi-inspired 6-signal voting system, persistent Optuna parameter optimization, an autonomous experiment loop, and optional regime-gated strategy selection.
 
@@ -26,6 +26,7 @@ Phases 1-9 delivered the full trading signal platform: Docker infrastructure, da
 - [x] **Phase 11: Experiment Infrastructure** - Optuna RDBStorage, ExperimentTracker, VotingStrategyFactory, holdout protocol, parameter search pipeline (completed 2026-03-26)
 - [x] **Phase 12: AutoResearch Loop** - StrategyMutator, 3-layer architecture enforcement, AutoResearchRunner Celery task, immutability boundary (completed 2026-03-26)
 - [x] **Phase 13: Regime Classification (Optional, Gated)** - XGBoostRegimeModel classifier, RegimeRouter, outperformance gate vs static baseline (completed 2026-03-26)
+- [ ] **Phase 14: Nunchi Signal Alignment** - Fix scoring formula, ATR/BB defaults, add SHORT support, RSI exit, signal flip, cooldown, update factory/router/search
 
 ## Phase Details
 
@@ -88,9 +89,27 @@ Plans:
 - [x] 13-01-PLAN.md -- Regime label generator, RegimeRouter strategy wrapper, core tests
 - [ ] 13-02-PLAN.md -- Per-regime Optuna search pipeline, outperformance gate evaluation
 
+### Phase 14: Nunchi Signal Alignment
+**Goal:** Align VotingStrategy with Nunchi auto-research proven logic -- fix ATR multiplier (2.0->5.5), add RSI exit/signal flip/cooldown exit mechanisms, correct BB squeeze threshold (20th->85th pct), fix composite_score formula to match Nunchi, and add SHORT signal support
+**Depends on:** Phase 13
+**Requirements**: ALIGN-01, ALIGN-02, ALIGN-03, ALIGN-04, ALIGN-05, ALIGN-06, ALIGN-07, ALIGN-08, ALIGN-09, ALIGN-10
+**Success Criteria** (what must be TRUE):
+  1. Composite score formula uses lenient drawdown penalty and capital turnover ratio -- verified by unit test with known inputs
+  2. Short position equity valuation is correct in backtest portfolio (entry_price - current_price for shorts)
+  3. VotingStrategy supports bear_sub_signals and emits SHORT signals when bear ensemble threshold met
+  4. RSI exit, signal flip, and cooldown exit mechanisms fire correctly with documented priority order
+  5. ATR trailing stop works bidirectionally (high watermark for longs, low watermark for shorts)
+  6. Factory PARAM_BOUNDS, RegimeRouter, and RegimeSearchPipeline all support bear parameters
+**Plans:** 3 plans
+
+Plans:
+- [ ] 14-01-PLAN.md -- Composite score formula fix, short equity valuation fix, Nunchi config defaults
+- [ ] 14-02-PLAN.md -- VotingStrategy overhaul: bear signals, RSI exit, signal flip, cooldown, short trailing stop
+- [ ] 14-03-PLAN.md -- Factory PARAM_BOUNDS/bear generation, RegimeRouter 4-param overrides, RegimeSearch 4-param search
+
 ## Progress
 
-**Execution Order:** Phases execute in numeric order: 10 -> 11 -> 12 -> 13
+**Execution Order:** Phases execute in numeric order: 10 -> 11 -> 12 -> 13 -> 14
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -98,17 +117,7 @@ Plans:
 | 11. Experiment Infrastructure | 3/3 | Complete    | 2026-03-26 |
 | 12. AutoResearch Loop | 1/2 | Complete    | 2026-03-26 |
 | 13. Regime Classification | 1/2 | Complete    | 2026-03-26 |
-| 14. Nunchi Signal Alignment | 0/0 | Not started | — |
-
-### Phase 14: Nunchi Signal Alignment
-
-**Goal:** Align VotingStrategy with Nunchi auto-research proven logic — fix ATR multiplier (2.0→5.5), add RSI exit/signal flip/cooldown exit mechanisms, correct BB squeeze threshold (20th→85th pct), fix composite_score formula to match Nunchi, and add SHORT signal support
-**Requirements**: TBD
-**Depends on:** Phase 13
-**Plans:** 0 plans
-
-Plans:
-- [ ] TBD (run /gsd:plan-phase 14 to break down)
+| 14. Nunchi Signal Alignment | 0/3 | Not started | -- |
 
 ---
 *Roadmap created: 2026-03-20*
@@ -117,3 +126,4 @@ Plans:
 *Phase 11 planned: 2026-03-26*
 *Phase 12 planned: 2026-03-26*
 *Phase 13 planned: 2026-03-26*
+*Phase 14 planned: 2026-03-26*
