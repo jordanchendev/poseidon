@@ -55,6 +55,22 @@ def evaluate_condition(
             for c in condition["none"]
         )
 
+    if "vote" in condition:
+        vote_config = condition["vote"]
+        sub_conditions = vote_config.get("conditions", [])
+        min_votes = vote_config.get("min_votes", 4)
+        if not sub_conditions:
+            return False
+        vote_count = sum(
+            1
+            for c in sub_conditions
+            if evaluate_condition(
+                c, features, row_idx,
+                max_depth=max_depth, _current_depth=next_depth,
+            )
+        )
+        return vote_count >= min_votes
+
     # Leaf node — dispatch to registered condition evaluator
     cond_type = condition.get("type")
     if cond_type not in CONDITION_REGISTRY:

@@ -12,6 +12,13 @@ CONDITION_REGISTRY: dict[str, Callable] = {}
 # Alias mapping for indicator names
 _INDICATOR_ALIASES = {"ma": "sma"}
 
+# Direct column name mappings (no period suffix needed)
+_DIRECT_COLUMN_MAP = {
+    "macd_histogram": "macd_histogram",
+    "macd_signal": "macd_signal",
+    "macd_line": "macd_line",
+}
+
 
 def register_condition(name: str):
     """Decorator to register a condition evaluator."""
@@ -34,6 +41,15 @@ def resolve_column_name(indicator: str, params: dict) -> str:
     """
     # Apply aliases
     indicator = _INDICATOR_ALIASES.get(indicator, indicator)
+
+    # Direct column mappings (e.g. macd_histogram, macd_signal, macd_line)
+    if indicator in _DIRECT_COLUMN_MAP:
+        return _DIRECT_COLUMN_MAP[indicator]
+
+    # Cumulative return uses '{period}d' suffix convention
+    if indicator == "cum_return":
+        period = params.get("period")
+        return f"cum_return_{period}d" if period else "cum_return"
 
     if indicator == "macd":
         return "macd_line"
@@ -158,3 +174,54 @@ def eval_volume_spike(condition: dict, features: pd.DataFrame, row_idx: int) -> 
     avg_vol = float(features.iloc[start:row_idx]["volume"].mean()) if row_idx > 0 else curr_vol
 
     return curr_vol > multiplier * avg_vol
+
+
+@register_condition("bollinger_width_percentile")
+def eval_bollinger_width_percentile(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
+    """Check if Bollinger Band width is in a squeeze (below percentile threshold).
+
+    Computes the percentile rank of current BB width within a lookback window.
+    No look-ahead: only uses rows up to and including row_idx.
+    """
+    params = condition.get("params", {})
+    period = params.get("period", 20)
+    lookback = params.get("lookback", 168)  # 1 week of hourly bars
+    threshold = condition.get("threshold", 0.2)  # below 20th percentile = squeeze
+
+    upper_col = f"bb_upper_{period}"
+    lower_col = f"bb_lower_{period}"
+
+    # Compute width series up to current row (no look-ahead)
+    start = max(0, row_idx - lookback + 1)
+    widths = features[upper_col].iloc[start:row_idx + 1] - features[lower_col].iloc[start:row_idx + 1]
+
+    if len(widths) < 2:
+        return False
+
+    current_width = widths.iloc[-1]
+    percentile = (widths < current_width).sum() / len(widths)
+    return percentile < threshold
+
+
+@register_condition("indicator_comparison")
+def eval_indicator_comparison(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
+    """Compare two indicator values: indicator_a vs indicator_b.
+
+    Parameters from condition dict:
+        indicator_a, indicator_b: indicator names
+        params.period_a, params.period_b: periods for each indicator
+        direction: 'above' (a > b) or 'below' (a < b)
+    """
+    params = condition.get("params", {})
+    indicator_a = condition.get("indicator_a", "")
+    indicator_b = condition.get("indicator_b", "")
+    col_a = resolve_column_name(indicator_a, {"period": params.get("period_a")})
+    col_b = resolve_column_name(indicator_b, {"period": params.get("period_b")})
+    direction = condition.get("direction", "above")
+
+    val_a = float(features.iloc[row_idx][col_a])
+    val_b = float(features.iloc[row_idx][col_b])
+
+    if direction == "above":
+        return val_a > val_b
+    return val_a < val_b

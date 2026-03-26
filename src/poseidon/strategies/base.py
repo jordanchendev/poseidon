@@ -18,6 +18,7 @@ class StrategyType(str, Enum):
 
     MODEL = "model"
     RULE = "rule"
+    VOTING = "voting"
 
 
 class BaseStrategy(ABC):
