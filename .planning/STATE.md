@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Strategy Pivot
 status: Milestone complete
-stopped_at: Completed 13-02-PLAN.md
-last_updated: "2026-03-26T07:15:15.726Z"
+stopped_at: Phase 14 context gathered
+last_updated: "2026-03-26T09:56:32.665Z"
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 4
   total_plans: 9
   completed_plans: 9
@@ -66,12 +66,13 @@ Plan: Not started
 - **Realistic target**: Sharpe 1.0-3.0 on properly validated strategies (Nunchi 21.4 is overfit)
 
 ### Roadmap Evolution
+
 - Phase 14 added: Nunchi Signal Alignment — autoresearch 0% pass rate root cause traced to implementation gaps vs Nunchi original (ATR 2.0 vs 5.5, missing RSI exit/signal flip/cooldown, BB threshold reversed, composite score formula too harsh, no SHORT support)
 
 ## Last Session
 
-- **Stopped at:** Completed 13-02-PLAN.md
-- **Resume file:** None
+- **Stopped at:** Phase 14 context gathered
+- **Resume file:** .planning/phases/14-nunchi-signal-alignment/14-CONTEXT.md
 - **Next step:** `/gsd:plan-phase 10`
 
 ---
