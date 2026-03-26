@@ -21,7 +21,7 @@ Public API:
 """
 
 from poseidon.backtest.cost_model import COST_MODELS, CostModel, get_cost_model
-from poseidon.backtest.metrics import compute_metrics
+from poseidon.backtest.metrics import compute_composite_score, compute_metrics
 from poseidon.backtest.optimizer import (
     BayesianOptimizer,
     GridSearchOptimizer,
@@ -51,6 +51,7 @@ __all__ = [
     "COST_MODELS",
     "get_cost_model",
     "TradeRecord",
+    "compute_composite_score",
     "compute_metrics",
     "BacktestRunner",
     "BacktestConfig",

@@ -58,7 +58,7 @@ def compute_metrics(
     # Trade-level metrics (only closed trades have pnl set)
     closed_trades = [t for t in trades if t.pnl is not None]
     if closed_trades:
-        pnls = [t.pnl for t in closed_trades]
+        pnls: list[float] = [t.pnl for t in closed_trades if t.pnl is not None]
         if pnls:
             wins = [p for p in pnls if p > 0]
             losses = [p for p in pnls if p < 0]
