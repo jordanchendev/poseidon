@@ -1,12 +1,14 @@
 """Strategy framework for Poseidon.
 
-Two strategy types share a common interface:
+Three strategy types share a common interface:
 - ModelStrategy: wraps a BaseModel, converts predictions to Signals
 - RuleStrategy: parses DSL JSON, evaluates conditions against features
+- VotingStrategy: multi-signal voting with ATR trailing stop
 """
 
 from poseidon.strategies.base import BaseStrategy, StrategyType
 from poseidon.strategies.model_strategy import ModelStrategy
 from poseidon.strategies.rule_strategy import RuleStrategy
+from poseidon.strategies.voting_strategy import VotingStrategy
 
-__all__ = ["BaseStrategy", "StrategyType", "ModelStrategy", "RuleStrategy"]
+__all__ = ["BaseStrategy", "StrategyType", "ModelStrategy", "RuleStrategy", "VotingStrategy"]
