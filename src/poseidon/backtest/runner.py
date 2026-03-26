@@ -18,6 +18,7 @@ import pandas as pd
 
 import numpy as np
 
+from poseidon.autoresearch.guard import autoresearch_guard
 from poseidon.backtest.cost_model import CostModel
 from poseidon.backtest.metrics import compute_metrics
 from poseidon.backtest.portfolio import BacktestPortfolio, SizingConfig, SizingMode
@@ -85,6 +86,7 @@ class _FakePositionEntry:
         self.entry_time = entry_time
 
 
+@autoresearch_guard
 class BacktestRunner:
     """Bar-by-bar backtest engine that reuses the live prediction pipeline.
 

@@ -9,6 +9,7 @@ from datetime import datetime
 
 import pandas as pd
 
+from poseidon.autoresearch.guard import autoresearch_guard
 from poseidon.data.features.base import get_feature
 from poseidon.data.storage import read_ohlcv
 from poseidon.models.base import SessionLocal
@@ -58,6 +59,7 @@ REGIME_FEATURES: list[tuple[str, dict]] = [
 ]
 
 
+@autoresearch_guard
 class FeatureEngine:
     """Compute features from OHLCV data.
 

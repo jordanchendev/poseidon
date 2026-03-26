@@ -7,12 +7,14 @@ Supports loading rules from DB on each evaluation cycle (RISK-03).
 
 from __future__ import annotations
 
+from poseidon.autoresearch.guard import autoresearch_guard
 from poseidon.risk.base import BaseRule, RuleResult
 from poseidon.risk.portfolio import VirtualPortfolio
 from poseidon.risk.rules import RULE_REGISTRY
 from poseidon.signals.schemas import Signal, SignalStatus
 
 
+@autoresearch_guard
 class RiskEngine:
     """Chain-of-responsibility risk evaluator.
 
