@@ -93,7 +93,7 @@ Reliably produce quality trading signals and deliver them to Thalassa for human 
 
 ## Current State
 
-v1.0 complete (9 phases) — full trading signal platform with data ingestion, feature engine, XGBoost + Transformer models, strategy DSL, risk engine, backtest engine, and REST API. v2.0 strategy pivot underway: Phase 10 (voting strategy foundation) and Phase 11 (experiment infrastructure) complete — ExperimentTracker, HoldoutConfig, VotingStrategyFactory, and ParameterSearchPipeline with Optuna RDBStorage all in place. Next: Phase 12 autoresearch loop.
+v1.0 complete (9 phases) — full trading signal platform with data ingestion, feature engine, XGBoost + Transformer models, strategy DSL, risk engine, backtest engine, and REST API. v2.0 strategy pivot underway: Phase 10 (voting strategy foundation), Phase 11 (experiment infrastructure), and Phase 12 (autoresearch loop) complete — StrategyMutator, contextvar-based immutability guard on FeatureEngine/BacktestRunner/RiskEngine, AutoResearchRunner Celery task with per-market isolation and graceful stop, and report generation all in place. Next: Phase 13 regime classification (optional, gated).
 
 ## Evolution
 
@@ -113,4 +113,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-26 after Phase 11 experiment-infrastructure complete*
+*Last updated: 2026-03-26 after Phase 12 autoresearch-loop complete*
