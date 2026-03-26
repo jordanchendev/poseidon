@@ -43,6 +43,8 @@ def _make_all_true_config(min_votes: int = 4) -> dict:
         "interval": "1h",
         "min_votes": min_votes,
         "position_pct": 0.08,
+        "cooldown_bars": 0,
+        "conviction_gap": 0,
         "sub_signals": [
             {"type": "indicator_above", "indicator": "cum_return", "params": {"period": 6}, "threshold": 0},
             {"type": "indicator_above", "indicator": "cum_return", "params": {"period": 12}, "threshold": 0},
@@ -203,8 +205,10 @@ class TestATRTrailingStop:
         assert strategy._position_high_watermark is None
 
     def test_reentry_after_close(self):
-        """After CLOSE + cooldown, new vote threshold met -> can re-enter (new LONG)."""
+        """After CLOSE + global cooldown, new vote threshold met -> can re-enter (new LONG)."""
         config = _make_all_true_config(min_votes=4)
+        config["cooldown_bars"] = 3  # short cooldown for test
+        config["conviction_gap"] = 0  # disable gap for this test
         strategy = VotingStrategy(config=config, atr_multiplier=2.0, atr_period=14)
 
         # Enter
@@ -213,11 +217,11 @@ class TestATRTrailingStop:
         strategy.evaluate(make_features(close=110.0, atr_14=2.0))
         strategy.evaluate(make_features(close=105.0, atr_14=2.0))
 
-        # Wait 2 bars for cooldown to expire (same direction block)
-        strategy.evaluate(make_features(rsi_8=45.0, macd_histogram=-0.1, cum_return_6d=-0.01))  # bar 1, no entry
-        strategy.evaluate(make_features(rsi_8=45.0, macd_histogram=-0.1, cum_return_6d=-0.01))  # bar 2, cooldown expires
+        # Wait cooldown_bars for cooldown to expire (global block)
+        for _ in range(3):
+            strategy.evaluate(make_features(rsi_8=45.0, macd_histogram=-0.1, cum_return_6d=-0.01))
 
-        # Re-enter (all conditions true again)
+        # Re-enter (all conditions true again, cooldown expired)
         signals_reentry = strategy.evaluate(make_features())
         long_signals = [s for s in signals_reentry if s.action == SignalAction.LONG]
         assert len(long_signals) == 1
@@ -404,6 +408,8 @@ def _make_bear_config() -> dict:
         ],
         "bear_min_votes": 4,
         "bear_position_pct": 0.06,
+        "cooldown_bars": 0,
+        "conviction_gap": 0,
     }
 
 
@@ -607,15 +613,17 @@ class TestSignalFlip:
 
 
 # ---------------------------------------------------------------------------
-# TestCooldown — 2-bar cooldown mechanism
+# TestCooldown — global cooldown mechanism
 # ---------------------------------------------------------------------------
 
 class TestCooldown:
-    """2-bar cooldown prevents re-entry to same direction after exit."""
+    """Global cooldown blocks ALL entries after ANY exit for cooldown_bars."""
 
-    def test_no_reentry_within_2_bars_same_direction(self):
-        """Cannot re-enter long within 2 bars of long exit."""
+    def test_no_reentry_within_cooldown_bars(self):
+        """Cannot re-enter any direction within cooldown_bars of exit."""
         config = _make_all_true_config(min_votes=4)
+        config["cooldown_bars"] = 3  # short cooldown for test
+        config["conviction_gap"] = 0  # disable gap for this test
         strategy = VotingStrategy(config=config, atr_multiplier=2.0)
         # Enter long
         strategy.evaluate(make_features())
@@ -625,24 +633,22 @@ class TestCooldown:
         signals_close = strategy.evaluate(make_features(close=105.0, atr_14=2.0))
         assert any(s.action == SignalAction.CLOSE for s in signals_close)
 
-        # Immediately try to re-enter (bar 0 after exit) -- should be blocked
-        signals_bar0 = strategy.evaluate(make_features())
-        long_signals_0 = [s for s in signals_bar0 if s.action == SignalAction.LONG]
-        assert len(long_signals_0) == 0
+        # Bars 0-3 after exit: blocked by global cooldown
+        for _ in range(3):
+            signals = strategy.evaluate(make_features())
+            long_signals = [s for s in signals if s.action == SignalAction.LONG]
+            assert len(long_signals) == 0
 
-        # Bar 1 after exit -- still blocked
-        signals_bar1 = strategy.evaluate(make_features())
-        long_signals_1 = [s for s in signals_bar1 if s.action == SignalAction.LONG]
-        assert len(long_signals_1) == 0
+        # Bar 4 after exit: cooldown expired, can re-enter
+        signals_ok = strategy.evaluate(make_features())
+        long_signals_ok = [s for s in signals_ok if s.action == SignalAction.LONG]
+        assert len(long_signals_ok) == 1
 
-        # Bar 2 after exit -- cooldown expired, can re-enter
-        signals_bar2 = strategy.evaluate(make_features())
-        long_signals_2 = [s for s in signals_bar2 if s.action == SignalAction.LONG]
-        assert len(long_signals_2) == 1
-
-    def test_cooldown_does_not_block_opposite_direction(self):
-        """After long exit, SHORT entry is not blocked by cooldown."""
+    def test_cooldown_blocks_opposite_direction_too(self):
+        """After long exit, SHORT entry is also blocked during cooldown."""
         config = _make_bear_config()
+        config["cooldown_bars"] = 3
+        config["conviction_gap"] = 0
         strategy = VotingStrategy(config=config, atr_multiplier=2.0)
         # Enter long
         strategy.evaluate(make_features())
@@ -651,10 +657,10 @@ class TestCooldown:
         strategy.evaluate(make_features(close=110.0, atr_14=2.0))
         strategy.evaluate(make_features(close=105.0, atr_14=2.0))
 
-        # Immediately try bear entry -- should NOT be blocked (different direction)
+        # Immediately try bear entry -- should BE blocked (global cooldown)
         signals = strategy.evaluate(_make_bear_features())
         short_signals = [s for s in signals if s.action == SignalAction.SHORT]
-        assert len(short_signals) == 1
+        assert len(short_signals) == 0
 
 
 # ---------------------------------------------------------------------------

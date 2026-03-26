@@ -38,6 +38,8 @@ PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "position_pct": (0.05, 0.15, "float"),
     "bear_min_votes": (3, 6, "int"),                    # D-22: new
     "bear_position_pct": (0.03, 0.12, "float"),         # D-22: new
+    "cooldown_bars": (4, 24, "int"),                     # global cooldown after any exit
+    "conviction_gap": (1, 3, "int"),                     # min net votes spread for entry
 }
 
 
@@ -161,6 +163,8 @@ def _build_config_from_params(
         "position_pct": params["position_pct"],
         "bear_min_votes": params["bear_min_votes"],
         "bear_position_pct": params["bear_position_pct"],
+        "cooldown_bars": params["cooldown_bars"],
+        "conviction_gap": params["conviction_gap"],
         "sub_signals": sub_signals,
         "bear_sub_signals": bear_sub_signals,
     }
@@ -229,6 +233,8 @@ class VotingStrategyFactory:
             "position_pct": strategy._position_pct,
             "bear_min_votes": strategy._bear_min_votes,
             "bear_position_pct": strategy._bear_position_pct,
+            "cooldown_bars": strategy._cooldown_bars,
+            "conviction_gap": strategy._conviction_gap,
             "sub_signals": copy.deepcopy(strategy._sub_signals),
             "bear_sub_signals": copy.deepcopy(strategy._bear_sub_signals),
             "atr_multiplier": strategy._atr_multiplier,

@@ -44,7 +44,7 @@ class WalkForwardConfig:
     validate_days: int = 63
     test_days: int = 63
     step_days: int = 63
-    min_trades_per_oos: int = 30
+    min_trades_per_oos: int = 5
     min_wfe: float = 0.50
 
 

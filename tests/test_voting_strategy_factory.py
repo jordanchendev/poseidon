@@ -70,6 +70,8 @@ class TestFromTrial:
             "position_pct": 0.08,
             "bear_min_votes": 4,
             "bear_position_pct": 0.06,
+            "cooldown_bars": 12,
+            "conviction_gap": 2,
         }
         return optuna.trial.FixedTrial(params)
 
@@ -131,8 +133,8 @@ class TestParamBounds:
     """PARAM_BOUNDS definition coverage."""
 
     def test_param_bounds_has_fourteen_entries(self) -> None:
-        """14 entries: 12 original + bear_min_votes + bear_position_pct."""
-        assert len(PARAM_BOUNDS) == 14
+        """16 entries: 12 original + bear_min_votes + bear_position_pct + cooldown_bars + conviction_gap."""
+        assert len(PARAM_BOUNDS) == 16
 
     def test_param_bounds_types_valid(self) -> None:
         for name, (low, high, ptype) in PARAM_BOUNDS.items():

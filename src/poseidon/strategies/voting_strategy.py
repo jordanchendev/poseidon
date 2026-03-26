@@ -83,14 +83,17 @@ class VotingStrategy(BaseStrategy):
         self._atr_multiplier = atr_multiplier
         self._atr_period = atr_period
 
+        # Cooldown and conviction gap
+        self._cooldown_bars: int = config.get("cooldown_bars", 12)
+        self._conviction_gap: int = config.get("conviction_gap", 2)
+
         # Position state (replaces _in_position bool)
         self._position_direction: str | None = None  # "long", "short", or None
         self._position_high_watermark: float | None = None  # for long trailing stop
         self._position_low_watermark: float | None = None   # for short trailing stop
 
-        # Cooldown state
+        # Cooldown state — applies to ALL directions after ANY exit
         self._bars_since_exit: int = 999  # starts high so first trade isn't blocked
-        self._last_exit_direction: str | None = None
 
         # Deduplicate sub-signal warnings
         self._warned_signals: set[str] = set()
@@ -133,6 +136,10 @@ class VotingStrategy(BaseStrategy):
 
         # === ENTRY CHECKS (only if not in position) ===
         if self._position_direction is None:
+            # Global cooldown: block ALL entries for cooldown_bars after ANY exit
+            if self._bars_since_exit <= self._cooldown_bars:
+                return signals
+
             # Count bull votes
             bull_votes = self._count_votes(self._sub_signals, features, row_idx)
             bear_votes = (
@@ -141,15 +148,10 @@ class VotingStrategy(BaseStrategy):
                 else 0
             )
 
-            # Check cooldown: cannot re-enter same direction within 2 bars of exit
-            bull_blocked = (
-                self._last_exit_direction == "long" and self._bars_since_exit <= 2
-            )
-            bear_blocked = (
-                self._last_exit_direction == "short" and self._bars_since_exit <= 2
-            )
+            # Conviction gap: require net directional strength before entry
+            net_conviction = bull_votes - bear_votes
 
-            if bull_votes >= self._min_votes and not bull_blocked:
+            if bull_votes >= self._min_votes and net_conviction >= self._conviction_gap:
                 confidence = (
                     bull_votes / len(self._sub_signals) if self._sub_signals else 0.0
                 )
@@ -174,7 +176,7 @@ class VotingStrategy(BaseStrategy):
                 self._position_high_watermark = close
             elif (
                 bear_votes >= self._bear_min_votes
-                and not bear_blocked
+                and (-net_conviction) >= self._conviction_gap
                 and self._bear_sub_signals
             ):
                 confidence = (
@@ -279,7 +281,6 @@ class VotingStrategy(BaseStrategy):
         self, reason: str, signal_time: datetime, **metadata: object
     ) -> Signal:
         """Create CLOSE signal and reset position state."""
-        self._last_exit_direction = self._position_direction
         self._bars_since_exit = 0
         self._position_direction = None
         self._position_high_watermark = None
@@ -411,5 +412,4 @@ class VotingStrategy(BaseStrategy):
         self._position_high_watermark = None
         self._position_low_watermark = None
         self._bars_since_exit = 999
-        self._last_exit_direction = None
         self._warned_signals.clear()
