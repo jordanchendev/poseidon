@@ -45,6 +45,7 @@ class WalkForwardConfig:
     test_days: int = 63
     step_days: int = 63
     min_trades_per_oos: int = 5
+    max_insufficient_ratio: float = 0.30  # tolerate up to 30% low-trade windows
     min_wfe: float = 0.50
 
 
@@ -275,13 +276,20 @@ class WalkForwardAnalyzer:
         if wfe < config.min_wfe:
             flags.append("wfe_below_threshold")
 
+        insufficient_count = 0
         for w in per_window:
             if w.oos_trade_count < config.min_trades_per_oos:
-                flags.append(f"insufficient_trades_window_{w.window_index}")
+                insufficient_count += 1
+
+        insufficient_ratio = insufficient_count / len(per_window) if per_window else 1.0
+        if insufficient_ratio > config.max_insufficient_ratio:
+            flags.append(
+                f"too_many_insufficient_windows_{insufficient_count}/{len(per_window)}"
+                f"_ratio={insufficient_ratio:.2f}_max={config.max_insufficient_ratio}"
+            )
 
         # Determine pass/fail
-        has_insufficient_trades = any("insufficient_trades" in f for f in flags)
-        passed = wfe >= config.min_wfe and not has_insufficient_trades
+        passed = wfe >= config.min_wfe and len(flags) == 0
 
         # Aggregate OOS metrics (average across windows)
         aggregate_oos_metrics: dict = {}
