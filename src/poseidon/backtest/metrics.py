@@ -96,20 +96,21 @@ def compute_metrics(
 def compute_composite_score(metrics: dict) -> float:
     """Compute composite optimization score from backtest metrics.
 
-    Formula: sharpe * sqrt(min(trades/50, 1.0)) - dd_penalty - turnover_penalty
+    Formula: sharpe * trade_factor - dd_penalty
+
+    trade_factor:
+        <50 trades: sqrt(trades/50) — reward having enough trades
+        50-500 trades: 1.0 — optimal zone, no penalty
+        >500 trades: 1/sqrt(trades/500) — penalize overtrading
+            1000→0.71, 2000→0.50, 4000→0.35
 
     dd_penalty = max(0, max_drawdown - 0.15) * 0.05
-        Drawdown under 15% incurs zero penalty (Nunchi D-15).
-
-    turnover_penalty = max(0, turnover_ratio - 500) * 0.001
-        where turnover_ratio = trade_count * avg_trade_value / capital (D-16).
+        Drawdown under 15% incurs zero penalty.
 
     Hard cutoffs (return 0.0 immediately):
     - trade_count < 10
     - max_drawdown > 0.50
     - total_return < -0.50 (>50% capital loss)
-
-    This is the single optimization metric for autoresearch (D-08).
     """
     trade_count = metrics.get("trade_count", 0)
     max_drawdown = metrics.get("max_drawdown", 1.0)
@@ -119,12 +120,16 @@ def compute_composite_score(metrics: dict) -> float:
     if trade_count < 10 or max_drawdown > 0.50 or total_return < -0.50:
         return 0.0
 
-    trade_factor = math.sqrt(min(trade_count / 50.0, 1.0))
+    # Trade factor: reward having enough trades (up to 50), then penalize excess
+    # Optimal zone: 50-500 trades (factor=1.0). Above 500: decaying penalty.
+    if trade_count <= 50:
+        trade_factor = math.sqrt(trade_count / 50.0)
+    elif trade_count <= 500:
+        trade_factor = 1.0
+    else:
+        # Smooth decay: 1000 trades → 0.71, 2000 → 0.50, 4000 → 0.35
+        trade_factor = 1.0 / math.sqrt(trade_count / 500.0)
+
     dd_penalty = max(0, max_drawdown - 0.15) * 0.05
 
-    avg_trade_value = metrics.get("avg_trade_value", 0.0)
-    capital = metrics.get("initial_capital", 100000.0)
-    turnover_ratio = (trade_count * avg_trade_value / capital) if capital > 0 else 0.0
-    turnover_penalty = max(0, turnover_ratio - 500) * 0.001
-
-    return sharpe * trade_factor - dd_penalty - turnover_penalty
+    return sharpe * trade_factor - dd_penalty
