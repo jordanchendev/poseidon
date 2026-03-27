@@ -100,9 +100,9 @@ def compute_composite_score(metrics: dict) -> float:
 
     trade_factor:
         <50 trades: sqrt(trades/50) — reward having enough trades
-        50-500 trades: 1.0 — optimal zone, no penalty
-        >500 trades: 1/sqrt(trades/500) — penalize overtrading
-            1000→0.71, 2000→0.50, 4000→0.35
+        50-200 trades: 1.0 — optimal zone, no penalty
+        >200 trades: 1/sqrt(trades/200) — penalize overtrading
+            400→0.71, 800→0.50, 1600→0.35, 3200→0.25
 
     dd_penalty = max(0, max_drawdown - 0.15) * 0.05
         Drawdown under 15% incurs zero penalty.
@@ -121,14 +121,14 @@ def compute_composite_score(metrics: dict) -> float:
         return 0.0
 
     # Trade factor: reward having enough trades (up to 50), then penalize excess
-    # Optimal zone: 50-500 trades (factor=1.0). Above 500: decaying penalty.
+    # Optimal zone: 50-200 trades. Above 200: aggressive decay.
     if trade_count <= 50:
         trade_factor = math.sqrt(trade_count / 50.0)
-    elif trade_count <= 500:
+    elif trade_count <= 200:
         trade_factor = 1.0
     else:
-        # Smooth decay: 1000 trades → 0.71, 2000 → 0.50, 4000 → 0.35
-        trade_factor = 1.0 / math.sqrt(trade_count / 500.0)
+        # Aggressive decay: 400→0.71, 800→0.50, 1600→0.35, 3200→0.25
+        trade_factor = 1.0 / math.sqrt(trade_count / 200.0)
 
     dd_penalty = max(0, max_drawdown - 0.15) * 0.05
 
