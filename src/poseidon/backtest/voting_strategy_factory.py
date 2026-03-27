@@ -38,8 +38,8 @@ PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "position_pct": (0.05, 0.15, "float"),
     "bear_min_votes": (3, 6, "int"),                    # D-22: new
     "bear_position_pct": (0.03, 0.12, "float"),         # D-22: new
-    "cooldown_bars": (4, 24, "int"),                     # global cooldown after any exit
-    "conviction_gap": (1, 3, "int"),                     # min net votes spread for entry
+    "cooldown_bars": (8, 48, "int"),                     # global cooldown after any exit
+    "conviction_gap": (2, 4, "int"),                     # min net votes spread for entry
 }
 
 

@@ -7,8 +7,8 @@
     "min_votes": 4,
     "position_pct": 0.08,
     "atr_multiplier": 5.5,
-    "cooldown_bars": 12,
-    "conviction_gap": 2,
+    "cooldown_bars": 24,
+    "conviction_gap": 3,
     "sub_signals": [
         {
             "type": "indicator_above",
