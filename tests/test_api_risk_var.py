@@ -84,8 +84,8 @@ def test_exposure_endpoint(client):
     mock_portfolio.total_exposure.return_value = 0.8
 
     with (
-        patch("poseidon.api.risk_metrics.SessionLocal") as mock_session_cls,
-        patch("poseidon.api.risk_metrics.VirtualPortfolio", return_value=mock_portfolio),
+        patch("poseidon.models.base.SessionLocal") as mock_session_cls,
+        patch("poseidon.risk.portfolio.VirtualPortfolio", return_value=mock_portfolio),
     ):
         mock_db = MagicMock()
         mock_session_cls.return_value = mock_db
@@ -108,7 +108,7 @@ def test_stress_test_trigger(client):
     mock_task = MagicMock()
     mock_task.id = "abc-123-task"
 
-    with patch("poseidon.api.risk_metrics.run_stress_test") as mock_fn:
+    with patch("poseidon.workers.cpu_tasks.run_stress_test") as mock_fn:
         mock_fn.delay.return_value = mock_task
         resp = client.post(
             "/api/risk/stress-test/run",

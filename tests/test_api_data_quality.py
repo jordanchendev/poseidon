@@ -19,7 +19,10 @@ def fake_redis_client():
 @pytest.fixture
 def client(fake_redis_client):
     """FastAPI TestClient with mocked Redis and API key."""
-    with patch("poseidon.api.data_quality._get_redis_client", return_value=fake_redis_client):
+    with (
+        patch("poseidon.api.data_quality._get_redis_client", return_value=fake_redis_client),
+        patch("poseidon.core.config.settings.api_key", "test-key"),
+    ):
         from poseidon.main import app
 
         c = TestClient(app)
