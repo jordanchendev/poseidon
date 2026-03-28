@@ -54,3 +54,9 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+
+[dependency-groups]
+dev = [
+    "fakeredis[lua]>=2.0",
+    "pytest>=9.0.2",
+]
