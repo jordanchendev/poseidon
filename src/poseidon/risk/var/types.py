@@ -17,6 +17,7 @@ class VaRMethod(str, Enum):
     PARAMETRIC = "parametric"
     HISTORICAL = "historical"
     CORNISH_FISHER = "cornish_fisher"
+    MONTE_CARLO = "monte_carlo"
 
 
 @dataclass

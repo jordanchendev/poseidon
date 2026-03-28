@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     # VaR cache TTL (2x hourly schedule = 2 hours, per pitfall 5)
     var_cache_ttl: int = 7200
 
+    # Monte Carlo VaR settings (per D-05)
+    mc_simulations: int = 10_000
+
+    # Data quality scoring weights (per D-08, must sum to 1.0)
+    quality_weight_completeness: float = 0.30
+    quality_weight_consistency: float = 0.25
+    quality_weight_anomaly_free: float = 0.25
+    quality_weight_timeliness: float = 0.20
+
     model_config = {"env_prefix": "POSEIDON_", "env_file": ".env"}
 
 
