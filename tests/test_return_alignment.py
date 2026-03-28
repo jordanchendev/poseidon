@@ -203,3 +203,125 @@ class TestAlignReturns:
         result2 = align_returns({"X": s1, "Y": s2}, as_of=as_of)
 
         pd.testing.assert_frame_equal(result1, result2)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures for covariance tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def aligned_returns_3assets() -> pd.DataFrame:
+    """Synthetic aligned return DataFrame: 3 assets, 60 business days."""
+    rng = np.random.default_rng(seed=123)
+    dates = pd.bdate_range("2024-01-02", periods=60, freq="B")
+    data = {
+        "TW2330": rng.standard_normal(60) * 0.02,
+        "AAPL": rng.standard_normal(60) * 0.015,
+        "BTCUSDT": rng.standard_normal(60) * 0.04,
+    }
+    return pd.DataFrame(data, index=dates)
+
+
+@pytest.fixture
+def small_aligned_returns() -> pd.DataFrame:
+    """Only 10 rows -- below default min_observations threshold."""
+    rng = np.random.default_rng(seed=456)
+    dates = pd.bdate_range("2024-01-02", periods=10, freq="B")
+    data = {
+        "A": rng.standard_normal(10) * 0.02,
+        "B": rng.standard_normal(10) * 0.015,
+    }
+    return pd.DataFrame(data, index=dates)
+
+
+# ---------------------------------------------------------------------------
+# Tests: compute_covariance
+# ---------------------------------------------------------------------------
+
+
+class TestComputeCovariance:
+    def test_returns_ndarray_correct_shape(self, aligned_returns_3assets):
+        from poseidon.risk.var.covariance import compute_covariance
+
+        cov = compute_covariance(aligned_returns_3assets)
+        assert isinstance(cov, np.ndarray)
+        assert cov.shape == (3, 3)
+
+    def test_epsilon_regularization(self, aligned_returns_3assets):
+        from poseidon.risk.var.covariance import EPSILON, compute_covariance
+
+        cov = compute_covariance(aligned_returns_3assets)
+        # Diagonal should be >= epsilon (regularized)
+        for i in range(cov.shape[0]):
+            assert cov[i, i] >= EPSILON
+
+    def test_raises_on_insufficient_observations(self, small_aligned_returns):
+        from poseidon.risk.var.covariance import compute_covariance
+
+        with pytest.raises(ValueError, match="Insufficient observations"):
+            compute_covariance(small_aligned_returns, min_observations=30)
+
+    def test_accepts_sufficient_observations(self, aligned_returns_3assets):
+        from poseidon.risk.var.covariance import compute_covariance
+
+        # 60 rows >= 30 min_observations => should not raise
+        cov = compute_covariance(aligned_returns_3assets, min_observations=30)
+        assert cov.shape == (3, 3)
+
+    def test_symmetric(self, aligned_returns_3assets):
+        from poseidon.risk.var.covariance import compute_covariance
+
+        cov = compute_covariance(aligned_returns_3assets)
+        np.testing.assert_array_almost_equal(cov, cov.T)
+
+
+# ---------------------------------------------------------------------------
+# Tests: cache_covariance / load_cached_covariance
+# ---------------------------------------------------------------------------
+
+
+class TestCovarianceCache:
+    def test_cache_roundtrip(self, fake_redis, aligned_returns_3assets):
+        from poseidon.risk.var.covariance import (
+            cache_covariance,
+            compute_covariance,
+            load_cached_covariance,
+        )
+
+        symbols = ["TW2330", "AAPL", "BTCUSDT"]
+        cov = compute_covariance(aligned_returns_3assets)
+        as_of = datetime(2024, 3, 29, tzinfo=timezone.utc)
+
+        cache_covariance(fake_redis, symbols, cov, as_of)
+        result = load_cached_covariance(fake_redis)
+
+        assert result is not None
+        loaded_symbols, loaded_matrix, metadata = result
+        assert loaded_symbols == symbols
+        np.testing.assert_array_almost_equal(loaded_matrix, cov)
+        assert "as_of" in metadata
+        assert "computed_at" in metadata
+
+    def test_load_returns_none_on_miss(self, fake_redis):
+        from poseidon.risk.var.covariance import load_cached_covariance
+
+        result = load_cached_covariance(fake_redis)
+        assert result is None
+
+    def test_cache_key_matches_spec(self, fake_redis, aligned_returns_3assets):
+        from poseidon.risk.var.covariance import (
+            COVARIANCE_CACHE_KEY,
+            cache_covariance,
+            compute_covariance,
+        )
+
+        symbols = ["TW2330", "AAPL", "BTCUSDT"]
+        cov = compute_covariance(aligned_returns_3assets)
+        as_of = datetime(2024, 3, 29, tzinfo=timezone.utc)
+
+        cache_covariance(fake_redis, symbols, cov, as_of)
+
+        # Verify the key is exactly what D-05 specifies
+        assert COVARIANCE_CACHE_KEY == "poseidon:var:covariance:latest"
+        assert fake_redis.exists(COVARIANCE_CACHE_KEY)
