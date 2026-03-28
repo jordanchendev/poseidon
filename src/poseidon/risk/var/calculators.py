@@ -1,4 +1,4 @@
-"""VaR calculators: Parametric, Historical Simulation, Cornish-Fisher.
+"""VaR calculators: Parametric, Historical Simulation, Cornish-Fisher, Monte Carlo.
 
 Convention: VaR/CVaR are positive numbers representing maximum loss fraction.
 E.g., VaR=0.05 means 5% portfolio loss at the given confidence level.
@@ -16,7 +16,7 @@ from poseidon.risk.var.types import VaRMethod, VaRResult
 
 
 class VaRCalculator:
-    """Portfolio VaR calculator supporting three methods.
+    """Portfolio VaR calculator supporting four methods.
 
     All methods return :class:`VaRResult` with positive loss fractions.
     The ``confidence_levels`` tuple must contain exactly two values
@@ -286,4 +286,87 @@ class VaRCalculator:
             portfolio_value=portfolio_value,
             holding_period=holding_period,
             details={"skewness": s, "excess_kurtosis": k},
+        )
+
+    # ------------------------------------------------------------------
+    # Monte Carlo VaR (Cholesky decomposition)
+    # ------------------------------------------------------------------
+
+    def monte_carlo(
+        self,
+        weights: np.ndarray,
+        cov_matrix: np.ndarray,
+        portfolio_value: float,
+        as_of: datetime,
+        n_simulations: int = 10_000,
+        holding_period: int = 1,
+        seed: int | None = None,
+    ) -> VaRResult:
+        """Compute Monte Carlo VaR using Cholesky decomposition.
+
+        Generates correlated random returns via Cholesky factorisation of the
+        covariance matrix, then computes VaR/CVaR from the simulated portfolio
+        return distribution.
+
+        Parameters
+        ----------
+        weights:
+            Asset weight vector.  Empty array triggers zero result.
+        cov_matrix:
+            Covariance matrix of asset returns (n x n).
+        portfolio_value:
+            Current portfolio value in currency units.
+        as_of:
+            Point-in-time for the computation.
+        n_simulations:
+            Number of Monte Carlo paths (default 10,000).
+        holding_period:
+            Number of days.  Simulated returns scaled by sqrt(holding_period).
+        seed:
+            Random seed for reproducibility (testing only; production uses None).
+
+        Returns
+        -------
+        VaRResult
+        """
+        method_name = VaRMethod.MONTE_CARLO.value
+
+        if len(weights) == 0:
+            return self._zero_result(method_name, as_of, portfolio_value, holding_period)
+
+        # Cholesky decomposition — graceful fallback for non-PD matrices
+        try:
+            L = np.linalg.cholesky(cov_matrix)
+        except np.linalg.LinAlgError:
+            return self._zero_result(method_name, as_of, portfolio_value, holding_period)
+
+        rng = np.random.default_rng(seed)
+        uncorrelated = rng.standard_normal((n_simulations, len(weights)))
+        correlated = uncorrelated @ L.T
+        # Scale for holding period
+        correlated *= np.sqrt(holding_period)
+        portfolio_sims = correlated @ weights
+
+        conf_95, conf_99 = self.confidence_levels
+
+        var_95 = float(-np.percentile(portfolio_sims, (1 - conf_95) * 100))
+        var_99 = float(-np.percentile(portfolio_sims, (1 - conf_99) * 100))
+
+        # CVaR (Expected Shortfall): mean of tail beyond VaR
+        tail_95 = portfolio_sims[portfolio_sims <= -var_95]
+        cvar_95 = float(-tail_95.mean()) if len(tail_95) > 0 else var_95
+        tail_99 = portfolio_sims[portfolio_sims <= -var_99]
+        cvar_99 = float(-tail_99.mean()) if len(tail_99) > 0 else var_99
+
+        return VaRResult(
+            method=method_name,
+            var_95=var_95,
+            var_99=var_99,
+            cvar_95=cvar_95,
+            cvar_99=cvar_99,
+            as_of=as_of,
+            computed_at=datetime.now(timezone.utc),
+            portfolio_value=portfolio_value,
+            holding_period=holding_period,
+            details={"n_simulations": n_simulations, "seed": seed},
         )
