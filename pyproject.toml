@@ -59,5 +59,6 @@ target-version = "py311"
 [dependency-groups]
 dev = [
     "fakeredis[lua]>=2.0",
+    "httpx>=0.28.1",
     "pytest>=9.0.2",
 ]

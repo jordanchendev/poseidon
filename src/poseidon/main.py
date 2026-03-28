@@ -8,6 +8,7 @@ from poseidon.api import (
     autoresearch,
     backtests,
     data,
+    data_quality,
     health,
     risk,
     sentiment,
@@ -42,3 +43,4 @@ app.include_router(models_api.router, prefix="/models", tags=["models"], depende
 app.include_router(backtests.router, prefix="/backtest", tags=["backtest"], dependencies=secured)
 app.include_router(signals.router, prefix="/signals", tags=["signals"], dependencies=secured)
 app.include_router(autoresearch.router, prefix="/autoresearch", tags=["autoresearch"], dependencies=secured)
+app.include_router(data_quality.router, prefix="/api/data-quality", tags=["data-quality"], dependencies=secured)

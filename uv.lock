@@ -1936,6 +1936,7 @@ gpu = [
 [package.dev-dependencies]
 dev = [
     { name = "fakeredis", extra = ["lua"] },
+    { name = "httpx" },
     { name = "pytest" },
 ]
 
@@ -1976,6 +1977,7 @@ provides-extras = ["gpu", "dev"]
 [package.metadata.requires-dev]
 dev = [
     { name = "fakeredis", extras = ["lua"], specifier = ">=2.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pytest", specifier = ">=9.0.2" },
 ]
 
