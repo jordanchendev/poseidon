@@ -65,6 +65,23 @@ celery_app.conf.update(
             "schedule": crontab(hour=0, minute=15),
             "args": ["crypto_spot", "1d"],
         },
+        # VaR computation: covariance matrix update daily at 00:30 UTC (per D-05)
+        "update-covariance-matrix": {
+            "task": "poseidon.workers.cpu_tasks.update_covariance_matrix",
+            "schedule": crontab(hour=0, minute=30),
+        },
+        # VaR Historical Simulation: hourly at :15 past the hour (per D-03)
+        "compute-var-historical": {
+            "task": "poseidon.workers.cpu_tasks.compute_var_snapshot",
+            "schedule": crontab(minute=15),
+            "args": ["historical"],
+        },
+        # VaR Parametric + Cornish-Fisher: daily at 01:00 UTC after covariance update
+        "compute-var-parametric": {
+            "task": "poseidon.workers.cpu_tasks.compute_var_snapshot",
+            "schedule": crontab(hour=1, minute=0),
+            "args": ["all"],
+        },
     },
 
     # Auto-discover task modules
