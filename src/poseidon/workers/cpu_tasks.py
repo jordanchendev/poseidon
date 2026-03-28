@@ -1222,3 +1222,134 @@ def compute_quality_scores() -> dict:
         db.close()
 
     return {"scored": scored, "skipped": skipped}
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.run_stress_test")
+def run_stress_test(
+    scenario_name: str, custom_shocks: dict | None = None
+) -> dict:
+    """Run stress test scenario asynchronously (per D-12).
+
+    Supports both named scenarios (from JSON config) and ad-hoc hypothetical
+    scenarios (custom_shocks dict). Results are returned as JSON-serializable
+    dicts for the Celery result backend.
+
+    Args:
+        scenario_name: Name of the scenario JSON file (without .json).
+        custom_shocks: Optional dict of market -> shock factor for ad-hoc
+            hypothetical scenarios. When provided, scenario_name is used
+            as the label but shocks come from this dict.
+
+    Returns:
+        Dict with StressTestResult fields (JSON-serializable).
+    """
+    from datetime import timedelta
+
+    import numpy as np
+
+    from poseidon.risk.portfolio import VirtualPortfolio
+    from poseidon.risk.stress.engine import StressTestEngine
+    from poseidon.risk.stress.types import ScenarioConfig
+    from poseidon.risk.var.calculators import VaRCalculator
+    from poseidon.risk.var.covariance import load_cached_covariance
+    from poseidon.risk.var.returns import align_returns, compute_returns
+
+    db = SessionLocal()
+    redis_client = _get_redis_client()
+    try:
+        # 1. Rebuild portfolio from DB
+        portfolio = VirtualPortfolio()
+        portfolio.rebuild_from_db(db)
+        if portfolio.open_position_count == 0:
+            return {"status": "skipped", "reason": "no open positions"}
+
+        weights = portfolio.weights()
+        symbols = portfolio.position_symbols()
+        as_of = datetime.now(timezone.utc)
+        portfolio_value = portfolio.total_exposure()
+
+        # 2. Load cached covariance
+        cached = load_cached_covariance(redis_client)
+        if cached is None:
+            return {"status": "skipped", "reason": "no cached covariance matrix"}
+        cov_symbols, cov_matrix, _cov_meta = cached
+        cov_matrix = np.array(cov_matrix)
+
+        # 3. Load aligned returns for historical scenarios
+        aligned_returns = None
+        try:
+            return_series = {}
+            for sym in symbols:
+                ohlcv_df = read_ohlcv(
+                    db, sym, market="", interval="1d",
+                    start=as_of - timedelta(days=settings.var_lookback_days),
+                    end=as_of,
+                )
+                if not ohlcv_df.empty and "close" in ohlcv_df.columns:
+                    ret = compute_returns(ohlcv_df["close"], as_of=as_of)
+                    if not ret.empty:
+                        return_series[sym] = ret
+            if return_series:
+                aligned_returns = align_returns(return_series, as_of=as_of)
+        except Exception:
+            logger.warning("Could not load aligned returns for stress test")
+
+        # 4. Create engine and run scenario
+        calculator = VaRCalculator()
+        scenarios_dir = str(
+            __import__("pathlib").Path(__file__).resolve().parents[3]
+            / "config"
+            / "stress_scenarios"
+        )
+        engine = StressTestEngine(calculator, scenarios_dir=scenarios_dir)
+
+        if custom_shocks is not None:
+            # Ad-hoc hypothetical scenario
+            config = ScenarioConfig(
+                name=scenario_name,
+                type="hypothetical",
+                description=f"Custom hypothetical: {scenario_name}",
+                shocks=custom_shocks,
+            )
+            result = engine.run_config(
+                config, weights, symbols, cov_matrix,
+                aligned_returns=aligned_returns,
+                portfolio_value=portfolio_value,
+            )
+        else:
+            # Named scenario from JSON config
+            result = engine.run_scenario(
+                scenario_name, weights, symbols, cov_matrix,
+                aligned_returns=aligned_returns,
+                portfolio_value=portfolio_value,
+            )
+
+        # 5. Convert to JSON-serializable dict
+        return {
+            "status": "completed",
+            "scenario_name": result.scenario_name,
+            "scenario_type": result.scenario_type,
+            "portfolio_pnl": result.portfolio_pnl,
+            "worst_case_loss": result.worst_case_loss,
+            "var_result": (
+                {
+                    "method": result.var_result.method,
+                    "var_95": result.var_result.var_95,
+                    "var_99": result.var_result.var_99,
+                    "cvar_95": result.var_result.cvar_95,
+                    "cvar_99": result.var_result.cvar_99,
+                    "portfolio_value": result.var_result.portfolio_value,
+                }
+                if result.var_result
+                else None
+            ),
+            "details": result.details,
+            "computed_at": (
+                result.computed_at.isoformat() if result.computed_at else None
+            ),
+        }
+    except Exception:
+        logger.exception("Stress test failed for scenario=%s", scenario_name)
+        raise
+    finally:
+        db.close()

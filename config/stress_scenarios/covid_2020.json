@@ -1,0 +1,6 @@
+{
+  "name": "covid_2020",
+  "type": "historical",
+  "description": "COVID-19 market crash (Feb-Mar 2020)",
+  "date_range": {"start": "2020-02-19", "end": "2020-03-23"}
+}

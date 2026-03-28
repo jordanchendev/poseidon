@@ -1,0 +1,11 @@
+{
+  "name": "equity_crash_20pct",
+  "type": "hypothetical",
+  "description": "20% equity drop, 30% crypto crash",
+  "shocks": {
+    "tw_stock": -0.20,
+    "tw_futures": -0.20,
+    "us_stock": -0.20,
+    "crypto_spot": -0.30
+  }
+}

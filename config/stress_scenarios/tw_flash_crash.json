@@ -1,0 +1,6 @@
+{
+  "name": "tw_flash_crash",
+  "type": "historical",
+  "description": "Taiwan market flash crash events",
+  "date_range": {"start": "2021-05-11", "end": "2021-05-17"}
+}

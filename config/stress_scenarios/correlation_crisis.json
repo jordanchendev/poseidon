@@ -1,0 +1,6 @@
+{
+  "name": "correlation_crisis",
+  "type": "correlation_stress",
+  "description": "All correlations spike to 0.9 during crisis",
+  "target_correlation": 0.9
+}

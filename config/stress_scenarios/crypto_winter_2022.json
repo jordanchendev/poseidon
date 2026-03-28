@@ -1,0 +1,6 @@
+{
+  "name": "crypto_winter_2022",
+  "type": "historical",
+  "description": "Crypto winter and Terra/Luna collapse (May-Jun 2022)",
+  "date_range": {"start": "2022-05-01", "end": "2022-06-30"}
+}
