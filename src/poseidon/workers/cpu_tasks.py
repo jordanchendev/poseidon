@@ -15,6 +15,7 @@ from poseidon.backtest.schemas import BacktestConfig
 from poseidon.core.config import settings
 from poseidon.data.feature_engine import FeatureEngine
 from poseidon.data.fetchers import get_fetcher
+from poseidon.data.cache import CacheManager
 from poseidon.data.rate_limiter import CircuitBreaker, DistributedRateLimiter, PROVIDER_LIMITS
 from poseidon.data.validation import validate_ohlcv
 from poseidon.data.storage import (
@@ -113,6 +114,7 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
         failure_window=settings.circuit_failure_window,
     )
     rate_limiter = DistributedRateLimiter(redis_client)
+    cache = CacheManager(redis_client) if settings.cache_enabled else None
     provider_cfg = PROVIDER_LIMITS.get(provider, {})
     window = provider_cfg.get("window_seconds", 3600)
     limit = getattr(settings, provider_cfg.get("limit_key", "ratelimit_finmind_hourly"), 500)
@@ -120,6 +122,15 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
     session = SessionLocal()
     try:
         for sym_info in symbols:
+            # 0. Check cache first (three-layer fallback: cache -> DB -> API)
+            if cache is not None:
+                cached_df = cache.get(sym_info.id, interval, start_date, end_date)
+                if cached_df is not None and not cached_df.empty:
+                    logger.debug("Cache hit for %s/%s/%s", market, sym_info.id, interval)
+                    count = upsert_ohlcv(session, cached_df, sym_info.id, market, instrument, interval)
+                    fetched_count += count
+                    continue
+
             # 1. Check circuit breaker
             if not circuit.allow_request():
                 logger.warning("Circuit open for %s, skipping %s", provider, sym_info.id)
@@ -162,6 +173,9 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
                 # 5. Upsert (only if no CRITICAL)
                 count = upsert_ohlcv(session, df, sym_info.id, market, instrument, interval)
                 fetched_count += count
+                # 6. Cache the validated data
+                if cache is not None:
+                    cache.set(sym_info.id, interval, start_date, end_date, df)
                 logger.info("Fetched %d rows for %s/%s/%s", count, market, sym_info.id, interval)
             else:
                 logger.info("No new data for %s/%s/%s", market, sym_info.id, interval)
