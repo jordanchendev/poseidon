@@ -1191,6 +1191,8 @@ def compute_quality_scores() -> dict:
                         continue
 
                     # Compute quality score
+                    # reset_index so validation_rules can access df["time"]
+                    df = df.reset_index()
                     dims = scorer.compute(
                         df,
                         market=market_name,
