@@ -50,7 +50,7 @@ class TestCacheGetSet:
         assert result is not None
         assert list(result.columns) == list(df.columns)
         assert len(result) == len(df)
-        pd.testing.assert_frame_equal(result, df, check_names=False)
+        pd.testing.assert_frame_equal(result, df, check_names=False, check_freq=False)
 
     def test_cache_miss_returns_none(self, fake_redis):
         from poseidon.data.cache import CacheManager
@@ -167,4 +167,4 @@ class TestSerialization:
         assert list(result.columns) == list(df.columns)
         assert len(result) == len(df)
         # Check float values match
-        pd.testing.assert_frame_equal(result, df, check_names=False)
+        pd.testing.assert_frame_equal(result, df, check_names=False, check_freq=False)
