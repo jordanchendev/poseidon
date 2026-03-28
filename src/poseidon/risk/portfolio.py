@@ -7,9 +7,12 @@ on startup (RISK-02 requirement).
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+
+import numpy as np
 
 from poseidon.signals.schemas import Signal, SignalAction
 
@@ -70,6 +73,41 @@ class VirtualPortfolio:
             )
         elif signal.action == SignalAction.CLOSE:
             self.positions.pop(key, None)
+
+    def exposure_by_market(self) -> dict[str, float]:
+        """Aggregate exposure by market.
+
+        Returns dict mapping market name to sum of quantity_pct.
+        """
+        result: dict[str, float] = defaultdict(float)
+        for entry in self.positions.values():
+            result[entry.market] += entry.quantity_pct
+        return dict(result)
+
+    def exposure_by_asset(self) -> dict[str, float]:
+        """Per-asset exposure keyed by '{market}:{symbol}'.
+
+        Returns dict mapping position key to its quantity_pct.
+        """
+        return {key: entry.quantity_pct for key, entry in self.positions.items()}
+
+    def position_symbols(self) -> list[str]:
+        """Sorted list of position keys for deterministic weight vector alignment."""
+        return sorted(self.positions.keys())
+
+    def weights(self) -> np.ndarray:
+        """Normalized position weights as numpy array.
+
+        Order matches position_symbols(). Returns empty array if no positions.
+        """
+        keys = self.position_symbols()
+        if not keys:
+            return np.array([])
+        raw = np.array([self.positions[k].quantity_pct for k in keys])
+        total = raw.sum()
+        if total == 0:
+            return np.array([])
+        return raw / total
 
     def _apply_signal_record(self, record: Any) -> None:
         """Apply a SignalRecord (ORM row) to rebuild state.
