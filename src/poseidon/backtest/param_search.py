@@ -186,6 +186,7 @@ class ParameterSearchPipeline:
             # Build strategy from this trial's params for WFE validation
             config_dict = _build_config_from_params(
                 trial.params, symbol=symbol, market=market, interval=interval,
+                strategy_mode=mode,
             )
             try:
                 strategy = VotingStrategyFactory.from_config(config_dict)
