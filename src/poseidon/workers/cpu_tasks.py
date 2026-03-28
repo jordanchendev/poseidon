@@ -846,6 +846,103 @@ def compute_var_snapshot(method: str = "all") -> dict:
         db.close()
 
 
+@celery_app.task(name="poseidon.workers.cpu_tasks.compute_mc_var")
+def compute_mc_var() -> dict:
+    """Compute Monte Carlo VaR using Cholesky decomposition (per D-05, D-06, D-07).
+
+    Uses cached covariance matrix (never recomputes), rebuilds portfolio for
+    weights, and stores result in VaR snapshot table + Redis cache.
+
+    Returns:
+        Dict with status and result summary.
+    """
+    import msgpack
+    import numpy as np
+
+    from poseidon.models.var_snapshot import VaRSnapshot
+    from poseidon.risk.portfolio import VirtualPortfolio
+    from poseidon.risk.var.calculators import VaRCalculator
+    from poseidon.risk.var.covariance import load_cached_covariance
+
+    db = SessionLocal()
+    redis_client = _get_redis_client()
+    try:
+        # 1. Load cached covariance (per D-06: never recompute inline)
+        cached = load_cached_covariance(redis_client)
+        if cached is None:
+            logger.warning("No cached covariance matrix, skipping MC VaR")
+            return {"status": "skipped", "reason": "no cached covariance matrix"}
+        cov_symbols, cov_matrix, cov_meta = cached
+
+        # 2. Rebuild portfolio from DB
+        portfolio = VirtualPortfolio()
+        portfolio.rebuild_from_db(db)
+        if portfolio.open_position_count == 0:
+            logger.info("No open positions, skipping MC VaR computation")
+            return {"status": "skipped", "reason": "no open positions"}
+
+        weights = portfolio.weights()
+        portfolio_value = portfolio.total_exposure()
+        as_of = datetime.now(timezone.utc)
+
+        # 3. Compute Monte Carlo VaR
+        calculator = VaRCalculator()
+        result = calculator.monte_carlo(
+            weights=weights,
+            cov_matrix=cov_matrix,
+            portfolio_value=portfolio_value,
+            as_of=as_of,
+            n_simulations=settings.mc_simulations,
+        )
+
+        # 4. Cache latest to Redis
+        snapshot_data = {
+            "method": result.method,
+            "var_95": result.var_95,
+            "var_99": result.var_99,
+            "cvar_95": result.cvar_95,
+            "cvar_99": result.cvar_99,
+            "portfolio_value": result.portfolio_value,
+            "as_of": result.as_of.isoformat(),
+            "computed_at": result.computed_at.isoformat(),
+        }
+        redis_key = "poseidon:var:latest:monte_carlo"
+        redis_client.set(
+            redis_key,
+            msgpack.packb(snapshot_data, use_bin_type=True),
+            ex=settings.var_cache_ttl,
+        )
+        logger.info("Cached MC VaR snapshot at %s (var_95=%.6f)", redis_key, result.var_95)
+
+        # 5. Store in TimescaleDB
+        db.add(VaRSnapshot(
+            time=result.as_of,
+            method=result.method,
+            var_95=result.var_95,
+            var_99=result.var_99,
+            cvar_95=result.cvar_95,
+            cvar_99=result.cvar_99,
+            portfolio_value=result.portfolio_value,
+            holding_period=result.holding_period,
+            details=result.details,
+        ))
+        db.commit()
+
+        logger.info("MC VaR computation completed: var_95=%.6f var_99=%.6f", result.var_95, result.var_99)
+        return {
+            "status": "ok",
+            "method": "monte_carlo",
+            "var_95": result.var_95,
+            "var_99": result.var_99,
+        }
+    except Exception:
+        db.rollback()
+        logger.exception("MC VaR computation failed")
+        raise
+    finally:
+        db.close()
+
+
 @celery_app.task(name="poseidon.workers.cpu_tasks.update_covariance_matrix")
 def update_covariance_matrix() -> dict:
     """Recompute and cache the covariance matrix from aligned returns.

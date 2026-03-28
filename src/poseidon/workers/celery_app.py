@@ -82,6 +82,11 @@ celery_app.conf.update(
             "schedule": crontab(hour=1, minute=0),
             "args": ["all"],
         },
+        # Monte Carlo VaR: daily at 01:30 UTC (30 min after covariance update, per D-07)
+        "compute-mc-var-daily": {
+            "task": "poseidon.workers.cpu_tasks.compute_mc_var",
+            "schedule": crontab(hour=1, minute=30),
+        },
         # Data quality scoring: daily at 02:00 UTC (per D-09, DVAL-05)
         "compute-quality-scores-daily": {
             "task": "poseidon.workers.cpu_tasks.compute_quality_scores",
