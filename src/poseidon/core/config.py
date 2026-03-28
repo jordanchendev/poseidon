@@ -25,6 +25,19 @@ class Settings(BaseSettings):
     # Cache settings
     cache_enabled: bool = True
 
+    # VaR computation settings
+    var_lookback_days: int = 252
+    var_min_observations: int = 30
+    var_confidence_levels: str = "0.95,0.99"  # comma-separated
+
+    # Drawdown monitoring thresholds (per D-10)
+    drawdown_warning_pct: float = 0.05
+    drawdown_alert_pct: float = 0.10
+    drawdown_critical_pct: float = 0.20
+
+    # VaR cache TTL (2x hourly schedule = 2 hours, per pitfall 5)
+    var_cache_ttl: int = 7200
+
     model_config = {"env_prefix": "POSEIDON_", "env_file": ".env"}
 
 
