@@ -601,6 +601,7 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
             storage_url=search_config.get("storage_url"),
             holdout=HoldoutConfig(**holdout_dict) if holdout_dict else HoldoutConfig(),
             walk_forward=WalkForwardConfig(**wf_dict) if wf_dict else WalkForwardConfig(),
+            strategy_mode=search_config.get("strategy_mode", "bidirectional"),
         )
 
         market_specs = [MarketSpec(**m) for m in markets]

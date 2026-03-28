@@ -87,6 +87,10 @@ class VotingStrategy(BaseStrategy):
         self._cooldown_bars: int = config.get("cooldown_bars", 12)
         self._conviction_gap: int = config.get("conviction_gap", 2)
 
+        # Strategy mode: bidirectional, long_only, regime_gated
+        self._strategy_mode: str = config.get("strategy_mode", "bidirectional")
+        self._atr_regime_lookback: int = 168  # 1 week of 1h bars for ATR percentile
+
         # Position state (replaces _in_position bool)
         self._position_direction: str | None = None  # "long", "short", or None
         self._position_high_watermark: float | None = None  # for long trailing stop
@@ -139,6 +143,16 @@ class VotingStrategy(BaseStrategy):
             # Global cooldown: block ALL entries for cooldown_bars after ANY exit
             if self._bars_since_exit <= self._cooldown_bars:
                 return signals
+
+            # Regime gate: only trade when ATR is above median (trending market)
+            if self._strategy_mode == "regime_gated":
+                atr_col = f"atr_{self._atr_period}"
+                if atr_col in features.columns and row_idx >= self._atr_regime_lookback:
+                    recent_atr = features[atr_col].iloc[
+                        max(0, row_idx - self._atr_regime_lookback) : row_idx + 1
+                    ]
+                    if features[atr_col].iloc[row_idx] < recent_atr.median():
+                        return signals  # low volatility = sideways, skip entry
 
             # Count bull votes
             bull_votes = self._count_votes(self._sub_signals, features, row_idx)

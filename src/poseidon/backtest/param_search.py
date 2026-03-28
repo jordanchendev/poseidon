@@ -42,6 +42,7 @@ class SearchConfig:
     walk_forward: WalkForwardConfig = field(default_factory=WalkForwardConfig)
     seed: int = 42
     storage_url: str | None = None  # PostgreSQL connection string for Optuna RDBStorage
+    strategy_mode: str = "bidirectional"  # bidirectional | long_only | regime_gated
 
     def __post_init__(self) -> None:
         if self.n_trials > self.max_trials:
@@ -141,9 +142,11 @@ class ParameterSearchPipeline:
         )
 
         # Strategy factory for optimizer: wraps VotingStrategyFactory.from_config
+        mode = config.strategy_mode
         def trial_strategy_factory(params: dict) -> Any:
             config_dict = _build_config_from_params(
                 params, symbol=symbol, market=market, interval=interval,
+                strategy_mode=mode,
             )
             return VotingStrategyFactory.from_config(config_dict)
 

@@ -49,6 +49,7 @@ def _build_config_from_params(
     symbol: str,
     market: str,
     interval: str,
+    strategy_mode: str = "bidirectional",
 ) -> dict:
     """Build a VotingStrategy config dict from flat parameter values.
 
@@ -154,7 +155,7 @@ def _build_config_from_params(
         },
     ]
 
-    return {
+    config = {
         "name": f"optuna_{symbol}_{interval}",
         "symbol": symbol,
         "market": market,
@@ -166,8 +167,10 @@ def _build_config_from_params(
         "cooldown_bars": params["cooldown_bars"],
         "conviction_gap": params["conviction_gap"],
         "sub_signals": sub_signals,
-        "bear_sub_signals": bear_sub_signals,
+        "bear_sub_signals": bear_sub_signals if strategy_mode != "long_only" else [],
+        "strategy_mode": strategy_mode,
     }
+    return config
 
 
 class VotingStrategyFactory:

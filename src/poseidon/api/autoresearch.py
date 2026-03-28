@@ -42,6 +42,11 @@ class AutoResearchRequest(BaseModel):
     n_trials: int = Field(50, ge=5, le=200)
     min_wfe: float = Field(0.50, ge=0.0, le=1.0)
     seed: int = Field(42)
+    strategy_mode: str = Field(
+        "bidirectional",
+        pattern="^(bidirectional|long_only|regime_gated)$",
+        description="Strategy variant: bidirectional (default), long_only, or regime_gated",
+    )
 
 
 class TaskStatusResponse(BaseModel):
@@ -84,6 +89,7 @@ async def run_autoresearch(request: AutoResearchRequest) -> MessageResponse:
         "n_trials": request.n_trials,
         "min_wfe": request.min_wfe,
         "seed": request.seed,
+        "strategy_mode": request.strategy_mode,
     }
     markets = [m.model_dump() for m in request.markets]
 
