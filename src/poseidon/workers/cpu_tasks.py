@@ -1182,7 +1182,8 @@ def compute_quality_scores() -> dict:
                     if df.empty:
                         skipped += 1
                         continue
-                    latest_time = pd.Timestamp(df["time"].max())
+                    # read_ohlcv returns time as index, not column
+                    latest_time = pd.Timestamp(df.index.max())
                     if latest_time.tzinfo is None:
                         latest_time = latest_time.tz_localize("UTC")
                     if (now - latest_time).days > 7:
