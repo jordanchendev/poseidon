@@ -4,8 +4,9 @@ Validates strategies by running rolling train/test windows and computing
 Walk-Forward Efficiency (WFE). Strategies with WFE < 50% or insufficient
 trades per OOS segment are flagged.
 
-Uses ProcessPoolExecutor for parallel window evaluation (~8-10x speedup
-on multi-core machines). Workers cap at 80% of available CPU cores.
+Uses ThreadPoolExecutor for parallel window evaluation. Compatible with
+Celery daemon workers (ProcessPoolExecutor cannot spawn from daemons).
+Workers cap at 80% of available CPU cores.
 
 Public API:
     WalkForwardConfig   - Configuration for rolling window parameters
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import pandas as pd
@@ -108,27 +109,22 @@ def compute_wfe(is_ann_return: float, oos_ann_return: float) -> float:
 
 
 def _run_single_window(args: tuple) -> WindowResult:
-    """Run IS + OOS backtest for a single window. Top-level for pickle compatibility.
+    """Run IS + OOS backtest for a single window.
 
-    Each call reconstructs the full pipeline (strategy, feature_engine, runner)
-    from config to avoid sharing mutable state across processes.
+    Each call gets its own strategy instance to avoid sharing mutable state.
+    Uses ThreadPoolExecutor (threads share memory, no serialization needed).
     """
-    window_index, is_ohlcv_bytes, oos_ohlcv_bytes, strategy_config, initial_capital = args
+    window_index, is_ohlcv, oos_ohlcv, strategy_config, initial_capital = args
 
-    # Reconstruct strategy from config (each process gets its own instance)
+    # Each thread gets its own strategy instance (strategy has mutable state)
     from poseidon.backtest.voting_strategy_factory import VotingStrategyFactory
 
     strategy = VotingStrategyFactory.from_config(strategy_config)
 
-    # Reconstruct feature engine and dependencies
     feature_engine = FeatureEngine()
     risk_engine = RiskEngine()
     cost_model = CostModel()
     sizing_config = SizingConfig()
-
-    # Deserialize OHLCV data
-    is_ohlcv = pd.read_parquet(is_ohlcv_bytes)
-    oos_ohlcv = pd.read_parquet(oos_ohlcv_bytes)
 
     # IS backtest
     strategy.reset()
@@ -272,21 +268,12 @@ class WalkForwardAnalyzer:
                 per_window=[], aggregate_oos_metrics={}, config=config,
             )
 
-        # Extract strategy config for subprocess reconstruction
+        # Extract strategy config for thread-local reconstruction
         from poseidon.backtest.voting_strategy_factory import VotingStrategyFactory
 
         strategy_config = VotingStrategyFactory.to_config_dict(strategy)
 
-        # Serialize OHLCV slices as parquet bytes for cross-process transfer
-        import io
-
-        def _to_parquet_bytes(df: pd.DataFrame) -> io.BytesIO:
-            buf = io.BytesIO()
-            df.to_parquet(buf, index=False)
-            buf.seek(0)
-            return buf
-
-        # Build args for each window
+        # Build args for each window (threads share memory, no serialization)
         window_args = []
         for i, ((train_start, train_end), (test_start, test_end)) in enumerate(windows):
             is_slice = ohlcv.iloc[train_start:train_end].reset_index(drop=True)
@@ -294,21 +281,21 @@ class WalkForwardAnalyzer:
 
             window_args.append((
                 i,
-                _to_parquet_bytes(is_slice),
-                _to_parquet_bytes(oos_slice),
+                is_slice,
+                oos_slice,
                 strategy_config,
                 self.initial_capital,
             ))
 
-        # Parallel execution
+        # Parallel execution with threads (compatible with Celery daemon workers)
         n_workers = min(_MAX_WORKERS, len(windows))
         logger.info(
-            "Walk-forward: %d windows, %d parallel workers",
+            "Walk-forward: %d windows, %d thread workers",
             len(windows), n_workers,
         )
 
         per_window: list[WindowResult] = []
-        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
             results = executor.map(_run_single_window, window_args)
             for result in results:
                 per_window.append(result)
