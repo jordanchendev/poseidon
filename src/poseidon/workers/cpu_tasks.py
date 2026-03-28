@@ -4,14 +4,19 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import redis as redis_lib
+
 from poseidon.backtest.cost_model import COST_MODELS
 from poseidon.backtest.optimizer import BayesianOptimizer, GridSearchOptimizer
 from poseidon.backtest.portfolio import SizingConfig, SizingMode
 from poseidon.backtest.repository import BacktestRepository
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.backtest.schemas import BacktestConfig
+from poseidon.core.config import settings
 from poseidon.data.feature_engine import FeatureEngine
 from poseidon.data.fetchers import get_fetcher
+from poseidon.data.rate_limiter import CircuitBreaker, DistributedRateLimiter, PROVIDER_LIMITS
+from poseidon.data.validation import validate_ohlcv
 from poseidon.data.storage import (
     get_or_create_backfill_progress,
     read_ohlcv,
@@ -27,6 +32,20 @@ from poseidon.strategies.rule_strategy import RuleStrategy
 from poseidon.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+# Market -> provider mapping for rate limiting and circuit breaker
+MARKET_TO_PROVIDER = {
+    "tw_stock": "finmind",
+    "tw_futures": "finmind",
+    "us_stock": "yfinance",
+    "crypto_spot": "ccxt",
+}
+
+
+def _get_redis_client() -> redis_lib.Redis:
+    """Create a Redis client for rate limiter and circuit breaker."""
+    return redis_lib.from_url(settings.redis_url, decode_responses=False)
+
 
 # Backfill target: 5 years of historical data
 BACKFILL_YEARS = 5
@@ -82,22 +101,70 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
     start_date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
 
     fetched_count = 0
+
+    # Initialize rate limiter and circuit breaker once per task call
+    provider = MARKET_TO_PROVIDER.get(market, "unknown")
+    redis_client = _get_redis_client()
+    circuit = CircuitBreaker(
+        redis_client,
+        provider,
+        failure_threshold=settings.circuit_failure_threshold,
+        open_timeout=settings.circuit_open_timeout,
+        failure_window=settings.circuit_failure_window,
+    )
+    rate_limiter = DistributedRateLimiter(redis_client)
+    provider_cfg = PROVIDER_LIMITS.get(provider, {})
+    window = provider_cfg.get("window_seconds", 3600)
+    limit = getattr(settings, provider_cfg.get("limit_key", "ratelimit_finmind_hourly"), 500)
+
     session = SessionLocal()
     try:
         for sym_info in symbols:
+            # 1. Check circuit breaker
+            if not circuit.allow_request():
+                logger.warning("Circuit open for %s, skipping %s", provider, sym_info.id)
+                continue
+
+            # 2. Acquire rate limit (wait up to 30s)
+            if not rate_limiter.wait_and_acquire(provider, window, limit, timeout=30):
+                logger.warning("Rate limit timeout for %s, skipping %s", provider, sym_info.id)
+                continue
+
+            # 3. Fetch
             try:
-                # Use ccxt_symbol if available (crypto), otherwise use id
                 fetch_symbol = sym_info.ccxt_symbol or sym_info.id
                 df = fetcher.fetch_ohlcv(fetch_symbol, interval, start_date, end_date)
-                if not df.empty:
-                    count = upsert_ohlcv(session, df, sym_info.id, market, instrument, interval)
-                    fetched_count += count
-                    logger.info("Fetched %d rows for %s/%s/%s", count, market, sym_info.id, interval)
-                else:
-                    logger.info("No new data for %s/%s/%s", market, sym_info.id, interval)
+                circuit.record_success()
             except Exception as exc:
+                circuit.record_failure()
                 session.rollback()
                 logger.error("Failed to fetch %s/%s/%s: %s", market, sym_info.id, interval, exc)
+                continue
+
+            # 4. Validate (per D-01: between fetch and upsert)
+            if not df.empty:
+                vresult = validate_ohlcv(df, market)
+                if vresult.has_critical:
+                    logger.error(
+                        "CRITICAL validation failure for %s/%s: %s",
+                        market,
+                        sym_info.id,
+                        [c for c in vresult.checks if not c.passed and c.severity.value == "critical"],
+                    )
+                    continue  # skip upsert per D-03
+                if vresult.warning_count > 0:
+                    logger.warning(
+                        "Validation warnings for %s/%s: %s",
+                        market,
+                        sym_info.id,
+                        [c for c in vresult.checks if not c.passed and c.severity.value == "warning"],
+                    )
+                # 5. Upsert (only if no CRITICAL)
+                count = upsert_ohlcv(session, df, sym_info.id, market, instrument, interval)
+                fetched_count += count
+                logger.info("Fetched %d rows for %s/%s/%s", count, market, sym_info.id, interval)
+            else:
+                logger.info("No new data for %s/%s/%s", market, sym_info.id, interval)
     finally:
         session.close()
 
@@ -159,19 +226,72 @@ def backfill_symbol(self, symbol: str, market: str, interval: str) -> dict:
         else:
             batch_days = BATCH_DAYS.get(market, 365)
 
+        # Initialize rate limiter and circuit breaker for backfill
+        provider = MARKET_TO_PROVIDER.get(market, "unknown")
+        redis_client = _get_redis_client()
+        circuit = CircuitBreaker(
+            redis_client,
+            provider,
+            failure_threshold=settings.circuit_failure_threshold,
+            open_timeout=settings.circuit_open_timeout,
+            failure_window=settings.circuit_failure_window,
+        )
+        rate_limiter = DistributedRateLimiter(redis_client)
+        provider_cfg = PROVIDER_LIMITS.get(provider, {})
+        window = provider_cfg.get("window_seconds", 3600)
+        limit = getattr(settings, provider_cfg.get("limit_key", "ratelimit_finmind_hourly"), 500)
+
         try:
             # Fetch in batches
             current_start = start_dt
             total_rows = 0
             while current_start < end_dt:
+                # Check circuit breaker before each batch
+                if not circuit.allow_request():
+                    logger.warning("Circuit open for %s, pausing backfill %s", provider, symbol)
+                    break
+
+                # Acquire rate limit before each batch (wait up to 60s for backfill)
+                if not rate_limiter.wait_and_acquire(provider, window, limit, timeout=60):
+                    logger.warning("Rate limit timeout for %s, pausing backfill %s", provider, symbol)
+                    break
+
                 batch_end = min(current_start + timedelta(days=batch_days), end_dt)
                 start_str = current_start.strftime("%Y-%m-%d")
                 end_str = batch_end.strftime("%Y-%m-%d")
 
                 logger.info("Backfill %s/%s/%s: %s to %s", market, symbol, interval, start_str, end_str)
-                df = fetcher.fetch_ohlcv(fetch_symbol, interval, start_str, end_str)
+                try:
+                    df = fetcher.fetch_ohlcv(fetch_symbol, interval, start_str, end_str)
+                    circuit.record_success()
+                except Exception as fetch_exc:
+                    circuit.record_failure()
+                    raise fetch_exc
 
                 if not df.empty:
+                    # Validate before upsert
+                    vresult = validate_ohlcv(df, market)
+                    if vresult.has_critical:
+                        logger.error(
+                            "CRITICAL validation failure in backfill %s/%s batch %s-%s: %s",
+                            market,
+                            symbol,
+                            start_str,
+                            end_str,
+                            [c for c in vresult.checks if not c.passed and c.severity.value == "critical"],
+                        )
+                        # Skip this batch but continue with next
+                        current_start = batch_end + timedelta(days=1)
+                        continue
+                    if vresult.warning_count > 0:
+                        logger.warning(
+                            "Validation warnings in backfill %s/%s batch %s-%s: %s",
+                            market,
+                            symbol,
+                            start_str,
+                            end_str,
+                            [c for c in vresult.checks if not c.passed and c.severity.value == "warning"],
+                        )
                     count = upsert_ohlcv(session, df, symbol, market, instrument, interval)
                     total_rows += count
                     # Update checkpoint after each batch
