@@ -4,6 +4,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pandas as pd
 import redis as redis_lib
 
 from poseidon.backtest.cost_model import COST_MODELS
@@ -1020,3 +1021,107 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
         except Exception:
             pass
         db.close()
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.compute_quality_scores")
+def compute_quality_scores() -> dict:
+    """Compute data quality scores for all symbols (per D-09, DVAL-05).
+
+    Iterates over symbols in symbols.yaml, computes quality score per
+    symbol+interval, stores results in quality_scores table.
+
+    Runs daily at 02:00 UTC via Celery Beat.
+    """
+    from poseidon.data.quality_scorer import DataQualityScorer
+    from poseidon.data.storage import read_ohlcv
+    from poseidon.data.symbols import load_symbols
+    from poseidon.models.base import SessionLocal
+    from poseidon.models.quality_score import QualityScore
+    from poseidon.risk.var.returns import MARKET_CALENDARS
+
+    scorer = DataQualityScorer()
+    config = load_symbols()
+    now = datetime.now(timezone.utc)
+    lookback_days = settings.var_lookback_days  # default 252
+    scored = 0
+    skipped = 0
+
+    db = SessionLocal()
+    try:
+        for market_name, market_cfg in config.markets.items():
+            calendar = MARKET_CALENDARS.get(market_name, {"freq": "B", "tz": "UTC"})
+            symbols = market_cfg.symbols
+            intervals = market_cfg.intervals
+
+            for sym in symbols:
+                for interval in intervals:
+                    # Compute expected rows using market calendar
+                    start_date = now - timedelta(days=lookback_days)
+                    if calendar["freq"] == "D":
+                        # Calendar days (crypto)
+                        expected_rows = lookback_days
+                    else:
+                        # Business days (TW/US): approximate with pandas
+                        bdays = pd.bdate_range(start=start_date, end=now)
+                        expected_rows = len(bdays)
+
+                    # For intraday intervals, multiply by bars per day
+                    if interval == "1h":
+                        expected_rows *= 24
+                    elif interval == "5m":
+                        expected_rows *= 288  # 24*60/5
+
+                    # Read recent OHLCV data
+                    df = read_ohlcv(
+                        db,
+                        symbol=sym.id,
+                        market=market_name,
+                        interval=interval,
+                        start=start_date,
+                        end=now,
+                    )
+
+                    # Skip symbols with no data in last 7 days
+                    if df.empty:
+                        skipped += 1
+                        continue
+                    latest_time = pd.Timestamp(df["time"].max())
+                    if latest_time.tzinfo is None:
+                        latest_time = latest_time.tz_localize("UTC")
+                    if (now - latest_time).days > 7:
+                        skipped += 1
+                        continue
+
+                    # Compute quality score
+                    dims = scorer.compute(
+                        df,
+                        market=market_name,
+                        interval=interval,
+                        expected_rows=expected_rows,
+                        latest_expected=now,
+                    )
+
+                    # Insert QualityScore row
+                    row = QualityScore(
+                        time=now,
+                        symbol=sym.id,
+                        interval=interval,
+                        score=dims.composite,
+                        completeness=dims.completeness,
+                        consistency=dims.consistency,
+                        anomaly_free=dims.anomaly_free,
+                        timeliness=dims.timeliness,
+                    )
+                    db.merge(row)
+                    scored += 1
+
+        db.commit()
+        logger.info("Quality scoring complete: scored=%d, skipped=%d", scored, skipped)
+    except Exception:
+        db.rollback()
+        logger.exception("Quality scoring failed")
+        raise
+    finally:
+        db.close()
+
+    return {"scored": scored, "skipped": skipped}

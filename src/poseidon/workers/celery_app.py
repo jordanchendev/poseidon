@@ -82,6 +82,11 @@ celery_app.conf.update(
             "schedule": crontab(hour=1, minute=0),
             "args": ["all"],
         },
+        # Data quality scoring: daily at 02:00 UTC (per D-09, DVAL-05)
+        "compute-quality-scores-daily": {
+            "task": "poseidon.workers.cpu_tasks.compute_quality_scores",
+            "schedule": crontab(hour=2, minute=0),
+        },
     },
 
     # Auto-discover task modules
