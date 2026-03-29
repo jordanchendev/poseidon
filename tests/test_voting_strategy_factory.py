@@ -182,6 +182,8 @@ class TestBearSignalGeneration:
             "position_pct": 0.08,
             "bear_min_votes": 4,
             "bear_position_pct": 0.06,
+            "cooldown_bars": 12,
+            "conviction_gap": 2,
         }
 
     def test_build_config_contains_bear_sub_signals(self) -> None:
