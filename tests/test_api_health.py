@@ -172,8 +172,8 @@ def test_health_degraded_on_redis_error(mock_session_local, mock_redis_mod, mock
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.api.health.redis")
 @patch("poseidon.api.health.SessionLocal")
-def test_health_gpu_not_installed(mock_session_local, mock_redis_mod, mock_celery):
-    """GPU component reports unavailable when torch is not installed."""
+def test_gpu_worker_ping(mock_session_local, mock_redis_mod, mock_celery):
+    """GPU component reports available when GPU workers respond to ping."""
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None
     mock_session_local.return_value = mock_db
@@ -182,10 +182,49 @@ def test_health_gpu_not_installed(mock_session_local, mock_redis_mod, mock_celer
     mock_redis_instance.ping.return_value = True
     mock_redis_mod.from_url.return_value = mock_redis_instance
 
-    mock_inspect = MagicMock()
-    mock_inspect.active.return_value = {}
-    mock_inspect.reserved.return_value = {}
-    mock_celery.control.inspect.return_value = mock_inspect
+    # Celery inspect for queue lengths
+    mock_inspect_queue = MagicMock()
+    mock_inspect_queue.active.return_value = {}
+    mock_inspect_queue.reserved.return_value = {}
+
+    # GPU inspect returns GPU worker ping
+    mock_inspect_gpu = MagicMock()
+    mock_inspect_gpu.ping.return_value = {"celery@gpu-worker": {"ok": "pong"}}
+
+    # First call is for queue lengths (timeout=2.0), second for GPU (timeout=3.0)
+    mock_celery.control.inspect.side_effect = [mock_inspect_queue, mock_inspect_gpu]
+
+    resp = client.get("/health")
+    data = resp.json()
+
+    gpu = data["components"]["gpu"]
+    assert gpu["available"] is True
+    assert "celery@gpu-worker" in gpu["workers"]
+
+
+@patch("poseidon.api.health.celery_app")
+@patch("poseidon.api.health.redis")
+@patch("poseidon.api.health.SessionLocal")
+def test_gpu_worker_unavailable(mock_session_local, mock_redis_mod, mock_celery):
+    """GPU component reports unavailable when no GPU workers respond."""
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar.return_value = None
+    mock_session_local.return_value = mock_db
+
+    mock_redis_instance = MagicMock()
+    mock_redis_instance.ping.return_value = True
+    mock_redis_mod.from_url.return_value = mock_redis_instance
+
+    # Queue inspect
+    mock_inspect_queue = MagicMock()
+    mock_inspect_queue.active.return_value = {}
+    mock_inspect_queue.reserved.return_value = {}
+
+    # GPU inspect returns empty (no GPU workers)
+    mock_inspect_gpu = MagicMock()
+    mock_inspect_gpu.ping.return_value = {}
+
+    mock_celery.control.inspect.side_effect = [mock_inspect_queue, mock_inspect_gpu]
 
     resp = client.get("/health")
     data = resp.json()

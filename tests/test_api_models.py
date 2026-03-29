@@ -297,24 +297,51 @@ def test_activate_not_found():
     assert resp.status_code == 404
 
 
-def test_predict_placeholder():
-    """Predict endpoint returns placeholder response."""
+@patch("poseidon.api.models.run_prediction")
+def test_predict_dispatch_returns_202(mock_run_prediction):
+    """POST /models/{id}/predict dispatches GPU task and returns 202."""
+    fake_task = MagicMock()
+    fake_task.id = "test-task-id"
+    mock_run_prediction.delay.return_value = fake_task
+
     mv_id = _seed_model_version(name="predict-test", version=1, status="active")
 
     resp = client.post(
         f"{PREFIX}/{mv_id}/predict",
-        json={"symbol": "2330", "market": "tw_stock"},
+        json={"symbol": "BTCUSDT", "market": "crypto_spot", "interval": "1h"},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = resp.json()
-    assert data["status"] == "prediction_requested"
-    assert data["version_id"] == mv_id
+    assert data["task_id"] == "test-task-id"
+    assert "Prediction dispatched" in data["message"]
+
+    mock_run_prediction.delay.assert_called_once()
+    call_kwargs = mock_run_prediction.delay.call_args.kwargs
+    assert call_kwargs["symbol"] == "BTCUSDT"
+    assert call_kwargs["market"] == "crypto_spot"
+    assert call_kwargs["interval"] == "1h"
 
 
-def test_predict_not_found():
+def test_predict_model_not_found_returns_404():
+    """Predict endpoint returns 404 for unknown model version."""
     random_id = str(uuid.uuid4())
     resp = client.post(
         f"{PREFIX}/{random_id}/predict",
         json={"symbol": "2330", "market": "tw_stock"},
     )
     assert resp.status_code == 404
+
+
+@patch("poseidon.api.models.run_prediction")
+def test_predict_invalid_status_returns_400(mock_run_prediction):
+    """Predict endpoint returns 400 for model with invalid status."""
+    mv_id = _seed_model_version(name="predict-bad", version=1, status="training")
+
+    resp = client.post(
+        f"{PREFIX}/{mv_id}/predict",
+        json={"symbol": "2330", "market": "tw_stock"},
+    )
+    assert resp.status_code == 400
+    assert "cannot run prediction" in resp.json()["detail"]
+
+    mock_run_prediction.delay.assert_not_called()

@@ -72,21 +72,17 @@ async def health():
     except Exception as e:
         components["celery"] = f"error: {e}"
 
-    # 4. GPU status (best-effort -- torch may not be installed in API container)
+    # 4. GPU status via Celery worker ping (torch not available in API container)
     try:
-        import torch
-
-        if torch.cuda.is_available():
-            free, total = torch.cuda.mem_get_info()
-            components["gpu"] = {
-                "available": True,
-                "free_mb": free // (1024 * 1024),
-                "total_mb": total // (1024 * 1024),
-            }
+        gpu_inspect = celery_app.control.inspect(timeout=3.0)
+        ping_result = gpu_inspect.ping() or {}
+        gpu_workers = {k: v for k, v in ping_result.items() if "gpu" in k.lower()}
+        if gpu_workers:
+            components["gpu"] = {"available": True, "workers": list(gpu_workers.keys())}
         else:
-            components["gpu"] = {"available": False}
-    except ImportError:
-        components["gpu"] = {"available": False, "note": "torch not installed"}
+            components["gpu"] = {"available": False, "note": "no GPU workers responding"}
+    except Exception as e:
+        components["gpu"] = {"available": False, "note": f"inspect failed: {e}"}
 
     # Overall status: degraded if any component value is an error string
     errors = [

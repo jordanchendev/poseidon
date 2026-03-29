@@ -20,7 +20,7 @@ from poseidon.ml.lifecycle import InvalidTransitionError
 from poseidon.ml.manager import ModelManager
 from poseidon.models.base import get_db
 from poseidon.models.model_version import ModelVersion
-from poseidon.workers.gpu_tasks import train_model
+from poseidon.workers.gpu_tasks import run_prediction, train_model
 
 router = APIRouter()
 
@@ -195,26 +195,36 @@ async def activate_model(
     return mv
 
 
-@router.post("/{version_id}/predict", response_model=dict)
+@router.post("/{version_id}/predict", response_model=MessageResponse, status_code=202)
 async def predict(
     version_id: uuid.UUID,
     body: PredictRequest,
     db: Session = Depends(get_db),
-) -> dict:
-    """Request a prediction from a model version.
+) -> MessageResponse:
+    """Dispatch model prediction to GPU worker.
 
-    .. note::
-        This is a placeholder. Full prediction requires loading the model
-        from disk artifacts, which will be implemented in a future phase.
+    Returns 202 Accepted with task_id for async tracking.
+    The GPU worker loads the model, runs inference via ModelStrategy,
+    filters predictions by confidence threshold, and pipes signals
+    through SignalPipeline (risk check -> persist -> deliver).
     """
     manager = ModelManager(db)
     mv = manager.get_version(version_id)
     if mv is None:
         raise HTTPException(status_code=404, detail="Model version not found")
+    if mv.status not in ("ready", "shadow", "active"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model version status '{mv.status}' cannot run prediction",
+        )
 
-    return {
-        "status": "prediction_requested",
-        "version_id": str(version_id),
-        "model_name": mv.name,
-        "model_version": mv.version,
-    }
+    task = run_prediction.delay(
+        version_id=str(version_id),
+        symbol=body.symbol,
+        market=body.market,
+        interval=body.interval,
+    )
+    return MessageResponse(
+        message=f"Prediction dispatched for {mv.name} v{mv.version}",
+        task_id=task.id,
+    )
