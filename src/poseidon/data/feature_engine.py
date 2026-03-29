@@ -58,6 +58,19 @@ REGIME_FEATURES: list[tuple[str, dict]] = [
     ("garman_klass_vol", {"period": 20}),
 ]
 
+# Cross-asset pair definitions: maps (market, symbol) -> list of (companion_market, companion_symbol)
+# Used by compute_with_companions() to load companion data for cross-asset features.
+CROSS_ASSET_PAIRS: dict[tuple[str, str], list[tuple[str, str]]] = {
+    ("crypto_spot", "BTCUSDT"): [("crypto_spot", "ETHUSDT")],
+    ("crypto_spot", "ETHUSDT"): [("crypto_spot", "BTCUSDT")],
+    ("tw_stock", "2330"): [("tw_futures", "TX")],
+    ("tw_futures", "TX"): [("tw_stock", "2330")],
+}
+
+# Placeholder for expanded feature sets that include cross-asset specs.
+# Future plans will populate this with cross-asset + volume profile features.
+EXPANDED_FEATURES: list[tuple[str, dict]] = []
+
 
 @autoresearch_guard
 class FeatureEngine:
@@ -146,5 +159,97 @@ class FeatureEngine:
             len(specs),
             len(result.columns) - len(ohlcv.columns),
             len(ohlcv),
+        )
+        return result
+
+    def compute_with_companions(
+        self,
+        ohlcv: pd.DataFrame,
+        symbol: str,
+        market: str,
+        interval: str,
+        feature_specs: list[tuple[str, dict]] | None = None,
+        db_session=None,
+    ) -> pd.DataFrame:
+        """Compute features including cross-asset ones that need companion data.
+
+        For cross-asset feature specs (those with companion_symbol in params),
+        loads companion data from DB and injects it into the feature's params.
+        Single-symbol features work as before via compute_from_df().
+
+        Args:
+            ohlcv: Primary symbol OHLCV DataFrame.
+            symbol: Primary symbol identifier.
+            market: Primary market name.
+            interval: Candle interval.
+            feature_specs: Feature specifications. None uses DEFAULT_FEATURES.
+            db_session: SQLAlchemy session for loading companion data. If None, creates one.
+
+        Returns:
+            Wide DataFrame with OHLCV + all computed feature columns.
+        """
+        if ohlcv.empty:
+            return ohlcv
+
+        specs = feature_specs if feature_specs is not None else DEFAULT_FEATURES
+
+        # Separate single-symbol and cross-asset specs
+        single_specs = []
+        cross_specs = []
+        for name, params in specs:
+            if "companion_symbol" in params:
+                cross_specs.append((name, params))
+            else:
+                single_specs.append((name, params))
+
+        # Compute single-symbol features first
+        result = self.compute_from_df(ohlcv, single_specs) if single_specs else ohlcv.copy()
+
+        if not cross_specs:
+            return result
+
+        # Load companion data and compute cross-asset features
+        close_session = False
+        if db_session is None:
+            db_session = SessionLocal()
+            close_session = True
+
+        try:
+            # Cache companion data to avoid redundant DB reads
+            companion_cache: dict[tuple[str, str], pd.DataFrame] = {}
+
+            for feature_name, params in cross_specs:
+                comp_symbol = params.get("companion_symbol", "")
+                comp_market = params.get("companion_market", market)
+                cache_key = (comp_market, comp_symbol)
+
+                if cache_key not in companion_cache:
+                    companion_cache[cache_key] = read_ohlcv(
+                        db_session, comp_symbol, comp_market, interval,
+                    )
+
+                companion_df = companion_cache[cache_key]
+                feature_cls = get_feature(feature_name)
+                feature = feature_cls()
+                computed = feature.compute(
+                    ohlcv,
+                    companion_data=companion_df if not companion_df.empty else None,
+                    **params,
+                )
+
+                if isinstance(computed, pd.Series):
+                    result[computed.name] = computed
+                elif isinstance(computed, pd.DataFrame):
+                    for col in computed.columns:
+                        result[col] = computed[col]
+        finally:
+            if close_session:
+                db_session.close()
+
+        logger.info(
+            "Computed %d single + %d cross-asset specs -> %d total columns",
+            len(single_specs),
+            len(cross_specs),
+            len(result.columns) - len(ohlcv.columns),
         )
         return result
