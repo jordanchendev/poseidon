@@ -8,6 +8,7 @@ experiment results.
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -62,7 +63,7 @@ class TaskStatusResponse(BaseModel):
 class ExperimentResponse(BaseModel):
     """Response for a single experiment record."""
 
-    id: str
+    id: UUID
     study_name: str
     market: str
     interval: str
