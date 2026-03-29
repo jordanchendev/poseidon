@@ -20,7 +20,7 @@ from poseidon.models.strategy import StrategyRecord
 
 router = APIRouter()
 
-_VALID_STRATEGY_TYPES = {"model", "rule"}
+_VALID_STRATEGY_TYPES = {"model", "rule", "voting"}
 
 
 # --------------- Pydantic schemas ---------------

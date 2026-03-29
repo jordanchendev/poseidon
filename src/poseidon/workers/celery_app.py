@@ -92,6 +92,38 @@ celery_app.conf.update(
             "task": "poseidon.workers.cpu_tasks.compute_quality_scores",
             "schedule": crontab(hour=2, minute=0),
         },
+        # Strategy evaluation: triggered after data fetch (PRED-03)
+        # Each runs ~5-10 min after corresponding fetch to ensure fresh data
+        "evaluate-strategies-tw-daily": {
+            "task": "poseidon.workers.cpu_tasks.evaluate_active_strategies",
+            "schedule": crontab(hour=6, minute=10),
+            "kwargs": {"market": "tw_stock", "interval": "1d"},
+        },
+        "evaluate-strategies-tw-futures-daily": {
+            "task": "poseidon.workers.cpu_tasks.evaluate_active_strategies",
+            "schedule": crontab(hour=6, minute=10),
+            "kwargs": {"market": "tw_futures", "interval": "1d"},
+        },
+        "evaluate-strategies-us-daily": {
+            "task": "poseidon.workers.cpu_tasks.evaluate_active_strategies",
+            "schedule": crontab(hour=21, minute=40),
+            "kwargs": {"market": "us_stock", "interval": "1d"},
+        },
+        "evaluate-strategies-crypto-hourly": {
+            "task": "poseidon.workers.cpu_tasks.evaluate_active_strategies",
+            "schedule": crontab(minute=15),
+            "kwargs": {"market": "crypto_spot", "interval": "1h"},
+        },
+        "evaluate-strategies-crypto-daily": {
+            "task": "poseidon.workers.cpu_tasks.evaluate_active_strategies",
+            "schedule": crontab(hour=0, minute=25),
+            "kwargs": {"market": "crypto_spot", "interval": "1d"},
+        },
+        # Risk pipeline trigger: after strategy evaluation (PRED-04)
+        "trigger-risk-after-crypto-eval": {
+            "task": "poseidon.workers.cpu_tasks.trigger_risk_update",
+            "schedule": crontab(minute=20),
+        },
     },
 
     # Auto-discover task modules
