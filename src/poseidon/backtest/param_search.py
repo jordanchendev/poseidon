@@ -20,9 +20,9 @@ from poseidon.backtest.metrics import compute_composite_score
 from poseidon.backtest.optimizer import BayesianOptimizer
 from poseidon.backtest.portfolio import SizingConfig
 from poseidon.backtest.voting_strategy_factory import (
-    PARAM_BOUNDS,
     VotingStrategyFactory,
     _build_config_from_params,
+    get_param_bounds,
 )
 from poseidon.backtest.walk_forward import WalkForwardAnalyzer, WalkForwardConfig
 from poseidon.data.feature_engine import FeatureEngine
@@ -152,7 +152,7 @@ class ParameterSearchPipeline:
 
         param_space = {
             name: (low, high, ptype)
-            for name, (low, high, ptype) in PARAM_BOUNDS.items()
+            for name, (low, high, ptype) in get_param_bounds(market).items()
         }
 
         trials = optimizer.optimize(

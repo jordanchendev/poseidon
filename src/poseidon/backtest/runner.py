@@ -172,9 +172,10 @@ class BacktestRunner:
         features = self.feature_engine.compute_from_df(ohlcv, feature_specs)
 
         # Step 2: Determine warmup period
-        # Feature columns are those not in the original OHLCV
-        ohlcv_cols = {"open", "high", "low", "close", "volume"}
-        feature_cols = [c for c in features.columns if c not in ohlcv_cols]
+        # Only consider columns NEWLY computed by compute_from_df for warmup,
+        # not pre-existing R2 columns that were already on the input ohlcv.
+        pre_existing_cols = set(ohlcv.columns)
+        feature_cols = [c for c in features.columns if c not in pre_existing_cols]
         warmup_end = self._find_warmup_end(features, feature_cols)
 
         # Step 3: Create portfolio
