@@ -62,7 +62,7 @@ class AutoResearchRunner:
         *,
         initial_capital: float = 1_000_000.0,
         sizing_config: SizingConfig | None = None,
-        feature_specs: list[tuple[str, dict]] | None = None,
+        feature_specs: list[tuple[str, dict]] | str | None = None,
         stop_check: Callable[[], bool] | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> None:
@@ -122,17 +122,21 @@ class AutoResearchRunner:
                         continue
 
                     # Pre-compute expanded features (incl. cross-asset) when feature_specs set
-                    if self.feature_specs is not None:
+                    resolved_specs = self.feature_specs
+                    if resolved_specs == "r2":
+                        # Dynamic per-market R2 feature resolution
+                        resolved_specs = get_r2_specs(spec.symbol, spec.market)
+                    if resolved_specs is not None and resolved_specs != "r2":
                         cross_specs = get_cross_asset_specs(spec.symbol, spec.market)
-                        full_specs = list(self.feature_specs) + cross_specs
+                        full_specs = list(resolved_specs) + cross_specs
                         ohlcv = feature_engine.compute_with_companions(
                             ohlcv, spec.symbol, spec.market, spec.interval,
                             feature_specs=full_specs, db_session=self.db_session,
                         )
                         logger.info(
-                            "Pre-computed %d expanded features for %s/%s (%d single + %d cross-asset)",
+                            "Pre-computed %d R2 features for %s/%s (%d base + %d cross-asset)",
                             len(full_specs), spec.symbol, spec.market,
-                            len(self.feature_specs), len(cross_specs),
+                            len(resolved_specs), len(cross_specs),
                         )
 
                     pipeline = ParameterSearchPipeline(

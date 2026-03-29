@@ -1085,6 +1085,7 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
             search_config=cfg,
             stop_check=check_stop,
             progress_callback=update_progress,
+            feature_specs="r2",  # Signal runner to use get_r2_specs() per-market
         )
         results = runner.run(market_specs)
 
