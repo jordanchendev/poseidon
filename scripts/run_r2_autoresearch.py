@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 from poseidon.autoresearch.runner import AutoResearchRunner, MarketSpec
 from poseidon.backtest.param_search import SearchConfig
-from poseidon.config import get_settings
+from poseidon.core.config import Settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    settings = get_settings()
+    settings = Settings()
     engine = create_engine(str(settings.database_url))
     Session = sessionmaker(bind=engine)
     session = Session()
