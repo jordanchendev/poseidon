@@ -41,6 +41,8 @@ services:
       - TZ=Asia/Taipei
       - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
       - POSEIDON_REDIS_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_FINMIND_TOKEN=${POSEIDON_FINMIND_TOKEN}
+      - POSEIDON_FINLAB_API_TOKEN=${POSEIDON_FINLAB_API_TOKEN}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
