@@ -78,10 +78,7 @@ def main() -> None:
 
         # Query tracker for passed experiments with metrics
         try:
-            experiments = tracker.query(
-                study_name=sr.study_name,
-                status="passed",
-            )
+            experiments = tracker.query_passed_by_study(sr.study_name)
             for exp in experiments:
                 metrics = exp.metrics_json or {}
                 sharpe = metrics.get("sharpe_ratio", 0)
