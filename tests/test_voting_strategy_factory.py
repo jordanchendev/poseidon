@@ -425,3 +425,100 @@ class TestBuildR2SubSignals:
         inst_bear = [s for s in bear if s["column"] in ("foreign_net_buy_ratio", "trust_net_buy_ratio")]
         assert len(inst_bull) == 2
         assert len(inst_bear) == 2
+
+
+class TestMixedConfig:
+    """_build_config_from_params with R2 sub_signals appended to TA signals."""
+
+    def _default_params(self) -> dict:
+        """Minimal params dict for _build_config_from_params."""
+        return {
+            "rsi_period": 10,
+            "ema_short": 7,
+            "ema_long": 26,
+            "macd_fast": 14,
+            "macd_slow": 23,
+            "macd_signal": 9,
+            "bollinger_period": 20,
+            "momentum_short": 6,
+            "momentum_long": 12,
+            "min_votes": 4,
+            "position_pct": 0.08,
+            "bear_min_votes": 4,
+            "bear_position_pct": 0.06,
+            "cooldown_bars": 12,
+            "conviction_gap": 2,
+        }
+
+    def test_mixed_ta_r2_tw_stock(self) -> None:
+        params = self._default_params()
+        params.update({
+            "r2_n_institutional": 1,
+            "r2_institutional_threshold": 0.01,
+            "r2_n_fundamental": 1,
+            "r2_pe_max": 20.0,
+            "r2_pb_max": 3.0,
+            "r2_n_funding": 0,
+            "r2_n_macro": 1,
+            "r2_macro_vix_threshold": 20.0,
+        })
+        config = _build_config_from_params(
+            params, symbol="2330", market="tw_stock", interval="1d",
+        )
+        # 6 TA + 1 institutional + 1 fundamental + 1 macro = 9
+        assert len(config["sub_signals"]) == 9
+        assert len(config["bear_sub_signals"]) == 9
+        # R2 signals start at index 6
+        assert config["sub_signals"][6]["type"] == "feature_above"
+        assert config["sub_signals"][6]["column"] == "foreign_net_buy_ratio"
+        assert config["sub_signals"][7]["type"] == "feature_below"
+        assert config["sub_signals"][7]["column"] == "pe_ratio"
+        assert config["sub_signals"][8]["type"] == "feature_below"
+        assert config["sub_signals"][8]["column"] == "macro_vix"
+
+    def test_mixed_ta_r2_crypto(self) -> None:
+        params = self._default_params()
+        params.update({
+            "r2_n_funding": 1,
+            "r2_funding_rate_threshold": 0.0005,
+            "r2_n_macro": 0,
+        })
+        config = _build_config_from_params(
+            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+        )
+        # 6 TA + 1 funding = 7
+        assert len(config["sub_signals"]) == 7
+        assert config["sub_signals"][6]["type"] == "feature_below"
+        assert config["sub_signals"][6]["column"] == "funding_rate_daily"
+
+    def test_no_r2_signals(self) -> None:
+        params = self._default_params()
+        params.update({
+            "r2_n_institutional": 0,
+            "r2_n_fundamental": 0,
+            "r2_n_funding": 0,
+            "r2_n_macro": 0,
+        })
+        config = _build_config_from_params(
+            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+        )
+        # Only 6 TA signals, no R2
+        assert len(config["sub_signals"]) == 6
+        assert len(config["bear_sub_signals"]) == 6
+
+    def test_validate_config_with_r2(self) -> None:
+        params = self._default_params()
+        params.update({
+            "r2_n_institutional": 1,
+            "r2_institutional_threshold": 0.01,
+            "r2_n_fundamental": 0,
+            "r2_n_funding": 0,
+            "r2_n_macro": 1,
+            "r2_macro_vix_threshold": 20.0,
+        })
+        config = _build_config_from_params(
+            params, symbol="2330", market="tw_stock", interval="1d",
+        )
+        strategy = VotingStrategy(config=config, atr_multiplier=5.5)
+        # Should not raise
+        assert strategy.validate_config() is True

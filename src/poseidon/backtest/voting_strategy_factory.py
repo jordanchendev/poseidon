@@ -276,6 +276,11 @@ def _build_config_from_params(
         },
     ]
 
+    # Append R2 sub_signals based on market + Optuna-selected counts
+    r2_bull, r2_bear = _build_r2_sub_signals(params, market=market)
+    sub_signals.extend(r2_bull)
+    bear_sub_signals.extend(r2_bear)
+
     config = {
         "name": f"optuna_{symbol}_{interval}",
         "symbol": symbol,
@@ -331,7 +336,8 @@ class VotingStrategyFactory:
         Per D-14: signal types and scoring formula are NOT searchable.
         """
         params: dict = {}
-        for name, (low, high, ptype) in PARAM_BOUNDS.items():
+        bounds = get_param_bounds(market)
+        for name, (low, high, ptype) in bounds.items():
             if ptype == "int":
                 params[name] = trial.suggest_int(name, int(low), int(high))
             else:
