@@ -72,13 +72,16 @@ async def health():
     except Exception as e:
         components["celery"] = f"error: {e}"
 
-    # 4. GPU status via Celery worker ping (torch not available in API container)
+    # 4. GPU status via Celery worker queue inspection (torch not available in API container)
     try:
         gpu_inspect = celery_app.control.inspect(timeout=3.0)
-        ping_result = gpu_inspect.ping() or {}
-        gpu_workers = {k: v for k, v in ping_result.items() if "gpu" in k.lower()}
+        active_queues = gpu_inspect.active_queues() or {}
+        gpu_workers = [
+            worker for worker, queues in active_queues.items()
+            if any(q.get("name") == "gpu" for q in queues)
+        ]
         if gpu_workers:
-            components["gpu"] = {"available": True, "workers": list(gpu_workers.keys())}
+            components["gpu"] = {"available": True, "workers": gpu_workers}
         else:
             components["gpu"] = {"available": False, "note": "no GPU workers responding"}
     except Exception as e:
