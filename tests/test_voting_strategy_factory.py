@@ -56,7 +56,7 @@ class TestFromTrial:
 
     @pytest.fixture()
     def fixed_trial(self) -> optuna.trial.FixedTrial:
-        """Create FixedTrial with known parameter values."""
+        """Create FixedTrial with known parameter values (crypto_spot market)."""
         params = {
             "rsi_period": 10,
             "ema_short": 7,
@@ -74,6 +74,11 @@ class TestFromTrial:
             "bear_position_pct": 0.06,
             "cooldown_bars": 12,
             "conviction_gap": 2,
+            # R2 params for crypto_spot market
+            "r2_n_funding": 0,
+            "r2_funding_rate_threshold": 0.0,
+            "r2_n_macro": 0,
+            "r2_macro_vix_threshold": 20.0,
         }
         return optuna.trial.FixedTrial(params)
 
@@ -100,9 +105,11 @@ class TestFromTrial:
         assert len(strategy._sub_signals) == 6
 
     def test_from_trial_param_bounds_all_used(self) -> None:
-        """Every key in PARAM_BOUNDS must be consumed by from_trial."""
+        """Every key in get_param_bounds(market) must be consumed by from_trial."""
+        market = "crypto_spot"
+        bounds = get_param_bounds(market)
         params = {}
-        for name, (low, high, ptype) in PARAM_BOUNDS.items():
+        for name, (low, high, ptype) in bounds.items():
             if ptype == "int":
                 params[name] = int(low)
             else:
@@ -110,7 +117,7 @@ class TestFromTrial:
         trial = optuna.trial.FixedTrial(params)
         # Should not raise -- all params consumed
         strategy = VotingStrategyFactory.from_trial(
-            trial, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+            trial, symbol="BTCUSDT", market=market, interval="1h",
         )
         assert strategy.validate_config() is True
 
@@ -316,6 +323,13 @@ class TestFromTrialBear:
             "position_pct": 0.08,
             "bear_min_votes": 4,
             "bear_position_pct": 0.06,
+            "cooldown_bars": 12,
+            "conviction_gap": 2,
+            # R2 params for crypto_spot market
+            "r2_n_funding": 0,
+            "r2_funding_rate_threshold": 0.0,
+            "r2_n_macro": 0,
+            "r2_macro_vix_threshold": 20.0,
         }
         trial = optuna.trial.FixedTrial(params)
         strategy = VotingStrategyFactory.from_trial(
