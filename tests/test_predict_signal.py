@@ -18,13 +18,13 @@ def _make_mock_signal(action: str, confidence: float) -> MagicMock:
     return sig
 
 
-@patch("poseidon.workers.gpu_tasks.SessionLocal")
-@patch("poseidon.workers.gpu_tasks.ModelManager")
-@patch("poseidon.workers.gpu_tasks.get_model")
-@patch("poseidon.workers.gpu_tasks.FeatureEngine")
-@patch("poseidon.workers.gpu_tasks.ModelStrategy")
-@patch("poseidon.workers.gpu_tasks.SignalPipeline")
-@patch("poseidon.workers.gpu_tasks.settings")
+@patch("poseidon.models.base.SessionLocal")
+@patch("poseidon.ml.manager.ModelManager")
+@patch("poseidon.ml.registry.get_model")
+@patch("poseidon.data.feature_engine.FeatureEngine")
+@patch("poseidon.strategies.model_strategy.ModelStrategy")
+@patch("poseidon.risk.pipeline.SignalPipeline")
+@patch("poseidon.core.config.settings")
 def test_run_prediction_loads_model_and_generates_signals(
     mock_settings,
     mock_pipeline_cls,
@@ -89,8 +89,8 @@ def test_run_prediction_loads_model_and_generates_signals(
     mock_pipeline.process.assert_called_once_with(sig_high)
 
 
-@patch("poseidon.workers.gpu_tasks.SessionLocal")
-@patch("poseidon.workers.gpu_tasks.ModelManager")
+@patch("poseidon.models.base.SessionLocal")
+@patch("poseidon.ml.manager.ModelManager")
 def test_run_prediction_model_not_found(mock_manager_cls, mock_session_local):
     """run_prediction raises ValueError when model version not found."""
     session = MagicMock()
@@ -118,6 +118,6 @@ def test_gpu_health_probe_with_torch(mock_torch):
 
     result = gpu_health_probe()
 
-    assert result["torch_version"] == "2.1.0"
+    assert result["torch_version"] == mock_torch.__version__
     assert result["cuda_available"] is True
     assert "cuda_device" in result

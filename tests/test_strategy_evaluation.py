@@ -98,7 +98,7 @@ def test_evaluate_active_strategies_processes_voting_strategy(
     mock_engine.compute.return_value = pd.DataFrame({"close": [100, 101]})
     mock_engine_cls.return_value = mock_engine
 
-    with patch("poseidon.workers.cpu_tasks.VotingStrategy") as mock_voting_cls:
+    with patch("poseidon.strategies.voting_strategy.VotingStrategy") as mock_voting_cls:
         mock_strategy = MagicMock()
         mock_strategy.evaluate.return_value = [mock_signal]
         mock_voting_cls.return_value = mock_strategy
