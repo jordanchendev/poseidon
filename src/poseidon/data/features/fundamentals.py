@@ -20,6 +20,11 @@ def _ffill_to_index(source: pd.Series, target_index: pd.Index) -> pd.Series:
     + monthly data where not every row has every column).
     """
     clean = source.dropna()
+    # Normalize timezone: FinLab naive datetime vs OHLCV UTC-aware
+    if isinstance(clean.index, pd.DatetimeIndex) and isinstance(target_index, pd.DatetimeIndex):
+        if clean.index.tz is None and target_index.tz is not None:
+            clean = clean.copy()
+            clean.index = clean.index.tz_localize("UTC")
     return clean.reindex(target_index, method="ffill")
 
 

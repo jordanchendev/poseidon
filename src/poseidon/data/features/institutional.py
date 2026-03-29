@@ -14,7 +14,15 @@ from poseidon.data.features.base import BaseFeature, register_feature
 def _align_to_index(
     source: pd.Series, target_index: pd.Index, method: str = "ffill"
 ) -> pd.Series:
-    """Align a source series to a target index with forward-fill."""
+    """Align a source series to a target index with forward-fill.
+
+    Handles timezone mismatch: FinLab returns naive datetime, OHLCV uses UTC-aware.
+    """
+    # Normalize timezone: FinLab naive datetime vs OHLCV UTC-aware
+    if isinstance(source.index, pd.DatetimeIndex) and isinstance(target_index, pd.DatetimeIndex):
+        if source.index.tz is None and target_index.tz is not None:
+            source = source.copy()
+            source.index = source.index.tz_localize("UTC")
     return source.reindex(target_index, method=method)
 
 
