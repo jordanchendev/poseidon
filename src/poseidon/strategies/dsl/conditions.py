@@ -225,3 +225,37 @@ def eval_indicator_comparison(condition: dict, features: pd.DataFrame, row_idx: 
     if direction == "above":
         return val_a > val_b
     return val_a < val_b
+
+
+@register_condition("feature_above")
+def eval_feature_above(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
+    """Check if a named feature column value > threshold.
+
+    Unlike indicator_above, uses direct column name (no resolve_column_name).
+    Designed for R2 features (institutional, fundamental, funding, macro).
+    Returns False on NaN or missing column.
+    """
+    column = condition["column"]
+    threshold = condition["threshold"]
+    if column not in features.columns:
+        return False
+    val = features.iloc[row_idx][column]
+    if pd.isna(val):
+        return False
+    return float(val) > threshold
+
+
+@register_condition("feature_below")
+def eval_feature_below(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
+    """Check if a named feature column value < threshold.
+
+    Returns False on NaN or missing column.
+    """
+    column = condition["column"]
+    threshold = condition["threshold"]
+    if column not in features.columns:
+        return False
+    val = features.iloc[row_idx][column]
+    if pd.isna(val):
+        return False
+    return float(val) < threshold
