@@ -42,6 +42,127 @@ PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "conviction_gap": (2, 4, "int"),                     # min net votes spread for entry
 }
 
+# R2 parameter bounds -- market-conditional, keyed by category
+_R2_BOUNDS_INSTITUTIONAL: dict[str, tuple] = {
+    "r2_n_institutional": (0, 2, "int"),
+    "r2_institutional_threshold": (0.001, 0.05, "float"),
+}
+
+_R2_BOUNDS_FUNDAMENTAL: dict[str, tuple] = {
+    "r2_n_fundamental": (0, 2, "int"),
+    "r2_pe_max": (10.0, 40.0, "float"),
+    "r2_pb_max": (1.0, 5.0, "float"),
+}
+
+_R2_BOUNDS_FUNDING: dict[str, tuple] = {
+    "r2_n_funding": (0, 1, "int"),
+    "r2_funding_rate_threshold": (-0.001, 0.001, "float"),
+}
+
+_R2_BOUNDS_MACRO: dict[str, tuple] = {
+    "r2_n_macro": (0, 2, "int"),
+    "r2_macro_vix_threshold": (15.0, 30.0, "float"),
+}
+
+# Which R2 categories are available per market
+_R2_CATEGORIES_BY_MARKET: dict[str, list[dict]] = {
+    "tw_stock": [_R2_BOUNDS_INSTITUTIONAL, _R2_BOUNDS_FUNDAMENTAL, _R2_BOUNDS_MACRO],
+    "tw_futures": [_R2_BOUNDS_MACRO],
+    "crypto_spot": [_R2_BOUNDS_FUNDING, _R2_BOUNDS_MACRO],
+    "us_stock": [_R2_BOUNDS_MACRO],
+}
+
+
+def get_param_bounds(market: str) -> dict[str, tuple]:
+    """Return market-specific PARAM_BOUNDS combining TA + R2.
+
+    Base TA bounds are always included. R2 bounds are added
+    based on which data sources are available for the market.
+    """
+    bounds = dict(PARAM_BOUNDS)
+    for category_bounds in _R2_CATEGORIES_BY_MARKET.get(market, [_R2_BOUNDS_MACRO]):
+        bounds.update(category_bounds)
+    return bounds
+
+
+# Ordered R2 feature pools per category
+_INSTITUTIONAL_FEATURES = [
+    ("foreign_net_buy_ratio", "r2_institutional_threshold"),
+    ("trust_net_buy_ratio", "r2_institutional_threshold"),
+]
+
+_FUNDAMENTAL_FEATURES = [
+    ("pe_ratio", "r2_pe_max"),
+    ("pb_ratio", "r2_pb_max"),
+]
+
+_FUNDING_FEATURES = [
+    ("funding_rate_daily", "r2_funding_rate_threshold"),
+]
+
+_MACRO_FEATURES = [
+    ("macro_vix", "r2_macro_vix_threshold"),
+    ("macro_dxy", "r2_macro_vix_threshold"),  # reuse VIX threshold as generic macro threshold
+]
+
+
+def _build_r2_sub_signals(
+    params: dict, *, market: str
+) -> tuple[list[dict], list[dict]]:
+    """Build R2 sub_signals for both bull and bear sides based on market.
+
+    Returns (bull_sub_signals, bear_sub_signals).
+    R2 counts (r2_n_institutional etc.) control how many from each pool.
+    Count=0 means that category is disabled for this trial.
+    """
+    bull: list[dict] = []
+    bear: list[dict] = []
+
+    # --- Institutional (tw_stock only) ---
+    n_inst = params.get("r2_n_institutional", 0)
+    if n_inst > 0 and market == "tw_stock":
+        threshold = params.get("r2_institutional_threshold", 0.01)
+        for col, _ in _INSTITUTIONAL_FEATURES[:n_inst]:
+            bull.append({"type": "feature_above", "column": col, "threshold": threshold})
+            bear.append({"type": "feature_below", "column": col, "threshold": -threshold})
+
+    # --- Fundamental (tw_stock only) ---
+    n_fund = params.get("r2_n_fundamental", 0)
+    if n_fund > 0 and market == "tw_stock":
+        pe_max = params.get("r2_pe_max", 20.0)
+        pb_max = params.get("r2_pb_max", 3.0)
+        fund_specs = [
+            ("pe_ratio", pe_max),
+            ("pb_ratio", pb_max),
+        ]
+        for col, thresh in fund_specs[:n_fund]:
+            # Bull: cheap (below threshold) = bullish
+            bull.append({"type": "feature_below", "column": col, "threshold": thresh})
+            # Bear: expensive (above threshold) = bearish
+            bear.append({"type": "feature_above", "column": col, "threshold": thresh})
+
+    # --- Funding rate (crypto_spot only) ---
+    n_funding = params.get("r2_n_funding", 0)
+    if n_funding > 0 and market == "crypto_spot":
+        fr_threshold = params.get("r2_funding_rate_threshold", 0.0)
+        for col, _ in _FUNDING_FEATURES[:n_funding]:
+            # Bull: negative funding (shorts pay) = bullish
+            bull.append({"type": "feature_below", "column": col, "threshold": fr_threshold})
+            # Bear: positive funding (longs pay) = bearish
+            bear.append({"type": "feature_above", "column": col, "threshold": fr_threshold})
+
+    # --- Macro (all markets) ---
+    n_macro = params.get("r2_n_macro", 0)
+    if n_macro > 0:
+        vix_threshold = params.get("r2_macro_vix_threshold", 20.0)
+        for col, _ in _MACRO_FEATURES[:n_macro]:
+            # Bull: low fear/dollar = bullish
+            bull.append({"type": "feature_below", "column": col, "threshold": vix_threshold})
+            # Bear: high fear/dollar = bearish
+            bear.append({"type": "feature_above", "column": col, "threshold": vix_threshold})
+
+    return bull, bear
+
 
 def _build_config_from_params(
     params: dict,

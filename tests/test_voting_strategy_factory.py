@@ -20,6 +20,8 @@ from poseidon.backtest.voting_strategy_factory import (
     PARAM_BOUNDS,
     VotingStrategyFactory,
     _build_config_from_params,
+    _build_r2_sub_signals,
+    get_param_bounds,
 )
 from poseidon.strategies.voting_strategy import VotingStrategy
 
@@ -322,3 +324,104 @@ class TestFromTrialBear:
         assert strategy._bear_min_votes == 4
         assert strategy._bear_position_pct == 0.06
         assert len(strategy._bear_sub_signals) == 6
+
+
+class TestR2ParamBounds:
+    """get_param_bounds() returns market-specific R2 parameter bounds."""
+
+    def test_tw_stock_has_institutional_params(self) -> None:
+        bounds = get_param_bounds("tw_stock")
+        assert "r2_n_institutional" in bounds
+        assert "r2_institutional_threshold" in bounds
+
+    def test_tw_stock_has_fundamental_params(self) -> None:
+        bounds = get_param_bounds("tw_stock")
+        assert "r2_pe_max" in bounds
+        assert "r2_pb_max" in bounds
+        assert "r2_n_fundamental" in bounds
+
+    def test_crypto_has_funding_params(self) -> None:
+        bounds = get_param_bounds("crypto_spot")
+        assert "r2_n_funding" in bounds
+        assert "r2_funding_rate_threshold" in bounds
+
+    def test_crypto_no_institutional(self) -> None:
+        bounds = get_param_bounds("crypto_spot")
+        assert "r2_n_institutional" not in bounds
+
+    def test_us_stock_macro_only(self) -> None:
+        bounds = get_param_bounds("us_stock")
+        assert "r2_n_macro" in bounds
+        assert "r2_macro_vix_threshold" in bounds
+        assert "r2_n_institutional" not in bounds
+        assert "r2_n_funding" not in bounds
+        assert "r2_n_fundamental" not in bounds
+
+    def test_all_markets_have_base_bounds(self) -> None:
+        for market in ("tw_stock", "crypto_spot", "us_stock", "tw_futures"):
+            bounds = get_param_bounds(market)
+            for key in PARAM_BOUNDS:
+                assert key in bounds, f"{market} missing base key {key}"
+
+
+class TestBuildR2SubSignals:
+    """_build_r2_sub_signals() generates correct bull/bear R2 sub_signals."""
+
+    def test_institutional_bull_bear(self) -> None:
+        params = {"r2_n_institutional": 1, "r2_institutional_threshold": 0.01}
+        bull, bear = _build_r2_sub_signals(params, market="tw_stock")
+        assert len(bull) >= 1
+        assert bull[0]["type"] == "feature_above"
+        assert bull[0]["column"] == "foreign_net_buy_ratio"
+        assert bull[0]["threshold"] == 0.01
+        assert bear[0]["type"] == "feature_below"
+        assert bear[0]["column"] == "foreign_net_buy_ratio"
+        assert bear[0]["threshold"] == -0.01
+
+    def test_fundamental_bull_bear(self) -> None:
+        params = {"r2_n_fundamental": 1, "r2_pe_max": 20.0, "r2_pb_max": 3.0}
+        bull, bear = _build_r2_sub_signals(params, market="tw_stock")
+        assert len(bull) >= 1
+        assert bull[0]["type"] == "feature_below"
+        assert bull[0]["column"] == "pe_ratio"
+        assert bull[0]["threshold"] == 20.0
+        assert bear[0]["type"] == "feature_above"
+        assert bear[0]["column"] == "pe_ratio"
+        assert bear[0]["threshold"] == 20.0
+
+    def test_funding_rate_bull_bear(self) -> None:
+        params = {"r2_n_funding": 1, "r2_funding_rate_threshold": 0.0005}
+        bull, bear = _build_r2_sub_signals(params, market="crypto_spot")
+        assert len(bull) >= 1
+        assert bull[0]["type"] == "feature_below"
+        assert bull[0]["column"] == "funding_rate_daily"
+        assert bull[0]["threshold"] == 0.0005
+        assert bear[0]["type"] == "feature_above"
+        assert bear[0]["column"] == "funding_rate_daily"
+        assert bear[0]["threshold"] == 0.0005
+
+    def test_macro_vix_bull_bear(self) -> None:
+        params = {"r2_n_macro": 1, "r2_macro_vix_threshold": 20.0}
+        bull, bear = _build_r2_sub_signals(params, market="us_stock")
+        assert len(bull) >= 1
+        assert bull[0]["type"] == "feature_below"
+        assert bull[0]["column"] == "macro_vix"
+        assert bull[0]["threshold"] == 20.0
+        assert bear[0]["type"] == "feature_above"
+        assert bear[0]["column"] == "macro_vix"
+        assert bear[0]["threshold"] == 20.0
+
+    def test_zero_count_returns_empty(self) -> None:
+        params = {"r2_n_institutional": 0, "r2_institutional_threshold": 0.01}
+        bull, bear = _build_r2_sub_signals(params, market="tw_stock")
+        # No institutional signals when count=0
+        inst_bull = [s for s in bull if s.get("column", "").startswith("foreign")]
+        assert len(inst_bull) == 0
+
+    def test_n_institutional_2_returns_two_pairs(self) -> None:
+        params = {"r2_n_institutional": 2, "r2_institutional_threshold": 0.01}
+        bull, bear = _build_r2_sub_signals(params, market="tw_stock")
+        inst_bull = [s for s in bull if s["column"] in ("foreign_net_buy_ratio", "trust_net_buy_ratio")]
+        inst_bear = [s for s in bear if s["column"] in ("foreign_net_buy_ratio", "trust_net_buy_ratio")]
+        assert len(inst_bull) == 2
+        assert len(inst_bear) == 2
