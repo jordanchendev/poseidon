@@ -83,6 +83,122 @@ EXPANDED_FEATURES: list[tuple[str, dict]] = [
 ]
 
 
+# -- Non-price feature name sets (used for spec classification + data routing) --------
+
+_INSTITUTIONAL_PREFIXES = ("foreign_net_buy", "trust_net_buy", "dealer_net_buy")
+_FUNDAMENTAL_NAMES = frozenset({"pe_ratio", "pb_ratio", "revenue_mom", "revenue_yoy"})
+_TRADE_STRUCTURE_NAMES = frozenset({"avg_trade_size", "turnover_ratio"})
+_FUNDING_NAMES = frozenset({"funding_rate_daily"})
+_MACRO_PREFIX = "macro_"
+
+
+def _is_nonprice_spec(name: str) -> bool:
+    """Return True if the feature name requires non-price data injection."""
+    return (
+        name.startswith(_INSTITUTIONAL_PREFIXES)
+        or name in _FUNDAMENTAL_NAMES
+        or name in _TRADE_STRUCTURE_NAMES
+        or name in _FUNDING_NAMES
+        or name.startswith(_MACRO_PREFIX)
+    )
+
+
+def _nonprice_data_key(name: str) -> str:
+    """Return the kwarg key for the non-price data this feature needs."""
+    if name.startswith(_INSTITUTIONAL_PREFIXES):
+        return "institutional_data"
+    if name in _FUNDAMENTAL_NAMES:
+        return "fundamental_data"
+    if name in _TRADE_STRUCTURE_NAMES:
+        return "trade_structure_data"
+    if name in _FUNDING_NAMES:
+        return "funding_data"
+    if name.startswith(_MACRO_PREFIX):
+        return "macro_data"
+    raise ValueError(f"Not a non-price feature: {name}")
+
+
+def get_r2_specs(symbol: str, market: str) -> list[tuple[str, dict]]:
+    """Generate market-conditional R2 feature specs.
+
+    Starts from EXPANDED_FEATURES and adds non-price features appropriate
+    for the given market:
+    - tw_stock: institutional flow + fundamentals + trade structure + macro
+    - crypto_spot: funding rate + macro
+    - all markets: macro indices
+
+    Args:
+        symbol: Symbol identifier (used for documentation; not filtered).
+        market: Market name controlling which feature groups are included.
+
+    Returns:
+        List of (feature_name, params) tuples.
+    """
+    specs: list[tuple[str, dict]] = list(EXPANDED_FEATURES)
+
+    if market == "tw_stock":
+        specs.extend([
+            ("foreign_net_buy_ratio", {}),
+            ("foreign_net_buy_cum", {"period": 5}),
+            ("foreign_net_buy_cum", {"period": 20}),
+            ("trust_net_buy_ratio", {}),
+            ("trust_net_buy_cum", {"period": 5}),
+            ("trust_net_buy_cum", {"period": 20}),
+            ("dealer_net_buy_ratio", {}),
+            ("pe_ratio", {}),
+            ("pb_ratio", {}),
+            ("revenue_mom", {}),
+            ("revenue_yoy", {}),
+            ("avg_trade_size", {}),
+            ("turnover_ratio", {}),
+        ])
+
+    if market == "crypto_spot":
+        specs.extend([
+            ("funding_rate_daily", {}),
+        ])
+
+    # Macro indices for ALL markets
+    specs.extend([
+        ("macro_vix", {}),
+        ("macro_dxy", {}),
+        ("macro_tnx", {}),
+        ("macro_twdusd", {}),
+    ])
+
+    return specs
+
+
+# R2 features are market-conditional -- use get_r2_specs(symbol, market) instead.
+# This constant documents the maximum feature set (tw_stock + all markets).
+EXPANDED_FEATURES_R2: list[tuple[str, dict]] = [
+    *EXPANDED_FEATURES,
+    # Institutional (tw_stock only)
+    ("foreign_net_buy_ratio", {}),
+    ("foreign_net_buy_cum", {"period": 5}),
+    ("foreign_net_buy_cum", {"period": 20}),
+    ("trust_net_buy_ratio", {}),
+    ("trust_net_buy_cum", {"period": 5}),
+    ("trust_net_buy_cum", {"period": 20}),
+    ("dealer_net_buy_ratio", {}),
+    # Fundamental (tw_stock only)
+    ("pe_ratio", {}),
+    ("pb_ratio", {}),
+    ("revenue_mom", {}),
+    ("revenue_yoy", {}),
+    # Trade structure (tw_stock only)
+    ("avg_trade_size", {}),
+    ("turnover_ratio", {}),
+    # Funding (crypto_spot only)
+    ("funding_rate_daily", {}),
+    # Macro (all markets)
+    ("macro_vix", {}),
+    ("macro_dxy", {}),
+    ("macro_tnx", {}),
+    ("macro_twdusd", {}),
+]
+
+
 def get_cross_asset_specs(
     symbol: str, market: str, periods: tuple[int, ...] = (20, 60),
 ) -> list[tuple[str, dict]]:
@@ -214,11 +330,15 @@ class FeatureEngine:
         feature_specs: list[tuple[str, dict]] | None = None,
         db_session=None,
     ) -> pd.DataFrame:
-        """Compute features including cross-asset ones that need companion data.
+        """Compute features including cross-asset and non-price data features.
 
-        For cross-asset feature specs (those with companion_symbol in params),
-        loads companion data from DB and injects it into the feature's params.
-        Single-symbol features work as before via compute_from_df().
+        Three categories of feature specs:
+        1. Single-symbol: standard TA features computed from OHLCV only.
+        2. Cross-asset: specs with ``companion_symbol`` in params; loads
+           companion OHLCV from DB.
+        3. Non-price: specs whose name maps to external data (institutional
+           flow, fundamentals, trade structure, funding rates, macro indices).
+           Data is loaded lazily via loaders and injected as kwargs.
 
         Args:
             ohlcv: Primary symbol OHLCV DataFrame.
@@ -236,19 +356,23 @@ class FeatureEngine:
 
         specs = feature_specs if feature_specs is not None else DEFAULT_FEATURES
 
-        # Separate single-symbol and cross-asset specs
-        single_specs = []
-        cross_specs = []
+        # Separate single-symbol, cross-asset, and non-price specs
+        single_specs: list[tuple[str, dict]] = []
+        cross_specs: list[tuple[str, dict]] = []
+        nonprice_specs: list[tuple[str, dict]] = []
         for name, params in specs:
             if "companion_symbol" in params:
                 cross_specs.append((name, params))
+            elif _is_nonprice_spec(name):
+                nonprice_specs.append((name, params))
             else:
                 single_specs.append((name, params))
 
         # Compute single-symbol features first
         result = self.compute_from_df(ohlcv, single_specs) if single_specs else ohlcv.copy()
 
-        if not cross_specs:
+        has_external = bool(cross_specs) or bool(nonprice_specs)
+        if not has_external:
             return result
 
         # Load companion data and compute cross-asset features
@@ -258,7 +382,7 @@ class FeatureEngine:
             close_session = True
 
         try:
-            # Cache companion data to avoid redundant DB reads
+            # --- Cross-asset features ---
             companion_cache: dict[tuple[str, str], pd.DataFrame] = {}
 
             for feature_name, params in cross_specs:
@@ -285,14 +409,77 @@ class FeatureEngine:
                 elif isinstance(computed, pd.DataFrame):
                     for col in computed.columns:
                         result[col] = computed[col]
+
+            # --- Non-price data features ---
+            if nonprice_specs:
+                nonprice_data = self._load_nonprice_data(
+                    nonprice_specs, symbol,
+                )
+                for feature_name, params in nonprice_specs:
+                    data_key = _nonprice_data_key(feature_name)
+                    extra_kwargs = {data_key: nonprice_data.get(data_key)}
+
+                    feature_cls = get_feature(feature_name)
+                    feature = feature_cls()
+                    computed = feature.compute(ohlcv, **params, **extra_kwargs)
+
+                    if isinstance(computed, pd.Series):
+                        result[computed.name] = computed
+                    elif isinstance(computed, pd.DataFrame):
+                        for col in computed.columns:
+                            result[col] = computed[col]
         finally:
             if close_session:
                 db_session.close()
 
         logger.info(
-            "Computed %d single + %d cross-asset specs -> %d total columns",
+            "Computed %d single + %d cross-asset + %d non-price specs -> %d total columns",
             len(single_specs),
             len(cross_specs),
+            len(nonprice_specs),
             len(result.columns) - len(ohlcv.columns),
         )
         return result
+
+    @staticmethod
+    def _load_nonprice_data(
+        nonprice_specs: list[tuple[str, dict]],
+        symbol: str,
+    ) -> dict[str, pd.DataFrame]:
+        """Lazily load non-price data required by the given specs.
+
+        Only instantiates loaders and fetches data when the corresponding
+        feature names are present in *nonprice_specs*.
+        """
+        nonprice_data: dict[str, pd.DataFrame] = {}
+
+        needs_institutional = any(
+            n.startswith(_INSTITUTIONAL_PREFIXES) for n, _ in nonprice_specs
+        )
+        needs_fundamental = any(n in _FUNDAMENTAL_NAMES for n, _ in nonprice_specs)
+        needs_trade_structure = any(n in _TRADE_STRUCTURE_NAMES for n, _ in nonprice_specs)
+        needs_funding = any(n in _FUNDING_NAMES for n, _ in nonprice_specs)
+        needs_macro = any(n.startswith(_MACRO_PREFIX) for n, _ in nonprice_specs)
+
+        if needs_institutional or needs_fundamental or needs_trade_structure:
+            from poseidon.data.loaders import FinLabDataLoader
+
+            finlab = FinLabDataLoader()
+            if needs_institutional:
+                nonprice_data["institutional_data"] = finlab.get_institutional_flow(symbol)
+            if needs_fundamental:
+                nonprice_data["fundamental_data"] = finlab.get_fundamentals(symbol)
+            if needs_trade_structure:
+                nonprice_data["trade_structure_data"] = finlab.get_trade_structure(symbol)
+
+        if needs_funding:
+            from poseidon.data.loaders import FundingRateLoader
+
+            nonprice_data["funding_data"] = FundingRateLoader().get_daily_funding_rate(symbol)
+
+        if needs_macro:
+            from poseidon.data.loaders import MacroIndexLoader
+
+            nonprice_data["macro_data"] = MacroIndexLoader().get_macro_data()
+
+        return nonprice_data
