@@ -45,6 +45,12 @@ class FundingRateDaily(BaseFeature):
         if col not in funding_data.columns:
             return pd.Series(float("nan"), index=ohlcv.index, name=col)
 
-        aligned = funding_data[col].reindex(ohlcv.index, method="ffill")
+        series = funding_data[col]
+        # Normalize timezone: CCXT returns naive datetime, OHLCV uses UTC-aware
+        if isinstance(series.index, pd.DatetimeIndex) and isinstance(ohlcv.index, pd.DatetimeIndex):
+            if series.index.tz is None and ohlcv.index.tz is not None:
+                series = series.copy()
+                series.index = series.index.tz_localize("UTC")
+        aligned = series.reindex(ohlcv.index, method="ffill")
         aligned.name = col
         return aligned
