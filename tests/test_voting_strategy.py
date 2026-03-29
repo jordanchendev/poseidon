@@ -746,3 +746,64 @@ class TestExitPriority:
         close_signals = [s for s in signals if s.action == SignalAction.CLOSE]
         assert len(close_signals) == 1
         assert close_signals[0].metadata["reason"] == "rsi_exit"
+
+
+# ---------------------------------------------------------------------------
+# TestR2FeatureSpecs — get_feature_specs() with R2 feature conditions
+# ---------------------------------------------------------------------------
+
+class TestR2FeatureSpecs:
+    """Test get_feature_specs() handles feature_above/below conditions."""
+
+    def test_r2_bull_sub_signals_in_specs(self):
+        """feature_above/below columns appear in get_feature_specs() output."""
+        config = _make_all_true_config(min_votes=4)
+        # Add R2 sub_signals
+        config["sub_signals"].extend([
+            {"type": "feature_above", "column": "foreign_net_buy_ratio", "threshold": 0.01},
+            {"type": "feature_below", "column": "pe_ratio", "threshold": 20.0},
+        ])
+        config["min_votes"] = 4  # keep at 4
+        strategy = VotingStrategy(config=config)
+        specs = strategy.get_feature_specs()
+        spec_names = [name for name, _ in specs]
+        assert "foreign_net_buy_ratio" in spec_names
+        assert "pe_ratio" in spec_names
+
+    def test_r2_specs_have_empty_params(self):
+        """R2 feature specs have empty params dict (pre-computed columns)."""
+        config = _make_all_true_config(min_votes=4)
+        config["sub_signals"].append(
+            {"type": "feature_above", "column": "foreign_net_buy_ratio", "threshold": 0.01},
+        )
+        strategy = VotingStrategy(config=config)
+        specs = strategy.get_feature_specs()
+        r2_specs = [(n, p) for n, p in specs if n == "foreign_net_buy_ratio"]
+        assert len(r2_specs) == 1
+        assert r2_specs[0] == ("foreign_net_buy_ratio", {})
+
+    def test_ta_specs_still_present(self):
+        """Standard TA specs (rsi, ema, macd, etc.) still present with R2 additions."""
+        config = _make_all_true_config(min_votes=4)
+        config["sub_signals"].append(
+            {"type": "feature_above", "column": "foreign_net_buy_ratio", "threshold": 0.01},
+        )
+        strategy = VotingStrategy(config=config)
+        specs = strategy.get_feature_specs()
+        spec_names = [name for name, _ in specs]
+        # Standard TA specs from _make_all_true_config
+        assert "rsi" in spec_names
+        assert "atr" in spec_names
+        assert "returns" in spec_names
+
+    def test_bear_r2_sub_signals_in_specs(self):
+        """R2 conditions in bear_sub_signals also appear in get_feature_specs()."""
+        config = _make_bear_config()
+        config["bear_sub_signals"].append(
+            {"type": "feature_below", "column": "funding_rate_daily", "threshold": -0.001},
+        )
+        strategy = VotingStrategy(config=config)
+        specs = strategy.get_feature_specs()
+        spec_names = [name for name, _ in specs]
+        assert "funding_rate_daily" in spec_names
+        assert ("funding_rate_daily", {}) in specs

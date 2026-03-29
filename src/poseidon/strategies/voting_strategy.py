@@ -385,6 +385,10 @@ class VotingStrategy(BaseStrategy):
                     "bollinger",
                     {"period": params.get("period", 20), "num_std": 2.0},
                 )
+            elif cond_type in ("feature_above", "feature_below"):
+                col_name = cond.get("column", "")
+                if col_name:
+                    _add(col_name, {})
 
         # Always need ATR for trailing stop and returns
         _add("atr", {"period": self._atr_period})
