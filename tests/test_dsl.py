@@ -231,3 +231,65 @@ class TestDSLExecutor:
             cond = {"all": [cond]}
         with pytest.raises(ValueError, match="max depth"):
             evaluate_condition(cond, sample_features, 0)
+
+
+# ---------------------------------------------------------------------------
+# R2 Feature Condition Tests — feature_above / feature_below
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def r2_features():
+    """DataFrame with R2 feature columns for testing feature_above/below."""
+    return pd.DataFrame({
+        "close": [100.0, 102.0, 98.0],
+        "foreign_net_buy_ratio": [0.02, 0.005, float("nan")],
+        "pe_ratio": [15.0, 25.0, float("nan")],
+        "funding_rate_daily": [0.001, -0.002, float("nan")],
+    })
+
+
+class TestFeatureAbove:
+    """Tests for feature_above condition type."""
+
+    def test_above_threshold_returns_true(self, r2_features):
+        cond = {"type": "feature_above", "column": "foreign_net_buy_ratio", "threshold": 0.01}
+        assert evaluate_condition(cond, r2_features, 0) is True  # 0.02 > 0.01
+
+    def test_below_threshold_returns_false(self, r2_features):
+        cond = {"type": "feature_above", "column": "foreign_net_buy_ratio", "threshold": 0.01}
+        assert evaluate_condition(cond, r2_features, 1) is False  # 0.005 < 0.01
+
+    def test_nan_returns_false(self, r2_features):
+        cond = {"type": "feature_above", "column": "foreign_net_buy_ratio", "threshold": 0.01}
+        assert evaluate_condition(cond, r2_features, 2) is False  # NaN
+
+    def test_missing_column_returns_false(self, r2_features):
+        cond = {"type": "feature_above", "column": "nonexistent_column", "threshold": 0.01}
+        assert evaluate_condition(cond, r2_features, 0) is False
+
+    def test_registered_in_registry(self):
+        assert "feature_above" in CONDITION_REGISTRY
+
+
+class TestFeatureBelow:
+    """Tests for feature_below condition type."""
+
+    def test_below_threshold_returns_true(self, r2_features):
+        cond = {"type": "feature_below", "column": "pe_ratio", "threshold": 20.0}
+        assert evaluate_condition(cond, r2_features, 0) is True  # 15.0 < 20.0
+
+    def test_above_threshold_returns_false(self, r2_features):
+        cond = {"type": "feature_below", "column": "pe_ratio", "threshold": 20.0}
+        assert evaluate_condition(cond, r2_features, 1) is False  # 25.0 > 20.0
+
+    def test_nan_returns_false(self, r2_features):
+        cond = {"type": "feature_below", "column": "pe_ratio", "threshold": 20.0}
+        assert evaluate_condition(cond, r2_features, 2) is False  # NaN
+
+    def test_missing_column_returns_false(self, r2_features):
+        cond = {"type": "feature_below", "column": "nonexistent_column", "threshold": 20.0}
+        assert evaluate_condition(cond, r2_features, 0) is False
+
+    def test_registered_in_registry(self):
+        assert "feature_below" in CONDITION_REGISTRY
