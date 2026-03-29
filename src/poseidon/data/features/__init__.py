@@ -7,6 +7,6 @@ and decorating it with @register_feature.
 from poseidon.data.features.base import BaseFeature, get_feature, list_features, register_feature
 
 # Import all feature modules to trigger registration
-from poseidon.data.features import cross_asset, regime, returns, technical, volatility, volume
+from poseidon.data.features import cross_asset, hmm_regime, regime, returns, technical, volatility, volume, volume_profile
 
 __all__ = ["BaseFeature", "register_feature", "get_feature", "list_features"]
