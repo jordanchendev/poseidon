@@ -15,7 +15,7 @@ from poseidon.backtest.cost_model import COST_MODELS, CostModel
 from poseidon.backtest.experiment_tracker import ExperimentTracker
 from poseidon.backtest.param_search import ParameterSearchPipeline, SearchConfig, SearchResult
 from poseidon.backtest.portfolio import SizingConfig
-from poseidon.data.feature_engine import FeatureEngine, get_cross_asset_specs
+from poseidon.data.feature_engine import FeatureEngine, get_cross_asset_specs, get_r2_specs
 from poseidon.data.storage import read_ohlcv
 from poseidon.risk.engine import RiskEngine
 
@@ -41,7 +41,19 @@ class MarketResult:
 
 
 class AutoResearchRunner:
-    """Runs parameter search across multiple markets with autoresearch guard active."""
+    """Runs parameter search across multiple markets with autoresearch guard active.
+
+    Supports R2 features (institutional, fundamental, funding, macro) via
+    ``feature_specs`` parameter.  Example usage::
+
+        runner = AutoResearchRunner(
+            db_session, config,
+            feature_specs=get_r2_specs(symbol, market),
+        )
+
+    When ``feature_specs`` contains non-price features, ``compute_with_companions()``
+    lazily loads the required data via loaders and injects it as kwargs.
+    """
 
     def __init__(
         self,
