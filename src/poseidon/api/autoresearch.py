@@ -62,7 +62,7 @@ class TaskStatusResponse(BaseModel):
 class ExperimentResponse(BaseModel):
     """Response for a single experiment record."""
 
-    id: int
+    id: str
     study_name: str
     market: str
     interval: str
