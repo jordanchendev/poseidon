@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # Monte Carlo VaR settings (per D-05)
     mc_simulations: int = 10_000
 
+    # Prediction settings
+    predict_confidence_threshold: float = 0.6
+
     # Data quality scoring weights (per D-08, must sum to 1.0)
     quality_weight_completeness: float = 0.30
     quality_weight_consistency: float = 0.25

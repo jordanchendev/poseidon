@@ -343,3 +343,109 @@ def run_model_backtest(
         raise
     finally:
         session.close()
+
+
+@celery_app.task(
+    name="poseidon.workers.gpu_tasks.run_prediction",
+    bind=True,
+    max_retries=0,
+)
+def run_prediction(
+    self,
+    version_id: str,
+    symbol: str,
+    market: str,
+    interval: str = "1d",
+) -> dict:
+    """Run live prediction: load model, compute features, evaluate strategy, pipe signals.
+
+    Steps:
+    1. Load model version from DB and model artifacts from disk.
+    2. Compute features via FeatureEngine for the given symbol/market/interval.
+    3. Run ModelStrategy.evaluate() to convert predictions to raw signals.
+    4. Filter by predict_confidence_threshold.
+    5. Pipe surviving signals through SignalPipeline (risk check -> persist -> deliver).
+    """
+    from poseidon.core.config import settings
+    from poseidon.data.feature_engine import FeatureEngine
+    from poseidon.ml.manager import ModelManager
+    from poseidon.ml.registry import get_model
+    from poseidon.models.base import SessionLocal
+    from poseidon.risk.pipeline import SignalPipeline
+    from poseidon.strategies.model_strategy import ModelStrategy
+
+    session = SessionLocal()
+    try:
+        manager = ModelManager(session)
+        mv = manager.get_version(UUID(version_id))
+        if mv is None:
+            raise ValueError(f"Model version {version_id} not found")
+
+        # Load model from artifacts
+        model_cls = get_model(mv.name)
+        model_instance = model_cls.load(Path(mv.artifact_path))
+
+        # Compute features
+        engine = FeatureEngine()
+        features_df = engine.compute(symbol, market, interval)
+
+        # Run strategy evaluation
+        strategy = ModelStrategy(
+            name=mv.name,
+            model=model_instance,
+            symbol=symbol,
+            market=market,
+            interval=interval,
+        )
+        raw_signals = strategy.evaluate(features_df)
+
+        # Filter by confidence threshold and pipe through SignalPipeline
+        pipeline = SignalPipeline(session)
+        threshold = settings.predict_confidence_threshold
+        results: list[dict] = []
+        for sig in raw_signals:
+            if sig.confidence >= threshold:
+                processed = pipeline.process(sig)
+                results.append({
+                    "signal_id": str(processed.id),
+                    "action": processed.action,
+                    "confidence": processed.confidence,
+                })
+
+        logger.info(
+            "Prediction complete for %s v%d — %d/%d signals passed threshold %.2f",
+            mv.name, mv.version, len(results), len(raw_signals), threshold,
+        )
+        return {
+            "version_id": version_id,
+            "symbol": symbol,
+            "signals_generated": len(results),
+            "results": results,
+        }
+    except Exception:
+        logger.exception("Prediction failed for version %s", version_id)
+        raise
+    finally:
+        session.close()
+
+
+@celery_app.task(name="poseidon.workers.gpu_tasks.gpu_health_probe")
+def gpu_health_probe() -> dict:
+    """Report torch/CUDA status from the GPU worker.
+
+    Runs on the GPU worker where torch is available, unlike the API container.
+    """
+    try:
+        import torch
+
+        result: dict = {
+            "torch_version": torch.__version__,
+            "cuda_available": torch.cuda.is_available(),
+        }
+        if torch.cuda.is_available():
+            result["cuda_device"] = torch.cuda.get_device_name(0)
+            free_mem, total_mem = torch.cuda.mem_get_info(0)
+            result["gpu_memory_free_mb"] = round(free_mem / (1024 * 1024), 1)
+        return result
+    except ImportError:
+        return {"torch_version": None, "cuda_available": False}
