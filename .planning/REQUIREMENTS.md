@@ -117,16 +117,26 @@ Strategy pivot from ML direction prediction to rule-based voting + automated par
 
 ### Nunchi Signal Alignment
 
-- [ ] **ALIGN-01**: Composite score formula uses lenient drawdown penalty (max(0, dd-0.15)*0.05) and capital turnover ratio penalty instead of quadratic dd and raw trade count
-- [ ] **ALIGN-02**: BacktestPortfolio equity curve correctly values short positions using entry_price - current_price direction
-- [ ] **ALIGN-03**: Nunchi baseline config uses ATR multiplier 5.5 and BB squeeze threshold 0.85
-- [ ] **ALIGN-04**: VotingStrategy supports separate bear_sub_signals list with independent bear_min_votes threshold, emitting SHORT signals
-- [ ] **ALIGN-05**: VotingStrategy implements RSI mean-reversion exit (long exit at RSI > 69, short exit at RSI < 31)
-- [ ] **ALIGN-06**: VotingStrategy implements signal flip exit (opposing ensemble fires -> close and reverse) and 2-bar cooldown
-- [ ] **ALIGN-07**: ATR trailing stop works bidirectionally: high watermark for longs, low watermark for shorts
-- [ ] **ALIGN-08**: PARAM_BOUNDS expanded with bear_min_votes, bear_position_pct, and ATR range (3.0, 8.0); factory generates bear_sub_signals with inverted conditions
-- [ ] **ALIGN-09**: RegimeRouter overrides 4 strategy attributes per regime (min_votes, position_pct, bear_min_votes, bear_position_pct)
-- [ ] **ALIGN-10**: RegimeSearchPipeline searches 4 params per regime instead of 2
+- [x] **ALIGN-01**: Composite score formula uses lenient drawdown penalty (max(0, dd-0.15)*0.05) and capital turnover ratio penalty instead of quadratic dd and raw trade count
+- [x] **ALIGN-02**: BacktestPortfolio equity curve correctly values short positions using entry_price - current_price direction
+- [x] **ALIGN-03**: Nunchi baseline config uses ATR multiplier 5.5 and BB squeeze threshold 0.85
+- [x] **ALIGN-04**: VotingStrategy supports separate bear_sub_signals list with independent bear_min_votes threshold, emitting SHORT signals
+- [x] **ALIGN-05**: VotingStrategy implements RSI mean-reversion exit (long exit at RSI > 69, short exit at RSI < 31)
+- [x] **ALIGN-06**: VotingStrategy implements signal flip exit (opposing ensemble fires -> close and reverse) and 2-bar cooldown
+- [x] **ALIGN-07**: ATR trailing stop works bidirectionally: high watermark for longs, low watermark for shorts
+- [x] **ALIGN-08**: PARAM_BOUNDS expanded with bear_min_votes, bear_position_pct, and ATR range (3.0, 8.0); factory generates bear_sub_signals with inverted conditions
+- [x] **ALIGN-09**: RegimeRouter overrides 4 strategy attributes per regime (min_votes, position_pct, bear_min_votes, bear_position_pct)
+- [x] **ALIGN-10**: RegimeSearchPipeline searches 4 params per regime instead of 2
+
+## v3.0 Requirements (Milestone v3.0 — Risk Management + Data Quality + Live Pipeline)
+
+### Live Signal Pipeline
+
+- [ ] **PRED-01**: POST /models/{version_id}/predict loads trained model on GPU worker, runs inference, returns 202 with task_id
+- [ ] **PRED-02**: Predictions meeting confidence threshold auto-convert to Signal objects via SignalPipeline (risk check + persist + deliver)
+- [ ] **PRED-03**: Active rule/voting strategies evaluated by Celery Beat on configurable schedule after data fetch
+- [ ] **PRED-04**: New signal generation triggers downstream risk pipeline: VaR snapshot recalculation
+- [ ] **PRED-05**: Health endpoint reports GPU worker torch/CUDA status via Celery worker ping, not local torch import
 
 ## Future Requirements
 
@@ -184,22 +194,30 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PARM-03 | Phase 11 | Pending |
 | PARM-04 | Phase 11 | Complete |
 | PARM-05 | Phase 11 | Complete |
-| ALIGN-01 | Phase 14 | Pending |
-| ALIGN-02 | Phase 14 | Pending |
-| ALIGN-03 | Phase 14 | Pending |
-| ALIGN-04 | Phase 14 | Pending |
-| ALIGN-05 | Phase 14 | Pending |
-| ALIGN-06 | Phase 14 | Pending |
-| ALIGN-07 | Phase 14 | Pending |
-| ALIGN-08 | Phase 14 | Pending |
-| ALIGN-09 | Phase 14 | Pending |
-| ALIGN-10 | Phase 14 | Pending |
+| ALIGN-01 | Phase 14 | Complete |
+| ALIGN-02 | Phase 14 | Complete |
+| ALIGN-03 | Phase 14 | Complete |
+| ALIGN-04 | Phase 14 | Complete |
+| ALIGN-05 | Phase 14 | Complete |
+| ALIGN-06 | Phase 14 | Complete |
+| ALIGN-07 | Phase 14 | Complete |
+| ALIGN-08 | Phase 14 | Complete |
+| ALIGN-09 | Phase 14 | Complete |
+| ALIGN-10 | Phase 14 | Complete |
+| PRED-01 | Phase 18 | Planned |
+| PRED-02 | Phase 18 | Planned |
+| PRED-03 | Phase 18 | Planned |
+| PRED-04 | Phase 18 | Planned |
+| PRED-05 | Phase 18 | Planned |
 
 **Coverage:**
 - v2.0 requirements: 30 total
 - Mapped to phases: 30/30
 - Unmapped: 0
+- v3.0 requirements: 5 total (PRED-01 through PRED-05)
+- Mapped to phases: 5/5
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-20*
-*Last updated: 2026-03-26 after Phase 14 planning*
+*Last updated: 2026-03-28 after Phase 18 planning*

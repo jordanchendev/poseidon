@@ -1,13 +1,14 @@
 # Roadmap: Poseidon
 
 **Created:** 2026-03-20
-**Updated:** 2026-03-26
+**Updated:** 2026-03-28
 **Granularity:** standard
 
 ## Milestones
 
 - **v1.0 Core Trading Signal Platform** - Phases 1-9 (complete)
 - **v2.0 Strategy Pivot -- Rule-Based Voting + Automated Search** - Phases 10-14 (in progress)
+- **v3.0 Risk Management + Data Quality** - Phases 15-18 (in progress)
 
 <details>
 <summary>v1.0 Core Platform (Phases 1-9) -- COMPLETE</summary>
@@ -107,6 +108,22 @@ Plans:
 - [x] 14-02-PLAN.md -- VotingStrategy overhaul: bear signals, RSI exit, signal flip, cooldown, short trailing stop
 - [ ] 14-03-PLAN.md -- Factory PARAM_BOUNDS/bear generation, RegimeRouter 4-param overrides, RegimeSearch 4-param search
 
+### Phase 18: Live Signal Pipeline -- Predict API + Strategy Beat Evaluation
+**Goal:** Live signal generation pipeline is operational -- model predictions dispatch to GPU worker and produce signals, active rule/voting strategies auto-evaluate after data fetch, and new signals trigger downstream risk recalculation
+**Depends on:** Phase 15
+**Requirements**: PRED-01, PRED-02, PRED-03, PRED-04, PRED-05
+**Success Criteria** (what must be TRUE):
+  1. POST /models/{version_id}/predict dispatches a GPU Celery task that loads the model, runs inference, filters by confidence threshold, and pipes signals through SignalPipeline
+  2. Active rule/voting strategies are evaluated on Beat schedule after data fetch, generating signals through SignalPipeline
+  3. New signal generation triggers downstream VaR snapshot recalculation
+  4. Health endpoint reports GPU worker status via Celery ping, not local torch import
+  5. Strategy API accepts "voting" as a valid strategy type
+**Plans:** 2 plans
+
+Plans:
+- [ ] 18-01-PLAN.md -- GPU predict task, API endpoint rewire, health fix, config setting
+- [ ] 18-02-PLAN.md -- Strategy Beat evaluation task, risk trigger task, Beat schedule wiring, strategy API fix
+
 ## Progress
 
 **Execution Order:** Phases execute in numeric order: 10 -> 11 -> 12 -> 13 -> 14
@@ -118,6 +135,7 @@ Plans:
 | 12. AutoResearch Loop | 1/2 | Complete    | 2026-03-26 |
 | 13. Regime Classification | 1/2 | Complete    | 2026-03-26 |
 | 14. Nunchi Signal Alignment | 2/3 | Complete    | 2026-03-26 |
+| 18. Live Signal Pipeline | 0/2 | Planned     | - |
 
 ---
 *Roadmap created: 2026-03-20*
@@ -127,3 +145,4 @@ Plans:
 *Phase 12 planned: 2026-03-26*
 *Phase 13 planned: 2026-03-26*
 *Phase 14 planned: 2026-03-26*
+*Phase 18 planned: 2026-03-28*
