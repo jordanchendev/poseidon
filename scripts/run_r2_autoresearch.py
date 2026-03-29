@@ -30,7 +30,8 @@ def main() -> None:
     session = Session()
 
     markets = [
-        MarketSpec(symbol="2330", market="tw_stock", interval="1d"),
+        # tw_stock skipped for now -- FinLab concurrent session limit
+        # MarketSpec(symbol="2330", market="tw_stock", interval="1d"),
         MarketSpec(symbol="BTCUSDT", market="crypto_spot", interval="1d"),
         MarketSpec(symbol="ETHUSDT", market="crypto_spot", interval="1d"),
     ]
