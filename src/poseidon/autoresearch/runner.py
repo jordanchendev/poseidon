@@ -15,7 +15,7 @@ from poseidon.backtest.cost_model import COST_MODELS, CostModel
 from poseidon.backtest.experiment_tracker import ExperimentTracker
 from poseidon.backtest.param_search import ParameterSearchPipeline, SearchConfig, SearchResult
 from poseidon.backtest.portfolio import SizingConfig
-from poseidon.data.feature_engine import FeatureEngine
+from poseidon.data.feature_engine import FeatureEngine, get_cross_asset_specs
 from poseidon.data.storage import read_ohlcv
 from poseidon.risk.engine import RiskEngine
 
@@ -50,6 +50,7 @@ class AutoResearchRunner:
         *,
         initial_capital: float = 1_000_000.0,
         sizing_config: SizingConfig | None = None,
+        feature_specs: list[tuple[str, dict]] | None = None,
         stop_check: Callable[[], bool] | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> None:
@@ -57,6 +58,7 @@ class AutoResearchRunner:
         self.search_config = search_config
         self.initial_capital = initial_capital
         self.sizing_config = sizing_config or SizingConfig()
+        self.feature_specs = feature_specs  # None = DEFAULT_FEATURES (backward compat)
         self.stop_check = stop_check
         self.progress_callback = progress_callback
 
@@ -106,6 +108,20 @@ class AutoResearchRunner:
                         )
                         results.append(MarketResult(spec=spec, error="No OHLCV data"))
                         continue
+
+                    # Pre-compute expanded features (incl. cross-asset) when feature_specs set
+                    if self.feature_specs is not None:
+                        cross_specs = get_cross_asset_specs(spec.symbol, spec.market)
+                        full_specs = list(self.feature_specs) + cross_specs
+                        ohlcv = feature_engine.compute_with_companions(
+                            ohlcv, spec.symbol, spec.market, spec.interval,
+                            feature_specs=full_specs, db_session=self.db_session,
+                        )
+                        logger.info(
+                            "Pre-computed %d expanded features for %s/%s (%d single + %d cross-asset)",
+                            len(full_specs), spec.symbol, spec.market,
+                            len(self.feature_specs), len(cross_specs),
+                        )
 
                     pipeline = ParameterSearchPipeline(
                         feature_engine=feature_engine,
