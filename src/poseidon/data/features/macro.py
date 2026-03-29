@@ -22,7 +22,16 @@ def _align_macro_column(
         return pd.Series(float("nan"), index=ohlcv.index, name=col)
     if col not in macro_data.columns:
         return pd.Series(float("nan"), index=ohlcv.index, name=col)
-    aligned = macro_data[col].reindex(ohlcv.index, method="ffill")
+    series = macro_data[col]
+    # Normalize timezone: yfinance returns datetime64[s] (naive), OHLCV uses UTC-aware
+    if isinstance(series.index, pd.DatetimeIndex) and isinstance(ohlcv.index, pd.DatetimeIndex):
+        if series.index.tz is None and ohlcv.index.tz is not None:
+            series = series.copy()
+            series.index = series.index.tz_localize("UTC")
+        elif series.index.tz is not None and ohlcv.index.tz is not None and series.index.tz != ohlcv.index.tz:
+            series = series.copy()
+            series.index = series.index.tz_convert(ohlcv.index.tz)
+    aligned = series.reindex(ohlcv.index, method="ffill")
     aligned.name = col
     return aligned
 
