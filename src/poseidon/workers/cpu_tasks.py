@@ -1528,8 +1528,12 @@ def portfolio_monthly_rebalance() -> dict:
         logger.info("portfolio_monthly_rebalance: no rebalance orders")
         return {"rebalanced": True, "orders": 0, "sells": 0}
 
+    # Ensure OHLCV data exists for all selected symbols (fetch missing ones)
+    order_symbols = [ro.symbol for ro in rebalance_orders]
+    _ensure_ohlcv_data(order_symbols, market=strategy_cfg.market)
+
     # Get latest prices for weight-to-shares conversion
-    prices = _get_latest_prices([ro.symbol for ro in rebalance_orders])
+    prices = _get_latest_prices(order_symbols)
 
     # Capture sell holding info BEFORE execution (positions get closed)
     sell_holdings_info: dict[str, dict] = {}
@@ -1813,6 +1817,52 @@ def _build_position_tracker():
     tracker = PositionTracker(SessionLocal)
     tracker.rebuild_from_db()
     return tracker
+
+
+def _ensure_ohlcv_data(symbols: list[str], market: str = "tw_stock") -> None:
+    """Ensure OHLCV data exists in DB for given symbols.
+
+    Checks which symbols are missing from the DB and fetches recent data
+    (last 30 days) using the appropriate market fetcher. This maintains the
+    three-layer architecture: strategy selects from full universe (FinLab),
+    then we ensure Poseidon DB has the data for order execution.
+    """
+    from poseidon.models.ohlcv import OHLCV
+    from poseidon.data.fetchers import get_fetcher
+    from poseidon.data.storage import upsert_ohlcv
+
+    session = SessionLocal()
+    try:
+        existing = set(
+            row[0]
+            for row in session.query(OHLCV.symbol)
+            .filter(OHLCV.market == market, OHLCV.interval == "1d")
+            .distinct()
+            .all()
+        )
+    finally:
+        session.close()
+
+    missing = [s for s in symbols if s not in existing]
+    if not missing:
+        return
+
+    logger.info("_ensure_ohlcv_data: fetching %d missing symbols: %s", len(missing), missing)
+
+    fetcher = get_fetcher(market)
+    end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    start_date = (datetime.now(timezone.utc) - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
+
+    for sym in missing:
+        try:
+            df = fetcher.fetch_ohlcv(sym, "1d", start_date, end_date)
+            if df is not None and not df.empty:
+                upsert_ohlcv(df, sym, market, "1d")
+                logger.info("_ensure_ohlcv_data: fetched %d rows for %s", len(df), sym)
+            else:
+                logger.warning("_ensure_ohlcv_data: no data returned for %s", sym)
+        except Exception as e:
+            logger.warning("_ensure_ohlcv_data: failed to fetch %s: %s", sym, e)
 
 
 def _get_latest_prices(symbols: list[str]) -> dict[str, float]:
