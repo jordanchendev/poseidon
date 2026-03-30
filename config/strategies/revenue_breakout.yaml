@@ -1,0 +1,19 @@
+strategy: revenue_breakout
+name: "Revenue Breakout Pure"
+market: tw_stock
+
+selection:
+  new_high_days: 250
+  revenue_yoy_min: 0.0
+  revenue_mom_min: 0.0
+  max_stocks: 10
+
+allocation:
+  method: equal_weight
+  position_limit_pct: 0.15
+  stop_loss_pct: 0.10
+
+rebalance:
+  frequency: monthly
+  day_of_month: 15
+  publication_lag_days: 10
