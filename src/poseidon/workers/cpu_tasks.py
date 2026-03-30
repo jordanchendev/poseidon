@@ -1501,8 +1501,11 @@ def portfolio_monthly_rebalance() -> dict:
         raw_cfg = yaml.safe_load(f)
     strategy_cfg = RevenueBreakoutConfig(**raw_cfg)
 
-    # Instantiate components
-    broker_cfg = BrokerConfig()
+    # Load broker config from YAML
+    broker_yaml_path = "config/broker.yaml"
+    with open(broker_yaml_path) as bf:
+        broker_raw = yaml.safe_load(bf)
+    broker_cfg = BrokerConfig(**broker_raw)
     position_tracker = _build_position_tracker()
     broker = PaperBrokerAdapter(SessionLocal)
     risk_checker = OrderRiskChecker(
@@ -1605,6 +1608,8 @@ def portfolio_stop_loss_monitor() -> dict:
     Runs every 5 min via beat. Self-gates to TW trading hours (01:00-05:30 UTC).
     Skips weekends. Dispatches sell orders for breached positions.
     """
+    import yaml
+
     from poseidon.broker.config import BrokerConfig
     from poseidon.broker.paper_adapter import PaperBrokerAdapter
     from poseidon.models.ohlcv import OHLCV
@@ -1666,7 +1671,8 @@ def portfolio_stop_loss_monitor() -> dict:
             stopped_symbols.append(sym)
 
     if sell_orders:
-        broker_cfg = BrokerConfig()
+        with open("config/broker.yaml") as bf:
+            broker_cfg = BrokerConfig(**yaml.safe_load(bf))
         broker = PaperBrokerAdapter(SessionLocal)
         risk_checker = OrderRiskChecker(
             position_limit_pct=0.15,
@@ -1725,6 +1731,8 @@ def portfolio_nav_snapshot() -> dict:
     """
     from datetime import date as date_type
 
+    import yaml
+
     from poseidon.broker.config import BrokerConfig
     from poseidon.models.nav_snapshot import NavSnapshotRecord
 
@@ -1736,7 +1744,8 @@ def portfolio_nav_snapshot() -> dict:
 
     position_tracker = _build_position_tracker()
     holdings = position_tracker.current_holdings()
-    broker_cfg = BrokerConfig()
+    with open("config/broker.yaml") as bf:
+        broker_cfg = BrokerConfig(**yaml.safe_load(bf))
     initial_nav = broker_cfg.paper_initial_nav
 
     # Compute holdings value from latest prices
