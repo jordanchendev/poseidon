@@ -10,3 +10,5 @@ from poseidon.models.signal import SignalRecord  # noqa: F401
 from poseidon.models.strategy import StrategyRecord  # noqa: F401
 from poseidon.models.portfolio_holding import PortfolioHoldingRecord  # noqa: F401
 from poseidon.models.virtual_position import VirtualPositionRecord  # noqa: F401
+from poseidon.models.order import OrderRecord  # noqa: F401
+from poseidon.models.order_fill import OrderFillRecord  # noqa: F401
