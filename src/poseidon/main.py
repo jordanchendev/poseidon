@@ -10,6 +10,7 @@ from poseidon.api import (
     data,
     data_quality,
     health,
+    portfolio,
     risk,
     risk_metrics,
     sentiment,
@@ -46,3 +47,4 @@ app.include_router(signals.router, prefix="/signals", tags=["signals"], dependen
 app.include_router(autoresearch.router, prefix="/autoresearch", tags=["autoresearch"], dependencies=secured)
 app.include_router(data_quality.router, prefix="/api/data-quality", tags=["data-quality"], dependencies=secured)
 app.include_router(risk_metrics.router, prefix="/api/risk", tags=["risk-metrics"], dependencies=secured)
+app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"], dependencies=secured)
