@@ -1,7 +1,5 @@
 """Orders package -- order schemas, state machine, risk checker, and manager."""
 
-from poseidon.orders.manager import OrderManager, weight_to_shares
-from poseidon.orders.risk_checker import OrderRiskChecker
 from poseidon.orders.schemas import Fill, Order, OrderResult, RiskCheckResult
 from poseidon.orders.state_machine import (
     VALID_TRANSITIONS,
@@ -21,3 +19,17 @@ __all__ = [
     "OrderRiskChecker",
     "weight_to_shares",
 ]
+
+
+def __getattr__(name: str):
+    """Lazy imports for OrderManager/OrderRiskChecker to avoid circular import."""
+    if name == "OrderManager":
+        from poseidon.orders.manager import OrderManager
+        return OrderManager
+    if name == "weight_to_shares":
+        from poseidon.orders.manager import weight_to_shares
+        return weight_to_shares
+    if name == "OrderRiskChecker":
+        from poseidon.orders.risk_checker import OrderRiskChecker
+        return OrderRiskChecker
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
