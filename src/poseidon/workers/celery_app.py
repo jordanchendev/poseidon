@@ -124,6 +124,21 @@ celery_app.conf.update(
             "task": "poseidon.workers.cpu_tasks.trigger_risk_update",
             "schedule": crontab(minute=20),
         },
+        # Portfolio monthly rebalance: 15th of month at 01:30 UTC (09:30 UTC+8, after TW market open)
+        "portfolio-monthly-rebalance": {
+            "task": "poseidon.workers.cpu_tasks.portfolio_monthly_rebalance",
+            "schedule": crontab(day_of_month=15, hour=1, minute=30),
+        },
+        # Portfolio stop-loss monitor: every 5 min (task self-gates to TW trading hours 01:00-05:30 UTC)
+        "portfolio-stop-loss-monitor": {
+            "task": "poseidon.workers.cpu_tasks.portfolio_stop_loss_monitor",
+            "schedule": crontab(minute="*/5"),
+        },
+        # Portfolio NAV snapshot: daily post-close at 06:00 UTC (14:00 UTC+8)
+        "portfolio-nav-snapshot": {
+            "task": "poseidon.workers.cpu_tasks.portfolio_nav_snapshot",
+            "schedule": crontab(hour=6, minute=0),
+        },
     },
 
     # Auto-discover task modules

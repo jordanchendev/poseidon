@@ -1459,3 +1459,373 @@ def trigger_risk_update(eval_result: dict | None = None) -> dict:
         "var_method": "historical",
         "trigger": "signal_generation",
     }
+
+
+# ---------------------------------------------------------------------------
+# Phase 24: Portfolio scheduling tasks
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.portfolio_monthly_rebalance")
+def portfolio_monthly_rebalance() -> dict:
+    """Monthly rebalance: run RevenueBreakoutStrategy -> Rebalancer -> OrderManager.
+
+    Triggered on the 15th of each month at 01:30 UTC (09:30 UTC+8, after TW open).
+    Skips weekends. Creates TradeLogRecord for each sell fill.
+    """
+    from datetime import date as date_type
+
+    import yaml
+
+    from poseidon.broker.config import BrokerConfig
+    from poseidon.broker.paper_adapter import PaperBrokerAdapter
+    from poseidon.models.ohlcv import OHLCV
+    from poseidon.models.portfolio_holding import PortfolioHoldingRecord
+    from poseidon.models.trade_log import TradeLogRecord
+    from poseidon.orders.risk_checker import OrderRiskChecker
+    from poseidon.orders.manager import OrderManager
+    from poseidon.strategies.portfolio.rebalancer import PortfolioRebalancer
+    from poseidon.strategies.portfolio.revenue_breakout import RevenueBreakoutStrategy
+    from poseidon.strategies.portfolio.schemas import RevenueBreakoutConfig
+
+    now = datetime.now(timezone.utc)
+
+    # Skip weekends
+    if now.weekday() >= 5:
+        logger.info("portfolio_monthly_rebalance: skipping weekend (weekday=%d)", now.weekday())
+        return {"skipped": "weekend"}
+
+    # Load strategy config from YAML
+    config_path = "config/strategies/revenue_breakout.yaml"
+    with open(config_path) as f:
+        raw_cfg = yaml.safe_load(f)
+    strategy_cfg = RevenueBreakoutConfig(**raw_cfg)
+
+    # Instantiate components
+    broker_cfg = BrokerConfig()
+    position_tracker = _build_position_tracker()
+    broker = PaperBrokerAdapter(SessionLocal)
+    risk_checker = OrderRiskChecker(
+        position_limit_pct=strategy_cfg.allocation.position_limit_pct,
+        max_exposure=1.0,
+        stop_loss_pct=strategy_cfg.allocation.stop_loss_pct,
+    )
+    order_manager = OrderManager(broker, risk_checker, position_tracker, SessionLocal, broker_cfg)
+    rebalancer = PortfolioRebalancer()
+
+    # Run strategy
+    strategy = RevenueBreakoutStrategy(strategy_cfg)
+    targets = strategy.select_stocks(pd.DataFrame(), as_of=date_type.today())
+
+    # Compute differential orders
+    current_holdings = position_tracker.current_holdings()
+    rebalance_orders = rebalancer.rebalance(targets, current_holdings)
+
+    if not rebalance_orders:
+        logger.info("portfolio_monthly_rebalance: no rebalance orders")
+        return {"rebalanced": True, "orders": 0, "sells": 0}
+
+    # Get latest prices for weight-to-shares conversion
+    prices = _get_latest_prices([ro.symbol for ro in rebalance_orders])
+
+    # Capture sell holding info BEFORE execution (positions get closed)
+    sell_holdings_info: dict[str, dict] = {}
+    session = SessionLocal()
+    try:
+        for ro in rebalance_orders:
+            if ro.action == "sell":
+                record = (
+                    session.query(PortfolioHoldingRecord)
+                    .filter(
+                        PortfolioHoldingRecord.symbol == ro.symbol,
+                        PortfolioHoldingRecord.closed == False,  # noqa: E712
+                    )
+                    .first()
+                )
+                if record:
+                    sell_holdings_info[ro.symbol] = {
+                        "entry_price": record.entry_price,
+                        "entry_date": record.entry_date,
+                        "shares": record.shares,
+                    }
+    finally:
+        session.close()
+
+    # Execute rebalance
+    results = order_manager.execute_rebalance(
+        rebalance_orders, strategy_name=strategy_cfg.name, prices=prices, market=strategy_cfg.market,
+    )
+
+    # Create TradeLogRecords for filled sell orders
+    trade_log_count = 0
+    session = SessionLocal()
+    try:
+        for result in results:
+            if result.success and result.order.action == "sell":
+                sym = result.order.symbol
+                info = sell_holdings_info.get(sym)
+                if info and info.get("entry_price") and info.get("shares"):
+                    exit_price = prices.get(sym, 0.0)
+                    entry_price = info["entry_price"]
+                    shares = info["shares"]
+                    entry_date = info["entry_date"]
+                    trade_log = TradeLogRecord(
+                        strategy_name=strategy_cfg.name,
+                        symbol=sym,
+                        market=strategy_cfg.market,
+                        entry_price=entry_price,
+                        exit_price=exit_price,
+                        entry_date=entry_date,
+                        exit_date=now,
+                        shares=shares,
+                        realized_pnl=(exit_price - entry_price) * shares,
+                        holding_days=(now - entry_date).days if entry_date else 0,
+                    )
+                    session.add(trade_log)
+                    trade_log_count += 1
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+    logger.info(
+        "portfolio_monthly_rebalance: %d orders, %d trade logs",
+        len(results),
+        trade_log_count,
+    )
+    return {"rebalanced": True, "orders": len(results), "sells": trade_log_count}
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.portfolio_stop_loss_monitor")
+def portfolio_stop_loss_monitor() -> dict:
+    """Intraday stop-loss monitor: check holdings against stop-loss thresholds.
+
+    Runs every 5 min via beat. Self-gates to TW trading hours (01:00-05:30 UTC).
+    Skips weekends. Dispatches sell orders for breached positions.
+    """
+    from poseidon.broker.config import BrokerConfig
+    from poseidon.broker.paper_adapter import PaperBrokerAdapter
+    from poseidon.models.ohlcv import OHLCV
+    from poseidon.models.portfolio_holding import PortfolioHoldingRecord
+    from poseidon.models.trade_log import TradeLogRecord
+    from poseidon.orders.risk_checker import OrderRiskChecker
+    from poseidon.orders.manager import OrderManager
+    from poseidon.strategies.portfolio.schemas import RebalanceOrder
+
+    now = datetime.now(timezone.utc)
+
+    # Skip weekends
+    if now.weekday() >= 5:
+        return {"skipped": "weekend"}
+
+    # Gate to TW trading hours: 01:00-05:30 UTC (09:00-13:30 UTC+8)
+    current_minutes = now.hour * 60 + now.minute
+    trading_start = 1 * 60  # 01:00 UTC
+    trading_end = 5 * 60 + 30  # 05:30 UTC
+    if current_minutes < trading_start or current_minutes > trading_end:
+        return {"skipped": "outside_trading_hours"}
+
+    position_tracker = _build_position_tracker()
+    holdings = position_tracker.current_holdings()
+
+    if not holdings:
+        return {"checked": 0, "stopped_out": []}
+
+    # Get latest prices
+    prices = _get_latest_prices(list(holdings.keys()))
+
+    stopped_symbols: list[str] = []
+    sell_orders: list[RebalanceOrder] = []
+
+    for sym, holding in holdings.items():
+        if holding.stop_loss_pct is None or holding.entry_price is None:
+            continue
+
+        current_price = prices.get(sym)
+        if current_price is None:
+            logger.warning("No price data for %s, skipping stop-loss check", sym)
+            continue
+
+        stop_price = holding.entry_price * (1 - holding.stop_loss_pct)
+        if current_price <= stop_price:
+            logger.warning(
+                "Stop-loss breached: %s price=%.2f <= stop=%.2f (entry=%.2f, pct=%.2f%%)",
+                sym, current_price, stop_price, holding.entry_price, holding.stop_loss_pct * 100,
+            )
+            sell_orders.append(
+                RebalanceOrder(
+                    symbol=sym,
+                    action="sell",
+                    target_weight=0.0,
+                    current_weight=holding.weight,
+                    delta_weight=-holding.weight,
+                )
+            )
+            stopped_symbols.append(sym)
+
+    if sell_orders:
+        broker_cfg = BrokerConfig()
+        broker = PaperBrokerAdapter(SessionLocal)
+        risk_checker = OrderRiskChecker(
+            position_limit_pct=0.15,
+            max_exposure=1.0,
+            stop_loss_pct=broker_cfg.slippage_pct,
+        )
+        order_manager = OrderManager(broker, risk_checker, position_tracker, SessionLocal, broker_cfg)
+
+        results = order_manager.execute_rebalance(
+            sell_orders, strategy_name="stop_loss", prices=prices, market="tw_stock",
+        )
+
+        # Create TradeLogRecords for stopped-out positions
+        session = SessionLocal()
+        try:
+            for result in results:
+                if result.success:
+                    sym = result.order.symbol
+                    holding = holdings.get(sym)
+                    if holding and holding.entry_price and holding.shares:
+                        exit_price = prices.get(sym, 0.0)
+                        trade_log = TradeLogRecord(
+                            strategy_name="stop_loss",
+                            symbol=sym,
+                            market=holding.market,
+                            entry_price=holding.entry_price,
+                            exit_price=exit_price,
+                            entry_date=holding.entry_date or now,
+                            exit_date=now,
+                            shares=holding.shares,
+                            realized_pnl=(exit_price - holding.entry_price) * holding.shares,
+                            holding_days=(now - holding.entry_date).days if holding.entry_date else 0,
+                        )
+                        session.add(trade_log)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    logger.info(
+        "portfolio_stop_loss_monitor: checked=%d stopped_out=%s",
+        len(holdings),
+        stopped_symbols,
+    )
+    return {"checked": len(holdings), "stopped_out": stopped_symbols}
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.portfolio_nav_snapshot")
+def portfolio_nav_snapshot() -> dict:
+    """Daily NAV snapshot: record portfolio value post-close.
+
+    Triggered daily at 06:00 UTC (14:00 UTC+8, after TW close).
+    Skips weekends. Creates NavSnapshotRecord.
+    """
+    from datetime import date as date_type
+
+    from poseidon.broker.config import BrokerConfig
+    from poseidon.models.nav_snapshot import NavSnapshotRecord
+
+    now = datetime.now(timezone.utc)
+
+    # Skip weekends
+    if now.weekday() >= 5:
+        return {"skipped": "weekend"}
+
+    position_tracker = _build_position_tracker()
+    holdings = position_tracker.current_holdings()
+    broker_cfg = BrokerConfig()
+    initial_nav = broker_cfg.paper_initial_nav
+
+    # Compute holdings value from latest prices
+    holdings_value = 0.0
+    deployed_cost = 0.0
+    if holdings:
+        prices = _get_latest_prices(list(holdings.keys()))
+        for sym, holding in holdings.items():
+            price = prices.get(sym, 0.0)
+            shares = holding.shares or 0
+            entry_price = holding.entry_price or 0.0
+            holdings_value += shares * price
+            deployed_cost += shares * entry_price
+
+    # Cash = initial NAV minus total cost of open positions
+    cash = initial_nav - deployed_cost
+    total_nav = holdings_value + cash
+
+    today = date_type.today()
+    session = SessionLocal()
+    try:
+        # Upsert: avoid duplicate if re-run on same day
+        existing = (
+            session.query(NavSnapshotRecord)
+            .filter(NavSnapshotRecord.snapshot_date == today)
+            .first()
+        )
+        if existing:
+            existing.total_nav = total_nav
+            existing.holdings_value = holdings_value
+            existing.cash = cash
+            existing.holdings_count = len(holdings)
+        else:
+            record = NavSnapshotRecord(
+                snapshot_date=today,
+                total_nav=total_nav,
+                holdings_value=holdings_value,
+                cash=cash,
+                holdings_count=len(holdings),
+            )
+            session.add(record)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+    logger.info(
+        "portfolio_nav_snapshot: date=%s total_nav=%.2f holdings=%d",
+        today, total_nav, len(holdings),
+    )
+    return {"date": str(today), "total_nav": total_nav, "holdings_count": len(holdings)}
+
+
+# ---------------------------------------------------------------------------
+# Phase 24: Helper functions for portfolio tasks
+# ---------------------------------------------------------------------------
+
+
+def _build_position_tracker():
+    """Build and initialize a PositionTracker."""
+    from poseidon.strategies.portfolio.position_tracker import PositionTracker
+
+    tracker = PositionTracker(SessionLocal)
+    tracker.rebuild_from_db()
+    return tracker
+
+
+def _get_latest_prices(symbols: list[str]) -> dict[str, float]:
+    """Get latest close prices from OHLCV for given symbols.
+
+    Returns:
+        Dict mapping symbol -> latest close price.
+    """
+    from poseidon.models.ohlcv import OHLCV
+
+    prices: dict[str, float] = {}
+    session = SessionLocal()
+    try:
+        for sym in symbols:
+            record = (
+                session.query(OHLCV)
+                .filter(OHLCV.symbol == sym, OHLCV.market == "tw_stock", OHLCV.interval == "1d")
+                .order_by(OHLCV.time.desc())
+                .first()
+            )
+            if record:
+                prices[sym] = float(record.close)
+    finally:
+        session.close()
+    return prices
