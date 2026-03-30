@@ -1,0 +1,7 @@
+mode: paper
+paper_initial_nav: 10000000
+lot_size: 1000
+slippage_pct: 0.0
+# Shioaji credentials (only needed for live mode)
+shioaji_api_key: ""
+shioaji_secret_key: ""
