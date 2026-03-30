@@ -1853,16 +1853,22 @@ def _ensure_ohlcv_data(symbols: list[str], market: str = "tw_stock") -> None:
     end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     start_date = (datetime.now(timezone.utc) - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
 
-    for sym in missing:
-        try:
-            df = fetcher.fetch_ohlcv(sym, "1d", start_date, end_date)
-            if df is not None and not df.empty:
-                upsert_ohlcv(df, sym, market, "1d")
-                logger.info("_ensure_ohlcv_data: fetched %d rows for %s", len(df), sym)
-            else:
-                logger.warning("_ensure_ohlcv_data: no data returned for %s", sym)
-        except Exception as e:
-            logger.warning("_ensure_ohlcv_data: failed to fetch %s: %s", sym, e)
+    session = SessionLocal()
+    try:
+        for sym in missing:
+            try:
+                df = fetcher.fetch_ohlcv(sym, "1d", start_date, end_date)
+                if df is not None and not df.empty:
+                    upsert_ohlcv(session, df, sym, market, "spot", "1d")
+                    session.commit()
+                    logger.info("_ensure_ohlcv_data: fetched %d rows for %s", len(df), sym)
+                else:
+                    logger.warning("_ensure_ohlcv_data: no data returned for %s", sym)
+            except Exception as e:
+                session.rollback()
+                logger.warning("_ensure_ohlcv_data: failed to fetch %s: %s", sym, e)
+    finally:
+        session.close()
 
 
 def _get_latest_prices(symbols: list[str]) -> dict[str, float]:
