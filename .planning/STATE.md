@@ -1,15 +1,15 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: Strategy Pivot
-status: Milestone complete
-stopped_at: Completed 14-03-PLAN.md
-last_updated: "2026-03-26T10:42:25.791Z"
+milestone: v3.0
+milestone_name: Risk Management + Data Quality
+status: In progress
+stopped_at: Completed 15-04-PLAN.md
+last_updated: "2026-03-28T11:59:40Z"
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 12
-  completed_plans: 12
+  total_phases: 3
+  completed_phases: 1
+  total_plans: 4
+  completed_plans: 4
 ---
 
 # State: Poseidon
@@ -18,12 +18,12 @@ progress:
 
 See: .planning/PROJECT.md (updated 2026-03-25)
 **Core value:** Reliably produce quality trading signals and deliver them to Thalassa
-**Current focus:** Phase 14 — nunchi-signal-alignment
+**Current focus:** Phase 15 — data-quality-foundation (complete)
 
 ## Current Position
 
-Phase: 14
-Plan: Not started
+Phase: 15
+Plan: 4 of 4 (complete)
 
 ## Velocity
 
@@ -58,6 +58,9 @@ Plan: Not started
 - [Phase 14]: Bear sub_signals use indicator_below DSL condition type with inverted thresholds
 - [Phase 14]: Factory BB threshold corrected 0.2->0.85, ATR range 1.5-3.0->3.0-8.0, default 2.0->5.5
 - [Phase 14]: RegimeRouter+Search expanded from 2 to 4 params per regime (adding bear_min_votes, bear_position_pct)
+- [Phase 15]: Circuit breaker and rate limiter initialized once per task call, not per symbol
+- [Phase 15]: Backfill uses 60s rate limit timeout (vs 30s for fetch) since batches are larger
+- [Phase 15]: CRITICAL validation in backfill skips batch but continues with next batch (fail-forward)
 
 ## Blockers
 
@@ -80,10 +83,10 @@ Plan: Not started
 
 ## Last Session
 
-- **Stopped at:** Completed 14-03-PLAN.md
+- **Stopped at:** Completed 15-04-PLAN.md
 - **Resume file:** None
-- **Next step:** `/gsd:plan-phase 10`
+- **Next step:** Phase 16 planning (Portfolio VaR Engine)
 
 ---
 *State created: 2026-03-20*
-*Last updated: 2026-03-25 after v2.0 roadmap creation*
+*Last updated: 2026-03-28 after Phase 15 data-quality-foundation complete*
