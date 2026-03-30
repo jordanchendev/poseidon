@@ -155,12 +155,20 @@ class OrderManager:
         # IMPORTANT: zip against processed_rorders (not rebalance_orders) because qty==0
         # orders are skipped via continue without appending to results. Using
         # rebalance_orders here would misalign rorder<->result pairs.
-        filled_rorders = [
-            rorder for rorder, result in zip(processed_rorders, results)
-            if result.success
-        ]
+        filled_rorders = []
+        fill_info: dict[str, tuple[int, float]] = {}  # symbol -> (shares, entry_price)
+        for rorder, result in zip(processed_rorders, results):
+            if result.success:
+                filled_rorders.append(rorder)
+                # Extract shares and price from fills
+                total_shares = sum(f.fill_quantity for f in result.fills)
+                avg_price = (
+                    sum(f.fill_price * f.fill_quantity for f in result.fills) / total_shares
+                    if total_shares > 0 else 0.0
+                )
+                fill_info[rorder.symbol] = (total_shares, avg_price)
         if filled_rorders:
-            self._tracker.apply_orders(filled_rorders, strategy_name, market)
+            self._tracker.apply_orders(filled_rorders, strategy_name, market, fill_info=fill_info)
             logger.info("Updated positions: %d filled orders", len(filled_rorders))
 
         return results

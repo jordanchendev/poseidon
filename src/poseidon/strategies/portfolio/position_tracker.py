@@ -62,24 +62,38 @@ class PositionTracker:
         return dict(self._holdings)
 
     def apply_orders(
-        self, orders: list[RebalanceOrder], strategy_name: str, market: str = "tw_stock"
+        self,
+        orders: list[RebalanceOrder],
+        strategy_name: str,
+        market: str = "tw_stock",
+        fill_info: dict[str, tuple[int, float]] | None = None,
     ) -> None:
         """Apply executed orders: update in-memory state and persist to DB.
+
+        Args:
+            orders: List of filled RebalanceOrders.
+            strategy_name: Strategy that produced the orders.
+            market: Market identifier.
+            fill_info: {symbol: (shares, entry_price)} from actual fills.
 
         For "buy": insert new PortfolioHoldingRecord with closed=False.
         For "sell": set existing record's closed=True and close_date=now.
         For "adjust": update weight on existing record.
         """
+        fill_info = fill_info or {}
         session: Session = self._session_factory()
         try:
             now = datetime.now(timezone.utc)
             for order in orders:
+                shares, entry_price = fill_info.get(order.symbol, (None, None))
                 if order.action == "buy":
                     record = PortfolioHoldingRecord(
                         strategy_name=strategy_name,
                         symbol=order.symbol,
                         market=market,
                         weight=order.target_weight,
+                        shares=shares,
+                        entry_price=entry_price,
                         entry_date=now,
                         closed=False,
                     )
@@ -88,6 +102,8 @@ class PositionTracker:
                         symbol=order.symbol,
                         market=market,
                         weight=order.target_weight,
+                        shares=shares,
+                        entry_price=entry_price,
                         entry_date=now,
                     )
                 elif order.action == "sell":
