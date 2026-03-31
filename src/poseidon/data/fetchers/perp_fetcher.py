@@ -1,7 +1,6 @@
 """CCXT fetcher for crypto perpetual contract OHLCV data (Binance)."""
 
 import logging
-from datetime import datetime, timezone
 
 import ccxt
 import pandas as pd

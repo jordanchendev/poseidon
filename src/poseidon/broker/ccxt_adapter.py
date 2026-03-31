@@ -7,7 +7,6 @@ CCXT is lazily imported so the module loads on machines without ccxt installed.
 from __future__ import annotations
 
 import logging
-import uuid
 from datetime import datetime, timezone
 
 from poseidon.broker.base import BrokerAdapter
