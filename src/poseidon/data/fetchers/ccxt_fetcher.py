@@ -18,12 +18,20 @@ class CCXTFetcher(BaseFetcher):
     """Fetcher for crypto spot data from Binance via CCXT.
 
     Uses synchronous CCXT client (not async) because Celery tasks are synchronous.
+    If POSEIDON_BINANCE_API_KEY is set, uses authenticated client (higher rate limits).
+    Falls back to public API otherwise.
     """
 
     def __init__(self):
-        self.exchange = ccxt.binance({
-            "enableRateLimit": True,  # Built-in rate limiter
-        })
+        from poseidon.core.config import settings
+
+        config: dict = {"enableRateLimit": True}
+        if settings.binance_api_key:
+            config["apiKey"] = settings.binance_api_key
+            logger.info("CCXTFetcher: using authenticated Binance API (read-only)")
+        else:
+            logger.info("CCXTFetcher: using public Binance API (no API key)")
+        self.exchange = ccxt.binance(config)
 
     def fetch_ohlcv(
         self, symbol: str, interval: str, start: str, end: str

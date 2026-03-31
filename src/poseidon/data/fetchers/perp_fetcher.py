@@ -30,12 +30,20 @@ class PerpFetcher(BaseFetcher):
     instrument = "perpetual"
 
     def __init__(self):
-        self.exchange = ccxt.binance({
+        from poseidon.core.config import settings
+
+        config: dict = {
             "enableRateLimit": True,
             "options": {
                 "defaultType": "swap",  # Route to futures/perp API
             },
-        })
+        }
+        if settings.binance_api_key:
+            config["apiKey"] = settings.binance_api_key
+            logger.info("PerpFetcher: using authenticated Binance API (read-only)")
+        else:
+            logger.info("PerpFetcher: using public Binance API (no API key)")
+        self.exchange = ccxt.binance(config)
 
     def fetch_ohlcv(
         self, symbol: str, interval: str = "4h", start: str = "", end: str = ""

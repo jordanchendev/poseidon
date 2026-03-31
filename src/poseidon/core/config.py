@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     api_key: str = ""
     finmind_token: str = ""
     finlab_api_token: str = ""
+    # Binance credentials — read-only key for data fetching
+    binance_api_key: str = ""
+    # Binance credentials — trading key pair (added when ready for live trading)
+    binance_trade_key: str = ""
+    binance_trade_secret: str = ""
     symbols_config: str = "config/symbols.yaml"
     model_artifact_dir: str = "/data/models"
 
