@@ -2174,7 +2174,7 @@ def perp_rebalance() -> dict:
     risk_checker = OrderRiskChecker(
         position_limit_pct=strategy_cfg.allocation.position_limit_pct,
         max_exposure=1.0,
-        stop_loss_pct=None,  # Perps use liquidation monitor, not stop-loss
+        stop_loss_pct=0.15,  # Nominal — perps use liquidation monitor for actual protection
         market="crypto_perp",
     )
     order_manager = OrderManager(
