@@ -24,8 +24,11 @@ class OrderRecord(Base):
         String(16), nullable=False, server_default="'market'"
     )
     target_weight: Mapped[float] = mapped_column(Float, nullable=False)
-    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
     price: Mapped[float | None] = mapped_column(Float, nullable=True)  # limit price
+    side: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="'long'"
+    )
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, server_default="'pending'"
     )

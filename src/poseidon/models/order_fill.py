@@ -20,7 +20,7 @@ class OrderFillRecord(Base):
         UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False
     )
     fill_price: Mapped[float] = mapped_column(Float, nullable=False)
-    fill_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    fill_quantity: Mapped[float] = mapped_column(Float, nullable=False)
     fill_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
