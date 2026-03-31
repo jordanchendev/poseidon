@@ -1,0 +1,21 @@
+strategy: crypto_trend
+name: "Crypto Trend 4H"
+market: crypto_perp
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+
+momentum:
+  ema_fast_period: 12
+  ema_slow_period: 26
+  interval: "4h"
+  lookback_days: 30
+
+funding_filter:
+  max_funding_rate_long: 0.001
+  max_funding_rate_short: -0.001
+
+allocation:
+  method: equal_weight
+  position_limit_pct: 0.5
+  leverage: 3
