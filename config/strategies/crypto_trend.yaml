@@ -17,7 +17,7 @@ funding_filter:
 
 allocation:
   method: equal_weight
-  position_limit_pct: 0.5
+  position_limit_pct: 0.3
   leverage: 3
 
 risk:
