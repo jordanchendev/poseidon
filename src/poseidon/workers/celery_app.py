@@ -139,6 +139,33 @@ celery_app.conf.update(
             "task": "poseidon.workers.cpu_tasks.portfolio_nav_snapshot",
             "schedule": crontab(hour=6, minute=0),
         },
+        # --- Phase 27: Perpetual contract 24/7 scheduling ---
+        # 1. Liquidation monitor: every 1 minute, 24/7 (PRSK-01, D-01)
+        "perp-liquidation-monitor": {
+            "task": "poseidon.workers.cpu_tasks.perp_liquidation_monitor",
+            "schedule": crontab(minute="*"),
+        },
+        # 2. Perp 4h OHLCV fetch (D-04, D-05)
+        "fetch-crypto-perp-4h": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(hour="0,4,8,12,16,20", minute=0),
+            "args": ["crypto_perp", "4h"],
+        },
+        # 3. Perp 4h rebalance: 5 min after fetch (D-04, D-05, PRSK-02)
+        "perp-rebalance-4h": {
+            "task": "poseidon.workers.cpu_tasks.perp_rebalance",
+            "schedule": crontab(hour="0,4,8,12,16,20", minute=5),
+        },
+        # 4. Funding settlement: every 8h (D-06)
+        "perp-funding-settlement": {
+            "task": "poseidon.workers.cpu_tasks.perp_funding_settlement",
+            "schedule": crontab(hour="0,8,16", minute=10),
+        },
+        # 5. Perp NAV snapshot: after each rebalance cycle
+        "perp-nav-snapshot": {
+            "task": "poseidon.workers.cpu_tasks.perp_nav_snapshot",
+            "schedule": crontab(hour="0,4,8,12,16,20", minute=15),
+        },
     },
 
     # Auto-discover task modules
