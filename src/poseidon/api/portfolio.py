@@ -99,17 +99,23 @@ class PerpHoldingsResponse(PydanticBase):
 
 
 @router.get("/performance", response_model=PerformanceSummaryResponse)
-def get_performance(db: Session = Depends(get_db)):
-    """Return NAV curve with total return, max drawdown, and Sharpe ratio."""
+def get_performance(
+    market: str | None = Query(None, description="Filter by market (e.g., 'crypto_perp')"),
+    db: Session = Depends(get_db),
+):
+    """Return NAV curve with total return, max drawdown, and Sharpe ratio.
+
+    When market is provided, returns only NAV snapshots and trades for that market.
+    Without market param, returns all markets (backward compatible).
+    """
     from poseidon.models.nav_snapshot import NavSnapshotRecord
     from poseidon.models.trade_log import TradeLogRecord
 
-    # Query NAV snapshots ordered by date
-    snapshots = (
-        db.query(NavSnapshotRecord)
-        .order_by(NavSnapshotRecord.snapshot_date.asc())
-        .all()
-    )
+    # Query NAV snapshots ordered by date, optionally filtered by market
+    query = db.query(NavSnapshotRecord).order_by(NavSnapshotRecord.snapshot_date.asc())
+    if market is not None:
+        query = query.filter(NavSnapshotRecord.market == market)
+    snapshots = query.all()
 
     # Build NAV curve
     nav_curve = [
@@ -160,11 +166,14 @@ def get_performance(db: Session = Depends(get_db)):
             if std_ret > 0:
                 sharpe_ratio = round((mean_ret / std_ret) * math.sqrt(252), 4)
 
-    # Query trade stats
-    trade_stats = db.query(
+    # Query trade stats, optionally filtered by market
+    trade_query = db.query(
         func.count(TradeLogRecord.id).label("total_trades"),
         func.coalesce(func.sum(TradeLogRecord.realized_pnl), 0.0).label("total_pnl"),
-    ).first()
+    )
+    if market is not None:
+        trade_query = trade_query.filter(TradeLogRecord.market == market)
+    trade_stats = trade_query.first()
 
     total_trades = trade_stats.total_trades if trade_stats else 0
     total_realized_pnl = round(float(trade_stats.total_pnl), 2) if trade_stats else 0.0
