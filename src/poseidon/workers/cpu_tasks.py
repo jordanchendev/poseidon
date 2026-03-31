@@ -31,6 +31,7 @@ from poseidon.models.base import SessionLocal
 from poseidon.models.strategy import StrategyRecord
 from poseidon.risk.engine import RiskEngine
 from poseidon.strategies.rule_strategy import RuleStrategy
+from poseidon.strategies.voting_strategy import VotingStrategy
 from poseidon.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -414,6 +415,8 @@ def run_backtest_task(
         # Reconstruct strategy object
         if record.strategy_type == "rule":
             strategy = RuleStrategy(config=record.config, strategy_id=record.id)
+        elif record.strategy_type == "voting":
+            strategy = VotingStrategy(config=record.config, strategy_id=record.id)
         elif record.strategy_type == "model":
             # Route to GPU worker which has model dependencies
             from poseidon.workers.gpu_tasks import run_model_backtest
