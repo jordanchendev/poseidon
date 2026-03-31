@@ -50,7 +50,10 @@ class CacheManager:
         """Serialize DataFrame to msgpack bytes.
 
         Stores columns, index (as ISO strings), and values (as nested lists).
+        If index is not DatetimeIndex but 'time' column exists, use that.
         """
+        if not isinstance(df.index, pd.DatetimeIndex) and "time" in df.columns:
+            df = df.set_index("time")
         index_strs = [ts.isoformat() for ts in df.index]
         data = {
             "columns": list(df.columns),
