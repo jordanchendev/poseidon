@@ -16,9 +16,10 @@ class Order:
     action: str  # "buy" | "sell"
     order_type: str  # "market" | "limit"
     target_weight: float
-    quantity: int  # shares (rounded to lot_size)
+    quantity: float  # shares (rounded to lot_size, or fractional for perps)
     strategy_name: str
     broker_mode: str  # "paper" | "live"
+    side: str = "long"  # "long" | "short"
     price: float | None = None  # limit price, None for market
     status: OrderStatus = OrderStatus.PENDING
     broker_order_id: str | None = None
@@ -32,7 +33,7 @@ class Fill:
 
     order_id: str
     fill_price: float
-    fill_quantity: int
+    fill_quantity: float
     fill_time: datetime
     broker_fill_id: str | None = None
 

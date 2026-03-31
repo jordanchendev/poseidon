@@ -52,6 +52,7 @@ class PositionTracker:
                     entry_price=r.entry_price,
                     entry_date=r.entry_date,
                     stop_loss_pct=r.stop_loss_pct,
+                    side=r.side,
                 )
             logger.info("Rebuilt %d holdings from DB", len(self._holdings))
         finally:
@@ -66,7 +67,8 @@ class PositionTracker:
         orders: list[RebalanceOrder],
         strategy_name: str,
         market: str = "tw_stock",
-        fill_info: dict[str, tuple[int, float]] | None = None,
+        fill_info: dict[str, tuple[float, float]] | None = None,
+        side: str = "long",
     ) -> None:
         """Apply executed orders: update in-memory state and persist to DB.
 
@@ -75,6 +77,7 @@ class PositionTracker:
             strategy_name: Strategy that produced the orders.
             market: Market identifier.
             fill_info: {symbol: (shares, entry_price)} from actual fills.
+            side: Position side ("long" or "short").
 
         For "buy": insert new PortfolioHoldingRecord with closed=False.
         For "sell": set existing record's closed=True and close_date=now.
@@ -96,6 +99,7 @@ class PositionTracker:
                         entry_price=entry_price,
                         entry_date=now,
                         closed=False,
+                        side=side,
                     )
                     session.add(record)
                     self._holdings[order.symbol] = Holding(
@@ -105,6 +109,7 @@ class PositionTracker:
                         shares=shares,
                         entry_price=entry_price,
                         entry_date=now,
+                        side=side,
                     )
                 elif order.action == "sell":
                     existing = (

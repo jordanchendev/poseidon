@@ -24,18 +24,23 @@ def weight_to_shares(
     total_nav: float,
     price: float,
     lot_size: int = 1000,
-) -> int:
-    """Convert portfolio weight to share quantity rounded to TW lot size.
+    fractional: bool = False,
+) -> float:
+    """Convert portfolio weight to share quantity.
 
-    Returns 0 if resulting shares < lot_size (skip the order).
-    Always rounds DOWN to nearest lot_size (TW stock: 1000 shares per lot).
+    When fractional=True (perps): return exact notional/price (no rounding).
+    When fractional=False (TW stock): round DOWN to nearest lot_size.
+
+    Returns 0 if resulting shares < lot_size (skip the order) in non-fractional mode.
     """
     if price <= 0:
-        return 0
+        return 0.0
     notional = weight * total_nav
     raw_shares = notional / price
+    if fractional:
+        return raw_shares
     lots = int(raw_shares // lot_size)
-    return lots * lot_size
+    return float(lots * lot_size)
 
 
 class OrderManager:
@@ -117,6 +122,7 @@ class OrderManager:
                 quantity=quantity,
                 strategy_name=strategy_name,
                 broker_mode=self._config.mode,
+                side="long",  # default; Phase 26 strategy will pass actual side
             )
 
             # Per-order risk check (isolation: rejection of one does not block others)
@@ -156,7 +162,7 @@ class OrderManager:
         # orders are skipped via continue without appending to results. Using
         # rebalance_orders here would misalign rorder<->result pairs.
         filled_rorders = []
-        fill_info: dict[str, tuple[int, float]] = {}  # symbol -> (shares, entry_price)
+        fill_info: dict[str, tuple[float, float]] = {}  # symbol -> (shares, entry_price)
         for rorder, result in zip(processed_rorders, results):
             if result.success:
                 filled_rorders.append(rorder)
@@ -168,7 +174,7 @@ class OrderManager:
                 )
                 fill_info[rorder.symbol] = (total_shares, avg_price)
         if filled_rorders:
-            self._tracker.apply_orders(filled_rorders, strategy_name, market, fill_info=fill_info)
+            self._tracker.apply_orders(filled_rorders, strategy_name, market, fill_info=fill_info, side="long")
             logger.info("Updated positions: %d filled orders", len(filled_rorders))
 
         return results
@@ -190,6 +196,7 @@ class OrderManager:
                 broker_order_id=order.broker_order_id,
                 broker_mode=order.broker_mode,
                 reject_reason=order.reject_reason,
+                side=order.side,
             )
             session.add(record)
             session.flush()  # get the DB-generated UUID

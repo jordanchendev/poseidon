@@ -26,10 +26,11 @@ class Holding:
     symbol: str
     market: str
     weight: float
-    shares: int | None = None
+    shares: float | None = None
     entry_price: float | None = None
     entry_date: datetime | None = None
     stop_loss_pct: float | None = None
+    side: str = "long"  # "long" | "short"
 
 
 @dataclass

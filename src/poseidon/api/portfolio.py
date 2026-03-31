@@ -44,12 +44,13 @@ class HoldingResponse(PydanticBase):
     symbol: str
     market: str
     weight: float
-    shares: int | None
+    shares: float | None
     entry_price: float | None
     entry_date: str | None
     stop_loss_pct: float | None
     current_price: float | None
     unrealized_pnl: float | None
+    side: str = "long"
 
 
 class HoldingsResponse(PydanticBase):
@@ -62,12 +63,13 @@ class OrderResponse(PydanticBase):
     symbol: str
     market: str
     action: str
-    quantity: int
+    quantity: float
     status: str
     price: float | None
     broker_mode: str
     reject_reason: str | None
     created_at: str
+    side: str = "long"
 
 
 class OrdersResponse(PydanticBase):
@@ -194,7 +196,8 @@ def get_holdings(db: Session = Depends(get_db)):
         if latest is not None:
             current_price = float(latest.close)
             if h.entry_price is not None and h.shares is not None:
-                unrealized_pnl = round((current_price - h.entry_price) * h.shares, 2)
+                direction = 1 if h.side == "long" else -1
+                unrealized_pnl = round((current_price - h.entry_price) * h.shares * direction, 2)
 
         result.append(
             HoldingResponse(
@@ -207,6 +210,7 @@ def get_holdings(db: Session = Depends(get_db)):
                 stop_loss_pct=h.stop_loss_pct,
                 current_price=current_price,
                 unrealized_pnl=unrealized_pnl,
+                side=h.side,
             )
         )
 
@@ -244,6 +248,7 @@ def get_orders(
             broker_mode=o.broker_mode,
             reject_reason=o.reject_reason,
             created_at=str(o.created_at),
+            side=o.side,
         )
         for o in orders
     ]
