@@ -77,6 +77,24 @@ class OrdersResponse(PydanticBase):
     total: int
 
 
+class PerpHoldingResponse(PydanticBase):
+    symbol: str
+    side: str
+    quantity: float
+    entry_price: float
+    leverage: int
+    liquidation_price: float
+    margin_ratio: float
+    unrealized_pnl: float
+    cumulative_funding_cost: float
+    current_price: float | None = None
+
+
+class PerpHoldingsResponse(PydanticBase):
+    holdings: list[PerpHoldingResponse]
+    total_holdings: int
+
+
 # --- GET /performance ---
 
 
@@ -254,3 +272,108 @@ def get_orders(
     ]
 
     return OrdersResponse(orders=result, total=len(result))
+
+
+# --- GET /perp-holdings ---
+
+
+@router.get("/perp-holdings", response_model=PerpHoldingsResponse)
+def get_perp_holdings(db: Session = Depends(get_db)):
+    """Return perp-specific holdings with leverage, liquidation, and margin detail (D-09)."""
+    from poseidon.broker.perp_paper_adapter import (
+        PerpPaperAdapter,
+        PerpPosition,
+        calc_liquidation_price,
+    )
+    from poseidon.models.base import SessionLocal
+    from poseidon.models.ohlcv import OHLCV
+    from poseidon.models.portfolio_holding import PortfolioHoldingRecord
+    from poseidon.models.trade_log import TradeLogRecord
+
+    # Query open perp holdings from DB
+    perp_holdings = (
+        db.query(PortfolioHoldingRecord)
+        .filter(
+            PortfolioHoldingRecord.closed == False,  # noqa: E712
+            PortfolioHoldingRecord.market == "crypto_perp",
+        )
+        .all()
+    )
+
+    if not perp_holdings:
+        return PerpHoldingsResponse(holdings=[], total_holdings=0)
+
+    # Build PerpPaperAdapter and populate positions from DB holdings
+    adapter = PerpPaperAdapter(SessionLocal)
+
+    # Reconstruct adapter positions from DB holdings
+    for h in perp_holdings:
+        leverage = 3  # default, will be overridden by adapter config
+        liq_price = calc_liquidation_price(
+            h.entry_price or 0.0, leverage, h.side or "long"
+        )
+        adapter._positions[h.symbol] = PerpPosition(
+            symbol=h.symbol,
+            side=h.side or "long",
+            entry_price=h.entry_price or 0.0,
+            quantity=h.shares or 0.0,
+            leverage=leverage,
+            margin=(h.entry_price or 0.0) * (h.shares or 0.0) / leverage,
+            liquidation_price=liq_price,
+        )
+
+    # Get latest mark prices from DB (perpetual OHLCV)
+    mark_prices: dict[str, float] = {}
+    for h in perp_holdings:
+        latest = (
+            db.query(OHLCV.close)
+            .filter(
+                OHLCV.symbol == h.symbol,
+                OHLCV.market == "crypto_perp",
+            )
+            .order_by(OHLCV.time.desc())
+            .first()
+        )
+        if latest:
+            mark_prices[h.symbol] = float(latest.close)
+
+    # Update mark prices for PnL calculation
+    adapter.update_mark_prices(mark_prices)
+
+    # Query cumulative funding from trade logs
+    funding_sums = (
+        db.query(
+            TradeLogRecord.symbol,
+            func.coalesce(func.sum(TradeLogRecord.realized_pnl), 0.0).label(
+                "total_funding"
+            ),
+        )
+        .filter(
+            TradeLogRecord.market == "crypto_perp",
+            TradeLogRecord.entry_type == "funding",
+        )
+        .group_by(TradeLogRecord.symbol)
+        .all()
+    )
+    funding_by_symbol = {row.symbol: float(row.total_funding) for row in funding_sums}
+
+    # Build response from adapter positions
+    positions = adapter.query_positions()
+    result = []
+    for pos in positions:
+        result.append(
+            PerpHoldingResponse(
+                symbol=pos["symbol"],
+                side=pos["side"],
+                quantity=pos["quantity"],
+                entry_price=pos["entryPrice"],
+                leverage=pos["leverage"],
+                liquidation_price=pos["liquidationPrice"],
+                margin_ratio=pos["marginRatio"],
+                unrealized_pnl=pos["unrealizedPnl"],
+                cumulative_funding_cost=funding_by_symbol.get(pos["symbol"], 0.0),
+                current_price=mark_prices.get(pos["symbol"]),
+            )
+        )
+
+    return PerpHoldingsResponse(holdings=result, total_holdings=len(result))
