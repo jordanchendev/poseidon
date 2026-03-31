@@ -69,8 +69,11 @@ def get_fetcher(market: str, backend: str | None = None) -> BaseFetcher:
                 fetcher = FinMindFetcher(market=market)
     elif market == "crypto_spot":
         fetcher = CCXTFetcher()
+    elif market == "crypto_perp":
+        from poseidon.data.fetchers.perp_fetcher import PerpFetcher
+        fetcher = PerpFetcher()
     else:
-        raise ValueError(f"Unsupported market: {market}. Supported: tw_stock, tw_futures, us_stock, crypto_spot")
+        raise ValueError(f"Unsupported market: {market}. Supported: tw_stock, tw_futures, us_stock, crypto_spot, crypto_perp")
 
     _fetcher_cache[cache_key] = fetcher
     return fetcher

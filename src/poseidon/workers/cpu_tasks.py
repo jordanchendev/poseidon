@@ -41,6 +41,7 @@ MARKET_TO_PROVIDER = {
     "tw_futures": "finmind",
     "us_stock": "yfinance",
     "crypto_spot": "ccxt",
+    "crypto_perp": "ccxt",
 }
 
 
