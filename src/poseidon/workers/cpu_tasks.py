@@ -1894,3 +1894,218 @@ def _get_latest_prices(symbols: list[str]) -> dict[str, float]:
     finally:
         session.close()
     return prices
+
+
+# ---------------------------------------------------------------------------
+# Phase 27: Perpetual contract task helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_perp_adapter_from_db():
+    """Build PerpPaperAdapter and populate positions from DB holdings.
+
+    Each Celery task needs its own adapter instance because in-memory
+    _positions dict is NOT shared across tasks (pitfall #1 from research).
+    """
+    from poseidon.broker.perp_paper_adapter import PerpPaperAdapter, PerpPosition, calc_liquidation_price
+    from poseidon.models.portfolio_holding import PortfolioHoldingRecord
+
+    adapter = PerpPaperAdapter(SessionLocal)
+    session = SessionLocal()
+    try:
+        perp_holdings = (
+            session.query(PortfolioHoldingRecord)
+            .filter(
+                PortfolioHoldingRecord.closed == False,  # noqa: E712
+                PortfolioHoldingRecord.market == "crypto_perp",
+            )
+            .all()
+        )
+        for h in perp_holdings:
+            leverage = adapter._leverage_per_symbol.get(
+                h.symbol, adapter._default_leverage
+            )
+            entry_price = h.entry_price or 0.0
+            quantity = h.shares or 0.0
+            side = h.side or "long"
+            liq_price = calc_liquidation_price(entry_price, leverage, side)
+            adapter._positions[h.symbol] = PerpPosition(
+                symbol=h.symbol,
+                side=side,
+                entry_price=entry_price,
+                quantity=quantity,
+                leverage=leverage,
+                margin=entry_price * quantity / leverage,
+                liquidation_price=liq_price,
+            )
+    finally:
+        session.close()
+
+    return adapter
+
+
+def _get_perp_mark_prices(symbols: list[str]) -> dict[str, float]:
+    """Get latest perpetual OHLCV close prices as mark prices."""
+    from poseidon.models.ohlcv import OHLCV
+
+    prices = {}
+    session = SessionLocal()
+    try:
+        for sym in symbols:
+            record = (
+                session.query(OHLCV.close)
+                .filter(
+                    OHLCV.symbol == sym,
+                    OHLCV.market == "crypto_perp",
+                )
+                .order_by(OHLCV.time.desc())
+                .first()
+            )
+            if record:
+                prices[sym] = float(record.close)
+    finally:
+        session.close()
+    return prices
+
+
+# ---------------------------------------------------------------------------
+# Phase 27: Perpetual contract Celery tasks
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.perp_liquidation_monitor")
+def perp_liquidation_monitor() -> dict:
+    """Every 1 min: check perp margin ratios, close all on breach (D-01, D-02, D-03).
+
+    24/7 -- NO weekend/holiday skip. Checks margin ratio for all open perp
+    positions. If any position has marginRatio < 0.15, closes ALL perp positions
+    (full close, not partial -- per D-03, same as stop-loss monitor pattern).
+    """
+    import yaml
+
+    from poseidon.broker.config import BrokerConfig
+    from poseidon.models.trade_log import TradeLogRecord
+    from poseidon.orders.manager import OrderManager
+    from poseidon.orders.risk_checker import OrderRiskChecker
+    from poseidon.strategies.portfolio.schemas import RebalanceOrder
+
+    MARGIN_THRESHOLD = 0.15  # D-02: 15% threshold
+
+    # 1. Rebuild perp adapter from DB
+    adapter = _build_perp_adapter_from_db()
+    if not adapter._positions:
+        return {"checked": 0, "closed": []}
+
+    # 2. Get mark prices and update adapter
+    symbols = list(adapter._positions.keys())
+    mark_prices = _get_perp_mark_prices(symbols)
+    adapter.update_mark_prices(mark_prices)
+
+    # 3. Check margin ratios
+    positions = adapter.query_positions()
+    breach_detected = False
+    for pos in positions:
+        if pos["marginRatio"] < MARGIN_THRESHOLD:
+            logger.warning(
+                "Liquidation risk: %s marginRatio=%.4f < %.4f threshold",
+                pos["symbol"], pos["marginRatio"], MARGIN_THRESHOLD,
+            )
+            breach_detected = True
+
+    if not breach_detected:
+        return {"checked": len(positions), "closed": []}
+
+    # 4. Full close ALL perp positions (D-03: close all, not partial)
+    position_tracker = _build_position_tracker()
+    perp_holdings = {
+        sym: h for sym, h in position_tracker.current_holdings().items()
+        if h.market == "crypto_perp"
+    }
+
+    close_orders = []
+    for sym, holding in perp_holdings.items():
+        close_orders.append(
+            RebalanceOrder(
+                symbol=sym,
+                action="sell",
+                target_weight=0.0,
+                current_weight=holding.weight,
+                delta_weight=-holding.weight,
+                side=holding.side,
+            )
+        )
+
+    if not close_orders:
+        return {"checked": len(positions), "closed": []}
+
+    # 5. Dispatch close orders via OrderManager (same as stop-loss pattern)
+    broker_yaml_path = "config/broker_perp.yaml"
+    try:
+        with open(broker_yaml_path) as bf:
+            broker_cfg = BrokerConfig(**yaml.safe_load(bf))
+    except FileNotFoundError:
+        # Fallback: create minimal perp config
+        broker_cfg = BrokerConfig(
+            mode="paper",
+            paper_initial_nav=100_000.0,  # USDT
+            lot_size=1,
+            fractional_qty=True,
+        )
+
+    from poseidon.broker.perp_paper_adapter import PerpPaperAdapter
+    close_adapter = PerpPaperAdapter(SessionLocal)
+    # Rebuild positions for the close adapter too
+    close_adapter._positions = adapter._positions.copy()
+
+    risk_checker = OrderRiskChecker(
+        position_limit_pct=1.0,  # No position limit for liquidation close
+        max_exposure=10.0,  # No exposure limit for close
+        stop_loss_pct=None,  # Not applicable for close
+    )
+    order_manager = OrderManager(
+        close_adapter, risk_checker, position_tracker, SessionLocal, broker_cfg,
+    )
+
+    results = order_manager.execute_rebalance(
+        close_orders, strategy_name="liquidation_protection",
+        prices=mark_prices, market="crypto_perp",
+    )
+
+    # 6. Create TradeLogRecords for liquidation-closed positions
+    closed_symbols = []
+    now = datetime.now(timezone.utc)
+    session = SessionLocal()
+    try:
+        for result in results:
+            if result.success:
+                sym = result.order.symbol
+                holding = perp_holdings.get(sym)
+                if holding and holding.entry_price and holding.shares:
+                    exit_price = mark_prices.get(sym, 0.0)
+                    direction = 1 if holding.side == "long" else -1
+                    trade_log = TradeLogRecord(
+                        strategy_name="liquidation_protection",
+                        symbol=sym,
+                        market="crypto_perp",
+                        entry_price=holding.entry_price,
+                        exit_price=exit_price,
+                        entry_date=holding.entry_date or now,
+                        exit_date=now,
+                        shares=holding.shares,
+                        realized_pnl=(exit_price - holding.entry_price) * holding.shares * direction,
+                        holding_days=(now - holding.entry_date).days if holding.entry_date else 0,
+                    )
+                    session.add(trade_log)
+                closed_symbols.append(sym)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+    logger.warning(
+        "LIQUIDATION PROTECTION: closed %d perp positions: %s",
+        len(closed_symbols), closed_symbols,
+    )
+    return {"checked": len(positions), "closed": closed_symbols}
