@@ -27,7 +27,10 @@ class TradeLogRecord(Base):
     exit_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    shares: Mapped[int] = mapped_column(Integer, nullable=False)
+    shares: Mapped[float] = mapped_column(Float, nullable=False)
+    entry_type: Mapped[str] = mapped_column(
+        String(16), server_default="trade", nullable=False
+    )
     realized_pnl: Mapped[float] = mapped_column(Float, nullable=False)
     holding_days: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

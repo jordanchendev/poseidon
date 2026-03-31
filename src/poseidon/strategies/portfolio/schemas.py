@@ -17,6 +17,8 @@ class TargetPosition:
     symbol: str
     weight: float  # 0.0-1.0, fraction of portfolio
     reason: str = ""
+    side: str = "long"  # "long" | "short"
+    leverage: float = 1.0  # 1.0 = no leverage
 
 
 @dataclass
@@ -42,6 +44,7 @@ class RebalanceOrder:
     target_weight: float
     current_weight: float
     delta_weight: float  # positive = buy more, negative = sell
+    side: str = "long"  # propagated from TargetPosition
 
 
 # --- Pydantic config models for YAML validation (per PSTRAT-04) ---
