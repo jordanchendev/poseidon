@@ -21,18 +21,6 @@ class PerpDataLoader:
     def __init__(self, session_factory):
         self._session_factory = session_factory
 
-    def _spot_to_perp(self, symbol: str) -> str:
-        """Map spot symbol to CCXT perp format for DB queries.
-
-        'BTCUSDT' -> 'BTC/USDT:USDT' (matches PerpFetcher storage format)
-        """
-        if ":" in symbol:
-            return symbol
-        if "USDT" in symbol:
-            base = symbol.replace("USDT", "")
-            return f"{base}/USDT:USDT"
-        return symbol
-
     def get_ohlcv(
         self, symbol: str, interval: str = "4h", lookback_days: int = 30
     ) -> pd.DataFrame:
@@ -41,7 +29,6 @@ class PerpDataLoader:
         Columns: time, open, high, low, close, volume
         Filters by instrument='perpetual' with fallback to market='crypto_perp'.
         """
-        perp_symbol = self._spot_to_perp(symbol)
         since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
         session: Session = self._session_factory()
@@ -49,7 +36,7 @@ class PerpDataLoader:
             rows = (
                 session.query(OHLCV)
                 .filter(
-                    OHLCV.symbol == perp_symbol,
+                    OHLCV.symbol == symbol,
                     OHLCV.interval == interval,
                     OHLCV.time >= since,
                 )
@@ -80,13 +67,11 @@ class PerpDataLoader:
 
     def get_latest_funding_rate(self, symbol: str) -> float | None:
         """Return the most recent funding rate for a symbol from DB."""
-        perp_symbol = self._spot_to_perp(symbol)
-
         session: Session = self._session_factory()
         try:
             row = (
                 session.query(FundingRateRecord)
-                .filter(FundingRateRecord.symbol == perp_symbol)
+                .filter(FundingRateRecord.symbol == symbol)
                 .order_by(FundingRateRecord.time.desc())
                 .first()
             )
@@ -99,14 +84,12 @@ class PerpDataLoader:
 
     def get_latest_price(self, symbol: str, interval: str = "4h") -> float | None:
         """Return the latest close price for weight-to-shares conversion."""
-        perp_symbol = self._spot_to_perp(symbol)
-
         session: Session = self._session_factory()
         try:
             row = (
                 session.query(OHLCV.close)
                 .filter(
-                    OHLCV.symbol == perp_symbol,
+                    OHLCV.symbol == symbol,
                     OHLCV.interval == interval,
                 )
                 .filter(
