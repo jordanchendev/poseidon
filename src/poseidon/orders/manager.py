@@ -61,12 +61,14 @@ class OrderManager:
         position_tracker,  # PositionTracker (avoid circular import)
         session_factory,
         config: BrokerConfig,
+        leverage_limits: dict[str, int] | None = None,
     ):
         self._broker = broker
         self._risk_checker = risk_checker
         self._tracker = position_tracker
         self._session_factory = session_factory
         self._config = config
+        self._leverage_limits = leverage_limits or {}
 
     def execute_rebalance(
         self,
@@ -135,6 +137,29 @@ class OrderManager:
                 results.append(OrderResult(order=order, fills=[], success=False))
                 logger.warning("Order rejected: %s %s -- %s", action, rorder.symbol, check.reason)
                 continue
+
+            # Leverage enforcement (PRSK-03, D-07)
+            if market == "crypto_perp" and self._leverage_limits:
+                max_lev = self._leverage_limits.get(order.symbol)
+                if max_lev is not None:
+                    # Read current leverage from broker adapter
+                    actual_leverage = getattr(
+                        self._broker, "_leverage_per_symbol", {}
+                    ).get(
+                        order.symbol,
+                        getattr(self._broker, "_default_leverage", 1),
+                    )
+                    if actual_leverage > max_lev:
+                        order.status = OrderStatus.REJECTED
+                        order.reject_reason = (
+                            f"leverage_limit: {order.symbol} leverage "
+                            f"{actual_leverage}x exceeds max {max_lev}x"
+                        )
+                        self._persist_order(order)
+                        processed_rorders.append(rorder)
+                        results.append(OrderResult(order=order, fills=[], success=False))
+                        logger.warning("Order rejected: %s", order.reject_reason)
+                        continue
 
             # Dispatch to broker
             try:

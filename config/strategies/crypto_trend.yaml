@@ -19,3 +19,8 @@ allocation:
   method: equal_weight
   position_limit_pct: 0.5
   leverage: 3
+
+risk:
+  max_leverage:
+    BTCUSDT: 2
+    ETHUSDT: 3
