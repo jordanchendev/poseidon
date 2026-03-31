@@ -28,10 +28,12 @@ class OrderRiskChecker:
         position_limit_pct: float = 0.15,
         max_exposure: float = 1.0,
         stop_loss_pct: float | None = 0.10,
+        market: str | None = None,
     ):
         self.position_limit_pct = position_limit_pct
         self.max_exposure = max_exposure
         self.stop_loss_pct = stop_loss_pct
+        self.market = market
 
     def check(
         self,
@@ -52,7 +54,10 @@ class OrderRiskChecker:
 
         # Check 2: Total exposure limit (only for buy orders)
         if order.action == "buy":
-            current_exposure = sum(h.weight for h in current_holdings.values())
+            holdings = current_holdings.values()
+            if self.market:
+                holdings = [h for h in holdings if getattr(h, "market", None) == self.market]
+            current_exposure = sum(h.weight for h in holdings)
             projected = current_exposure + order.target_weight
             if projected > self.max_exposure:
                 reason = (
