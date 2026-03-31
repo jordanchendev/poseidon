@@ -152,11 +152,16 @@ class BacktestPortfolio:
             return self.cash
         return self.initial_capital
 
+    def _is_crypto_market(self, signal: Signal) -> bool:
+        """Check if signal is for a crypto market (fractional quantities allowed)."""
+        return signal.market in ("crypto_spot", "crypto_perp")
+
     def _execute_long(self, signal: Signal, price: float, key: str) -> TradeRecord | None:
         """Open a long position."""
         fill_price = self._apply_slippage(price, is_buy=True)
         quantity_pct = signal.quantity_pct or 0.1
-        quantity = int(self._sizing_base() * quantity_pct / fill_price)
+        raw_quantity = self._sizing_base() * quantity_pct / fill_price
+        quantity = raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
         if quantity <= 0:
             return None
 
@@ -191,7 +196,8 @@ class BacktestPortfolio:
         """Open a short position."""
         fill_price = self._apply_slippage(price, is_buy=False)
         quantity_pct = signal.quantity_pct or 0.1
-        quantity = int(self._sizing_base() * quantity_pct / fill_price)
+        raw_quantity = self._sizing_base() * quantity_pct / fill_price
+        quantity = raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
         if quantity <= 0:
             return None
 
