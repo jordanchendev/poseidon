@@ -60,6 +60,7 @@ class PortfolioRebalancer:
                     target_weight=target_map[sym].weight,
                     current_weight=0.0,
                     delta_weight=target_map[sym].weight,
+                    side=target_map[sym].side,
                 )
             )
 
@@ -72,20 +73,50 @@ class PortfolioRebalancer:
                     target_weight=0.0,
                     current_weight=current[sym].weight,
                     delta_weight=-current[sym].weight,
+                    side=current[sym].side,
                 )
             )
 
         # Positions to adjust (weight changed beyond threshold)
         for sym in sorted(current_symbols & target_symbols):
-            delta = target_map[sym].weight - current[sym].weight
+            target = target_map[sym]
+            cur = current[sym]
+
+            # Side flip detection: close old + open new
+            if cur.side != target.side:
+                orders.append(
+                    RebalanceOrder(
+                        symbol=sym,
+                        action="sell",
+                        target_weight=0.0,
+                        current_weight=cur.weight,
+                        delta_weight=-cur.weight,
+                        side=cur.side,
+                    )
+                )
+                orders.append(
+                    RebalanceOrder(
+                        symbol=sym,
+                        action="buy",
+                        target_weight=target.weight,
+                        current_weight=0.0,
+                        delta_weight=target.weight,
+                        side=target.side,
+                    )
+                )
+                continue
+
+            # Normal adjust (same side)
+            delta = target.weight - cur.weight
             if abs(delta) > self.adjust_threshold:
                 orders.append(
                     RebalanceOrder(
                         symbol=sym,
                         action="adjust",
-                        target_weight=target_map[sym].weight,
-                        current_weight=current[sym].weight,
+                        target_weight=target.weight,
+                        current_weight=cur.weight,
                         delta_weight=delta,
+                        side=target.side,
                     )
                 )
 

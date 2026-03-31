@@ -122,7 +122,7 @@ class OrderManager:
                 quantity=quantity,
                 strategy_name=strategy_name,
                 broker_mode=self._config.mode,
-                side="long",  # default; Phase 26 strategy will pass actual side
+                side=rorder.side,
             )
 
             # Per-order risk check (isolation: rejection of one does not block others)
@@ -157,25 +157,28 @@ class OrderManager:
             processed_rorders.append(rorder)
             results.append(OrderResult(order=order, fills=fills, success=order.status == OrderStatus.FILLED))
 
-        # Update PositionTracker with filled orders only
+        # Update PositionTracker with filled orders (per-order to support mixed sides)
         # IMPORTANT: zip against processed_rorders (not rebalance_orders) because qty==0
         # orders are skipped via continue without appending to results. Using
         # rebalance_orders here would misalign rorder<->result pairs.
-        filled_rorders = []
-        fill_info: dict[str, tuple[float, float]] = {}  # symbol -> (shares, entry_price)
+        filled_count = 0
         for rorder, result in zip(processed_rorders, results):
             if result.success:
-                filled_rorders.append(rorder)
-                # Extract shares and price from fills
                 total_shares = sum(f.fill_quantity for f in result.fills)
                 avg_price = (
                     sum(f.fill_price * f.fill_quantity for f in result.fills) / total_shares
                     if total_shares > 0 else 0.0
                 )
-                fill_info[rorder.symbol] = (total_shares, avg_price)
-        if filled_rorders:
-            self._tracker.apply_orders(filled_rorders, strategy_name, market, fill_info=fill_info, side="long")
-            logger.info("Updated positions: %d filled orders", len(filled_rorders))
+                self._tracker.apply_orders(
+                    [rorder],
+                    strategy_name,
+                    market,
+                    fill_info={rorder.symbol: (total_shares, avg_price)},
+                    side=rorder.side,
+                )
+                filled_count += 1
+        if filled_count:
+            logger.info("Updated positions: %d filled orders", filled_count)
 
         return results
 
