@@ -50,8 +50,8 @@ def _get_redis_client() -> redis_lib.Redis:
     return redis_lib.from_url(settings.redis_url, decode_responses=False)
 
 
-# Backfill target: 5 years of historical data
-BACKFILL_YEARS = 5
+# Backfill target: 10 years of historical data
+BACKFILL_YEARS = 10
 
 # Batch sizes for backfill pagination (per provider)
 BATCH_DAYS = {

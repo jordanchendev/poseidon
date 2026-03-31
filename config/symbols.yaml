@@ -66,7 +66,7 @@ markets:
 
   crypto_spot:
     instrument: spot
-    intervals: ["1d", "1h", "5m"]
+    intervals: ["1d", "1h", "30m", "15m", "5m"]
     symbols:
       - { id: "BTCUSDT", name: "Bitcoin", ccxt_symbol: "BTC/USDT" }
       - { id: "ETHUSDT", name: "Ethereum", ccxt_symbol: "ETH/USDT" }
