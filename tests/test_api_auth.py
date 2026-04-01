@@ -80,21 +80,21 @@ client = TestClient(app, raise_server_exceptions=False)
 # --------------- Secured endpoints to test ---------------
 
 SECURED_ENDPOINTS = [
-    ("GET", "/data/backfill/status"),
-    ("POST", "/data/fetch"),
-    ("POST", "/sentiment"),
-    ("GET", "/sentiment?symbol=TEST"),
+    ("GET", "/api/data/backfill/status"),
+    ("POST", "/api/data/fetch"),
+    ("POST", "/api/sentiment"),
+    ("GET", "/api/sentiment?symbol=TEST"),
     ("GET", "/api/risk-rules"),
     ("POST", "/api/risk-rules"),
     ("GET", "/api/risk-rules/types"),
     ("GET", "/api/risk-rules/portfolio"),
-    ("GET", "/strategies"),
-    ("POST", "/strategies"),
-    ("GET", "/models"),
-    ("POST", "/models/train"),
-    ("GET", "/backtest"),
-    ("POST", "/backtest/run"),
-    ("GET", "/signals"),
+    ("GET", "/api/strategies"),
+    ("POST", "/api/strategies"),
+    ("GET", "/api/models"),
+    ("POST", "/api/models/train"),
+    ("GET", "/api/backtest"),
+    ("POST", "/api/backtest/run"),
+    ("GET", "/api/signals"),
 ]
 
 
@@ -136,7 +136,7 @@ def test_secured_endpoint_accepts_valid_api_key():
     irrelevant -- the point is that the auth layer did not block us.
     """
     resp = client.get(
-        "/strategies",
+        "/api/strategies",
         headers={"X-API-Key": VALID_API_KEY},
     )
     assert resp.status_code not in (401, 403), (

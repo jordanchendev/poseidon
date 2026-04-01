@@ -43,7 +43,7 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engi
 
 # Create a local test app with just the backtests router
 _test_app = FastAPI()
-_test_app.include_router(backtests_router, prefix="/backtest", tags=["backtest"])
+_test_app.include_router(backtests_router, prefix="/api/backtest", tags=["backtest"])
 
 
 def override_get_db():
@@ -67,7 +67,7 @@ def setup_db():
 
 client = TestClient(_test_app)
 
-PREFIX = "/backtest"
+PREFIX = "/api/backtest"
 
 
 # --------------- Tests ---------------

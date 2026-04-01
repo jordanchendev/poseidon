@@ -50,7 +50,7 @@ def _register_sqlite_functions(dbapi_conn, connection_record):
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
 
 _test_app = FastAPI()
-_test_app.include_router(models_router, prefix="/models", tags=["models"])
+_test_app.include_router(models_router, prefix="/api/models", tags=["models"])
 
 
 def override_get_db():
@@ -82,7 +82,7 @@ def setup_db(tmp_path):
 
 client = TestClient(_test_app)
 
-PREFIX = "/models"
+PREFIX = "/api/models"
 
 
 # --------------- Helpers ---------------

@@ -42,7 +42,7 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engi
 
 # Create a local test app with just the strategies router (not yet mounted in main.py)
 _test_app = FastAPI()
-_test_app.include_router(strategies_router, prefix="/strategies", tags=["strategies"])
+_test_app.include_router(strategies_router, prefix="/api/strategies", tags=["strategies"])
 
 
 def override_get_db():
@@ -66,7 +66,7 @@ def setup_db():
 
 client = TestClient(_test_app)
 
-PREFIX = "/strategies"
+PREFIX = "/api/strategies"
 
 
 # --------------- Helper ---------------
