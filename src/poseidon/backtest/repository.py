@@ -39,6 +39,8 @@ class BacktestRepository:
         result: BacktestResult,
         trades: list[TradeRecord],
         equity_curve: list[tuple[datetime, float, float]],
+        strategy_id: uuid.UUID | None = None,
+        completed_at: datetime | None = None,
     ) -> uuid.UUID:
         """Persist backtest results to three separate tables.
 
@@ -56,6 +58,7 @@ class BacktestRepository:
         # 1. Create main backtest record
         record = BacktestRecord(
             id=backtest_id,
+            strategy_id=strategy_id,
             strategy_type=config.strategy_type,
             symbol=config.symbol,
             market=config.market,
@@ -64,6 +67,7 @@ class BacktestRepository:
             metrics=result.metrics,
             status=result.status,
             error_message=result.error_message,
+            completed_at=completed_at,
         )
         self._db.add(record)
 

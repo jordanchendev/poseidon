@@ -464,35 +464,28 @@ def run_backtest_task(
         result = runner.run(ohlcv_df)
         backtest_id = result.backtest_id
 
-        # Build config dict for persistence
-        config_dict = {
-            "strategy_type": record.strategy_type,
-            "symbol": record.symbol,
-            "market": record.market,
-            "interval": record.interval,
-            "initial_capital": initial_capital,
-            "start_date": start_date,
-            "end_date": end_date,
-            "strategy_params": record.config,
-        }
-
-        # Persist to BacktestRecord directly (the repository expects TradeRecord
-        # objects, but we only have trade dicts from BacktestResult; persist
-        # the main record with metrics for the API to query)
-        bt_record = BacktestRecord(
-            id=backtest_id,
-            strategy_id=sid,
+        # Build BacktestConfig for repository persistence
+        bt_config = BacktestConfig(
             strategy_type=record.strategy_type,
             symbol=record.symbol,
             market=record.market,
             interval=record.interval,
-            config=config_dict,
-            metrics=result.metrics,
-            status=result.status,
-            error_message=result.error_message,
+            initial_capital=initial_capital,
+            start_date=parsed_start,
+            end_date=parsed_end,
+            strategy_params=record.config,
+        )
+
+        # Persist via BacktestRepository (trades + equity curve included)
+        repo = BacktestRepository(session)
+        repo.save_result(
+            config=bt_config,
+            result=result,
+            trades=runner.portfolio.trades if runner.portfolio else [],
+            equity_curve=runner.portfolio.equity_curve if runner.portfolio else [],
+            strategy_id=sid,
             completed_at=datetime.now(timezone.utc),
         )
-        session.add(bt_record)
         session.commit()
 
         logger.info(

@@ -117,6 +117,11 @@ class BacktestRunner:
         self.initial_capital = initial_capital
         self.sizing_config = sizing_config or SizingConfig()
 
+    @property
+    def portfolio(self) -> BacktestPortfolio | None:
+        """Access the portfolio after run() completes. Returns None if run() hasn't been called."""
+        return getattr(self, "_last_portfolio", None)
+
     def run(
         self,
         ohlcv: pd.DataFrame,
@@ -182,6 +187,7 @@ class BacktestRunner:
         portfolio = BacktestPortfolio(
             self.initial_capital, self.cost_model, self.sizing_config,
         )
+        self._last_portfolio = portfolio
         adapter = _PortfolioAdapter(portfolio)
 
         # Step 4: Bar-by-bar loop
