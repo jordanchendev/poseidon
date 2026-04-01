@@ -1464,11 +1464,14 @@ def trigger_risk_update(eval_result: dict | None = None) -> dict:
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.portfolio_monthly_rebalance")
-def portfolio_monthly_rebalance() -> dict:
+def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
     """Monthly rebalance: run RevenueBreakoutStrategy -> Rebalancer -> OrderManager.
 
     Triggered on the 15th of each month at 01:30 UTC (09:30 UTC+8, after TW open).
     Skips weekends. Creates TradeLogRecord for each sell fill.
+
+    Args:
+        signal_id: Optional signal UUID that triggered this rebalance.
     """
     from datetime import date as date_type
 
@@ -1584,6 +1587,7 @@ def portfolio_monthly_rebalance() -> dict:
                         shares=shares,
                         realized_pnl=(exit_price - entry_price) * shares,
                         holding_days=(now - entry_date).days if entry_date else 0,
+                        signal_id=uuid.UUID(signal_id) if signal_id else None,
                     )
                     session.add(trade_log)
                     trade_log_count += 1
@@ -1706,6 +1710,7 @@ def portfolio_stop_loss_monitor() -> dict:
                             shares=holding.shares,
                             realized_pnl=(exit_price - holding.entry_price) * holding.shares,
                             holding_days=(now - holding.entry_date).days if holding.entry_date else 0,
+                            signal_id=None,  # Stop-loss exits are not signal-triggered
                         )
                         session.add(trade_log)
             session.commit()
@@ -2091,6 +2096,7 @@ def perp_liquidation_monitor() -> dict:
                         shares=holding.shares,
                         realized_pnl=(exit_price - holding.entry_price) * holding.shares * direction,
                         holding_days=(now - holding.entry_date).days if holding.entry_date else 0,
+                        signal_id=None,  # Liquidation protection is not signal-triggered
                     )
                     session.add(trade_log)
                 closed_symbols.append(sym)
@@ -2109,11 +2115,14 @@ def perp_liquidation_monitor() -> dict:
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.perp_rebalance")
-def perp_rebalance() -> dict:
+def perp_rebalance(signal_id: str | None = None) -> dict:
     """Every 4h: run CryptoTrendStrategy -> Rebalancer -> OrderManager (D-04, D-05).
 
     24/7 -- NO weekend/holiday skip. Triggered 5 min after 4h OHLCV fetch.
     Uses leverage_limits from crypto_trend.yaml risk section (PRSK-03).
+
+    Args:
+        signal_id: Optional signal UUID that triggered this rebalance.
     """
     import yaml
 
@@ -2242,6 +2251,7 @@ def perp_rebalance() -> dict:
                         shares=shares,
                         realized_pnl=(exit_price - entry_price) * shares * direction,
                         holding_days=(now - entry_date).days if entry_date else 0,
+                        signal_id=uuid.UUID(signal_id) if signal_id else None,
                     )
                     session.add(trade_log)
                     trade_log_count += 1
