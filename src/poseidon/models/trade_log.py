@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Index, Integer, String
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,6 +33,9 @@ class TradeLogRecord(Base):
     )
     realized_pnl: Mapped[float] = mapped_column(Float, nullable=False)
     holding_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    signal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("signals.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()", nullable=False
     )
