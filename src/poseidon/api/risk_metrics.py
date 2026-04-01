@@ -212,3 +212,39 @@ def get_alerts(
     # total: count of entries fetched (may be less than full stream)
     total_in_stream = r.xlen(STREAM_KEY)
     return AlertsResponse(alerts=alerts, total=total_in_stream)
+
+
+# --- API-07: GET /correlation ---
+
+
+class CorrelationResponse(PydanticBase):
+    symbols: list[str]
+    matrix: list[list[float]]
+    as_of: str | None = None
+    computed_at: str | None = None
+
+
+@router.get("/correlation", response_model=CorrelationResponse)
+def get_correlation():
+    """Return cross-market correlation matrix from cached covariance data."""
+    import numpy as np
+
+    from poseidon.risk.var.covariance import load_cached_covariance
+
+    r = _get_redis_client()
+    result = load_cached_covariance(r)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No covariance data cached")
+    symbols, cov_matrix, metadata = result
+    # Convert covariance to correlation: corr_ij = cov_ij / (std_i * std_j)
+    std = np.sqrt(np.diag(cov_matrix))
+    # Handle zero-variance (constant price) assets -- set std to 1.0 to avoid div by zero
+    std[std == 0] = 1.0
+    corr_matrix = cov_matrix / np.outer(std, std)
+    np.fill_diagonal(corr_matrix, 1.0)  # ensure diagonal is exactly 1.0
+    return CorrelationResponse(
+        symbols=symbols,
+        matrix=corr_matrix.tolist(),
+        as_of=metadata.get("as_of"),
+        computed_at=metadata.get("computed_at"),
+    )
