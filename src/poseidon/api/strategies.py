@@ -15,6 +15,7 @@ from pydantic import BaseModel as PydanticBase
 from pydantic import ConfigDict
 from sqlalchemy.orm import Session
 
+from poseidon.models.backtest import BacktestRecord
 from poseidon.models.base import get_db
 from poseidon.models.strategy import StrategyRecord
 
@@ -224,3 +225,88 @@ async def deactivate_strategy(
     db.commit()
     db.refresh(record)
     return record
+
+
+# --------------- Performance aggregation ---------------
+
+
+class BacktestMetricsSummary(PydanticBase):
+    """Summary of metrics from a single backtest run."""
+
+    backtest_id: uuid.UUID
+    completed_at: datetime | None
+    sharpe_ratio: float | None
+    win_rate: float | None
+    total_pnl: float | None
+    trade_count: int | None
+    max_drawdown: float | None
+    composite_score: float | None
+
+
+class StrategyPerformanceResponse(PydanticBase):
+    """Aggregated performance response: best + latest backtest metrics."""
+
+    strategy_id: uuid.UUID
+    backtest_count: int
+    best: BacktestMetricsSummary | None
+    latest: BacktestMetricsSummary | None
+
+
+@router.get("/{strategy_id}/performance", response_model=StrategyPerformanceResponse)
+async def get_strategy_performance(
+    strategy_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> StrategyPerformanceResponse:
+    """Get aggregated performance metrics for a strategy from its backtests.
+
+    Returns both the 'best' backtest (highest composite score) and 'latest'
+    backtest (most recent completed_at). Per D-04: backtest-only aggregation,
+    live trade data deferred per D-06.
+    """
+    backtests = (
+        db.query(BacktestRecord)
+        .filter(
+            BacktestRecord.strategy_id == strategy_id,
+            BacktestRecord.status == "completed",
+        )
+        .order_by(BacktestRecord.completed_at.desc())
+        .all()
+    )
+
+    if not backtests:
+        return StrategyPerformanceResponse(
+            strategy_id=strategy_id,
+            backtest_count=0,
+            best=None,
+            latest=None,
+        )
+
+    def _extract_summary(bt: BacktestRecord) -> BacktestMetricsSummary:
+        metrics = bt.metrics or {}
+        return BacktestMetricsSummary(
+            backtest_id=bt.id,
+            completed_at=bt.completed_at,
+            sharpe_ratio=metrics.get("sharpe_ratio"),
+            win_rate=metrics.get("win_rate"),
+            total_pnl=metrics.get("total_pnl"),
+            trade_count=metrics.get("trade_count"),
+            max_drawdown=metrics.get("max_drawdown"),
+            composite_score=metrics.get("composite_score"),
+        )
+
+    # Latest = first in list (ordered by completed_at desc)
+    latest = _extract_summary(backtests[0])
+
+    # Best = highest composite_score among all completed backtests
+    best_bt = max(
+        backtests,
+        key=lambda bt: (bt.metrics or {}).get("composite_score", float("-inf")),
+    )
+    best = _extract_summary(best_bt)
+
+    return StrategyPerformanceResponse(
+        strategy_id=strategy_id,
+        backtest_count=len(backtests),
+        best=best,
+        latest=latest,
+    )
