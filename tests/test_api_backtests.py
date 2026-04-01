@@ -25,7 +25,11 @@ def _compile_uuid_sqlite(type_, compiler, **kw):
 
 # --- Now import models (registers them with Base.metadata) ---
 from poseidon.models.base import Base, get_db  # noqa: E402
-from poseidon.models.backtest import BacktestRecord  # noqa: E402,F401
+from poseidon.models.backtest import (  # noqa: E402,F401
+    BacktestEquityRecord,
+    BacktestRecord,
+    BacktestTradeRecord,
+)
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -216,3 +220,111 @@ def test_list_backtests_with_limit():
     resp = client.get(f"{PREFIX}?limit=1")
     assert resp.status_code == 200
     assert len(resp.json()) == 1
+
+
+# --------------- Trade endpoint tests ---------------
+
+
+def test_get_backtest_trades_returns_list():
+    """GET /backtest/{id}/trades returns trade list for a completed backtest."""
+    bt_id = uuid.uuid4()
+    db = TestingSessionLocal()
+    db.add(BacktestRecord(
+        id=bt_id,
+        strategy_type="voting",
+        symbol="BTCUSDT",
+        market="crypto",
+        interval="1d",
+        config={},
+        status="completed",
+    ))
+    from datetime import datetime as dt
+
+    db.add(BacktestTradeRecord(
+        id=uuid.uuid4(),
+        backtest_id=bt_id,
+        symbol="BTCUSDT",
+        action="buy",
+        entry_time=dt(2025, 1, 1),
+        exit_time=dt(2025, 1, 5),
+        entry_price=40000.0,
+        exit_price=42000.0,
+        quantity=0.1,
+        pnl=200.0,
+        fees=10.0,
+        metadata_={},
+    ))
+    db.add(BacktestTradeRecord(
+        id=uuid.uuid4(),
+        backtest_id=bt_id,
+        symbol="BTCUSDT",
+        action="sell",
+        entry_time=dt(2025, 1, 10),
+        exit_time=dt(2025, 1, 15),
+        entry_price=43000.0,
+        exit_price=41000.0,
+        quantity=0.1,
+        pnl=-200.0,
+        fees=10.0,
+        metadata_={},
+    ))
+    db.commit()
+    db.close()
+
+    resp = client.get(f"{PREFIX}/{bt_id}/trades")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    assert data[0]["backtest_id"] == str(bt_id)
+    assert data[0]["symbol"] == "BTCUSDT"
+
+
+def test_get_backtest_trades_not_found():
+    """GET /backtest/{random_uuid}/trades returns 404."""
+    random_id = str(uuid.uuid4())
+    resp = client.get(f"{PREFIX}/{random_id}/trades")
+    assert resp.status_code == 404
+
+
+# --------------- Equity curve endpoint tests ---------------
+
+
+def test_get_backtest_equity_curve_returns_data():
+    """GET /backtest/{id}/equity-curve returns equity time-series."""
+    bt_id = uuid.uuid4()
+    db = TestingSessionLocal()
+    db.add(BacktestRecord(
+        id=bt_id,
+        strategy_type="voting",
+        symbol="ETHUSDT",
+        market="crypto",
+        interval="1d",
+        config={},
+        status="completed",
+    ))
+    from datetime import datetime as dt
+
+    for i in range(3):
+        db.add(BacktestEquityRecord(
+            backtest_id=bt_id,
+            time=dt(2025, 1, 1 + i),
+            equity=100000.0 + i * 1000,
+            drawdown=0.01 * i,
+        ))
+    db.commit()
+    db.close()
+
+    resp = client.get(f"{PREFIX}/{bt_id}/equity-curve")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["backtest_id"] == str(bt_id)
+    assert data["count"] == 3
+    assert len(data["data"]) == 3
+    assert data["data"][0]["equity"] == 100000.0
+
+
+def test_get_backtest_equity_curve_not_found():
+    """GET /backtest/{random_uuid}/equity-curve returns 404."""
+    random_id = str(uuid.uuid4())
+    resp = client.get(f"{PREFIX}/{random_id}/equity-curve")
+    assert resp.status_code == 404

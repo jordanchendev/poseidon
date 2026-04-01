@@ -119,6 +119,42 @@ async def list_backtests(
     return repo.list_backtests(strategy_id=strategy_id, limit=limit)
 
 
+class BacktestTradeResponse(PydanticBase):
+    """Response model for a single backtest trade."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    backtest_id: uuid.UUID
+    symbol: str
+    action: str
+    entry_time: datetime
+    exit_time: datetime | None
+    entry_price: float
+    exit_price: float | None
+    quantity: float
+    pnl: float | None
+    fees: float
+
+
+class BacktestEquityPointResponse(PydanticBase):
+    """Response model for a single equity curve data point."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    time: datetime
+    equity: float
+    drawdown: float
+
+
+class BacktestEquityResponse(PydanticBase):
+    """Response model wrapping the equity curve for a backtest."""
+
+    backtest_id: uuid.UUID
+    data: list[BacktestEquityPointResponse]
+    count: int
+
+
 @router.get("/{backtest_id}", response_model=BacktestResponse)
 async def get_backtest(
     backtest_id: uuid.UUID,
@@ -130,3 +166,35 @@ async def get_backtest(
     if not record:
         raise HTTPException(status_code=404, detail="Backtest not found")
     return record
+
+
+@router.get("/{backtest_id}/trades", response_model=list[BacktestTradeResponse])
+async def get_backtest_trades(
+    backtest_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> list[BacktestTradeResponse]:
+    """Get trade list for a completed backtest."""
+    repo = BacktestRepository(db)
+    record = repo.get_by_id(backtest_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Backtest not found")
+    trades = repo.get_trades(backtest_id)
+    return trades
+
+
+@router.get("/{backtest_id}/equity-curve", response_model=BacktestEquityResponse)
+async def get_backtest_equity_curve(
+    backtest_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> BacktestEquityResponse:
+    """Get equity curve time-series for a completed backtest."""
+    repo = BacktestRepository(db)
+    record = repo.get_by_id(backtest_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Backtest not found")
+    points = repo.get_equity_curve(backtest_id)
+    return BacktestEquityResponse(
+        backtest_id=backtest_id,
+        data=points,
+        count=len(points),
+    )
