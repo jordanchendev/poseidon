@@ -61,7 +61,7 @@ services:
 
   cpu-worker:
     build: .
-    command: celery -A poseidon.workers.celery_app worker -Q cpu -c 8 --loglevel=info
+    command: celery -A poseidon.workers.celery_app worker -Q cpu -c 6 --loglevel=info
     environment:
       - TZ=Asia/Taipei
       - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
