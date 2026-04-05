@@ -9,6 +9,7 @@ Verifies that:
 - VotingStrategy is NOT protected (strategy config is mutable)
 """
 
+import pandas as pd
 import pytest
 
 from poseidon.autoresearch.guard import (
@@ -184,3 +185,64 @@ class TestStrategyConfigMutable:
             # Should NOT raise -- VotingStrategy is not @autoresearch_guard decorated
             vs.min_votes = 5
             assert vs.min_votes == 5
+
+
+class TestBacktestRunnerInternalState:
+    """Regression test for internal state writes during autoresearch."""
+
+    def test_backtest_runner_can_store_portfolio_during_autoresearch(self):
+        """BacktestRunner.run() should complete under guard and preserve portfolio access."""
+        from poseidon.backtest.cost_model import COST_MODELS
+        from poseidon.backtest.runner import BacktestRunner
+        from poseidon.data.feature_engine import FeatureEngine
+        from poseidon.risk.engine import RiskEngine
+        from poseidon.strategies.voting_strategy import VotingStrategy
+
+        idx = pd.date_range("2024-01-01", periods=220, freq="h", tz="UTC")
+        ohlcv = pd.DataFrame(
+            {
+                "open": [100.0] * 220,
+                "high": [101.0] * 220,
+                "low": [99.0] * 220,
+                "close": [100.0] * 220,
+                "volume": [1000.0] * 220,
+            },
+            index=idx,
+        )
+        config = {
+            "name": "test_voting",
+            "symbol": "BTCUSDT",
+            "market": "crypto_spot",
+            "interval": "1h",
+            "min_votes": 4,
+            "position_pct": 0.08,
+            "cooldown_bars": 0,
+            "conviction_gap": 0,
+            "sub_signals": [
+                {"type": "indicator_above", "indicator": "cum_return", "params": {"period": 6}, "threshold": 0},
+                {"type": "indicator_above", "indicator": "cum_return", "params": {"period": 12}, "threshold": 0},
+                {
+                    "type": "indicator_comparison",
+                    "indicator_a": "ema",
+                    "indicator_b": "ema",
+                    "params": {"period_a": 7, "period_b": 26},
+                    "direction": "above",
+                },
+                {"type": "indicator_above", "indicator": "rsi", "params": {"period": 8}, "threshold": 50},
+                {"type": "indicator_above", "indicator": "macd_histogram", "params": {}, "threshold": 0},
+                {"type": "bollinger_width_percentile", "params": {"period": 20, "lookback": 168}, "threshold": 0.2},
+            ],
+        }
+
+        with autoresearch_context():
+            runner = BacktestRunner(
+                strategy=VotingStrategy(config=config),
+                feature_engine=FeatureEngine(),
+                risk_engine=RiskEngine(),
+                cost_model=COST_MODELS["crypto_spot"],
+            )
+            result = runner.run(ohlcv)
+
+        assert result.status == "completed"
+        assert result.error_message is None
+        assert runner.portfolio is not None

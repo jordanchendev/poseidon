@@ -120,7 +120,7 @@ class BacktestRunner:
     @property
     def portfolio(self) -> BacktestPortfolio | None:
         """Access the portfolio after run() completes. Returns None if run() hasn't been called."""
-        return getattr(self, "_last_portfolio", None)
+        return getattr(self, "_ar_last_portfolio", None)
 
     def run(
         self,
@@ -187,7 +187,8 @@ class BacktestRunner:
         portfolio = BacktestPortfolio(
             self.initial_capital, self.cost_model, self.sizing_config,
         )
-        self._last_portfolio = portfolio
+        # The autoresearch guard explicitly allows internal `_ar_*` state.
+        self._ar_last_portfolio = portfolio
         adapter = _PortfolioAdapter(portfolio)
 
         # Step 4: Bar-by-bar loop
