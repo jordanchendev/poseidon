@@ -11,7 +11,13 @@ Usage:
 
 from __future__ import annotations
 
-__all__ = ["DatasetBuilder", "QlibModelExporter", "check_qlib_available", "require_qlib"]
+__all__ = [
+    "DatasetBuilder",
+    "PoseidonDataHandler",
+    "QlibModelExporter",
+    "check_qlib_available",
+    "require_qlib",
+]
 
 
 def check_qlib_available() -> bool:
@@ -38,9 +44,12 @@ def __getattr__(name: str):
         from poseidon.qlib.dataset_builder import DatasetBuilder
 
         return DatasetBuilder
+    if name == "PoseidonDataHandler":
+        from poseidon.qlib.data_handler import PoseidonDataHandler
+
+        return PoseidonDataHandler
     if name == "QlibModelExporter":
-        # Placeholder for Plan 37-02
-        raise ImportError(
-            f"QlibModelExporter is not yet implemented (planned in 37-02-PLAN)"
-        )
+        from poseidon.qlib.model_exporter import QlibModelExporter
+
+        return QlibModelExporter
     raise AttributeError(f"module 'poseidon.qlib' has no attribute {name!r}")
