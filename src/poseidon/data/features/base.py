@@ -52,6 +52,12 @@ class BaseFeature(ABC):
     name: str = ""
     description: str = ""
 
+    # Capability metadata (Phase 34)
+    supports_backtest: bool = True
+    supports_live: bool = False
+    bias_risk: list[str] = []
+    stateful: bool = False
+
     @abstractmethod
     def compute(self, ohlcv: pd.DataFrame, **params) -> pd.Series | pd.DataFrame:
         """Compute feature values from OHLCV data.

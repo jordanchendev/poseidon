@@ -42,6 +42,12 @@ class BaseStrategy(ABC):
     market: str = ""
     interval: str = "1d"
 
+    # Capability metadata (Phase 34)
+    supports_backtest: bool = True
+    supports_live: bool = False
+    bias_risk: list[str] = []
+    stateful: bool = False
+
     @abstractmethod
     def evaluate(self, features: pd.DataFrame) -> list[Signal]:
         """Evaluate strategy against feature data and produce signals.

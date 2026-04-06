@@ -25,6 +25,12 @@ class PortfolioStrategy(ABC):
 
     name: str = ""
 
+    # Capability metadata (Phase 34)
+    supports_backtest: bool = True
+    supports_live: bool = False
+    bias_risk: list[str] = []
+    stateful: bool = False
+
     @abstractmethod
     def select_stocks(
         self, universe_df: pd.DataFrame, as_of: date | None = None

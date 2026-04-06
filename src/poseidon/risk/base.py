@@ -36,6 +36,12 @@ class BaseRule(ABC):
     name: str = ""
     enabled: bool = True
 
+    # Capability metadata (Phase 34)
+    supports_backtest: bool = True
+    supports_live: bool = False
+    bias_risk: list[str] = []
+    stateful: bool = False
+
     @abstractmethod
     def check(self, signal: Signal, portfolio: VirtualPortfolio) -> RuleResult:
         """Evaluate signal against this rule.

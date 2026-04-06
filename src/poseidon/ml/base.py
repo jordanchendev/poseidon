@@ -22,6 +22,12 @@ class BaseModel(ABC):
     name: str = ""
     description: str = ""
 
+    # Capability metadata (Phase 34)
+    supports_backtest: bool = True
+    supports_live: bool = False
+    bias_risk: list[str] = []
+    stateful: bool = False
+
     @abstractmethod
     def train(self, features: pd.DataFrame, targets: pd.Series, params: dict) -> dict:
         """Train the model on feature data.
