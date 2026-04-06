@@ -1516,6 +1516,23 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
     order_manager = OrderManager(broker, risk_checker, position_tracker, SessionLocal, broker_cfg)
     rebalancer = PortfolioRebalancer()
 
+    # --- Protection checks (D-11, D-12, D-13) ---
+    from poseidon.protections.manager import ProtectionManager
+
+    protection_mgr = ProtectionManager.from_defaults()
+
+    # Check portfolio-level protections first (daily_loss halts ALL trading)
+    prot_db = SessionLocal()
+    try:
+        daily_results = protection_mgr.check_all("__portfolio__", strategy_cfg.market, prot_db)
+        portfolio_locked = any(r.locked and r.protection_type == "daily_loss" for r in daily_results)
+        if portfolio_locked:
+            reason = next(r.reason for r in daily_results if r.locked and r.protection_type == "daily_loss")
+            logger.warning("portfolio_monthly_rebalance: portfolio locked by daily_loss protection — %s", reason)
+            return {"skipped": "protection_locked", "reason": reason}
+    finally:
+        prot_db.close()
+
     # Run strategy
     strategy = RevenueBreakoutStrategy(strategy_cfg)
     targets = strategy.select_stocks(pd.DataFrame(), as_of=date_type.today())
@@ -1527,6 +1544,25 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
     if not rebalance_orders:
         logger.info("portfolio_monthly_rebalance: no rebalance orders")
         return {"rebalanced": True, "orders": 0, "sells": 0}
+
+    # Filter out locked symbols (per D-12)
+    prot_db = SessionLocal()
+    try:
+        unlocked_orders = []
+        for ro in rebalance_orders:
+            if protection_mgr.is_locked(ro.symbol, strategy_cfg.market, prot_db):
+                locks = protection_mgr.check_all(ro.symbol, strategy_cfg.market, prot_db)
+                active = [r for r in locks if r.locked]
+                logger.info("portfolio_monthly_rebalance: skipping %s — locked by %s", ro.symbol, [r.protection_type for r in active])
+            else:
+                unlocked_orders.append(ro)
+        rebalance_orders = unlocked_orders
+    finally:
+        prot_db.close()
+
+    if not rebalance_orders:
+        logger.info("portfolio_monthly_rebalance: all symbols locked by protection")
+        return {"rebalanced": True, "orders": 0, "sells": 0, "protection_filtered": True}
 
     # Ensure OHLCV data exists for all selected symbols (fetch missing ones)
     order_symbols = [ro.symbol for ro in rebalance_orders]
@@ -2188,6 +2224,23 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
     )
     rebalancer = PortfolioRebalancer()
 
+    # --- Protection checks (D-11, D-12, D-13) ---
+    from poseidon.protections.manager import ProtectionManager
+
+    protection_mgr = ProtectionManager.from_defaults()
+
+    # Check portfolio-level protections first (daily_loss halts ALL trading)
+    prot_db = SessionLocal()
+    try:
+        daily_results = protection_mgr.check_all("__portfolio__", strategy_cfg.market, prot_db)
+        portfolio_locked = any(r.locked and r.protection_type == "daily_loss" for r in daily_results)
+        if portfolio_locked:
+            reason = next(r.reason for r in daily_results if r.locked and r.protection_type == "daily_loss")
+            logger.warning("perp_rebalance: portfolio locked by daily_loss protection — %s", reason)
+            return {"skipped": "protection_locked", "reason": reason}
+    finally:
+        prot_db.close()
+
     # Run strategy
     targets = strategy.select_stocks(pd.DataFrame(), as_of=now.date())
 
@@ -2201,6 +2254,25 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
     if not rebalance_orders:
         logger.info("perp_rebalance: no rebalance orders")
         return {"rebalanced": True, "orders": 0, "sells": 0}
+
+    # Filter out locked symbols (per D-12)
+    prot_db = SessionLocal()
+    try:
+        unlocked_orders = []
+        for ro in rebalance_orders:
+            if protection_mgr.is_locked(ro.symbol, strategy_cfg.market, prot_db):
+                locks = protection_mgr.check_all(ro.symbol, strategy_cfg.market, prot_db)
+                active = [r for r in locks if r.locked]
+                logger.info("perp_rebalance: skipping %s — locked by %s", ro.symbol, [r.protection_type for r in active])
+            else:
+                unlocked_orders.append(ro)
+        rebalance_orders = unlocked_orders
+    finally:
+        prot_db.close()
+
+    if not rebalance_orders:
+        logger.info("perp_rebalance: all symbols locked by protection")
+        return {"rebalanced": True, "orders": 0, "sells": 0, "protection_filtered": True}
 
     # Get latest prices for weight-to-shares
     order_symbols = [ro.symbol for ro in rebalance_orders]

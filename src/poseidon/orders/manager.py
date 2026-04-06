@@ -205,6 +205,29 @@ class OrderManager:
         if filled_count:
             logger.info("Updated positions: %d filled orders", filled_count)
 
+        # Create cooldown protection locks for filled orders (D-14)
+        for rorder, result in zip(processed_rorders, results):
+            if result.success:
+                try:
+                    from poseidon.protections.cooldown import CooldownProtection
+                    from datetime import timedelta
+
+                    cooldown = CooldownProtection()
+                    expires = datetime.now(timezone.utc) + timedelta(hours=cooldown.cooldown_hours)
+                    session = self._session_factory()
+                    try:
+                        cooldown.create_lock(
+                            symbol=result.order.symbol,
+                            market=market,
+                            reason=f"Cooldown after {result.order.action} execution",
+                            expires_at=expires,
+                            db=session,
+                        )
+                    finally:
+                        session.close()
+                except Exception as e:
+                    logger.warning("Failed to create cooldown lock for %s: %s", result.order.symbol, e)
+
         return results
 
     def _persist_order(self, order: Order, fills: list[Fill] | None = None) -> None:
