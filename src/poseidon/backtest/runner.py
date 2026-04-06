@@ -117,6 +117,15 @@ class BacktestRunner:
         self.initial_capital = initial_capital
         self.sizing_config = sizing_config or SizingConfig()
 
+        # Capability enforcement (Phase 34 - COMP-05)
+        from poseidon.capabilities.validation import (
+            validate_backtest_components,
+            warn_bias_risks,
+        )
+
+        validate_backtest_components([self.strategy])
+        warn_bias_risks([self.strategy])
+
     @property
     def portfolio(self) -> BacktestPortfolio | None:
         """Access the portfolio after run() completes. Returns None if run() hasn't been called."""
