@@ -51,6 +51,7 @@ class XGBoostModel(BaseModel):
 
     name = "xgboost"
     description = "XGBoost gradient boosting classifier for directional prediction"
+    supports_live = True
 
     def __init__(self):
         self._model = None

@@ -196,3 +196,129 @@ class TestPortfolioStrategyRegistry:
         _registry.clear()
         with pytest.raises(KeyError, match="no_such"):
             get_portfolio_strategy("no_such")
+
+
+# ---------- COMP-02: Concrete component annotations ----------
+
+
+class TestConcreteStrategyAnnotations:
+    """Verify live-capable and stateful strategies are correctly annotated."""
+
+    def test_voting_strategy_supports_live(self):
+        from poseidon.strategies.voting_strategy import VotingStrategy
+
+        assert VotingStrategy.supports_live is True
+        assert VotingStrategy.stateful is True
+
+    def test_regime_router_supports_live(self):
+        from poseidon.strategies.regime_router import RegimeRouter
+
+        assert RegimeRouter.supports_live is True
+        assert RegimeRouter.stateful is True
+
+    def test_model_strategy_defaults(self):
+        from poseidon.strategies.model_strategy import ModelStrategy
+
+        assert ModelStrategy.supports_live is False  # backtest only
+        assert ModelStrategy.stateful is False
+
+    def test_rule_strategy_defaults(self):
+        from poseidon.strategies.rule_strategy import RuleStrategy
+
+        assert RuleStrategy.supports_live is False
+        assert RuleStrategy.stateful is False
+
+    def test_crypto_trend_stateful(self):
+        from poseidon.strategies.portfolio.crypto_trend import CryptoTrendStrategy
+
+        assert CryptoTrendStrategy.supports_live is True
+        assert CryptoTrendStrategy.stateful is True
+
+    def test_revenue_breakout_supports_live(self):
+        from poseidon.strategies.portfolio.revenue_breakout import (
+            RevenueBreakoutStrategy,
+        )
+
+        assert RevenueBreakoutStrategy.supports_live is True
+        assert RevenueBreakoutStrategy.stateful is False
+
+
+class TestConcreteRiskRuleAnnotations:
+    """All 6 risk rules must have supports_live=True."""
+
+    @pytest.mark.parametrize(
+        "rule_cls_path",
+        [
+            "poseidon.risk.rules.position_limit.PositionLimitRule",
+            "poseidon.risk.rules.loss_limit.LossLimitRule",
+            "poseidon.risk.rules.frequency.FrequencyRule",
+            "poseidon.risk.rules.confidence_threshold.ConfidenceThresholdRule",
+            "poseidon.risk.rules.leverage_cap.LeverageCapRule",
+            "poseidon.risk.rules.var_limit.VaRLimitRule",
+        ],
+    )
+    def test_risk_rule_supports_live(self, rule_cls_path):
+        import importlib
+
+        module_path, cls_name = rule_cls_path.rsplit(".", 1)
+        mod = importlib.import_module(module_path)
+        cls = getattr(mod, cls_name)
+        assert cls.supports_live is True, f"{cls_name}.supports_live should be True"
+
+
+class TestConcreteMLModelAnnotations:
+    """All ML models must have supports_live=True."""
+
+    def test_xgboost_model_supports_live(self):
+        from poseidon.ml.implementations.xgboost_model import XGBoostModel
+
+        assert XGBoostModel.supports_live is True
+
+    def test_transformer_model_supports_live(self):
+        from poseidon.ml.implementations.transformer_model import TransformerModel
+
+        assert TransformerModel.supports_live is True
+
+    def test_xgboost_regime_model_supports_live(self):
+        from poseidon.ml.implementations.xgboost_regime import XGBoostRegimeModel
+
+        assert XGBoostRegimeModel.supports_live is True
+
+
+class TestHMMRegimeFeatureAnnotation:
+    """HMM regime feature must have bias_risk and stateful annotations."""
+
+    def test_hmm_regime_bias_risk(self):
+        from poseidon.data.features.hmm_regime import HMMRegime
+
+        assert HMMRegime.bias_risk == ["future_data_leakage"]
+        assert HMMRegime.stateful is True
+
+
+class TestRegistryDiscovery:
+    """Verify registries discover concrete components after import."""
+
+    def test_list_strategies_has_expected_names(self):
+        # Force imports to trigger registration
+        import poseidon.strategies.voting_strategy  # noqa: F401
+        import poseidon.strategies.regime_router  # noqa: F401
+        import poseidon.strategies.model_strategy  # noqa: F401
+        import poseidon.strategies.rule_strategy  # noqa: F401
+
+        from poseidon.strategies.registry import list_strategies
+
+        names = list_strategies()
+        assert "voting_strategy" in names
+        assert "regime_router" in names
+        assert "model_strategy" in names
+        assert "rule_strategy" in names
+
+    def test_list_portfolio_strategies_has_expected_names(self):
+        import poseidon.strategies.portfolio.revenue_breakout  # noqa: F401
+        import poseidon.strategies.portfolio.crypto_trend  # noqa: F401
+
+        from poseidon.strategies.portfolio.registry import list_portfolio_strategies
+
+        names = list_portfolio_strategies()
+        assert "revenue_breakout" in names
+        assert "crypto_trend" in names

@@ -17,6 +17,7 @@ import pandas as pd
 from poseidon.backtest.voting_strategy_factory import VotingStrategyFactory
 from poseidon.signals.schemas import Signal
 from poseidon.strategies.base import BaseStrategy, StrategyType
+from poseidon.strategies.registry import register_strategy
 
 if TYPE_CHECKING:
     from poseidon.ml.implementations.xgboost_regime import XGBoostRegimeModel
@@ -31,6 +32,7 @@ DEFAULT_REGIME_CONFIGS: dict[str, dict] = {
 }
 
 
+@register_strategy
 class RegimeRouter(BaseStrategy):
     """Strategy wrapper that applies per-regime min_votes/position_pct overrides.
 
@@ -42,7 +44,11 @@ class RegimeRouter(BaseStrategy):
     When enabled=False, resets to base config values on every call.
     """
 
+    name = "regime_router"
     strategy_type = StrategyType.VOTING
+    supports_live = True
+    supports_backtest = True
+    stateful = True  # wraps VotingStrategy, inherits statefulness
 
     def __init__(
         self,

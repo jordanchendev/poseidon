@@ -34,6 +34,7 @@ class VaRLimitRule(BaseRule):
     """
 
     name = "var_limit"
+    supports_live = True
 
     def __init__(self) -> None:
         self.max_var_pct: float = 0.05

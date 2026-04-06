@@ -26,6 +26,8 @@ class HMMRegime(BaseFeature):
 
     name = "hmm_regime"
     description = "HMM volatility regime (label, transition prob, duration)"
+    bias_risk = ["future_data_leakage"]
+    stateful = True
 
     def compute(
         self,

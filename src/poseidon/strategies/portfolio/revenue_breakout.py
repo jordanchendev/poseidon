@@ -13,11 +13,13 @@ import pandas as pd
 
 from poseidon.data.loaders.finlab_loader import FinLabDataLoader
 from poseidon.strategies.portfolio.base import PortfolioStrategy
+from poseidon.strategies.portfolio.registry import register_portfolio_strategy
 from poseidon.strategies.portfolio.schemas import RevenueBreakoutConfig, TargetPosition
 
 logger = logging.getLogger(__name__)
 
 
+@register_portfolio_strategy
 class RevenueBreakoutStrategy(PortfolioStrategy):
     """Revenue Breakout Pure -- universe-wide stock selection strategy.
 
@@ -28,6 +30,11 @@ class RevenueBreakoutStrategy(PortfolioStrategy):
     4. Rank by volume ascending (least crowded)
     5. Select top N stocks with equal weight allocation
     """
+
+    name = "revenue_breakout"
+    supports_live = True
+    supports_backtest = True
+    # stateful=False (default) -- no internal state between calls
 
     def __init__(
         self,

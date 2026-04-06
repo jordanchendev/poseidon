@@ -17,14 +17,18 @@ import pandas as pd
 from poseidon.ml.base import BaseModel as MLBaseModel
 from poseidon.signals.schemas import InstrumentType, Signal, SignalAction
 from poseidon.strategies.base import BaseStrategy, StrategyType
+from poseidon.strategies.registry import register_strategy
 
 logger = logging.getLogger(__name__)
 
 
+@register_strategy
 class ModelStrategy(BaseStrategy):
     """Strategy that wraps an ML model and converts predictions to Signals."""
 
+    name = "model_strategy"
     strategy_type = StrategyType.MODEL
+    # inherits defaults: supports_live=False, supports_backtest=True, stateful=False
 
     def __init__(
         self,

@@ -20,6 +20,7 @@ class LeverageCapRule(BaseRule):
     """Reject signals if total exposure would exceed max_total_exposure."""
 
     name = "leverage_cap"
+    supports_live = True
 
     def __init__(self) -> None:
         self.max_total_exposure: float = 1.0

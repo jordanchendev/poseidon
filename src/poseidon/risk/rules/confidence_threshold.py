@@ -19,6 +19,7 @@ class ConfidenceThresholdRule(BaseRule):
     """Reject signals with confidence below min_confidence."""
 
     name = "confidence_threshold"
+    supports_live = True
 
     def __init__(self) -> None:
         self.min_confidence: float = 0.5

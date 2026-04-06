@@ -35,6 +35,7 @@ class LossLimitRule(BaseRule):
     """
 
     name = "loss_limit"
+    supports_live = True
 
     def __init__(self) -> None:
         self.max_consecutive_rejects: int = 3

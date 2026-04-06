@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from poseidon.data.loaders.perp_data_loader import PerpDataLoader
 from poseidon.strategies.portfolio.base import PortfolioStrategy
+from poseidon.strategies.portfolio.registry import register_portfolio_strategy
 from poseidon.strategies.portfolio.schemas import TargetPosition
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ class CryptoTrendConfig(BaseModel):
 # --- Strategy ---
 
 
+@register_portfolio_strategy
 class CryptoTrendStrategy(PortfolioStrategy):
     """4h EMA crossover + funding rate filter for BTC/ETH perps.
 
@@ -62,6 +64,11 @@ class CryptoTrendStrategy(PortfolioStrategy):
       - Funding rate > max_funding_rate_long -> block long (too expensive to hold)
       - Funding rate < max_funding_rate_short -> block short (too expensive to hold)
     """
+
+    name = "crypto_trend"
+    supports_live = True
+    supports_backtest = True
+    stateful = True  # tracks position state via PositionTracker
 
     def __init__(
         self,

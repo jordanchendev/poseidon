@@ -35,6 +35,7 @@ class FrequencyRule(BaseRule):
     """
 
     name = "frequency"
+    supports_live = True
 
     def __init__(self) -> None:
         self.max_signals: int = 5

@@ -18,6 +18,7 @@ class PositionLimitRule(BaseRule):
     """Reject signals when open positions count >= max_positions."""
 
     name = "position_limit"
+    supports_live = True
 
     def __init__(self) -> None:
         self.max_positions: int = 10

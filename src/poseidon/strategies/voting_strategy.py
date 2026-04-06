@@ -26,6 +26,7 @@ import pandas as pd
 from poseidon.signals.schemas import InstrumentType, Signal, SignalAction
 from poseidon.strategies.base import BaseStrategy, StrategyType
 from poseidon.strategies.dsl.executor import evaluate_condition
+from poseidon.strategies.registry import register_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ VOTING_FEATURE_SPECS: list[tuple[str, dict]] = [
 ]
 
 
+@register_strategy
 class VotingStrategy(BaseStrategy):
     """Multi-signal voting strategy with ATR trailing stop exit.
 
@@ -51,7 +53,11 @@ class VotingStrategy(BaseStrategy):
     RSI mean-reversion, signal flip, and 2-bar cooldown.
     """
 
+    name = "voting_strategy"
     strategy_type = StrategyType.VOTING
+    supports_live = True
+    supports_backtest = True
+    stateful = True  # tracks position state across evaluations
 
     def __init__(
         self,

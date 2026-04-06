@@ -194,6 +194,7 @@ class TransformerModel(BaseModel):
 
     name = "transformer"
     description = "PatchTST Transformer for directional prediction"
+    supports_live = True
 
     def __init__(self) -> None:
         self._model: "PatchTST | None" = None  # type: ignore[name-defined]

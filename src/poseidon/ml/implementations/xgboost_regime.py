@@ -50,6 +50,7 @@ class XGBoostRegimeModel(BaseModel):
 
     name = "xgboost_regime"
     description = "XGBoost gradient boosting classifier for volatility regime prediction"
+    supports_live = True
 
     def __init__(self):
         self._model = None

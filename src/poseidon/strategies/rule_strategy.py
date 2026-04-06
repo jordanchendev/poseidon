@@ -15,15 +15,19 @@ import pandas as pd
 from poseidon.signals.schemas import InstrumentType, Signal, SignalAction
 from poseidon.strategies.base import BaseStrategy, StrategyType
 from poseidon.strategies.dsl.executor import evaluate_condition
+from poseidon.strategies.registry import register_strategy
 from poseidon.strategies.dsl.schema import RuleConfig
 
 logger = logging.getLogger(__name__)
 
 
+@register_strategy
 class RuleStrategy(BaseStrategy):
     """Strategy that evaluates JSON DSL conditions against feature data."""
 
+    name = "rule_strategy"
     strategy_type = StrategyType.RULE
+    # inherits defaults: supports_live=False, supports_backtest=True, stateful=False
 
     def __init__(
         self,
