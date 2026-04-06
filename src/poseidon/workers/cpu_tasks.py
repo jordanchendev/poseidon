@@ -2439,3 +2439,59 @@ def perp_nav_snapshot() -> dict:
         today, total_nav, len(perp_holdings),
     )
     return {"date": str(today), "total_nav": total_nav, "holdings_count": len(perp_holdings)}
+
+
+# ---------------------------------------------------------------------------
+# Universe refresh (Phase 35)
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    name="poseidon.workers.cpu_tasks.refresh_universe",
+    bind=True,
+    max_retries=2,
+)
+def refresh_universe(self, market: str):
+    """Refresh trading universe for a market: resolve source -> filter -> persist snapshot.
+
+    If refresh fails, previous snapshot remains active (D-15).
+    """
+    from poseidon.universe.pipeline import UniversePipeline
+    from poseidon.universe.snapshot import save_snapshot
+    from poseidon.universe.yaml_source import YamlSource  # ensure registered
+
+    session = SessionLocal()
+    try:
+        # TODO: make source/filter configurable per market (D-03)
+        # For now, default to YamlSource with no filters
+        source = YamlSource()
+        pipeline = UniversePipeline(source=source, filters=[])
+        symbols = pipeline.run(market, db_session=session)
+
+        if not symbols:
+            logger.warning(
+                "refresh_universe: empty result for market=%s, skipping snapshot",
+                market,
+            )
+            return {"market": market, "symbols": 0, "status": "skipped_empty"}
+
+        snapshot = save_snapshot(
+            db=session,
+            market=market,
+            snapshot_time=datetime.now(timezone.utc),
+            symbols=symbols,
+            source_type=source.name,
+            filter_config=None,
+        )
+        logger.info("refresh_universe: market=%s, symbols=%d", market, len(symbols))
+        return {
+            "market": market,
+            "symbols": len(symbols),
+            "snapshot_id": str(snapshot.id),
+        }
+    except Exception as exc:
+        logger.error("refresh_universe failed for market=%s: %s", market, exc)
+        session.rollback()
+        raise self.retry(exc=exc, countdown=60)
+    finally:
+        session.close()

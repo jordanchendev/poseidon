@@ -166,6 +166,37 @@ celery_app.conf.update(
             "task": "poseidon.workers.cpu_tasks.perp_nav_snapshot",
             "schedule": crontab(hour="0,4,8,12,16,20", minute=15),
         },
+        # --- Phase 35: Universe refresh scheduling ---
+        # TW stocks: daily before market data fetch (05:30 UTC)
+        "refresh-universe-tw-stock": {
+            "task": "poseidon.workers.cpu_tasks.refresh_universe",
+            "schedule": crontab(hour=5, minute=30),
+            "args": ["tw_stock"],
+        },
+        # TW futures: daily before market data fetch (05:30 UTC)
+        "refresh-universe-tw-futures": {
+            "task": "poseidon.workers.cpu_tasks.refresh_universe",
+            "schedule": crontab(hour=5, minute=30),
+            "args": ["tw_futures"],
+        },
+        # US stocks: daily before market data fetch (21:00 UTC)
+        "refresh-universe-us-stock": {
+            "task": "poseidon.workers.cpu_tasks.refresh_universe",
+            "schedule": crontab(hour=21, minute=0),
+            "args": ["us_stock"],
+        },
+        # Crypto spot: every 4 hours (per D-13)
+        "refresh-universe-crypto-spot": {
+            "task": "poseidon.workers.cpu_tasks.refresh_universe",
+            "schedule": crontab(hour="*/4", minute=0),
+            "args": ["crypto_spot"],
+        },
+        # Crypto perp: every 4 hours (per D-13)
+        "refresh-universe-crypto-perp": {
+            "task": "poseidon.workers.cpu_tasks.refresh_universe",
+            "schedule": crontab(hour="*/4", minute=0),
+            "args": ["crypto_perp"],
+        },
     },
 
     # Auto-discover task modules
