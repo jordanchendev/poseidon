@@ -14,3 +14,4 @@ from poseidon.models.nav_snapshot import NavSnapshotRecord  # noqa: F401
 from poseidon.models.order import OrderRecord  # noqa: F401
 from poseidon.models.order_fill import OrderFillRecord  # noqa: F401
 from poseidon.models.trade_log import TradeLogRecord  # noqa: F401
+from poseidon.models.protection_lock import ProtectionLockRecord  # noqa: F401
