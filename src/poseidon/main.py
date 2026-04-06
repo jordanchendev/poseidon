@@ -8,6 +8,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from poseidon.api import (
     autoresearch,
     backtests,
+    capabilities,
     data,
     data_quality,
     health,
@@ -63,3 +64,4 @@ app.include_router(data_quality.router, prefix="/api/data-quality", tags=["data-
 app.include_router(risk_metrics.router, prefix="/api/risk", tags=["risk-metrics"], dependencies=secured)
 app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"], dependencies=secured)
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"], dependencies=secured)
+app.include_router(capabilities.router, prefix="/api/v1", tags=["capabilities"], dependencies=secured)
