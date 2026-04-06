@@ -14,6 +14,7 @@ from poseidon.api import (
     health,
     notifications,
     portfolio,
+    protections,
     risk,
     risk_metrics,
     sentiment,
@@ -65,3 +66,4 @@ app.include_router(risk_metrics.router, prefix="/api/risk", tags=["risk-metrics"
 app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"], dependencies=secured)
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"], dependencies=secured)
 app.include_router(capabilities.router, prefix="/api/v1", tags=["capabilities"], dependencies=secured)
+app.include_router(protections.router, prefix="/api/v1/protections", tags=["protections"], dependencies=secured)
