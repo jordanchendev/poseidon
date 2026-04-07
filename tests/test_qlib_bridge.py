@@ -310,12 +310,12 @@ class TestPoseidonDataHandler:
         df = _multi_index_frame(symbols=("BTC", "ETH"), rows=10)
         handler = PoseidonDataHandler(_StubBuilder(df))
 
-        # Build segment date strings from the actual data range
+        # Build segment date strings from the actual data range (UTC-aware)
         all_dates = sorted(df.index.get_level_values("datetime").unique())
         segments = {
-            "train": (str(all_dates[0].date()), str(all_dates[5].date())),
-            "valid": (str(all_dates[6].date()), str(all_dates[7].date())),
-            "test": (str(all_dates[8].date()), str(all_dates[9].date())),
+            "train": (all_dates[0].isoformat(), all_dates[5].isoformat()),
+            "valid": (all_dates[6].isoformat(), all_dates[7].isoformat()),
+            "test": (all_dates[8].isoformat(), all_dates[9].isoformat()),
         }
 
         result = handler.setup_dataset(segments)
@@ -330,8 +330,8 @@ class TestPoseidonDataHandler:
     def test_setup_dataset_empty_segment_logged_but_no_crash(self):
         df = _multi_index_frame(rows=4)
         handler = PoseidonDataHandler(_StubBuilder(df))
-        # A segment with dates outside the data range
-        segments = {"future": ("2099-01-01", "2099-12-31")}
+        # A segment with dates outside the data range (UTC-aware)
+        segments = {"future": ("2099-01-01T00:00:00+00:00", "2099-12-31T00:00:00+00:00")}
         result = handler.setup_dataset(segments)
         assert "future" in result
         assert result["future"].empty
