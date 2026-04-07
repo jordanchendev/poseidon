@@ -18,7 +18,7 @@ from poseidon.protections.daily_loss import DailyLossProtection
 from poseidon.protections.manager import ProtectionManager
 from poseidon.protections.max_drawdown import MaxDrawdownProtection
 from poseidon.protections.registry import (
-    _registry,
+    _protection_registry,
     get_protection,
     list_protections,
     register_protection,
@@ -111,7 +111,7 @@ class TestProtectionRegistry:
             get_protection("no_such_protection")
 
     def test_register_protection_snapshot_restore(self):
-        snapshot = dict(_registry)
+        snapshot = dict(_protection_registry)
         try:
 
             @register_protection
@@ -124,8 +124,8 @@ class TestProtectionRegistry:
             assert "dummy_prot" in list_protections()
             assert get_protection("dummy_prot") is DummyProtection
         finally:
-            _registry.clear()
-            _registry.update(snapshot)
+            _protection_registry.clear()
+            _protection_registry.update(snapshot)
 
 
 # ---------------------------------------------------------------------------
