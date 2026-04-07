@@ -109,22 +109,24 @@ class TestStrategyRegistry:
         )
         from poseidon.strategies.base import BaseStrategy
 
-        # Clear to avoid side effects
-        _registry.clear()
+        # Snapshot to avoid wiping module-level registrations
+        snapshot = dict(_registry)
+        try:
+            @register_strategy
+            class DummyStrategy(BaseStrategy):
+                name = "dummy_strat"
+                strategy_type = "model"
 
-        @register_strategy
-        class DummyStrategy(BaseStrategy):
-            name = "dummy_strat"
-            strategy_type = "model"
+                def evaluate(self, features):
+                    return []
 
-            def evaluate(self, features):
-                return []
+                def validate_config(self):
+                    return True
 
-            def validate_config(self):
-                return True
-
-        assert "dummy_strat" in list_strategies()
-        _registry.clear()
+            assert "dummy_strat" in list_strategies()
+        finally:
+            _registry.clear()
+            _registry.update(snapshot)
 
     def test_get_strategy_found(self):
         from poseidon.strategies.registry import (
@@ -134,26 +136,27 @@ class TestStrategyRegistry:
         )
         from poseidon.strategies.base import BaseStrategy
 
-        _registry.clear()
+        snapshot = dict(_registry)
+        try:
+            @register_strategy
+            class FindMe(BaseStrategy):
+                name = "find_me"
+                strategy_type = "model"
 
-        @register_strategy
-        class FindMe(BaseStrategy):
-            name = "find_me"
-            strategy_type = "model"
+                def evaluate(self, features):
+                    return []
 
-            def evaluate(self, features):
-                return []
+                def validate_config(self):
+                    return True
 
-            def validate_config(self):
-                return True
-
-        assert get_strategy("find_me") is FindMe
-        _registry.clear()
+            assert get_strategy("find_me") is FindMe
+        finally:
+            _registry.clear()
+            _registry.update(snapshot)
 
     def test_get_strategy_raises_key_error(self):
-        from poseidon.strategies.registry import _registry, get_strategy
+        from poseidon.strategies.registry import get_strategy
 
-        _registry.clear()
         with pytest.raises(KeyError, match="no_such_strategy"):
             get_strategy("no_such_strategy")
 
@@ -172,28 +175,26 @@ class TestPortfolioStrategyRegistry:
         )
         from poseidon.strategies.portfolio.base import PortfolioStrategy
 
-        _registry.clear()
+        snapshot = dict(_registry)
+        try:
+            @register_portfolio_strategy
+            class DummyPortfolio(PortfolioStrategy):
+                name = "dummy_port"
 
-        @register_portfolio_strategy
-        class DummyPortfolio(PortfolioStrategy):
-            name = "dummy_port"
+                def select_stocks(self, universe_df, as_of=None):
+                    return []
 
-            def select_stocks(self, universe_df, as_of=None):
-                return []
+                def validate_config(self):
+                    return True
 
-            def validate_config(self):
-                return True
-
-        assert "dummy_port" in list_portfolio_strategies()
-        _registry.clear()
+            assert "dummy_port" in list_portfolio_strategies()
+        finally:
+            _registry.clear()
+            _registry.update(snapshot)
 
     def test_get_portfolio_strategy_raises_key_error(self):
-        from poseidon.strategies.portfolio.registry import (
-            _registry,
-            get_portfolio_strategy,
-        )
+        from poseidon.strategies.portfolio.registry import get_portfolio_strategy
 
-        _registry.clear()
         with pytest.raises(KeyError, match="no_such"):
             get_portfolio_strategy("no_such")
 

@@ -8,7 +8,15 @@ Three strategy types share a common interface:
 
 from poseidon.strategies.base import BaseStrategy, StrategyType
 from poseidon.strategies.model_strategy import ModelStrategy
+from poseidon.strategies.regime_router import RegimeRouter
 from poseidon.strategies.rule_strategy import RuleStrategy
 from poseidon.strategies.voting_strategy import VotingStrategy
 
-__all__ = ["BaseStrategy", "StrategyType", "ModelStrategy", "RuleStrategy", "VotingStrategy"]
+__all__ = [
+    "BaseStrategy",
+    "StrategyType",
+    "ModelStrategy",
+    "RegimeRouter",
+    "RuleStrategy",
+    "VotingStrategy",
+]
