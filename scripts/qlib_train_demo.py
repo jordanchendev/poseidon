@@ -28,7 +28,7 @@ log = logging.getLogger("qlib_train_demo")
 
 
 def main() -> None:
-    qlib.init(region=REG_CN, provider_uri=None, expression_cache=None, dataset_cache=None)
+    qlib.init(region=REG_CN, provider_uri="/tmp/qlib_dummy", expression_cache=None, dataset_cache=None)
     log.info("qlib initialized")
 
     end = datetime.now(timezone.utc)
