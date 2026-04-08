@@ -43,7 +43,12 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.5",
 ]
-qlib = ["pyqlib>=0.9"]
+qlib = [
+    "pyqlib>=0.9",
+    # mlflow (qlib transitive dep) imports `google.protobuf.service` which
+    # was removed in protobuf 5.x — pin to 4.x to avoid ImportError at qlib.init().
+    "protobuf>=4.21,<5",
+]
 
 [build-system]
 requires = ["hatchling"]
