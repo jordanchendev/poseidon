@@ -98,7 +98,7 @@ def dump_qlib_bin(daily: pd.DataFrame, symbols: list[str]) -> None:
 def main() -> None:
     # Step 1: fetch 4h bars
     end = datetime.now(timezone.utc)
-    start = end - timedelta(days=120)
+    start = end - timedelta(days=820)
     symbols = ["BTCUSDT", "ETHUSDT"]
 
     with SessionLocal() as db:
