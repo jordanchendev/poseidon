@@ -22,6 +22,7 @@ from qlib.contrib.model.gbdt import LGBModel
 from poseidon.qlib.dataset_builder import DatasetBuilder
 from poseidon.qlib.data_handler import PoseidonDataHandler
 from poseidon.qlib.model_exporter import QlibModelExporter
+from poseidon.models.base import SessionLocal
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("qlib_train_demo")
@@ -35,8 +36,9 @@ def main() -> None:
     start = end - timedelta(days=120)
     symbols = ["BTCUSDT", "ETHUSDT"]
 
-    builder = DatasetBuilder(market="crypto_perp", interval="4h")
-    df = builder.build(symbols=symbols, start=start, end=end)
+    with SessionLocal() as db:
+        builder = DatasetBuilder(session=db, market="crypto_perp", interval="4h")
+        df = builder.build(symbols=symbols, start=start, end=end)
     log.info("DatasetBuilder produced %d rows, columns=%s", len(df), list(df.columns))
     if df.empty:
         raise SystemExit("no data returned")
@@ -80,18 +82,24 @@ def main() -> None:
     log.info("test predictions: %d rows", len(preds))
     log.info("prediction head:\n%s", preds.head().to_string())
 
-    exporter = QlibModelExporter()
-    mv = exporter.export(
-        model=model,
-        name="qlib_lgb_crypto_perp_4h_demo",
-        market="crypto_perp",
-        symbols=symbols,
-        interval="4h",
-        feature_list=["$open", "$high", "$low", "$close", "$volume", "$vwap"],
-        metrics={"train_rows": float(len(dataset.prepare("train"))),
-                 "test_rows": float(len(preds))},
-    )
-    log.info("exported ModelVersion id=%s status=%s", mv.id, mv.status)
+    with SessionLocal() as db:
+        exporter = QlibModelExporter(session=db)
+        mv = exporter.export(
+            model=model,
+            model_name="qlib_lgb_crypto_perp_4h_demo",
+            model_class="LGBModel",
+            model_params={"loss": "mse", "num_leaves": 31, "learning_rate": 0.05,
+                          "num_boost_round": 50, "early_stopping_rounds": 10},
+            feature_list=["$open", "$high", "$low", "$close", "$volume", "$vwap"],
+            train_start=segments["train"][0],
+            train_end=segments["train"][1],
+            valid_start=segments["valid"][0],
+            valid_end=segments["valid"][1],
+            test_start=segments["test"][0],
+            test_end=segments["test"][1],
+            metrics={"test_rows": float(len(preds))},
+        )
+        log.info("exported ModelVersion id=%s status=%s", mv.id, mv.status)
 
 
 if __name__ == "__main__":
