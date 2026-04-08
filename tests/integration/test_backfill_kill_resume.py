@@ -26,30 +26,79 @@ pytestmark = pytest.mark.phase38
 
 
 class _StubFetcher:
-    def __init__(self, interval_sec=3600, delay=0.0):
-        self.interval_sec = interval_sec
-        self.delay = delay
+    """Driven by a pre-computed list of frames (date-string args are lossy)."""
+
+    def __init__(self, frames):
+        self.frames = list(frames)
+        self.calls = 0
 
     def fetch_ohlcv(self, symbol, interval, start_s, end_s):
-        if self.delay:
-            time.sleep(self.delay)
-        start = datetime.fromisoformat(start_s).replace(tzinfo=timezone.utc)
-        end = datetime.fromisoformat(end_s).replace(tzinfo=timezone.utc)
+        if self.calls >= len(self.frames):
+            return pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"])
+        df = self.frames[self.calls]
+        self.calls += 1
+        return df
+
+
+def _build_chunks_for_job(job, interval_sec=3600, candles_per_chunk=1000):
+    start = datetime.fromisoformat(job.cursor["start_ts"])
+    end = datetime.fromisoformat(job.cursor["end_ts"])
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    chunk_td = timedelta(seconds=interval_sec * candles_per_chunk)
+    frames = []
+    cur = start
+    while cur < end:
+        batch_end = min(cur + chunk_td, end)
         times = []
-        t = start
-        while t < end:
+        t = cur
+        while t < batch_end:
             times.append(t)
-            t = t + timedelta(seconds=self.interval_sec)
-        return pd.DataFrame(
-            {
-                "time": times,
-                "open": [100.0] * len(times),
-                "high": [101.0] * len(times),
-                "low": [99.0] * len(times),
-                "close": [100.5] * len(times),
-                "volume": [10.0] * len(times),
-            }
+            t = t + timedelta(seconds=interval_sec)
+        frames.append(
+            pd.DataFrame(
+                {
+                    "time": times,
+                    "open": [100.0] * len(times),
+                    "high": [101.0] * len(times),
+                    "low": [99.0] * len(times),
+                    "close": [100.5] * len(times),
+                    "volume": [10.0] * len(times),
+                }
+            )
         )
+        cur = batch_end
+    return frames
+
+
+def _build_resume_chunks(*, resume_from: datetime, end: datetime, interval_sec=3600, candles_per_chunk=1000):
+    """Chunks starting from an arbitrary resume point (for resume test)."""
+    chunk_td = timedelta(seconds=interval_sec * candles_per_chunk)
+    frames = []
+    cur = resume_from
+    while cur < end:
+        batch_end = min(cur + chunk_td, end)
+        times = []
+        t = cur
+        while t < batch_end:
+            times.append(t)
+            t = t + timedelta(seconds=interval_sec)
+        frames.append(
+            pd.DataFrame(
+                {
+                    "time": times,
+                    "open": [100.0] * len(times),
+                    "high": [101.0] * len(times),
+                    "low": [99.0] * len(times),
+                    "close": [100.5] * len(times),
+                    "volume": [10.0] * len(times),
+                }
+            )
+        )
+        cur = batch_end
+    return frames
 
 
 class _ValidationOK:
@@ -58,8 +107,8 @@ class _ValidationOK:
     checks = []
 
 
-def _patch_stubs(monkeypatch):
-    fetcher = _StubFetcher()
+def _patch_stubs(monkeypatch, frames):
+    fetcher = _StubFetcher(frames)
     monkeypatch.setattr(backfill_tasks, "get_fetcher", lambda market: fetcher)
     monkeypatch.setattr(backfill_tasks, "validate_ohlcv", lambda df, market: _ValidationOK())
 
@@ -111,7 +160,6 @@ def _cleanup_job(db_session, job):
 def test_resume_from_cursor(db_session, monkeypatch):
     """Start with a partially-progressed cursor and verify backfill_chunk
     resumes from ``cursor.next_ts`` rather than ``cursor.start_ts``."""
-    _patch_stubs(monkeypatch)
     monkeypatch.setattr(backfill_tasks, "MAX_CHUNKS_PER_CALL", 50)
 
     job = _make_job(db_session, hours=4)
@@ -119,11 +167,17 @@ def test_resume_from_cursor(db_session, monkeypatch):
         # Simulate a previous partial run: advance next_ts by 2 hours.
         cursor = dict(job.cursor)
         start_dt = datetime.fromisoformat(cursor["start_ts"])
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=timezone.utc)
+        end_dt = datetime.fromisoformat(cursor["end_ts"])
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=timezone.utc)
         resume_from = start_dt + timedelta(hours=2)
         cursor["next_ts"] = resume_from.isoformat()
         cursor["completed_chunks"] = 2
         job.cursor = cursor
         db_session.commit()
+        _patch_stubs(monkeypatch, _build_resume_chunks(resume_from=resume_from, end=end_dt))
 
         rows_before = db_session.execute(
             text(
@@ -173,10 +227,12 @@ def test_sigkill_midchunk_no_dupes_no_gaps(db_session, monkeypatch):
     to raise RIGHT after upsert commits, rolling back, then running the
     function again cleanly and asserting the resulting hypertable state.
     """
-    fetcher = _patch_stubs(monkeypatch)
     monkeypatch.setattr(backfill_tasks, "MAX_CHUNKS_PER_CALL", 50)
 
     job = _make_job(db_session, hours=3)
+    # Build enough frames for phase-1 + full replay in phase-2.
+    frames = _build_chunks_for_job(job) * 3
+    fetcher = _patch_stubs(monkeypatch, frames)
     try:
         # --- Phase 1: crash AFTER upsert commits but BEFORE cursor write ----
         real_upsert = backfill_tasks.upsert_ohlcv

@@ -21,35 +21,58 @@ pytestmark = pytest.mark.phase38
 # --- Helpers ---------------------------------------------------------------
 
 
-def _stub_frame(start: datetime, batch_end: datetime, interval_sec: int = 3600):
-    """Build a realistic OHLCV frame covering [start, batch_end)."""
-    times = []
-    t = start
-    while t < batch_end:
-        times.append(t)
-        t = t + timedelta(seconds=interval_sec)
-    return pd.DataFrame(
-        {
-            "time": times,
-            "open": [100.0] * len(times),
-            "high": [101.0] * len(times),
-            "low": [99.0] * len(times),
-            "close": [100.5] * len(times),
-            "volume": [10.0] * len(times),
-        }
-    )
-
-
 class _StubFetcher:
-    def __init__(self, interval_sec=3600):
-        self.interval_sec = interval_sec
+    """Stub that yields pre-computed OHLCV frames per call.
+
+    The real fetcher signature takes ``%Y-%m-%d`` strings which lose sub-day
+    granularity, so the stub is driven by an explicit iterable of frames
+    produced from the BackfillJob window by ``_build_chunks_for_job``.
+    """
+
+    def __init__(self, frames):
+        self.frames = list(frames)
         self.calls = 0
 
     def fetch_ohlcv(self, symbol, interval, start_s, end_s):
+        if self.calls >= len(self.frames):
+            return pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"])
+        df = self.frames[self.calls]
         self.calls += 1
-        start = datetime.fromisoformat(start_s).replace(tzinfo=timezone.utc)
-        end = datetime.fromisoformat(end_s).replace(tzinfo=timezone.utc)
-        return _stub_frame(start, end, self.interval_sec)
+        return df
+
+
+def _build_chunks_for_job(job, interval_sec=3600, candles_per_chunk=1000):
+    """Replicate the loop's chunk walk to produce one DataFrame per chunk."""
+    start = datetime.fromisoformat(job.cursor["start_ts"])
+    end = datetime.fromisoformat(job.cursor["end_ts"])
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    chunk_td = timedelta(seconds=interval_sec * candles_per_chunk)
+    frames = []
+    cur = start
+    while cur < end:
+        batch_end = min(cur + chunk_td, end)
+        times = []
+        t = cur
+        while t < batch_end:
+            times.append(t)
+            t = t + timedelta(seconds=interval_sec)
+        frames.append(
+            pd.DataFrame(
+                {
+                    "time": times,
+                    "open": [100.0] * len(times),
+                    "high": [101.0] * len(times),
+                    "low": [99.0] * len(times),
+                    "close": [100.5] * len(times),
+                    "volume": [10.0] * len(times),
+                }
+            )
+        )
+        cur = batch_end
+    return frames
 
 
 class _ValidationOK:
@@ -58,11 +81,10 @@ class _ValidationOK:
     checks = []
 
 
-@pytest.fixture
-def stub_fetcher_and_validate(monkeypatch):
-    """Patch fetcher + validator + load_symbols so _run_backfill_chunk is
-    fully driven by stubs."""
-    fetcher = _StubFetcher()
+def _patch_job_stubs(monkeypatch, job):
+    frames = _build_chunks_for_job(job)
+    # Multiply by 3 so replays find more frames on each invocation.
+    fetcher = _StubFetcher(frames * 3)
     monkeypatch.setattr(backfill_tasks, "get_fetcher", lambda market: fetcher)
     monkeypatch.setattr(backfill_tasks, "validate_ohlcv", lambda df, market: _ValidationOK())
 
@@ -71,8 +93,7 @@ def stub_fetcher_and_validate(monkeypatch):
 
     monkeypatch.setattr(backfill_tasks, "load_symbols", lambda: object())
     monkeypatch.setattr(backfill_tasks, "get_market_config", lambda market, cfg: _Cfg())
-    # Hard-cap chunks per call so short-horizon jobs exit after 1-2 iters.
-    monkeypatch.setattr(backfill_tasks, "MAX_CHUNKS_PER_CALL", 5)
+    monkeypatch.setattr(backfill_tasks, "MAX_CHUNKS_PER_CALL", 50)
     return fetcher
 
 
@@ -116,9 +137,10 @@ def backfill_job(db_session):
 # --- Tests ------------------------------------------------------------------
 
 
-def test_onconflict_dedupe(db_session, stub_fetcher_and_validate, backfill_job):
+def test_onconflict_dedupe(db_session, monkeypatch, backfill_job):
     """Running backfill_chunk twice over the same window produces the same row
     count (ON CONFLICT pk_ohlcv dedupes)."""
+    _patch_job_stubs(monkeypatch, backfill_job)
     result1 = backfill_tasks._run_backfill_chunk(db_session, str(backfill_job.job_id))
     assert result1["status"] == "succeeded"
 
@@ -155,16 +177,7 @@ def test_onconflict_dedupe(db_session, stub_fetcher_and_validate, backfill_job):
 def test_cursor_advances_after_upsert(db_session, monkeypatch, backfill_job):
     """Cursor must advance strictly AFTER upsert_ohlcv commits. If the upsert
     raises, the cursor must remain at its pre-call position."""
-    # Replace fetcher + validator with passing stubs.
-    fetcher = _StubFetcher()
-    monkeypatch.setattr(backfill_tasks, "get_fetcher", lambda market: fetcher)
-    monkeypatch.setattr(backfill_tasks, "validate_ohlcv", lambda df, market: _ValidationOK())
-
-    class _Cfg:
-        instrument = "spot"
-    monkeypatch.setattr(backfill_tasks, "load_symbols", lambda: object())
-    monkeypatch.setattr(backfill_tasks, "get_market_config", lambda market, cfg: _Cfg())
-    monkeypatch.setattr(backfill_tasks, "MAX_CHUNKS_PER_CALL", 5)
+    _patch_job_stubs(monkeypatch, backfill_job)
 
     # Upsert raises BEFORE cursor advance — cursor should stay unchanged.
     def _boom(*args, **kwargs):
