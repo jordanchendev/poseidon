@@ -48,6 +48,9 @@ qlib = [
     # mlflow (qlib transitive dep) imports `google.protobuf.service` which
     # was removed in protobuf 5.x — pin to 4.x to avoid ImportError at qlib.init().
     "protobuf>=4.21,<5",
+    # mlflow imports `pkg_resources` (setuptools) which is no longer bundled
+    # with Python 3.12+ slim images by default.
+    "setuptools>=68",
 ]
 
 [build-system]
