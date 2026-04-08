@@ -12,6 +12,9 @@ celery_app.conf.update(
     task_routes={
         "poseidon.workers.gpu_tasks.*": {"queue": "gpu"},
         "poseidon.workers.cpu_tasks.*": {"queue": "cpu"},
+        # Phase 38 D-13: BackfillJob chunk processor lives on its own queue
+        # so one-shot backfills never starve the periodic ingest path.
+        "poseidon.workers.backfill_tasks.*": {"queue": "backfill"},
     },
 
     # Serialization
@@ -203,5 +206,6 @@ celery_app.conf.update(
     imports=[
         "poseidon.workers.cpu_tasks",
         "poseidon.workers.gpu_tasks",
+        "poseidon.workers.backfill_tasks",
     ],
 )
