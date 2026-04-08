@@ -137,54 +137,91 @@ def test_bootstrap_idempotent(db_session):
         _cleanup(db_session, symbol, market, interval)
 
 
-def test_chunked_loop_bounded(db_session, monkeypatch):
+def test_chunked_loop_bounded(db_session, ingest_state_seed, monkeypatch):
     """Cursor-mode gap=30d / interval=1h chunks into ~1000-candle batches and
-    respects both MAX_CHUNKS_PER_TICK and TICK_WALL_BUDGET_SEC."""
-    from poseidon.core.config import settings
+    respects MAX_CHUNKS_PER_TICK (hard bound)."""
+    from unittest.mock import MagicMock
+
+    import pandas as pd
+
+    from poseidon.data.symbols import SymbolInfo
     from poseidon.workers import cpu_tasks
 
     symbol, market, interval = _unique_key("CHUNK")
-    market_real = "crypto_perp"
     try:
-        # Seed cursor 30 days behind "now"
         now = datetime.now(timezone.utc)
-        thirty_days_ago = now - timedelta(days=30)
-
-        db_session.execute(
-            text(
-                "INSERT INTO ingest_state (symbol, market, interval, last_successful_ts, first_backfill_done) "
-                "VALUES (:s, :m, :i, :ts, true) ON CONFLICT DO NOTHING"
-            ),
-            {"s": symbol, "m": market_real, "i": interval, "ts": thirty_days_ago},
+        ingest_state_seed(
+            db_session,
+            symbol=symbol,
+            market=market,
+            interval=interval,
+            last_successful_ts=now - timedelta(days=30),
+            first_backfill_done=True,
         )
-        db_session.commit()
 
-        # Stub fetcher + upsert to avoid hitting network / polluting real tables
-        calls: list[tuple[datetime, datetime]] = []
+        calls: list[tuple[str, str]] = []
 
         class StubFetcher:
             def fetch_ohlcv(self, sym, itv, start, end):
-                import pandas as pd
                 calls.append((start, end))
-                # return a 1-row frame so upsert path is exercised but rowcount is tiny
                 ts = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
                 return pd.DataFrame(
-                    [{"time": ts, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0}]
+                    [{
+                        "time": ts, "open": 1.0, "high": 1.0,
+                        "low": 1.0, "close": 1.0, "volume": 1.0,
+                    }]
                 )
 
         monkeypatch.setattr(cpu_tasks, "get_fetcher", lambda m: StubFetcher())
         monkeypatch.setattr(cpu_tasks, "upsert_ohlcv", lambda *a, **kw: 1)
-        monkeypatch.setattr(cpu_tasks, "validate_ohlcv", lambda df, m: type("V", (), {"has_critical": False, "warning_count": 0, "checks": []})())
-        monkeypatch.setattr(settings, "ingest_cursor_mode", "cursor")
+        monkeypatch.setattr(
+            cpu_tasks,
+            "validate_ohlcv",
+            lambda df, m: type("V", (), {"has_critical": False, "warning_count": 0, "checks": []})(),
+        )
+        monkeypatch.setattr(cpu_tasks, "_get_redis_client", lambda: MagicMock())
+        monkeypatch.setattr(
+            cpu_tasks,
+            "CircuitBreaker",
+            lambda *a, **kw: type(
+                "C", (),
+                {"allow_request": lambda self: True,
+                 "record_success": lambda self: None,
+                 "record_failure": lambda self: None},
+            )(),
+        )
+        monkeypatch.setattr(
+            cpu_tasks,
+            "DistributedRateLimiter",
+            lambda *a, **kw: type(
+                "R", (),
+                {"wait_and_acquire": lambda self, *a, **kw: True},
+            )(),
+        )
+        # Stub SessionLocal to return our live db_session so the helper sees
+        # the seeded cursor row without opening a separate connection.
+        monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: _SessionProxy(db_session))
 
-        # Shrink MAX_CHUNKS_PER_TICK to verify bound is honored
+        # Shrink the per-tick bound so the test finishes fast
         monkeypatch.setattr(cpu_tasks, "MAX_CHUNKS_PER_TICK", 3)
 
-        # Use an ad-hoc symbol not in symbols.yaml so the loop targets just this one
-        result = cpu_tasks.fetch_market_data(market_real, interval, symbol=symbol)
+        sym_info = SymbolInfo(id=symbol, name=symbol)
+        market_cfg = type("MC", (), {"instrument": "perp"})()
+        result = cpu_tasks._fetch_market_data_cursor(
+            market, interval, [sym_info], market_cfg
+        )
+
         assert result["mode"] == "cursor"
-        # Should have chunked at most MAX_CHUNKS_PER_TICK times
-        assert len(calls) <= 3
-        assert len(calls) >= 1
+        assert 1 <= len(calls) <= 3
     finally:
-        _cleanup(db_session, symbol, market_real, interval)
+        _cleanup(db_session, symbol, market, interval)
+
+
+class _SessionProxy:
+    """Wrap an existing session so SessionLocal() returns it but .close() is a no-op."""
+    def __init__(self, real):
+        self._real = real
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+    def close(self):
+        pass

@@ -95,6 +95,11 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
         logger.warning("No symbols configured for market: %s", market)
         return {"market": market, "interval": interval, "fetched": 0}
 
+    # Phase 38 D-04: cursor-mode branch. Legacy path below is UNCHANGED so
+    # flag=legacy is byte-identical to v7.0 behavior.
+    if settings.ingest_cursor_mode == "cursor":
+        return _fetch_market_data_cursor(market, interval, symbols, market_cfg)
+
     fetcher = get_fetcher(market)
     instrument = market_cfg.instrument if market_cfg else "spot"
 
@@ -185,6 +190,170 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
 
     logger.info("Completed fetch for %s/%s: %d total rows", market, interval, fetched_count)
     return {"market": market, "interval": interval, "fetched": fetched_count}
+
+
+# ---------------------------------------------------------------------------
+# Phase 38 cursor-mode ingest (D-01..D-08) — self-contained; NEVER delegates to
+# backfill_jobs per D-07. Guarded by settings.ingest_cursor_mode.
+# ---------------------------------------------------------------------------
+
+CHUNK_CANDLES = 1000
+MAX_CHUNKS_PER_TICK = 10  # hard upper bound per symbol per tick (D-06)
+TICK_WALL_BUDGET_SEC = 30  # soft wall-clock budget per tick (D-06)
+
+_INTERVAL_SECONDS = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "30m": 1800,
+    "1h": 3600,
+    "4h": 14400,
+    "1d": 86400,
+}
+
+
+def _fetch_market_data_cursor(market: str, interval: str, symbols, market_cfg) -> dict:
+    """Cursor-mode ingest helper — DATA-FOUND-01/02/03.
+
+    Self-contained (D-07): does NOT delegate to backfill_jobs. Loops over each
+    resolved symbol, bootstraps last_successful_ts from MAX(time) when missing,
+    chunks gaps into CHUNK_CANDLES batches, upserts, then advances the cursor
+    AFTER commit (D-03, D-08). Respects CHUNK_CANDLES, MAX_CHUNKS_PER_TICK, and
+    TICK_WALL_BUDGET_SEC so a long gap is closed over successive Celery Beat
+    ticks without monopolising a worker.
+    """
+    import time as _time
+
+    from poseidon.data.ingest_cursor import IngestCursorService
+
+    cursor_service = IngestCursorService()
+    fetcher = get_fetcher(market)
+    instrument = market_cfg.instrument if market_cfg else "spot"
+    now = datetime.now(timezone.utc)
+    interval_sec = _INTERVAL_SECONDS.get(interval, 3600)
+    chunk_td = timedelta(seconds=interval_sec * CHUNK_CANDLES)
+    fetched_count = 0
+    tick_start = _time.monotonic()
+
+    # Rate limit / circuit breaker init (mirror legacy path)
+    provider = MARKET_TO_PROVIDER.get(market, "unknown")
+    redis_client = _get_redis_client()
+    circuit = CircuitBreaker(
+        redis_client,
+        provider,
+        failure_threshold=settings.circuit_failure_threshold,
+        open_timeout=settings.circuit_open_timeout,
+        failure_window=settings.circuit_failure_window,
+    )
+    rate_limiter = DistributedRateLimiter(redis_client)
+    provider_cfg = PROVIDER_LIMITS.get(provider, {})
+    window = provider_cfg.get("window_seconds", 3600)
+    limit = getattr(
+        settings, provider_cfg.get("limit_key", "ratelimit_finmind_hourly"), 500
+    )
+
+    session = SessionLocal()
+    try:
+        for sym_info in symbols:
+            cursor = cursor_service.get_or_bootstrap(
+                session, sym_info.id, market, interval
+            )
+            # Fresh symbol (no history) falls back to a 7-day warm-up window.
+            start = cursor or (now - timedelta(days=7))
+            chunks_this_sym = 0
+            while start < now and chunks_this_sym < MAX_CHUNKS_PER_TICK:
+                if _time.monotonic() - tick_start > TICK_WALL_BUDGET_SEC:
+                    logger.info(
+                        "cursor ingest tick wall-budget exceeded for %s/%s/%s; deferring",
+                        market,
+                        sym_info.id,
+                        interval,
+                    )
+                    break
+                if not circuit.allow_request():
+                    logger.warning(
+                        "Circuit open for %s, skipping %s", provider, sym_info.id
+                    )
+                    break
+                if not rate_limiter.wait_and_acquire(
+                    provider, window, limit, timeout=30
+                ):
+                    logger.warning(
+                        "Rate limit timeout for %s, skipping %s", provider, sym_info.id
+                    )
+                    break
+
+                batch_end = min(start + chunk_td, now)
+                fetch_symbol = sym_info.ccxt_symbol or sym_info.id
+                try:
+                    df = fetcher.fetch_ohlcv(
+                        fetch_symbol,
+                        interval,
+                        start.strftime("%Y-%m-%d"),
+                        batch_end.strftime("%Y-%m-%d"),
+                    )
+                    circuit.record_success()
+                except Exception as exc:  # noqa: BLE001
+                    circuit.record_failure()
+                    session.rollback()
+                    cursor_service.record_error(
+                        session, sym_info.id, market, interval, str(exc)
+                    )
+                    logger.error(
+                        "cursor fetch failed %s/%s/%s: %s",
+                        market,
+                        sym_info.id,
+                        interval,
+                        exc,
+                    )
+                    break
+
+                if df is None or df.empty:
+                    # No data in this chunk — still advance cursor to avoid
+                    # re-requesting the same empty window forever.
+                    cursor_service.advance(
+                        session, sym_info.id, market, interval, batch_end
+                    )
+                    start = batch_end
+                    chunks_this_sym += 1
+                    continue
+
+                vresult = validate_ohlcv(df, market)
+                if vresult.has_critical:
+                    cursor_service.record_error(
+                        session,
+                        sym_info.id,
+                        market,
+                        interval,
+                        "critical validation failure",
+                    )
+                    logger.error(
+                        "cursor CRITICAL validation %s/%s/%s", market, sym_info.id, interval
+                    )
+                    break
+
+                n = upsert_ohlcv(
+                    session, df, sym_info.id, market, instrument, interval
+                )
+                fetched_count += n
+                # Advance AFTER upsert commits (D-03, D-08).
+                cursor_service.advance(
+                    session, sym_info.id, market, interval, batch_end
+                )
+                start = batch_end
+                chunks_this_sym += 1
+    finally:
+        session.close()
+
+    logger.info(
+        "cursor-mode fetch %s/%s: %d total rows", market, interval, fetched_count
+    )
+    return {
+        "market": market,
+        "interval": interval,
+        "fetched": fetched_count,
+        "mode": "cursor",
+    }
 
 
 @celery_app.task(
