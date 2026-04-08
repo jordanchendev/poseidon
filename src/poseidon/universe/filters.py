@@ -52,18 +52,26 @@ class VolumeFilter(UniverseFilter):
         Symbols with no OHLCV data are omitted from the result.
         """
         from poseidon.data.storage import read_ohlcv
+        from poseidon.models.base import SessionLocal
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=self.lookback_days)
+        # Pick the densest interval available for the market so "average
+        # daily volume" is derived from the finest-grained data we have.
+        # crypto has 4h / 1h data; stocks are 1d.
+        interval = "4h" if market in {"crypto_spot", "crypto_perp"} else "1d"
+
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(days=self.lookback_days)
         volumes: dict[str, float] = {}
-        for s in symbols:
-            try:
-                df = read_ohlcv(s.id, market, "1d")
-                if df is not None and not df.empty:
-                    recent = df[df.index >= cutoff]
-                    if not recent.empty and "volume" in recent.columns:
-                        volumes[s.id] = float(recent["volume"].mean())
-            except Exception:
-                logger.debug("No volume data for %s/%s", s.id, market)
+        with SessionLocal() as db:
+            for s in symbols:
+                try:
+                    df = read_ohlcv(db, s.id, market, interval, start=start, end=now)
+                    if df is not None and not df.empty and "volume" in df.columns:
+                        volumes[s.id] = float(df["volume"].mean())
+                except Exception:
+                    logger.debug(
+                        "No volume data for %s/%s", s.id, market, exc_info=True
+                    )
         return volumes
 
 
@@ -100,21 +108,28 @@ class ListingAgeFilter(UniverseFilter):
         Returns mapping of symbol_id -> days_since_first_record.
         """
         from poseidon.data.storage import read_ohlcv
+        from poseidon.models.base import SessionLocal
+
+        interval = "4h" if market in {"crypto_spot", "crypto_perp"} else "1d"
 
         now = datetime.now(timezone.utc)
         ages: dict[str, int] = {}
-        for s in symbols:
-            try:
-                df = read_ohlcv(s.id, market, "1d")
-                if df is not None and not df.empty:
-                    first_date = df.index.min()
-                    if hasattr(first_date, "to_pydatetime"):
-                        first_date = first_date.to_pydatetime()
-                    if first_date.tzinfo is None:
-                        first_date = first_date.replace(tzinfo=timezone.utc)
-                    ages[s.id] = (now - first_date).days
-            except Exception:
-                logger.debug("No listing data for %s/%s", s.id, market)
+        with SessionLocal() as db:
+            for s in symbols:
+                try:
+                    # Unbounded start/end to catch the true earliest record
+                    df = read_ohlcv(db, s.id, market, interval)
+                    if df is not None and not df.empty:
+                        first_date = df.index.min()
+                        if hasattr(first_date, "to_pydatetime"):
+                            first_date = first_date.to_pydatetime()
+                        if first_date.tzinfo is None:
+                            first_date = first_date.replace(tzinfo=timezone.utc)
+                        ages[s.id] = (now - first_date).days
+                except Exception:
+                    logger.debug(
+                        "No listing data for %s/%s", s.id, market, exc_info=True
+                    )
         return ages
 
 
