@@ -61,19 +61,38 @@ def hypertable_seed_ohlcv():
                                   interval="4h", timestamps=[ts1, ts2, ts3])
     """
     def _seed(db_session, *, symbol, market, interval, timestamps,
+              instrument="spot",
               open_=100.0, high=110.0, low=90.0, close=105.0, volume=1000.0):
         from sqlalchemy import text
         for ts in timestamps:
             db_session.execute(
                 text(
-                    "INSERT INTO ohlcv (symbol, market, interval, ts, open, high, low, close, volume) "
-                    "VALUES (:symbol, :market, :interval, :ts, :o, :h, :l, :c, :v) "
+                    "INSERT INTO ohlcv (time, symbol, market, instrument, interval, open, high, low, close, volume) "
+                    "VALUES (:ts, :symbol, :market, :instrument, :interval, :o, :h, :l, :c, :v) "
                     "ON CONFLICT DO NOTHING"
                 ),
                 {
-                    "symbol": symbol, "market": market, "interval": interval, "ts": ts,
+                    "ts": ts, "symbol": symbol, "market": market,
+                    "instrument": instrument, "interval": interval,
                     "o": open_, "h": high, "l": low, "c": close, "v": volume,
                 },
             )
         db_session.commit()
     return _seed
+
+
+@pytest.fixture
+def db_session():
+    """Real SQLAlchemy session bound to the live poseidon DB.
+
+    Tests using this fixture run inside the cpu-worker container on
+    stormtrooper against the real TimescaleDB. Each test is responsible for
+    cleaning up its own rows (or using unique symbol/market/interval keys).
+    """
+    from poseidon.models.base import SessionLocal
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.close()

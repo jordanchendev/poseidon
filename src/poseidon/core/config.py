@@ -1,3 +1,6 @@
+from typing import Literal
+
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -55,7 +58,20 @@ class Settings(BaseSettings):
     quality_weight_anomaly_free: float = 0.25
     quality_weight_timeliness: float = 0.20
 
-    model_config = {"env_prefix": "POSEIDON_", "env_file": ".env"}
+    # Phase 38 D-04: ingest cursor mode flag (legacy|cursor). Defaults to legacy
+    # for instant rollback; 48h shadow-mode runbook flips to "cursor" via the
+    # unprefixed env var INGEST_CURSOR_MODE (see docs/runbooks/phase38-shadow-mode.md).
+    ingest_cursor_mode: Literal["legacy", "cursor"] = Field(
+        default="legacy",
+        validation_alias="INGEST_CURSOR_MODE",
+    )
+
+    model_config = {
+        "env_prefix": "POSEIDON_",
+        "env_file": ".env",
+        "populate_by_name": True,
+        "extra": "ignore",
+    }
 
 
 settings = Settings()
