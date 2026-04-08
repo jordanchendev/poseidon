@@ -85,14 +85,29 @@ def hypertable_seed_ohlcv():
 def db_session():
     """Real SQLAlchemy session bound to the live poseidon DB.
 
-    Tests using this fixture run inside the cpu-worker container on
-    stormtrooper against the real TimescaleDB. Each test is responsible for
-    cleaning up its own rows (or using unique symbol/market/interval keys).
+    Tests using this fixture run inside the qlib-research container on
+    stormtrooper against the real TimescaleDB. The autouse ``test_settings``
+    fixture overrides ``POSEIDON_DATABASE_URL`` for the general test suite, so
+    we bypass the cached ``SessionLocal`` and bind directly to the real DSN
+    provided by the container environment (or the default poseidon compose
+    DSN). Each test is responsible for cleaning up its own rows.
     """
-    from poseidon.models.base import SessionLocal
+    import os
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    # Prefer an explicit real-DB DSN; fall back to the poseidon compose
+    # default wired via host.docker.internal.
+    real_dsn = (
+        os.environ.get("POSEIDON_REAL_DATABASE_URL")
+        or "postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon"
+    )
+    engine = create_engine(real_dsn, future=True)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     session = SessionLocal()
     try:
         yield session
     finally:
         session.rollback()
         session.close()
+        engine.dispose()
