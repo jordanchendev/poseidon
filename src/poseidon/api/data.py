@@ -14,7 +14,7 @@ from poseidon.core.schemas import (
     FetchRequest,
     MessageResponse,
 )
-from poseidon.models.backfill import BackfillProgress
+from poseidon.models.backfill import BackfillJob  # noqa: F401
 from poseidon.models.base import get_db
 from poseidon.workers.cpu_tasks import fetch_market_data, trigger_backfill
 
@@ -89,12 +89,14 @@ async def get_backfill_status(
     market: str | None = None,
     db: Session = Depends(get_db),
 ):
-    """Get backfill progress status for all symbols or a specific market."""
-    query = db.query(BackfillProgress)
-    if market:
-        query = query.filter(BackfillProgress.market == market)
-    rows = query.order_by(BackfillProgress.market, BackfillProgress.symbol).all()
-    return rows
+    """Get backfill job status for all symbols or a specific market.
+
+    Phase 38 D-10: backfill_progress replaced by backfill_jobs. Response model
+    fields not yet wired up — returns empty list until plan 38-03 rewires
+    the endpoint to the new BackfillJob schema.
+    """
+    del market, db  # noqa: F841 — will be used after 38-03 rewrite
+    return []
 
 
 # --- GET /ohlcv: OHLCV candlestick data (API-01) ---

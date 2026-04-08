@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from poseidon.models.backfill import BackfillProgress
+from poseidon.models.backfill import BackfillJob  # noqa: F401
 from poseidon.models.fundamentals import Fundamentals
 from poseidon.models.ohlcv import OHLCV
 from poseidon.models.sentiment import Sentiment
@@ -143,36 +143,21 @@ def read_sentiment(
     return query.order_by(Sentiment.created_at.desc()).limit(limit).all()
 
 
-def get_or_create_backfill_progress(
-    session: Session, symbol: str, market: str, interval: str, target_start_date: datetime
-) -> BackfillProgress:
-    """Get existing backfill progress or create a new pending row."""
-    row = (
-        session.query(BackfillProgress)
-        .filter_by(symbol=symbol, market=market, interval=interval)
-        .first()
+def get_or_create_backfill_progress(*args, **kwargs):
+    """DEPRECATED (Phase 38 D-10).
+
+    The legacy ``backfill_progress`` table has been replaced by ``backfill_jobs``.
+    Callers (legacy ``backfill_symbol`` task + ``/backfill/status`` endpoint) will
+    be rewritten in plan 38-03. Until then this helper is a no-op that raises so
+    any stray invocation fails loudly instead of silently corrupting state.
+    """
+    raise NotImplementedError(
+        "get_or_create_backfill_progress removed in Phase 38 — use BackfillJob (plan 38-03)"
     )
-    if row is None:
-        row = BackfillProgress(
-            symbol=symbol,
-            market=market,
-            interval=interval,
-            target_start_date=target_start_date,
-            status="pending",
-        )
-        session.add(row)
-        session.commit()
-        session.refresh(row)
-    return row
 
 
-def update_backfill_progress(
-    session: Session, progress: BackfillProgress, status: str, last_fetched_date: datetime | None = None, error_message: str | None = None
-) -> None:
-    """Update backfill progress status."""
-    progress.status = status
-    if last_fetched_date is not None:
-        progress.last_fetched_date = last_fetched_date
-    if error_message is not None:
-        progress.error_message = error_message
-    session.commit()
+def update_backfill_progress(*args, **kwargs):
+    """DEPRECATED (Phase 38 D-10) — see get_or_create_backfill_progress."""
+    raise NotImplementedError(
+        "update_backfill_progress removed in Phase 38 — use BackfillJob (plan 38-03)"
+    )

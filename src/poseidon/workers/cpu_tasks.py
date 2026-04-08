@@ -20,9 +20,7 @@ from poseidon.data.cache import CacheManager
 from poseidon.data.rate_limiter import CircuitBreaker, DistributedRateLimiter, PROVIDER_LIMITS
 from poseidon.data.validation import validate_ohlcv
 from poseidon.data.storage import (
-    get_or_create_backfill_progress,
     read_ohlcv,
-    update_backfill_progress,
     upsert_ohlcv,
 )
 from poseidon.data.symbols import get_market_config, get_symbols_for_market, load_symbols
@@ -196,137 +194,23 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
     default_retry_delay=60,
 )
 def backfill_symbol(self, symbol: str, market: str, interval: str) -> dict:
-    """Backfill historical data for a single symbol. Resumable via backfill_progress table.
+    """DEPRECATED in Phase 38 — replaced by BackfillJob substrate (plan 38-03).
 
-    Args:
-        symbol: Symbol ID (e.g., "2330", "BTCUSDT")
-        market: Market name (e.g., "tw_stock", "crypto_spot")
-        interval: Candle interval ("1d" or "1h")
-
-    Returns:
-        Dict with backfill status.
+    The legacy ``backfill_progress`` checkpoint table was dropped in migration 020.
+    Calling this task now returns a ``deprecated`` status so any stray trigger
+    (manual API POST, etc.) no-ops instead of crashing. The full idempotent
+    chunk task built on BackfillJob ships in plan 38-03.
     """
-    session = SessionLocal()
-    try:
-        target_start = datetime.now(timezone.utc) - timedelta(days=BACKFILL_YEARS * 365)
-        progress = get_or_create_backfill_progress(session, symbol, market, interval, target_start)
-
-        if progress.status == "completed":
-            logger.info("Backfill already completed for %s/%s/%s", market, symbol, interval)
-            return {"symbol": symbol, "market": market, "interval": interval, "status": "already_completed"}
-
-        update_backfill_progress(session, progress, status="in_progress")
-
-        # Determine the fetcher and instrument
-        config = load_symbols()
-        market_cfg = get_market_config(market, config)
-        fetcher = get_fetcher(market)
-        instrument = market_cfg.instrument if market_cfg else "spot"
-
-        # Determine the ccxt_symbol for crypto
-        symbols_list = get_symbols_for_market(market, config)
-        fetch_symbol = symbol
-        for s in symbols_list:
-            if s.id == symbol and s.ccxt_symbol:
-                fetch_symbol = s.ccxt_symbol
-                break
-
-        # Resume from last checkpoint or start from target
-        start_dt = progress.last_fetched_date or progress.target_start_date
-        end_dt = datetime.now(timezone.utc)
-
-        # Choose batch size based on market and interval
-        if interval == "1d" and market in BATCH_DAYS_DAILY:
-            batch_days = BATCH_DAYS_DAILY[market]
-        elif interval == "5m" and market in BATCH_DAYS_5M:
-            batch_days = BATCH_DAYS_5M[market]
-        else:
-            batch_days = BATCH_DAYS.get(market, 365)
-
-        # Initialize rate limiter and circuit breaker for backfill
-        provider = MARKET_TO_PROVIDER.get(market, "unknown")
-        redis_client = _get_redis_client()
-        circuit = CircuitBreaker(
-            redis_client,
-            provider,
-            failure_threshold=settings.circuit_failure_threshold,
-            open_timeout=settings.circuit_open_timeout,
-            failure_window=settings.circuit_failure_window,
-        )
-        rate_limiter = DistributedRateLimiter(redis_client)
-        provider_cfg = PROVIDER_LIMITS.get(provider, {})
-        window = provider_cfg.get("window_seconds", 3600)
-        limit = getattr(settings, provider_cfg.get("limit_key", "ratelimit_finmind_hourly"), 500)
-
-        try:
-            # Fetch in batches
-            current_start = start_dt
-            total_rows = 0
-            while current_start < end_dt:
-                # Check circuit breaker before each batch
-                if not circuit.allow_request():
-                    logger.warning("Circuit open for %s, pausing backfill %s", provider, symbol)
-                    break
-
-                # Acquire rate limit before each batch (wait up to 60s for backfill)
-                if not rate_limiter.wait_and_acquire(provider, window, limit, timeout=60):
-                    logger.warning("Rate limit timeout for %s, pausing backfill %s", provider, symbol)
-                    break
-
-                batch_end = min(current_start + timedelta(days=batch_days), end_dt)
-                start_str = current_start.strftime("%Y-%m-%d")
-                end_str = batch_end.strftime("%Y-%m-%d")
-
-                logger.info("Backfill %s/%s/%s: %s to %s", market, symbol, interval, start_str, end_str)
-                try:
-                    df = fetcher.fetch_ohlcv(fetch_symbol, interval, start_str, end_str)
-                    circuit.record_success()
-                except Exception as fetch_exc:
-                    circuit.record_failure()
-                    raise fetch_exc
-
-                if not df.empty:
-                    # Validate before upsert
-                    vresult = validate_ohlcv(df, market)
-                    if vresult.has_critical:
-                        logger.error(
-                            "CRITICAL validation failure in backfill %s/%s batch %s-%s: %s",
-                            market,
-                            symbol,
-                            start_str,
-                            end_str,
-                            [c for c in vresult.checks if not c.passed and c.severity.value == "critical"],
-                        )
-                        # Skip this batch but continue with next
-                        current_start = batch_end + timedelta(days=1)
-                        continue
-                    if vresult.warning_count > 0:
-                        logger.warning(
-                            "Validation warnings in backfill %s/%s batch %s-%s: %s",
-                            market,
-                            symbol,
-                            start_str,
-                            end_str,
-                            [c for c in vresult.checks if not c.passed and c.severity.value == "warning"],
-                        )
-                    count = upsert_ohlcv(session, df, symbol, market, instrument, interval)
-                    total_rows += count
-                    # Update checkpoint after each batch
-                    update_backfill_progress(session, progress, status="in_progress", last_fetched_date=batch_end)
-
-                current_start = batch_end + timedelta(days=1)
-
-            update_backfill_progress(session, progress, status="completed", last_fetched_date=end_dt)
-            logger.info("Backfill completed for %s/%s/%s: %d total rows", market, symbol, interval, total_rows)
-            return {"symbol": symbol, "market": market, "interval": interval, "status": "completed", "rows": total_rows}
-
-        except Exception as exc:
-            update_backfill_progress(session, progress, status="failed", error_message=str(exc))
-            logger.error("Backfill failed for %s/%s/%s: %s", market, symbol, interval, exc)
-            raise self.retry(exc=exc)
-
-    finally:
-        session.close()
+    logger.warning(
+        "backfill_symbol is deprecated (Phase 38 D-10); use BackfillJob via plan 38-03 substrate"
+    )
+    return {
+        "symbol": symbol,
+        "market": market,
+        "interval": interval,
+        "status": "deprecated",
+    }
+    # Legacy body removed Phase 38 D-10; see plan 38-03 for BackfillJob replacement.
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.trigger_backfill")
