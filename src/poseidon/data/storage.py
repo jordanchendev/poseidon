@@ -7,7 +7,6 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from poseidon.models.backfill import BackfillJob  # noqa: F401
 from poseidon.models.fundamentals import Fundamentals
 from poseidon.models.ohlcv import OHLCV
 from poseidon.models.sentiment import Sentiment
@@ -143,21 +142,3 @@ def read_sentiment(
     return query.order_by(Sentiment.created_at.desc()).limit(limit).all()
 
 
-def get_or_create_backfill_progress(*args, **kwargs):
-    """DEPRECATED (Phase 38 D-10).
-
-    The legacy ``backfill_progress`` table has been replaced by ``backfill_jobs``.
-    Callers (legacy ``backfill_symbol`` task + ``/backfill/status`` endpoint) will
-    be rewritten in plan 38-03. Until then this helper is a no-op that raises so
-    any stray invocation fails loudly instead of silently corrupting state.
-    """
-    raise NotImplementedError(
-        "get_or_create_backfill_progress removed in Phase 38 — use BackfillJob (plan 38-03)"
-    )
-
-
-def update_backfill_progress(*args, **kwargs):
-    """DEPRECATED (Phase 38 D-10) — see get_or_create_backfill_progress."""
-    raise NotImplementedError(
-        "update_backfill_progress removed in Phase 38 — use BackfillJob (plan 38-03)"
-    )

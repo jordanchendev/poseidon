@@ -49,24 +49,6 @@ def _get_redis_client() -> redis_lib.Redis:
     return redis_lib.from_url(settings.redis_url, decode_responses=False)
 
 
-# Backfill target: 10 years of historical data
-BACKFILL_YEARS = 10
-
-# Batch sizes for backfill pagination (per provider)
-BATCH_DAYS = {
-    "tw_stock": 365,       # FinMind: 1 year per request
-    "tw_futures": 365,     # FinMind: 1 year per request
-    "us_stock": 1825,      # yfinance: all 5 years in one call
-    "crypto_spot": 41,     # CCXT 1h: ~41 days per 1000 candles
-}
-BATCH_DAYS_DAILY = {
-    "crypto_spot": 900,    # CCXT 1d: ~2.7 years per 1000 candles
-}
-BATCH_DAYS_5M = {
-    "crypto_spot": 3,      # CCXT 5m: ~3.47 days per 1000 candles
-}
-
-
 @celery_app.task(name="poseidon.workers.cpu_tasks.fetch_market_data")
 def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> dict:
     """Fetch latest data for all symbols (or a specific symbol) in a market.
@@ -356,76 +338,9 @@ def _fetch_market_data_cursor(market: str, interval: str, symbols, market_cfg) -
     }
 
 
-@celery_app.task(
-    name="poseidon.workers.cpu_tasks.backfill_symbol",
-    bind=True,
-    max_retries=3,
-    default_retry_delay=60,
-)
-def backfill_symbol(self, symbol: str, market: str, interval: str) -> dict:
-    """DEPRECATED in Phase 38 — replaced by BackfillJob substrate (plan 38-03).
-
-    The legacy ``backfill_progress`` checkpoint table was dropped in migration 020.
-    Calling this task now returns a ``deprecated`` status so any stray trigger
-    (manual API POST, etc.) no-ops instead of crashing. The full idempotent
-    chunk task built on BackfillJob ships in plan 38-03.
-    """
-    logger.warning(
-        "backfill_symbol is deprecated (Phase 38 D-10); use BackfillJob via plan 38-03 substrate"
-    )
-    return {
-        "symbol": symbol,
-        "market": market,
-        "interval": interval,
-        "status": "deprecated",
-    }
-    # Legacy body removed Phase 38 D-10; see plan 38-03 for BackfillJob replacement.
-
-
-@celery_app.task(name="poseidon.workers.cpu_tasks.trigger_backfill")
-def trigger_backfill(market: str | None = None, symbol: str | None = None) -> dict:
-    """Trigger backfill for all symbols (or a specific market/symbol).
-
-    Dispatches individual backfill_symbol tasks for each symbol/interval combo.
-    If a specific symbol is requested but not in config, it is still backfilled
-    with the default interval ("1d").
-
-    Args:
-        market: Optional market to limit backfill to.
-        symbol: Optional symbol ID to limit backfill to.
-    """
-    config = load_symbols()
-    dispatched = 0
-
-    markets_to_process = [market] if market else list(config.markets.keys())
-
-    for m in markets_to_process:
-        market_cfg = config.markets.get(m)
-        if not market_cfg:
-            # Market not in config but symbol explicitly requested — backfill with default interval
-            if symbol and market:
-                backfill_symbol.delay(symbol, m, "1d")
-                dispatched += 1
-                logger.info("Dispatched backfill for %s/%s/1d (not in config)", m, symbol)
-            continue
-        configured_ids = {sym.id for sym in market_cfg.symbols}
-        for sym in market_cfg.symbols:
-            if symbol and sym.id != symbol:
-                continue
-            for interval in market_cfg.intervals:
-                backfill_symbol.delay(sym.id, m, interval)
-                dispatched += 1
-                logger.info("Dispatched backfill for %s/%s/%s", m, sym.id, interval)
-
-        # Symbol requested but not in this market's config — backfill anyway
-        if symbol and symbol not in configured_ids:
-            for interval in market_cfg.intervals:
-                backfill_symbol.delay(symbol, m, interval)
-                dispatched += 1
-                logger.info("Dispatched backfill for %s/%s/%s (not in config)", m, symbol, interval)
-
-    logger.info("Dispatched %d backfill tasks", dispatched)
-    return {"dispatched": dispatched}
+# Phase 38 D-10: legacy backfill_symbol + trigger_backfill tasks deleted.
+# BackfillJob substrate lives in poseidon.workers.backfill_tasks.backfill_chunk;
+# Phase 39 will ship the REST dispatcher that enqueues on the 'backfill' queue.
 
 
 @celery_app.task(

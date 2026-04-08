@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel as PydanticBase
 from sqlalchemy.orm import Session
 
@@ -14,9 +14,9 @@ from poseidon.core.schemas import (
     FetchRequest,
     MessageResponse,
 )
-from poseidon.models.backfill import BackfillJob  # noqa: F401
+from poseidon.models.backfill import BackfillJob
 from poseidon.models.base import get_db
-from poseidon.workers.cpu_tasks import fetch_market_data, trigger_backfill
+from poseidon.workers.cpu_tasks import fetch_market_data
 
 router = APIRouter()
 
@@ -74,14 +74,19 @@ async def trigger_fetch(request: FetchRequest):
 async def trigger_backfill_endpoint(request: BackfillRequest):
     """Trigger historical data backfill.
 
-    If market is specified, backfills only that market.
-    If both market and symbol are None, backfills all configured symbols.
+    Phase 38 only lays the BackfillJob substrate. Phase 39 owns the real REST
+    dispatcher that enqueues ``backfill_chunk`` on the 'backfill' queue — see
+    38-CONTEXT.md D-13. Returning 501 keeps OpenAPI clients aware the endpoint
+    exists without silently accepting writes we cannot service.
     """
-    task = trigger_backfill.delay(request.market, request.symbol)
-    market_label = request.market or "all markets"
-    if request.symbol:
-        market_label += f" (symbol={request.symbol})"
-    return MessageResponse(message=f"Backfill task dispatched for {market_label}", task_id=task.id)
+    del request  # placeholder until Phase 39 wires BackfillJob creation.
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "POST /api/v1/data/backfill is implemented in Phase 39. "
+            "Phase 38 only lays the substrate."
+        ),
+    )
 
 
 @router.get("/backfill/status", response_model=list[BackfillStatusResponse])
@@ -89,14 +94,24 @@ async def get_backfill_status(
     market: str | None = None,
     db: Session = Depends(get_db),
 ):
-    """Get backfill job status for all symbols or a specific market.
+    """Return all BackfillJob rows, optionally filtered by market.
 
-    Phase 38 D-10: backfill_progress replaced by backfill_jobs. Response model
-    fields not yet wired up — returns empty list until plan 38-03 rewires
-    the endpoint to the new BackfillJob schema.
+    Phase 38 D-10: queries the new ``backfill_jobs`` table. v6.0 dashboard
+    depends on this endpoint shape — must not 5xx while Phase 38 is shadow
+    deploying.
     """
-    del market, db  # noqa: F841 — will be used after 38-03 rewrite
-    return []
+    query = db.query(BackfillJob)
+    if market:
+        query = query.filter(BackfillJob.market == market)
+    rows = (
+        query.order_by(
+            BackfillJob.market,
+            BackfillJob.symbol,
+            BackfillJob.created_at.desc(),
+        )
+        .all()
+    )
+    return rows
 
 
 # --- GET /ohlcv: OHLCV candlestick data (API-01) ---

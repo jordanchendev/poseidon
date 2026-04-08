@@ -44,13 +44,17 @@ class BackfillRequest(BaseModel):
 
 
 class BackfillStatusResponse(BaseModel):
-    """Response body for backfill status."""
-    symbol: str
+    """Response body for backfill status (Phase 38 D-10: BackfillJob shape)."""
+    job_id: UUID
     market: str
+    symbol: str
     interval: str
     status: str
-    last_fetched_date: datetime | None
-    error_message: str | None
+    cursor: dict | None = None
+    progress: dict | None = None
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
 
