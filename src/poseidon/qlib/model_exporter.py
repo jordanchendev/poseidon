@@ -2,11 +2,12 @@
 
 Bridges the gap between Qlib's research workflow and Poseidon's model versioning
 system. A trained Qlib model is pickled to the artifact directory and registered
-as a ModelVersion with status='trained'.
+as a ModelVersion with status='ready' (matching the existing ML lifecycle).
 
-Promotion to 'active' for live deployment is NOT done here (per D-14).
+Promotion to 'shadow' or 'active' for live deployment is NOT done here (per D-14).
 The researcher must manually call ModelManager.transition(version_id, "active")
-after evaluation.
+after evaluation. See `poseidon.ml.lifecycle.VALID_TRANSITIONS` for the full state
+machine: training -> ready -> shadow -> active -> retired.
 """
 
 from __future__ import annotations
@@ -142,8 +143,10 @@ class QlibModelExporter:
 
         artifacts.save_metadata(model_name, mv.version, metadata)
 
-        # 3. Transition to 'trained' status
-        mv = self._manager.transition(mv.id, "trained", metrics=metrics)
+        # 3. Transition to 'ready' status (training -> ready is a valid transition
+        #    per poseidon.ml.lifecycle.VALID_TRANSITIONS). "trained" is not a real
+        #    state in the poseidon lifecycle — the state machine uses 'ready'.
+        mv = self._manager.transition(mv.id, "ready", metrics=metrics)
 
         logger.info(
             "Exported Qlib model: %s v%d (id=%s)",

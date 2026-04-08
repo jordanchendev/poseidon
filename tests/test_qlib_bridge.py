@@ -552,11 +552,12 @@ class TestQlibModelExporter:
         assert meta_dict["model_class"] == "LGBModel"
         assert meta_dict["source"] == "qlib_bridge"
 
-        # Version should be transitioned to 'trained'
+        # Version should be transitioned to 'ready' (the real lifecycle state —
+        # 'trained' is not a valid state in poseidon.ml.lifecycle.VALID_TRANSITIONS)
         mock_mgr.transition.assert_called_once()
         transition_args = mock_mgr.transition.call_args
         assert transition_args.args[0] == fake_version.id
-        assert transition_args.args[1] == "trained"
+        assert transition_args.args[1] == "ready"
 
         assert result is fake_version
 
