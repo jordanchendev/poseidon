@@ -101,19 +101,91 @@ class PoseidonDataHandler:
         """
         return self._raw_data
 
+    def to_qlib_handler(self):
+        """Wrap the raw DataFrame in a Qlib DataHandlerLP for native DatasetH usage.
+
+        Builds a `DataHandlerLP(data_loader=StaticDataLoader(config=df))` after
+        promoting the flat $-prefixed columns to the MultiIndex column layout
+        Qlib expects: ``[("feature", "$open"), ("feature", "$high"), ...]``.
+
+        Verified end-to-end against pyqlib 0.9.7 (D-03 confirmation, 2026-04-07):
+        Poseidon DataFrame -> StaticDataLoader -> DataHandlerLP -> DatasetH
+        produces correct train/valid/test splits with no data leakage.
+
+        Note: Requires `pyqlib` to be installed AND `qlib.init()` to have been
+        called by the researcher first. In production containers (Python 3.13)
+        pyqlib is unavailable — see Dockerfile.qlib (Python 3.12) for the
+        research environment.
+
+        Returns:
+            qlib.data.dataset.handler.DataHandlerLP: Ready to feed into DatasetH.
+
+        Raises:
+            ImportError: If pyqlib is not installed. Includes a helpful hint.
+            ValueError: If the underlying DataFrame is empty.
+        """
+        if self._raw_data.empty:
+            raise ValueError(
+                "Cannot build a Qlib handler from an empty DataFrame. "
+                "Verify that DatasetBuilder returned data for the requested "
+                "symbols/date range."
+            )
+
+        try:
+            from qlib.data.dataset.handler import DataHandlerLP
+            from qlib.data.dataset.loader import StaticDataLoader
+        except ImportError as exc:
+            raise ImportError(
+                "pyqlib is not installed. Qlib bridge requires Python 3.12 + "
+                "pyqlib. Install via `uv sync --extra qlib` (Python 3.12) or "
+                "use the Dockerfile.qlib research image. Per design D-19, "
+                "pyqlib is intentionally excluded from production containers."
+            ) from exc
+
+        # Promote flat columns to ("feature", col) MultiIndex per Qlib convention
+        df_qlib = self._raw_data.copy()
+        df_qlib.columns = pd.MultiIndex.from_tuples(
+            [("feature", col) for col in df_qlib.columns]
+        )
+
+        # Resolve instruments and time bounds from the data itself
+        instruments = sorted(
+            df_qlib.index.get_level_values("instrument").unique().tolist()
+        )
+        dt_index = df_qlib.index.get_level_values("datetime")
+        start_time = pd.Timestamp(dt_index.min()).isoformat()
+        end_time = pd.Timestamp(dt_index.max()).isoformat()
+
+        loader = StaticDataLoader(config=df_qlib)
+        handler = DataHandlerLP(
+            instruments=instruments,
+            start_time=start_time,
+            end_time=end_time,
+            data_loader=loader,
+        )
+
+        logger.info(
+            "Built Qlib DataHandlerLP: %d instruments, %s to %s, %d rows",
+            len(instruments),
+            start_time,
+            end_time,
+            len(df_qlib),
+        )
+        return handler
+
     def setup_dataset(
         self,
         segments: dict[str, tuple[str, str]],
     ) -> dict[str, pd.DataFrame]:
         """Split data into train/valid/test segments with processor transformations.
 
-        This is the preferred approach that works without qlib.init(). Each segment
-        is a date-bounded slice of the raw data with processors applied.
+        This is a **standalone splitting helper** that works without qlib.init()
+        or pyqlib. Each segment is a date-bounded slice of the raw data with
+        processors applied — useful for non-Qlib research workflows or for
+        previewing what segments will look like before invoking Qlib.
 
-        Note on Qlib DatasetH integration (per D-03 blocker in STATE.md):
-            StaticDataLoader API needs verification against the installed qlib version.
-            If the researcher needs full Qlib DatasetH integration, they should call
-            qlib.init() themselves and use the raw data from get_data() directly.
+        For native Qlib DatasetH integration, use `to_qlib_handler()` instead
+        and pass the result to `DatasetH(handler=..., segments=...)`.
 
         Args:
             segments: Dict mapping segment names to (start_date, end_date) tuples.

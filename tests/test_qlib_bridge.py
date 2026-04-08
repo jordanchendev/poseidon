@@ -336,6 +336,143 @@ class TestPoseidonDataHandler:
         assert "future" in result
         assert result["future"].empty
 
+    def test_to_qlib_handler_empty_data_raises(self):
+        empty_df = pd.DataFrame(
+            index=pd.MultiIndex.from_tuples([], names=["datetime", "instrument"]),
+            columns=["$open", "$high", "$low", "$close", "$volume"],
+            dtype=float,
+        )
+        handler = PoseidonDataHandler(_StubBuilder(empty_df))
+        with pytest.raises(ValueError, match="empty DataFrame"):
+            handler.to_qlib_handler()
+
+    def test_to_qlib_handler_missing_qlib_raises_helpful_error(self):
+        df = _multi_index_frame()
+        handler = PoseidonDataHandler(_StubBuilder(df))
+
+        # Force the qlib imports to fail by patching __import__
+        import builtins as _builtins
+        real_import = _builtins.__import__
+
+        def _fake_import(name, *args, **kwargs):
+            if name.startswith("qlib"):
+                raise ImportError(f"simulated missing module: {name}")
+            return real_import(name, *args, **kwargs)
+
+        with patch.object(_builtins, "__import__", side_effect=_fake_import):
+            with pytest.raises(ImportError, match="pyqlib is not installed"):
+                handler.to_qlib_handler()
+
+    def test_to_qlib_handler_builds_handler_with_multiindex_columns(self):
+        df = _multi_index_frame(symbols=("BTC", "ETH"), rows=5)
+        handler = PoseidonDataHandler(_StubBuilder(df))
+
+        # Capture what gets passed into StaticDataLoader / DataHandlerLP
+        captured: dict = {}
+
+        class _FakeStaticDataLoader:
+            def __init__(self, config):
+                captured["loader_config"] = config
+
+        class _FakeDataHandlerLP:
+            def __init__(self, instruments, start_time, end_time, data_loader):
+                captured["instruments"] = instruments
+                captured["start_time"] = start_time
+                captured["end_time"] = end_time
+                captured["data_loader"] = data_loader
+
+        # Stub out the qlib modules at import time
+        import sys
+        import types
+
+        fake_qlib = types.ModuleType("qlib")
+        fake_data = types.ModuleType("qlib.data")
+        fake_dataset = types.ModuleType("qlib.data.dataset")
+        fake_handler_mod = types.ModuleType("qlib.data.dataset.handler")
+        fake_loader_mod = types.ModuleType("qlib.data.dataset.loader")
+        fake_handler_mod.DataHandlerLP = _FakeDataHandlerLP
+        fake_loader_mod.StaticDataLoader = _FakeStaticDataLoader
+
+        modules_to_inject = {
+            "qlib": fake_qlib,
+            "qlib.data": fake_data,
+            "qlib.data.dataset": fake_dataset,
+            "qlib.data.dataset.handler": fake_handler_mod,
+            "qlib.data.dataset.loader": fake_loader_mod,
+        }
+        original = {k: sys.modules.get(k) for k in modules_to_inject}
+        sys.modules.update(modules_to_inject)
+        try:
+            result = handler.to_qlib_handler()
+        finally:
+            for k, v in original.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v
+
+        # Verify result is the fake DataHandlerLP instance
+        assert isinstance(result, _FakeDataHandlerLP)
+
+        # Verify MultiIndex columns were applied to the loader's input
+        loader_df = captured["loader_config"]
+        assert isinstance(loader_df.columns, pd.MultiIndex)
+        top_levels = {col[0] for col in loader_df.columns}
+        assert top_levels == {"feature"}
+        bottom_levels = sorted(col[1] for col in loader_df.columns)
+        assert bottom_levels == [
+            "$close",
+            "$high",
+            "$low",
+            "$open",
+            "$volume",
+        ]
+
+        # Verify instruments + time range derived from data
+        assert captured["instruments"] == ["BTC", "ETH"]
+        assert captured["start_time"] is not None
+        assert captured["end_time"] is not None
+
+    def test_to_qlib_handler_does_not_mutate_get_data(self):
+        df = _multi_index_frame()
+        handler = PoseidonDataHandler(_StubBuilder(df))
+
+        # Stub qlib so to_qlib_handler() doesn't ImportError
+        import sys
+        import types
+
+        class _Stub:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        fake_handler_mod = types.ModuleType("qlib.data.dataset.handler")
+        fake_loader_mod = types.ModuleType("qlib.data.dataset.loader")
+        fake_handler_mod.DataHandlerLP = _Stub
+        fake_loader_mod.StaticDataLoader = _Stub
+
+        modules_to_inject = {
+            "qlib": types.ModuleType("qlib"),
+            "qlib.data": types.ModuleType("qlib.data"),
+            "qlib.data.dataset": types.ModuleType("qlib.data.dataset"),
+            "qlib.data.dataset.handler": fake_handler_mod,
+            "qlib.data.dataset.loader": fake_loader_mod,
+        }
+        original = {k: sys.modules.get(k) for k in modules_to_inject}
+        sys.modules.update(modules_to_inject)
+        try:
+            handler.to_qlib_handler()
+        finally:
+            for k, v in original.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v
+
+        # Original get_data() output should still have flat columns, not MultiIndex
+        result = handler.get_data()
+        assert not isinstance(result.columns, pd.MultiIndex)
+        assert list(result.columns) == ["$open", "$high", "$low", "$close", "$volume"]
+
 
 # ---------------------------------------------------------------------------
 # QlibModelExporter
