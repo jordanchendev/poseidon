@@ -1,11 +1,8 @@
 """End-to-end Qlib training demo using Poseidon TimescaleDB data.
 
-Flow:
-  1. DatasetBuilder pulls BTC+ETH crypto_perp 4h bars from TimescaleDB
-  2. PoseidonDataHandler wraps to Qlib DataHandlerLP (feature/label multi-index)
-  3. DatasetH splits train/valid/test
-  4. LGBModel fits, predicts on test
-  5. QlibModelExporter registers a ModelVersion in Poseidon's registry
+Pulls BTC+ETH perp 4h bars via DatasetBuilder, builds a Qlib DataHandlerLP
+with feature+label columns, trains LGBModel via DatasetH, exports to
+Poseidon's ModelVersion registry via QlibModelExporter.
 """
 from __future__ import annotations
 
@@ -16,11 +13,11 @@ import pandas as pd
 import qlib
 from qlib.constant import REG_CN
 from qlib.data.dataset import DatasetH
-from qlib.data.dataset.processor import DropnaProcessor
+from qlib.data.dataset.handler import DataHandlerLP
+from qlib.data.dataset.loader import StaticDataLoader
 from qlib.contrib.model.gbdt import LGBModel
 
 from poseidon.qlib.dataset_builder import DatasetBuilder
-from poseidon.qlib.data_handler import PoseidonDataHandler
 from poseidon.qlib.model_exporter import QlibModelExporter
 from poseidon.models.base import SessionLocal
 
@@ -39,22 +36,38 @@ def main() -> None:
     with SessionLocal() as db:
         builder = DatasetBuilder(session=db, market="crypto_perp", interval="4h")
         df = builder.build(symbols=symbols, start=start, end=end)
-    log.info("DatasetBuilder produced %d rows, columns=%s", len(df), list(df.columns))
+    log.info("DatasetBuilder: %d rows, cols=%s", len(df), list(df.columns))
     if df.empty:
         raise SystemExit("no data returned")
 
-    flat = df.reset_index()
-    handler = PoseidonDataHandler(
-        df=flat,
-        instruments=symbols,
-        label_col="$close",
-        label_horizon=1,
-    )
-    qlib_handler = handler.to_qlib_handler(processors=[DropnaProcessor()])
-    log.info("wrapped in qlib DataHandlerLP")
+    # Build LABEL = next-period log return of $close, per instrument
+    df = df.sort_index()
+    close = df["$close"].unstack("instrument")
+    label = (close.shift(-1) / close - 1.0).stack().rename("LABEL0")
+    label.index = label.index.set_names(["datetime", "instrument"])
 
-    # Time-based split: 70/15/15
-    dates = sorted(df.index.get_level_values("datetime").unique())
+    # Assemble feature+label DataFrame with MultiIndex columns Qlib expects
+    feat_cols = pd.MultiIndex.from_tuples([("feature", c) for c in df.columns])
+    features = df.copy()
+    features.columns = feat_cols
+    labels = label.to_frame()
+    labels.columns = pd.MultiIndex.from_tuples([("label", "LABEL0")])
+    combined = features.join(labels, how="inner").dropna()
+    log.info("combined feature+label: %d rows", len(combined))
+
+    instruments = sorted(combined.index.get_level_values("instrument").unique().tolist())
+    dt_index = combined.index.get_level_values("datetime")
+    start_iso = pd.Timestamp(dt_index.min()).isoformat()
+    end_iso = pd.Timestamp(dt_index.max()).isoformat()
+
+    handler = DataHandlerLP(
+        instruments=instruments,
+        start_time=start_iso,
+        end_time=end_iso,
+        data_loader=StaticDataLoader(config=combined),
+    )
+
+    dates = sorted(combined.index.get_level_values("datetime").unique())
     n = len(dates)
     t1 = dates[int(n * 0.70)]
     t2 = dates[int(n * 0.85)]
@@ -65,22 +78,18 @@ def main() -> None:
     }
     log.info("segments: %s", {k: (str(v[0]), str(v[1])) for k, v in segments.items()})
 
-    dataset = DatasetH(handler=qlib_handler, segments=segments)
+    dataset = DatasetH(handler=handler, segments=segments)
 
-    model = LGBModel(
-        loss="mse",
-        num_leaves=31,
-        learning_rate=0.05,
-        num_boost_round=50,
-        early_stopping_rounds=10,
-    )
+    model_params = {"loss": "mse", "num_leaves": 31, "learning_rate": 0.05,
+                    "num_boost_round": 50, "early_stopping_rounds": 10}
+    model = LGBModel(**model_params)
     log.info("fitting LGBModel...")
     model.fit(dataset)
     log.info("fit complete")
 
     preds = model.predict(dataset, segment="test")
     log.info("test predictions: %d rows", len(preds))
-    log.info("prediction head:\n%s", preds.head().to_string())
+    log.info("head:\n%s", preds.head().to_string())
 
     with SessionLocal() as db:
         exporter = QlibModelExporter(session=db)
@@ -88,8 +97,7 @@ def main() -> None:
             model=model,
             model_name="qlib_lgb_crypto_perp_4h_demo",
             model_class="LGBModel",
-            model_params={"loss": "mse", "num_leaves": 31, "learning_rate": 0.05,
-                          "num_boost_round": 50, "early_stopping_rounds": 10},
+            model_params=model_params,
             feature_list=["$open", "$high", "$low", "$close", "$volume", "$vwap"],
             train_start=segments["train"][0],
             train_end=segments["train"][1],
