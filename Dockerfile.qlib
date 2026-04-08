@@ -1,0 +1,57 @@
+# Research-only Python 3.12 image with pyqlib installed.
+#
+# Why a separate image:
+# - pyqlib 0.9.7 only ships cp312 wheels (no cp313 support).
+# - Production containers (api, cpu-worker, gpu-worker, beat) run on Python 3.13
+#   per the main Dockerfile, so pyqlib cannot be installed alongside them.
+# - Per design D-19 (Phase 37), Qlib is an optional research dependency and
+#   intentionally excluded from production containers.
+#
+# Usage:
+#   docker compose --profile research build qlib-research
+#   docker compose --profile research run --rm qlib-research \
+#     python -c "import qlib; print(qlib.__version__)"
+#
+# Or interactively for notebook-style research:
+#   docker compose --profile research run --rm qlib-research bash
+#
+# This image shares the same TimescaleDB connection as production containers,
+# so DatasetBuilder reads from the live data layer with no duplication.
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# System dependencies — same as main Dockerfile (TA-Lib, postgres, build tools)
+# pyqlib needs gcc + g++ to build cython extensions on first install.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libc6-dev libpq-dev wget make && \
+    wget -q https://github.com/ta-lib/ta-lib/releases/download/v0.6.4/ta-lib-0.6.4-src.tar.gz && \
+    tar xzf ta-lib-0.6.4-src.tar.gz && \
+    cd ta-lib-0.6.4 && ./configure --prefix=/usr && make -j$(nproc) && make install && \
+    cd .. && rm -rf ta-lib-0.6.4 ta-lib-0.6.4-src.tar.gz && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Install poseidon + qlib extra. Use --no-dev because research env doesn't
+# need pytest etc., and skip --frozen because we're on a different Python
+# version than uv.lock was generated against (lock targets cp313).
+COPY pyproject.toml uv.lock ./
+RUN uv sync --extra qlib --no-dev --no-install-project
+
+COPY src/ src/
+RUN uv sync --extra qlib --no-dev --no-editable
+COPY config/ config/
+COPY alembic/ alembic/
+COPY alembic.ini .
+
+# Verify the install — fail the build if either component is broken.
+RUN /app/.venv/bin/python -c "import qlib; print(f'qlib {qlib.__version__} OK')" && \
+    /app/.venv/bin/python -c "from poseidon.qlib import check_qlib_available; assert check_qlib_available(), 'qlib bridge reports unavailable inside research image'; print('poseidon.qlib bridge OK')"
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Default to a python REPL so `docker compose run --rm qlib-research` drops
+# the researcher into an interactive session ready to import qlib + poseidon.
+CMD ["python"]

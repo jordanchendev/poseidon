@@ -77,5 +77,34 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  qlib-research:
+    # Python 3.12 research environment with pyqlib installed.
+    # Production containers run cp313 which is incompatible with pyqlib's
+    # cp312-only wheels — see Dockerfile.qlib for full rationale.
+    #
+    # Hidden behind the "research" profile so it does NOT start with
+    # `docker compose up`. To use:
+    #   docker compose --profile research build qlib-research
+    #   docker compose --profile research run --rm qlib-research bash
+    profiles: ["research"]
+    build:
+      context: .
+      dockerfile: Dockerfile.qlib
+    environment:
+      - TZ=Asia/Taipei
+      - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
+      - POSEIDON_REDIS_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_FINMIND_TOKEN=${POSEIDON_FINMIND_TOKEN}
+      - POSEIDON_FINLAB_API_TOKEN=${POSEIDON_FINLAB_API_TOKEN}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - model-artifacts:/data/models
+      # Mount source for live edits during research sessions
+      - ./src:/app/src
+      - ./tests:/app/tests
+    # Default command from Dockerfile.qlib drops into Python REPL.
+    # Override at runtime for scripts: `run --rm qlib-research python script.py`
+
 volumes:
   model-artifacts:
