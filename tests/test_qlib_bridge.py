@@ -164,7 +164,7 @@ class TestDatasetBuilder:
             result = b.build(symbols=["BTCUSDT"], start=None, end=None)
 
         assert result.empty
-        assert list(result.columns) == ["$open", "$high", "$low", "$close", "$volume"]
+        assert list(result.columns) == ["$open", "$high", "$low", "$close", "$volume", "$vwap"]
         assert result.index.names == ["datetime", "instrument"]
 
     def test_build_with_single_symbol_produces_multi_index(self):
@@ -176,7 +176,12 @@ class TestDatasetBuilder:
 
         assert not result.empty
         assert result.index.names == ["datetime", "instrument"]
-        assert list(result.columns) == ["$open", "$high", "$low", "$close", "$volume"]
+        # $vwap is computed as HLC/3 so Alpha158/360 expressions that reference
+        # $vwap resolve cleanly against our DataFrame (no .bin data source needed)
+        assert list(result.columns) == ["$open", "$high", "$low", "$close", "$volume", "$vwap"]
+        # VWAP must match HLC/3 formula exactly
+        expected_vwap = (result["$high"] + result["$low"] + result["$close"]) / 3.0
+        pd.testing.assert_series_equal(result["$vwap"], expected_vwap, check_names=False)
         instruments = result.index.get_level_values("instrument").unique()
         assert list(instruments) == ["BTCUSDT"]
         assert len(result) == 4

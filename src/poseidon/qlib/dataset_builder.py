@@ -18,8 +18,11 @@ from poseidon.universe.snapshot import get_snapshot_at
 
 logger = logging.getLogger(__name__)
 
-# Qlib-compatible column names for empty DataFrame construction
-_QLIB_COLUMNS = ["$open", "$high", "$low", "$close", "$volume"]
+# Qlib-compatible column names for empty DataFrame construction.
+# $vwap is computed downstream as a typical-price proxy so Alpha158/360
+# expressions that reference $vwap (e.g. CLOSE59 = Ref($close, 59)/$close,
+# VWAP59 = Ref($vwap, 59)/$close) can resolve without a separate data source.
+_QLIB_COLUMNS = ["$open", "$high", "$low", "$close", "$volume", "$vwap"]
 
 
 class DatasetBuilder:
@@ -116,6 +119,14 @@ class DatasetBuilder:
 
         # Adapt columns from Poseidon convention to Qlib convention
         result = adapt_columns(combined)
+
+        # Add $vwap as typical-price proxy (HLC/3). Real tick-level VWAP
+        # isn't in our OHLCV schema, but Alpha158/360 expressions that
+        # reference $vwap (e.g. VWAP0, VWAP59) need _some_ series. The
+        # HLC/3 convention is Qlib's own fallback when .bin data lacks VWAP.
+        result["$vwap"] = (
+            result["$high"] + result["$low"] + result["$close"]
+        ) / 3.0
 
         # Sort for deterministic output
         result = result.sort_index()
