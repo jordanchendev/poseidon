@@ -196,3 +196,128 @@ def test_cursor_advances_after_upsert(db_session, monkeypatch, backfill_job):
         "cursor.next_ts must NOT advance when upsert raises (D-08)"
     )
     assert job.cursor["completed_chunks"] == 0
+
+
+# --- Branch-coverage targeted tests ---------------------------------------
+
+
+def test_parse_ts_helpers():
+    assert backfill_tasks._parse_ts(None) is None
+    # Naive iso string gets stamped UTC.
+    parsed = backfill_tasks._parse_ts("2025-01-01T00:00:00")
+    assert parsed is not None
+    assert parsed.tzinfo is not None
+
+
+def test_noop_on_terminal_status(db_session, backfill_job):
+    """Jobs already succeeded/cancelled short-circuit without touching
+    fetcher, upsert, or cursor."""
+    backfill_job.status = "succeeded"
+    db_session.commit()
+    result = backfill_tasks._run_backfill_chunk(db_session, str(backfill_job.job_id))
+    assert result == {
+        "job_id": str(backfill_job.job_id),
+        "status": "succeeded",
+        "noop": True,
+    }
+
+
+def test_missing_cursor_raises(db_session, backfill_job):
+    """A BackfillJob with no start cursor must raise ValueError (loud
+    failure; worker wrapper marks the job failed)."""
+    backfill_job.cursor = {}  # no start_ts / next_ts
+    db_session.commit()
+    with pytest.raises(ValueError, match="no start cursor"):
+        backfill_tasks._run_backfill_chunk(db_session, str(backfill_job.job_id))
+
+
+def test_load_symbols_failure_falls_back_to_spot(db_session, monkeypatch, backfill_job):
+    """If load_symbols raises (e.g. symbols.yaml missing for a symbol
+    Phase 39 created on the fly), the loop must fall back to instrument
+    ``spot`` rather than crashing the job."""
+    def _boom():
+        raise RuntimeError("no symbols.yaml in this env")
+    monkeypatch.setattr(backfill_tasks, "load_symbols", _boom)
+    # Still need fetcher + validator + frames.
+    frames = _build_chunks_for_job(backfill_job)
+    fetcher = _StubFetcher(frames)
+    monkeypatch.setattr(backfill_tasks, "get_fetcher", lambda market: fetcher)
+    monkeypatch.setattr(backfill_tasks, "validate_ohlcv", lambda df, market: _ValidationOK())
+    monkeypatch.setattr(backfill_tasks, "MAX_CHUNKS_PER_CALL", 50)
+
+    result = backfill_tasks._run_backfill_chunk(db_session, str(backfill_job.job_id))
+    assert result["status"] == "succeeded"
+
+
+def test_critical_validation_marks_failed(db_session, monkeypatch, backfill_job):
+    """Critical validation failure must mark the job failed and return
+    without touching upsert/cursor."""
+    frames = _build_chunks_for_job(backfill_job)
+    fetcher = _StubFetcher(frames)
+    monkeypatch.setattr(backfill_tasks, "get_fetcher", lambda market: fetcher)
+
+    class _Critical:
+        has_critical = True
+        warning_count = 0
+        checks = []
+    monkeypatch.setattr(backfill_tasks, "validate_ohlcv", lambda df, market: _Critical())
+
+    class _Cfg:
+        instrument = "spot"
+    monkeypatch.setattr(backfill_tasks, "load_symbols", lambda: object())
+    monkeypatch.setattr(backfill_tasks, "get_market_config", lambda m, c: _Cfg())
+
+    # Upsert MUST NOT be called on critical validation.
+    def _should_not_be_called(*args, **kwargs):
+        raise AssertionError("upsert_ohlcv called despite critical validation")
+    monkeypatch.setattr(backfill_tasks, "upsert_ohlcv", _should_not_be_called)
+
+    result = backfill_tasks._run_backfill_chunk(db_session, str(backfill_job.job_id))
+    assert result["status"] == "failed"
+
+    db_session.rollback()
+    job = db_session.query(BackfillJob).filter_by(job_id=backfill_job.job_id).one()
+    assert job.status == "failed"
+    assert "critical" in (job.error or "")
+
+
+def test_backfill_chunk_wrapper_marks_failed_and_retries(monkeypatch, backfill_job):
+    """The Celery task wrapper must rollback, persist ``status=failed`` +
+    error, and invoke ``self.retry``. Simulate by calling ``run`` directly
+    on a fake task instance."""
+    # Patch SessionLocal to produce a real session so the wrapper touches DB.
+    from poseidon.models.base import SessionLocal as RealSessionLocal  # noqa: F401
+
+    import os
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    real_dsn = (
+        os.environ.get("POSEIDON_REAL_DATABASE_URL")
+        or "postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon"
+    )
+    engine = create_engine(real_dsn, future=True)
+    LiveSession = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+
+    monkeypatch.setattr(backfill_tasks, "SessionLocal", LiveSession)
+
+    # Force _run_backfill_chunk to raise.
+    def _boom(session, job_id):
+        raise RuntimeError("boom-from-wrapper-test")
+    monkeypatch.setattr(backfill_tasks, "_run_backfill_chunk", _boom)
+
+    class _FakeTask:
+        def retry(self, exc):
+            raise exc  # simulate Celery raising Retry — we just want the path hit
+
+    with pytest.raises(RuntimeError, match="boom-from-wrapper-test"):
+        backfill_tasks.backfill_chunk.run(_FakeTask(), str(backfill_job.job_id))
+
+    # Verify the job was marked failed.
+    sess = LiveSession()
+    try:
+        job = sess.query(BackfillJob).filter_by(job_id=backfill_job.job_id).one()
+        assert job.status == "failed"
+        assert "boom-from-wrapper-test" in (job.error or "")
+    finally:
+        sess.close()
+        engine.dispose()
