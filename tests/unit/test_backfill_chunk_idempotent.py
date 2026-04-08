@@ -305,12 +305,15 @@ def test_backfill_chunk_wrapper_marks_failed_and_retries(monkeypatch, backfill_j
         raise RuntimeError("boom-from-wrapper-test")
     monkeypatch.setattr(backfill_tasks, "_run_backfill_chunk", _boom)
 
-    class _FakeTask:
-        def retry(self, exc):
-            raise exc  # simulate Celery raising Retry — we just want the path hit
+    # Stub retry so it re-raises rather than scheduling a real Celery retry.
+    def _retry(self, exc=None, **kwargs):
+        raise exc
+    monkeypatch.setattr(
+        type(backfill_tasks.backfill_chunk), "retry", _retry, raising=False
+    )
 
     with pytest.raises(RuntimeError, match="boom-from-wrapper-test"):
-        backfill_tasks.backfill_chunk.run(_FakeTask(), str(backfill_job.job_id))
+        backfill_tasks.backfill_chunk.run(str(backfill_job.job_id))
 
     # Verify the job was marked failed.
     sess = LiveSession()
