@@ -130,6 +130,11 @@ services:
       # integration test suite can grep the backfill-worker service block
       # from inside the container.
       - ./docker-compose.yml:/app/docker-compose.yml:ro
+      # Phase 39-03 Task 1: expose alembic/ read-only so migration shape
+      # tests (e.g. data_coverage_mv DDL assertions) can read migration
+      # files from inside the container without requiring a full image
+      # rebuild on every migration change.
+      - ./alembic:/app/alembic:ro
     # Default command from Dockerfile.qlib drops into Python REPL.
     # Override at runtime for scripts: `run --rm qlib-research python script.py`
 
