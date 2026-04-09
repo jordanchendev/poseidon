@@ -218,6 +218,15 @@ celery_app.conf.update(
             "task": "poseidon.workers.cpu_tasks.historical_backfill_dispatcher",
             "schedule": crontab(minute=0),
         },
+        # --- Phase 40 plan 40-02: data_gap_audit daily (COVERAGE-03) ---
+        # Daily at 03:00 UTC, after the 00:15 UTC crypto daily fetch and
+        # well before the 06:00 UTC TW market-close fetch — so the audit
+        # sees the freshest data from both cycles. Routed onto the cpu
+        # queue via the existing poseidon.workers.cpu_tasks.* rule.
+        "data-gap-audit": {
+            "task": "poseidon.workers.cpu_tasks.data_gap_audit",
+            "schedule": crontab(hour=3, minute=0),
+        },
     },
 
     # Auto-discover task modules
