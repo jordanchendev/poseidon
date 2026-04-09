@@ -2794,3 +2794,81 @@ def data_gap_audit() -> dict:
         raise
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase 40 plan 40-03 — ingest_freshness_watchdog (FRESH-01..04)
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.ingest_freshness_watchdog")
+def ingest_freshness_watchdog() -> dict:
+    """Every-15-min watchdog: per-tuple freshness vs SLA + HC.io ping.
+
+    Phase 40 D-10..D-16. The watchdog itself IS the heartbeat -- Beat
+    dying or this task dying both produce silence on the HC.io check,
+    and HC.io fires the dead-man's-switch alert automatically (D-12).
+
+    Returns ``{checked, violations, unknown, hc_pinged}`` for operator
+    visibility in Celery logs. ``hc_pinged`` is one of:
+    - ``"success"`` -- heartbeat sent (all tuples within SLA)
+    - ``"fail"``    -- violation alert sent (one or more tuples stale)
+    - ``"skipped"`` -- HEALTHCHECKS_FRESHNESS_URL is empty (local/dev)
+    """
+    from poseidon.core.config import settings
+    from poseidon.data.freshness import (
+        evaluate_freshness,
+        ping_healthchecks,
+    )
+
+    session = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        records = evaluate_freshness(
+            session, now=now, sla_dict=settings.freshness_sla
+        )
+
+        violations = [r for r in records if r.status == "violation"]
+        unknown = [r for r in records if r.status == "unknown"]
+
+        for r in violations:
+            logger.warning(
+                "freshness_watchdog VIOLATION market=%s interval=%s "
+                "observed=%.0fs sla=%ds last_successful_ts=%s",
+                r.market,
+                r.interval,
+                r.observed_lag_seconds,
+                r.expected_lag_seconds,
+                r.last_successful_ts,
+            )
+
+        url = settings.healthchecks_freshness_url
+        if not url:
+            hc_pinged = "skipped"
+        else:
+            if violations:
+                ping_healthchecks(url, success=False)
+                hc_pinged = "fail"
+            else:
+                ping_healthchecks(url, success=True)
+                hc_pinged = "success"
+
+        logger.info(
+            "ingest_freshness_watchdog: checked=%d violations=%d "
+            "unknown=%d hc_pinged=%s",
+            len(records),
+            len(violations),
+            len(unknown),
+            hc_pinged,
+        )
+        return {
+            "checked": len(records),
+            "violations": len(violations),
+            "unknown": len(unknown),
+            "hc_pinged": hc_pinged,
+        }
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()

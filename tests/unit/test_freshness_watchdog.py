@@ -282,12 +282,13 @@ class TestIngestFreshnessWatchdogTask:
 
     def _seed_ok_rows(self, db):
         """Seed rows that are all within SLA."""
+        real_now = datetime.now(timezone.utc)
         db.add(
             IngestState(
                 symbol="BTCUSDT",
                 market="crypto_perp",
                 interval="4h",
-                last_successful_ts=NOW - timedelta(seconds=3600),
+                last_successful_ts=real_now - timedelta(seconds=3600),
                 first_backfill_done=True,
             )
         )
@@ -295,12 +296,13 @@ class TestIngestFreshnessWatchdogTask:
 
     def _seed_violation_rows(self, db):
         """Seed rows with at least one SLA violation."""
+        real_now = datetime.now(timezone.utc)
         db.add(
             IngestState(
                 symbol="BTCUSDT",
                 market="crypto_perp",
                 interval="4h",
-                last_successful_ts=NOW - timedelta(seconds=20000),
+                last_successful_ts=real_now - timedelta(seconds=20000),
                 first_backfill_done=True,
             )
         )

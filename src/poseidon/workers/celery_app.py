@@ -227,6 +227,16 @@ celery_app.conf.update(
             "task": "poseidon.workers.cpu_tasks.data_gap_audit",
             "schedule": crontab(hour=3, minute=0),
         },
+        # --- Phase 40 plan 40-03: ingest_freshness_watchdog every 15min (FRESH-01..04) ---
+        # The watchdog IS the heartbeat -- Beat dying or watchdog dying
+        # both produce silence on HEALTHCHECKS_FRESHNESS_URL and HC.io
+        # fires the dead-man's-switch alert automatically (D-12).
+        # Routed onto the cpu queue via the existing
+        # poseidon.workers.cpu_tasks.* rule.
+        "ingest-freshness-watchdog": {
+            "task": "poseidon.workers.cpu_tasks.ingest_freshness_watchdog",
+            "schedule": crontab(minute="*/15"),
+        },
     },
 
     # Auto-discover task modules
