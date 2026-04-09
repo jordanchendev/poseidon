@@ -91,6 +91,37 @@ class BackfillJobDetailResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# --- Data Coverage (Phase 39 plan 39-03) ---
+
+
+class DataCoverageResponse(BaseModel):
+    """Per-tuple data coverage response for GET /api/data/coverage (Phase 39).
+
+    Fields follow 39-CONTEXT.md D-10..D-12 and 39-03-PLAN.md Task 2:
+
+    * ``market`` / ``symbol`` / ``interval`` — the tuple key
+    * ``first_ts`` / ``last_ts`` — MIN/MAX(time) from ``data_coverage_mv``
+    * ``row_count`` — observed row count (may be null if MV is empty)
+    * ``expected_count`` — floor((last-first)/interval) + 1
+    * ``gap_count`` — max(0, expected - row_count)
+    * ``completeness_pct`` — row_count / expected_count (0..1)
+    * ``staleness_seconds`` — seconds since ``last_ts``
+    * ``health`` — ``green`` | ``yellow`` | ``red``
+    """
+
+    market: str
+    symbol: str
+    interval: str
+    first_ts: datetime | None = None
+    last_ts: datetime | None = None
+    row_count: int
+    expected_count: int
+    gap_count: int
+    completeness_pct: float
+    staleness_seconds: float
+    health: str
+
+
 # --- Health ---
 
 class HealthResponse(BaseModel):

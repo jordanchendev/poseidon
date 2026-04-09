@@ -7,15 +7,18 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel as PydanticBase
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from poseidon.core.schemas import (
     BackfillJobDetailResponse,
     BackfillRequest,
     BackfillStatusResponse,
+    DataCoverageResponse,
     FetchRequest,
     MessageResponse,
 )
+from poseidon.data import coverage as coverage_helpers
 from poseidon.data.backfill_jobs import (
     cancel_backfill_job,
     create_backfill_job,
@@ -148,6 +151,98 @@ async def cancel_backfill_job_endpoint(
     if job is None:
         raise HTTPException(status_code=404, detail=f"BackfillJob {job_id} not found")
     return BackfillJobDetailResponse.model_validate(job)
+
+
+# --- GET /coverage: per-tuple data coverage (Phase 39 plan 39-03 D-10..D-11) ---
+
+
+@router.get("/coverage", response_model=list[DataCoverageResponse])
+async def get_data_coverage(
+    market: str | None = Query(None, description="Filter by market, e.g. crypto_perp"),
+    symbol: str | None = Query(None, description="Filter by ticker symbol"),
+    interval: str | None = Query(None, description="Filter by candle interval"),
+    db: Session = Depends(get_db),
+) -> list[DataCoverageResponse]:
+    """Return per-(market, symbol, interval) coverage from ``data_coverage_mv``.
+
+    The materialized view is refreshed hourly and immediately after every
+    successful backfill completion (Phase 39 D-12), so this endpoint is a
+    cheap read-only surface operators can hit to answer "what history do
+    we actually have?" without writing SQL.
+
+    ``expected_count``, ``gap_count``, ``completeness_pct``, and ``health``
+    are computed at request time from ``first_ts`` / ``last_ts`` /
+    ``row_count`` / ``staleness_seconds`` via
+    :mod:`poseidon.data.coverage` helpers.
+    """
+    # Build a filtered query against the MV. We use raw SQL because the MV
+    # is not an ORM-mapped model (it has no primary key in SQLAlchemy terms).
+    where_clauses = []
+    params: dict[str, str] = {}
+    if market is not None:
+        where_clauses.append("market = :market")
+        params["market"] = market
+    if symbol is not None:
+        where_clauses.append("symbol = :symbol")
+        params["symbol"] = symbol
+    if interval is not None:
+        where_clauses.append("interval = :interval")
+        params["interval"] = interval
+    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    stmt = text(
+        f"""
+        SELECT
+            market,
+            symbol,
+            interval,
+            first_ts,
+            last_ts,
+            row_count,
+            staleness_seconds
+        FROM data_coverage_mv
+        {where_sql}
+        ORDER BY market, symbol, interval
+        """
+    )
+    rows = db.execute(stmt, params).fetchall()
+
+    response: list[DataCoverageResponse] = []
+    for row in rows:
+        first_ts = row.first_ts
+        last_ts = row.last_ts
+        row_count = int(row.row_count or 0)
+        staleness_seconds = float(row.staleness_seconds or 0.0)
+
+        expected_count = coverage_helpers.compute_expected_count(
+            first_ts, last_ts, row.interval
+        )
+        gap_count = coverage_helpers.compute_gap_count(row_count, expected_count)
+        completeness_pct = (
+            row_count / expected_count if expected_count > 0 else 0.0
+        )
+        health = coverage_helpers.compute_health(
+            completeness_pct=completeness_pct,
+            staleness_seconds=staleness_seconds,
+            interval=row.interval,
+            gap_count=gap_count,
+        )
+        response.append(
+            DataCoverageResponse(
+                market=row.market,
+                symbol=row.symbol,
+                interval=row.interval,
+                first_ts=first_ts,
+                last_ts=last_ts,
+                row_count=row_count,
+                expected_count=expected_count,
+                gap_count=gap_count,
+                completeness_pct=completeness_pct,
+                staleness_seconds=staleness_seconds,
+                health=health,
+            )
+        )
+    return response
 
 
 # --- GET /ohlcv: OHLCV candlestick data (API-01) ---
