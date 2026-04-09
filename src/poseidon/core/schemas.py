@@ -182,3 +182,105 @@ class MessageResponse(BaseModel):
     """Generic message response."""
     message: str
     task_id: str | None = None
+
+
+# --- Training Runs (Phase 41) ---
+
+
+class TrainRequest(BaseModel):
+    """Request body for POST /api/v1/models/train (per D-01, RESEARCH-API-01)."""
+
+    handler_class: str = Field(..., examples=["Alpha158Handler"])
+    handler_params: dict = Field(default_factory=dict, examples=[{}])
+    model_class: str = Field(..., examples=["LGBMModel"])
+    model_params: dict = Field(
+        default_factory=dict, examples=[{"num_leaves": 128}]
+    )
+    market: str = Field(..., examples=["crypto_perp"])
+    symbols: list[str] = Field(..., min_length=1, examples=[["BTCUSDT"]])
+    interval: str = Field(..., examples=["4h"])
+    segments: dict = Field(
+        default_factory=lambda: {
+            "train": ["2023-01-01", "2024-06-30"],
+            "valid": ["2024-07-01", "2024-12-31"],
+            "test": ["2025-01-01", "2025-06-30"],
+        },
+        examples=[
+            {
+                "train": ["2023-01-01", "2024-06-30"],
+                "valid": ["2024-07-01", "2024-12-31"],
+                "test": ["2025-01-01", "2025-06-30"],
+            }
+        ],
+    )
+    lookback: str | None = Field(None, examples=["2y"])
+
+
+class TrainingRunResponse(BaseModel):
+    """Short response for run creation and list items."""
+
+    run_id: UUID
+    handler_class: str
+    model_class: str
+    market: str
+    status: str
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    metrics: dict | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class TrainingRunDetailResponse(BaseModel):
+    """Full detail response for GET /runs/{run_id} (per RESEARCH-API-04)."""
+
+    run_id: UUID
+    handler_class: str
+    handler_params: dict
+    model_class: str
+    model_params: dict
+    market: str
+    symbols: list[str]
+    interval: str
+    segments: dict
+    lookback: str | None = None
+    status: str
+    metrics: dict | None = None
+    model_version_id: UUID | None = None
+    mlflow_run_id: str | None = None
+    error: str | None = None
+    requested_by: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TrainingRunListResponse(BaseModel):
+    """Paginated list response for GET /runs (per D-23)."""
+
+    runs: list[TrainingRunResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class ModelMetricsResponse(BaseModel):
+    """Full metrics response for GET /models/{id} (per RESEARCH-API-08)."""
+
+    id: UUID
+    name: str
+    version: int
+    status: str
+    params: dict
+    metrics: dict | None = None
+    feature_list: list
+    train_start: datetime | None = None
+    train_end: datetime | None = None
+    artifact_path: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
