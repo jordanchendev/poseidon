@@ -1,4 +1,5 @@
 from poseidon.models.backfill import BackfillJob  # noqa: F401
+from poseidon.models.data_gap import DataGap  # noqa: F401
 from poseidon.models.ingest_state import IngestState  # noqa: F401
 from poseidon.models.base import Base, SessionLocal, engine, get_db  # noqa: F401
 from poseidon.models.experiment import ExperimentRecord  # noqa: F401
