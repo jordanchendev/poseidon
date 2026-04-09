@@ -55,6 +55,7 @@ end
 PROVIDER_LIMITS: dict[str, dict] = {
     "finlab": {"window_seconds": 60, "limit_key": "ratelimit_finlab_per_minute"},
     "finmind": {"window_seconds": 3600, "limit_key": "ratelimit_finmind_hourly"},
+    "polygon": {"window_seconds": 60, "limit_key": "ratelimit_polygon_per_minute"},
     "shioaji": {"window_seconds": 60, "limit_key": "ratelimit_shioaji_per_minute"},
     "yfinance": {"window_seconds": 86400, "limit_key": "ratelimit_yfinance_daily"},
     "ccxt": {"window_seconds": 60, "limit_key": "ratelimit_ccxt_per_minute"},

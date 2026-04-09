@@ -5,6 +5,7 @@ import logging
 from poseidon.data.fetchers.base import BaseFetcher
 from poseidon.data.fetchers.ccxt_fetcher import CCXTFetcher
 from poseidon.data.fetchers.finmind import FinMindFetcher
+from poseidon.data.fetchers.polygon_fetcher import PolygonFetcher
 from poseidon.data.fetchers.shioaji_fetcher import ShioajiFetcher
 from poseidon.data.fetchers.yfinance_fetcher import YFinanceFetcher
 from poseidon.core.config import settings
@@ -33,6 +34,8 @@ def _get_default_backend(market: str) -> str | None:
         return settings.tw_stock_data_backend
     if market == "tw_futures":
         return settings.tw_futures_data_backend
+    if market == "us_stock":
+        return settings.us_stock_data_backend
     return None
 
 
@@ -67,6 +70,8 @@ def get_fetcher(market: str, backend: str | None = None) -> BaseFetcher:
     elif resolved_backend == "finlab":
         FinLabCls = _get_finlab_fetcher_class()
         fetcher = FinLabCls(market=market)
+    elif resolved_backend == "polygon":
+        fetcher = PolygonFetcher()
     elif resolved_backend == "shioaji":
         if market != "tw_stock":
             raise ValueError("Shioaji backend currently supports only tw_stock")
@@ -102,6 +107,7 @@ __all__ = [
     "BaseFetcher",
     "CCXTFetcher",
     "FinMindFetcher",
+    "PolygonFetcher",
     "ShioajiFetcher",
     "YFinanceFetcher",
     "get_fetcher",

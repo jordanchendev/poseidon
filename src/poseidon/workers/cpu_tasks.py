@@ -52,6 +52,8 @@ def _get_provider_for_market(market: str) -> str:
         return settings.tw_stock_data_backend
     if market == "tw_futures":
         return settings.tw_futures_data_backend
+    if market == "us_stock":
+        return settings.us_stock_data_backend
     return MARKET_TO_PROVIDER.get(market, "unknown")
 
 

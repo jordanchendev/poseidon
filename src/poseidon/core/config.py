@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     finlab_api_token: str = ""
     tw_stock_data_backend: Literal["finlab", "finmind", "shioaji"] = "finlab"
     tw_futures_data_backend: Literal["finlab", "finmind"] = "finlab"
+    us_stock_data_backend: Literal["yfinance", "finlab", "polygon"] = "yfinance"
+    polygon_api_key: str = ""
     shioaji_data_api_key: str = ""
     shioaji_data_secret_key: str = ""
     shioaji_data_simulation: bool = True
@@ -34,6 +36,7 @@ class Settings(BaseSettings):
     # Rate limit settings (conservative values per provider)
     ratelimit_finmind_hourly: int = 500
     ratelimit_finlab_per_minute: int = 120
+    ratelimit_polygon_per_minute: int = 5
     ratelimit_shioaji_per_minute: int = 60
     ratelimit_yfinance_daily: int = 900
     ratelimit_ccxt_per_minute: int = 1200
