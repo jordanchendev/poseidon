@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     # load dict-of-tuple-keys from env vars cleanly); the watchdog splits the
     # colon at lookup time. Values are the maximum tolerated delta between
     # ``now()`` and ``ingest_state.last_successful_ts`` before the tuple
-    # counts as a violation — HC.io then fires a Telegram alert via the
+    # counts as a violation — Uptime Kuma then fires a Telegram alert via the
     # dead-man's-switch topology (D-12).
     freshness_sla: dict[str, int] = Field(
         default_factory=lambda: {
@@ -107,14 +107,14 @@ class Settings(BaseSettings):
         }
     )
 
-    # Phase 40 D-12..D-14: Healthchecks.io single-check URL covering both
-    # FRESH-03 (violation -> /fail) and FRESH-04 (dead-man's-switch via
-    # silence). Empty string = no-op (local/dev safe; watchdog logs the
+    # Phase 40 D-12..D-14: Uptime Kuma push monitor URL covering both
+    # FRESH-03 (violation -> ?status=down) and FRESH-04 (dead-man's-switch
+    # via silence). Empty string = no-op (local/dev safe; watchdog logs the
     # summary but skips the HTTP call). Ping is fire-and-forget with a
-    # short timeout — HC.io outages must NOT poison the watchdog task.
-    healthchecks_freshness_url: str = Field(
+    # short timeout — monitoring outages must NOT poison the watchdog task.
+    uptime_kuma_push_url: str = Field(
         default="",
-        validation_alias="HEALTHCHECKS_FRESHNESS_URL",
+        validation_alias="UPTIME_KUMA_PUSH_URL",
     )
 
     # Phase 40 D-20: which markets dispatch ``read_ohlcv(interval='1d')``

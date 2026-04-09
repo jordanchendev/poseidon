@@ -5,7 +5,7 @@ Covers the locked Phase 40 decisions in
 
 - Task 1: migration 023 (``data_gaps`` table) + DataGap ORM model
 - Task 2: migration 024 (``ohlcv_1d_cagg`` continuous aggregate) shape
-- Task 3: Settings fields (``freshness_sla``, ``healthchecks_freshness_url``,
+- Task 3: Settings fields (``freshness_sla``, ``uptime_kuma_push_url``,
   ``cagg_1d_markets``) + DataGapResponse / DataFreshnessResponse schemas
 
 The unit suite runs against an in-memory SQLite harness that uses the
@@ -213,23 +213,23 @@ def test_settings_freshness_sla_defaults():
     assert s.freshness_sla["us_stock:1d"] == 108000
 
 
-def test_settings_healthchecks_freshness_url_default_empty():
-    """D-13: healthchecks_freshness_url defaults to empty string (no-op for
-    local/dev) and reads HEALTHCHECKS_FRESHNESS_URL (unprefixed env var)."""
+def test_settings_uptime_kuma_push_url_default_empty():
+    """D-13: uptime_kuma_push_url defaults to empty string (no-op for
+    local/dev) and reads UPTIME_KUMA_PUSH_URL (unprefixed env var)."""
     from poseidon.core.config import Settings
 
     s = Settings()
-    assert s.healthchecks_freshness_url == ""
+    assert s.uptime_kuma_push_url == ""
 
 
-def test_settings_healthchecks_freshness_url_env_override(monkeypatch):
-    """The HEALTHCHECKS_FRESHNESS_URL validation_alias must pick up an
+def test_settings_uptime_kuma_push_url_env_override(monkeypatch):
+    """The UPTIME_KUMA_PUSH_URL validation_alias must pick up an
     unprefixed env var (the watchdog runbook sets exactly this name)."""
     from poseidon.core.config import Settings
 
-    monkeypatch.setenv("HEALTHCHECKS_FRESHNESS_URL", "https://hc-ping.com/fake-uuid")
+    monkeypatch.setenv("UPTIME_KUMA_PUSH_URL", "http://localhost:3001/api/push/fake-token")
     s = Settings()
-    assert s.healthchecks_freshness_url == "https://hc-ping.com/fake-uuid"
+    assert s.uptime_kuma_push_url == "http://localhost:3001/api/push/fake-token"
 
 
 def test_settings_cagg_1d_markets_default():

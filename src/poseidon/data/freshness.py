@@ -1,13 +1,13 @@
 """Freshness watchdog helpers -- Phase 40 D-10..D-16.
 
 Pure helpers separated from the Celery task wrapper so unit tests can
-drive them without booting Celery. The HC.io ping is fire-and-forget
-by design (D-14): a network outage on Healthchecks.io must NEVER
+drive them without booting Celery. The Uptime Kuma ping is fire-and-forget
+by design (D-14): a network outage on the monitoring service must NEVER
 poison the watchdog task itself.
 
 See:
 - .planning/phases/40-data-health-observability/40-CONTEXT.md
-- poseidon/src/poseidon/core/config.py for freshness_sla / healthchecks_freshness_url
+- poseidon/src/poseidon/core/config.py for freshness_sla / uptime_kuma_push_url
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from poseidon.models.ingest_state import IngestState
 
 logger = logging.getLogger(__name__)
 
-HC_PING_TIMEOUT_SECONDS = 3.0
+PING_TIMEOUT_SECONDS = 3.0
 
 
 @dataclass(frozen=True)
@@ -140,32 +140,35 @@ def evaluate_freshness(
     return records
 
 
-def ping_healthchecks(url: str, *, success: bool) -> bool:
-    """Fire-and-forget HC.io ping. Returns True iff a request was sent.
+def ping_monitor(url: str, *, success: bool, message: str = "") -> bool:
+    """Fire-and-forget Uptime Kuma push ping. Returns True iff a request was sent.
 
     Phase 40 D-12..D-14:
     - empty url = local/dev no-op (returns False)
-    - success=True  -> GET ``url``           (heartbeat)
-    - success=False -> GET ``url + "/fail"`` (violation alert)
+    - success=True  -> GET ``url?status=up&msg=OK``
+    - success=False -> GET ``url?status=down&msg=<message>``
     - 3s timeout, all exceptions swallowed and logged
 
-    We deliberately do NOT raise on HC.io errors -- the watchdog must
+    We deliberately do NOT raise on monitoring errors -- the watchdog must
     keep emitting signals even if the alerting layer is temporarily
     unreachable.
     """
     if not url:
         return False
 
-    target = url if success else url.rstrip("/") + "/fail"
+    params = {
+        "status": "up" if success else "down",
+        "msg": message or ("OK" if success else "freshness violation"),
+    }
     try:
         import requests
 
-        requests.get(target, timeout=HC_PING_TIMEOUT_SECONDS)
+        requests.get(url, params=params, timeout=PING_TIMEOUT_SECONDS)
         return True
     except Exception as exc:
         logger.warning(
-            "ping_healthchecks failed for %s: %s",
-            target,
+            "ping_monitor failed for %s: %s",
+            url,
             exc,
         )
         return False

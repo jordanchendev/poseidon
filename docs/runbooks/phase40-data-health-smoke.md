@@ -2,7 +2,7 @@
 
 Operator-facing runbook proving the Phase 40 (`data-health-observability`)
 work ships end-to-end on stormtrooper. Satisfies Phase 40 ROADMAP success
-criteria 1 (gap audit), 2 (HC.io dead-man's-switch), 3 (HC.io violation
+criteria 1 (gap audit), 2 (Uptime Kuma dead-man's-switch), 3 (Uptime Kuma violation
 alert), 4 (CAGG transparency), 5 (Kairos data-health view), and 6 (this
 runbook itself).
 
@@ -56,24 +56,27 @@ Before starting, confirm ALL of the following:
       Expected: both `poseidon.workers.cpu_tasks.data_gap_audit` and
       `poseidon.workers.cpu_tasks.ingest_freshness_watchdog` listed.
 
-- [ ] Healthchecks.io check exists. Create one if not:
-      1. Open https://healthchecks.io/ and create a new check named
-         `poseidon-freshness-watchdog`.
-      2. Set period = 15 minutes.
-      3. Set grace period = 30 minutes.
-      4. Add a Telegram integration to the check.
-      5. Copy the ping URL (`https://hc-ping.com/<uuid>`).
+- [ ] Uptime Kuma running on stormtrooper. Deploy if not:
+      ```bash
+      docker run -d --restart=always -p 3001:3001 \
+        -v uptime-kuma:/app/data --name uptime-kuma louislam/uptime-kuma:1
+      ```
+      1. Open http://stormtrooper:3001 and complete initial setup (create admin account).
+      2. Add Monitor → Type: **Push** → Name: `poseidon-freshness`.
+      3. Set Heartbeat Interval = 900 (15 min), Retries = 1.
+      4. Setup Notifications → Telegram (Bot Token + Chat ID).
+      5. Copy the Push URL from the monitor detail page (format: `http://localhost:3001/api/push/<token>`).
 
-- [ ] `HEALTHCHECKS_FRESHNESS_URL` is set in `~/Projects/poseidon/.env`:
+- [ ] `UPTIME_KUMA_PUSH_URL` is set in `~/Projects/poseidon/.env`:
 
       ```bash
-      grep HEALTHCHECKS_FRESHNESS_URL ~/Projects/poseidon/.env
+      grep UPTIME_KUMA_PUSH_URL ~/Projects/poseidon/.env
       ```
 
       If empty, append:
 
       ```bash
-      echo "HEALTHCHECKS_FRESHNESS_URL=https://hc-ping.com/<uuid>" >> ~/Projects/poseidon/.env
+      echo "UPTIME_KUMA_PUSH_URL=http://localhost:3001/api/push/<token>" >> ~/Projects/poseidon/.env
       docker compose up -d cpu-worker beat
       ```
 
@@ -83,9 +86,9 @@ Before starting, confirm ALL of the following:
       export POSEIDON_API_KEY=$(grep POSEIDON_API_KEY ~/Projects/poseidon/.env | cut -d= -f2)
       ```
 
-## 1. Verify HC.io heartbeat (FRESH-04 dead-man's-switch baseline)
+## 1. Verify Uptime Kuma heartbeat (FRESH-04 dead-man's-switch baseline)
 
-Goal: prove the watchdog is currently pinging HC.io success. If this
+Goal: prove the watchdog is currently pinging Uptime Kuma success. If this
 section fails, sections 2 and 3 are meaningless.
 
 Manually fire the watchdog once:
@@ -100,10 +103,10 @@ print(ingest_freshness_watchdog.apply().result)
 Expected output:
 
 ```
-{'checked': N, 'violations': 0, 'unknown': U, 'hc_pinged': 'success'}
+{'checked': N, 'violations': 0, 'unknown': U, 'monitor_pinged': 'success'}
 ```
 
-Verify on https://healthchecks.io that the `poseidon-freshness-watchdog`
+Verify on https://Uptime Kuma that the `poseidon-freshness`
 check shows a fresh "Up" event within the last minute.
 
 Also confirm the REST endpoint returns the same freshness data (this is
@@ -121,7 +124,7 @@ for all tuples that have an SLA defined. Each row shows `market`,
 
 ## 2. Inject FRESH-03 violation and verify Telegram alert
 
-Goal: verify a stale ingest_state row triggers a /fail ping and HC.io
+Goal: verify a stale ingest_state row triggers a /fail ping and Uptime Kuma
 fires a Telegram alert.
 
 Pick a sacrificial tuple (use crypto_perp BTCUSDT 4h — it will self-heal
@@ -152,14 +155,14 @@ print(ingest_freshness_watchdog.apply().result)
 "
 ```
 
-Expected output (note `violations: 1` and `hc_pinged: 'fail'`):
+Expected output (note `violations: 1` and `monitor_pinged: 'fail'`):
 
 ```
-{'checked': N, 'violations': 1, 'unknown': U, 'hc_pinged': 'fail'}
+{'checked': N, 'violations': 1, 'unknown': U, 'monitor_pinged': 'fail'}
 ```
 
-Verify on https://healthchecks.io that the `poseidon-freshness-watchdog`
-check shows a "Down" event AND that you receive a Telegram alert (HC.io
+Verify on https://Uptime Kuma that the `poseidon-freshness`
+check shows a "Down" event AND that you receive a Telegram alert (Uptime Kuma
 fires the integration on the first /fail ping after a healthy state).
 
 Restore the original timestamp so live ingest is not stuck:
@@ -178,11 +181,11 @@ print('restored')
 "
 ```
 
-Re-fire the watchdog and confirm `violations: 0` + `hc_pinged: 'success'`.
+Re-fire the watchdog and confirm `violations: 0` + `monitor_pinged: 'success'`.
 
 ## 3. Verify FRESH-04 dead-man's-switch by killing Beat
 
-Goal: prove that if Beat dies entirely, HC.io fires a "dead" alert
+Goal: prove that if Beat dies entirely, Uptime Kuma fires a "dead" alert
 automatically WITHOUT any explicit Python error path.
 
 Stop Beat:
@@ -191,9 +194,9 @@ Stop Beat:
 docker compose stop beat
 ```
 
-Wait at least the configured HC.io grace period (35 minutes if you set
-grace=30, to be safe). Verify on https://healthchecks.io that the
-`poseidon-freshness-watchdog` check transitions to "Down" automatically
+Wait at least the configured Uptime Kuma grace period (35 minutes if you set
+grace=30, to be safe). Verify on https://Uptime Kuma that the
+`poseidon-freshness` check transitions to "Down" automatically
 AND that you receive a second Telegram alert ("watchdog dead").
 
 Restart Beat:
@@ -203,7 +206,7 @@ docker compose up -d beat
 ```
 
 The next 15-minute beat tick should resume the heartbeat. Confirm the
-HC.io check transitions back to "Up".
+Uptime Kuma check transitions back to "Up".
 
 ## 4. Inject a known gap and verify GET /api/data/gaps (COVERAGE-04)
 
@@ -370,11 +373,11 @@ Confirm visually:
 
 Phase 40 is shippable iff ALL of the following are true:
 
-- [ ] Section 1: HC.io heartbeat baseline is `success`
+- [ ] Section 1: Uptime Kuma heartbeat baseline is `success`
 - [ ] Section 2: Forced stale ts produced a `/fail` ping AND a Telegram
       alert was received
 - [ ] Section 3: Killing Beat for >grace_period produced an automatic
-      HC.io "Down" event AND a Telegram alert (no Python error path)
+      Uptime Kuma "Down" event AND a Telegram alert (no Python error path)
 - [ ] Section 4: Manual `data_gap_audit.apply()` after a DELETE produced
       at least one new `data_gaps` row visible via `/api/data/gaps`
 - [ ] Section 4: Restoring the deleted bars and re-firing the audit set
@@ -388,7 +391,7 @@ Phase 40 is shippable iff ALL of the following are true:
 
 - Restore any deleted ohlcv rows (Section 4 should already have done
   this, but double-check via `/api/data/coverage`).
-- Confirm the freshness watchdog is back to `hc_pinged: 'success'`.
+- Confirm the freshness watchdog is back to `monitor_pinged: 'success'`.
 - Confirm `docker compose ps` shows all five services `Up`.
 - Update STATE.md with the smoke run date so the next operator knows
   when this was last validated.

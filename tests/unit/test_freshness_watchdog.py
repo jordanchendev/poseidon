@@ -4,11 +4,11 @@ Task 1 tests: pure helper functions in poseidon.data.freshness
   - compute_freshness_status (ok / violation / unknown)
   - lookup_sla (hit + miss)
   - evaluate_freshness (aggregate, SLA filter, worst-tuple collapse)
-  - ping_healthchecks (no-op on empty URL, success path, fail path, swallow exceptions)
+  - ping_monitor (no-op on empty URL, success path, fail path, swallow exceptions)
 
 Task 2 tests: ingest_freshness_watchdog Celery task + beat schedule
   - Task return dict shape
-  - HC.io ping on all-ok / any-violation / empty URL
+  - Uptime Kuma ping on all-ok / any-violation / empty URL
   - Exception swallow
   - Beat schedule entry
 
@@ -199,62 +199,64 @@ class TestEvaluateFreshness:
         assert r.expected_lag_seconds == 18000
 
 
-class TestPingHealthchecks:
-    """Tests 6-9: fire-and-forget HC.io ping."""
+class TestPingMonitor:
+    """Tests 6-9: fire-and-forget Uptime Kuma ping."""
 
     def test_noop_on_empty_url(self):
-        from poseidon.data.freshness import ping_healthchecks
+        from poseidon.data.freshness import ping_monitor
 
-        assert ping_healthchecks("", success=True) is False
+        assert ping_monitor("", success=True) is False
 
     def test_success_ping(self, monkeypatch):
         from poseidon.data import freshness as freshness_mod
 
         calls = []
 
-        def fake_get(url, timeout=None):
-            calls.append((url, timeout))
+        def fake_get(url, params=None, timeout=None):
+            calls.append((url, params, timeout))
 
         monkeypatch.setattr("requests.get", fake_get)
-        # Force re-import inside the function
         import importlib
 
         importlib.reload(freshness_mod)
 
-        result = freshness_mod.ping_healthchecks(
-            "http://hc.io/abc", success=True
+        result = freshness_mod.ping_monitor(
+            "http://kuma.local/api/push/tok", success=True
         )
         assert result is True
         assert len(calls) == 1
-        assert calls[0][0] == "http://hc.io/abc"
-        assert calls[0][1] == 3.0
+        assert calls[0][0] == "http://kuma.local/api/push/tok"
+        assert calls[0][1]["status"] == "up"
+        assert calls[0][2] == 3.0
 
     def test_fail_ping(self, monkeypatch):
         from poseidon.data import freshness as freshness_mod
 
         calls = []
 
-        def fake_get(url, timeout=None):
-            calls.append((url, timeout))
+        def fake_get(url, params=None, timeout=None):
+            calls.append((url, params, timeout))
 
         monkeypatch.setattr("requests.get", fake_get)
         import importlib
 
         importlib.reload(freshness_mod)
 
-        result = freshness_mod.ping_healthchecks(
-            "http://hc.io/abc", success=False
+        result = freshness_mod.ping_monitor(
+            "http://kuma.local/api/push/tok", success=False, message="stale"
         )
         assert result is True
         assert len(calls) == 1
-        assert calls[0][0] == "http://hc.io/abc/fail"
-        assert calls[0][1] == 3.0
+        assert calls[0][0] == "http://kuma.local/api/push/tok"
+        assert calls[0][1]["status"] == "down"
+        assert calls[0][1]["msg"] == "stale"
+        assert calls[0][2] == 3.0
 
     def test_swallows_exceptions(self, monkeypatch, caplog):
         import requests as requests_mod
         from poseidon.data import freshness as freshness_mod
 
-        def fake_get(url, timeout=None):
+        def fake_get(url, params=None, timeout=None):
             raise requests_mod.ConnectionError("network down")
 
         monkeypatch.setattr("requests.get", fake_get)
@@ -263,12 +265,12 @@ class TestPingHealthchecks:
         importlib.reload(freshness_mod)
 
         with caplog.at_level(logging.WARNING):
-            result = freshness_mod.ping_healthchecks(
-                "http://hc.io/abc", success=True
+            result = freshness_mod.ping_monitor(
+                "http://kuma.local/api/push/tok", success=True
             )
         assert result is False
         assert any(
-            "ping_healthchecks failed" in r.message for r in caplog.records
+            "ping_monitor failed" in r.message for r in caplog.records
         )
 
 
@@ -329,7 +331,7 @@ class TestIngestFreshnessWatchdogTask:
             TEST_SLA,
         )
         monkeypatch.setattr(
-            "poseidon.core.config.settings.healthchecks_freshness_url",
+            "poseidon.core.config.settings.uptime_kuma_push_url",
             "http://hc.io/test-uuid",
         )
 
@@ -339,7 +341,7 @@ class TestIngestFreshnessWatchdogTask:
 
         assert result["checked"] >= 1
         assert result["violations"] == 0
-        assert result["hc_pinged"] == "success"
+        assert result["monitor_pinged"] == "success"
         assert len(calls) == 1
         assert calls[0][0] == "http://hc.io/test-uuid"
 
@@ -362,7 +364,7 @@ class TestIngestFreshnessWatchdogTask:
             TEST_SLA,
         )
         monkeypatch.setattr(
-            "poseidon.core.config.settings.healthchecks_freshness_url",
+            "poseidon.core.config.settings.uptime_kuma_push_url",
             "http://hc.io/test-uuid",
         )
 
@@ -371,12 +373,12 @@ class TestIngestFreshnessWatchdogTask:
         result = ingest_freshness_watchdog()
 
         assert result["violations"] >= 1
-        assert result["hc_pinged"] == "fail"
+        assert result["monitor_pinged"] == "fail"
         assert len(calls) == 1
         assert calls[0][0] == "http://hc.io/test-uuid/fail"
 
     def test_empty_url_skips_ping(self, monkeypatch, db):
-        """With empty HEALTHCHECKS_FRESHNESS_URL, no HTTP call is made."""
+        """With empty UPTIME_KUMA_PUSH_URL, no HTTP call is made."""
         self._seed_ok_rows(db)
 
         calls = []
@@ -394,7 +396,7 @@ class TestIngestFreshnessWatchdogTask:
             TEST_SLA,
         )
         monkeypatch.setattr(
-            "poseidon.core.config.settings.healthchecks_freshness_url",
+            "poseidon.core.config.settings.uptime_kuma_push_url",
             "",
         )
 
@@ -402,11 +404,11 @@ class TestIngestFreshnessWatchdogTask:
 
         result = ingest_freshness_watchdog()
 
-        assert result["hc_pinged"] == "skipped"
+        assert result["monitor_pinged"] == "skipped"
         assert len(calls) == 0  # no HTTP call
 
     def test_hcio_exception_does_not_raise(self, monkeypatch, db):
-        """HC.io exception is swallowed — task still returns its summary."""
+        """Uptime Kuma exception is swallowed — task still returns its summary."""
         self._seed_ok_rows(db)
 
         import requests as requests_mod
@@ -424,7 +426,7 @@ class TestIngestFreshnessWatchdogTask:
             TEST_SLA,
         )
         monkeypatch.setattr(
-            "poseidon.core.config.settings.healthchecks_freshness_url",
+            "poseidon.core.config.settings.uptime_kuma_push_url",
             "http://hc.io/test-uuid",
         )
 
@@ -433,9 +435,9 @@ class TestIngestFreshnessWatchdogTask:
         # Must NOT raise — task returns summary dict
         result = ingest_freshness_watchdog()
         assert "checked" in result
-        assert "hc_pinged" in result
+        assert "monitor_pinged" in result
         # The ping returned False but the task still reported success intent
-        assert result["hc_pinged"] == "success"
+        assert result["monitor_pinged"] == "success"
 
 
 class TestBeatScheduleEntry:
