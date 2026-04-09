@@ -125,7 +125,9 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
                 continue
 
             # 2. Acquire rate limit (wait up to 30s)
-            if not rate_limiter.wait_and_acquire(provider, window, limit, timeout=30):
+            if not rate_limiter.wait_and_acquire(
+                provider, window, limit, timeout=30, budget_class="live_ingest"
+            ):
                 logger.warning("Rate limit timeout for %s, skipping %s", provider, sym_info.id)
                 continue
 
@@ -258,7 +260,7 @@ def _fetch_market_data_cursor(market: str, interval: str, symbols, market_cfg) -
                     )
                     break
                 if not rate_limiter.wait_and_acquire(
-                    provider, window, limit, timeout=30
+                    provider, window, limit, timeout=30, budget_class="live_ingest"
                 ):
                     logger.warning(
                         "Rate limit timeout for %s, skipping %s", provider, sym_info.id

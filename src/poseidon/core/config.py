@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     ratelimit_yfinance_daily: int = 900
     ratelimit_ccxt_per_minute: int = 1200
 
+    # Phase 39 D-16/D-17: bulk backfill budgets, isolated from live ingest so a
+    # one-shot historical job cannot starve the periodic ingest path's quota.
+    ratelimit_finmind_backfill_hourly: int = 100
+    ratelimit_yfinance_backfill_daily: int = 200
+    ratelimit_ccxt_backfill_per_minute: int = 300
+
     # Circuit breaker settings
     circuit_failure_threshold: int = 5
     circuit_open_timeout: int = 60

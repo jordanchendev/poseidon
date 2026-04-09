@@ -74,10 +74,24 @@ class DistributedRateLimiter:
         self._script = self._redis.register_script(SLIDING_WINDOW_LUA)
         self._counter = 0  # monotonic counter for unique member values
 
-    def _make_key(self, provider: str, window_seconds: int) -> str:
-        return f"poseidon:ratelimit:{provider}:{window_seconds}"
+    def _make_key(
+        self,
+        provider: str,
+        window_seconds: int,
+        budget_class: str = "live_ingest",
+    ) -> str:
+        # Phase 39 D-16/D-17: budget_class isolates bulk backfill traffic from
+        # live ingest so a one-shot historical job cannot starve the periodic
+        # ingest path's quota.
+        return f"poseidon:ratelimit:{provider}:{budget_class}:{window_seconds}"
 
-    def acquire(self, provider: str, window_seconds: int, limit: int) -> bool:
+    def acquire(
+        self,
+        provider: str,
+        window_seconds: int,
+        limit: int,
+        budget_class: str = "live_ingest",
+    ) -> bool:
         """Try to acquire a rate limit slot.
 
         Returns True if the request is allowed, False if rate limited.
@@ -88,7 +102,7 @@ class DistributedRateLimiter:
         self._counter += 1
         member = f"{now}:{self._counter}"
 
-        key = self._make_key(provider, window_seconds)
+        key = self._make_key(provider, window_seconds, budget_class=budget_class)
         result = self._script(
             keys=[key],
             args=[str(window_start), str(now), str(limit), str(ttl), member],
@@ -102,6 +116,7 @@ class DistributedRateLimiter:
         limit: int,
         timeout: float = 60.0,
         poll_interval: float = 1.0,
+        budget_class: str = "live_ingest",
     ) -> bool:
         """Block until a rate limit slot is available or timeout.
 
@@ -109,7 +124,7 @@ class DistributedRateLimiter:
         """
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if self.acquire(provider, window_seconds, limit):
+            if self.acquire(provider, window_seconds, limit, budget_class=budget_class):
                 return True
             remaining = deadline - time.time()
             if remaining <= 0:
@@ -117,11 +132,16 @@ class DistributedRateLimiter:
             time.sleep(min(poll_interval, remaining))
         return False
 
-    def get_usage(self, provider: str, window_seconds: int) -> int:
+    def get_usage(
+        self,
+        provider: str,
+        window_seconds: int,
+        budget_class: str = "live_ingest",
+    ) -> int:
         """Get current number of requests in the sliding window."""
         now = time.time()
         window_start = now - window_seconds
-        key = self._make_key(provider, window_seconds)
+        key = self._make_key(provider, window_seconds, budget_class=budget_class)
         # Clean expired entries and count
         self._redis.zremrangebyscore(key, "-inf", str(window_start))
         count = self._redis.zcard(key)
