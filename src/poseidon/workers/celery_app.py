@@ -200,6 +200,14 @@ celery_app.conf.update(
             "schedule": crontab(hour="*/4", minute=0),
             "args": ["crypto_perp"],
         },
+        # --- Phase 39 plan 39-03: data_coverage_mv hourly refresh (D-12) ---
+        # Immediate-after-success refresh is triggered from backfill_chunk's
+        # succeeded path; this beat tick is the "background safety net" so
+        # the MV stays within at most one hour of the underlying ohlcv table.
+        "refresh-data-coverage-mv": {
+            "task": "poseidon.workers.backfill_tasks.coverage_view_refresh",
+            "schedule": crontab(minute=0),
+        },
     },
 
     # Auto-discover task modules

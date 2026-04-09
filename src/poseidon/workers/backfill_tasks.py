@@ -44,6 +44,7 @@ from uuid import UUID
 import redis as redis_lib
 
 from poseidon.core.config import settings
+from poseidon.data import coverage as coverage_helpers
 from poseidon.data.fetchers import get_fetcher
 from poseidon.data.rate_limiter import (
     PROVIDER_LIMITS,
@@ -399,6 +400,23 @@ def _run_backfill_chunk(session, job_id: str) -> dict:
     job.status = "succeeded"
     job.finished_at = datetime.now(timezone.utc)
     session.commit()
+
+    # Phase 39 plan 39-03 Task 3 / D-12: immediately refresh the coverage
+    # materialized view once a manual backfill completes so operators see
+    # fresh coverage rows on the dashboard/API without waiting for the
+    # hourly beat tick. Delegated to the dedicated ``backfill`` queue via
+    # ``coverage_view_refresh.delay()`` to avoid blocking the current
+    # worker slot on the REFRESH.
+    try:
+        coverage_view_refresh.delay()
+    except Exception:  # noqa: BLE001
+        # Never fail a successful job because the refresh enqueue hiccuped;
+        # the hourly beat task will still pick the view back up.
+        logger.exception(
+            "backfill_chunk: failed to enqueue coverage_view_refresh for job %s",
+            job_id,
+        )
+
     return {
         "job_id": job_id,
         "status": "succeeded",
@@ -475,6 +493,36 @@ def backfill_chunk(self, job_id: str) -> dict:
             job.finished_at = datetime.now(timezone.utc)
             session.commit()
         logger.exception("backfill_chunk failed for job_id=%s", job_id)
+        raise self.retry(exc=exc)
+    finally:
+        session.close()
+
+
+@celery_app.task(
+    name="poseidon.workers.backfill_tasks.coverage_view_refresh",
+    queue="backfill",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
+def coverage_view_refresh(self) -> dict:
+    """Refresh the ``data_coverage_mv`` materialized view (Phase 39 D-12).
+
+    Scheduled hourly on celery beat and also triggered via
+    ``coverage_view_refresh.delay()`` from the success path of
+    :func:`backfill_chunk` so operators see fresh coverage immediately
+    after a manual backfill completes.
+
+    Runs on the dedicated ``backfill`` queue so it never contends with
+    live-ingest or model-training workers.
+    """
+    session = SessionLocal()
+    try:
+        coverage_helpers.refresh_data_coverage_mv(session)
+        return {"status": "refreshed"}
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.exception("coverage_view_refresh failed: %s", exc)
         raise self.retry(exc=exc)
     finally:
         session.close()
