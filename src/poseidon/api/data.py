@@ -15,6 +15,7 @@ from poseidon.core.schemas import (
     BackfillRequest,
     BackfillStatusResponse,
     DataCoverageResponse,
+    DataGapResponse,
     FetchRequest,
     MessageResponse,
 )
@@ -254,6 +255,49 @@ async def get_data_coverage(
             )
         )
     return response
+
+
+# --- GET /gaps: per-window data gaps (Phase 40 plan 40-02 D-01..D-02) ---
+
+
+@router.get("/gaps", response_model=list[DataGapResponse])
+async def get_data_gaps(
+    market: str | None = Query(None, description="Filter by market, e.g. crypto_perp"),
+    symbol: str | None = Query(None, description="Filter by ticker symbol"),
+    interval: str | None = Query(None, description="Filter by candle interval"),
+    open_only: bool = Query(
+        True,
+        description="When true (default), only return rows where healed_at IS NULL",
+    ),
+    db: Session = Depends(get_db),
+) -> list[DataGapResponse]:
+    """Return detected gap windows from ``data_gaps`` (Phase 40 D-04..D-07).
+
+    Populated daily by the ``data_gap_audit`` Celery task. Each row is
+    a contiguous missing time window per ``(market, symbol, interval)``
+    identified via a ``LAG(time)`` window function with a 1.5x tolerance
+    threshold. ``healed_at`` is non-null when a later audit confirmed
+    the window is fully populated.
+
+    Default ``open_only=true`` matches the operator triage flow: most
+    callers want "what is currently broken?", not the historical
+    record. Pass ``open_only=false`` for full history.
+    """
+    from poseidon.models.data_gap import DataGap
+
+    query = db.query(DataGap)
+    if market is not None:
+        query = query.filter(DataGap.market == market)
+    if symbol is not None:
+        query = query.filter(DataGap.symbol == symbol)
+    if interval is not None:
+        query = query.filter(DataGap.interval == interval)
+    if open_only:
+        query = query.filter(DataGap.healed_at.is_(None))
+    rows = query.order_by(
+        DataGap.market, DataGap.symbol, DataGap.interval, DataGap.gap_start
+    ).all()
+    return [DataGapResponse.model_validate(row) for row in rows]
 
 
 # --- GET /ohlcv: OHLCV candlestick data (API-01) ---
