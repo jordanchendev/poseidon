@@ -53,6 +53,15 @@ def _setup_db():
     """Create ORM tables + SQLite stand-ins for ohlcv and data_coverage_mv."""
     Base.metadata.create_all(bind=_engine)
     with _engine.begin() as conn:
+        # Unique index for INSERT OR IGNORE idempotency (mirrors migration 023)
+        conn.execute(
+            text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS ix_data_gaps_tuple_start
+                ON data_gaps (market, symbol, interval, gap_start)
+                """
+            )
+        )
         # Stand-in for ohlcv (simplified — only columns the gap detection needs)
         conn.execute(
             text(
@@ -301,7 +310,26 @@ def test_heal_resolved_gaps_sets_healed_at(db_session):
 
 def test_data_gap_audit_celery_task_registered():
     """data_gap_audit must be registered as poseidon.workers.cpu_tasks.data_gap_audit."""
+    from poseidon.workers.cpu_tasks import data_gap_audit  # noqa: F401
+
+    assert hasattr(data_gap_audit, "name")
+    assert data_gap_audit.name == "poseidon.workers.cpu_tasks.data_gap_audit"
+
+
+# ---------------------------------------------------------------------------
+# Task 3: beat schedule registration test
+# ---------------------------------------------------------------------------
+
+
+def test_data_gap_audit_registered_on_beat_schedule():
+    """data-gap-audit beat entry exists with daily 03:00 UTC crontab."""
+    from celery.schedules import crontab
+
     from poseidon.workers.celery_app import celery_app
 
-    task_names = list(celery_app.tasks.keys())
-    assert "poseidon.workers.cpu_tasks.data_gap_audit" in task_names
+    entry = celery_app.conf.beat_schedule.get("data-gap-audit")
+    assert entry is not None, "data-gap-audit beat entry missing"
+    assert entry["task"] == "poseidon.workers.cpu_tasks.data_gap_audit"
+    # crontab equality check: hour=3 minute=0 means 03:00 UTC
+    expected = crontab(hour=3, minute=0)
+    assert str(entry["schedule"]) == str(expected)

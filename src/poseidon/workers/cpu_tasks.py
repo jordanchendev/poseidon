@@ -14,6 +14,7 @@ from poseidon.backtest.repository import BacktestRepository
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.backtest.schemas import BacktestConfig
 from poseidon.core.config import settings
+from sqlalchemy import text as sa_text
 from poseidon.data.feature_engine import FeatureEngine
 from poseidon.data.fetchers import get_fetcher
 from poseidon.data.cache import CacheManager
@@ -2724,6 +2725,70 @@ def historical_backfill_dispatcher() -> dict:
             "skipped_first_backfill_done": len(skipped_done),
             "skipped_duplicate": len(skipped_duplicate),
         }
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase 40 plan 40-02 — data_gap_audit (COVERAGE-03 / COVERAGE-04)
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.data_gap_audit")
+def data_gap_audit() -> dict:
+    """Daily audit: scan data_coverage_mv tuples for missing bars.
+
+    Phase 40 D-04..D-09. For every (market, symbol, interval) tuple
+    present in data_coverage_mv (which auto-tracks the active universe
+    via Phase 39 substrate), runs detect_gaps_for_tuple, idempotently
+    UPSERTS the result into data_gaps, and finally heals any previously
+    recorded gap whose window is now fully populated.
+
+    Runs on the cpu queue via the existing
+    ``poseidon.workers.cpu_tasks.*`` task_routes rule. Daily at 03:00
+    UTC via Celery Beat (D-08).
+    """
+    from poseidon.data.gaps import (
+        detect_gaps_for_tuple,
+        heal_resolved_gaps,
+        upsert_gaps,
+    )
+
+    session = SessionLocal()
+    inserted = 0
+    scanned = 0
+    try:
+        tuple_rows = session.execute(
+            sa_text(
+                """
+                SELECT market, symbol, interval
+                FROM data_coverage_mv
+                ORDER BY market, symbol, interval
+                """
+            )
+        ).fetchall()
+
+        for row in tuple_rows:
+            scanned += 1
+            gaps = detect_gaps_for_tuple(
+                session,
+                market=row.market,
+                symbol=row.symbol,
+                interval=row.interval,
+            )
+            inserted += upsert_gaps(session, gaps)
+
+        healed = heal_resolved_gaps(session)
+        logger.info(
+            "data_gap_audit: scanned=%d inserted=%d healed=%d",
+            scanned,
+            inserted,
+            healed,
+        )
+        return {"scanned": scanned, "inserted": inserted, "healed": healed}
     except Exception:
         session.rollback()
         raise
