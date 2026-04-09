@@ -122,6 +122,53 @@ class DataCoverageResponse(BaseModel):
     health: str
 
 
+# --- Phase 40: Data Gaps + Freshness (plan 40-01 D-02..D-04, D-11, D-16) ---
+
+
+class DataGapResponse(BaseModel):
+    """Per-gap response for GET /api/data/gaps (Phase 40 D-02, D-04).
+
+    One row per detected gap window. ``healed_at`` is non-null when a later
+    audit run has confirmed the window is now fully populated (D-07). The
+    default dashboard query (``?open_only=true``) returns only rows where
+    ``healed_at IS NULL``.
+    """
+
+    gap_id: UUID
+    market: str
+    symbol: str
+    interval: str
+    gap_start: datetime
+    gap_end: datetime
+    missing_bars: int
+    detected_at: datetime
+    healed_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class DataFreshnessResponse(BaseModel):
+    """Per-(market, interval) freshness snapshot (Phase 40 D-03, D-11, D-16).
+
+    Returned by the freshness helper the Kairos ``/data-health`` view polls.
+    Computed live from ``ingest_state.last_successful_ts`` + the per-tuple
+    SLA in ``settings.freshness_sla`` — there is no snapshot table
+    (D-16: stateless watchdog).
+
+    * ``expected_lag_seconds`` — SLA pulled from ``settings.freshness_sla``
+    * ``observed_lag_seconds`` — ``now() - last_successful_ts`` at read time
+    * ``status`` — ``"ok"`` | ``"violation"`` | ``"unknown"`` (``unknown``
+      when ``last_successful_ts`` is NULL, i.e. first-time bootstrap)
+    """
+
+    market: str
+    interval: str
+    last_successful_ts: datetime | None = None
+    expected_lag_seconds: int
+    observed_lag_seconds: float
+    status: str
+
+
 # --- Health ---
 
 class HealthResponse(BaseModel):
