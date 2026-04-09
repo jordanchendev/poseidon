@@ -208,6 +208,16 @@ celery_app.conf.update(
             "task": "poseidon.workers.backfill_tasks.coverage_view_refresh",
             "schedule": crontab(minute=0),
         },
+        # --- Phase 39 plan 39-04: historical backfill dispatcher (BACKFILL-05) ---
+        # Hourly tick that scans symbols.yaml for tuples without ingest
+        # history and creates BackfillJob rows via the durable Phase 39
+        # contract. The dispatcher runs on the cpu queue (NOT backfill)
+        # because it only writes rows; the dedicated backfill-worker then
+        # consumes the durable jobs from queue 'backfill'.
+        "historical-backfill-dispatcher": {
+            "task": "poseidon.workers.cpu_tasks.historical_backfill_dispatcher",
+            "schedule": crontab(minute=0),
+        },
     },
 
     # Auto-discover task modules
