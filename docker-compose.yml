@@ -77,6 +77,29 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  backfill-worker:
+    # Phase 39-02 Task 3: dedicated consumer for the 'backfill' queue so a
+    # one-shot historical job never starves live ingest on cpu-worker.
+    # Smoke check after deploy:
+    #   docker compose exec api celery -A poseidon.workers.celery_app \
+    #       inspect active_queues
+    build: .
+    command: celery -A poseidon.workers.celery_app worker -Q backfill -c 1 --loglevel=info
+    environment:
+      - TZ=Asia/Taipei
+      - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
+      - POSEIDON_REDIS_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_FINMIND_TOKEN=${POSEIDON_FINMIND_TOKEN}
+      - POSEIDON_FINLAB_API_TOKEN=${POSEIDON_FINLAB_API_TOKEN}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - model-artifacts:/data/models
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
   qlib-research:
     # Python 3.12 research environment with pyqlib installed.
     # Production containers run cp313 which is incompatible with pyqlib's
@@ -103,6 +126,10 @@ services:
       # Mount source for live edits during research sessions
       - ./src:/app/src
       - ./tests:/app/tests
+      # Phase 39-02 Task 3: expose docker-compose.yml read-only so the
+      # integration test suite can grep the backfill-worker service block
+      # from inside the container.
+      - ./docker-compose.yml:/app/docker-compose.yml:ro
     # Default command from Dockerfile.qlib drops into Python REPL.
     # Override at runtime for scripts: `run --rm qlib-research python script.py`
 
