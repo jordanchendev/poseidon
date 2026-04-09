@@ -15,10 +15,10 @@ _finlab_lock = threading.Lock()
 # Dataset mapping per market
 FINLAB_DATASETS = {
     "tw_stock": {
-        "open": "etl:adj_open",
-        "high": "etl:adj_high",
-        "low": "etl:adj_low",
-        "close": "etl:adj_close",
+        "open": "price:開盤價",
+        "high": "price:最高價",
+        "low": "price:最低價",
+        "close": "price:收盤價",
         "volume": "price:成交股數",
     },
     "tw_futures": {
