@@ -417,16 +417,35 @@ def test_docker_compose_has_dedicated_backfill_worker_service():
 def test_docker_compose_preserves_cpu_worker_service():
     """The cpu-worker must remain unchanged so live ingest keeps working.
     Regression guard against a plan that accidentally rewires cpu-worker
-    onto the backfill queue."""
+    onto the backfill queue.
+
+    Walks the compose file line-by-line to extract just the cpu-worker
+    service block, because simple substring-find of ``\\n  `` would also
+    match any 4-space-indented line inside the block.
+    """
     body = _COMPOSE_PATH.read_text()
     assert "\n  cpu-worker:" in body
-    # cpu-worker must NOT be subscribing to the backfill queue.
-    cpu_block_start = body.index("\n  cpu-worker:")
-    next_service_idx = body.find("\n  ", cpu_block_start + 1)
-    cpu_block = (
-        body[cpu_block_start:next_service_idx] if next_service_idx != -1 else body[cpu_block_start:]
-    )
-    assert "-Q cpu" in cpu_block, "cpu-worker must still subscribe to queue 'cpu'"
+
+    lines = body.splitlines()
+    cpu_block_lines: list[str] = []
+    in_cpu_block = False
+    for line in lines:
+        if line == "  cpu-worker:":
+            in_cpu_block = True
+            cpu_block_lines.append(line)
+            continue
+        if in_cpu_block:
+            # Stop at the next top-level service (line starting with
+            # exactly 2 spaces + non-space) OR a top-level key.
+            if (
+                (line.startswith("  ") and not line.startswith("   ") and line.strip().endswith(":"))
+                or (line and not line.startswith(" "))
+            ):
+                break
+            cpu_block_lines.append(line)
+
+    cpu_block = "\n".join(cpu_block_lines)
+    assert "-Q cpu" in cpu_block, f"cpu-worker must still subscribe to queue 'cpu'; block=\n{cpu_block}"
     assert "-Q backfill" not in cpu_block, (
         "cpu-worker must NOT subscribe to the 'backfill' queue"
     )
