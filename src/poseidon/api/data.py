@@ -207,10 +207,21 @@ async def get_data_coverage(
     )
     rows = db.execute(stmt, params).fetchall()
 
+    def _parse_ts(value):
+        # Postgres returns a datetime; SQLite returns an ISO string. Normalize.
+        if value is None or isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                return None
+        return None
+
     response: list[DataCoverageResponse] = []
     for row in rows:
-        first_ts = row.first_ts
-        last_ts = row.last_ts
+        first_ts = _parse_ts(row.first_ts)
+        last_ts = _parse_ts(row.last_ts)
         row_count = int(row.row_count or 0)
         staleness_seconds = float(row.staleness_seconds or 0.0)
 
