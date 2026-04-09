@@ -12,6 +12,17 @@ class Settings(BaseSettings):
     api_key: str = ""
     finmind_token: str = ""
     finlab_api_token: str = ""
+    tw_stock_data_backend: Literal["finlab", "finmind", "shioaji"] = "finlab"
+    tw_futures_data_backend: Literal["finlab", "finmind"] = "finlab"
+    shioaji_data_api_key: str = ""
+    shioaji_data_secret_key: str = ""
+    shioaji_data_simulation: bool = True
+    shioaji_trade_api_key: str = ""
+    shioaji_trade_secret_key: str = ""
+    shioaji_trade_simulation: bool = True
+    shioaji_ca_cert_path: str = ""
+    shioaji_ca_password: str = ""
+    shioaji_person_id: str = ""
     # Binance credentials — read-only key for data fetching
     binance_api_key: str = ""
     # Binance credentials — trading key pair (added when ready for live trading)
@@ -22,6 +33,8 @@ class Settings(BaseSettings):
 
     # Rate limit settings (conservative values per provider)
     ratelimit_finmind_hourly: int = 500
+    ratelimit_finlab_per_minute: int = 120
+    ratelimit_shioaji_per_minute: int = 60
     ratelimit_yfinance_daily: int = 900
     ratelimit_ccxt_per_minute: int = 1200
 

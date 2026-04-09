@@ -38,12 +38,47 @@ logger = logging.getLogger(__name__)
 
 # Market -> provider mapping for rate limiting and circuit breaker
 MARKET_TO_PROVIDER = {
-    "tw_stock": "finmind",
-    "tw_futures": "finmind",
+    "tw_stock": "finlab",
+    "tw_futures": "finlab",
     "us_stock": "yfinance",
     "crypto_spot": "ccxt",
     "crypto_perp": "ccxt",
 }
+
+
+def _get_provider_for_market(market: str) -> str:
+    """Resolve the provider name used for rate limiting and circuit health."""
+    if market == "tw_stock":
+        return settings.tw_stock_data_backend
+    if market == "tw_futures":
+        return settings.tw_futures_data_backend
+    return MARKET_TO_PROVIDER.get(market, "unknown")
+
+
+def _build_tw_stock_broker(broker_cfg):
+    """Build the existing TW stock execution adapter from broker config."""
+    from poseidon.broker.paper_adapter import PaperBrokerAdapter
+
+    if broker_cfg.mode != "live" or broker_cfg.execution_backend == "paper":
+        broker = PaperBrokerAdapter(SessionLocal)
+        broker.login()
+        return broker
+
+    if broker_cfg.execution_backend != "shioaji":
+        raise ValueError(f"Unsupported TW stock execution backend: {broker_cfg.execution_backend}")
+
+    from poseidon.broker.shioaji_adapter import ShioajiBrokerAdapter
+
+    broker = ShioajiBrokerAdapter(
+        api_key=broker_cfg.shioaji_api_key,
+        secret_key=broker_cfg.shioaji_secret_key,
+        simulation=broker_cfg.shioaji_simulation,
+        ca_cert_path=broker_cfg.shioaji_ca_cert_path,
+        ca_password=broker_cfg.shioaji_ca_password,
+        person_id=broker_cfg.shioaji_person_id,
+    )
+    broker.login()
+    return broker
 
 
 def _get_redis_client() -> redis_lib.Redis:
@@ -94,7 +129,7 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
     fetched_count = 0
 
     # Initialize rate limiter and circuit breaker once per task call
-    provider = MARKET_TO_PROVIDER.get(market, "unknown")
+    provider = _get_provider_for_market(market)
     redis_client = _get_redis_client()
     circuit = CircuitBreaker(
         redis_client,
@@ -222,7 +257,7 @@ def _fetch_market_data_cursor(market: str, interval: str, symbols, market_cfg) -
     tick_start = _time.monotonic()
 
     # Rate limit / circuit breaker init (mirror legacy path)
-    provider = MARKET_TO_PROVIDER.get(market, "unknown")
+    provider = _get_provider_for_market(market)
     redis_client = _get_redis_client()
     circuit = CircuitBreaker(
         redis_client,
@@ -1450,7 +1485,6 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
     import yaml
 
     from poseidon.broker.config import BrokerConfig
-    from poseidon.broker.paper_adapter import PaperBrokerAdapter
     from poseidon.models.ohlcv import OHLCV
     from poseidon.models.portfolio_holding import PortfolioHoldingRecord
     from poseidon.models.trade_log import TradeLogRecord
@@ -1479,7 +1513,7 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
         broker_raw = yaml.safe_load(bf)
     broker_cfg = BrokerConfig(**broker_raw)
     position_tracker = _build_position_tracker()
-    broker = PaperBrokerAdapter(SessionLocal)
+    broker = _build_tw_stock_broker(broker_cfg)
     risk_checker = OrderRiskChecker(
         position_limit_pct=strategy_cfg.allocation.position_limit_pct,
         max_exposure=1.0,
@@ -1686,7 +1720,7 @@ def portfolio_stop_loss_monitor() -> dict:
     if sell_orders:
         with open("config/broker.yaml") as bf:
             broker_cfg = BrokerConfig(**yaml.safe_load(bf))
-        broker = PaperBrokerAdapter(SessionLocal)
+        broker = _build_tw_stock_broker(broker_cfg)
         risk_checker = OrderRiskChecker(
             position_limit_pct=0.15,
             max_exposure=1.0,

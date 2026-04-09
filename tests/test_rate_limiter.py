@@ -35,7 +35,7 @@ class TestSlidingWindowRateLimiter:
         limiter.acquire("myprovider", window_seconds=3600, limit=100)
         # Verify the key pattern used by Lua script
         keys = [k.decode() for k in fake_redis.keys("poseidon:ratelimit:*")]
-        assert any("poseidon:ratelimit:myprovider:3600" in k for k in keys)
+        assert any("poseidon:ratelimit:myprovider:live_ingest:3600" in k for k in keys)
 
     def test_get_usage(self, fake_redis):
         limiter = DistributedRateLimiter(fake_redis)
@@ -67,6 +67,16 @@ class TestProviderConfig:
         cfg = PROVIDER_LIMITS["finmind"]
         assert cfg["window_seconds"] == 3600
         assert cfg["limit_key"] == "ratelimit_finmind_hourly"
+
+    def test_provider_config_finlab(self):
+        cfg = PROVIDER_LIMITS["finlab"]
+        assert cfg["window_seconds"] == 60
+        assert cfg["limit_key"] == "ratelimit_finlab_per_minute"
+
+    def test_provider_config_shioaji(self):
+        cfg = PROVIDER_LIMITS["shioaji"]
+        assert cfg["window_seconds"] == 60
+        assert cfg["limit_key"] == "ratelimit_shioaji_per_minute"
 
     def test_provider_config_yfinance(self):
         cfg = PROVIDER_LIMITS["yfinance"]
@@ -145,7 +155,9 @@ class TestSettingsRateLimitFields:
             database_url="postgresql://test:test@localhost/test",
             redis_url="redis://localhost:6379/0",
         )
+        assert s.ratelimit_finlab_per_minute == 120
         assert s.ratelimit_finmind_hourly == 500
+        assert s.ratelimit_shioaji_per_minute == 60
         assert s.ratelimit_yfinance_daily == 900
         assert s.ratelimit_ccxt_per_minute == 1200
         assert s.circuit_failure_threshold == 5

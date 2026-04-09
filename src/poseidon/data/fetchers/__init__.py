@@ -5,7 +5,9 @@ import logging
 from poseidon.data.fetchers.base import BaseFetcher
 from poseidon.data.fetchers.ccxt_fetcher import CCXTFetcher
 from poseidon.data.fetchers.finmind import FinMindFetcher
+from poseidon.data.fetchers.shioaji_fetcher import ShioajiFetcher
 from poseidon.data.fetchers.yfinance_fetcher import YFinanceFetcher
+from poseidon.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,15 @@ def _get_finlab_fetcher_class():
 _fetcher_cache: dict[str, BaseFetcher] = {}
 
 
+def _get_default_backend(market: str) -> str | None:
+    """Resolve the default backend for a market from Settings."""
+    if market == "tw_stock":
+        return settings.tw_stock_data_backend
+    if market == "tw_futures":
+        return settings.tw_futures_data_backend
+    return None
+
+
 def get_fetcher(market: str, backend: str | None = None) -> BaseFetcher:
     """Return the appropriate fetcher for a given market.
 
@@ -39,22 +50,27 @@ def get_fetcher(market: str, backend: str | None = None) -> BaseFetcher:
     Raises:
         ValueError: If market is not supported.
     """
-    cache_key = f"{market}:{backend or 'default'}"
+    resolved_backend = backend or _get_default_backend(market)
+    cache_key = f"{market}:{resolved_backend or 'default'}"
     if cache_key in _fetcher_cache:
         return _fetcher_cache[cache_key]
 
     fetcher: BaseFetcher
 
     # Explicit backend override
-    if backend == "finmind":
+    if resolved_backend == "finmind":
         fetcher = FinMindFetcher(market=market)
-    elif backend == "yfinance":
+    elif resolved_backend == "yfinance":
         fetcher = YFinanceFetcher()
-    elif backend == "ccxt":
+    elif resolved_backend == "ccxt":
         fetcher = CCXTFetcher()
-    elif backend == "finlab":
+    elif resolved_backend == "finlab":
         FinLabCls = _get_finlab_fetcher_class()
         fetcher = FinLabCls(market=market)
+    elif resolved_backend == "shioaji":
+        if market != "tw_stock":
+            raise ValueError("Shioaji backend currently supports only tw_stock")
+        fetcher = ShioajiFetcher()
     # Default routing: FinLab for stocks/futures, CCXT for crypto
     elif market in ("tw_stock", "tw_futures", "us_stock"):
         try:
@@ -73,10 +89,20 @@ def get_fetcher(market: str, backend: str | None = None) -> BaseFetcher:
         from poseidon.data.fetchers.perp_fetcher import PerpFetcher
         fetcher = PerpFetcher()
     else:
-        raise ValueError(f"Unsupported market: {market}. Supported: tw_stock, tw_futures, us_stock, crypto_spot, crypto_perp")
+        raise ValueError(
+            f"Unsupported market: {market}. "
+            "Supported: tw_stock, tw_futures, us_stock, crypto_spot, crypto_perp"
+        )
 
     _fetcher_cache[cache_key] = fetcher
     return fetcher
 
 
-__all__ = ["BaseFetcher", "FinMindFetcher", "YFinanceFetcher", "CCXTFetcher", "get_fetcher"]
+__all__ = [
+    "BaseFetcher",
+    "CCXTFetcher",
+    "FinMindFetcher",
+    "ShioajiFetcher",
+    "YFinanceFetcher",
+    "get_fetcher",
+]

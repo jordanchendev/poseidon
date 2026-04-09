@@ -168,3 +168,32 @@ class TestSerialization:
         assert len(result) == len(df)
         # Check float values match
         pd.testing.assert_frame_equal(result, df, check_names=False, check_freq=False)
+
+
+class TestCacheRoundTripTimeColumn:
+    """Verify cache round-trip restores the canonical 'time' column."""
+
+    def test_cache_round_trip_restores_time_column(self, fake_redis):
+        from poseidon.data.cache import CacheManager
+
+        cache = CacheManager(fake_redis)
+        df = pd.DataFrame(
+            {
+                "time": pd.to_datetime(
+                    ["2026-04-08T05:30:00Z", "2026-04-09T05:30:00Z"], utc=True
+                ),
+                "open": [100.0, 110.0],
+                "high": [105.0, 112.0],
+                "low": [99.0, 109.0],
+                "close": [104.0, 111.0],
+                "volume": [1000, 2000],
+            }
+        )
+
+        cache.set("2330", "1d", "2026-04-01", "2026-04-09", df)
+        restored = cache.get("2330", "1d", "2026-04-01", "2026-04-09")
+
+        assert restored is not None
+        assert "time" in restored.columns
+        assert restored["time"].tolist() == df["time"].tolist()
+        assert restored["close"].tolist() == [104.0, 111.0]

@@ -37,7 +37,7 @@ def test_import_router():
 
 
 def test_provider_health_returns_all_providers(client):
-    """GET /api/data-quality/providers returns all 3 providers with expected keys."""
+    """GET /api/data-quality/providers returns all configured providers."""
     response = client.get("/api/data-quality/providers", headers={"X-API-Key": "test-key"})
     assert response.status_code == 200
 
@@ -45,12 +45,14 @@ def test_provider_health_returns_all_providers(client):
     assert "providers" in data
 
     providers = data["providers"]
+    assert "finlab" in providers
     assert "finmind" in providers
+    assert "shioaji" in providers
     assert "yfinance" in providers
     assert "ccxt" in providers
 
     # Each provider should have the expected fields
-    for name in ("finmind", "yfinance", "ccxt"):
+    for name in ("finlab", "finmind", "shioaji", "yfinance", "ccxt"):
         p = providers[name]
         assert "circuit_state" in p
         assert "failure_count" in p
@@ -64,7 +66,7 @@ def test_provider_health_default_circuit_state(client):
     response = client.get("/api/data-quality/providers", headers={"X-API-Key": "test-key"})
     data = response.json()
 
-    for name in ("finmind", "yfinance", "ccxt"):
+    for name in ("finlab", "finmind", "shioaji", "yfinance", "ccxt"):
         assert data["providers"][name]["circuit_state"] == "CLOSED"
         assert data["providers"][name]["failure_count"] == 0
         assert data["providers"][name]["quota_used"] == 0

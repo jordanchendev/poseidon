@@ -72,6 +72,11 @@ class CacheManager:
         if tz and tz != "UTC":
             idx = idx.tz_localize("UTC").tz_convert(tz)
         df.index = idx
+        # Keep the historical DatetimeIndex for callers that expect it, but
+        # also restore the canonical ``time`` column because the ingest path
+        # passes cache hits directly into ``upsert_ohlcv()``, which expects the
+        # normalized OHLCV schema.
+        df = df.reset_index(names="time")
         return df
 
     def get(self, symbol: str, interval: str, start: str, end: str) -> pd.DataFrame | None:
