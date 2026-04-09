@@ -24,8 +24,10 @@ from poseidon.data.storage import (
     upsert_ohlcv,
 )
 from poseidon.data.symbols import get_market_config, get_symbols_for_market, load_symbols
+from poseidon.models.backfill import BackfillJob
 from poseidon.models.backtest import BacktestRecord
 from poseidon.models.base import SessionLocal
+from poseidon.models.ingest_state import IngestState
 from poseidon.models.strategy import StrategyRecord
 from poseidon.risk.engine import RiskEngine
 from poseidon.strategies.rule_strategy import RuleStrategy
@@ -2535,5 +2537,159 @@ def refresh_universe(self, market: str):
         logger.error("refresh_universe failed for market=%s: %s", market, exc)
         session.rollback()
         raise self.retry(exc=exc, countdown=60)
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase 39 plan 39-04 — historical_backfill_dispatcher (BACKFILL-05)
+# ---------------------------------------------------------------------------
+
+# Default lookback windows for first-time history backfill, in days.
+# Source: 39-RESEARCH.md Recommendation 5. These are intentionally fixed
+# rather than per-symbol because symbols.yaml has no `history_start` key
+# in v8.0; explicit per-symbol overrides can be added later if needed.
+_BACKFILL_DEFAULT_LOOKBACK_DAYS = {
+    "1d": 730,
+    "4h": 730,
+    "1h": 180,
+    "30m": 90,
+    "15m": 60,
+    "5m": 30,
+}
+
+# Statuses that mean "this job is still going to do the work, do not
+# dispatch a duplicate". Anything terminal (succeeded/failed/cancelled)
+# is NOT considered active so the dispatcher can retry on the next tick.
+_ACTIVE_BACKFILL_STATUSES = frozenset({"pending", "running"})
+
+
+def _job_covers_tuple(job, market: str, symbol: str, interval: str) -> bool:
+    """Return True if ``job`` is an active job already covering this tuple.
+
+    A job covers the tuple iff:
+    - its market matches AND
+    - its symbols list contains ``symbol`` (or legacy ``job.symbol == symbol``) AND
+    - its intervals list contains ``interval`` (or legacy ``job.interval == interval``).
+    """
+    if job.market != market:
+        return False
+    job_symbols = list(job.symbols or [])
+    if not job_symbols and job.symbol:
+        job_symbols = [job.symbol]
+    if symbol not in job_symbols:
+        return False
+    job_intervals = list(job.intervals or [])
+    if not job_intervals and job.interval:
+        job_intervals = [job.interval]
+    if interval not in job_intervals:
+        return False
+    return True
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.historical_backfill_dispatcher")
+def historical_backfill_dispatcher() -> dict:
+    """Auto-create first-time BackfillJob rows for tuples that have no history.
+
+    Phase 39 plan 39-04 / BACKFILL-05.
+
+    Walks every ``(market, symbol, interval)`` tuple in ``symbols.yaml`` and:
+
+    1. Reads ``ingest_state`` for the tuple. If a row exists with
+       ``first_backfill_done = true`` the tuple already has history and is
+       skipped.
+    2. Looks at every BackfillJob row in status ``pending``/``running`` and
+       checks whether any active job already covers this tuple. If yes the
+       dispatcher does NOT enqueue a duplicate (Phase 39 RESEARCH Pitfall 5).
+    3. Otherwise creates a new BackfillJob via
+       :func:`poseidon.data.backfill_jobs.create_backfill_job` with
+       ``requested_by="dispatcher"``. The default lookback window is taken
+       from ``_BACKFILL_DEFAULT_LOOKBACK_DAYS`` per interval.
+
+    The dedicated ``backfill-worker`` from plan 39-02 picks up these rows
+    via the existing ``backfill_chunk`` task on the ``backfill`` queue, so
+    the dispatcher only writes durable rows and never spawns chunk tasks
+    itself. This is intentional — the dispatcher runs on the ``cpu`` queue
+    and would otherwise contend with live ingest scheduling.
+    """
+    from poseidon.core.schemas import BackfillRequest
+    from poseidon.data.backfill_jobs import create_backfill_job
+
+    config = load_symbols()
+
+    session = SessionLocal()
+    created: list[str] = []
+    skipped_done: list[str] = []
+    skipped_duplicate: list[str] = []
+    try:
+        # Pre-fetch all active (pending/running) backfill jobs once so we
+        # do not issue O(N tuples) queries.
+        active_jobs = (
+            session.query(BackfillJob)
+            .filter(BackfillJob.status.in_(list(_ACTIVE_BACKFILL_STATUSES)))
+            .all()
+        )
+
+        now = datetime.now(timezone.utc)
+
+        for market_name, market_cfg in config.markets.items():
+            for sym_info in market_cfg.symbols:
+                for interval in market_cfg.intervals:
+                    tuple_label = f"{market_name}/{sym_info.id}/{interval}"
+
+                    state = (
+                        session.query(IngestState)
+                        .filter_by(
+                            symbol=sym_info.id,
+                            market=market_name,
+                            interval=interval,
+                        )
+                        .one_or_none()
+                    )
+                    if state is not None and state.first_backfill_done:
+                        skipped_done.append(tuple_label)
+                        continue
+
+                    if any(
+                        _job_covers_tuple(job, market_name, sym_info.id, interval)
+                        for job in active_jobs
+                    ):
+                        skipped_duplicate.append(tuple_label)
+                        continue
+
+                    lookback_days = _BACKFILL_DEFAULT_LOOKBACK_DAYS.get(interval, 730)
+                    start_ts = now - timedelta(days=lookback_days)
+
+                    request = BackfillRequest(
+                        market=market_name,
+                        symbols=[sym_info.id],
+                        intervals=[interval],
+                        start=start_ts,
+                        end=now,
+                    )
+                    job = create_backfill_job(
+                        session, request, requested_by="dispatcher"
+                    )
+                    # Append to the in-memory active list so the next loop
+                    # iteration de-duplicates against the row we just made
+                    # in case the same tuple appears twice in the config.
+                    active_jobs.append(job)
+                    created.append(tuple_label)
+
+        logger.info(
+            "historical_backfill_dispatcher: created=%d skipped_done=%d "
+            "skipped_duplicate=%d",
+            len(created),
+            len(skipped_done),
+            len(skipped_duplicate),
+        )
+        return {
+            "created": len(created),
+            "skipped_first_backfill_done": len(skipped_done),
+            "skipped_duplicate": len(skipped_duplicate),
+        }
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
