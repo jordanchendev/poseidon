@@ -316,8 +316,8 @@ class TestIngestFreshnessWatchdogTask:
 
         calls = []
 
-        def fake_get(url, timeout=None):
-            calls.append((url, timeout))
+        def fake_get(url, params=None, timeout=None):
+            calls.append((url, params, timeout))
 
         monkeypatch.setattr("requests.get", fake_get)
 
@@ -332,7 +332,7 @@ class TestIngestFreshnessWatchdogTask:
         )
         monkeypatch.setattr(
             "poseidon.core.config.settings.uptime_kuma_push_url",
-            "http://hc.io/test-uuid",
+            "http://kuma.local/api/push/test-token",
         )
 
         from poseidon.workers.cpu_tasks import ingest_freshness_watchdog
@@ -343,16 +343,17 @@ class TestIngestFreshnessWatchdogTask:
         assert result["violations"] == 0
         assert result["monitor_pinged"] == "success"
         assert len(calls) == 1
-        assert calls[0][0] == "http://hc.io/test-uuid"
+        assert calls[0][0] == "http://kuma.local/api/push/test-token"
+        assert calls[0][1]["status"] == "up"
 
     def test_violation_pings_fail(self, monkeypatch, db):
-        """With any violation, watchdog pings /fail."""
+        """With any violation, watchdog pings status=down."""
         self._seed_violation_rows(db)
 
         calls = []
 
-        def fake_get(url, timeout=None):
-            calls.append((url, timeout))
+        def fake_get(url, params=None, timeout=None):
+            calls.append((url, params, timeout))
 
         monkeypatch.setattr("requests.get", fake_get)
         monkeypatch.setattr(
@@ -365,7 +366,7 @@ class TestIngestFreshnessWatchdogTask:
         )
         monkeypatch.setattr(
             "poseidon.core.config.settings.uptime_kuma_push_url",
-            "http://hc.io/test-uuid",
+            "http://kuma.local/api/push/test-token",
         )
 
         from poseidon.workers.cpu_tasks import ingest_freshness_watchdog
@@ -375,7 +376,8 @@ class TestIngestFreshnessWatchdogTask:
         assert result["violations"] >= 1
         assert result["monitor_pinged"] == "fail"
         assert len(calls) == 1
-        assert calls[0][0] == "http://hc.io/test-uuid/fail"
+        assert calls[0][0] == "http://kuma.local/api/push/test-token"
+        assert calls[0][1]["status"] == "down"
 
     def test_empty_url_skips_ping(self, monkeypatch, db):
         """With empty UPTIME_KUMA_PUSH_URL, no HTTP call is made."""
@@ -383,8 +385,8 @@ class TestIngestFreshnessWatchdogTask:
 
         calls = []
 
-        def fake_get(url, timeout=None):
-            calls.append((url, timeout))
+        def fake_get(url, params=None, timeout=None):
+            calls.append((url, params, timeout))
 
         monkeypatch.setattr("requests.get", fake_get)
         monkeypatch.setattr(
@@ -413,7 +415,7 @@ class TestIngestFreshnessWatchdogTask:
 
         import requests as requests_mod
 
-        def fake_get(url, timeout=None):
+        def fake_get(url, params=None, timeout=None):
             raise requests_mod.ConnectionError("boom")
 
         monkeypatch.setattr("requests.get", fake_get)
@@ -427,7 +429,7 @@ class TestIngestFreshnessWatchdogTask:
         )
         monkeypatch.setattr(
             "poseidon.core.config.settings.uptime_kuma_push_url",
-            "http://hc.io/test-uuid",
+            "http://kuma.local/api/push/test-token",
         )
 
         from poseidon.workers.cpu_tasks import ingest_freshness_watchdog
