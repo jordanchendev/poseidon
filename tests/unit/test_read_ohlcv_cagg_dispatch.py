@@ -468,3 +468,34 @@ def test_cagg_parity_with_pandas_resample(db_session, monkeypatch):
         assert actual_1d.iloc[i]["low"] == pytest.approx(expected_1d.iloc[i]["low"])
         assert actual_1d.iloc[i]["close"] == pytest.approx(expected_1d.iloc[i]["close"])
         assert actual_1d.iloc[i]["volume"] == pytest.approx(expected_1d.iloc[i]["volume"])
+
+
+# =============================================================================
+# Test 9: CAGG-03 transparency — DatasetBuilder call site unchanged
+# =============================================================================
+
+
+def test_dataset_builder_call_site_unchanged():
+    """CAGG-03 transparency check: DatasetBuilder still calls
+    read_ohlcv with the same signature, no source diff required."""
+    import pathlib
+
+    src = pathlib.Path("src/poseidon/qlib/dataset_builder.py").read_text()
+    assert "read_ohlcv(" in src
+    # The exact call site from Phase 37; touching it would mean we
+    # broke the CAGG-03 transparency contract.
+    assert "self.session, symbol, self.market, self.interval" in src
+
+
+# =============================================================================
+# Test 10: CAGG-02 transparency — /api/data/ohlcv endpoint call site unchanged
+# =============================================================================
+
+
+def test_api_data_ohlcv_endpoint_call_site_unchanged():
+    """CAGG-02 transparency check: /api/data/ohlcv endpoint still
+    calls read_ohlcv with the same signature, no source diff required."""
+    import pathlib
+
+    src = pathlib.Path("src/poseidon/api/data.py").read_text()
+    assert "read_ohlcv(db, symbol, market, interval" in src
