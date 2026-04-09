@@ -123,7 +123,9 @@ def test_post_backfill_creates_job(client, _stub_celery_dispatch):
     # Durable row must exist in Postgres (per D-04)
     session = TestingSessionLocal()
     try:
-        row = session.query(BackfillJob).filter_by(job_id=body["job_id"]).one()
+        from uuid import UUID as _UUID
+
+        row = session.query(BackfillJob).filter_by(job_id=_UUID(body["job_id"])).one()
         assert row.market == "crypto_perp"
         assert row.symbols == ["BTCUSDT"]
         assert row.intervals == ["4h"]
