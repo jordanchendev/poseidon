@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel as PydanticBase
 from sqlalchemy.orm import Session
 
 from poseidon.core.schemas import (
+    BackfillJobDetailResponse,
     BackfillRequest,
     BackfillStatusResponse,
     FetchRequest,
     MessageResponse,
+)
+from poseidon.data.backfill_jobs import (
+    cancel_backfill_job,
+    create_backfill_job,
+    get_backfill_job,
 )
 from poseidon.models.backfill import BackfillJob
 from poseidon.models.base import get_db
@@ -70,23 +77,53 @@ async def trigger_fetch(request: FetchRequest):
     return MessageResponse(message=f"Fetch task dispatched for {label}", task_id=task.id)
 
 
-@router.post("/backfill", response_model=MessageResponse, status_code=202)
-async def trigger_backfill_endpoint(request: BackfillRequest):
-    """Trigger historical data backfill.
+@router.post("/backfill", status_code=202)
+async def trigger_backfill_endpoint(
+    request: BackfillRequest,
+    db: Session = Depends(get_db),
+):
+    """Trigger a historical data backfill (Phase 39 D-01..D-05).
 
-    Phase 38 only lays the BackfillJob substrate. Phase 39 owns the real REST
-    dispatcher that enqueues ``backfill_chunk`` on the 'backfill' queue — see
-    38-CONTEXT.md D-13. Returning 501 keeps OpenAPI clients aware the endpoint
-    exists without silently accepting writes we cannot service.
+    Creates a durable ``BackfillJob`` row in Postgres and enqueues the
+    existing ``backfill_chunk`` task on the dedicated ``backfill`` queue.
+    Clients poll ``GET /api/data/backfill/{job_id}`` for progress.
     """
-    del request  # placeholder until Phase 39 wires BackfillJob creation.
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "POST /api/v1/data/backfill is implemented in Phase 39. "
-            "Phase 38 only lays the substrate."
-        ),
-    )
+    # Deferred import: avoids loading workers (and Celery) at module import
+    # time when only the API test suite wants this router.
+    from poseidon.workers.backfill_tasks import backfill_chunk
+
+    job = create_backfill_job(db, request, requested_by="api")
+    backfill_chunk.delay(str(job.job_id))
+    return {"job_id": str(job.job_id), "status": job.status}
+
+
+@router.get("/backfill/{job_id}", response_model=BackfillJobDetailResponse)
+async def get_backfill_job_endpoint(
+    job_id: UUID,
+    db: Session = Depends(get_db),
+) -> BackfillJobDetailResponse:
+    """Return a durable BackfillJob row by ``job_id`` (Phase 39 D-04)."""
+    job = get_backfill_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"BackfillJob {job_id} not found")
+    return BackfillJobDetailResponse.model_validate(job)
+
+
+@router.post("/backfill/{job_id}/cancel", response_model=BackfillJobDetailResponse)
+async def cancel_backfill_job_endpoint(
+    job_id: UUID,
+    db: Session = Depends(get_db),
+) -> BackfillJobDetailResponse:
+    """Cooperatively cancel a BackfillJob (Phase 39 D-05).
+
+    Flips status to ``cancelled`` and preserves ``cursor``/``progress`` so
+    operators can see where the worker stopped. Already-terminal jobs are
+    returned unchanged (idempotent cancel).
+    """
+    job = cancel_backfill_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"BackfillJob {job_id} not found")
+    return BackfillJobDetailResponse.model_validate(job)
 
 
 @router.get("/backfill/status", response_model=list[BackfillStatusResponse])
