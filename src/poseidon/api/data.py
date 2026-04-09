@@ -97,6 +97,30 @@ async def trigger_backfill_endpoint(
     return {"job_id": str(job.job_id), "status": job.status}
 
 
+@router.get("/backfill/status", response_model=list[BackfillStatusResponse])
+async def get_backfill_status(
+    market: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Return all BackfillJob rows, optionally filtered by market.
+
+    Registered before ``/backfill/{job_id}`` so FastAPI does not try to parse
+    the literal ``status`` segment as a UUID path parameter.
+    """
+    query = db.query(BackfillJob)
+    if market:
+        query = query.filter(BackfillJob.market == market)
+    rows = (
+        query.order_by(
+            BackfillJob.market,
+            BackfillJob.symbol,
+            BackfillJob.created_at.desc(),
+        )
+        .all()
+    )
+    return rows
+
+
 @router.get("/backfill/{job_id}", response_model=BackfillJobDetailResponse)
 async def get_backfill_job_endpoint(
     job_id: UUID,
@@ -124,31 +148,6 @@ async def cancel_backfill_job_endpoint(
     if job is None:
         raise HTTPException(status_code=404, detail=f"BackfillJob {job_id} not found")
     return BackfillJobDetailResponse.model_validate(job)
-
-
-@router.get("/backfill/status", response_model=list[BackfillStatusResponse])
-async def get_backfill_status(
-    market: str | None = None,
-    db: Session = Depends(get_db),
-):
-    """Return all BackfillJob rows, optionally filtered by market.
-
-    Phase 38 D-10: queries the new ``backfill_jobs`` table. v6.0 dashboard
-    depends on this endpoint shape — must not 5xx while Phase 38 is shadow
-    deploying.
-    """
-    query = db.query(BackfillJob)
-    if market:
-        query = query.filter(BackfillJob.market == market)
-    rows = (
-        query.order_by(
-            BackfillJob.market,
-            BackfillJob.symbol,
-            BackfillJob.created_at.desc(),
-        )
-        .all()
-    )
-    return rows
 
 
 # --- GET /ohlcv: OHLCV candlestick data (API-01) ---
