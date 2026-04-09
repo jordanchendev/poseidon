@@ -15,6 +15,7 @@ from poseidon.core.schemas import (
     BackfillRequest,
     BackfillStatusResponse,
     DataCoverageResponse,
+    DataFreshnessResponse,
     DataGapResponse,
     FetchRequest,
     MessageResponse,
@@ -298,6 +299,49 @@ async def get_data_gaps(
         DataGap.market, DataGap.symbol, DataGap.interval, DataGap.gap_start
     ).all()
     return [DataGapResponse.model_validate(row) for row in rows]
+
+
+# --- GET /freshness: per-(market, interval) freshness snapshot (Phase 40 D-03/D-16) ---
+
+
+@router.get("/freshness", response_model=list[DataFreshnessResponse])
+async def get_data_freshness(
+    market: str | None = Query(None, description="Filter by market, e.g. crypto_perp"),
+    db: Session = Depends(get_db),
+) -> list[DataFreshnessResponse]:
+    """Return per-(market, interval) freshness vs SLA from ingest_state.
+
+    Stateless reader (Phase 40 D-16): no snapshot table. Operators (and
+    the new Kairos /data-health view) call this endpoint to see the
+    same data the watchdog evaluates every 15 min, just on-demand
+    rather than on a beat schedule.
+
+    Tuples with no SLA entry in ``settings.freshness_sla`` are silently
+    skipped -- operators only care about tracked markets.
+    """
+    from datetime import datetime, timezone
+
+    from poseidon.core.config import settings
+    from poseidon.data.freshness import evaluate_freshness
+
+    records = evaluate_freshness(
+        db,
+        now=datetime.now(timezone.utc),
+        sla_dict=settings.freshness_sla,
+    )
+    if market is not None:
+        records = [r for r in records if r.market == market]
+    return [
+        DataFreshnessResponse(
+            market=r.market,
+            interval=r.interval,
+            last_successful_ts=r.last_successful_ts,
+            expected_lag_seconds=r.expected_lag_seconds,
+            observed_lag_seconds=r.observed_lag_seconds,
+            status=r.status,
+        )
+        for r in records
+    ]
 
 
 # --- GET /ohlcv: OHLCV candlestick data (API-01) ---
