@@ -76,9 +76,6 @@ def qlib_train(self, run_id: str) -> dict:
         import qlib
         from qlib.config import REG_CN
         from qlib.data.dataset import DatasetH
-        from qlib.workflow import R
-        from qlib.workflow.record_temp import SigAnaRecord, SignalRecord
-
         from poseidon.qlib.allowlist import resolve_model
         from poseidon.qlib.data_handler import PoseidonDataHandler
         from poseidon.qlib.dataset_builder import DatasetBuilder
@@ -151,15 +148,38 @@ def qlib_train(self, run_id: str) -> dict:
         # 8. Generate predictions on test segment
         test_predictions = trained_model.predict(dataset, segment="test")
 
-        # 9. Record with MLflow via Qlib's Recorder API
+        # 9. Record with MLflow directly (bypass Qlib Recorder to avoid state conflicts)
         mlflow_run_id = None
-        with R.start(experiment_name=f"phase41_{run.run_id}"):
-            recorder = R.get_recorder()
-            sr = SignalRecord(recorder=recorder, model=trained_model, dataset=dataset)
-            sr.generate()
-            sar = SigAnaRecord(recorder=recorder)
-            sar.generate()
-            mlflow_run_id = recorder.id
+        mlflow.end_run()  # ensure no stale run
+        mlflow.set_experiment(f"phase41_{run.run_id}")
+        with mlflow.start_run() as mlflow_active:
+            mlflow_run_id = mlflow_active.info.run_id
+            # Log model params
+            mlflow.log_params(run.model_params or {})
+            mlflow.log_param("handler_class", run.handler_class)
+            mlflow.log_param("model_class", run.model_class)
+            mlflow.log_param("market", run.market)
+            # Compute and log IC/ICIR if predictions available
+            if test_predictions is not None:
+                try:
+                    pred_series = test_predictions if isinstance(test_predictions, pd.Series) else test_predictions.iloc[:, 0]
+                    label_series = dataset.prepare("test", col_set="label").iloc[:, 0]
+                    # Align indices
+                    common_idx = pred_series.index.intersection(label_series.index)
+                    if len(common_idx) > 0:
+                        p = pred_series.loc[common_idx]
+                        l = label_series.loc[common_idx]
+                        ic = p.corr(l)
+                        # Group IC by date for ICIR
+                        ic_by_date = p.groupby(level="datetime").corrwith(l.groupby(level="datetime")) if hasattr(p.groupby(level="datetime"), 'corrwith') else None
+                        if ic_by_date is not None and len(ic_by_date) > 1:
+                            icir = ic_by_date.mean() / ic_by_date.std()
+                        else:
+                            icir = 0.0
+                        mlflow.log_metric("IC", float(ic) if pd.notna(ic) else 0.0)
+                        mlflow.log_metric("ICIR", float(icir) if pd.notna(icir) else 0.0)
+                except Exception as metric_exc:
+                    logger.warning("Failed to compute IC/ICIR: %s", metric_exc)
 
         # 10. Prepare predictions DataFrame for Parquet
         pred_df = None
@@ -172,8 +192,8 @@ def qlib_train(self, run_id: str) -> dict:
         # 11. Scrape MLflow metrics (D-16)
         scraped_metrics: dict = {}
         if mlflow_run_id:
-            mlflow_run = mlflow.get_run(mlflow_run_id)
-            scraped_metrics = dict(mlflow_run.data.metrics)
+            mlflow_run_data = mlflow.get_run(mlflow_run_id)
+            scraped_metrics = dict(mlflow_run_data.data.metrics)
             # Reload run from DB to avoid stale ORM state
             run = session.query(TrainingRun).filter_by(run_id=uuid.UUID(run_id)).one()
             run.metrics = scraped_metrics
