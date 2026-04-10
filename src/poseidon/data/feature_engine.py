@@ -86,7 +86,7 @@ EXPANDED_FEATURES: list[tuple[str, dict]] = [
 # -- Non-price feature name sets (used for spec classification + data routing) --------
 
 _INSTITUTIONAL_PREFIXES = ("foreign_net_buy", "trust_net_buy", "dealer_net_buy")
-_FUNDAMENTAL_NAMES = frozenset({"pe_ratio", "pb_ratio", "revenue_mom", "revenue_yoy"})
+_FUNDAMENTAL_NAMES = frozenset({"pe_ratio", "pb_ratio", "revenue_mom", "revenue_yoy", "roe", "roa"})
 _TRADE_STRUCTURE_NAMES = frozenset({"avg_trade_size", "turnover_ratio"})
 _FUNDING_NAMES = frozenset({"funding_rate_daily"})
 _MACRO_PREFIX = "macro_"
@@ -151,6 +151,9 @@ def get_r2_specs(symbol: str, market: str) -> list[tuple[str, dict]]:
             ("revenue_yoy", {}),
             ("avg_trade_size", {}),
             ("turnover_ratio", {}),
+            # Fundamental expansion (Phase 42 FEAT-01)
+            ("roe", {}),
+            ("roa", {}),
         ])
 
     if market == "crypto_spot":
@@ -186,6 +189,8 @@ EXPANDED_FEATURES_R2: list[tuple[str, dict]] = [
     ("pb_ratio", {}),
     ("revenue_mom", {}),
     ("revenue_yoy", {}),
+    ("roe", {}),
+    ("roa", {}),
     # Trade structure (tw_stock only)
     ("avg_trade_size", {}),
     ("turnover_ratio", {}),

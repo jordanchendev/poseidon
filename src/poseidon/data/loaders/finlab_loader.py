@@ -78,7 +78,7 @@ class FinLabDataLoader:
     def get_fundamentals(self, symbol: str) -> pd.DataFrame:
         """Load fundamental ratios for a TW stock symbol.
 
-        Returns DataFrame with columns: pe_ratio, pb_ratio, monthly_rev, prev_year_rev
+        Returns DataFrame with columns: pe_ratio, pb_ratio, monthly_rev, prev_year_rev, roe, roa
         indexed by date. Returns empty DataFrame if symbol not found.
         """
         datasets = {
@@ -86,6 +86,8 @@ class FinLabDataLoader:
             "price_earning_ratio:股價淨值比": "pb_ratio",
             "monthly_revenue:當月營收": "monthly_rev",
             "monthly_revenue:去年當月營收": "prev_year_rev",
+            "fundamental_features:ROE稅後": "roe",
+            "fundamental_features:ROA稅後息前": "roa",
         }
         return self._extract_columns(symbol, datasets)
 

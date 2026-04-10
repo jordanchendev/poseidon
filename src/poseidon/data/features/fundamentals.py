@@ -161,3 +161,53 @@ class RevenueYoY(BaseFeature):
         result = result.replace([np.inf, -np.inf], np.nan)
         result.name = col_name
         return result
+
+
+@register_feature
+class ROE(BaseFeature):
+    """Return on equity, forward-filled from quarterly data to daily."""
+
+    name = "roe"
+    description = "Return on equity (quarterly ROE稅後, forward-filled)"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        fundamental_data: pd.DataFrame | None = None,
+        **kwargs,
+    ) -> pd.Series:
+        col_name = "roe"
+        if not self._validate(ohlcv):
+            return pd.Series(dtype=float, name=col_name)
+        if fundamental_data is None or fundamental_data.empty:
+            return _nan_series(ohlcv.index, col_name)
+        if "roe" not in fundamental_data.columns:
+            return _nan_series(ohlcv.index, col_name)
+        result = _ffill_to_index(fundamental_data["roe"], ohlcv.index)
+        result.name = col_name
+        return result
+
+
+@register_feature
+class ROA(BaseFeature):
+    """Return on assets, forward-filled from quarterly data to daily."""
+
+    name = "roa"
+    description = "Return on assets (quarterly ROA稅後息前, forward-filled)"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        fundamental_data: pd.DataFrame | None = None,
+        **kwargs,
+    ) -> pd.Series:
+        col_name = "roa"
+        if not self._validate(ohlcv):
+            return pd.Series(dtype=float, name=col_name)
+        if fundamental_data is None or fundamental_data.empty:
+            return _nan_series(ohlcv.index, col_name)
+        if "roa" not in fundamental_data.columns:
+            return _nan_series(ohlcv.index, col_name)
+        result = _ffill_to_index(fundamental_data["roa"], ohlcv.index)
+        result.name = col_name
+        return result

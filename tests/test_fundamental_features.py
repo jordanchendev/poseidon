@@ -7,6 +7,8 @@ import pytest
 from poseidon.data.features.fundamentals import (
     PBRatio,
     PERatio,
+    ROA,
+    ROE,
     RevenueMoM,
     RevenueYoY,
 )
@@ -49,10 +51,15 @@ def fundamental_data(ohlcv):
     all_dates = sorted(set(quarterly_dates + monthly_dates))
     df = pd.DataFrame(index=pd.DatetimeIndex(all_dates))
 
+    roe_values = [0.15, 0.18, 0.12, 0.20]
+    roa_values = [0.08, 0.09, 0.07, 0.10]
+
     # Set quarterly values
-    for d, pe, pb in zip(quarterly_dates, pe_values, pb_values):
+    for d, pe, pb, roe, roa in zip(quarterly_dates, pe_values, pb_values, roe_values, roa_values):
         df.loc[d, "pe_ratio"] = pe
         df.loc[d, "pb_ratio"] = pb
+        df.loc[d, "roe"] = roe
+        df.loc[d, "roa"] = roa
 
     # Set monthly values
     for d, rev, prev in zip(monthly_dates, monthly_rev, prev_year_rev):
@@ -142,4 +149,49 @@ class TestRevenueYoY:
             index=pd.DatetimeIndex([ohlcv.index[0]]),
         )
         result = feat.compute(ohlcv, fundamental_data=partial)
+        assert result.isna().all()
+
+
+class TestROE:
+    def test_forward_fill_quarterly(self, ohlcv, fundamental_data):
+        feat = ROE()
+        result = feat.compute(ohlcv, fundamental_data=fundamental_data)
+        assert result.name == "roe"
+        assert len(result) == len(ohlcv)
+        assert result.iloc[0] == 0.15
+        assert result.iloc[26] == 0.18
+        assert not result.iloc[0:76].isna().any()
+
+    def test_none_data_returns_nan(self, ohlcv):
+        feat = ROE()
+        result = feat.compute(ohlcv, fundamental_data=None)
+        assert result.name == "roe"
+        assert result.isna().all()
+
+    def test_empty_data_returns_nan(self, ohlcv):
+        feat = ROE()
+        result = feat.compute(ohlcv, fundamental_data=pd.DataFrame())
+        assert result.name == "roe"
+        assert result.isna().all()
+
+
+class TestROA:
+    def test_forward_fill_quarterly(self, ohlcv, fundamental_data):
+        feat = ROA()
+        result = feat.compute(ohlcv, fundamental_data=fundamental_data)
+        assert result.name == "roa"
+        assert len(result) == len(ohlcv)
+        assert result.iloc[0] == 0.08
+        assert result.iloc[26] == 0.09
+
+    def test_none_data_returns_nan(self, ohlcv):
+        feat = ROA()
+        result = feat.compute(ohlcv, fundamental_data=None)
+        assert result.name == "roa"
+        assert result.isna().all()
+
+    def test_empty_data_returns_nan(self, ohlcv):
+        feat = ROA()
+        result = feat.compute(ohlcv, fundamental_data=pd.DataFrame())
+        assert result.name == "roa"
         assert result.isna().all()
