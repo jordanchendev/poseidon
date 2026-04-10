@@ -101,7 +101,7 @@ def celery_calls(_stub_celery):
 
 _VALID_TRAIN_PAYLOAD = {
     "handler_class": "Alpha158Handler",
-    "model_class": "LGBMModel",
+    "model_class": "LGBModel",
     "market": "crypto_perp",
     "symbols": ["BTCUSDT"],
     "interval": "4h",
@@ -124,7 +124,7 @@ def test_train_endpoint(client, celery_calls):
     assert "run_id" in body
     assert body["status"] == "pending"
     assert body["handler_class"] == "Alpha158Handler"
-    assert body["model_class"] == "LGBMModel"
+    assert body["model_class"] == "LGBModel"
     assert body["market"] == "crypto_perp"
 
 
@@ -226,7 +226,7 @@ def test_get_run_detail(client, celery_calls):
     body = detail_resp.json()
     assert body["run_id"] == run_id
     assert body["handler_class"] == "Alpha158Handler"
-    assert body["model_class"] == "LGBMModel"
+    assert body["model_class"] == "LGBModel"
     assert body["market"] == "crypto_perp"
     assert body["symbols"] == ["BTCUSDT"]
     assert body["interval"] == "4h"

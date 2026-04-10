@@ -192,7 +192,7 @@ class TrainRequest(BaseModel):
 
     handler_class: str = Field(..., examples=["Alpha158Handler"])
     handler_params: dict = Field(default_factory=dict, examples=[{}])
-    model_class: str = Field(..., examples=["LGBMModel"])
+    model_class: str = Field(..., examples=["LGBModel"])
     model_params: dict = Field(
         default_factory=dict, examples=[{"num_leaves": 128}]
     )

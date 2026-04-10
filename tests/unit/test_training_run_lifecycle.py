@@ -212,7 +212,7 @@ def test_training_run_default_status_is_pending(db_session: Session):
     run = TrainingRunTest(
         run_id=uuid.uuid4(),
         handler_class="Alpha158Handler",
-        model_class="LGBMModel",
+        model_class="LGBModel",
         market="crypto_perp",
         interval="4h",
     )
@@ -293,7 +293,7 @@ def test_training_run_status_transitions(db_session: Session):
     run = TrainingRunTest(
         run_id=uuid.uuid4(),
         handler_class="Alpha158Handler",
-        model_class="LGBMModel",
+        model_class="LGBModel",
         market="crypto_perp",
         interval="4h",
     )
@@ -323,7 +323,7 @@ def test_training_run_failed_preserves_error(db_session: Session):
     run = TrainingRunTest(
         run_id=uuid.uuid4(),
         handler_class="Alpha158Handler",
-        model_class="LGBMModel",
+        model_class="LGBModel",
         market="crypto_perp",
         interval="4h",
     )
@@ -345,7 +345,7 @@ def test_training_run_model_version_id_nullable(db_session: Session):
     run = TrainingRunTest(
         run_id=uuid.uuid4(),
         handler_class="Alpha158Handler",
-        model_class="LGBMModel",
+        model_class="LGBModel",
         market="crypto_perp",
         interval="4h",
     )
@@ -362,7 +362,7 @@ def test_training_run_repr():
     run = TrainingRunTest(
         run_id=run_id,
         handler_class="Alpha158Handler",
-        model_class="LGBMModel",
+        model_class="LGBModel",
         market="crypto_perp",
         interval="4h",
     )
@@ -370,7 +370,7 @@ def test_training_run_repr():
     assert "TrainingRun" in r
     assert str(run_id) in r
     assert "Alpha158Handler" in r
-    assert "LGBMModel" in r
+    assert "LGBModel" in r
 
 
 # ---------------------------------------------------------------------------
@@ -384,13 +384,13 @@ def test_train_request_validates_required_fields():
 
     req = TrainRequest(
         handler_class="Alpha158Handler",
-        model_class="LGBMModel",
+        model_class="LGBModel",
         market="crypto_perp",
         symbols=["BTCUSDT"],
         interval="4h",
     )
     assert req.handler_class == "Alpha158Handler"
-    assert req.model_class == "LGBMModel"
+    assert req.model_class == "LGBModel"
     assert req.symbols == ["BTCUSDT"]
     # segments should have default value
     assert "train" in req.segments
@@ -405,7 +405,7 @@ def test_train_request_rejects_empty_symbols():
     with pytest.raises(ValidationError):
         TrainRequest(
             handler_class="Alpha158Handler",
-            model_class="LGBMModel",
+            model_class="LGBModel",
             market="crypto_perp",
             symbols=[],
             interval="4h",
@@ -419,7 +419,7 @@ def test_training_run_response_from_attributes():
     data = {
         "run_id": uuid.uuid4(),
         "handler_class": "Alpha158Handler",
-        "model_class": "LGBMModel",
+        "model_class": "LGBModel",
         "market": "crypto_perp",
         "status": "pending",
         "created_at": datetime.now(timezone.utc),

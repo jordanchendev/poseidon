@@ -14,7 +14,7 @@ ALLOWED_HANDLER_CLASSES: dict[str, str] = {
 }
 
 ALLOWED_MODEL_CLASSES: dict[str, str] = {
-    "LGBMModel": "qlib.contrib.model.gbdt.LGBMModel",
+    "LGBModel": "qlib.contrib.model.gbdt.LGBModel",
     "LinearModel": "qlib.contrib.model.linear.LinearModel",
     "XGBModel": "qlib.contrib.model.xgboost.XGBModel",
 }

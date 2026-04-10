@@ -38,11 +38,11 @@ def test_allowed_handler_classes_contains_expected_entries():
 
 
 def test_allowed_model_classes_contains_expected_entries():
-    """LGBMModel, LinearModel, XGBModel must be present with correct import paths."""
-    assert "LGBMModel" in ALLOWED_MODEL_CLASSES
+    """LGBModel, LinearModel, XGBModel must be present with correct import paths."""
+    assert "LGBModel" in ALLOWED_MODEL_CLASSES
     assert "LinearModel" in ALLOWED_MODEL_CLASSES
     assert "XGBModel" in ALLOWED_MODEL_CLASSES
-    assert ALLOWED_MODEL_CLASSES["LGBMModel"] == "qlib.contrib.model.gbdt.LGBMModel"
+    assert ALLOWED_MODEL_CLASSES["LGBModel"] == "qlib.contrib.model.gbdt.LGBModel"
     assert (
         ALLOWED_MODEL_CLASSES["LinearModel"]
         == "qlib.contrib.model.linear.LinearModel"
@@ -83,7 +83,7 @@ def test_resolve_handler_invalid_raises_valueerror():
 
 def test_resolve_model_valid():
     """resolve_model with a valid name returns the correct import path."""
-    assert resolve_model("LGBMModel") == "qlib.contrib.model.gbdt.LGBMModel"
+    assert resolve_model("LGBModel") == "qlib.contrib.model.gbdt.LGBModel"
     assert resolve_model("LinearModel") == "qlib.contrib.model.linear.LinearModel"
     assert resolve_model("XGBModel") == "qlib.contrib.model.xgboost.XGBModel"
 
