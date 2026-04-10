@@ -66,12 +66,10 @@ def qlib_train(self, run_id: str) -> dict:
         run.started_at = datetime.now(timezone.utc)
         session.commit()
 
-        # 3. Import Qlib/MLflow inside task body (Research Pitfall 2)
+        # 3. Import Qlib inside task body (Research Pitfall 2)
         import importlib
-        import os
         from pathlib import Path
 
-        import mlflow
         import pandas as pd
         import qlib
         from qlib.config import REG_CN
@@ -86,13 +84,6 @@ def qlib_train(self, run_id: str) -> dict:
             qlib.init(provider_uri="~/.qlib/qlib_data/cn_data", region=REG_CN)
         except Exception:
             logger.debug("Qlib already initialized, skipping re-init")
-
-        # 5. Set MLflow tracking URI from environment + clean stale state
-        tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
-        if tracking_uri:
-            mlflow.set_tracking_uri(tracking_uri)
-        # End any stale MLflow run left from a previous failed task
-        mlflow.end_run()
 
         # 6. Build dataset via DatasetBuilder -> PoseidonDataHandler -> DataHandlerLP -> DatasetH
         segments = run.segments  # dict from JSONB: {"train": ["start", "end"], ...}
@@ -151,57 +142,41 @@ def qlib_train(self, run_id: str) -> dict:
         # 8. Generate predictions on test segment
         test_predictions = trained_model.predict(dataset, segment="test")
 
-        # 9. Record with MLflow directly (bypass Qlib Recorder to avoid state conflicts)
-        mlflow_run_id = None
-        mlflow.end_run()  # ensure no stale run
-        mlflow.set_experiment(f"phase41_{run.run_id}")
-        with mlflow.start_run() as mlflow_active:
-            mlflow_run_id = mlflow_active.info.run_id
-            # Log model params
-            mlflow.log_params(run.model_params or {})
-            mlflow.log_param("handler_class", run.handler_class)
-            mlflow.log_param("model_class", run.model_class)
-            mlflow.log_param("market", run.market)
-            # Compute and log IC/ICIR if predictions available
-            if test_predictions is not None:
-                try:
-                    pred_series = test_predictions if isinstance(test_predictions, pd.Series) else test_predictions.iloc[:, 0]
-                    label_series = dataset.prepare("test", col_set="label").iloc[:, 0]
-                    # Align indices
-                    common_idx = pred_series.index.intersection(label_series.index)
-                    if len(common_idx) > 0:
-                        p = pred_series.loc[common_idx]
-                        l = label_series.loc[common_idx]
-                        ic = p.corr(l)
-                        # Group IC by date for ICIR
-                        ic_by_date = p.groupby(level="datetime").corrwith(l.groupby(level="datetime")) if hasattr(p.groupby(level="datetime"), 'corrwith') else None
-                        if ic_by_date is not None and len(ic_by_date) > 1:
-                            icir = ic_by_date.mean() / ic_by_date.std()
-                        else:
-                            icir = 0.0
-                        mlflow.log_metric("IC", float(ic) if pd.notna(ic) else 0.0)
-                        mlflow.log_metric("ICIR", float(icir) if pd.notna(icir) else 0.0)
-                except Exception as metric_exc:
-                    logger.warning("Failed to compute IC/ICIR: %s", metric_exc)
+        # 9. Compute metrics directly (IC/ICIR) — no MLflow dependency
+        # MLflow PostgreSQL backend conflicts with Poseidon's `experiments` table.
+        # Metrics are computed in-process and stored directly in training_runs.metrics.
+        computed_metrics: dict = {}
+        if test_predictions is not None:
+            try:
+                pred_series = test_predictions if isinstance(test_predictions, pd.Series) else test_predictions.iloc[:, 0]
+                label_series = dataset.prepare("test", col_set="label").iloc[:, 0]
+                common_idx = pred_series.index.intersection(label_series.index)
+                if len(common_idx) > 0:
+                    p = pred_series.loc[common_idx]
+                    la = label_series.loc[common_idx]
+                    ic = float(p.corr(la)) if pd.notna(p.corr(la)) else 0.0
+                    # Per-date IC for ICIR calculation
+                    daily_ic = p.groupby(level="datetime").apply(
+                        lambda x: x.corr(la.loc[x.index]) if len(x) > 1 else 0.0
+                    )
+                    icir = float(daily_ic.mean() / daily_ic.std()) if len(daily_ic) > 1 and daily_ic.std() > 0 else 0.0
+                    computed_metrics = {"IC": ic, "ICIR": icir}
+            except Exception as metric_exc:
+                logger.warning("Failed to compute IC/ICIR: %s", metric_exc)
 
-        # 10. Prepare predictions DataFrame for Parquet
+        # 10. Store metrics in training_runs row
+        run = session.query(TrainingRun).filter_by(run_id=uuid.UUID(run_id)).one()
+        if computed_metrics:
+            run.metrics = computed_metrics
+            session.commit()
+
+        # 11. Prepare predictions DataFrame for Parquet
         pred_df = None
         if test_predictions is not None:
             if isinstance(test_predictions, pd.Series):
                 pred_df = test_predictions.to_frame(name="prediction")
             else:
                 pred_df = test_predictions
-
-        # 11. Scrape MLflow metrics (D-16)
-        scraped_metrics: dict = {}
-        if mlflow_run_id:
-            mlflow_run_data = mlflow.get_run(mlflow_run_id)
-            scraped_metrics = dict(mlflow_run_data.data.metrics)
-            # Reload run from DB to avoid stale ORM state
-            run = session.query(TrainingRun).filter_by(run_id=uuid.UUID(run_id)).one()
-            run.metrics = scraped_metrics
-            run.mlflow_run_id = mlflow_run_id
-            session.commit()
 
         # 12. Export to ModelVersion via QlibModelExporter (D-06)
         exporter = QlibModelExporter(session)
@@ -217,7 +192,7 @@ def qlib_train(self, run_id: str) -> dict:
             valid_end=datetime.fromisoformat(segments["valid"][1]) if "valid" in segments else None,
             test_start=datetime.fromisoformat(segments["test"][0]) if "test" in segments else None,
             test_end=datetime.fromisoformat(segments["test"][1]) if "test" in segments else None,
-            metrics=scraped_metrics or None,
+            metrics=computed_metrics or None,
         )
         run.model_version_id = model_version.id
 
