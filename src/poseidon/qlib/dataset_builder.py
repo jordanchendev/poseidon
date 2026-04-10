@@ -12,6 +12,7 @@ from datetime import datetime
 import pandas as pd
 from sqlalchemy.orm import Session
 
+from poseidon.data.feature_engine import FeatureEngine
 from poseidon.data.storage import read_ohlcv
 from poseidon.qlib.column_adapter import adapt_columns
 from poseidon.universe.snapshot import get_snapshot_at
@@ -65,6 +66,7 @@ class DatasetBuilder:
         start: datetime | None = None,
         end: datetime | None = None,
         snapshot_date: datetime | None = None,
+        feature_specs: list[tuple[str, dict]] | None = None,
     ) -> pd.DataFrame:
         """Build a Qlib-compatible multi-index DataFrame from TimescaleDB.
 
@@ -75,10 +77,16 @@ class DatasetBuilder:
             end: End of the date range (inclusive). None means no upper bound.
             snapshot_date: Point-in-time for dynamic universe resolution via
                 get_snapshot_at. Used only when symbols is None.
+            feature_specs: Optional list of (feature_name, params_dict) tuples.
+                When provided, FeatureEngine computes these features per-symbol
+                and merges the results as $-prefixed columns into the output
+                DataFrame. When None, only OHLCV + $vwap columns are produced
+                (backward-compatible default).
 
         Returns:
             DataFrame with MultiIndex (datetime, instrument) and columns
-            $open, $high, $low, $close, $volume.
+            $open, $high, $low, $close, $volume, $vwap, plus any computed
+            feature columns from feature_specs (e.g., $roe, $roa).
 
         Raises:
             ValueError: If neither symbols nor snapshot_date is provided.
@@ -90,6 +98,8 @@ class DatasetBuilder:
             return self._make_empty_df()
 
         frames: list[pd.DataFrame] = []
+        engine = FeatureEngine() if feature_specs else None
+
         for symbol in resolved_symbols:
             df = read_ohlcv(
                 self.session, symbol, self.market, self.interval, start, end
@@ -104,6 +114,23 @@ class DatasetBuilder:
                 continue
 
             df = df.copy()
+
+            # Compute FeatureEngine features per-symbol BEFORE concatenation
+            if engine is not None and feature_specs:
+                feature_df = engine.compute_with_companions(
+                    ohlcv=df,
+                    symbol=symbol,
+                    market=self.market,
+                    interval=self.interval,
+                    feature_specs=feature_specs,
+                    db_session=self.session,
+                )
+                # Merge computed feature columns (exclude OHLCV to avoid duplication)
+                ohlcv_cols = {"time", "open", "high", "low", "close", "volume"}
+                new_cols = [c for c in feature_df.columns if c not in ohlcv_cols]
+                for col in new_cols:
+                    df[col] = feature_df[col]
+
             df["instrument"] = symbol
             frames.append(df)
 
@@ -127,6 +154,15 @@ class DatasetBuilder:
         result["$vwap"] = (
             result["$high"] + result["$low"] + result["$close"]
         ) / 3.0
+
+        # Prefix non-OHLCV feature columns with $ for Qlib compatibility
+        known_qlib = {"$open", "$high", "$low", "$close", "$volume", "$vwap"}
+        rename_map = {}
+        for col in result.columns:
+            if col not in known_qlib and not col.startswith("$"):
+                rename_map[col] = f"${col}"
+        if rename_map:
+            result = result.rename(columns=rename_map)
 
         # Sort for deterministic output
         result = result.sort_index()
