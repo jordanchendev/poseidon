@@ -13,6 +13,7 @@ AFTER ``/runs`` and ``/runs/{run_id}`` to prevent FastAPI from matching
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 import pandas as pd
@@ -21,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from poseidon.core.schemas import (
     ModelMetricsResponse,
+    PredictionResponse,
     TrainRequest,
     TrainingRunDetailResponse,
     TrainingRunListResponse,
@@ -34,6 +36,16 @@ from poseidon.qlib.allowlist import resolve_handler, resolve_model
 from poseidon.workers.celery_app import celery_app
 
 router = APIRouter()
+
+
+def _parse_period_date(value: str | None) -> datetime | None:
+    """Parse a date string from ModelVersion params JSONB to datetime."""
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        return None
 
 
 @router.post("/train", status_code=202, response_model=TrainingRunResponse)
@@ -208,16 +220,27 @@ async def delete_model(
     return {"detail": f"Model version {model_id} deleted"}
 
 
-@router.get("/{model_id}/predictions")
+@router.get("/{model_id}/predictions", response_model=PredictionResponse)
 async def get_predictions(
     model_id: UUID,
-    segment: str = Query("test", examples=["test", "valid"]),
+    segment: str | None = Query(None, examples=["test", "valid", "train"]),
+    start: datetime | None = Query(None, examples=["2024-01-01T00:00:00"]),
+    end: datetime | None = Query(None, examples=["2024-12-31T00:00:00"]),
+    symbol: str | None = Query(None, examples=["BTCUSDT"]),
     db: Session = Depends(get_db),
 ):
-    """Return predictions from Parquet file for the given segment (per RESEARCH-API-10).
+    """Return predictions with optional range filtering (per D-04, D-05, D-06, PRED-03).
 
-    Reads ``{artifact_path}/predictions_{segment}.parquet`` and converts to
-    JSON records.  Returns 404 with D-19 message when the file does not exist.
+    Query modes (backward compatible per D-04):
+    - ``?segment=test`` -- return single segment Parquet (legacy behavior)
+    - ``?start=...&end=...`` -- load all segments, concat, filter by date range
+    - ``?symbol=...`` -- filter by instrument
+    - Combine: ``?start=...&end=...&symbol=...`` for precise queries
+
+    When no segment and no range params provided, defaults to loading test segment
+    for backward compatibility.
+
+    Response always includes training period metadata per D-06.
     """
     version = db.query(ModelVersion).filter(ModelVersion.id == model_id).first()
     if version is None:
@@ -227,24 +250,101 @@ async def get_predictions(
     if not version.artifact_path:
         raise HTTPException(
             status_code=404,
-            detail=f"Predictions not available for segment: {segment}",
+            detail="No artifact path for this model version",
         )
-    pred_path = get_predictions_path(version.artifact_path, segment)
-    if not pred_path.exists():
+
+    # Extract training period metadata from params JSONB (per D-06)
+    params = version.params or {}
+    train_period = params.get("train_period", {})
+    valid_period = params.get("valid_period", {})
+    test_period = params.get("test_period", {})
+
+    # Determine which segments to load
+    if segment is not None:
+        # Legacy mode: load single segment
+        segments_to_load = [segment]
+    elif start is not None or end is not None or symbol is not None:
+        # Range query mode: load all available segments (per D-05)
+        segments_to_load = []
+        for seg in ["train", "valid", "test"]:
+            pred_path = get_predictions_path(version.artifact_path, seg)
+            if pred_path.exists():
+                segments_to_load.append(seg)
+        if not segments_to_load:
+            raise HTTPException(
+                status_code=404,
+                detail="No prediction files found for this model version",
+            )
+    else:
+        # Default: test segment for backward compatibility
+        segments_to_load = ["test"]
+        segment = "test"
+
+    # Load and concatenate Parquet files
+    dfs: list[pd.DataFrame] = []
+    for seg in segments_to_load:
+        pred_path = get_predictions_path(version.artifact_path, seg)
+        if not pred_path.exists():
+            if segment is not None:
+                # Single segment mode: 404 if requested segment missing
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Predictions not available for segment: {seg}",
+                )
+            continue  # Range mode: skip missing segments
+        dfs.append(pd.read_parquet(pred_path))
+
+    if not dfs:
         raise HTTPException(
             status_code=404,
-            detail=f"Predictions not available for segment: {segment}",
+            detail="No prediction files found",
         )
-    df = pd.read_parquet(pred_path)
-    # Reset index to include any multi-index columns (Qlib uses datetime+instrument)
-    df_reset = df.reset_index()
-    # Convert datetime columns to ISO strings for JSON serialization
-    for col in df_reset.select_dtypes(include=["datetime64", "datetimetz"]).columns:
-        df_reset[col] = df_reset[col].astype(str)
-    records = df_reset.to_dict(orient="records")
-    return {
-        "model_id": str(model_id),
-        "segment": segment,
-        "count": len(records),
-        "predictions": records,
-    }
+
+    df = pd.concat(dfs)
+
+    # Apply date range filter (per D-05)
+    if start is not None or end is not None:
+        # Reset index to access datetime column for filtering
+        idx_names = df.index.names
+        df_reset = df.reset_index()
+        datetime_col = "datetime" if "datetime" in df_reset.columns else idx_names[0]
+        if datetime_col in df_reset.columns:
+            df_reset[datetime_col] = pd.to_datetime(df_reset[datetime_col])
+            if start is not None:
+                df_reset = df_reset[df_reset[datetime_col] >= pd.Timestamp(start)]
+            if end is not None:
+                df_reset = df_reset[df_reset[datetime_col] <= pd.Timestamp(end)]
+        # Re-set index
+        df = df_reset.set_index(idx_names) if idx_names[0] is not None else df_reset
+
+    # Apply symbol filter
+    if symbol is not None:
+        idx_names = df.index.names
+        df_reset = df.reset_index() if isinstance(df.index, pd.MultiIndex) else df
+        instrument_col = "instrument" if "instrument" in df_reset.columns else None
+        if instrument_col is not None:
+            df_reset = df_reset[df_reset[instrument_col] == symbol]
+        df = (
+            df_reset.set_index(idx_names)
+            if idx_names[0] is not None and isinstance(df.index, pd.MultiIndex)
+            else df_reset
+        )
+
+    # Convert to JSON records
+    df_out = df.reset_index() if isinstance(df.index, pd.MultiIndex) else df
+    for col in df_out.select_dtypes(include=["datetime64", "datetimetz"]).columns:
+        df_out[col] = df_out[col].astype(str)
+    records = df_out.to_dict(orient="records")
+
+    return PredictionResponse(
+        model_id=model_id,
+        segment=segment,
+        count=len(records),
+        predictions=records,
+        train_start=_parse_period_date(train_period.get("start")),
+        train_end=_parse_period_date(train_period.get("end")),
+        valid_start=_parse_period_date(valid_period.get("start")),
+        valid_end=_parse_period_date(valid_period.get("end")),
+        test_start=_parse_period_date(test_period.get("start")),
+        test_end=_parse_period_date(test_period.get("end")),
+    )
