@@ -13,8 +13,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+from uuid import UUID
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 import numpy as np
 
@@ -126,6 +132,69 @@ class BacktestRunner:
         validate_backtest_components([self.strategy])
         warn_bias_risks([self.strategy])
 
+    def validate_model_bias(
+        self,
+        model_version_id: UUID | None,
+        backtest_start: datetime | None,
+        db_session: Session | None = None,
+    ) -> tuple[datetime | None, UUID | None]:
+        """Validate no look-ahead bias when using a ModelVersion (per D-07, PRED-04).
+
+        Checks that model_version.train_end < backtest_start_date.
+        Returns (active_model_timestamp, model_version_id) for audit trail.
+        Raises ValueError if look-ahead bias detected.
+
+        Args:
+            model_version_id: UUID of the ModelVersion to validate.
+            backtest_start: Start date of the backtest.
+            db_session: SQLAlchemy session for DB lookup. Required if model_version_id is set.
+
+        Returns:
+            Tuple of (active_model_timestamp, model_version_id).
+        """
+        if model_version_id is None:
+            return None, None
+
+        if db_session is None:
+            raise ValueError(
+                "db_session is required when model_version_id is specified"
+            )
+
+        from poseidon.models.model_version import ModelVersion
+
+        mv = db_session.query(ModelVersion).filter(
+            ModelVersion.id == model_version_id
+        ).first()
+        if mv is None:
+            raise ValueError(
+                f"ModelVersion {model_version_id} not found"
+            )
+
+        active_model_timestamp = datetime.now(timezone.utc)
+
+        if mv.train_end is not None and backtest_start is not None:
+            # Normalize both to aware datetimes for comparison
+            train_end = mv.train_end
+            bt_start = backtest_start
+            if train_end.tzinfo is not None and (bt_start.tzinfo is None):
+                bt_start = bt_start.replace(tzinfo=timezone.utc)
+            elif (train_end.tzinfo is None) and bt_start.tzinfo is not None:
+                train_end = train_end.replace(tzinfo=timezone.utc)
+
+            if train_end >= bt_start:
+                raise ValueError(
+                    f"Look-ahead bias detected: ModelVersion {model_version_id} "
+                    f"train_end={mv.train_end.isoformat()} >= backtest_start={backtest_start.isoformat()}. "
+                    f"The model's training period must end before the backtest start date."
+                )
+
+        logger.info(
+            "Model bias check passed: model_version_id=%s, train_end=%s, backtest_start=%s",
+            model_version_id, mv.train_end, backtest_start,
+        )
+
+        return active_model_timestamp, model_version_id
+
     @property
     def portfolio(self) -> BacktestPortfolio | None:
         """Access the portfolio after run() completes. Returns None if run() hasn't been called."""
@@ -135,6 +204,9 @@ class BacktestRunner:
         self,
         ohlcv: pd.DataFrame,
         feature_specs: list[tuple[str, dict]] | None = None,
+        model_version_id: UUID | None = None,
+        backtest_start: datetime | None = None,
+        db_session: Session | None = None,
     ) -> BacktestResult:
         """Run backtest over historical OHLCV data.
 
@@ -149,12 +221,17 @@ class BacktestRunner:
         Args:
             ohlcv: Historical OHLCV DataFrame.
             feature_specs: Optional feature specs override.
+            model_version_id: Optional ModelVersion UUID for ML prediction look-ahead bias check.
+            backtest_start: Backtest start date for bias validation.
+            db_session: SQLAlchemy session for ModelVersion lookup.
 
         Returns:
             BacktestResult with metrics, trades, and equity curve length.
         """
         try:
-            return self._run_loop(ohlcv, feature_specs)
+            return self._run_loop(
+                ohlcv, feature_specs, model_version_id, backtest_start, db_session,
+            )
         except Exception as exc:
             logger.exception("Backtest failed: %s", exc)
             config = BacktestConfig(
@@ -163,6 +240,7 @@ class BacktestRunner:
                 market=self.strategy.market,
                 interval=self.strategy.interval,
                 initial_capital=self.initial_capital,
+                model_version_id=model_version_id,
             )
             return BacktestResult(
                 config=config,
@@ -171,14 +249,23 @@ class BacktestRunner:
                 equity_curve_length=0,
                 status="failed",
                 error_message=str(exc),
+                model_version_id=model_version_id,
             )
 
     def _run_loop(
         self,
         ohlcv: pd.DataFrame,
         feature_specs: list[tuple[str, dict]] | None = None,
+        model_version_id: UUID | None = None,
+        backtest_start: datetime | None = None,
+        db_session: Session | None = None,
     ) -> BacktestResult:
         """Core event loop implementation."""
+        # Step 0: Look-ahead bias validation (per D-07, PRED-04)
+        active_model_timestamp, validated_mv_id = self.validate_model_bias(
+            model_version_id, backtest_start, db_session,
+        )
+
         # Step 1: Compute features ONCE -- same code path as live prediction (BT-01)
         # If no feature_specs given, ask the strategy for its required specs
         if feature_specs is None and hasattr(self.strategy, "get_feature_specs"):
@@ -282,6 +369,8 @@ class BacktestRunner:
             equity_curve_length=len(portfolio.equity_curve),
             status="completed",
             trades=trades_dicts,
+            active_model_timestamp=active_model_timestamp,
+            model_version_id=validated_mv_id,
         )
 
     def _compute_sizing(
