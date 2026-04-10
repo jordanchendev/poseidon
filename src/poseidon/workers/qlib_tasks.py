@@ -81,8 +81,9 @@ def qlib_train(self, run_id: str) -> dict:
         from poseidon.qlib.dataset_builder import DatasetBuilder
         from poseidon.qlib.model_exporter import QlibModelExporter
 
-        # 4. Initialize Qlib (Research Pitfall 5)
-        qlib.init(provider_uri="~/.qlib/qlib_data/cn_data", region=REG_CN)
+        # 4. Initialize Qlib (Research Pitfall 5) — guard for solo pool reuse
+        if not qlib.is_initialized():
+            qlib.init(provider_uri="~/.qlib/qlib_data/cn_data", region=REG_CN)
 
         # 5. Set MLflow tracking URI from environment + clean stale state
         tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
