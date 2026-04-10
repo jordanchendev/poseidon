@@ -87,10 +87,12 @@ def qlib_train(self, run_id: str) -> dict:
         # 4. Initialize Qlib (Research Pitfall 5)
         qlib.init(provider_uri="~/.qlib/qlib_data/cn_data", region=REG_CN)
 
-        # 5. Set MLflow tracking URI from environment
+        # 5. Set MLflow tracking URI from environment + clean stale state
         tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
+        # End any stale MLflow run left from a previous failed task
+        mlflow.end_run()
 
         # 6. Build dataset via DatasetBuilder -> PoseidonDataHandler -> DataHandlerLP -> DatasetH
         segments = run.segments  # dict from JSONB: {"train": ["start", "end"], ...}
