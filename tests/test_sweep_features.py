@@ -9,12 +9,18 @@ import pytest
 
 
 def make_ohlcv(n=50):
-    """Create synthetic OHLCV data for testing."""
+    """Create synthetic OHLCV data with valid constraints.
+
+    Guarantees: high >= max(open, close), low <= min(open, close).
+    """
     np.random.seed(42)
     close = 100 + np.cumsum(np.random.randn(n) * 0.5)
-    high = close + np.abs(np.random.randn(n)) * 2
-    low = close - np.abs(np.random.randn(n)) * 2
     open_ = close + np.random.randn(n) * 0.3
+    # high must be >= max(open, close), low must be <= min(open, close)
+    bar_max = np.maximum(open_, close)
+    bar_min = np.minimum(open_, close)
+    high = bar_max + np.abs(np.random.randn(n)) * 2
+    low = bar_min - np.abs(np.random.randn(n)) * 2
     volume = np.random.randint(1000, 10000, n).astype(float)
     return pd.DataFrame(
         {"open": open_, "high": high, "low": low, "close": close, "volume": volume}
