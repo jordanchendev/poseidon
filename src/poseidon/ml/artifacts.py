@@ -8,6 +8,7 @@ Directory layout:
 
 import json
 import logging
+import shutil
 from pathlib import Path
 
 from poseidon.core.config import settings
@@ -72,3 +73,32 @@ def get_active_version(model_name: str) -> int | None:
     if target.startswith("v"):
         return int(target[1:])
     return None
+
+
+def get_predictions_path(artifact_path: str, segment: str) -> Path:
+    """Return the path to a predictions Parquet file for a given segment.
+
+    Per Phase 41 D-18: predictions are serialized to Parquet at
+    ``{artifact_path}/predictions_{segment}.parquet``.
+    """
+    return Path(artifact_path) / f"predictions_{segment}.parquet"
+
+
+def delete_version_artifacts(artifact_path: str) -> bool:
+    """Remove the entire artifact directory for a model version.
+
+    Returns True if the directory existed and was removed, False if it
+    didn't exist. Logs a warning on removal errors but does not raise
+    (best-effort cleanup).
+    """
+    path = Path(artifact_path)
+    if not path.exists():
+        logger.warning("Artifact path does not exist: %s", path)
+        return False
+    try:
+        shutil.rmtree(path)
+        logger.info("Deleted artifact directory: %s", path)
+        return True
+    except OSError as exc:
+        logger.warning("Failed to delete artifact directory %s: %s", path, exc)
+        return False
