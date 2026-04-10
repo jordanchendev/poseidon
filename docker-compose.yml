@@ -139,7 +139,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.qlib
-    command: celery -A poseidon.workers.celery_app worker -Q qlib_queue -c 1 --pool=solo --loglevel=info
+    command: celery -A poseidon.workers.celery_app worker -Q qlib_queue -c 1 --pool=solo --loglevel=info --include=poseidon.workers.qlib_tasks
     environment:
       - TZ=Asia/Taipei
       - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
