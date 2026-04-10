@@ -52,6 +52,7 @@ class PoseidonDataHandler:
         snapshot_date: datetime | None = None,
         learn_processors: list[tuple[str, dict[str, Any]]] | None = None,
         infer_processors: list[tuple[str, dict[str, Any]]] | None = None,
+        feature_specs: list[tuple[str, dict]] | None = None,
     ) -> None:
         """Initialize PoseidonDataHandler.
 
@@ -65,6 +66,9 @@ class PoseidonDataHandler:
                 CSZScoreNorm + Fillna.
             infer_processors: Processor configs for inference data. Defaults to
                 same as learn_processors.
+            feature_specs: Optional list of (feature_name, params_dict) passed through
+                to DatasetBuilder.build(). When provided, computed feature columns are
+                included in the Qlib DataFrame.
         """
         self._dataset_builder = dataset_builder
         self._symbols = symbols
@@ -74,7 +78,8 @@ class PoseidonDataHandler:
 
         # Fetch raw data via DatasetBuilder
         self._raw_data: pd.DataFrame = dataset_builder.build(
-            symbols=symbols, start=start, end=end, snapshot_date=snapshot_date
+            symbols=symbols, start=start, end=end, snapshot_date=snapshot_date,
+            feature_specs=feature_specs,
         )
 
         # Processor configs (stored as tuples, not Qlib objects)
