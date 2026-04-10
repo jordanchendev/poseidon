@@ -284,3 +284,23 @@ class ModelMetricsResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PredictionResponse(BaseModel):
+    """Response for GET /models/{id}/predictions with range query (per D-04, D-06, PRED-03).
+
+    Includes training period metadata alongside prediction data so consumers
+    know the model's temporal boundary.
+    """
+
+    model_id: UUID
+    segment: str | None = None  # Set when querying by segment; None for range query
+    count: int
+    predictions: list[dict]
+    # Training period metadata (per D-06)
+    train_start: datetime | None = None
+    train_end: datetime | None = None
+    valid_start: datetime | None = None
+    valid_end: datetime | None = None
+    test_start: datetime | None = None
+    test_end: datetime | None = None
