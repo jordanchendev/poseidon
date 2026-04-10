@@ -23,6 +23,7 @@ class BacktestConfig(BaseModel):
     feature_specs: list[tuple[str, dict]] | None = None
     sizing_mode: str = "fixed_notional"  # SizingMode value
     sizing_params: dict = Field(default_factory=dict)  # extra SizingConfig fields
+    model_version_id: UUID | None = None  # ModelVersion to use for ML predictions
 
 
 class BacktestResult(BaseModel):
@@ -36,3 +37,5 @@ class BacktestResult(BaseModel):
     status: str  # "completed" or "failed"
     error_message: str | None = None
     trades: list[dict] = Field(default_factory=list)
+    active_model_timestamp: datetime | None = None  # When model was selected for audit trail (per D-08)
+    model_version_id: UUID | None = None  # Which ModelVersion was used
