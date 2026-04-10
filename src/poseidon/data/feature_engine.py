@@ -90,6 +90,7 @@ _FUNDAMENTAL_NAMES = frozenset({"pe_ratio", "pb_ratio", "revenue_mom", "revenue_
 _TRADE_STRUCTURE_NAMES = frozenset({"avg_trade_size", "turnover_ratio"})
 _FUNDING_NAMES = frozenset({"funding_rate_daily"})
 _MARGIN_NAMES = frozenset({"margin_buy_ratio", "margin_sell_ratio"})
+_OI_NAMES = frozenset({"oi_change", "oi_buildup"})
 _MACRO_PREFIX = "macro_"
 
 
@@ -101,6 +102,7 @@ def _is_nonprice_spec(name: str) -> bool:
         or name in _TRADE_STRUCTURE_NAMES
         or name in _FUNDING_NAMES
         or name in _MARGIN_NAMES
+        or name in _OI_NAMES
         or name.startswith(_MACRO_PREFIX)
     )
 
@@ -117,6 +119,8 @@ def _nonprice_data_key(name: str) -> str:
         return "funding_data"
     if name in _MARGIN_NAMES:
         return "margin_data"
+    if name in _OI_NAMES:
+        return "oi_data"
     if name.startswith(_MACRO_PREFIX):
         return "macro_data"
     raise ValueError(f"Not a non-price feature: {name}")
@@ -166,6 +170,13 @@ def get_r2_specs(symbol: str, market: str) -> list[tuple[str, dict]]:
     if market == "crypto_spot":
         specs.extend([
             ("funding_rate_daily", {}),
+        ])
+
+    if market == "crypto_perp":
+        specs.extend([
+            ("funding_rate_daily", {}),
+            ("oi_change", {"period": 20}),
+            ("oi_buildup", {"period": 24}),
         ])
 
     # Macro indices for ALL markets
@@ -475,6 +486,7 @@ class FeatureEngine:
         needs_trade_structure = any(n in _TRADE_STRUCTURE_NAMES for n, _ in nonprice_specs)
         needs_funding = any(n in _FUNDING_NAMES for n, _ in nonprice_specs)
         needs_margin = any(n in _MARGIN_NAMES for n, _ in nonprice_specs)
+        needs_oi = any(n in _OI_NAMES for n, _ in nonprice_specs)
         needs_macro = any(n.startswith(_MACRO_PREFIX) for n, _ in nonprice_specs)
 
         if needs_institutional or needs_fundamental or needs_trade_structure or needs_margin:
@@ -494,6 +506,13 @@ class FeatureEngine:
             from poseidon.data.loaders import FundingRateLoader
 
             nonprice_data["funding_data"] = FundingRateLoader().get_daily_funding_rate(symbol)
+
+        if needs_oi:
+            from poseidon.data.loaders import OpenInterestLoader
+
+            nonprice_data["oi_data"] = OpenInterestLoader(
+                session_factory=SessionLocal
+            ).get_oi_series(symbol)
 
         if needs_macro:
             from poseidon.data.loaders import MacroIndexLoader
