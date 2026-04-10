@@ -18,10 +18,13 @@ from poseidon.data.features import margin  # noqa: F401
 from poseidon.data.features import open_interest  # noqa: F401
 from poseidon.data.features import regime  # noqa: F401
 from poseidon.data.features import returns  # noqa: F401
+from poseidon.data.features import swing  # noqa: F401
 from poseidon.data.features import technical  # noqa: F401
 from poseidon.data.features import trade_structure  # noqa: F401
+from poseidon.data.features import trend  # noqa: F401
 from poseidon.data.features import volatility  # noqa: F401
 from poseidon.data.features import volume  # noqa: F401
 from poseidon.data.features import volume_profile  # noqa: F401
+from poseidon.data.features import wick  # noqa: F401
 
 __all__ = ["BaseFeature", "register_feature", "get_feature", "list_features"]

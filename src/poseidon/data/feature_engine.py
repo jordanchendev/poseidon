@@ -88,7 +88,7 @@ EXPANDED_FEATURES: list[tuple[str, dict]] = [
 _INSTITUTIONAL_PREFIXES = ("foreign_net_buy", "trust_net_buy", "dealer_net_buy")
 _FUNDAMENTAL_NAMES = frozenset({"pe_ratio", "pb_ratio", "revenue_mom", "revenue_yoy", "roe", "roa"})
 _TRADE_STRUCTURE_NAMES = frozenset({"avg_trade_size", "turnover_ratio"})
-_FUNDING_NAMES = frozenset({"funding_rate_daily"})
+_FUNDING_NAMES = frozenset({"funding_rate_daily", "funding_rate_extreme"})
 _MARGIN_NAMES = frozenset({"margin_buy_ratio", "margin_sell_ratio"})
 _OI_NAMES = frozenset({"oi_change", "oi_buildup"})
 _MACRO_PREFIX = "macro_"
@@ -175,8 +175,25 @@ def get_r2_specs(symbol: str, market: str) -> list[tuple[str, dict]]:
     if market == "crypto_perp":
         specs.extend([
             ("funding_rate_daily", {}),
+            ("funding_rate_extreme", {"period": 20, "threshold": 2.0}),
             ("oi_change", {"period": 20}),
             ("oi_buildup", {"period": 24}),
+            # Wick & range (G-02)
+            ("wick_ratio", {}),
+            ("range_expansion", {"period": 14}),
+            ("body_ratio", {}),
+            # Swing & breakout (G-03)
+            ("swing_high", {"period": 24}),
+            ("swing_low", {"period": 24}),
+            ("breakout_distance", {"period": 24, "atr_period": 14}),
+            ("fib_extension", {"period": 24}),
+            # Volatility classification (G-04)
+            ("atr_percentile", {"period": 14, "lookback": 100}),
+            ("vol_regime", {"short_period": 5, "long_period": 20}),
+            # Trend filter (G-24)
+            ("adx", {"period": 14}),
+            ("trend_strength", {"long_period": 100, "atr_period": 14}),
+            ("hour_of_day", {}),
         ])
 
     # Macro indices for ALL markets

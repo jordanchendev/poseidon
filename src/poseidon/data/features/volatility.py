@@ -66,3 +66,77 @@ class GarmanKlassVolatility(BaseFeature):
         result = np.sqrt(gk.rolling(window=period).mean())
         result.name = f"garman_klass_vol_{period}"
         return result
+
+
+@register_feature
+class ATRPercentile(BaseFeature):
+    """ATR percentile rank in historical distribution -- H-C core signal.
+
+    Used to dynamically adjust ambush distance based on current volatility state.
+    """
+
+    name = "atr_percentile"
+    description = "ATR percentile rank in rolling window"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        period: int = 14,
+        lookback: int = 100,
+        **kwargs,
+    ) -> pd.Series:
+        col = f"atr_percentile_{lookback}"
+        if not self._validate(ohlcv, min_rows=lookback + period):
+            return pd.Series(dtype=float, name=col)
+        high_low = ohlcv["high"] - ohlcv["low"]
+        high_close_prev = (ohlcv["high"] - ohlcv["close"].shift(1)).abs()
+        low_close_prev = (ohlcv["low"] - ohlcv["close"].shift(1)).abs()
+        tr = pd.concat(
+            [high_low, high_close_prev, low_close_prev], axis=1
+        ).max(axis=1)
+        atr = tr.rolling(window=period).mean()
+        result = atr.rolling(window=lookback).rank(pct=True)
+        result.name = col
+        return result
+
+
+@register_feature
+class VolRegime(BaseFeature):
+    """Volatility regime classification based on short/long vol ratio.
+
+    0=low (<0.8), 1=normal (0.8-1.2), 2=high (1.2-2.0), 3=extreme (>2.0).
+    Used to adjust ambush distance and position sizing.
+    """
+
+    name = "vol_regime"
+    description = "Volatility regime (0=low, 1=normal, 2=high, 3=extreme)"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        short_period: int = 5,
+        long_period: int = 20,
+        **kwargs,
+    ) -> pd.Series:
+        col = "vol_regime"
+        if not self._validate(ohlcv, min_rows=long_period + 1):
+            return pd.Series(dtype=float, name=col)
+        returns = ohlcv["close"].pct_change()
+        short_vol = returns.rolling(window=short_period).std()
+        long_vol = returns.rolling(window=long_period).std()
+        ratio = short_vol / long_vol.replace(0, float("nan"))
+
+        conditions = [
+            ratio < 0.8,
+            (ratio >= 0.8) & (ratio < 1.2),
+            (ratio >= 1.2) & (ratio < 2.0),
+            ratio >= 2.0,
+        ]
+        choices = [0, 1, 2, 3]
+        result = pd.Series(
+            np.select(conditions, choices, default=np.nan),
+            index=ohlcv.index,
+            dtype=float,
+        )
+        result.name = col
+        return result
