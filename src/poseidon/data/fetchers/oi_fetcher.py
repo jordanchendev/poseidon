@@ -2,6 +2,7 @@
 
 import logging
 import time as time_module
+from datetime import datetime, timezone
 
 import ccxt
 import pandas as pd
@@ -10,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 # Binance OI history API max records per request
 MAX_RECORDS_PER_REQUEST = 500
+# Binance openInterestHist endpoint only serves ~30 days of history
+MAX_LOOKBACK_DAYS = 30
 
 
 class OpenInterestFetcher:
@@ -56,6 +59,17 @@ class OpenInterestFetcher:
         """
         since_ms = self.exchange.parse8601(f"{start}T00:00:00Z") if start else None
         until_ms = self.exchange.parse8601(f"{end}T23:59:59Z") if end else None
+
+        # Clamp to Binance's ~30-day lookback limit
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        earliest_ms = now_ms - (MAX_LOOKBACK_DAYS * 86_400_000)
+        if since_ms is not None and since_ms < earliest_ms:
+            clamped_date = datetime.fromtimestamp(earliest_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            logger.warning(
+                "OI start %s exceeds Binance %d-day lookback limit, clamped to %s",
+                start, MAX_LOOKBACK_DAYS, clamped_date,
+            )
+            since_ms = earliest_ms
 
         all_data = self._retry_with_backoff(
             self._fetch_paginated, symbol, interval, since_ms, until_ms

@@ -31,14 +31,14 @@ class OpenInterestLoader:
         self,
         symbol: str,
         interval: str = "1h",
-        start: str = "2024-01-01",
+        start: str = "",
     ) -> int:
         """Fetch OI from Binance and store in open_interest table.
 
         Args:
             symbol: CCXT perp format (e.g. "BTC/USDT:USDT").
             interval: OI snapshot interval ("5m", "1h", "4h").
-            start: Start date "YYYY-MM-DD".
+            start: Start date "YYYY-MM-DD" (empty = fetcher decides).
 
         Returns:
             Number of records stored/upserted.
