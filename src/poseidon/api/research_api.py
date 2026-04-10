@@ -1,24 +1,34 @@
-"""Research API endpoints for training run lifecycle (Phase 41).
+"""Research API endpoints for training run lifecycle + model queries (Phase 41).
 
-Exposes POST /train, GET /runs, GET /runs/{run_id}, POST /runs/{run_id}/cancel.
+Exposes POST /train, GET /runs, GET /runs/{run_id}, POST /runs/{run_id}/cancel,
+GET /{model_id}, DELETE /{model_id}, GET /{model_id}/predictions.
+
 Task dispatch uses ``celery_app.send_task()`` (NOT direct import of qlib_tasks)
 to avoid importing qlib/mlflow in the cp313 API container.
+
+**Route ordering note:** The ``/{model_id}`` wildcard routes MUST be defined
+AFTER ``/runs`` and ``/runs/{run_id}`` to prevent FastAPI from matching
+``/runs`` as a ``model_id``.
 """
 
 from __future__ import annotations
 
 from uuid import UUID
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from poseidon.core.schemas import (
+    ModelMetricsResponse,
     TrainRequest,
     TrainingRunDetailResponse,
     TrainingRunListResponse,
     TrainingRunResponse,
 )
+from poseidon.ml.artifacts import delete_version_artifacts, get_predictions_path
 from poseidon.models.base import get_db
+from poseidon.models.model_version import ModelVersion
 from poseidon.models.training_run import TrainingRun
 from poseidon.qlib.allowlist import resolve_handler, resolve_model
 from poseidon.workers.celery_app import celery_app
@@ -148,3 +158,93 @@ async def cancel_training_run(
     run.status = "cancelled"
     db.commit()
     return {"run_id": str(run.run_id), "status": "cancelled"}
+
+
+# ---------------------------------------------------------------------------
+# Model-level endpoints (Plan 04: RESEARCH-API-08, -09, -10)
+# ---------------------------------------------------------------------------
+# These MUST stay below /runs and /runs/{run_id} to avoid route shadowing.
+
+
+@router.get("/{model_id}", response_model=ModelMetricsResponse)
+async def get_model_metrics(
+    model_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """Return a ModelVersion with full metrics JSON (per RESEARCH-API-08)."""
+    version = db.query(ModelVersion).filter(ModelVersion.id == model_id).first()
+    if version is None:
+        raise HTTPException(
+            status_code=404, detail=f"Model version {model_id} not found"
+        )
+    return version
+
+
+@router.delete("/{model_id}")
+async def delete_model(
+    model_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """Delete a ModelVersion and its artifact files (per RESEARCH-API-09).
+
+    Best-effort artifact cleanup: if the directory doesn't exist or fails
+    to delete, the DB row is still removed. Training runs that reference
+    this version have their FK set to NULL to prevent orphaned references.
+    """
+    version = db.query(ModelVersion).filter(ModelVersion.id == model_id).first()
+    if version is None:
+        raise HTTPException(
+            status_code=404, detail=f"Model version {model_id} not found"
+        )
+    # Best-effort artifact cleanup
+    if version.artifact_path:
+        delete_version_artifacts(version.artifact_path)
+    # Unlink any training_runs that reference this model_version
+    db.query(TrainingRun).filter(
+        TrainingRun.model_version_id == model_id
+    ).update({"model_version_id": None})
+    db.delete(version)
+    db.commit()
+    return {"detail": f"Model version {model_id} deleted"}
+
+
+@router.get("/{model_id}/predictions")
+async def get_predictions(
+    model_id: UUID,
+    segment: str = Query("test", examples=["test", "valid"]),
+    db: Session = Depends(get_db),
+):
+    """Return predictions from Parquet file for the given segment (per RESEARCH-API-10).
+
+    Reads ``{artifact_path}/predictions_{segment}.parquet`` and converts to
+    JSON records.  Returns 404 with D-19 message when the file does not exist.
+    """
+    version = db.query(ModelVersion).filter(ModelVersion.id == model_id).first()
+    if version is None:
+        raise HTTPException(
+            status_code=404, detail=f"Model version {model_id} not found"
+        )
+    if not version.artifact_path:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Predictions not available for segment: {segment}",
+        )
+    pred_path = get_predictions_path(version.artifact_path, segment)
+    if not pred_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Predictions not available for segment: {segment}",
+        )
+    df = pd.read_parquet(pred_path)
+    # Reset index to include any multi-index columns (Qlib uses datetime+instrument)
+    df_reset = df.reset_index()
+    # Convert datetime columns to ISO strings for JSON serialization
+    for col in df_reset.select_dtypes(include=["datetime64", "datetimetz"]).columns:
+        df_reset[col] = df_reset[col].astype(str)
+    records = df_reset.to_dict(orient="records")
+    return {
+        "model_id": str(model_id),
+        "segment": segment,
+        "count": len(records),
+        "predictions": records,
+    }
