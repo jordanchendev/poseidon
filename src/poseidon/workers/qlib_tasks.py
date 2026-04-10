@@ -78,6 +78,7 @@ def qlib_train(self, run_id: str) -> dict:
         from poseidon.qlib.data_handler import PoseidonDataHandler
         from poseidon.qlib.dataset_builder import DatasetBuilder
         from poseidon.qlib.model_exporter import QlibModelExporter
+        from poseidon.ml.artifacts import get_predictions_path
 
         # 4. Initialize Qlib (Research Pitfall 5) — guard for solo pool reuse
         try:
@@ -153,8 +154,30 @@ def qlib_train(self, run_id: str) -> dict:
             session.commit()
             return {"run_id": run_id, "status": "cancelled"}
 
-        # 8. Generate predictions on test segment
-        test_predictions = trained_model.predict(dataset, segment="test")
+        # 8. Generate predictions on ALL segments (per Phase 43 D-01: train, valid, test)
+        all_predictions: dict[str, pd.DataFrame | pd.Series | None] = {}
+        for seg_name in segments.keys():
+            try:
+                seg_pred = trained_model.predict(dataset, segment=seg_name)
+                all_predictions[seg_name] = seg_pred
+                logger.info(
+                    "Generated predictions for segment '%s': %d rows",
+                    seg_name,
+                    len(seg_pred) if seg_pred is not None else 0,
+                )
+            except Exception as seg_exc:
+                logger.warning("Failed to predict segment '%s': %s", seg_name, seg_exc)
+                all_predictions[seg_name] = None
+
+            # CHECK CANCEL between segment predictions (per _run_cancelled pattern)
+            if _run_cancelled(session, run_id):
+                run = session.query(TrainingRun).filter_by(run_id=uuid.UUID(run_id)).one()
+                run.finished_at = datetime.now(timezone.utc)
+                session.commit()
+                return {"run_id": run_id, "status": "cancelled"}
+
+        # Use test predictions for metrics (backward compatible)
+        test_predictions = all_predictions.get("test")
 
         # 9. Compute metrics directly (IC/ICIR) — no MLflow dependency
         # MLflow PostgreSQL backend conflicts with Poseidon's `experiments` table.
@@ -184,14 +207,6 @@ def qlib_train(self, run_id: str) -> dict:
             run.metrics = computed_metrics
             session.commit()
 
-        # 11. Prepare predictions DataFrame for Parquet
-        pred_df = None
-        if test_predictions is not None:
-            if isinstance(test_predictions, pd.Series):
-                pred_df = test_predictions.to_frame(name="prediction")
-            else:
-                pred_df = test_predictions
-
         # 12. Export to ModelVersion via QlibModelExporter (D-06)
         exporter = QlibModelExporter(session)
         model_version = exporter.export(
@@ -210,12 +225,37 @@ def qlib_train(self, run_id: str) -> dict:
         )
         run.model_version_id = model_version.id
 
-        # 13. Save predictions Parquet to the ModelVersion's artifact_path
-        if pred_df is not None and model_version.artifact_path:
-            pred_path = Path(model_version.artifact_path) / "predictions_test.parquet"
-            pred_path.parent.mkdir(parents=True, exist_ok=True)
-            pred_df.to_parquet(str(pred_path))
-            logger.info("Saved test predictions to %s (%d rows)", pred_path, len(pred_df))
+        # 13. Save predictions Parquet for ALL segments (per Phase 43 D-02)
+        saved_segments: list[str] = []
+        if model_version.artifact_path:
+            Path(model_version.artifact_path).mkdir(parents=True, exist_ok=True)
+            for seg_name, seg_pred in all_predictions.items():
+                if seg_pred is None:
+                    continue
+                # Normalize to DataFrame with "prediction" column
+                if isinstance(seg_pred, pd.Series):
+                    seg_df = seg_pred.to_frame(name="prediction")
+                else:
+                    seg_df = seg_pred
+                pred_path = get_predictions_path(model_version.artifact_path, seg_name)
+                seg_df.to_parquet(str(pred_path))
+                saved_segments.append(seg_name)
+                logger.info(
+                    "Saved %s predictions to %s (%d rows)",
+                    seg_name,
+                    pred_path,
+                    len(seg_df),
+                )
+
+        # Record which segments were generated in ModelVersion params JSONB
+        if saved_segments:
+            if model_version.params is None:
+                model_version.params = {}
+            # SQLAlchemy JSONB mutation detection requires reassignment
+            updated_params = dict(model_version.params)
+            updated_params["prediction_segments"] = saved_segments
+            model_version.params = updated_params
+            session.commit()
 
         # 14. Mark succeeded
         run.status = "succeeded"
