@@ -46,8 +46,12 @@ dev = [
 ]
 qlib = [
     "pyqlib>=0.9",
-    # mlflow (qlib transitive dep) imports `google.protobuf.service` which
-    # was removed in protobuf 5.x — pin to 4.x to avoid ImportError at qlib.init().
+    # Phase 41 D-14: mlflow as explicit dependency for the metrics bridge
+    # (previously transitive via pyqlib). The qlib_train task scrapes
+    # mlflow.get_run() metrics into training_runs.metrics JSONB.
+    "mlflow>=2.0",
+    # mlflow imports `google.protobuf.service` which was removed in
+    # protobuf 5.x — pin to 4.x to avoid ImportError at qlib.init().
     "protobuf>=4.21,<5",
     # mlflow imports `pkg_resources` which was removed from setuptools 81+.
     # Pin to <81 so the legacy import still works.
