@@ -89,6 +89,7 @@ _INSTITUTIONAL_PREFIXES = ("foreign_net_buy", "trust_net_buy", "dealer_net_buy")
 _FUNDAMENTAL_NAMES = frozenset({"pe_ratio", "pb_ratio", "revenue_mom", "revenue_yoy", "roe", "roa"})
 _TRADE_STRUCTURE_NAMES = frozenset({"avg_trade_size", "turnover_ratio"})
 _FUNDING_NAMES = frozenset({"funding_rate_daily"})
+_MARGIN_NAMES = frozenset({"margin_buy_ratio", "margin_sell_ratio"})
 _MACRO_PREFIX = "macro_"
 
 
@@ -99,6 +100,7 @@ def _is_nonprice_spec(name: str) -> bool:
         or name in _FUNDAMENTAL_NAMES
         or name in _TRADE_STRUCTURE_NAMES
         or name in _FUNDING_NAMES
+        or name in _MARGIN_NAMES
         or name.startswith(_MACRO_PREFIX)
     )
 
@@ -113,6 +115,8 @@ def _nonprice_data_key(name: str) -> str:
         return "trade_structure_data"
     if name in _FUNDING_NAMES:
         return "funding_data"
+    if name in _MARGIN_NAMES:
+        return "margin_data"
     if name.startswith(_MACRO_PREFIX):
         return "macro_data"
     raise ValueError(f"Not a non-price feature: {name}")
@@ -154,6 +158,9 @@ def get_r2_specs(symbol: str, market: str) -> list[tuple[str, dict]]:
             # Fundamental expansion (Phase 42 FEAT-01)
             ("roe", {}),
             ("roa", {}),
+            # Margin transaction (Phase 42 FEAT-02)
+            ("margin_buy_ratio", {}),
+            ("margin_sell_ratio", {}),
         ])
 
     if market == "crypto_spot":
@@ -194,6 +201,9 @@ EXPANDED_FEATURES_R2: list[tuple[str, dict]] = [
     # Trade structure (tw_stock only)
     ("avg_trade_size", {}),
     ("turnover_ratio", {}),
+    # Margin transaction (tw_stock only)
+    ("margin_buy_ratio", {}),
+    ("margin_sell_ratio", {}),
     # Funding (crypto_spot only)
     ("funding_rate_daily", {}),
     # Macro (all markets)
@@ -464,9 +474,10 @@ class FeatureEngine:
         needs_fundamental = any(n in _FUNDAMENTAL_NAMES for n, _ in nonprice_specs)
         needs_trade_structure = any(n in _TRADE_STRUCTURE_NAMES for n, _ in nonprice_specs)
         needs_funding = any(n in _FUNDING_NAMES for n, _ in nonprice_specs)
+        needs_margin = any(n in _MARGIN_NAMES for n, _ in nonprice_specs)
         needs_macro = any(n.startswith(_MACRO_PREFIX) for n, _ in nonprice_specs)
 
-        if needs_institutional or needs_fundamental or needs_trade_structure:
+        if needs_institutional or needs_fundamental or needs_trade_structure or needs_margin:
             from poseidon.data.loaders import FinLabDataLoader
 
             finlab = FinLabDataLoader()
@@ -476,6 +487,8 @@ class FeatureEngine:
                 nonprice_data["fundamental_data"] = finlab.get_fundamentals(symbol)
             if needs_trade_structure:
                 nonprice_data["trade_structure_data"] = finlab.get_trade_structure(symbol)
+            if needs_margin:
+                nonprice_data["margin_data"] = finlab.get_margin_data(symbol)
 
         if needs_funding:
             from poseidon.data.loaders import FundingRateLoader

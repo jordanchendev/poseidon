@@ -14,6 +14,7 @@ from poseidon.data.features import hmm_regime  # noqa: F401
 from poseidon.data.features import institutional  # noqa: F401
 from poseidon.data.features import intermarket  # noqa: F401
 from poseidon.data.features import macro  # noqa: F401
+from poseidon.data.features import margin  # noqa: F401
 from poseidon.data.features import regime  # noqa: F401
 from poseidon.data.features import returns  # noqa: F401
 from poseidon.data.features import technical  # noqa: F401

@@ -91,6 +91,18 @@ class FinLabDataLoader:
         }
         return self._extract_columns(symbol, datasets)
 
+    def get_margin_data(self, symbol: str) -> pd.DataFrame:
+        """Load margin transaction data for a TW stock symbol.
+
+        Returns DataFrame with columns: margin_buy_ratio, margin_sell_ratio
+        indexed by date. Returns empty DataFrame if symbol not found.
+        """
+        datasets = {
+            "margin_transactions:融資使用率": "margin_buy_ratio",
+            "margin_transactions:融券使用率": "margin_sell_ratio",
+        }
+        return self._extract_columns(symbol, datasets)
+
     def get_trade_structure(self, symbol: str) -> pd.DataFrame:
         """Load trade structure data for a TW stock symbol.
 

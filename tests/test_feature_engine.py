@@ -107,3 +107,36 @@ class TestDefaultFeatures:
         """All default features should compute without error."""
         result = engine.compute_from_df(sample_ohlcv)
         assert not result.empty
+
+
+class TestGetR2Specs:
+    """Tests for get_r2_specs() market-conditional feature generation."""
+
+    def test_tw_stock_includes_fundamental_expansion(self):
+        from poseidon.data.feature_engine import get_r2_specs
+        specs = get_r2_specs("2330", "tw_stock")
+        spec_names = [name for name, _ in specs]
+        assert "roe" in spec_names, "ROE missing from tw_stock R2 specs"
+        assert "roa" in spec_names, "ROA missing from tw_stock R2 specs"
+        assert "margin_buy_ratio" in spec_names, "margin_buy_ratio missing from tw_stock R2 specs"
+        assert "margin_sell_ratio" in spec_names, "margin_sell_ratio missing from tw_stock R2 specs"
+
+    def test_crypto_spot_excludes_margin(self):
+        from poseidon.data.feature_engine import get_r2_specs
+        specs = get_r2_specs("BTCUSDT", "crypto_spot")
+        spec_names = [name for name, _ in specs]
+        assert "margin_buy_ratio" not in spec_names
+        assert "margin_sell_ratio" not in spec_names
+        assert "roe" not in spec_names
+        assert "roa" not in spec_names
+
+    def test_nonprice_spec_detection(self):
+        from poseidon.data.feature_engine import _is_nonprice_spec, _nonprice_data_key
+        assert _is_nonprice_spec("roe") is True
+        assert _is_nonprice_spec("roa") is True
+        assert _is_nonprice_spec("margin_buy_ratio") is True
+        assert _is_nonprice_spec("margin_sell_ratio") is True
+        assert _nonprice_data_key("roe") == "fundamental_data"
+        assert _nonprice_data_key("roa") == "fundamental_data"
+        assert _nonprice_data_key("margin_buy_ratio") == "margin_data"
+        assert _nonprice_data_key("margin_sell_ratio") == "margin_data"
