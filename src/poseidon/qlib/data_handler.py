@@ -142,11 +142,26 @@ class PoseidonDataHandler:
                 "pyqlib is intentionally excluded from production containers."
             ) from exc
 
-        # Promote flat columns to ("feature", col) MultiIndex per Qlib convention
-        df_qlib = self._raw_data.copy()
-        df_qlib.columns = pd.MultiIndex.from_tuples(
-            [("feature", col) for col in df_qlib.columns]
-        )
+        # Compute label: next-period return from $close (Qlib standard)
+        # Label = Ref($close, -1) / $close - 1  (1-period forward return)
+        df_work = self._raw_data.copy()
+        if "$close" in df_work.columns:
+            df_work["label"] = (
+                df_work.groupby(level="instrument")["$close"]
+                .shift(-1)
+                .div(df_work["$close"])
+                .sub(1)
+            )
+        else:
+            logger.warning("No $close column found — label will be NaN")
+            df_work["label"] = np.nan
+
+        # Promote columns to MultiIndex per Qlib convention:
+        # features → ("feature", col), label → ("label", "label")
+        feature_cols = [c for c in df_work.columns if c != "label"]
+        mi_tuples = [("feature", col) for col in feature_cols] + [("label", "label")]
+        df_qlib = df_work.copy()
+        df_qlib.columns = pd.MultiIndex.from_tuples(mi_tuples)
 
         # Resolve instruments and time bounds from the data itself
         instruments = sorted(
