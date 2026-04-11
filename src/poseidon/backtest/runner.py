@@ -29,7 +29,7 @@ from poseidon.backtest.cost_model import CostModel
 from poseidon.backtest.metrics import compute_metrics
 from poseidon.backtest.portfolio import BacktestPortfolio, SizingConfig, SizingMode
 from poseidon.backtest.schemas import BacktestConfig, BacktestResult
-from poseidon.data.feature_engine import FeatureEngine
+from poseidon.data.feature_engine import FeatureEngine, _is_nonprice_spec
 from poseidon.risk.engine import RiskEngine
 from poseidon.signals.schemas import SignalAction, SignalStatus
 from poseidon.strategies.base import BaseStrategy
@@ -195,6 +195,108 @@ class BacktestRunner:
 
         return active_model_timestamp, model_version_id
 
+    def _load_prediction_data(
+        self,
+        model_version_id: UUID | None,
+        symbol: str,
+        db_session: Session | None = None,
+    ) -> pd.DataFrame | None:
+        """Load prediction cache for a model version, filtered to a single symbol.
+
+        Reads the "test" segment Parquet (primary backtest segment), falls back
+        to checking all available segments. Returns a single-instrument DataFrame
+        with DatetimeIndex and "prediction" column, or None if unavailable.
+
+        Args:
+            model_version_id: UUID of the model version.
+            symbol: Symbol to filter predictions for.
+            db_session: SQLAlchemy session for ModelVersion lookup.
+
+        Returns:
+            DataFrame with DatetimeIndex and "prediction" column, or None.
+        """
+        if model_version_id is None or db_session is None:
+            return None
+
+        from poseidon.ml.artifacts import get_predictions_path
+        from poseidon.models.model_version import ModelVersion
+
+        mv = db_session.query(ModelVersion).filter(
+            ModelVersion.id == model_version_id
+        ).first()
+        if mv is None or mv.artifact_path is None:
+            logger.warning(
+                "ModelVersion %s not found or has no artifact_path", model_version_id,
+            )
+            return None
+
+        # Try segments in order: test first (standard backtest), then valid, then train
+        segments_to_try = (
+            mv.params.get("prediction_segments", ["test"]) if mv.params else ["test"]
+        )
+        # Prefer test segment for backtesting
+        ordered: list[str] = []
+        for pref in ("test", "valid", "train"):
+            if pref in segments_to_try:
+                ordered.append(pref)
+        if not ordered:
+            ordered = list(segments_to_try)
+
+        all_dfs: list[pd.DataFrame] = []
+        for segment in ordered:
+            pred_path = get_predictions_path(mv.artifact_path, segment)
+            if pred_path.exists():
+                try:
+                    seg_df = pd.read_parquet(str(pred_path))
+                    all_dfs.append(seg_df)
+                    logger.info(
+                        "Loaded %s predictions from %s (%d rows)",
+                        segment, pred_path, len(seg_df),
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to read predictions %s: %s", pred_path, exc)
+
+        if not all_dfs:
+            logger.warning(
+                "No prediction Parquet files found for ModelVersion %s",
+                model_version_id,
+            )
+            return None
+
+        # Concatenate all segments (they don't overlap in date ranges)
+        combined = pd.concat(all_dfs)
+        # Remove duplicates keeping last (in case segments overlap at boundaries)
+        combined = combined[~combined.index.duplicated(keep="last")]
+
+        # Filter to single instrument
+        # Qlib MultiIndex is (datetime, instrument). Extract this symbol's predictions.
+        if isinstance(combined.index, pd.MultiIndex):
+            instruments = combined.index.get_level_values("instrument").unique()
+            # Find matching instrument: try exact match, then suffix match
+            # Poseidon symbols: "2330", "BTCUSDT"
+            # Qlib instruments: "SH600519", "BTCUSDT", "2330.TW" (varies by handler)
+            matched_instrument = None
+            for inst in instruments:
+                if inst == symbol or inst.endswith(symbol) or symbol in inst:
+                    matched_instrument = inst
+                    break
+            if matched_instrument is None:
+                logger.warning(
+                    "Symbol %s not found in prediction instruments: %s",
+                    symbol, list(instruments)[:10],
+                )
+                return None
+
+            # Extract single instrument, collapse to DatetimeIndex
+            instrument_df = combined.loc[(slice(None), matched_instrument), :]
+            instrument_df = instrument_df.droplevel("instrument")
+        else:
+            # Already a flat DatetimeIndex (single instrument predictions)
+            instrument_df = combined
+
+        instrument_df = instrument_df.sort_index()
+        return instrument_df
+
     @property
     def portfolio(self) -> BacktestPortfolio | None:
         """Access the portfolio after run() completes. Returns None if run() hasn't been called."""
@@ -270,7 +372,41 @@ class BacktestRunner:
         # If no feature_specs given, ask the strategy for its required specs
         if feature_specs is None and hasattr(self.strategy, "get_feature_specs"):
             feature_specs = self.strategy.get_feature_specs()
-        features = self.feature_engine.compute_from_df(ohlcv, feature_specs)
+
+        # Check if we need prediction data injection (Phase 44 - ML vote)
+        extra_nonprice_data = None
+        if model_version_id is not None and feature_specs is not None:
+            # Check if any spec references qlib_prediction
+            has_prediction_spec = any(
+                name == "qlib_prediction" for name, _ in feature_specs
+            )
+            if has_prediction_spec:
+                pred_df = self._load_prediction_data(
+                    model_version_id, self.strategy.symbol, db_session,
+                )
+                if pred_df is not None:
+                    extra_nonprice_data = {"prediction_data": pred_df}
+                    logger.info(
+                        "Injecting prediction_data (%d rows) for model_version_id=%s",
+                        len(pred_df), model_version_id,
+                    )
+
+        # Use compute_with_companions when non-price features are present
+        has_nonprice = feature_specs is not None and any(
+            _is_nonprice_spec(name) for name, _ in feature_specs
+        )
+        if has_nonprice:
+            features = self.feature_engine.compute_with_companions(
+                ohlcv,
+                self.strategy.symbol,
+                self.strategy.market,
+                self.strategy.interval,
+                feature_specs=feature_specs,
+                db_session=db_session,
+                extra_nonprice_data=extra_nonprice_data,
+            )
+        else:
+            features = self.feature_engine.compute_from_df(ohlcv, feature_specs)
 
         # Step 2: Determine warmup period
         # Only consider columns NEWLY computed by compute_from_df for warmup,
