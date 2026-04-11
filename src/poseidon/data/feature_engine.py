@@ -91,6 +91,7 @@ _TRADE_STRUCTURE_NAMES = frozenset({"avg_trade_size", "turnover_ratio"})
 _FUNDING_NAMES = frozenset({"funding_rate_daily", "funding_rate_extreme"})
 _MARGIN_NAMES = frozenset({"margin_buy_ratio", "margin_sell_ratio"})
 _OI_NAMES = frozenset({"oi_change", "oi_buildup"})
+_PREDICTION_NAMES = frozenset({"qlib_prediction"})
 _MACRO_PREFIX = "macro_"
 
 
@@ -103,6 +104,7 @@ def _is_nonprice_spec(name: str) -> bool:
         or name in _FUNDING_NAMES
         or name in _MARGIN_NAMES
         or name in _OI_NAMES
+        or name in _PREDICTION_NAMES
         or name.startswith(_MACRO_PREFIX)
     )
 
@@ -121,6 +123,8 @@ def _nonprice_data_key(name: str) -> str:
         return "margin_data"
     if name in _OI_NAMES:
         return "oi_data"
+    if name in _PREDICTION_NAMES:
+        return "prediction_data"
     if name.startswith(_MACRO_PREFIX):
         return "macro_data"
     raise ValueError(f"Not a non-price feature: {name}")
@@ -372,6 +376,7 @@ class FeatureEngine:
         interval: str,
         feature_specs: list[tuple[str, dict]] | None = None,
         db_session=None,
+        extra_nonprice_data: dict[str, pd.DataFrame] | None = None,
     ) -> pd.DataFrame:
         """Compute features including cross-asset and non-price data features.
 
@@ -390,6 +395,9 @@ class FeatureEngine:
             interval: Candle interval.
             feature_specs: Feature specifications. None uses DEFAULT_FEATURES.
             db_session: SQLAlchemy session for loading companion data. If None, creates one.
+            extra_nonprice_data: Externally-injected non-price data to merge
+                into the loader results. Used by BacktestRunner to inject
+                prediction cache data (e.g., ``{"prediction_data": df}``).
 
         Returns:
             Wide DataFrame with OHLCV + all computed feature columns.
@@ -458,6 +466,10 @@ class FeatureEngine:
                 nonprice_data = self._load_nonprice_data(
                     nonprice_specs, symbol,
                 )
+                # Merge externally-injected non-price data (e.g., prediction_data
+                # from BacktestRunner). External data takes precedence over loader.
+                if extra_nonprice_data:
+                    nonprice_data.update(extra_nonprice_data)
                 for feature_name, params in nonprice_specs:
                     data_key = _nonprice_data_key(feature_name)
                     extra_kwargs = {data_key: nonprice_data.get(data_key)}
