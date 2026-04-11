@@ -148,13 +148,14 @@ class ParameterSearchPipeline:
         models_list = available_models or []
         forced_mv_id = model_version_id
 
-        def resolve_model_version_id(params: dict[str, Any]) -> Any | None:
+        def resolve_model_version_id(params: dict[str, Any]) -> str | None:
             mv_id = forced_mv_id
             if mv_id is None and models_list and params.get("qlib_model_enabled") == 1:
                 version_idx = int(params.get("qlib_model_version", 0))
                 version_idx = min(version_idx, len(models_list) - 1)
                 mv_id = models_list[version_idx].id
-            return mv_id
+            # Convert UUID to string for JSON serialization in experiment records
+            return str(mv_id) if mv_id is not None else None
 
         def trial_strategy_factory(params: dict) -> Any:
             config_dict = _build_config_from_params(
