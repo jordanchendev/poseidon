@@ -297,6 +297,41 @@ class BacktestRunner:
         instrument_df = instrument_df.sort_index()
         return instrument_df
 
+    def _resolve_model_version_id(
+        self,
+        config_model_version_id: UUID | None,
+    ) -> UUID | None:
+        """Resolve model_version_id from strategy sub-signals or backtest config.
+
+        Per D-13: Scans strategy's sub_signals for type=='ml_prediction',
+        extracts model_version_id from the FIRST such condition found.
+
+        Per D-14: Sub-signal model_version_id takes precedence over
+        config-level model_version_id (Phase 44 path).
+        """
+        # Phase 45 path: scan sub-signals for ml_prediction condition
+        all_signals: list[dict] = []
+        if hasattr(self.strategy, "_sub_signals"):
+            all_signals.extend(self.strategy._sub_signals)
+        if hasattr(self.strategy, "_bear_sub_signals"):
+            all_signals.extend(self.strategy._bear_sub_signals)
+
+        for cond in all_signals:
+            if cond.get("type") == "ml_prediction":
+                sub_mv_id = cond.get("model_version_id")
+                if sub_mv_id is not None:
+                    # Ensure UUID type for DB compatibility
+                    if not isinstance(sub_mv_id, UUID):
+                        sub_mv_id = UUID(str(sub_mv_id))
+                    logger.info(
+                        "Resolved model_version_id=%s from ml_prediction sub-signal (Phase 45 path)",
+                        sub_mv_id,
+                    )
+                    return sub_mv_id
+
+        # Fallback: Phase 44 path (config-level model_version_id)
+        return config_model_version_id
+
     @property
     def portfolio(self) -> BacktestPortfolio | None:
         """Access the portfolio after run() completes. Returns None if run() hasn't been called."""
@@ -363,9 +398,12 @@ class BacktestRunner:
         db_session: Session | None = None,
     ) -> BacktestResult:
         """Core event loop implementation."""
-        # Step 0: Look-ahead bias validation (per D-07, PRED-04)
+        # Step 0a: Resolve model_version_id from sub-signals or config (Phase 45)
+        resolved_mv_id = self._resolve_model_version_id(model_version_id)
+
+        # Step 0b: Look-ahead bias validation (per D-07, PRED-04)
         active_model_timestamp, validated_mv_id = self.validate_model_bias(
-            model_version_id, backtest_start, db_session,
+            resolved_mv_id, backtest_start, db_session,
         )
 
         # Step 1: Compute features ONCE -- same code path as live prediction (BT-01)
@@ -373,22 +411,22 @@ class BacktestRunner:
         if feature_specs is None and hasattr(self.strategy, "get_feature_specs"):
             feature_specs = self.strategy.get_feature_specs()
 
-        # Check if we need prediction data injection (Phase 44 - ML vote)
+        # Check if we need prediction data injection (Phase 44/45 - ML vote)
         extra_nonprice_data = None
-        if model_version_id is not None and feature_specs is not None:
+        if resolved_mv_id is not None and feature_specs is not None:
             # Check if any spec references qlib_prediction
             has_prediction_spec = any(
                 name == "qlib_prediction" for name, _ in feature_specs
             )
             if has_prediction_spec:
                 pred_df = self._load_prediction_data(
-                    model_version_id, self.strategy.symbol, db_session,
+                    resolved_mv_id, self.strategy.symbol, db_session,
                 )
                 if pred_df is not None:
                     extra_nonprice_data = {"prediction_data": pred_df}
                     logger.info(
                         "Injecting prediction_data (%d rows) for model_version_id=%s",
-                        len(pred_df), model_version_id,
+                        len(pred_df), resolved_mv_id,
                     )
 
         # Use compute_with_companions when non-price features are present
