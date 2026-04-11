@@ -74,6 +74,8 @@ class TestFromTrial:
             "bear_position_pct": 0.06,
             "cooldown_bars": 12,
             "conviction_gap": 2,
+            "qlib_prediction_threshold": 0.5,
+            "qlib_model_enabled": 0,
             # R2 params for crypto_spot market
             "r2_n_funding": 0,
             "r2_funding_rate_threshold": 0.0,
@@ -142,8 +144,8 @@ class TestParamBounds:
     """PARAM_BOUNDS definition coverage."""
 
     def test_param_bounds_has_fourteen_entries(self) -> None:
-        """16 entries: 12 original + bear_min_votes + bear_position_pct + cooldown_bars + conviction_gap."""
-        assert len(PARAM_BOUNDS) == 16
+        """18 entries after adding qlib_prediction_threshold and qlib_model_enabled."""
+        assert len(PARAM_BOUNDS) == 18
 
     def test_param_bounds_types_valid(self) -> None:
         for name, (low, high, ptype) in PARAM_BOUNDS.items():
@@ -161,6 +163,9 @@ class TestParamBounds:
     def test_param_bounds_bear_position_pct(self) -> None:
         """Bear position_pct range should be (0.03, 0.12, float) per D-22."""
         assert PARAM_BOUNDS["bear_position_pct"] == (0.03, 0.12, "float")
+
+    def test_param_bounds_qlib_model_enabled(self) -> None:
+        assert PARAM_BOUNDS["qlib_model_enabled"] == (0, 1, "int")
 
 
 class TestBearSignalGeneration:
@@ -327,6 +332,8 @@ class TestFromTrialBear:
             "bear_position_pct": 0.06,
             "cooldown_bars": 12,
             "conviction_gap": 2,
+            "qlib_prediction_threshold": 0.5,
+            "qlib_model_enabled": 0,
             # R2 params for crypto_spot market
             "r2_n_funding": 0,
             "r2_funding_rate_threshold": 0.0,

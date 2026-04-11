@@ -108,6 +108,19 @@ class ModelManager:
             ).scalars()
         )
 
+    def list_ready_models(self, market: str) -> list[ModelVersion]:
+        """Return ready or active model versions whose names match a market."""
+        return list(
+            self.session.execute(
+                select(ModelVersion)
+                .where(
+                    ModelVersion.status.in_(["ready", "active"]),
+                    ModelVersion.name.contains(market),
+                )
+                .order_by(ModelVersion.created_at.desc())
+            ).scalars()
+        )
+
     def _retire_active(self, name: str, exclude_id: UUID) -> None:
         """Retire any currently active version (except exclude_id)."""
         active = self.session.execute(

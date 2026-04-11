@@ -41,6 +41,7 @@ PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "cooldown_bars": (8, 48, "int"),                     # global cooldown after any exit
     "conviction_gap": (2, 4, "int"),                     # min net votes spread for entry
     "qlib_prediction_threshold": (0.3, 0.8, "float"),   # D-08: ML prediction threshold, market-agnostic
+    "qlib_model_enabled": (0, 1, "int"),                # Phase 46: binary ML on/off search
 }
 
 # R2 parameter bounds -- market-conditional, keyed by category
