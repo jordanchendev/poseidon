@@ -304,3 +304,92 @@ class PredictionResponse(BaseModel):
     valid_end: datetime | None = None
     test_start: datetime | None = None
     test_end: datetime | None = None
+
+
+# --- Factor Analysis (Phase 47) ---
+
+
+class ICAnalysisRequest(BaseModel):
+    """Request body for triggering IC analysis (D-20)."""
+
+    market: str = Field(..., min_length=1, max_length=32, examples=["tw_stock"])
+    symbols: list[str] | None = Field(
+        None, description="Optional symbol subset; None = all symbols in market"
+    )
+    start_date: str = Field(
+        ..., examples=["2025-01-01"], description="Start date YYYY-MM-DD"
+    )
+    end_date: str = Field(
+        ..., examples=["2025-12-31"], description="End date YYYY-MM-DD"
+    )
+    horizons: list[int] = Field(
+        default_factory=lambda: [1, 5, 20],
+        description="Forward return horizons in days (D-02)",
+    )
+    features: list[str] | None = Field(
+        None, description="Feature subset; None = all DEFAULT_FEATURES"
+    )
+    interval: str = Field(default="1d", max_length=8)
+
+
+class ShapleyAnalysisRequest(BaseModel):
+    """Request body for triggering Shapley analysis (D-21)."""
+
+    model_version_id: str = Field(
+        ..., description="UUID of trained ModelVersion (D-07)"
+    )
+    max_samples: int | None = Field(
+        None,
+        ge=100,
+        le=5000,
+        description="Max samples for SHAP; None = all (capped at 500 default)",
+    )
+
+
+class CentralityAnalysisRequest(BaseModel):
+    """Request body for triggering centrality analysis (D-22)."""
+
+    market: str = Field(..., min_length=1, max_length=32, examples=["tw_stock"])
+    sub_signals: list[dict] = Field(
+        ..., description="VotingStrategy sub-signal configs to evaluate (D-11)"
+    )
+    symbols: list[str] | None = Field(None, description="Optional symbol subset")
+    start_date: str = Field(..., examples=["2025-01-01"])
+    end_date: str = Field(..., examples=["2025-12-31"])
+    interval: str = Field(default="1d", max_length=8)
+    distance_threshold: float = Field(
+        default=0.7,
+        ge=0.1,
+        le=1.0,
+        description="Clustering distance threshold (D-10)",
+    )
+
+
+class FactorAnalysisRunResponse(BaseModel):
+    """Response for a single factor analysis run."""
+
+    id: str
+    run_type: str
+    config_json: dict
+    results_json: dict | None
+    status: str
+    market: str
+    error: str | None
+    created_at: str
+    updated_at: str
+
+
+class FactorAnalysisRunListResponse(BaseModel):
+    """Paginated list response for factor analysis runs (D-23)."""
+
+    runs: list[FactorAnalysisRunResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class FactorAnalysisTriggerResponse(BaseModel):
+    """Response for POST trigger endpoints (D-20, D-21, D-22)."""
+
+    id: str
+    status: str
