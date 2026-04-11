@@ -7,7 +7,7 @@ No authentication required -- used by Docker healthcheck.
 from __future__ import annotations
 
 import redis
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
 from poseidon.core.config import settings
@@ -19,14 +19,17 @@ router = APIRouter()
 
 
 @router.get("/health")
-async def health():
+async def health(details: bool = Query(False)):
     """Health check endpoint. No authentication required.
 
-    Reports comprehensive system status including:
+    Default mode stays lightweight for Docker liveness checks.
+    Pass ``details=true`` to include Celery/GPU inspection.
+
+    Reports system status including:
     - Database connectivity and data freshness
     - Redis connectivity
-    - Celery worker queue lengths
-    - GPU availability and memory
+    - Optional Celery worker queue lengths
+    - Optional GPU worker availability
 
     Returns ``{"status": "ok"}`` when all components are healthy,
     ``{"status": "degraded"}`` when any component reports an error.
@@ -60,32 +63,42 @@ async def health():
     except Exception as e:
         components["redis"] = f"error: {e}"
 
-    # 3. Celery queue lengths
-    try:
-        inspect = celery_app.control.inspect(timeout=2.0)
-        active = inspect.active() or {}
-        reserved = inspect.reserved() or {}
-        components["celery"] = {
-            "active_tasks": sum(len(v) for v in active.values()),
-            "reserved_tasks": sum(len(v) for v in reserved.values()),
-        }
-    except Exception as e:
-        components["celery"] = f"error: {e}"
+    if details:
+        # 3. Celery queue lengths
+        try:
+            inspect = celery_app.control.inspect(timeout=1.0)
+            active = inspect.active() or {}
+            reserved = inspect.reserved() or {}
+            components["celery"] = {
+                "active_tasks": sum(len(v) for v in active.values()),
+                "reserved_tasks": sum(len(v) for v in reserved.values()),
+            }
+        except Exception as e:
+            components["celery"] = f"error: {e}"
 
-    # 4. GPU status via Celery worker queue inspection (torch not available in API container)
-    try:
-        gpu_inspect = celery_app.control.inspect(timeout=3.0)
-        active_queues = gpu_inspect.active_queues() or {}
-        gpu_workers = [
-            worker for worker, queues in active_queues.items()
-            if any(q.get("name") == "gpu" for q in queues)
-        ]
-        if gpu_workers:
-            components["gpu"] = {"available": True, "workers": gpu_workers}
-        else:
-            components["gpu"] = {"available": False, "note": "no GPU workers responding"}
-    except Exception as e:
-        components["gpu"] = {"available": False, "note": f"inspect failed: {e}"}
+        # 4. GPU status via Celery worker queue inspection (torch not available in API container)
+        try:
+            gpu_inspect = celery_app.control.inspect(timeout=1.0)
+            active_queues = gpu_inspect.active_queues() or {}
+            gpu_workers = [
+                worker for worker, queues in active_queues.items()
+                if any(q.get("name") == "gpu" for q in queues)
+            ]
+            if gpu_workers:
+                components["gpu"] = {"available": True, "workers": gpu_workers}
+            else:
+                components["gpu"] = {"available": False, "note": "no GPU workers responding"}
+        except Exception as e:
+            components["gpu"] = {"available": False, "note": f"inspect failed: {e}"}
+    else:
+        components["celery"] = {
+            "status": "skipped",
+            "note": "set details=true to inspect worker queues",
+        }
+        components["gpu"] = {
+            "status": "skipped",
+            "note": "set details=true to inspect GPU workers",
+        }
 
     # Overall status: degraded if any component value is an error string
     errors = [

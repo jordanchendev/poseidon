@@ -48,6 +48,31 @@ def _mock_all_healthy():
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.api.health.redis")
 @patch("poseidon.api.health.SessionLocal")
+def test_health_lightweight_skips_celery_inspect(mock_session_local, mock_redis_mod, mock_celery):
+    """Default /health stays lightweight for Docker liveness checks."""
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar.return_value = None
+    mock_session_local.return_value = mock_db
+
+    mock_redis_instance = MagicMock()
+    mock_redis_instance.ping.return_value = True
+    mock_redis_mod.from_url.return_value = mock_redis_instance
+
+    resp = client.get("/health")
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["status"] == "ok"
+    assert data["components"]["database"] == "ok"
+    assert data["components"]["redis"] == "ok"
+    assert data["components"]["celery"]["status"] == "skipped"
+    assert data["components"]["gpu"]["status"] == "skipped"
+    mock_celery.control.inspect.assert_not_called()
+
+
+@patch("poseidon.api.health.celery_app")
+@patch("poseidon.api.health.redis")
+@patch("poseidon.api.health.SessionLocal")
 def test_health_returns_200(mock_session_local, mock_redis_mod, mock_celery):
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None
@@ -62,7 +87,7 @@ def test_health_returns_200(mock_session_local, mock_redis_mod, mock_celery):
     mock_inspect.reserved.return_value = {}
     mock_celery.control.inspect.return_value = mock_inspect
 
-    resp = client.get("/health")
+    resp = client.get("/health?details=true")
     assert resp.status_code == 200
     data = resp.json()
     assert "status" in data
@@ -85,7 +110,7 @@ def test_health_response_structure(mock_session_local, mock_redis_mod, mock_cele
     mock_inspect.reserved.return_value = {}
     mock_celery.control.inspect.return_value = mock_inspect
 
-    resp = client.get("/health")
+    resp = client.get("/health?details=true")
     data = resp.json()
 
     assert "components" in data
@@ -112,9 +137,10 @@ def test_health_all_ok(mock_session_local, mock_redis_mod, mock_celery):
     mock_inspect = MagicMock()
     mock_inspect.active.return_value = {"worker1": []}
     mock_inspect.reserved.return_value = {"worker1": []}
+    mock_inspect.active_queues.return_value = {}
     mock_celery.control.inspect.return_value = mock_inspect
 
-    resp = client.get("/health")
+    resp = client.get("/health?details=true")
     data = resp.json()
 
     assert data["status"] == "ok"
@@ -140,7 +166,7 @@ def test_health_degraded_on_db_error(mock_session_local, mock_redis_mod, mock_ce
     mock_inspect.reserved.return_value = {}
     mock_celery.control.inspect.return_value = mock_inspect
 
-    resp = client.get("/health")
+    resp = client.get("/health?details=true")
     data = resp.json()
 
     assert data["status"] == "degraded"
@@ -162,7 +188,7 @@ def test_health_degraded_on_redis_error(mock_session_local, mock_redis_mod, mock
     mock_inspect.reserved.return_value = {}
     mock_celery.control.inspect.return_value = mock_inspect
 
-    resp = client.get("/health")
+    resp = client.get("/health?details=true")
     data = resp.json()
 
     assert data["status"] == "degraded"
@@ -187,14 +213,16 @@ def test_gpu_worker_ping(mock_session_local, mock_redis_mod, mock_celery):
     mock_inspect_queue.active.return_value = {}
     mock_inspect_queue.reserved.return_value = {}
 
-    # GPU inspect returns GPU worker ping
+    # GPU inspect returns queue membership for GPU workers
     mock_inspect_gpu = MagicMock()
-    mock_inspect_gpu.ping.return_value = {"celery@gpu-worker": {"ok": "pong"}}
+    mock_inspect_gpu.active_queues.return_value = {
+        "celery@gpu-worker": [{"name": "gpu"}],
+    }
 
     # First call is for queue lengths (timeout=2.0), second for GPU (timeout=3.0)
     mock_celery.control.inspect.side_effect = [mock_inspect_queue, mock_inspect_gpu]
 
-    resp = client.get("/health")
+    resp = client.get("/health?details=true")
     data = resp.json()
 
     gpu = data["components"]["gpu"]
@@ -222,11 +250,11 @@ def test_gpu_worker_unavailable(mock_session_local, mock_redis_mod, mock_celery)
 
     # GPU inspect returns empty (no GPU workers)
     mock_inspect_gpu = MagicMock()
-    mock_inspect_gpu.ping.return_value = {}
+    mock_inspect_gpu.active_queues.return_value = {}
 
     mock_celery.control.inspect.side_effect = [mock_inspect_queue, mock_inspect_gpu]
 
-    resp = client.get("/health")
+    resp = client.get("/health?details=true")
     data = resp.json()
 
     gpu = data["components"]["gpu"]
@@ -252,7 +280,7 @@ def test_health_data_freshness_null_when_no_data(
     mock_inspect.reserved.return_value = {}
     mock_celery.control.inspect.return_value = mock_inspect
 
-    resp = client.get("/health")
+    resp = client.get("/health?details=true")
     data = resp.json()
 
     assert data["components"]["data_freshness"]["latest_ohlcv"] is None
