@@ -2880,3 +2880,98 @@ def ingest_freshness_watchdog() -> dict:
         raise
     finally:
         session.close()
+
+
+# --- Factor Analysis Tasks (Phase 47, D-13, D-15) ---
+
+
+@celery_app.task(
+    name="poseidon.workers.cpu_tasks.factor_ic_analysis",
+    queue="cpu",
+    bind=True,
+    max_retries=0,
+)
+def factor_ic_analysis(self, run_id: str):
+    """Compute Rank IC for features against forward returns."""
+    from poseidon.models.factor_analysis_run import FactorAnalysisRun
+    from poseidon.research.ic_analysis import run_ic_analysis
+
+    session = SessionLocal()
+    run = None
+    try:
+        run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).one()
+        run.status = "running"
+        run.error = None
+        session.commit()
+
+        config = run.config_json
+        run.results_json = run_ic_analysis(
+            market=config["market"],
+            symbols=config.get("symbols"),
+            start_date=config["start_date"],
+            end_date=config["end_date"],
+            horizons=config.get("horizons", [1, 5, 20]),
+            features=config.get("features"),
+            interval=config.get("interval", "1d"),
+        )
+        run.status = "succeeded"
+        session.commit()
+        return {"run_id": run_id, "status": "succeeded"}
+    except Exception as exc:
+        logger.exception("factor_ic_analysis failed for run_id=%s", run_id)
+        if run is not None:
+            session.rollback()
+            run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).first()
+            if run is not None:
+                run.status = "failed"
+                run.error = str(exc)[:2000]
+                session.commit()
+        return {"run_id": run_id, "status": "failed", "error": str(exc)}
+    finally:
+        session.close()
+
+
+@celery_app.task(
+    name="poseidon.workers.cpu_tasks.factor_centrality_analysis",
+    queue="cpu",
+    bind=True,
+    max_retries=0,
+)
+def factor_centrality_analysis(self, run_id: str):
+    """Compute sub-signal centrality (overlap detection)."""
+    from poseidon.models.factor_analysis_run import FactorAnalysisRun
+    from poseidon.research.centrality_analysis import run_centrality_analysis
+
+    session = SessionLocal()
+    run = None
+    try:
+        run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).one()
+        run.status = "running"
+        run.error = None
+        session.commit()
+
+        config = run.config_json
+        run.results_json = run_centrality_analysis(
+            market=config["market"],
+            sub_signals=config["sub_signals"],
+            symbols=config.get("symbols"),
+            start_date=config["start_date"],
+            end_date=config["end_date"],
+            interval=config.get("interval", "1d"),
+            distance_threshold=config.get("distance_threshold", 0.7),
+        )
+        run.status = "succeeded"
+        session.commit()
+        return {"run_id": run_id, "status": "succeeded"}
+    except Exception as exc:
+        logger.exception("factor_centrality_analysis failed for run_id=%s", run_id)
+        if run is not None:
+            session.rollback()
+            run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).first()
+            if run is not None:
+                run.status = "failed"
+                run.error = str(exc)[:2000]
+                session.commit()
+        return {"run_id": run_id, "status": "failed", "error": str(exc)}
+    finally:
+        session.close()

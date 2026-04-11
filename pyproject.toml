@@ -46,6 +46,7 @@ dev = [
 ]
 qlib = [
     "pyqlib>=0.9",
+    "shap>=0.50",
     # Phase 41 D-14: mlflow as explicit dependency for the metrics bridge
     # (previously transitive via pyqlib). The qlib_train task scrapes
     # mlflow.get_run() metrics into training_runs.metrics JSONB.

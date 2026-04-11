@@ -288,3 +288,46 @@ def qlib_train(self, run_id: str) -> dict:
         return {"run_id": run_id, "status": "failed", "error": str(exc)}
     finally:
         session.close()
+
+
+@celery_app.task(
+    name="poseidon.workers.qlib_tasks.factor_shapley_analysis",
+    queue="qlib_queue",
+    bind=True,
+    max_retries=0,
+)
+def factor_shapley_analysis(self, run_id: str):
+    """Compute SHAP feature importance for a trained model."""
+    session = SessionLocal()
+    run = None
+    try:
+        from poseidon.models.factor_analysis_run import FactorAnalysisRun
+        from poseidon.research.shapley_analysis import run_shapley_analysis
+
+        run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).one()
+        run.status = "running"
+        run.error = None
+        session.commit()
+
+        config = run.config_json
+        run.results_json = run_shapley_analysis(
+            model_version_id=config["model_version_id"],
+            max_samples=config.get("max_samples", 500),
+        )
+        run.status = "succeeded"
+        session.commit()
+        return {"run_id": run_id, "status": "succeeded"}
+    except Exception as exc:
+        logger.exception("factor_shapley_analysis failed for run_id=%s", run_id)
+        if run is not None:
+            session.rollback()
+            from poseidon.models.factor_analysis_run import FactorAnalysisRun
+
+            run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).first()
+            if run is not None:
+                run.status = "failed"
+                run.error = str(exc)[:2000]
+                session.commit()
+        return {"run_id": run_id, "status": "failed", "error": str(exc)}
+    finally:
+        session.close()
