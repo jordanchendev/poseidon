@@ -29,10 +29,12 @@ class StrategyMutator:
         symbol: str,
         market: str,
         interval: str,
+        model_version_id: int | None = None,
     ) -> VotingStrategy:
         """Bayesian-guided mutation via Optuna trial suggest API (D-02)."""
         return VotingStrategyFactory.from_trial(
             trial, symbol=symbol, market=market, interval=interval,
+            model_version_id=model_version_id,
         )
 
     @staticmethod
@@ -42,6 +44,7 @@ class StrategyMutator:
         symbol: str,
         market: str,
         interval: str,
+        model_version_id: int | None = None,
     ) -> dict:
         """Generate random config within PARAM_BOUNDS (D-03).
 
@@ -56,6 +59,7 @@ class StrategyMutator:
                 params[name] = rng.uniform(float(low), float(high))
         config = _build_config_from_params(
             params, symbol=symbol, market=market, interval=interval,
+            model_version_id=model_version_id,
         )
         # D-04: validate via existing Pydantic validation
         strategy = VotingStrategyFactory.from_config(config)

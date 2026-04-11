@@ -99,6 +99,7 @@ class ParameterSearchPipeline:
         market: str,
         interval: str,
         config: SearchConfig | None = None,
+        model_version_id: int | None = None,
     ) -> SearchResult:
         """Execute full parameter search pipeline.
 
@@ -143,10 +144,12 @@ class ParameterSearchPipeline:
 
         # Strategy factory for optimizer: wraps VotingStrategyFactory.from_config
         mode = config.strategy_mode
+        mv_id = model_version_id  # capture for closure
         def trial_strategy_factory(params: dict) -> Any:
             config_dict = _build_config_from_params(
                 params, symbol=symbol, market=market, interval=interval,
                 strategy_mode=mode,
+                model_version_id=mv_id,
             )
             return VotingStrategyFactory.from_config(config_dict)
 
@@ -187,6 +190,7 @@ class ParameterSearchPipeline:
             config_dict = _build_config_from_params(
                 trial.params, symbol=symbol, market=market, interval=interval,
                 strategy_mode=mode,
+                model_version_id=model_version_id,
             )
             try:
                 strategy = VotingStrategyFactory.from_config(config_dict)
