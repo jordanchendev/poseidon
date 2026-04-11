@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
 
@@ -123,12 +124,14 @@ class WalkForwardAnalyzer:
         cost_model: CostModel,
         initial_capital: float = 1_000_000.0,
         sizing_config: SizingConfig | None = None,
+        db_session: Any | None = None,
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
         self.cost_model = cost_model
         self.initial_capital = initial_capital
         self.sizing_config = sizing_config or SizingConfig()
+        self.db_session = db_session
 
     def generate_windows(
         self,
@@ -238,7 +241,7 @@ class WalkForwardAnalyzer:
                 initial_capital=self.initial_capital,
                 sizing_config=self.sizing_config,
             )
-            is_result = is_runner.run(is_ohlcv)
+            is_result = is_runner.run(is_ohlcv, db_session=self.db_session)
 
             # OOS backtest (reset strategy state between IS and OOS)
             window_strategy.reset()
@@ -250,7 +253,7 @@ class WalkForwardAnalyzer:
                 initial_capital=self.initial_capital,
                 sizing_config=self.sizing_config,
             )
-            oos_result = oos_runner.run(oos_ohlcv)
+            oos_result = oos_runner.run(oos_ohlcv, db_session=self.db_session)
 
             is_metrics = is_result.metrics
             oos_metrics = oos_result.metrics

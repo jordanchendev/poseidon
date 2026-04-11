@@ -84,6 +84,7 @@ class ParameterSearchPipeline:
         tracker: ExperimentTracker,
         initial_capital: float = 1_000_000.0,
         sizing_config: SizingConfig | None = None,
+        db_session: Any | None = None,
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
@@ -91,6 +92,7 @@ class ParameterSearchPipeline:
         self.tracker = tracker
         self.initial_capital = initial_capital
         self.sizing_config = sizing_config or SizingConfig()
+        self.db_session = db_session
 
     def run(
         self,
@@ -141,6 +143,7 @@ class ParameterSearchPipeline:
             cost_model=self.cost_model,
             initial_capital=self.initial_capital,
             sizing_config=self.sizing_config,
+            db_session=self.db_session,
         )
 
         # Strategy factory for optimizer: wraps VotingStrategyFactory.from_config
@@ -194,6 +197,7 @@ class ParameterSearchPipeline:
             cost_model=self.cost_model,
             initial_capital=self.initial_capital,
             sizing_config=self.sizing_config,
+            db_session=self.db_session,
         )
 
         passed_count = 0

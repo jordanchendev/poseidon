@@ -154,6 +154,7 @@ class AutoResearchRunner:
                         tracker=tracker,
                         initial_capital=self.initial_capital,
                         sizing_config=self.sizing_config,
+                        db_session=self.db_session,
                     )
                     available_models = None
                     if self.model_version_id is None:

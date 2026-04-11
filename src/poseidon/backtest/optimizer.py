@@ -139,12 +139,14 @@ class BayesianOptimizer:
         cost_model: CostModel,
         initial_capital: float = 1_000_000.0,
         sizing_config: SizingConfig | None = None,
+        db_session: Any | None = None,
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
         self.cost_model = cost_model
         self.initial_capital = initial_capital
         self.sizing_config = sizing_config or SizingConfig()
+        self.db_session = db_session
 
     def optimize(
         self,
@@ -211,7 +213,7 @@ class BayesianOptimizer:
                 initial_capital=self.initial_capital,
                 sizing_config=self.sizing_config,
             )
-            result = runner.run(ohlcv)
+            result = runner.run(ohlcv, db_session=self.db_session)
 
             # Store full metrics as user attributes for later retrieval
             trial.set_user_attr("metrics", result.metrics)
