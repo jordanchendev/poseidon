@@ -17,7 +17,7 @@ def compute_forward_returns(
     close_series: pd.Series, horizons: list[int] | None = None
 ) -> dict[int, pd.Series]:
     """Compute forward returns for each requested horizon."""
-    horizon_list = horizons or [1, 5, 20]
+    horizon_list = [1, 5, 20] if horizons is None else horizons
     return {
         horizon: close_series.shift(-horizon).div(close_series).sub(1)
         for horizon in horizon_list
