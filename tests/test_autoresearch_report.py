@@ -235,3 +235,150 @@ class TestGenerateReport:
         # Top config should be BTC (0.95) then ETH (0.80)
         assert report["top_configs"][0]["composite_score"] == 0.95
         assert report["top_configs"][1]["composite_score"] == 0.80
+
+
+class TestAbComparison:
+    """Tests for ML vs TA A/B comparison helpers in autoresearch reports."""
+
+    def test_has_ml_sub_signal_detects_ml_prediction(self):
+        from poseidon.autoresearch.report import _has_ml_sub_signal
+
+        assert _has_ml_sub_signal(
+            {
+                "sub_signals": [
+                    {"type": "rsi_above"},
+                    {"type": "ml_prediction", "model_version_id": "abc"},
+                ]
+            }
+        )
+
+    def test_has_ml_sub_signal_false_without_ml_prediction(self):
+        from poseidon.autoresearch.report import _has_ml_sub_signal
+
+        assert not _has_ml_sub_signal(
+            {
+                "sub_signals": [
+                    {"type": "rsi_above"},
+                    {"type": "ema_crossover"},
+                ]
+            }
+        )
+        assert not _has_ml_sub_signal({"sub_signals": []})
+
+    def test_build_ab_comparison_prefers_best_ml_and_ta_records(self):
+        from poseidon.autoresearch.report import _build_ab_comparison
+
+        best_ml = _make_experiment_record(
+            composite_score=0.91,
+            wfe_score=0.72,
+            config_json={
+                "symbol": "BTCUSDT",
+                "sub_signals": [
+                    {"type": "rsi_above"},
+                    {"type": "ml_prediction", "model_version_id": "model-1", "threshold": 0.5},
+                ],
+            },
+        )
+        weaker_ml = _make_experiment_record(
+            composite_score=0.75,
+            wfe_score=0.61,
+            config_json={
+                "symbol": "BTCUSDT",
+                "sub_signals": [{"type": "ml_prediction", "model_version_id": "model-2"}],
+            },
+        )
+        best_ta = _make_experiment_record(
+            composite_score=0.83,
+            wfe_score=0.60,
+            config_json={
+                "symbol": "BTCUSDT",
+                "sub_signals": [{"type": "ema_crossover"}],
+            },
+        )
+
+        result = _build_ab_comparison([weaker_ml, best_ta, best_ml])
+
+        assert result["ml_enabled_trials"] == 2
+        assert result["ml_disabled_trials"] == 1
+        assert result["best_ml_config"] == best_ml.config_json
+        assert result["best_ta_config"] == best_ta.config_json
+        assert result["best_ml_wfe_score"] == pytest.approx(0.72)
+        assert result["best_ta_wfe_score"] == pytest.approx(0.60)
+        assert result["wfe_delta"] == pytest.approx(0.12)
+        assert result["wfe_delta_pct"] == pytest.approx(20.0)
+        assert "improved WFE" in result["recommendation"]
+
+    def test_build_ab_comparison_handles_missing_ml_trials(self):
+        from poseidon.autoresearch.report import _build_ab_comparison
+
+        ta_only = _make_experiment_record(
+            composite_score=0.80,
+            wfe_score=0.58,
+            config_json={"symbol": "BTCUSDT", "sub_signals": [{"type": "rsi_above"}]},
+        )
+
+        result = _build_ab_comparison([ta_only])
+
+        assert result["ml_enabled_trials"] == 0
+        assert result["ml_disabled_trials"] == 1
+        assert result["best_ml_config"] is None
+        assert result["wfe_delta"] is None
+        assert "no ML-enabled trials" in result["recommendation"]
+
+    def test_build_ab_comparison_handles_missing_ta_trials(self):
+        from poseidon.autoresearch.report import _build_ab_comparison
+
+        ml_only = _make_experiment_record(
+            composite_score=0.84,
+            wfe_score=0.63,
+            config_json={
+                "symbol": "BTCUSDT",
+                "sub_signals": [{"type": "ml_prediction", "model_version_id": "model-1"}],
+            },
+        )
+
+        result = _build_ab_comparison([ml_only])
+
+        assert result["ml_enabled_trials"] == 1
+        assert result["ml_disabled_trials"] == 0
+        assert result["best_ta_config"] is None
+        assert result["wfe_delta"] is None
+        assert "no ML-disabled trials" in result["recommendation"]
+
+    def test_generate_report_includes_ab_comparison(self):
+        from poseidon.autoresearch.report import generate_report
+
+        ml_record = _make_experiment_record(
+            composite_score=0.91,
+            wfe_score=0.72,
+            config_json={
+                "symbol": "BTCUSDT",
+                "sub_signals": [{"type": "ml_prediction", "model_version_id": "model-1"}],
+            },
+        )
+        ta_record = _make_experiment_record(
+            composite_score=0.83,
+            wfe_score=0.60,
+            config_json={"symbol": "BTCUSDT", "sub_signals": [{"type": "ema_crossover"}]},
+        )
+
+        mock_tracker = MagicMock()
+        mock_tracker.query_passed_by_study.return_value = [ml_record, ta_record]
+        mock_query_obj = MagicMock()
+        mock_tracker._db.query.return_value = mock_query_obj
+        mock_query_obj.filter.return_value = mock_query_obj
+        mock_query_obj.all.return_value = [MagicMock()] * 4
+
+        now = datetime.now(timezone.utc)
+        report = generate_report(
+            mock_tracker,
+            ["crypto_spot_BTCUSDT_1h"],
+            run_id="run-ab",
+            started_at=now,
+            completed_at=now,
+        )
+
+        assert "ab_comparison" in report
+        assert report["ab_comparison"]["ml_enabled_trials"] == 1
+        assert report["ab_comparison"]["ml_disabled_trials"] == 1
+        assert report["ab_comparison"]["wfe_delta"] == pytest.approx(0.12)
