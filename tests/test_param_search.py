@@ -7,6 +7,7 @@ WalkForwardAnalyzer) to keep tests fast and deterministic.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -67,6 +68,12 @@ class TestParameterSearchPipeline:
             tracker=tracker,
         )
         return pipeline, tracker
+
+    def _base_trial_params(self) -> dict:
+        return {
+            "qlib_model_enabled": 0,
+            "qlib_prediction_threshold": 0.5,
+        }
 
     def test_holdout_enforcement(self):
         """Pipeline trims OHLCV to train portion before optimization."""
@@ -171,7 +178,10 @@ class TestParameterSearchPipeline:
             params={"rsi_period": 10, "ema_short": 5, "ema_long": 20,
                     "macd_fast": 12, "macd_slow": 26, "macd_signal": 9,
                     "bollinger_period": 20, "momentum_short": 5, "momentum_long": 10,
-                    "min_votes": 4, "atr_multiplier": 2.0, "position_pct": 0.08},
+                    "min_votes": 4, "atr_multiplier": 2.0, "position_pct": 0.08,
+                    "bear_min_votes": 4, "bear_position_pct": 0.06,
+                    "cooldown_bars": 12, "conviction_gap": 2,
+                    "qlib_prediction_threshold": 0.5, "qlib_model_enabled": 0},
             metrics={"sharpe_ratio": 1.5, "trade_count": 60, "max_drawdown": 0.1,
                      "total_return": 0.2},
             metric_value=0.8,
@@ -208,7 +218,10 @@ class TestParameterSearchPipeline:
             params={"rsi_period": 10, "ema_short": 5, "ema_long": 20,
                     "macd_fast": 12, "macd_slow": 26, "macd_signal": 9,
                     "bollinger_period": 20, "momentum_short": 5, "momentum_long": 10,
-                    "min_votes": 4, "atr_multiplier": 2.0, "position_pct": 0.08},
+                    "min_votes": 4, "atr_multiplier": 2.0, "position_pct": 0.08,
+                    "bear_min_votes": 4, "bear_position_pct": 0.06,
+                    "cooldown_bars": 12, "conviction_gap": 2,
+                    "qlib_prediction_threshold": 0.5, "qlib_model_enabled": 0},
             metrics={"sharpe_ratio": 1.5, "trade_count": 60, "max_drawdown": 0.1,
                      "total_return": 0.2},
             metric_value=0.8,
@@ -229,3 +242,119 @@ class TestParameterSearchPipeline:
         assert result.rejected_trials == 0
         call_kwargs = tracker.save.call_args[1]
         assert call_kwargs["status"] == "passed"
+
+    def test_dynamic_ml_params_with_models(self):
+        """available_models injects ML toggle and version bounds into param_space."""
+        pipeline, _tracker = self._make_pipeline()
+        ohlcv = _make_ohlcv(100)
+        models = [
+            SimpleNamespace(id="model-1"),
+            SimpleNamespace(id="model-2"),
+            SimpleNamespace(id="model-3"),
+        ]
+        captured_param_space = {}
+
+        def mock_optimize(strategy_factory, ohlcv, param_space, n_trials, metric, seed, storage, study_name):
+            captured_param_space.update(param_space)
+            return []
+
+        with patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt:
+            MockOpt.return_value.optimize = mock_optimize
+            pipeline.run(
+                ohlcv,
+                "BTCUSDT",
+                "crypto_spot",
+                "1d",
+                config=SearchConfig(n_trials=2, storage_url=None),
+                available_models=models,
+            )
+
+        assert captured_param_space["qlib_model_enabled"] == (0, 1, "int")
+        assert captured_param_space["qlib_model_version"] == (0, 2, "int")
+
+    def test_dynamic_ml_params_no_models(self):
+        """No available models removes ML params from the search space."""
+        pipeline, _tracker = self._make_pipeline()
+        ohlcv = _make_ohlcv(100)
+        captured_param_space = {}
+
+        def mock_optimize(strategy_factory, ohlcv, param_space, n_trials, metric, seed, storage, study_name):
+            captured_param_space.update(param_space)
+            return []
+
+        with patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt:
+            MockOpt.return_value.optimize = mock_optimize
+            pipeline.run(
+                ohlcv,
+                "BTCUSDT",
+                "crypto_spot",
+                "1d",
+                config=SearchConfig(n_trials=2, storage_url=None),
+                available_models=[],
+            )
+
+        assert "qlib_model_enabled" not in captured_param_space
+        assert "qlib_model_version" not in captured_param_space
+
+    def test_trial_factory_resolves_model_id_when_ml_enabled(self):
+        """Trial factory maps qlib_model_version index to the concrete model id."""
+        pipeline, _tracker = self._make_pipeline()
+        ohlcv = _make_ohlcv(100)
+        models = [
+            SimpleNamespace(id="model-1"),
+            SimpleNamespace(id="model-2"),
+        ]
+
+        def mock_optimize(strategy_factory, ohlcv, param_space, n_trials, metric, seed, storage, study_name):
+            strategy_factory(
+                {
+                    **self._base_trial_params(),
+                    "qlib_model_enabled": 1,
+                    "qlib_model_version": 1,
+                }
+            )
+            return []
+
+        with patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt, \
+             patch("poseidon.backtest.param_search._build_config_from_params") as mock_build, \
+             patch("poseidon.backtest.param_search.VotingStrategyFactory.from_config") as mock_from_config:
+            MockOpt.return_value.optimize = mock_optimize
+            mock_build.return_value = {"name": "test"}
+            mock_from_config.return_value = MagicMock()
+            pipeline.run(
+                ohlcv,
+                "BTCUSDT",
+                "crypto_spot",
+                "1d",
+                config=SearchConfig(n_trials=2, storage_url=None),
+                available_models=models,
+            )
+
+        assert mock_build.call_args.kwargs["model_version_id"] == "model-2"
+
+    def test_trial_factory_returns_none_when_ml_disabled(self):
+        """Trial factory leaves model_version_id unset for pure-TA trials."""
+        pipeline, _tracker = self._make_pipeline()
+        ohlcv = _make_ohlcv(100)
+        models = [SimpleNamespace(id="model-1")]
+
+        def mock_optimize(strategy_factory, ohlcv, param_space, n_trials, metric, seed, storage, study_name):
+            strategy_factory(self._base_trial_params())
+            return []
+
+        with patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt, \
+             patch("poseidon.backtest.param_search._build_config_from_params") as mock_build, \
+             patch("poseidon.backtest.param_search.VotingStrategyFactory.from_config") as mock_from_config:
+            MockOpt.return_value.optimize = mock_optimize
+            mock_build.return_value = {"name": "test"}
+            mock_from_config.return_value = MagicMock()
+            pipeline.run(
+                ohlcv,
+                "BTCUSDT",
+                "crypto_spot",
+                "1d",
+                config=SearchConfig(n_trials=2, storage_url=None),
+                available_models=models,
+            )
+
+        assert mock_build.call_args.kwargs["model_version_id"] is None

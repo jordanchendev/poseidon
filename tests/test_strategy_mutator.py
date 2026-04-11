@@ -6,6 +6,7 @@ Verifies that:
 - All configs pass VotingStrategy.validate_config()
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -57,7 +58,11 @@ class TestMutateViaOptuna:
             mock_from_trial.return_value = MagicMock()
             StrategyMutator.mutate_via_optuna(trial, **MARKET_KWARGS)
             mock_from_trial.assert_called_once_with(
-                trial, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+                trial,
+                symbol="BTCUSDT",
+                market="crypto_spot",
+                interval="1h",
+                model_version_id=None,
             )
 
 
@@ -110,3 +115,50 @@ class TestMutateRandom:
         # Check position_pct
         low, high, _ = PARAM_BOUNDS["position_pct"]
         assert low <= config["position_pct"] <= high
+
+    def test_available_models_resolve_model_version(self):
+        models = [SimpleNamespace(id="model-1")]
+
+        class FakeRandom:
+            def randint(self, low, high):
+                return high
+
+            def uniform(self, low, high):
+                return (low + high) / 2.0
+
+        with patch("poseidon.autoresearch.mutator.random.Random", return_value=FakeRandom()), \
+             patch("poseidon.autoresearch.mutator._build_config_from_params") as mock_build, \
+             patch("poseidon.autoresearch.mutator.VotingStrategyFactory.from_config") as mock_from_config:
+            mock_build.return_value = {"name": "test"}
+            mock_from_config.return_value = MagicMock(validate_config=MagicMock())
+
+            StrategyMutator.mutate_random(
+                seed=42,
+                available_models=models,
+                **MARKET_KWARGS,
+            )
+
+        assert mock_build.call_args.kwargs["model_version_id"] == "model-1"
+
+    def test_no_models_force_ml_disabled(self):
+        class FakeRandom:
+            def randint(self, low, high):
+                return high
+
+            def uniform(self, low, high):
+                return (low + high) / 2.0
+
+        with patch("poseidon.autoresearch.mutator.random.Random", return_value=FakeRandom()), \
+             patch("poseidon.autoresearch.mutator._build_config_from_params") as mock_build, \
+             patch("poseidon.autoresearch.mutator.VotingStrategyFactory.from_config") as mock_from_config:
+            mock_build.return_value = {"qlib_model_enabled": 0}
+            mock_from_config.return_value = MagicMock(validate_config=MagicMock())
+
+            config = StrategyMutator.mutate_random(
+                seed=42,
+                available_models=[],
+                **MARKET_KWARGS,
+            )
+
+        assert config["qlib_model_enabled"] == 0
+        assert mock_build.call_args.kwargs["model_version_id"] is None

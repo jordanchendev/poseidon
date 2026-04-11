@@ -17,6 +17,7 @@ from poseidon.backtest.param_search import ParameterSearchPipeline, SearchConfig
 from poseidon.backtest.portfolio import SizingConfig
 from poseidon.data.feature_engine import FeatureEngine, get_cross_asset_specs, get_r2_specs
 from poseidon.data.storage import read_ohlcv
+from poseidon.ml.manager import ModelManager
 from poseidon.risk.engine import RiskEngine
 
 logger = logging.getLogger(__name__)
@@ -154,9 +155,22 @@ class AutoResearchRunner:
                         initial_capital=self.initial_capital,
                         sizing_config=self.sizing_config,
                     )
+                    available_models = None
+                    if self.model_version_id is None:
+                        manager = ModelManager(self.db_session)
+                        available_models = manager.list_ready_models(spec.market)
+                        if available_models:
+                            logger.info(
+                                "Found %d ready/active models for %s: %s",
+                                len(available_models),
+                                spec.market,
+                                [f"{model.name} v{model.version}" for model in available_models],
+                            )
+
                     search_result = pipeline.run(
                         ohlcv, spec.symbol, spec.market, spec.interval, self.search_config,
                         model_version_id=self.model_version_id,
+                        available_models=available_models,
                     )
                     results.append(MarketResult(spec=spec, search_result=search_result))
                     self.db_session.commit()

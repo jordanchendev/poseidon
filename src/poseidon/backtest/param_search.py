@@ -100,6 +100,7 @@ class ParameterSearchPipeline:
         interval: str,
         config: SearchConfig | None = None,
         model_version_id: int | None = None,
+        available_models: list[Any] | None = None,
     ) -> SearchResult:
         """Execute full parameter search pipeline.
 
@@ -143,13 +144,23 @@ class ParameterSearchPipeline:
         )
 
         # Strategy factory for optimizer: wraps VotingStrategyFactory.from_config
-        mode = config.strategy_mode
-        mv_id = model_version_id  # capture for closure
+        mode = cfg.strategy_mode
+        models_list = available_models or []
+        forced_mv_id = model_version_id
+
+        def resolve_model_version_id(params: dict[str, Any]) -> Any | None:
+            mv_id = forced_mv_id
+            if mv_id is None and models_list and params.get("qlib_model_enabled") == 1:
+                version_idx = int(params.get("qlib_model_version", 0))
+                version_idx = min(version_idx, len(models_list) - 1)
+                mv_id = models_list[version_idx].id
+            return mv_id
+
         def trial_strategy_factory(params: dict) -> Any:
             config_dict = _build_config_from_params(
                 params, symbol=symbol, market=market, interval=interval,
                 strategy_mode=mode,
-                model_version_id=mv_id,
+                model_version_id=resolve_model_version_id(params),
             )
             return VotingStrategyFactory.from_config(config_dict)
 
@@ -157,6 +168,12 @@ class ParameterSearchPipeline:
             name: (low, high, ptype)
             for name, (low, high, ptype) in get_param_bounds(market).items()
         }
+        if models_list and model_version_id is None:
+            if len(models_list) > 1:
+                param_space["qlib_model_version"] = (0, len(models_list) - 1, "int")
+        elif not models_list:
+            param_space.pop("qlib_model_enabled", None)
+            param_space.pop("qlib_model_version", None)
 
         trials = optimizer.optimize(
             strategy_factory=trial_strategy_factory,
@@ -190,7 +207,7 @@ class ParameterSearchPipeline:
             config_dict = _build_config_from_params(
                 trial.params, symbol=symbol, market=market, interval=interval,
                 strategy_mode=mode,
-                model_version_id=model_version_id,
+                model_version_id=resolve_model_version_id(trial.params),
             )
             try:
                 strategy = VotingStrategyFactory.from_config(config_dict)
