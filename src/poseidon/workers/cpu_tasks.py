@@ -1087,12 +1087,16 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
                 },
             )
 
+        # Phase 45: optional ML model for sub-signal search (D-20)
+        mv_id = search_config.get("model_version_id")
+
         runner = AutoResearchRunner(
             db_session=db,
             search_config=cfg,
             stop_check=check_stop,
             progress_callback=update_progress,
             feature_specs="r2",  # Signal runner to use get_r2_specs() per-market
+            model_version_id=mv_id,
         )
         results = runner.run(market_specs)
 

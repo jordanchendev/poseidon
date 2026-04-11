@@ -65,6 +65,7 @@ class AutoResearchRunner:
         feature_specs: list[tuple[str, dict]] | str | None = None,
         stop_check: Callable[[], bool] | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
+        model_version_id: int | None = None,
     ) -> None:
         self.db_session = db_session
         self.search_config = search_config
@@ -73,6 +74,7 @@ class AutoResearchRunner:
         self.feature_specs = feature_specs  # None = DEFAULT_FEATURES (backward compat)
         self.stop_check = stop_check
         self.progress_callback = progress_callback
+        self.model_version_id = model_version_id
 
     def run(self, markets: list[MarketSpec]) -> list[MarketResult]:
         """Run parameter search across all markets with immutability guard active.
@@ -154,6 +156,7 @@ class AutoResearchRunner:
                     )
                     search_result = pipeline.run(
                         ohlcv, spec.symbol, spec.market, spec.interval, self.search_config,
+                        model_version_id=self.model_version_id,
                     )
                     results.append(MarketResult(spec=spec, search_result=search_result))
                     self.db_session.commit()
