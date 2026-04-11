@@ -40,6 +40,7 @@ PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "bear_position_pct": (0.03, 0.12, "float"),         # D-22: new
     "cooldown_bars": (8, 48, "int"),                     # global cooldown after any exit
     "conviction_gap": (2, 4, "int"),                     # min net votes spread for entry
+    "qlib_prediction_threshold": (0.3, 0.8, "float"),   # D-08: ML prediction threshold, market-agnostic
 }
 
 # R2 parameter bounds -- market-conditional, keyed by category
@@ -171,6 +172,7 @@ def _build_config_from_params(
     market: str,
     interval: str,
     strategy_mode: str = "bidirectional",
+    model_version_id: int | None = None,
 ) -> dict:
     """Build a VotingStrategy config dict from flat parameter values.
 
@@ -281,6 +283,23 @@ def _build_config_from_params(
     sub_signals.extend(r2_bull)
     bear_sub_signals.extend(r2_bear)
 
+    # Append ML prediction sub-signals when model_version_id is available (D-09, D-10)
+    if model_version_id is not None:
+        ml_threshold = params.get("qlib_prediction_threshold", 0.5)
+        sub_signals.append({
+            "type": "ml_prediction",
+            "model_version_id": model_version_id,
+            "threshold": ml_threshold,
+            "direction": "long",
+        })
+        if strategy_mode != "long_only":
+            bear_sub_signals.append({
+                "type": "ml_prediction",
+                "model_version_id": model_version_id,
+                "threshold": ml_threshold,
+                "direction": "short",
+            })
+
     config = {
         "name": f"optuna_{symbol}_{interval}",
         "symbol": symbol,
@@ -328,6 +347,7 @@ class VotingStrategyFactory:
         symbol: str,
         market: str,
         interval: str,
+        model_version_id: int | None = None,
     ) -> VotingStrategy:
         """Create VotingStrategy from an Optuna trial using suggest API.
 
@@ -345,6 +365,7 @@ class VotingStrategyFactory:
 
         config = _build_config_from_params(
             params, symbol=symbol, market=market, interval=interval,
+            model_version_id=model_version_id,
         )
         return VotingStrategy(
             config=config,
