@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # --- Sentiment ---
@@ -344,6 +344,12 @@ class ShapleyAnalysisRequest(BaseModel):
         le=5000,
         description="Max samples for SHAP; None = all (capped at 500 default)",
     )
+
+    @field_validator("model_version_id")
+    @classmethod
+    def _validate_model_version_id(cls, value: str) -> str:
+        UUID(value)
+        return value
 
 
 class CentralityAnalysisRequest(BaseModel):
