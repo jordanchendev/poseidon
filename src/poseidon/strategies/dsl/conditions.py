@@ -259,3 +259,31 @@ def eval_feature_below(condition: dict, features: pd.DataFrame, row_idx: int) ->
     if pd.isna(val):
         return False
     return float(val) < threshold
+
+
+@register_condition("ml_prediction")
+def eval_ml_prediction(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
+    """Evaluate ML model prediction as a vote (Phase 45 - MLVOTE-03).
+
+    Reads pre-computed qlib_prediction column from features DataFrame.
+    Direction controls evaluation:
+      - direction="long": prediction > threshold (bullish signal)
+      - direction="short": prediction < -threshold (bearish signal)
+
+    Returns False on NaN or missing column (per D-04, consistent with feature_above).
+    """
+    threshold = condition.get("threshold", 0.5)
+    direction = condition.get("direction", "long")
+
+    column = "qlib_prediction"
+    if column not in features.columns:
+        return False
+    val = features.iloc[row_idx][column]
+    if pd.isna(val):
+        return False
+
+    if direction == "long":
+        return float(val) > threshold
+    elif direction == "short":
+        return float(val) < -threshold
+    return False

@@ -395,6 +395,9 @@ class VotingStrategy(BaseStrategy):
                 col_name = cond.get("column", "")
                 if col_name:
                     _add(col_name, {})
+            elif cond_type == "ml_prediction":
+                # ML prediction condition reads from qlib_prediction column (D-06)
+                _add("qlib_prediction", {})
 
         # Always need ATR for trailing stop and returns
         _add("atr", {"period": self._atr_period})
