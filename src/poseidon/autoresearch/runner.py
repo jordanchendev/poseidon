@@ -138,6 +138,11 @@ class AutoResearchRunner:
                             len(full_specs), spec.symbol, spec.market,
                             len(resolved_specs), len(cross_specs),
                         )
+                        # NOTE: If full_specs contains qlib_prediction (ML vote),
+                        # the pre-computation returns NaN for that column because
+                        # prediction_data is not injected here. BacktestRunner._run_loop
+                        # re-computes with real prediction data via extra_nonprice_data.
+                        # Phase 45 (MLVOTE-05) will add batch pre-loading here.
 
                     pipeline = ParameterSearchPipeline(
                         feature_engine=feature_engine,
