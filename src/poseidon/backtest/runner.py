@@ -673,6 +673,41 @@ class BacktestRunner:
             raw_pct = cfg.target_vol / realized_vol
             return min(raw_pct, cfg.max_position_pct)
 
+        if cfg.mode == SizingMode.FIXED_RISK:
+            # D-18: entry price = order_price for limit, bar close for market
+            entry_price = (
+                signal.order_price
+                if signal.order_price is not None
+                else float(features_slice.iloc[-1]["close"])
+            )
+            sl_price = signal.stop_loss_price
+
+            if sl_price is None:
+                logger.warning(
+                    "FIXED_RISK without stop_loss_price, falling back to FIXED_NOTIONAL"
+                )
+                return cfg.notional_pct
+
+            distance = abs(entry_price - sl_price)
+            if distance < 1e-10:
+                logger.warning(
+                    "FIXED_RISK: SL distance near zero (%.10f), falling back to FIXED_NOTIONAL",
+                    distance,
+                )
+                return cfg.notional_pct
+
+            # D-17: qty = (equity * risk_pct) / distance
+            # self._ar_last_portfolio is set in _run_loop (line ~526) BEFORE bar iteration.
+            # It holds the BacktestPortfolio instance, giving access to .equity during sizing.
+            # The autoresearch_guard decorator explicitly allows _ar_* prefixed attributes.
+            equity = self._ar_last_portfolio.equity
+            risk_amount = equity * cfg.risk_pct
+            raw_qty = risk_amount / distance
+            raw_notional_pct = (raw_qty * entry_price) / self.initial_capital
+
+            # Cap at max_notional_pct
+            return min(raw_notional_pct, cfg.max_notional_pct)
+
         return 0.1  # unreachable fallback
 
     @staticmethod

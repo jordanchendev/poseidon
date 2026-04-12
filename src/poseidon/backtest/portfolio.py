@@ -25,6 +25,7 @@ class SizingMode(str, Enum):
     FIXED_PCT = "fixed_pct"
     FIXED_NOTIONAL = "fixed_notional"
     VOL_TARGET = "vol_target"
+    FIXED_RISK = "fixed_risk"
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,8 @@ class SizingConfig:
         target_vol: Annualized target volatility (vol_target mode).
         vol_lookback: Lookback bars for realized volatility (vol_target mode).
         max_position_pct: Hard cap on position size as fraction of capital (vol_target mode).
+        risk_pct: Fraction of equity risked per trade (fixed_risk mode).
+        max_notional_pct: Hard cap on position notional as fraction of equity (fixed_risk mode).
     """
 
     mode: SizingMode = SizingMode.FIXED_NOTIONAL
@@ -46,6 +49,8 @@ class SizingConfig:
     target_vol: float = 0.15
     vol_lookback: int = 20
     max_position_pct: float = 0.3
+    risk_pct: float = 0.01           # 1% of equity risked per trade (FIXED_RISK only)
+    max_notional_pct: float = 0.3    # Hard cap as fraction of equity (FIXED_RISK only)
 
 
 @dataclass
