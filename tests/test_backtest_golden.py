@@ -1,10 +1,136 @@
 """Golden reference tests for backtest engine — schema extension and regression.
 
 Phase 49: Signal schema golden reference tests.
-Wave 0 stubs to be unskipped as implementation proceeds.
+- Wave 1 (49-01/02): Schema extension + consumer integration tests
+- Wave 2 (49-03): Golden regression test locking _run_loop behavior before Phase 50
 """
 
+import numpy as np
+import pandas as pd
 import pytest
+from datetime import timezone
+
+
+# ---------------------------------------------------------------------------
+# Golden regression test constants — DO NOT CHANGE after values captured
+# ---------------------------------------------------------------------------
+
+GOLDEN_SEED = 12345
+GOLDEN_N_BARS = 80
+GOLDEN_BASE_PRICE = 50000.0
+
+
+def _make_golden_ohlcv() -> pd.DataFrame:
+    """Deterministic OHLCV for golden regression test.
+
+    WARNING: Changing this function invalidates all golden expected values.
+    Uses np.random.default_rng() for isolated RNG (not global np.random.seed()).
+    """
+    rng = np.random.default_rng(GOLDEN_SEED)
+    times = pd.date_range("2025-06-01", periods=GOLDEN_N_BARS, freq="h", tz=timezone.utc)
+    returns = rng.standard_normal(GOLDEN_N_BARS) * 0.01
+    closes = GOLDEN_BASE_PRICE * np.cumprod(1 + returns)
+    highs = closes * (1 + np.abs(rng.standard_normal(GOLDEN_N_BARS) * 0.005))
+    lows = closes * (1 - np.abs(rng.standard_normal(GOLDEN_N_BARS) * 0.005))
+    opens = closes * (1 + rng.standard_normal(GOLDEN_N_BARS) * 0.001)
+    volumes = rng.integers(100, 10000, GOLDEN_N_BARS).astype(float)
+    df = pd.DataFrame(
+        {
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": closes,
+            "volume": volumes,
+        },
+        index=times,
+    )
+    df.index.name = "time"
+    return df
+
+
+GOLDEN_STRATEGY_CONFIG = {
+    "name": "golden_test_strategy",
+    "symbol": "BTCUSDT",
+    "market": "crypto_perp",
+    "interval": "1h",
+    "sub_signals": [
+        {
+            "type": "indicator_comparison",
+            "indicator_a": "ema",
+            "indicator_b": "ema",
+            "params": {"period_a": 7, "period_b": 26},
+        },
+        {
+            "type": "indicator_above",
+            "indicator": "rsi",
+            "params": {"period": 8, "threshold": 40},
+        },
+        {
+            "type": "indicator_above",
+            "indicator": "cum_return",
+            "params": {"period": 6, "threshold": -0.02},
+        },
+    ],
+    "min_votes": 2,
+    "conviction_gap": 0,
+    "cooldown_bars": 2,
+    "position_pct": 0.08,
+    "strategy_mode": "long_only",
+}
+
+
+def _run_golden_backtest():
+    """Run the golden backtest. Returns BacktestResult.
+
+    WARNING: Changing this function or its dependencies invalidates expected values.
+    """
+    from poseidon.backtest.cost_model import get_cost_model
+    from poseidon.backtest.runner import BacktestRunner
+    from poseidon.data.feature_engine import FeatureEngine
+    from poseidon.risk.engine import RiskEngine
+    from poseidon.strategies.voting_strategy import VotingStrategy
+
+    ohlcv = _make_golden_ohlcv()
+    strategy = VotingStrategy(config=GOLDEN_STRATEGY_CONFIG)
+    feature_engine = FeatureEngine()
+    risk_engine = RiskEngine(rules=[])
+    cost_model = get_cost_model("crypto_perp")
+
+    runner = BacktestRunner(
+        strategy=strategy,
+        feature_engine=feature_engine,
+        risk_engine=risk_engine,
+        cost_model=cost_model,
+        initial_capital=100_000.0,
+    )
+    return runner.run(ohlcv)
+
+
+# ---------------------------------------------------------------------------
+# Golden expected values — PLACEHOLDER: capture on stormtrooper then freeze
+# ---------------------------------------------------------------------------
+# To capture golden values, run on stormtrooper:
+#   ssh stormtrooper "cd ~/Projects/poseidon && docker compose exec gpu-worker \
+#     python -c '
+# import sys; sys.path.insert(0, \"src\")
+# from tests.test_backtest_golden import _run_golden_backtest
+# result = _run_golden_backtest()
+# print(f\"EXPECTED_TRADE_COUNT = {result.trade_count}\")
+# print(f\"EXPECTED_EQUITY_LENGTH = {result.equity_curve_length}\")
+# import json
+# print(f\"EXPECTED_METRICS = {json.dumps(result.metrics, indent=2, default=str)}\")
+# print(f\"EXPECTED_TRADES = {json.dumps(result.trades, indent=2, default=str)}\")
+# '"
+#
+# Then replace the placeholders below with the actual output.
+# Until golden values are captured, TestBacktestGolden tests are skipped.
+
+GOLDEN_VALUES_CAPTURED = False  # Set to True after capturing values on stormtrooper
+
+EXPECTED_TRADE_COUNT: int = 0  # PLACEHOLDER — replace after capture
+EXPECTED_EQUITY_LENGTH: int = 80  # PLACEHOLDER — replace after capture
+EXPECTED_TRADES: list[dict] = []  # PLACEHOLDER — replace after capture
+EXPECTED_METRICS: dict = {}  # PLACEHOLDER — replace after capture
 
 
 class TestSignalSchemaExtension:
@@ -71,12 +197,105 @@ class TestSignalSchemaExtension:
 
 
 class TestBacktestGolden:
-    """Golden regression tests for BacktestRunner (placeholder for future tasks)."""
+    """Golden regression test — locks _run_loop behavior before Phase 50.
 
-    @pytest.mark.skip(reason="Wave 0 stub -- placeholder for golden regression tests")
-    def test_placeholder(self):
-        """Placeholder for golden regression test suite."""
-        pass
+    DO NOT modify expected values unless intentionally changing backtest logic.
+    If a test fails after a code change, that change broke backward compatibility.
+
+    Golden values must be captured on stormtrooper (Mac has no torch/GPU).
+    See capture instructions in the EXPECTED_* constants section above.
+    """
+
+    @pytest.mark.skipif(
+        not GOLDEN_VALUES_CAPTURED,
+        reason="Golden values not yet captured on stormtrooper — run capture script first",
+    )
+    def test_golden_trade_count(self):
+        """Trade count matches frozen golden value exactly."""
+        result = _run_golden_backtest()
+        assert result.trade_count == EXPECTED_TRADE_COUNT
+
+    @pytest.mark.skipif(
+        not GOLDEN_VALUES_CAPTURED,
+        reason="Golden values not yet captured on stormtrooper — run capture script first",
+    )
+    def test_golden_trades(self):
+        """Every trade field matches golden values to 6 decimal places."""
+        result = _run_golden_backtest()
+        assert len(result.trades) == len(EXPECTED_TRADES), (
+            f"Trade list length mismatch: {len(result.trades)} != {len(EXPECTED_TRADES)}"
+        )
+        for i, (actual, expected) in enumerate(zip(result.trades, EXPECTED_TRADES)):
+            assert actual["entry_price"] == pytest.approx(
+                expected["entry_price"], abs=1e-6
+            ), f"Trade {i} entry_price mismatch"
+            assert actual["exit_price"] == pytest.approx(
+                expected["exit_price"], abs=1e-6
+            ), f"Trade {i} exit_price mismatch"
+            assert actual["quantity"] == pytest.approx(
+                expected["quantity"], abs=1e-6
+            ), f"Trade {i} quantity mismatch"
+            assert actual["fees"] == pytest.approx(
+                expected["fees"], abs=1e-6
+            ), f"Trade {i} fees mismatch"
+            assert actual["pnl"] == pytest.approx(
+                expected["pnl"], abs=1e-6
+            ), f"Trade {i} pnl mismatch"
+            assert actual["action"] == expected["action"], f"Trade {i} action mismatch"
+            assert actual["symbol"] == expected["symbol"], f"Trade {i} symbol mismatch"
+
+    @pytest.mark.skipif(
+        not GOLDEN_VALUES_CAPTURED,
+        reason="Golden values not yet captured on stormtrooper — run capture script first",
+    )
+    def test_golden_metrics(self):
+        """All computed metrics match golden values to 6 decimal places."""
+        result = _run_golden_backtest()
+        for key, expected_val in EXPECTED_METRICS.items():
+            if expected_val is None:
+                assert result.metrics.get(key) is None, f"Metric {key} should be None"
+            elif isinstance(expected_val, (int, float)):
+                assert result.metrics[key] == pytest.approx(
+                    expected_val, abs=1e-6
+                ), f"Metric {key} mismatch"
+            else:
+                assert result.metrics[key] == expected_val, f"Metric {key} mismatch"
+
+    @pytest.mark.skipif(
+        not GOLDEN_VALUES_CAPTURED,
+        reason="Golden values not yet captured on stormtrooper — run capture script first",
+    )
+    def test_golden_equity_curve_length(self):
+        """Equity curve length matches golden value exactly."""
+        result = _run_golden_backtest()
+        assert result.equity_curve_length == EXPECTED_EQUITY_LENGTH
+
+    def test_golden_ohlcv_deterministic(self):
+        """Verify _make_golden_ohlcv produces identical output across calls."""
+        df1 = _make_golden_ohlcv()
+        df2 = _make_golden_ohlcv()
+        pd.testing.assert_frame_equal(df1, df2)
+
+    def test_golden_ohlcv_shape(self):
+        """Verify golden OHLCV has expected shape and columns."""
+        df = _make_golden_ohlcv()
+        assert df.shape == (GOLDEN_N_BARS, 5)
+        assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+        assert df.index.name == "time"
+        assert df.index.tz is not None  # timezone-aware
+
+    def test_trade_count_nonzero(self):
+        """Sanity: golden test must produce trades to be useful as regression gate.
+
+        This test runs the actual backtest (no frozen values needed) to verify
+        the VotingStrategy config produces >= 2 round-trip trades in 80 bars.
+        """
+        result = _run_golden_backtest()
+        assert result.trade_count >= 2, (
+            f"Golden config only produced {result.trade_count} trades — "
+            f"need >= 2 for regression gate. Adjust GOLDEN_STRATEGY_CONFIG."
+        )
+        assert result.status == "completed"
 
 
 class TestSignalConsumerIntegration:
