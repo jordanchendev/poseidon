@@ -567,6 +567,13 @@ class BacktestRunner:
 
             for signal in signals:
                 if signal.action == SignalAction.HOLD:
+                    # Check for trailing stop SL updates (ADV-01, D-10)
+                    if signal.metadata:
+                        updated_sl = signal.metadata.get("updated_stop_loss")
+                        if updated_sl is not None:
+                            key = f"{self.strategy.market}:{self.strategy.symbol}"
+                            if key in portfolio.positions:
+                                portfolio.positions[key]["stop_loss_price"] = updated_sl
                     continue
 
                 # Compute position size based on SizingConfig (before risk check)

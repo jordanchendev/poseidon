@@ -81,6 +81,11 @@ class LiquiditySweepStrategy(BaseStrategy):
         self._cooldown_bars: int = exit_cfg.get("cooldown_bars", 4)
         self._max_holding_bars: int | None = exit_cfg.get("max_holding_bars", None)
 
+        # Trailing stop config (D-07, D-08, D-09)
+        trailing = config.get("trailing", {})
+        self._trailing_activation_r: float = trailing.get("activation_r", 1.0)
+        self._trail_atr_multiplier: float = trailing.get("atr_multiplier", 2.0)
+
         # Direction mode (D-16)
         self._direction_mode: str = config.get("direction_mode", "bidirectional")
 
@@ -88,6 +93,14 @@ class LiquiditySweepStrategy(BaseStrategy):
         self._position_direction: str | None = None
         self._bars_since_exit: int = 999  # starts high so first trade isn't blocked
         self._bars_in_position: int = 0
+
+        # Trailing stop state (D-07)
+        self._trailing_active: bool = False
+        self._position_high_watermark: float | None = None
+        self._position_low_watermark: float | None = None
+        self._entry_price: float | None = None
+        self._initial_stop_loss: float | None = None
+        self._current_stop_loss: float | None = None
 
     def get_feature_specs(self) -> list[tuple[str, dict]]:
         """Declare all required features for this strategy (D-03)."""
@@ -130,7 +143,7 @@ class LiquiditySweepStrategy(BaseStrategy):
         # Increment cooldown counter
         self._bars_since_exit += 1
 
-        # === IN POSITION: check exits only ===
+        # === IN POSITION: check trailing stop + exits ===
         if self._position_direction is not None:
             self._bars_in_position += 1
 
@@ -156,6 +169,24 @@ class LiquiditySweepStrategy(BaseStrategy):
                 self._bars_since_exit = 0
                 self._bars_in_position = 0
                 return signals
+
+            # Check trailing stop (ADV-01)
+            close = float(row.get("close", 0.0))
+            new_sl = self._check_trailing_stop(row, close)
+            if new_sl is not None:
+                return [
+                    Signal(
+                        strategy_id=self.strategy_id,
+                        symbol=self.symbol,
+                        market=self.market,
+                        instrument=self.instrument,
+                        action=SignalAction.HOLD,
+                        confidence=0.0,
+                        interval=self.interval,
+                        signal_time=signal_time,
+                        metadata={"updated_stop_loss": new_sl},
+                    )
+                ]
 
             # SL/TP handled by BacktestRunner Phase A -- no strategy-side exit
             return []
@@ -226,9 +257,19 @@ class LiquiditySweepStrategy(BaseStrategy):
         )
         signals.append(signal)
 
-        # Update position state (D-18)
+        # Update position state (D-18) and trailing stop entry context
         self._position_direction = direction
         self._bars_in_position = 0
+        self._entry_price = entry_price
+        self._initial_stop_loss = stop_loss
+        self._current_stop_loss = stop_loss
+        self._trailing_active = False
+        if direction == "long":
+            self._position_high_watermark = entry_price
+            self._position_low_watermark = None
+        else:
+            self._position_low_watermark = entry_price
+            self._position_high_watermark = None
 
         logger.debug(
             "Sweep detected: %s at zone %.2f, score=%.3f, entry=%.2f, sl=%.2f, tp=%.2f",
@@ -241,6 +282,74 @@ class LiquiditySweepStrategy(BaseStrategy):
         )
 
         return signals
+
+    def _check_trailing_stop(self, row: pd.Series, close: float) -> float | None:
+        """Check and update trailing stop if applicable (ADV-01, D-07/D-08/D-09).
+
+        Trailing stop activates when unrealized profit reaches
+        trailing_activation_r * 1R (where 1R = |entry - initial_stop|).
+        Once active, SL trails via ATR-based distance from high/low watermark.
+        SL only tightens, never loosens (D-08).
+
+        Args:
+            row: Current bar feature values.
+            close: Current bar close price.
+
+        Returns:
+            New SL value if changed, None otherwise.
+        """
+        if self._entry_price is None or self._initial_stop_loss is None:
+            return None
+        if self._current_stop_loss is None:
+            return None
+
+        one_r = abs(self._entry_price - self._initial_stop_loss)
+        if one_r == 0:
+            return None
+
+        atr = row.get("atr_14", 0.0)
+        if pd.isna(atr):
+            atr = 0.0
+        atr = float(atr)
+
+        old_sl = self._current_stop_loss
+
+        if self._position_direction == "long":
+            # Track high watermark
+            if self._position_high_watermark is None:
+                self._position_high_watermark = close
+            else:
+                self._position_high_watermark = max(self._position_high_watermark, close)
+
+            unrealized = close - self._entry_price
+            if unrealized >= one_r * self._trailing_activation_r:
+                self._trailing_active = True
+
+            if self._trailing_active and atr > 0:
+                trail_sl = self._position_high_watermark - atr * self._trail_atr_multiplier
+                # Only tighten (D-08): for long, SL can only move up
+                self._current_stop_loss = max(trail_sl, self._current_stop_loss)
+
+        elif self._position_direction == "short":
+            # Track low watermark
+            if self._position_low_watermark is None:
+                self._position_low_watermark = close
+            else:
+                self._position_low_watermark = min(self._position_low_watermark, close)
+
+            unrealized = self._entry_price - close
+            if unrealized >= one_r * self._trailing_activation_r:
+                self._trailing_active = True
+
+            if self._trailing_active and atr > 0:
+                trail_sl = self._position_low_watermark + atr * self._trail_atr_multiplier
+                # Only tighten (D-08): for short, SL can only move down
+                self._current_stop_loss = min(trail_sl, self._current_stop_loss)
+
+        # Return new SL only if it changed
+        if self._current_stop_loss != old_sl:
+            return self._current_stop_loss
+        return None
 
     def _identify_zones(self, row: pd.Series) -> dict:
         """Stage 1: Identify stop-loss cluster zones (D-05, D-06, D-07).
@@ -425,7 +534,14 @@ class LiquiditySweepStrategy(BaseStrategy):
         return True
 
     def reset(self) -> None:
-        """Reset position state (D-18, D-20)."""
+        """Reset position state and trailing stop state (D-18, D-20, ADV-01)."""
         self._position_direction = None
         self._bars_since_exit = 999
         self._bars_in_position = 0
+        # Trailing stop state (D-07)
+        self._trailing_active = False
+        self._position_high_watermark = None
+        self._position_low_watermark = None
+        self._entry_price = None
+        self._initial_stop_loss = None
+        self._current_stop_loss = None
