@@ -63,12 +63,14 @@ GOLDEN_STRATEGY_CONFIG = {
         {
             "type": "indicator_above",
             "indicator": "rsi",
-            "params": {"period": 8, "threshold": 40},
+            "threshold": 40,
+            "params": {"period": 8},
         },
         {
             "type": "indicator_above",
             "indicator": "cum_return",
-            "params": {"period": 6, "threshold": -0.02},
+            "threshold": -0.02,
+            "params": {"period": 6},
         },
     ],
     "min_votes": 2,
