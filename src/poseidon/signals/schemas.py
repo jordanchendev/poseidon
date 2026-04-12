@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SignalAction(str, Enum):
@@ -27,6 +27,13 @@ class InstrumentType(str, Enum):
     FUTURES = "futures"
     PERPETUAL = "perpetual"
     OPTION = "option"
+
+
+class OrderType(str, Enum):
+    """Order execution type."""
+
+    MARKET = "market"
+    LIMIT = "limit"
 
 
 class SignalStatus(str, Enum):
@@ -63,6 +70,12 @@ class Signal(BaseModel):
     # Instrument-specific params (JSONB in DB)
     params: dict = Field(default_factory=dict)
 
+    # Limit order fields (Phase 49 -- all optional, backward-compatible)
+    order_type: OrderType | None = None
+    order_price: float | None = None
+    stop_loss_price: float | None = None
+    take_profit_price: float | None = None
+
     # Risk
     status: SignalStatus = SignalStatus.PENDING
     reject_reason: str | None = None
@@ -71,3 +84,10 @@ class Signal(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def validate_limit_order_fields(self) -> "Signal":
+        """When order_type is LIMIT, order_price is required."""
+        if self.order_type == OrderType.LIMIT and self.order_price is None:
+            raise ValueError("order_price is required when order_type is LIMIT")
+        return self

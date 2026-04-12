@@ -10,7 +10,6 @@ import pytest
 class TestSignalSchemaExtension:
     """Tests for OrderType enum and limit-order fields on Signal schema."""
 
-    @pytest.mark.skip(reason="Wave 0 stub -- implementation pending")
     def test_signal_backward_compat(self):
         """Signal() without new fields succeeds, all new fields are None."""
         from poseidon.signals.schemas import Signal
@@ -26,7 +25,6 @@ class TestSignalSchemaExtension:
         assert sig.stop_loss_price is None
         assert sig.take_profit_price is None
 
-    @pytest.mark.skip(reason="Wave 0 stub -- implementation pending")
     def test_signal_with_limit_order(self):
         """Signal with order_type=LIMIT, order_price=50000.0 succeeds."""
         from poseidon.signals.schemas import OrderType, Signal
@@ -42,7 +40,6 @@ class TestSignalSchemaExtension:
         assert sig.order_type == OrderType.LIMIT
         assert sig.order_price == 50000.0
 
-    @pytest.mark.skip(reason="Wave 0 stub -- implementation pending")
     def test_limit_requires_order_price(self):
         """Signal with order_type=LIMIT without order_price raises ValidationError."""
         from pydantic import ValidationError
@@ -58,7 +55,6 @@ class TestSignalSchemaExtension:
                 order_type=OrderType.LIMIT,
             )
 
-    @pytest.mark.skip(reason="Wave 0 stub -- implementation pending")
     def test_market_order_no_price_required(self):
         """Signal with order_type=MARKET without order_price succeeds."""
         from poseidon.signals.schemas import OrderType, Signal
