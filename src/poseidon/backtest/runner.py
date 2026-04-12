@@ -27,11 +27,12 @@ import numpy as np
 from poseidon.autoresearch.guard import autoresearch_guard
 from poseidon.backtest.cost_model import CostModel
 from poseidon.backtest.metrics import compute_metrics
+from poseidon.backtest.pending_orders import FillModel, PendingOrderBook
 from poseidon.backtest.portfolio import BacktestPortfolio, SizingConfig, SizingMode
 from poseidon.backtest.schemas import BacktestConfig, BacktestResult
 from poseidon.data.feature_engine import FeatureEngine, _is_nonprice_spec
 from poseidon.risk.engine import RiskEngine
-from poseidon.signals.schemas import SignalAction, SignalStatus
+from poseidon.signals.schemas import OrderType, SignalAction, SignalStatus
 from poseidon.strategies.base import BaseStrategy
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,8 @@ class BacktestRunner:
         cost_model: CostModel,
         initial_capital: float = 1_000_000.0,
         sizing_config: SizingConfig | None = None,
+        fill_model: FillModel | None = None,
+        max_pending_bars: int = 5,
     ) -> None:
         self.strategy = strategy
         self.feature_engine = feature_engine
@@ -122,6 +125,8 @@ class BacktestRunner:
         self.cost_model = cost_model
         self.initial_capital = initial_capital
         self.sizing_config = sizing_config or SizingConfig()
+        self._fill_model = fill_model or FillModel.OPTIMISTIC
+        self._max_pending_bars = max_pending_bars
 
         # Capability enforcement (Phase 34 - COMP-05)
         from poseidon.capabilities.validation import (
@@ -337,6 +342,66 @@ class BacktestRunner:
         """Access the portfolio after run() completes. Returns None if run() hasn't been called."""
         return getattr(self, "_ar_last_portfolio", None)
 
+    def _evaluate_sl_tp(
+        self, portfolio: BacktestPortfolio, bar: pd.Series, bar_index: int,
+    ) -> None:
+        """Evaluate intra-bar SL/TP exits on open positions (Phase A of bar loop).
+
+        For each open position with SL/TP prices set, checks if the bar's
+        high/low triggers either exit condition:
+
+        Long positions:
+        - SL triggers if bar_low <= stop_loss_price
+        - TP triggers if bar_high >= take_profit_price
+
+        Short positions:
+        - SL triggers if bar_high >= stop_loss_price
+        - TP triggers if bar_low <= take_profit_price
+
+        When both SL and TP trigger in the same bar, SL takes priority (D-12).
+
+        Args:
+            portfolio: The BacktestPortfolio to evaluate.
+            bar: Current OHLCV bar with 'high' and 'low' columns.
+            bar_index: Current bar index (unused but available for logging).
+        """
+        # Collect exits first, then execute (cannot modify dict while iterating)
+        exits: list[tuple[str, float, str]] = []  # (key, exit_price, exit_type)
+
+        for key, pos in portfolio.positions.items():
+            sl_price = pos.get("stop_loss_price")
+            tp_price = pos.get("take_profit_price")
+
+            if sl_price is None and tp_price is None:
+                continue
+
+            bar_low = float(bar["low"])
+            bar_high = float(bar["high"])
+
+            sl_triggered = False
+            tp_triggered = False
+
+            if pos["side"] == "long":
+                if sl_price is not None and bar_low <= sl_price:
+                    sl_triggered = True
+                if tp_price is not None and bar_high >= tp_price:
+                    tp_triggered = True
+            else:  # short
+                if sl_price is not None and bar_high >= sl_price:
+                    sl_triggered = True
+                if tp_price is not None and bar_low <= tp_price:
+                    tp_triggered = True
+
+            # D-12: SL takes priority when both trigger in same bar
+            if sl_triggered:
+                exits.append((key, sl_price, "sl"))
+            elif tp_triggered:
+                exits.append((key, tp_price, "tp"))
+
+        # Execute all SL/TP exits
+        for key, exit_price, exit_type in exits:
+            portfolio.execute_sl_tp_exit(key, exit_price, exit_type, bar)
+
     def run(
         self,
         ohlcv: pd.DataFrame,
@@ -461,12 +526,24 @@ class BacktestRunner:
         self._ar_last_portfolio = portfolio
         adapter = _PortfolioAdapter(portfolio)
 
-        # Step 4: Bar-by-bar loop
+        # Step 4: Bar-by-bar four-phase loop (Phase 50 refactor)
+        # Phase A: SL/TP evaluation on open positions
+        # Phase B: Check pending limit order fills
+        # Phase C: Strategy evaluate + signal routing (market vs limit)
+        # Phase D: Record equity + expire timed-out orders
+        #
+        # For existing market-order backtests (no pending orders, no SL/TP):
+        # Phase A is a no-op (no positions have SL/TP), Phase B returns empty
+        # list, Phase C is identical to the original loop, Phase D adds a
+        # no-op expire call before equity recording. Results are IDENTICAL.
         n_bars = len(features)
         logger.info(
             "Backtest: %d bars, warmup=%d, tradeable=%d",
             n_bars, warmup_end, n_bars - warmup_end,
         )
+
+        # Create PendingOrderBook for this run
+        pending_book = PendingOrderBook(fill_model=self._fill_model)
 
         for i in range(n_bars):
             bar = features.iloc[i]
@@ -476,13 +553,18 @@ class BacktestRunner:
                 portfolio.record_equity_point(bar.name, float(bar["close"]))
                 continue
 
-            # Step 4a: Expanding window slice -- no look-ahead (BT-01)
-            features_slice = features.iloc[:i + 1]
+            # Phase A: SL/TP evaluation on open positions (D-02)
+            self._evaluate_sl_tp(portfolio, bar, i)
 
-            # Step 4b: Strategy evaluate -- same code path as live (BT-01)
+            # Phase B: Check pending limit order fills
+            fill_events = pending_book.check_fills(bar, i)
+            for fe in fill_events:
+                portfolio.execute_limit_fill(fe, bar)
+
+            # Phase C: Strategy evaluate + signal routing (D-03)
+            features_slice = features.iloc[:i + 1]
             signals = self.strategy.evaluate(features_slice)
 
-            # Step 4c: Compute sizing, risk check, and fill for each signal
             for signal in signals:
                 if signal.action == SignalAction.HOLD:
                     continue
@@ -496,9 +578,14 @@ class BacktestRunner:
                 signal = self.risk_engine.evaluate(signal, adapter)
 
                 if signal.status == SignalStatus.PASSED:
-                    portfolio.execute_fill(signal, bar)
+                    # Route by order type: limit -> pending book, market -> immediate fill
+                    if signal.order_type == OrderType.LIMIT:
+                        pending_book.submit(signal, i)
+                    else:
+                        portfolio.execute_fill(signal, bar)
 
-            # Step 4d: Record equity point at every bar
+            # Phase D: Record equity + expire timed-out orders
+            pending_book.expire_orders(i, self._max_pending_bars)
             portfolio.record_equity_point(bar.name, float(bar["close"]))
 
         # Step 5: Compute metrics
