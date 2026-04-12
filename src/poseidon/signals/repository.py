@@ -39,6 +39,10 @@ class SignalRepository:
             status=signal.status.value,
             reject_reason=signal.reject_reason,
             metadata_=signal.metadata,
+            order_type=signal.order_type.value if signal.order_type else None,
+            order_price=signal.order_price,
+            stop_loss_price=signal.stop_loss_price,
+            take_profit_price=signal.take_profit_price,
         )
         self._session.add(record)
         self._session.flush()
