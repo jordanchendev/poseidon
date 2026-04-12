@@ -100,3 +100,26 @@ def run_dual_mode_comparison(
         delta_metrics=delta,
         is_viable=is_viable,
     )
+
+
+def validate_cross_symbol(
+    results: list[dict],
+) -> tuple[bool, dict]:
+    """Cross-symbol validation gate (SWEEP-06, D-17).
+
+    Each result dict must contain: symbol, pessimistic_sharpe, wfe.
+    Returns (all_passed, per_symbol_report) where:
+    - all_passed: True only if EVERY symbol has pessimistic Sharpe > 0 AND WFE >= 50%
+    - per_symbol_report: {symbol: {sharpe, wfe, passed}}
+    """
+    report: dict[str, dict] = {}
+    all_passed = True
+    for r in results:
+        symbol = r["symbol"]
+        sharpe = r.get("pessimistic_sharpe", 0.0)
+        wfe = r.get("wfe", 0.0)
+        passed = sharpe > 0 and wfe >= 0.50
+        report[symbol] = {"sharpe": sharpe, "wfe": wfe, "passed": passed}
+        if not passed:
+            all_passed = False
+    return all_passed, report
