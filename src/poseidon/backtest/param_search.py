@@ -85,6 +85,7 @@ class ParameterSearchPipeline:
         initial_capital: float = 1_000_000.0,
         sizing_config: SizingConfig | None = None,
         db_session: Any | None = None,
+        strategy_factory: Any | None = None,  # D-02: injectable strategy factory
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
@@ -93,6 +94,7 @@ class ParameterSearchPipeline:
         self.initial_capital = initial_capital
         self.sizing_config = sizing_config or SizingConfig()
         self.db_session = db_session
+        self.strategy_factory = strategy_factory  # None = VotingStrategyFactory (backward compat)
 
     def run(
         self,
@@ -160,24 +162,34 @@ class ParameterSearchPipeline:
             # Convert UUID to string for JSON serialization in experiment records
             return str(mv_id) if mv_id is not None else None
 
-        def trial_strategy_factory(params: dict) -> Any:
-            config_dict = _build_config_from_params(
-                params, symbol=symbol, market=market, interval=interval,
-                strategy_mode=mode,
-                model_version_id=resolve_model_version_id(params),
+        # Strategy factory for optimizer (D-02): polymorphic via build_trial_factory()
+        if self.strategy_factory is not None:
+            # Use injected factory -- call build_trial_factory() to get
+            # (trial_strategy_factory_fn, param_bounds) without importing strategy internals.
+            # This keeps param_search.py truly polymorphic per D-02.
+            trial_strategy_factory, param_space = self.strategy_factory.build_trial_factory(
+                symbol=symbol, market=market, interval=interval,
             )
-            return VotingStrategyFactory.from_config(config_dict)
+        else:
+            # Original VotingStrategyFactory path (unchanged for backward compat)
+            def trial_strategy_factory(params: dict) -> Any:
+                config_dict = _build_config_from_params(
+                    params, symbol=symbol, market=market, interval=interval,
+                    strategy_mode=mode,
+                    model_version_id=resolve_model_version_id(params),
+                )
+                return VotingStrategyFactory.from_config(config_dict)
 
-        param_space = {
-            name: (low, high, ptype)
-            for name, (low, high, ptype) in get_param_bounds(market).items()
-        }
-        if models_list and model_version_id is None:
-            if len(models_list) > 1:
-                param_space["qlib_model_version"] = (0, len(models_list) - 1, "int")
-        elif not models_list:
-            param_space.pop("qlib_model_enabled", None)
-            param_space.pop("qlib_model_version", None)
+            param_space = {
+                name: (low, high, ptype)
+                for name, (low, high, ptype) in get_param_bounds(market).items()
+            }
+            if models_list and model_version_id is None:
+                if len(models_list) > 1:
+                    param_space["qlib_model_version"] = (0, len(models_list) - 1, "int")
+            elif not models_list:
+                param_space.pop("qlib_model_enabled", None)
+                param_space.pop("qlib_model_version", None)
 
         trials = optimizer.optimize(
             strategy_factory=trial_strategy_factory,
@@ -209,13 +221,19 @@ class ParameterSearchPipeline:
             composite = compute_composite_score(trial.metrics)
 
             # Build strategy from this trial's params for WFE validation
-            config_dict = _build_config_from_params(
-                trial.params, symbol=symbol, market=market, interval=interval,
-                strategy_mode=mode,
-                model_version_id=resolve_model_version_id(trial.params),
-            )
+            if self.strategy_factory is not None:
+                # Use injected factory's trial_strategy_factory callable
+                strategy_for_wfe = trial_strategy_factory(trial.params)
+                config_dict = trial.params  # Flat params for logging
+            else:
+                config_dict = _build_config_from_params(
+                    trial.params, symbol=symbol, market=market, interval=interval,
+                    strategy_mode=mode,
+                    model_version_id=resolve_model_version_id(trial.params),
+                )
+                strategy_for_wfe = VotingStrategyFactory.from_config(config_dict)
             try:
-                strategy = VotingStrategyFactory.from_config(config_dict)
+                strategy = strategy_for_wfe
                 wf_result = wf_analyzer.analyze(
                     strategy=strategy,
                     ohlcv=train_ohlcv,
