@@ -42,6 +42,10 @@ class SignalResponse(PydanticBase):
     valid_until: datetime | None
     interval: str
     params: dict
+    order_type: str | None = None
+    order_price: float | None = None
+    stop_loss_price: float | None = None
+    take_profit_price: float | None = None
     status: str
     reject_reason: str | None
     created_at: datetime
