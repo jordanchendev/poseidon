@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from poseidon.data.features.open_interest import OIChange, OIBuildup
+from poseidon.data.features.open_interest import OIChange, OIBuildup, _align_oi_to_index
 
 
 def _make_ohlcv(n: int = 50) -> pd.DataFrame:
@@ -167,3 +167,93 @@ class TestOIBuildup:
         # At index 5: oi_buildup = (105000 - 100000) / 100000 * 100 = 5.0%
         buildup_at_5 = result["oi_buildup_5"].iloc[5]
         assert abs(buildup_at_5 - 5.0) < 0.01
+
+
+class TestOITimestampAlignment:
+    """Verify OI timestamp alignment prevents look-ahead bias.
+
+    Binance fetchOpenInterestHistory returns timestamps representing the
+    START of the measurement period (D-01). The _align_oi_to_index(method="ffill")
+    ensures that at any bar time T, the OI value used is the most recent
+    snapshot with timestamp <= T.
+
+    References: CONTEXT.md D-01, D-02.
+    """
+
+    def test_no_lookahead_with_gap(self):
+        """Feature at time T must use OI from T or earlier, never T+1.
+
+        Creates OI data with a gap at T=5h. After ffill, the aligned value
+        at T=5h must be T=4h's OI (1400), NOT T=6h's (1600).
+        """
+        n = 10
+        dates = pd.date_range("2025-01-01", periods=n, freq="1h", tz="UTC")
+        ohlcv = pd.DataFrame(
+            {
+                "time": dates,
+                "open": [100.0] * n,
+                "high": [105.0] * n,
+                "low": [95.0] * n,
+                "close": [100.0] * n,
+                "volume": [1000.0] * n,
+            },
+            index=dates,
+        )
+
+        # OI data: 1000, 1100, 1200, 1300, 1400, [gap], 1600, 1700, 1800, 1900
+        all_oi = [1000 + i * 100 for i in range(n)]
+        # Remove index 5 to create a gap
+        oi_dates = [d for i, d in enumerate(dates) if i != 5]
+        oi_values = [v for i, v in enumerate(all_oi) if i != 5]
+        oi_data = pd.DataFrame({"open_interest": oi_values}, index=oi_dates)
+
+        aligned = _align_oi_to_index(oi_data["open_interest"], ohlcv.index)
+
+        # At T=5 (index 5), ffill should carry forward T=4's value (1400)
+        assert aligned.iloc[5] == 1400.0, (
+            f"Look-ahead bias detected: T=5 got {aligned.iloc[5]}, expected 1400.0 "
+            f"(ffill from T=4). If 1600.0 appeared, future data leaked."
+        )
+
+    def test_no_lookahead_oi_arrives_later(self):
+        """OI data that starts AFTER OHLCV should produce NaN, not backfill.
+
+        If OI only exists from T=5 onward, bars T=0..4 must be NaN (no data
+        available yet), not filled from the future.
+        """
+        n = 10
+        dates = pd.date_range("2025-01-01", periods=n, freq="1h", tz="UTC")
+
+        # OI only available from index 5 onward
+        oi_dates = dates[5:]
+        oi_values = [5000.0 + i * 100 for i in range(5)]
+        oi_series = pd.Series(oi_values, index=oi_dates, name="open_interest")
+
+        aligned = _align_oi_to_index(oi_series, dates)
+
+        # First 5 bars should be NaN -- no OI data available yet
+        assert aligned.iloc[:5].isna().all(), (
+            "Look-ahead bias: bars before first OI snapshot must be NaN, "
+            f"got {aligned.iloc[:5].tolist()}"
+        )
+        # Bars from index 5 onward should have values
+        assert aligned.iloc[5:].notna().all()
+
+    def test_ffill_carries_last_known_value(self):
+        """Forward-fill must carry the last known OI value into subsequent bars."""
+        dates = pd.date_range("2025-01-01", periods=6, freq="1h", tz="UTC")
+        # OI available only at T=0 and T=3
+        oi_series = pd.Series(
+            [1000.0, 2000.0],
+            index=[dates[0], dates[3]],
+            name="open_interest",
+        )
+
+        aligned = _align_oi_to_index(oi_series, dates)
+
+        assert aligned.iloc[0] == 1000.0  # T=0: direct match
+        assert aligned.iloc[1] == 1000.0  # T=1: ffill from T=0
+        assert aligned.iloc[2] == 1000.0  # T=2: ffill from T=0
+        assert aligned.iloc[3] == 2000.0  # T=3: direct match
+        assert aligned.iloc[4] == 2000.0  # T=4: ffill from T=3
+        assert aligned.iloc[5] == 2000.0  # T=5: ffill from T=3

@@ -15,9 +15,28 @@ from poseidon.data.features.base import BaseFeature, register_feature
 def _align_oi_to_index(
     oi_series: pd.Series, target_index: pd.Index, method: str = "ffill"
 ) -> pd.Series:
-    """Align OI series to OHLCV index with forward-fill.
+    """Align OI series to OHLCV index via forward-fill.
 
-    Handles timezone mismatch: OI may have different granularity than OHLCV.
+    Binance ``fetchOpenInterestHistory`` returns timestamps representing
+    the START of the measurement period (period-start convention).  For
+    example, a 5-minute OI snapshot stamped ``10:00`` reflects OI measured
+    during [10:00, 10:05).
+
+    Forward-fill (``method="ffill"``) guarantees that at any bar time *T*,
+    the OI value used is the most recent snapshot with timestamp <= T.
+    This eliminates look-ahead bias regardless of whether the exchange
+    uses period-start or period-end conventions, because:
+
+    - Period-start T: OI was measured at or after T, so using it at bar T
+      is conservative (data is available by T).
+    - Period-end T: OI was measured during [T-interval, T], fully
+      available by T.
+
+    In either case, ``reindex(..., method="ffill")`` never pulls a future
+    value forward -- it only carries past/current values into gaps.
+
+    Handles timezone mismatch: OI may have different tz-awareness than
+    OHLCV.  Normalises before reindex to prevent silent all-NaN results.
     """
     if isinstance(oi_series.index, pd.DatetimeIndex) and isinstance(
         target_index, pd.DatetimeIndex
