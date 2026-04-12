@@ -50,6 +50,14 @@ class SignalDeliveryService:
             fields["strategy_id"] = str(signal.strategy_id)
         if signal.model_id is not None:
             fields["model_id"] = str(signal.model_id)
+        if signal.order_type is not None:
+            fields["order_type"] = signal.order_type.value
+        if signal.order_price is not None:
+            fields["order_price"] = str(signal.order_price)
+        if signal.stop_loss_price is not None:
+            fields["stop_loss_price"] = str(signal.stop_loss_price)
+        if signal.take_profit_price is not None:
+            fields["take_profit_price"] = str(signal.take_profit_price)
 
         # Ensure consumer group exists before writing
         self._ensure_consumer_group(stream_key)
