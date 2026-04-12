@@ -237,3 +237,211 @@ class TestFillEvent:
         assert len(fills) == 1
         assert fills[0].fill_price == 49500.0
         assert fills[0].fill_price != 50500.0  # not bar close
+
+
+# ---------------------------------------------------------------------------
+# Portfolio extension tests (Task 2)
+# ---------------------------------------------------------------------------
+
+from poseidon.backtest.cost_model import get_cost_model
+from poseidon.backtest.portfolio import BacktestPortfolio, TradeRecord
+
+
+def _make_portfolio(initial_capital: float = 100_000.0) -> BacktestPortfolio:
+    """Create a BacktestPortfolio with crypto_perp cost model for testing."""
+    cost_model = get_cost_model("crypto_perp")
+    return BacktestPortfolio(initial_capital=initial_capital, cost_model=cost_model)
+
+
+class TestExecuteLimitFill:
+    """Tests for BacktestPortfolio.execute_limit_fill()."""
+
+    def test_execute_limit_fill_long(self):
+        """execute_limit_fill opens a long position with correct fill price."""
+        portfolio = _make_portfolio()
+        signal = _make_signal(
+            order_price=49500.0,
+            stop_loss_price=48000.0,
+            take_profit_price=52000.0,
+        )
+        fe = FillEvent(signal=signal, fill_price=49500.0, fill_bar_index=1)
+        bar = _make_bar(close=50000.0)
+
+        trade = portfolio.execute_limit_fill(fe, bar)
+
+        assert trade is not None
+        assert trade.entry_price == 49500.0  # fill price, not bar close
+        assert trade.action == "long"
+        key = "crypto_perp:BTCUSDT"
+        assert key in portfolio.positions
+        assert portfolio.positions[key]["entry_price"] == 49500.0
+
+    def test_execute_limit_fill_short(self):
+        """execute_limit_fill opens a short position with correct fill price."""
+        portfolio = _make_portfolio()
+        signal = _make_signal(
+            action=SignalAction.SHORT,
+            order_price=51000.0,
+        )
+        fe = FillEvent(signal=signal, fill_price=51000.0, fill_bar_index=1)
+        bar = _make_bar(close=50000.0)
+
+        trade = portfolio.execute_limit_fill(fe, bar)
+
+        assert trade is not None
+        assert trade.entry_price == 51000.0
+        assert trade.action == "short"
+
+    def test_execute_limit_fill_no_slippage(self):
+        """execute_limit_fill uses fill_price directly without slippage."""
+        portfolio = _make_portfolio()
+        signal = _make_signal(order_price=49500.0)
+        fe = FillEvent(signal=signal, fill_price=49500.0, fill_bar_index=1)
+        bar = _make_bar(close=50000.0)
+
+        trade = portfolio.execute_limit_fill(fe, bar)
+
+        # The entry price should be exactly the order price (no slippage applied)
+        assert trade.entry_price == 49500.0
+        # Verify slippage was NOT applied: crypto_perp has slippage_pct=0.0005
+        # If slippage was applied, price would be 49500 * 1.0005 = 49524.75
+        assert trade.entry_price != 49500.0 * 1.0005
+
+    def test_maker_fee_rate(self):
+        """Limit fill uses maker fee rate (buy_commission_rate = 0.0002), not taker."""
+        portfolio = _make_portfolio()
+        signal = _make_signal(order_price=50000.0, quantity_pct=0.1)
+        fe = FillEvent(signal=signal, fill_price=50000.0, fill_bar_index=1)
+        bar = _make_bar()
+
+        trade = portfolio.execute_limit_fill(fe, bar)
+
+        assert trade is not None
+        # Expected fee: trade_value * 0.0002 (maker rate)
+        # trade_value = 50000 * (100000 * 0.1 / 50000) = 50000 * 0.2 = 10000
+        # fee = 10000 * 0.0002 = 2.0
+        expected_fee = trade.quantity * 50000.0 * 0.0002
+        assert trade.fees == pytest.approx(expected_fee, abs=1e-6)
+        # Verify it's NOT the taker rate (0.0005)
+        taker_fee = trade.quantity * 50000.0 * 0.0005
+        assert trade.fees != pytest.approx(taker_fee, abs=1e-6)
+
+
+class TestExecuteSlTpExit:
+    """Tests for BacktestPortfolio.execute_sl_tp_exit()."""
+
+    def test_execute_sl_tp_exit_long_sl(self):
+        """execute_sl_tp_exit closes long position at SL trigger price."""
+        portfolio = _make_portfolio()
+        # Open a long position first
+        signal = _make_signal(
+            order_price=50000.0,
+            stop_loss_price=48000.0,
+            take_profit_price=55000.0,
+        )
+        fe = FillEvent(signal=signal, fill_price=50000.0, fill_bar_index=0)
+        bar = _make_bar()
+        portfolio.execute_limit_fill(fe, bar)
+
+        key = "crypto_perp:BTCUSDT"
+        assert key in portfolio.positions
+
+        # SL exit at 48000
+        exit_bar = _make_bar(low=47500.0, close=47800.0)
+        trade = portfolio.execute_sl_tp_exit(key, exit_price=48000.0, exit_type="sl", bar=exit_bar)
+
+        assert trade is not None
+        assert trade.exit_price == 48000.0  # trigger price, not bar close
+        assert trade.exit_price != 47800.0  # not bar close
+        assert trade.action == "close_sl"
+        assert trade.pnl is not None
+        assert trade.pnl < 0  # SL exit = loss
+        assert key not in portfolio.positions
+
+    def test_execute_sl_tp_exit_long_tp(self):
+        """execute_sl_tp_exit closes long position at TP trigger price."""
+        portfolio = _make_portfolio()
+        signal = _make_signal(
+            order_price=50000.0,
+            stop_loss_price=48000.0,
+            take_profit_price=55000.0,
+        )
+        fe = FillEvent(signal=signal, fill_price=50000.0, fill_bar_index=0)
+        bar = _make_bar()
+        portfolio.execute_limit_fill(fe, bar)
+
+        key = "crypto_perp:BTCUSDT"
+
+        # TP exit at 55000
+        exit_bar = _make_bar(high=55500.0, close=55200.0)
+        trade = portfolio.execute_sl_tp_exit(key, exit_price=55000.0, exit_type="tp", bar=exit_bar)
+
+        assert trade is not None
+        assert trade.exit_price == 55000.0  # trigger price
+        assert trade.action == "close_tp"
+        assert trade.pnl is not None
+        assert trade.pnl > 0  # TP exit = profit
+
+    def test_sl_priority_over_tp(self):
+        """When both SL and TP trigger, SL takes priority (D-12)."""
+        # This tests the execute_sl_tp_exit behavior directly
+        # The SL priority logic lives in _evaluate_sl_tp (runner.py, Task 3)
+        # Here we just verify that calling execute_sl_tp_exit with "sl"
+        # closes the position and records the correct exit type
+        portfolio = _make_portfolio()
+        signal = _make_signal(
+            order_price=50000.0,
+            stop_loss_price=48000.0,
+            take_profit_price=55000.0,
+        )
+        fe = FillEvent(signal=signal, fill_price=50000.0, fill_bar_index=0)
+        bar = _make_bar()
+        portfolio.execute_limit_fill(fe, bar)
+
+        key = "crypto_perp:BTCUSDT"
+
+        # Call with SL first (runner would choose SL when both trigger)
+        exit_bar = _make_bar(low=47000.0, high=56000.0)
+        trade = portfolio.execute_sl_tp_exit(key, exit_price=48000.0, exit_type="sl", bar=exit_bar)
+
+        assert trade is not None
+        assert trade.action == "close_sl"
+        assert trade.exit_price == 48000.0
+        # Position should be gone -- TP cannot trigger
+        assert key not in portfolio.positions
+
+
+class TestPositionSlTpStorage:
+    """Tests for SL/TP field storage on position dict."""
+
+    def test_position_stores_sl_tp(self):
+        """Opening a position via execute_fill stores SL/TP from signal."""
+        portfolio = _make_portfolio()
+        signal = _make_signal(
+            stop_loss_price=48000.0,
+            take_profit_price=55000.0,
+        )
+        # Use execute_fill (market order path) with a bar
+        signal.order_type = None  # market order
+        bar = _make_bar(close=50000.0)
+        trade = portfolio.execute_fill(signal, bar)
+
+        assert trade is not None
+        key = "crypto_perp:BTCUSDT"
+        pos = portfolio.positions[key]
+        assert pos["stop_loss_price"] == 48000.0
+        assert pos["take_profit_price"] == 55000.0
+
+    def test_position_stores_none_sl_tp(self):
+        """Position stores None when SL/TP not set on signal."""
+        portfolio = _make_portfolio()
+        signal = _make_signal()  # no SL/TP
+        signal.order_type = None  # market order
+        bar = _make_bar(close=50000.0)
+        trade = portfolio.execute_fill(signal, bar)
+
+        assert trade is not None
+        key = "crypto_perp:BTCUSDT"
+        pos = portfolio.positions[key]
+        assert pos["stop_loss_price"] is None
+        assert pos["take_profit_price"] is None

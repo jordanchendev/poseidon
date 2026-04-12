@@ -15,6 +15,7 @@ from typing import Any
 import pandas as pd
 
 from poseidon.backtest.cost_model import CostModel
+from poseidon.backtest.pending_orders import FillEvent
 from poseidon.signals.schemas import Signal, SignalAction
 
 
@@ -179,6 +180,8 @@ class BacktestPortfolio:
             "entry_price": fill_price,
             "entry_time": signal.signal_time,
             "entry_fees": fees,
+            "stop_loss_price": signal.stop_loss_price,
+            "take_profit_price": signal.take_profit_price,
         }
 
         trade = TradeRecord(
@@ -211,6 +214,8 @@ class BacktestPortfolio:
             "entry_price": fill_price,
             "entry_time": signal.signal_time,
             "entry_fees": fees,
+            "stop_loss_price": signal.stop_loss_price,
+            "take_profit_price": signal.take_profit_price,
         }
 
         trade = TradeRecord(
@@ -270,6 +275,155 @@ class BacktestPortfolio:
         )
         self.trades.append(trade)
         return trade
+
+    def execute_sl_tp_exit(
+        self, key: str, exit_price: float, exit_type: str, bar: pd.Series,
+    ) -> TradeRecord | None:
+        """Close a position via SL or TP trigger at the exact trigger price.
+
+        No slippage is applied -- the trigger price IS the fill price (D-13).
+        Exit fees use sell_commission_rate + tax_rate (same as _execute_close).
+
+        Args:
+            key: Position key (e.g., "crypto_perp:BTCUSDT").
+            exit_price: The SL or TP trigger price (used directly as fill price).
+            exit_type: "sl" or "tp" for trade record annotation.
+            bar: Current OHLCV bar (used for exit time).
+
+        Returns:
+            TradeRecord for the exit, or None if position not found.
+        """
+        if key not in self.positions:
+            return None
+
+        pos = self.positions.pop(key)
+        quantity = pos["quantity"]
+        entry_price = pos["entry_price"]
+        entry_fees = pos.get("entry_fees", 0.0)
+
+        trade_value = exit_price * quantity
+        exit_fees = trade_value * (
+            self.cost_model.sell_commission_rate + self.cost_model.tax_rate
+        )
+        total_fees = entry_fees + exit_fees
+
+        if pos["side"] == "long":
+            pnl = (exit_price - entry_price) * quantity - total_fees
+            self.cash += trade_value - exit_fees
+        else:
+            # Short close: buy to cover
+            pnl = (entry_price - exit_price) * quantity - total_fees
+            self.cash -= trade_value + exit_fees
+
+        trade = TradeRecord(
+            symbol=key.split(":")[-1] if ":" in key else key,
+            action=f"close_{exit_type}",
+            entry_time=pos["entry_time"],
+            exit_time=bar.name,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            quantity=quantity,
+            fees=total_fees,
+            pnl=pnl,
+        )
+        self.trades.append(trade)
+        return trade
+
+    def execute_limit_fill(
+        self, fill_event: FillEvent, bar: pd.Series,
+    ) -> TradeRecord | None:
+        """Execute a limit order fill using maker fee rate with no slippage.
+
+        Fill price comes from the FillEvent (= order's limit price).
+        Uses buy_commission_rate (maker rate 0.0002 for crypto_perp) for BOTH
+        buy and sell sides, since limit orders are always maker fills.
+
+        Args:
+            fill_event: FillEvent from PendingOrderBook.check_fills().
+            bar: Current OHLCV bar (used for time context).
+
+        Returns:
+            TradeRecord for the fill, or None if fill cannot be executed.
+        """
+        signal = fill_event.signal
+        fill_price = fill_event.fill_price  # No slippage (D-21)
+        key = f"{signal.market}:{signal.symbol}"
+        fee_rate = self.cost_model.buy_commission_rate  # Maker rate (D-20)
+
+        if signal.action == SignalAction.LONG:
+            quantity_pct = signal.quantity_pct or 0.1
+            raw_quantity = self._sizing_base() * quantity_pct / fill_price
+            quantity = (
+                raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
+            )
+            if quantity <= 0:
+                return None
+
+            trade_value = fill_price * quantity
+            fees = trade_value * fee_rate
+            total_cost = trade_value + fees
+
+            if total_cost > self.cash:
+                return None
+
+            self.cash -= total_cost
+            self.positions[key] = {
+                "side": "long",
+                "quantity": quantity,
+                "entry_price": fill_price,
+                "entry_time": signal.signal_time,
+                "entry_fees": fees,
+                "stop_loss_price": signal.stop_loss_price,
+                "take_profit_price": signal.take_profit_price,
+            }
+
+            trade = TradeRecord(
+                symbol=signal.symbol,
+                action="long",
+                entry_time=signal.signal_time,
+                entry_price=fill_price,
+                quantity=quantity,
+                fees=fees,
+            )
+            self.trades.append(trade)
+            return trade
+
+        elif signal.action == SignalAction.SHORT:
+            quantity_pct = signal.quantity_pct or 0.1
+            raw_quantity = self._sizing_base() * quantity_pct / fill_price
+            quantity = (
+                raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
+            )
+            if quantity <= 0:
+                return None
+
+            trade_value = fill_price * quantity
+            fees = trade_value * fee_rate
+
+            self.cash += trade_value - fees  # short: receive proceeds
+            self.positions[key] = {
+                "side": "short",
+                "quantity": quantity,
+                "entry_price": fill_price,
+                "entry_time": signal.signal_time,
+                "entry_fees": fees,
+                "stop_loss_price": signal.stop_loss_price,
+                "take_profit_price": signal.take_profit_price,
+            }
+
+            trade = TradeRecord(
+                symbol=signal.symbol,
+                action="short",
+                entry_time=signal.signal_time,
+                entry_price=fill_price,
+                quantity=quantity,
+                fees=fees,
+            )
+            self.trades.append(trade)
+            return trade
+
+        # CLOSE action is not expected from limit fills
+        return None
 
     def record_equity_point(self, time: datetime, current_price: float) -> None:
         """Record mark-to-market equity and drawdown at a given time.
