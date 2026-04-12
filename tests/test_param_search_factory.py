@@ -205,3 +205,79 @@ def test_wfe_gate_rejects_low_wfe_liquidity_sweep_trial():
     assert call_kwargs[1]["status"] == "rejected" or (
         len(call_kwargs[0]) > 0 and "rejected" in str(call_kwargs)
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 3: AutoResearchRunner factory injection tests (D-15)
+# ---------------------------------------------------------------------------
+
+
+def test_autoresearch_runner_stores_strategy_factory():
+    """AutoResearchRunner stores strategy_factory attribute."""
+    from poseidon.autoresearch.runner import AutoResearchRunner
+    from poseidon.backtest.param_search import SearchConfig
+
+    db_session = MagicMock()
+    cfg = SearchConfig(n_trials=1)
+
+    runner = AutoResearchRunner(
+        db_session=db_session,
+        search_config=cfg,
+        strategy_factory=LiquiditySweepStrategyFactory,
+    )
+    assert runner.strategy_factory is LiquiditySweepStrategyFactory
+
+
+def test_autoresearch_runner_default_strategy_factory_is_none():
+    """AutoResearchRunner with no strategy_factory defaults to None (VotingStrategy path)."""
+    from poseidon.autoresearch.runner import AutoResearchRunner
+    from poseidon.backtest.param_search import SearchConfig
+
+    db_session = MagicMock()
+    cfg = SearchConfig(n_trials=1)
+
+    runner = AutoResearchRunner(db_session=db_session, search_config=cfg)
+    assert runner.strategy_factory is None
+
+
+def test_autoresearch_runner_passes_factory_to_pipeline():
+    """AutoResearchRunner.run() passes strategy_factory to ParameterSearchPipeline."""
+    from poseidon.autoresearch.runner import AutoResearchRunner, MarketSpec
+    from poseidon.backtest.param_search import SearchConfig
+
+    db_session = MagicMock()
+    cfg = SearchConfig(n_trials=1)
+
+    runner = AutoResearchRunner(
+        db_session=db_session,
+        search_config=cfg,
+        strategy_factory=LiquiditySweepStrategyFactory,
+    )
+
+    with patch("poseidon.autoresearch.runner.autoresearch_context"), \
+         patch("poseidon.autoresearch.runner.FeatureEngine"), \
+         patch("poseidon.autoresearch.runner.RiskEngine"), \
+         patch("poseidon.autoresearch.runner.ExperimentTracker"), \
+         patch("poseidon.autoresearch.runner.read_ohlcv") as mock_read, \
+         patch("poseidon.autoresearch.runner.COST_MODELS", {"crypto_perp": MagicMock()}), \
+         patch("poseidon.autoresearch.runner.ParameterSearchPipeline") as mock_pipeline_cls, \
+         patch("poseidon.autoresearch.runner.ModelManager"):
+
+        import pandas as pd
+        mock_read.return_value = pd.DataFrame(
+            {"open": [1.0] * 100, "high": [1.1] * 100, "low": [0.9] * 100,
+             "close": [1.0] * 100, "volume": [100.0] * 100},
+            index=pd.date_range("2024-01-01", periods=100, freq="1h"),
+        )
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.run.return_value = MagicMock()
+        mock_pipeline_cls.return_value = mock_pipeline
+
+        runner.run([MarketSpec(symbol="BTCUSDT", market="crypto_perp", interval="1h")])
+
+    # Verify ParameterSearchPipeline was created with strategy_factory
+    mock_pipeline_cls.assert_called_once()
+    call_kwargs = mock_pipeline_cls.call_args
+    assert call_kwargs[1].get("strategy_factory") is LiquiditySweepStrategyFactory or \
+           (len(call_kwargs[0]) > 7 and call_kwargs[0][7] is LiquiditySweepStrategyFactory)

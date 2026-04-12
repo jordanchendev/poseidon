@@ -67,6 +67,7 @@ class AutoResearchRunner:
         stop_check: Callable[[], bool] | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
         model_version_id: int | None = None,
+        strategy_factory: Any | None = None,  # D-15: injectable strategy factory
     ) -> None:
         self.db_session = db_session
         self.search_config = search_config
@@ -76,6 +77,7 @@ class AutoResearchRunner:
         self.stop_check = stop_check
         self.progress_callback = progress_callback
         self.model_version_id = model_version_id
+        self.strategy_factory = strategy_factory  # None = VotingStrategyFactory (backward compat)
 
     def run(self, markets: list[MarketSpec]) -> list[MarketResult]:
         """Run parameter search across all markets with immutability guard active.
@@ -155,6 +157,7 @@ class AutoResearchRunner:
                         initial_capital=self.initial_capital,
                         sizing_config=self.sizing_config,
                         db_session=self.db_session,
+                        strategy_factory=self.strategy_factory,
                     )
                     available_models = None
                     if self.model_version_id is None:
