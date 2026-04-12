@@ -1,10 +1,10 @@
-"""Tests for OI feature computation (OIChange and OIBuildup)."""
+"""Tests for OI feature computation (OIChange, OIBuildup, and OICostBasis)."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from poseidon.data.features.open_interest import OIChange, OIBuildup, _align_oi_to_index
+from poseidon.data.features.open_interest import OIChange, OIBuildup, OICostBasis, _align_oi_to_index
 
 
 def _make_ohlcv(n: int = 50) -> pd.DataFrame:
@@ -257,3 +257,179 @@ class TestOITimestampAlignment:
         assert aligned.iloc[3] == 2000.0  # T=3: direct match
         assert aligned.iloc[4] == 2000.0  # T=4: ffill from T=3
         assert aligned.iloc[5] == 2000.0  # T=5: ffill from T=3
+
+
+class TestOICostBasis:
+    """Test OICostBasis (OIWAP) feature computation.
+
+    References: CONTEXT.md D-04, D-05, D-06, D-07, D-08, D-11.
+    """
+
+    def test_output_columns(self):
+        """OICostBasis should produce oiwap_{period} and oiwap_distance_{period}."""
+        ohlcv = _make_ohlcv()
+        oi_data = _make_oi_data()
+        feature = OICostBasis()
+        result = feature.compute(ohlcv, oi_data=oi_data)
+        assert isinstance(result, pd.DataFrame)
+        assert "oiwap_168" in result.columns
+        assert "oiwap_distance_168" in result.columns
+        assert len(result) == len(ohlcv)
+
+    def test_custom_period(self):
+        """OICostBasis should respect custom period parameter."""
+        ohlcv = _make_ohlcv()
+        oi_data = _make_oi_data()
+        feature = OICostBasis()
+        result = feature.compute(ohlcv, oi_data=oi_data, period=24)
+        assert "oiwap_24" in result.columns
+        assert "oiwap_distance_24" in result.columns
+
+    def test_oiwap_basic_computation(self):
+        """With all-increasing OI, OIWAP should be a weighted average of close prices.
+
+        Construct simple scenario: constant close=100, linearly increasing OI.
+        All delta_oi > 0, all close=100 -> OIWAP should be exactly 100.
+        """
+        n = 20
+        dates = pd.date_range("2025-01-01", periods=n, freq="1h", tz="UTC")
+        ohlcv = pd.DataFrame(
+            {
+                "time": dates,
+                "open": [100.0] * n,
+                "high": [105.0] * n,
+                "low": [95.0] * n,
+                "close": [100.0] * n,
+                "volume": [1000.0] * n,
+            },
+            index=dates,
+        )
+        # Linearly increasing OI: every bar has delta_oi > 0
+        oi_values = [10000.0 + i * 500 for i in range(n)]
+        oi_data = pd.DataFrame({"open_interest": oi_values}, index=dates)
+
+        feature = OICostBasis()
+        result = feature.compute(ohlcv, oi_data=oi_data, period=50)
+
+        # All bars have close=100 and all delta_oi>0, so OIWAP must be 100
+        valid_oiwap = result["oiwap_50"].dropna()
+        assert len(valid_oiwap) > 0
+        # Skip first bar (delta_oi is NaN from diff)
+        for val in valid_oiwap.iloc[1:]:
+            assert abs(val - 100.0) < 0.01, f"Expected OIWAP ~100.0, got {val}"
+
+    def test_oi_decrease_ignored(self):
+        """OI decreases must NOT affect OIWAP computation (D-06).
+
+        Scenario: OI increases at close=100, then decreases at close=200.
+        OIWAP should stay at ~100 because decreases are filtered out.
+        """
+        n = 10
+        dates = pd.date_range("2025-01-01", periods=n, freq="1h", tz="UTC")
+        # First 5 bars: close=100, OI rising
+        # Last 5 bars: close=200, OI falling
+        close_prices = [100.0] * 5 + [200.0] * 5
+        oi_values = [10000.0, 11000.0, 12000.0, 13000.0, 14000.0,
+                     13000.0, 12000.0, 11000.0, 10000.0, 9000.0]
+        ohlcv = pd.DataFrame(
+            {
+                "time": dates,
+                "open": close_prices,
+                "high": [c + 5 for c in close_prices],
+                "low": [c - 5 for c in close_prices],
+                "close": close_prices,
+                "volume": [1000.0] * n,
+            },
+            index=dates,
+        )
+        oi_data = pd.DataFrame({"open_interest": oi_values}, index=dates)
+
+        feature = OICostBasis()
+        result = feature.compute(ohlcv, oi_data=oi_data, period=50)
+
+        # OIWAP in the last bars should still be ~100, not ~200
+        # because OI decreases (bars 5-9) are ignored
+        last_oiwap = result["oiwap_50"].iloc[-1]
+        assert abs(last_oiwap - 100.0) < 0.01, (
+            f"OI decrease contaminated OIWAP: got {last_oiwap}, expected ~100.0"
+        )
+
+    def test_none_oi_returns_nan(self):
+        """OICostBasis with no OI data should return NaN columns (D-11)."""
+        ohlcv = _make_ohlcv()
+        feature = OICostBasis()
+        result = feature.compute(ohlcv, oi_data=None)
+        assert isinstance(result, pd.DataFrame)
+        assert "oiwap_168" in result.columns
+        assert "oiwap_distance_168" in result.columns
+        assert result["oiwap_168"].isna().all()
+        assert result["oiwap_distance_168"].isna().all()
+
+    def test_empty_oi_returns_nan(self):
+        """OICostBasis with empty OI data should return NaN columns."""
+        ohlcv = _make_ohlcv()
+        feature = OICostBasis()
+        result = feature.compute(ohlcv, oi_data=pd.DataFrame())
+        assert result["oiwap_168"].isna().all()
+
+    def test_missing_column_returns_nan(self):
+        """OICostBasis with oi_data missing 'open_interest' column returns NaN."""
+        ohlcv = _make_ohlcv()
+        feature = OICostBasis()
+        bad_data = pd.DataFrame({"wrong_column": [1, 2, 3]})
+        result = feature.compute(ohlcv, oi_data=bad_data)
+        assert result["oiwap_168"].isna().all()
+
+    def test_oiwap_distance_sign(self):
+        """oiwap_distance should be positive when close > OIWAP, negative otherwise (D-08).
+
+        Scenario: OI increases at close=100 (OIWAP anchors at 100).
+        Then close jumps to 120 -> distance should be positive (~20%).
+        """
+        n = 10
+        dates = pd.date_range("2025-01-01", periods=n, freq="1h", tz="UTC")
+        # First 5 bars: close=100, OI rising -> OIWAP ~ 100
+        # Bar 6+: close=120, OI still rising -> distance should be positive
+        close_prices = [100.0] * 5 + [120.0] * 5
+        oi_values = [10000.0 + i * 500 for i in range(n)]
+        ohlcv = pd.DataFrame(
+            {
+                "time": dates,
+                "open": close_prices,
+                "high": [c + 5 for c in close_prices],
+                "low": [c - 5 for c in close_prices],
+                "close": close_prices,
+                "volume": [1000.0] * n,
+            },
+            index=dates,
+        )
+        oi_data = pd.DataFrame({"open_interest": oi_values}, index=dates)
+
+        feature = OICostBasis()
+        result = feature.compute(ohlcv, oi_data=oi_data, period=50)
+
+        # Last bar: close=120, OIWAP is weighted avg biased toward 100
+        # -> distance should be positive
+        last_distance = result["oiwap_distance_50"].iloc[-1]
+        assert last_distance > 0, f"Expected positive distance, got {last_distance}"
+
+    def test_all_oi_decrease_produces_nan(self):
+        """When OI only decreases (no new positions), OIWAP should be NaN.
+
+        rolling_oi_sum == 0 -> division produces NaN naturally.
+        """
+        n = 10
+        dates = pd.date_range("2025-01-01", periods=n, freq="1h", tz="UTC")
+        # Monotonically decreasing OI
+        oi_values = [20000.0 - i * 1000 for i in range(n)]
+        ohlcv = _make_ohlcv(n)
+        oi_data = pd.DataFrame({"open_interest": oi_values}, index=dates)
+
+        feature = OICostBasis()
+        result = feature.compute(ohlcv, oi_data=oi_data, period=50)
+
+        # After first bar (which has NaN delta from diff), all delta_oi <= 0
+        # So rolling_oi_sum is 0 -> OIWAP is NaN for bars 1+
+        assert result["oiwap_50"].iloc[2:].isna().all(), (
+            "OIWAP should be NaN when no OI increases exist in window"
+        )
