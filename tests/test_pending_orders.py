@@ -445,3 +445,222 @@ class TestPositionSlTpStorage:
         pos = portfolio.positions[key]
         assert pos["stop_loss_price"] is None
         assert pos["take_profit_price"] is None
+
+
+# ---------------------------------------------------------------------------
+# FIXED_RISK sizing mode tests (Plan 02 Task 1)
+# ---------------------------------------------------------------------------
+
+from poseidon.backtest.portfolio import SizingConfig, SizingMode
+from poseidon.backtest.runner import BacktestRunner
+from poseidon.data.feature_engine import FeatureEngine
+from poseidon.risk.engine import RiskEngine
+
+
+def _make_runner_for_sizing(
+    sizing_config: SizingConfig,
+    initial_capital: float = 1_000_000.0,
+) -> BacktestRunner:
+    """Create a minimal BacktestRunner for FIXED_RISK sizing tests."""
+    from poseidon.strategies.base import BaseStrategy, StrategyType
+
+    class _MinimalStrategy(BaseStrategy):
+        name = "fixed_risk_test"
+        strategy_type = StrategyType.RULE
+        symbol = "BTCUSDT"
+        market = "crypto_perp"
+        interval = "1h"
+        supports_backtest = True
+        supports_live = False
+        bias_risk = []
+        stateful = False
+
+        def evaluate(self, features: pd.DataFrame) -> list:
+            return []
+
+        def validate_config(self) -> bool:
+            return True
+
+        def get_feature_specs(self) -> list:
+            return []
+
+    cost_model = get_cost_model("crypto_perp")
+    strategy = _MinimalStrategy()
+    feature_engine = FeatureEngine()
+    risk_engine = RiskEngine(rules=[])
+
+    return BacktestRunner(
+        strategy=strategy,
+        feature_engine=feature_engine,
+        risk_engine=risk_engine,
+        cost_model=cost_model,
+        initial_capital=initial_capital,
+        sizing_config=sizing_config,
+    )
+
+
+def _make_features_slice(close: float = 50000.0, n_bars: int = 5) -> pd.DataFrame:
+    """Create a synthetic features_slice with known close prices."""
+    times = pd.date_range("2025-06-01", periods=n_bars, freq="h", tz=timezone.utc)
+    return pd.DataFrame(
+        {
+            "open": [close] * n_bars,
+            "high": [close * 1.01] * n_bars,
+            "low": [close * 0.99] * n_bars,
+            "close": [close] * n_bars,
+            "volume": [1000.0] * n_bars,
+        },
+        index=times,
+    )
+
+
+class TestFixedRiskSizing:
+    """Tests for SizingMode.FIXED_RISK in _compute_sizing."""
+
+    def test_basic_fixed_risk_calculation(self):
+        """FIXED_RISK: qty = (equity * risk_pct) / |entry - SL|, return as notional_pct.
+
+        With equity=1M, risk_pct=0.01, entry=50000, SL=49000:
+        qty = (1_000_000 * 0.01) / |50000 - 49000| = 10_000 / 1000 = 10.0
+        notional = 10 * 50000 = 500_000
+        notional_pct = 500_000 / 1_000_000 = 0.5
+        """
+        cfg = SizingConfig(mode=SizingMode.FIXED_RISK, risk_pct=0.01, max_notional_pct=0.6)
+        runner = _make_runner_for_sizing(cfg, initial_capital=1_000_000.0)
+
+        # Set up portfolio equity (runner._ar_last_portfolio)
+        portfolio = _make_portfolio(initial_capital=1_000_000.0)
+        runner._ar_last_portfolio = portfolio
+
+        signal = _make_signal(
+            order_price=50000.0,
+            stop_loss_price=49000.0,
+        )
+        features_slice = _make_features_slice(close=50000.0)
+
+        result = runner._compute_sizing(signal, features_slice)
+        assert result == pytest.approx(0.5, abs=1e-6)
+
+    def test_fixed_risk_max_notional_pct_cap(self):
+        """FIXED_RISK caps result at max_notional_pct when raw value exceeds it.
+
+        With equity=1M, risk_pct=0.01, entry=50000, SL=49900 (tiny distance):
+        qty = 10_000 / 100 = 100
+        notional_pct = 100 * 50000 / 1_000_000 = 5.0
+        cap at max_notional_pct=0.3 -> returns 0.3
+        """
+        cfg = SizingConfig(mode=SizingMode.FIXED_RISK, risk_pct=0.01, max_notional_pct=0.3)
+        runner = _make_runner_for_sizing(cfg, initial_capital=1_000_000.0)
+
+        portfolio = _make_portfolio(initial_capital=1_000_000.0)
+        runner._ar_last_portfolio = portfolio
+
+        signal = _make_signal(
+            order_price=50000.0,
+            stop_loss_price=49900.0,  # tiny distance -> huge position -> cap
+        )
+        features_slice = _make_features_slice(close=50000.0)
+
+        result = runner._compute_sizing(signal, features_slice)
+        assert result == pytest.approx(0.3, abs=1e-6)
+
+    def test_fixed_risk_fallback_no_stop_loss(self):
+        """FIXED_RISK falls back to notional_pct when stop_loss_price is None."""
+        cfg = SizingConfig(
+            mode=SizingMode.FIXED_RISK, risk_pct=0.01, notional_pct=0.1,
+        )
+        runner = _make_runner_for_sizing(cfg, initial_capital=1_000_000.0)
+
+        portfolio = _make_portfolio(initial_capital=1_000_000.0)
+        runner._ar_last_portfolio = portfolio
+
+        signal = _make_signal(
+            order_price=50000.0,
+            stop_loss_price=None,  # no SL -> fallback
+        )
+        features_slice = _make_features_slice(close=50000.0)
+
+        result = runner._compute_sizing(signal, features_slice)
+        assert result == pytest.approx(0.1, abs=1e-6)
+
+    def test_fixed_risk_fallback_zero_distance(self):
+        """FIXED_RISK falls back when entry == SL (zero distance)."""
+        cfg = SizingConfig(
+            mode=SizingMode.FIXED_RISK, risk_pct=0.01, notional_pct=0.1,
+        )
+        runner = _make_runner_for_sizing(cfg, initial_capital=1_000_000.0)
+
+        portfolio = _make_portfolio(initial_capital=1_000_000.0)
+        runner._ar_last_portfolio = portfolio
+
+        signal = _make_signal(
+            order_price=50000.0,
+            stop_loss_price=50000.0,  # same as entry -> zero distance -> fallback
+        )
+        features_slice = _make_features_slice(close=50000.0)
+
+        result = runner._compute_sizing(signal, features_slice)
+        assert result == pytest.approx(0.1, abs=1e-6)
+
+    def test_fixed_risk_entry_price_from_order_price(self):
+        """FIXED_RISK uses signal.order_price for limit orders."""
+        cfg = SizingConfig(mode=SizingMode.FIXED_RISK, risk_pct=0.01, max_notional_pct=1.0)
+        runner = _make_runner_for_sizing(cfg, initial_capital=1_000_000.0)
+
+        portfolio = _make_portfolio(initial_capital=1_000_000.0)
+        runner._ar_last_portfolio = portfolio
+
+        # order_price differs from bar close
+        signal = _make_signal(
+            order_price=48000.0,
+            stop_loss_price=47000.0,
+        )
+        # Bar close is 50000, but we expect entry=48000 (order_price)
+        features_slice = _make_features_slice(close=50000.0)
+
+        result = runner._compute_sizing(signal, features_slice)
+        # qty = (1M * 0.01) / |48000 - 47000| = 10000 / 1000 = 10
+        # notional_pct = 10 * 48000 / 1_000_000 = 0.48
+        assert result == pytest.approx(0.48, abs=1e-6)
+
+    def test_fixed_risk_entry_price_from_bar_close(self):
+        """FIXED_RISK uses bar close when order_price is None (market order)."""
+        cfg = SizingConfig(mode=SizingMode.FIXED_RISK, risk_pct=0.01, max_notional_pct=1.0)
+        runner = _make_runner_for_sizing(cfg, initial_capital=1_000_000.0)
+
+        portfolio = _make_portfolio(initial_capital=1_000_000.0)
+        runner._ar_last_portfolio = portfolio
+
+        # Market order: order_price is None
+        signal = Signal(
+            symbol="BTCUSDT",
+            market="crypto_perp",
+            action=SignalAction.LONG,
+            confidence=0.8,
+            order_type=None,
+            order_price=None,
+            stop_loss_price=49000.0,
+        )
+        # Bar close is 50000, so entry_price = 50000
+        features_slice = _make_features_slice(close=50000.0)
+
+        result = runner._compute_sizing(signal, features_slice)
+        # qty = (1M * 0.01) / |50000 - 49000| = 10000 / 1000 = 10
+        # notional_pct = 10 * 50000 / 1_000_000 = 0.5
+        assert result == pytest.approx(0.5, abs=1e-6)
+
+    def test_close_action_always_returns_one(self):
+        """CLOSE action returns 1.0 regardless of FIXED_RISK sizing mode."""
+        cfg = SizingConfig(mode=SizingMode.FIXED_RISK, risk_pct=0.01)
+        runner = _make_runner_for_sizing(cfg, initial_capital=1_000_000.0)
+
+        signal = Signal(
+            symbol="BTCUSDT",
+            market="crypto_perp",
+            action=SignalAction.CLOSE,
+            confidence=0.8,
+        )
+        features_slice = _make_features_slice(close=50000.0)
+
+        result = runner._compute_sizing(signal, features_slice)
+        assert result == 1.0
