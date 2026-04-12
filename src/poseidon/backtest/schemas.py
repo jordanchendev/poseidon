@@ -39,3 +39,9 @@ class BacktestResult(BaseModel):
     trades: list[dict] = Field(default_factory=list)
     active_model_timestamp: datetime | None = None  # When model was selected for audit trail (per D-08)
     model_version_id: UUID | None = None  # Which ModelVersion was used
+
+    # Funding rate cost modeling (ADV-02, D-13)
+    funding_costs_total: float = 0.0
+    funding_costs_by_trade: list[float] = Field(default_factory=list)
+    pnl_with_funding: float | None = None
+    pnl_without_funding: float | None = None
