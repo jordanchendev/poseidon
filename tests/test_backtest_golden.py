@@ -127,12 +127,36 @@ def _run_golden_backtest():
 # Then replace the placeholders below with the actual output.
 # Until golden values are captured, TestBacktestGolden tests are skipped.
 
-GOLDEN_VALUES_CAPTURED = False  # Set to True after capturing values on stormtrooper
+GOLDEN_VALUES_CAPTURED = True  # Captured on stormtrooper 2026-04-12
 
-EXPECTED_TRADE_COUNT: int = 0  # PLACEHOLDER — replace after capture
-EXPECTED_EQUITY_LENGTH: int = 80  # PLACEHOLDER — replace after capture
-EXPECTED_TRADES: list[dict] = []  # PLACEHOLDER — replace after capture
-EXPECTED_METRICS: dict = {}  # PLACEHOLDER — replace after capture
+EXPECTED_TRADE_COUNT: int = 11
+EXPECTED_EQUITY_LENGTH: int = 80
+EXPECTED_METRICS: dict = {
+    "total_return": 0.0002564929132415905,
+    "annualized_return": 0.0008081754753110904,
+    "sharpe_ratio": 0.07719986597569624,
+    "max_drawdown": 0.008113635510987238,
+    "calmar_ratio": 0.09960707185042805,
+    "win_rate": 0.8,
+    "profit_factor": 1.0402444239075295,
+    "avg_win": 210.96490293373748,
+    "avg_loss": -811.2128191613966,
+    "trade_count": 11,
+    "closed_trade_count": 5,
+}
+EXPECTED_TRADES: list[dict] = [
+    {"symbol": "BTCUSDT", "action": "long", "entry_time": "2025-06-01T13:00:00+00:00", "exit_time": None, "entry_price": 49500.76641474099, "exit_price": None, "quantity": 0.2020170741643723, "fees": 2.0, "pnl": None},
+    {"symbol": "BTCUSDT", "action": "close", "entry_time": "2025-06-01T13:00:00+00:00", "exit_time": "2025-06-01T20:00:00+00:00", "entry_price": 49500.76641474099, "exit_price": 50586.41194226201, "quantity": 0.2020170741643723, "fees": 7.109659466524717, "pnl": 212.20927358290922},
+    {"symbol": "BTCUSDT", "action": "long", "entry_time": "2025-06-01T23:00:00+00:00", "exit_time": None, "entry_price": 50115.05428926785, "exit_price": None, "quantity": 0.19954083941083353, "fees": 2.0, "pnl": None},
+    {"symbol": "BTCUSDT", "action": "close", "entry_time": "2025-06-01T23:00:00+00:00", "exit_time": "2025-06-02T07:00:00+00:00", "entry_price": 50115.05428926785, "exit_price": 52500.3369727029, "quantity": 0.19954083941083353, "fees": 7.237980654442377, "pnl": 468.7233282303128},
+    {"symbol": "BTCUSDT", "action": "long", "entry_time": "2025-06-02T10:00:00+00:00", "exit_time": None, "entry_price": 50693.22231538012, "exit_price": None, "quantity": 0.19726502958889716, "fees": 2.0, "pnl": None},
+    {"symbol": "BTCUSDT", "action": "close", "entry_time": "2025-06-02T10:00:00+00:00", "exit_time": "2025-06-03T01:00:00+00:00", "entry_price": 50693.22231538012, "exit_price": 51369.42969394952, "quantity": 0.19726502958889716, "fees": 7.066696034270862, "pnl": 126.32537250745263},
+    {"symbol": "BTCUSDT", "action": "long", "entry_time": "2025-06-03T04:00:00+00:00", "exit_time": None, "entry_price": 52061.719127300705, "exit_price": None, "quantity": 0.19207971168889212, "fees": 2.0, "pnl": None},
+    {"symbol": "BTCUSDT", "action": "close", "entry_time": "2025-06-03T04:00:00+00:00", "exit_time": "2025-06-03T05:00:00+00:00", "entry_price": 52061.719127300705, "exit_price": 52288.83030294377, "quantity": 0.19207971168889212, "fees": 7.021811724569422, "pnl": 36.60163741427524},
+    {"symbol": "BTCUSDT", "action": "long", "entry_time": "2025-06-03T08:00:00+00:00", "exit_time": None, "entry_price": 52402.85691838111, "exit_price": None, "quantity": 0.1908292903872641, "fees": 2.0, "pnl": None},
+    {"symbol": "BTCUSDT", "action": "close", "entry_time": "2025-06-03T08:00:00+00:00", "exit_time": "2025-06-03T23:00:00+00:00", "entry_price": 52402.85691838111, "exit_price": 48186.44378236885, "quantity": 0.1908292903872641, "fees": 6.597692436637621, "pnl": -811.2128191613966},
+    {"symbol": "BTCUSDT", "action": "long", "entry_time": "2025-06-04T07:00:00+00:00", "exit_time": None, "entry_price": 48304.46735624273, "exit_price": None, "quantity": 0.20702018979425987, "fees": 2.0, "pnl": None},
+]
 
 
 class TestSignalSchemaExtension:
