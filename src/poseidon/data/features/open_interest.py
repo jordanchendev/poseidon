@@ -171,3 +171,78 @@ class OIBuildup(BaseFeature):
             index=ohlcv.index,
         )
         return result
+
+
+@register_feature
+class OICostBasis(BaseFeature):
+    """OI-weighted average price (OIWAP) -- cost-basis estimation.
+
+    Estimates the aggregate cost basis of open positions by computing
+    an OI-increment-weighted average price.  When OI increases (new
+    positions opened), the close price at that bar is treated as the
+    entry price.  OI decreases (closures / liquidations) do NOT update
+    the cost basis (D-06).
+
+    Outputs
+    -------
+    oiwap_{period}
+        Rolling OI-weighted average entry price.
+    oiwap_distance_{period}
+        Current close relative to OIWAP as a percentage.
+        Positive = price above aggregate cost basis (positions in profit).
+        Negative = price below aggregate cost basis (positions underwater).
+
+    Data is injected via the ``oi_data`` kwarg by
+    FeatureEngine.compute_with_companions().
+
+    References: CONTEXT.md D-04, D-05, D-06, D-07, D-08.
+    """
+
+    name = "oi_cost_basis"
+    description = "OI-weighted average price (cost-basis estimation)"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        oi_data: pd.DataFrame | None = None,
+        period: int = 168,
+        **kwargs,
+    ) -> pd.DataFrame:
+        col_oiwap = f"oiwap_{period}"
+        col_distance = f"oiwap_distance_{period}"
+        out_cols = [col_oiwap, col_distance]
+
+        if not self._validate(ohlcv):
+            return pd.DataFrame(dtype=float, columns=out_cols)
+
+        if oi_data is None or (hasattr(oi_data, "empty") and oi_data.empty):
+            return _nan_df(ohlcv.index, out_cols)
+
+        if "open_interest" not in oi_data.columns:
+            return _nan_df(ohlcv.index, out_cols)
+
+        oi = _align_oi_to_index(oi_data["open_interest"], ohlcv.index)
+        close = ohlcv["close"]
+
+        # OI change per bar
+        delta_oi = oi.diff()
+        # Only OI increases contribute -- new positions opened (D-06)
+        oi_increase = delta_oi.clip(lower=0)
+
+        # Weighted price: close * max(delta_oi, 0)
+        weighted_price = close * oi_increase
+
+        # Rolling OIWAP over lookback window (D-07)
+        rolling_weighted_sum = weighted_price.rolling(period, min_periods=1).sum()
+        rolling_oi_sum = oi_increase.rolling(period, min_periods=1).sum()
+
+        # Division: 0/0 -> NaN naturally (correct: no OI increases = undefined cost basis)
+        oiwap = rolling_weighted_sum / rolling_oi_sum
+
+        # Distance: percentage difference from estimated cost basis (D-08)
+        oiwap_distance = (close - oiwap) / oiwap * 100
+
+        return pd.DataFrame(
+            {col_oiwap: oiwap, col_distance: oiwap_distance},
+            index=ohlcv.index,
+        )
