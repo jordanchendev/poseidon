@@ -118,6 +118,8 @@ class BacktestRunner:
         sizing_config: SizingConfig | None = None,
         fill_model: FillModel | None = None,
         max_pending_bars: int = 5,
+        include_funding: bool = False,
+        funding_rates: pd.DataFrame | None = None,
     ) -> None:
         self.strategy = strategy
         self.feature_engine = feature_engine
@@ -127,6 +129,11 @@ class BacktestRunner:
         self.sizing_config = sizing_config or SizingConfig()
         self._fill_model = fill_model or FillModel.OPTIMISTIC
         self._max_pending_bars = max_pending_bars
+        self._include_funding = include_funding
+        self._funding_rates = funding_rates
+        self._funding_costs_total = 0.0
+        self._funding_costs_by_trade: list[float] = []
+        self._last_funding_settlement: pd.Timestamp | None = None
 
         # Capability enforcement (Phase 34 - COMP-05)
         from poseidon.capabilities.validation import (
@@ -402,6 +409,54 @@ class BacktestRunner:
         for key, exit_price, exit_type in exits:
             portfolio.execute_sl_tp_exit(key, exit_price, exit_type, bar)
 
+    def _crosses_8h_boundary(self, bar_time: pd.Timestamp) -> bool:
+        """Check if bar_time crosses an 8h funding settlement boundary.
+
+        Settlement times: 00:00, 08:00, 16:00 UTC.
+        Uses _last_funding_settlement to ensure each settlement is applied exactly once.
+        """
+        # Normalize to UTC
+        if bar_time.tzinfo is None:
+            bar_time = bar_time.tz_localize("UTC")
+
+        # Compute the 8h slot for this bar
+        hour_slot = (bar_time.hour // 8) * 8
+        current_settlement = bar_time.normalize() + pd.Timedelta(hours=hour_slot)
+
+        if self._last_funding_settlement is None:
+            self._last_funding_settlement = current_settlement
+            return False  # Don't apply on first bar
+
+        if current_settlement > self._last_funding_settlement:
+            self._last_funding_settlement = current_settlement
+            return True
+        return False
+
+    def _get_funding_rate(self, bar_time: pd.Timestamp) -> float | None:
+        """Look up funding rate for the given settlement time.
+
+        Searches funding_rates DataFrame for the closest rate <= bar_time.
+        Returns None if no rate found.
+        """
+        if self._funding_rates is None or self._funding_rates.empty:
+            return None
+        # Ensure bar_time has timezone for comparison
+        if bar_time.tzinfo is None:
+            bar_time = bar_time.tz_localize("UTC")
+
+        # Build a tz-aware index for comparison
+        idx = self._funding_rates.index
+        if idx.tzinfo is None:
+            idx = idx.tz_localize("UTC")
+
+        mask = idx <= bar_time
+        if not mask.any():
+            return None
+        # Get the last matching position index
+        matching_positions = np.where(mask)[0]
+        last_pos = matching_positions[-1]
+        return float(self._funding_rates.iloc[last_pos]["funding_rate"])
+
     def run(
         self,
         ohlcv: pd.DataFrame,
@@ -463,6 +518,11 @@ class BacktestRunner:
         db_session: Session | None = None,
     ) -> BacktestResult:
         """Core event loop implementation."""
+        # Reset funding state for this run
+        self._funding_costs_total = 0.0
+        self._funding_costs_by_trade = []
+        self._last_funding_settlement = None
+
         # Step 0a: Resolve model_version_id from sub-signals or config (Phase 45)
         resolved_mv_id = self._resolve_model_version_id(model_version_id)
 
@@ -593,6 +653,25 @@ class BacktestRunner:
 
             # Phase D: Record equity + expire timed-out orders
             pending_book.expire_orders(i, self._max_pending_bars)
+
+            # Funding rate settlement (ADV-02, D-12)
+            if self._include_funding and self._funding_rates is not None:
+                bar_time = pd.Timestamp(bar.name)
+                if self._crosses_8h_boundary(bar_time):
+                    for _key, pos in portfolio.positions.items():
+                        rate = self._get_funding_rate(bar_time)
+                        if rate is not None:
+                            mark_price = float(bar["close"])
+                            qty = pos["quantity"]
+                            # Long pays positive rate, short pays negative rate
+                            if pos["side"] == "long":
+                                cost = abs(qty) * mark_price * rate
+                            else:
+                                cost = -(abs(qty) * mark_price * rate)
+                            portfolio.cash -= cost
+                            self._funding_costs_total += abs(cost)
+                            self._funding_costs_by_trade.append(cost)
+
             portfolio.record_equity_point(bar.name, float(bar["close"]))
 
         # Step 5: Compute metrics
@@ -630,6 +709,11 @@ class BacktestRunner:
             for t in portfolio.trades
         ]
 
+        # Compute PnL with/without funding (D-13)
+        total_pnl = metrics.get("total_pnl", 0.0)
+        pnl_with_funding = total_pnl - self._funding_costs_total if self._include_funding else None
+        pnl_without_funding = total_pnl if self._include_funding else None
+
         return BacktestResult(
             config=config,
             metrics=metrics,
@@ -639,6 +723,10 @@ class BacktestRunner:
             trades=trades_dicts,
             active_model_timestamp=active_model_timestamp,
             model_version_id=validated_mv_id,
+            funding_costs_total=self._funding_costs_total,
+            funding_costs_by_trade=self._funding_costs_by_trade,
+            pnl_with_funding=pnl_with_funding,
+            pnl_without_funding=pnl_without_funding,
         )
 
     def _compute_sizing(
