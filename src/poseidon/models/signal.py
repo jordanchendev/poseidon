@@ -30,6 +30,13 @@ class SignalRecord(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, server_default="{}")
+
+    # Limit order fields (Phase 49)
+    order_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    order_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_loss_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    take_profit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     created_at: Mapped[str] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
