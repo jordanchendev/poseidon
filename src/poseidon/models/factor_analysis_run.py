@@ -15,7 +15,10 @@ class FactorAnalysisRun(Base):
     __tablename__ = "factor_analysis_runs"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
     )
     run_type: Mapped[str] = mapped_column(String(16), nullable=False)
     config_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
