@@ -429,7 +429,11 @@ def run_backtest_task(
             raise ValueError(f"Strategy {strategy_id} not found")
 
         # Reconstruct strategy object
-        if record.strategy_type == "rule":
+        if record.strategy_type == "liquidity_sweep":
+            from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
+            ls_config = {**record.config, "symbol": record.symbol, "market": record.market, "interval": record.interval}
+            strategy = LiquiditySweepStrategy(config=ls_config, strategy_id=record.id)
+        elif record.strategy_type == "rule":
             strategy = RuleStrategy(config=record.config, strategy_id=record.id)
         elif record.strategy_type == "voting":
             strategy = VotingStrategy(config=record.config, strategy_id=record.id)
@@ -614,7 +618,8 @@ def run_dual_mode_task(
         elif record.strategy_type == "liquidity_sweep":
             from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
 
-            strategy_factory = lambda: LiquiditySweepStrategyFactory.from_config(record.config)  # noqa: E731
+            ls_config = {**record.config, "symbol": record.symbol, "market": record.market, "interval": record.interval}
+            strategy_factory = lambda: LiquiditySweepStrategyFactory.from_config(ls_config)  # noqa: E731
         elif record.strategy_type == "rule":
             strategy_factory = lambda: RuleStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
         elif record.strategy_type == "model":
