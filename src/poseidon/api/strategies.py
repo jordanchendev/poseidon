@@ -21,7 +21,7 @@ from poseidon.models.strategy import StrategyRecord
 
 router = APIRouter()
 
-_VALID_STRATEGY_TYPES = {"model", "rule", "voting"}
+_VALID_STRATEGY_TYPES = {"model", "rule", "voting", "liquidity_sweep"}
 
 
 # --------------- Pydantic schemas ---------------
@@ -46,6 +46,7 @@ class StrategyUpdate(PydanticBase):
     """
 
     name: str | None = None
+    strategy_type: str | None = None
     config: dict | None = None
     symbol: str | None = None
     market: str | None = None
@@ -168,6 +169,14 @@ async def update_strategy(
                     detail=f"Strategy with name '{body.name}' already exists",
                 )
         record.name = body.name
+    if body.strategy_type is not None:
+        if body.strategy_type not in _VALID_STRATEGY_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid strategy_type '{body.strategy_type}'. "
+                f"Must be one of: {sorted(_VALID_STRATEGY_TYPES)}",
+            )
+        record.strategy_type = body.strategy_type
     if body.config is not None:
         record.config = body.config
     if body.symbol is not None:
