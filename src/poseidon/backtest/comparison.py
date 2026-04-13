@@ -35,9 +35,10 @@ def run_dual_mode_comparison(
     cost_model: Any,
     initial_capital: float = 1_000_000.0,
     sizing_config: Any = None,
-    max_pending_bars: int = 5,
+    max_pending_bars: int = 24,
     feature_specs: list[tuple[str, dict]] | None = None,
     include_funding: bool = False,
+    db_session: Any = None,
     **runner_kwargs: Any,
 ) -> DualModeResult:
     """Run same strategy config with both fill models and compare (D-04).
@@ -76,7 +77,7 @@ def run_dual_mode_comparison(
         run_kwargs: dict[str, Any] = {}
         if feature_specs is not None:
             run_kwargs["feature_specs"] = feature_specs
-        result = runner.run(ohlcv, **run_kwargs)
+        result = runner.run(ohlcv, db_session=db_session, **run_kwargs)
         results[fill_model] = result
 
     opt_result = results[FillModel.OPTIMISTIC]

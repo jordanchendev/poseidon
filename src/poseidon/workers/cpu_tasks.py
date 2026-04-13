@@ -678,6 +678,7 @@ def run_dual_mode_task(
             initial_capital=initial_capital,
             sizing_config=sizing_cfg,
             include_funding=include_funding,
+            db_session=session,
             funding_rates=funding_df,
         )
 
