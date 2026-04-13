@@ -117,7 +117,7 @@ class BacktestRunner:
         initial_capital: float = 1_000_000.0,
         sizing_config: SizingConfig | None = None,
         fill_model: FillModel | None = None,
-        max_pending_bars: int = 5,
+        max_pending_bars: int = 24,
         include_funding: bool = False,
         funding_rates: pd.DataFrame | None = None,
     ) -> None:
