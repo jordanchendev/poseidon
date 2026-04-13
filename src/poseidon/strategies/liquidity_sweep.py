@@ -368,8 +368,9 @@ class LiquiditySweepStrategy(BaseStrategy):
 
         zones: dict = {}
 
-        # OI buildup must exceed threshold for zone to be active (D-06)
-        if pd.isna(oi_buildup) or oi_buildup <= self._oi_buildup_min:
+        # OI buildup filter (D-06): skip zone if OI is present but below threshold.
+        # When OI is NaN (no data), degrade gracefully — use swing levels without OI filter.
+        if not pd.isna(oi_buildup) and oi_buildup <= self._oi_buildup_min:
             return zones
 
         if not pd.isna(swing_low):
