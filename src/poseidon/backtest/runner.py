@@ -810,12 +810,20 @@ class BacktestRunner:
         """Find the first row index where no feature columns have NaN.
 
         Returns 0 if there are no feature columns or no NaN values.
+        Columns that are entirely NaN (e.g., optional companion data not
+        available) are excluded from the warmup check — they represent
+        graceful degradation, not incomplete warmup.
         """
         if not feature_cols:
             return 0
 
-        # Find first row where ALL feature columns are non-NaN
-        non_nan_mask = features[feature_cols].notna().all(axis=1)
+        # Exclude columns that are entirely NaN (optional companion data)
+        active_cols = [c for c in feature_cols if features[c].notna().any()]
+        if not active_cols:
+            return 0
+
+        # Find first row where ALL active feature columns are non-NaN
+        non_nan_mask = features[active_cols].notna().all(axis=1)
         non_nan_indices = non_nan_mask[non_nan_mask].index
 
         if len(non_nan_indices) == 0:
