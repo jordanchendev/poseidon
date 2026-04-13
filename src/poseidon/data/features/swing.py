@@ -61,8 +61,8 @@ class BreakoutDistance(BaseFeature):
     ) -> pd.DataFrame:
         if not self._validate(ohlcv, min_rows=max(period, atr_period) + 1):
             return pd.DataFrame(dtype=float)
-        swing_high = ohlcv["high"].rolling(window=period).max()
-        swing_low = ohlcv["low"].rolling(window=period).min()
+        swing_high = ohlcv["high"].rolling(window=period).max().shift(1)
+        swing_low = ohlcv["low"].rolling(window=period).min().shift(1)
         # ATR inline
         high_low = ohlcv["high"] - ohlcv["low"]
         high_close_prev = (ohlcv["high"] - ohlcv["close"].shift(1)).abs()
@@ -99,8 +99,8 @@ class FibExtension(BaseFeature):
     ) -> pd.DataFrame:
         if not self._validate(ohlcv, min_rows=period):
             return pd.DataFrame(dtype=float)
-        swing_high = ohlcv["high"].rolling(window=period).max()
-        swing_low = ohlcv["low"].rolling(window=period).min()
+        swing_high = ohlcv["high"].rolling(window=period).max().shift(1)
+        swing_low = ohlcv["low"].rolling(window=period).min().shift(1)
         swing_range = swing_high - swing_low
 
         result = {}
