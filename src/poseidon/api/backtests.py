@@ -41,6 +41,30 @@ class BacktestRunRequest(PydanticBase):
     sizing_params: dict | None = None
 
 
+class DualModeRequest(PydanticBase):
+    """Request body for dual-mode fill comparison (API-03)."""
+
+    strategy_id: uuid.UUID
+    start_date: str | None = None
+    end_date: str | None = None
+    initial_capital: float = 1_000_000.0
+    include_funding: bool = False
+    sizing_mode: str = Field(
+        "fixed_notional",
+        pattern="^(fixed_pct|fixed_notional|vol_target|fixed_risk)$",
+    )
+    sizing_params: dict | None = None
+
+
+class DualModeResponse(PydanticBase):
+    """Response body wrapping DualModeResult (API-03)."""
+
+    optimistic_metrics: dict
+    pessimistic_metrics: dict
+    delta_metrics: dict
+    is_viable: bool
+
+
 class OptimizeRequest(PydanticBase):
     """Request body for dispatching a parameter optimization."""
 
@@ -94,6 +118,28 @@ async def run_backtest(request: BacktestRunRequest) -> MessageResponse:
     )
     return MessageResponse(
         message=f"Backtest dispatched for strategy {request.strategy_id}",
+        task_id=task.id,
+    )
+
+
+@router.post("/dual-mode", response_model=MessageResponse, status_code=202)
+async def run_dual_mode(request: DualModeRequest) -> MessageResponse:
+    """Dispatch dual-mode fill comparison to CPU worker queue (API-03).
+
+    Runs same strategy with both OPTIMISTIC and PESSIMISTIC fill models.
+    Returns 202 with Celery task_id for status polling.
+    """
+    task = run_dual_mode_task.delay(
+        str(request.strategy_id),
+        request.start_date,
+        request.end_date,
+        request.initial_capital,
+        request.include_funding,
+        request.sizing_mode,
+        request.sizing_params,
+    )
+    return MessageResponse(
+        message=f"Dual-mode comparison dispatched for strategy {request.strategy_id}",
         task_id=task.id,
     )
 
