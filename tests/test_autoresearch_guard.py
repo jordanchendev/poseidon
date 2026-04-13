@@ -187,6 +187,47 @@ class TestStrategyConfigMutable:
             assert vs.min_votes == 5
 
 
+class TestMutableAttrsWhitelist:
+    """Test mutable_attrs parameter on autoresearch_guard."""
+
+    def test_mutable_attrs_allowed_during_autoresearch(self):
+        """Whitelisted attrs can be mutated during autoresearch."""
+
+        @autoresearch_guard(mutable_attrs=frozenset({"counter"}))
+        class _WithMutable:
+            def __init__(self):
+                self.counter = 0
+                self.config = "immutable"
+
+        with autoresearch_context():
+            obj = _WithMutable()
+            obj.counter = 42  # should NOT raise
+            assert obj.counter == 42
+            with pytest.raises(ImmutabilityViolationError):
+                obj.config = "changed"  # should raise
+
+    def test_backtest_runner_funding_state_mutable(self):
+        """BacktestRunner funding state attrs are whitelisted for mutation."""
+        from poseidon.backtest.runner import BacktestRunner
+
+        with autoresearch_context():
+            runner = BacktestRunner(
+                strategy=None,
+                feature_engine=None,
+                risk_engine=None,
+                cost_model=None,
+            )
+            # These must NOT raise -- they are per-run runtime state
+            runner._funding_costs_total = 1.23
+            runner._funding_costs_by_trade = [0.5, 0.73]
+            runner._last_funding_settlement = None
+            assert runner._funding_costs_total == 1.23
+
+            # Non-whitelisted attrs must still raise
+            with pytest.raises(ImmutabilityViolationError):
+                runner.strategy = "forbidden"
+
+
 class TestBacktestRunnerInternalState:
     """Regression test for internal state writes during autoresearch."""
 

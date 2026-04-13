@@ -93,7 +93,11 @@ class _FakePositionEntry:
         self.entry_time = entry_time
 
 
-@autoresearch_guard
+@autoresearch_guard(mutable_attrs=frozenset({
+    "_funding_costs_total",
+    "_funding_costs_by_trade",
+    "_last_funding_settlement",
+}))
 class BacktestRunner:
     """Bar-by-bar backtest engine that reuses the live prediction pipeline.
 
