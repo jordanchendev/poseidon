@@ -398,6 +398,8 @@ def run_backtest_task(
     initial_capital: float = 1_000_000.0,
     sizing_mode: str = "fixed_notional",
     sizing_params: dict | None = None,
+    fill_model: str | None = None,
+    include_funding: bool = False,
 ) -> dict:
     """Run a backtest for an existing strategy.
 
@@ -409,6 +411,10 @@ def run_backtest_task(
         start_date: ISO date string for backtest start (optional).
         end_date: ISO date string for backtest end (optional).
         initial_capital: Starting capital for the backtest.
+        sizing_mode: Position sizing mode (fixed_pct, fixed_notional, vol_target, fixed_risk).
+        sizing_params: Additional sizing parameters dict.
+        fill_model: Fill model for limit orders ('optimistic' or 'pessimistic').
+        include_funding: Whether to include funding rate settlement costs.
 
     Returns:
         Dict with backtest_id, status, and trade_count.
@@ -462,6 +468,29 @@ def run_backtest_task(
             **(sizing_params or {}),
         )
 
+        # Resolve fill model enum (Phase 53 API-01)
+        from poseidon.backtest.pending_orders import FillModel
+
+        fill_model_enum = FillModel(fill_model) if fill_model else None
+
+        # Load funding rates if requested and market is crypto_perp (Phase 53 API-01)
+        funding_df = None
+        if include_funding and record.market == "crypto_perp":
+            from poseidon.models.funding_rate import FundingRateRecord
+
+            rows = (
+                session.query(FundingRateRecord)
+                .filter(FundingRateRecord.symbol == record.symbol)
+                .order_by(FundingRateRecord.time)
+                .all()
+            )
+            if rows:
+                funding_df = pd.DataFrame(
+                    [{"datetime": r.time, "funding_rate": r.funding_rate} for r in rows]
+                )
+                funding_df.index = pd.to_datetime(funding_df["datetime"], utc=True)
+                funding_df = funding_df.drop(columns=["datetime"])
+
         # Run backtest
         runner = BacktestRunner(
             strategy=strategy,
@@ -470,6 +499,9 @@ def run_backtest_task(
             cost_model=cost_model,
             initial_capital=initial_capital,
             sizing_config=sizing_cfg,
+            fill_model=fill_model_enum,
+            include_funding=include_funding,
+            funding_rates=funding_df,
         )
         result = runner.run(ohlcv_df)
         backtest_id = result.backtest_id
@@ -530,6 +562,134 @@ def run_backtest_task(
         logger.exception("Backtest task failed for strategy %s", strategy_id)
         raise
 
+    finally:
+        session.close()
+
+
+@celery_app.task(
+    name="poseidon.workers.cpu_tasks.run_dual_mode_task",
+    bind=True,
+    max_retries=0,
+)
+def run_dual_mode_task(
+    self,
+    strategy_id: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    initial_capital: float = 1_000_000.0,
+    include_funding: bool = False,
+    sizing_mode: str = "fixed_notional",
+    sizing_params: dict | None = None,
+) -> dict:
+    """Run dual-mode fill comparison for a strategy (Phase 53 API-03).
+
+    Runs the same strategy with both OPTIMISTIC and PESSIMISTIC fill models
+    via run_dual_mode_comparison(), returns serialized DualModeResult.
+
+    Args:
+        strategy_id: UUID string of the strategy to compare.
+        start_date: ISO date string for backtest start (optional).
+        end_date: ISO date string for backtest end (optional).
+        initial_capital: Starting capital for the backtest.
+        include_funding: Whether to include funding rate settlement costs.
+        sizing_mode: Position sizing mode.
+        sizing_params: Additional sizing parameters dict.
+
+    Returns:
+        Dict with optimistic_metrics, pessimistic_metrics, delta_metrics, is_viable.
+    """
+    from poseidon.backtest.comparison import run_dual_mode_comparison
+    from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
+
+    session = SessionLocal()
+    try:
+        sid = uuid.UUID(strategy_id)
+        record = session.get(StrategyRecord, sid)
+        if not record:
+            raise ValueError(f"Strategy {strategy_id} not found")
+
+        # Build strategy factory based on strategy_type (Phase 53 API-03)
+        if record.strategy_type == "voting":
+            strategy_factory = lambda: VotingStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
+        elif record.strategy_type == "liquidity_sweep":
+            from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
+
+            strategy_factory = lambda: LiquiditySweepStrategyFactory.from_config(record.config)  # noqa: E731
+        elif record.strategy_type == "rule":
+            strategy_factory = lambda: RuleStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
+        elif record.strategy_type == "model":
+            raise ValueError("Dual-mode comparison not supported for model strategies")
+        else:
+            raise ValueError(f"Unknown strategy_type: {record.strategy_type!r}")
+
+        # Parse date filters
+        parsed_start = datetime.fromisoformat(start_date) if start_date else None
+        parsed_end = datetime.fromisoformat(end_date) if end_date else None
+
+        # Load OHLCV data
+        ohlcv_df = read_ohlcv(
+            session, record.symbol, record.market, record.interval,
+            start=parsed_start, end=parsed_end,
+        )
+        if ohlcv_df.empty:
+            raise ValueError(
+                f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}"
+            )
+
+        # Build pipeline components
+        feature_engine = FeatureEngine()
+        risk_engine = RiskEngine()
+        cost_model = COST_MODELS[record.market]
+        sizing_cfg = SizingConfig(
+            mode=SizingMode(sizing_mode),
+            **(sizing_params or {}),
+        )
+
+        # Load funding rates if requested (Phase 53 API-03)
+        funding_df = None
+        if include_funding and record.market == "crypto_perp":
+            from poseidon.models.funding_rate import FundingRateRecord
+
+            rows = (
+                session.query(FundingRateRecord)
+                .filter(FundingRateRecord.symbol == record.symbol)
+                .order_by(FundingRateRecord.time)
+                .all()
+            )
+            if rows:
+                funding_df = pd.DataFrame(
+                    [{"datetime": r.time, "funding_rate": r.funding_rate} for r in rows]
+                )
+                funding_df.index = pd.to_datetime(funding_df["datetime"], utc=True)
+                funding_df = funding_df.drop(columns=["datetime"])
+
+        # Run dual-mode comparison
+        dual_result = run_dual_mode_comparison(
+            strategy_factory=strategy_factory,
+            ohlcv=ohlcv_df,
+            feature_engine=feature_engine,
+            risk_engine=risk_engine,
+            cost_model=cost_model,
+            initial_capital=initial_capital,
+            sizing_config=sizing_cfg,
+            include_funding=include_funding,
+            funding_rates=funding_df,
+        )
+
+        logger.info(
+            "Dual-mode comparison completed: strategy=%s, is_viable=%s",
+            strategy_id, dual_result.is_viable,
+        )
+        return {
+            "optimistic_metrics": dual_result.optimistic_result.metrics,
+            "pessimistic_metrics": dual_result.pessimistic_result.metrics,
+            "delta_metrics": dual_result.delta_metrics,
+            "is_viable": dual_result.is_viable,
+        }
+
+    except Exception:
+        logger.exception("Dual-mode task failed for strategy %s", strategy_id)
+        raise
     finally:
         session.close()
 
@@ -1090,6 +1250,14 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
         # Phase 45: optional ML model for sub-signal search (D-20)
         mv_id = search_config.get("model_version_id")
 
+        # Phase 53 API-02: inject strategy factory based on strategy_type
+        strategy_type = search_config.get("strategy_type", "voting")
+        strategy_factory = None  # None = VotingStrategyFactory (backward compat)
+        if strategy_type == "liquidity_sweep":
+            from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
+
+            strategy_factory = LiquiditySweepStrategyFactory()
+
         runner = AutoResearchRunner(
             db_session=db,
             search_config=cfg,
@@ -1097,6 +1265,7 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
             progress_callback=update_progress,
             feature_specs="r2",  # Signal runner to use get_r2_specs() per-market
             model_version_id=mv_id,
+            strategy_factory=strategy_factory,
         )
         results = runner.run(market_specs)
 

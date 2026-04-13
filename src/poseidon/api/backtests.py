@@ -11,13 +11,13 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel as PydanticBase
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from poseidon.backtest.repository import BacktestRepository
 from poseidon.core.schemas import MessageResponse
 from poseidon.models.base import get_db
-from poseidon.workers.cpu_tasks import run_backtest_task, run_optimization_task
+from poseidon.workers.cpu_tasks import run_backtest_task, run_dual_mode_task, run_optimization_task
 
 router = APIRouter()
 
@@ -32,6 +32,13 @@ class BacktestRunRequest(PydanticBase):
     start_date: str | None = None
     end_date: str | None = None
     initial_capital: float = 1_000_000.0
+    fill_model: str | None = Field(None, pattern="^(optimistic|pessimistic)$")
+    include_funding: bool = False
+    sizing_mode: str = Field(
+        "fixed_notional",
+        pattern="^(fixed_pct|fixed_notional|vol_target|fixed_risk)$",
+    )
+    sizing_params: dict | None = None
 
 
 class OptimizeRequest(PydanticBase):
@@ -80,6 +87,10 @@ async def run_backtest(request: BacktestRunRequest) -> MessageResponse:
         request.start_date,
         request.end_date,
         request.initial_capital,
+        request.sizing_mode,
+        request.sizing_params,
+        request.fill_model,
+        request.include_funding,
     )
     return MessageResponse(
         message=f"Backtest dispatched for strategy {request.strategy_id}",

@@ -48,6 +48,11 @@ class AutoResearchRequest(BaseModel):
         pattern="^(bidirectional|long_only|regime_gated)$",
         description="Strategy variant: bidirectional (default), long_only, or regime_gated",
     )
+    strategy_type: str = Field(
+        "voting",
+        pattern="^(voting|liquidity_sweep)$",
+        description="Strategy factory: 'voting' (VotingStrategyFactory, default) or 'liquidity_sweep' (LiquiditySweepStrategyFactory)",
+    )
 
 
 class TaskStatusResponse(BaseModel):
@@ -91,6 +96,7 @@ async def run_autoresearch(request: AutoResearchRequest) -> MessageResponse:
         "min_wfe": request.min_wfe,
         "seed": request.seed,
         "strategy_mode": request.strategy_mode,
+        "strategy_type": request.strategy_type,
     }
     markets = [m.model_dump() for m in request.markets]
 

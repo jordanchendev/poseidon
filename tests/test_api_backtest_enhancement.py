@@ -255,7 +255,7 @@ class TestBacktestRunEndpointWiring:
         sid = str(uuid.uuid4())
 
         resp = client.post(
-            "/backtests/run",
+            "/api/backtest/run",
             json={
                 "strategy_id": sid,
                 "fill_model": "pessimistic",
@@ -274,7 +274,7 @@ class TestBacktestRunEndpointWiring:
         sid = str(uuid.uuid4())
 
         resp = client.post(
-            "/backtests/run",
+            "/api/backtest/run",
             json={
                 "strategy_id": sid,
                 "include_funding": True,
@@ -292,7 +292,7 @@ class TestBacktestRunEndpointWiring:
         sid = str(uuid.uuid4())
 
         resp = client.post(
-            "/backtests/run",
+            "/api/backtest/run",
             json={
                 "strategy_id": sid,
                 "fill_model": "pessimistic",
@@ -318,7 +318,7 @@ class TestBacktestRunEndpointWiring:
         sid = str(uuid.uuid4())
 
         resp = client.post(
-            "/backtests/run",
+            "/api/backtest/run",
             json={"strategy_id": sid},
             headers=API_KEY_HEADER,
         )
@@ -344,7 +344,7 @@ class TestAutoResearchEndpointWiring:
         mock_task.delay.return_value = MagicMock(id="task-456")
 
         resp = client.post(
-            "/autoresearch/run",
+            "/api/autoresearch/run",
             json={
                 "markets": [{"symbol": "BTCUSDT", "market": "crypto_spot", "interval": "1h"}],
                 "strategy_type": "liquidity_sweep",
@@ -362,7 +362,7 @@ class TestAutoResearchEndpointWiring:
         mock_task.delay.return_value = MagicMock(id="task-789")
 
         resp = client.post(
-            "/autoresearch/run",
+            "/api/autoresearch/run",
             json={
                 "markets": [{"symbol": "BTCUSDT", "market": "crypto_spot", "interval": "1h"}],
             },
