@@ -372,3 +372,130 @@ class TestAutoResearchEndpointWiring:
         call_args = mock_task.delay.call_args
         search_config = call_args.args[0]
         assert search_config["strategy_type"] == "voting"
+
+
+# ===================================================================
+# API-03: DualModeRequest schema tests
+# ===================================================================
+
+
+class TestDualModeRequestSchema:
+    """Test DualModeRequest Pydantic schema."""
+
+    def test_accepts_strategy_id(self):
+        """strategy_id (UUID) is required."""
+        from poseidon.api.backtests import DualModeRequest
+
+        sid = uuid.uuid4()
+        req = DualModeRequest(strategy_id=sid)
+        assert req.strategy_id == sid
+
+    def test_default_values(self):
+        """All optional fields have correct defaults."""
+        from poseidon.api.backtests import DualModeRequest
+
+        req = DualModeRequest(strategy_id=uuid.uuid4())
+        assert req.start_date is None
+        assert req.end_date is None
+        assert req.initial_capital == 1_000_000.0
+        assert req.include_funding is False
+        assert req.sizing_mode == "fixed_notional"
+        assert req.sizing_params is None
+
+    def test_accepts_all_optional_params(self):
+        """All optional params are accepted."""
+        from poseidon.api.backtests import DualModeRequest
+
+        req = DualModeRequest(
+            strategy_id=uuid.uuid4(),
+            start_date="2025-01-01",
+            end_date="2025-06-01",
+            initial_capital=500_000.0,
+            include_funding=True,
+            sizing_mode="fixed_risk",
+            sizing_params={"risk_pct": 0.01},
+        )
+        assert req.include_funding is True
+        assert req.sizing_mode == "fixed_risk"
+
+    def test_sizing_mode_invalid_rejected(self):
+        """Invalid sizing_mode is rejected."""
+        from poseidon.api.backtests import DualModeRequest
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            DualModeRequest(
+                strategy_id=uuid.uuid4(),
+                sizing_mode="invalid",
+            )
+
+
+# ===================================================================
+# API-03: Dual-mode endpoint wiring tests
+# ===================================================================
+
+
+class TestDualModeEndpointWiring:
+    """Test POST /api/backtest/dual-mode dispatches correct Celery task."""
+
+    @patch("poseidon.api.backtests.run_dual_mode_task")
+    def test_returns_202_with_task_id(self, mock_task):
+        """POST /api/backtest/dual-mode returns 202 + task_id."""
+        mock_task.delay.return_value = MagicMock(id="dual-task-001")
+        sid = str(uuid.uuid4())
+
+        resp = client.post(
+            "/api/backtest/dual-mode",
+            json={"strategy_id": sid},
+            headers=API_KEY_HEADER,
+        )
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["task_id"] == "dual-task-001"
+        assert "Dual-mode" in body["message"]
+
+    @patch("poseidon.api.backtests.run_dual_mode_task")
+    def test_dispatches_with_correct_args(self, mock_task):
+        """All request fields are passed to run_dual_mode_task.delay()."""
+        mock_task.delay.return_value = MagicMock(id="dual-task-002")
+        sid = str(uuid.uuid4())
+
+        resp = client.post(
+            "/api/backtest/dual-mode",
+            json={
+                "strategy_id": sid,
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-01",
+                "initial_capital": 500_000.0,
+                "include_funding": True,
+                "sizing_mode": "fixed_risk",
+                "sizing_params": {"risk_pct": 0.02},
+            },
+            headers=API_KEY_HEADER,
+        )
+        assert resp.status_code == 202
+        call_args = mock_task.delay.call_args
+        args = call_args.args
+        assert sid in args  # strategy_id
+        assert "2025-01-01" in args  # start_date
+        assert "2025-06-01" in args  # end_date
+        assert 500_000.0 in args  # initial_capital
+        assert True in args  # include_funding
+        assert "fixed_risk" in args  # sizing_mode
+
+    @patch("poseidon.api.backtests.run_dual_mode_task")
+    def test_default_args_passed(self, mock_task):
+        """Defaults are passed when optional fields omitted."""
+        mock_task.delay.return_value = MagicMock(id="dual-task-003")
+        sid = str(uuid.uuid4())
+
+        resp = client.post(
+            "/api/backtest/dual-mode",
+            json={"strategy_id": sid},
+            headers=API_KEY_HEADER,
+        )
+        assert resp.status_code == 202
+        call_args = mock_task.delay.call_args
+        args = call_args.args
+        assert False in args  # include_funding default
+        assert "fixed_notional" in args  # sizing_mode default
