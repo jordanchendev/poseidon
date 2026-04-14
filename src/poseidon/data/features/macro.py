@@ -23,6 +23,13 @@ def _align_macro_column(
     if col not in macro_data.columns:
         return pd.Series(float("nan"), index=ohlcv.index, name=col)
     series = macro_data[col]
+    # Ensure both indexes are DatetimeIndex before reindex.
+    # macro_data may arrive with int64 index (e.g. from DB or cache),
+    # which causes "Cannot compare dtypes datetime64 and int64" on reindex.
+    if not isinstance(series.index, pd.DatetimeIndex):
+        series = series.copy()
+        series.index = pd.to_datetime(series.index, utc=True, errors="coerce")
+        series = series[series.index.notna()].sort_index()
     # Normalize timezone: yfinance returns datetime64[s] (naive), OHLCV uses UTC-aware
     if isinstance(series.index, pd.DatetimeIndex) and isinstance(ohlcv.index, pd.DatetimeIndex):
         if series.index.tz is None and ohlcv.index.tz is not None:
