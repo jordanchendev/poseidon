@@ -6,11 +6,9 @@ No authentication required -- used by Docker healthcheck.
 
 from __future__ import annotations
 
-import redis
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
-from poseidon.core.config import settings
 from poseidon.models.base import SessionLocal
 from poseidon.models.ohlcv import OHLCV
 from poseidon.workers.celery_app import celery_app
@@ -55,9 +53,10 @@ async def health(details: bool = Query(False)):
         if db is not None:
             db.close()
 
-    # 2. Redis check
+    # 2. Redis check (Celery broker, DB 0)
     try:
-        r = redis.from_url(settings.redis_url)
+        from poseidon.core.redis import get_redis
+        r = get_redis("celery")
         r.ping()
         components["redis"] = "ok"
     except Exception as e:

@@ -133,9 +133,9 @@ async def stop_autoresearch(task_id: str) -> MessageResponse:
 
     Sets Redis flag that the runner checks between markets.
     """
-    import redis as redis_lib
+    from poseidon.core.redis import get_redis
 
-    redis_client = redis_lib.from_url(celery_app.conf.broker_url)
+    redis_client = get_redis("celery")
     redis_client.set(f"autoresearch:stop:{task_id}", "1", ex=3600)
     return MessageResponse(message=f"Stop requested for task {task_id}")
 

@@ -13,7 +13,6 @@ import redis as redis_lib
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel as PydanticBase
 
-from poseidon.core.config import settings
 from poseidon.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -77,7 +76,9 @@ class AlertsResponse(PydanticBase):
 
 
 def _get_redis_client() -> redis_lib.Redis:
-    return redis_lib.from_url(settings.redis_url, decode_responses=False)
+    """Redis client for VaR snapshots and alert streams (cache, DB 1)."""
+    from poseidon.core.redis import get_redis
+    return get_redis("cache")
 
 
 # --- RAPI-01: GET /var ---

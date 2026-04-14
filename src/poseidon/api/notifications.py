@@ -11,7 +11,7 @@ import logging
 from fastapi import APIRouter, Query
 from pydantic import BaseModel as PydanticBase
 
-from poseidon.api.risk_metrics import _get_redis_client
+from poseidon.core.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ def get_notifications(
     - poseidon:alerts:data_quality (data quality events)
     - poseidon:alerts:autoresearch (autoresearch completions)
     """
-    r = _get_redis_client()
+    r = get_redis("cache")
     all_notifications: list[NotificationItem] = []
 
     streams = {

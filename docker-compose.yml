@@ -6,7 +6,10 @@ services:
     environment:
       - TZ=Asia/Taipei
       - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
-      - POSEIDON_REDIS_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_REDIS_CELERY_URL=redis://host.docker.internal:6379/0
+      - POSEIDON_REDIS_CACHE_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_REDIS_STREAM_URL=redis://host.docker.internal:6379/2
+      - POSEIDON_REDIS_RATELIMIT_URL=redis://host.docker.internal:6379/3
       - POSEIDON_API_KEY=${POSEIDON_API_KEY}
       - POSEIDON_TW_STOCK_DATA_BACKEND=${POSEIDON_TW_STOCK_DATA_BACKEND:-finlab}
       - POSEIDON_SHIOAJI_DATA_API_KEY=${POSEIDON_SHIOAJI_DATA_API_KEY:-}
@@ -32,7 +35,10 @@ services:
     environment:
       - TZ=Asia/Taipei
       - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
-      - POSEIDON_REDIS_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_REDIS_CELERY_URL=redis://host.docker.internal:6379/0
+      - POSEIDON_REDIS_CACHE_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_REDIS_STREAM_URL=redis://host.docker.internal:6379/2
+      - POSEIDON_REDIS_RATELIMIT_URL=redis://host.docker.internal:6379/3
       - POSEIDON_TW_STOCK_DATA_BACKEND=${POSEIDON_TW_STOCK_DATA_BACKEND:-finlab}
       - POSEIDON_SHIOAJI_DATA_API_KEY=${POSEIDON_SHIOAJI_DATA_API_KEY:-}
       - POSEIDON_SHIOAJI_DATA_SECRET_KEY=${POSEIDON_SHIOAJI_DATA_SECRET_KEY:-}
@@ -54,7 +60,10 @@ services:
     environment:
       - TZ=Asia/Taipei
       - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
-      - POSEIDON_REDIS_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_REDIS_CELERY_URL=redis://host.docker.internal:6379/0
+      - POSEIDON_REDIS_CACHE_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_REDIS_STREAM_URL=redis://host.docker.internal:6379/2
+      - POSEIDON_REDIS_RATELIMIT_URL=redis://host.docker.internal:6379/3
       - POSEIDON_FINMIND_TOKEN=${POSEIDON_FINMIND_TOKEN}
       - POSEIDON_FINLAB_API_TOKEN=${POSEIDON_FINLAB_API_TOKEN}
       - POSEIDON_TW_STOCK_DATA_BACKEND=${POSEIDON_TW_STOCK_DATA_BACKEND:-finlab}
@@ -85,7 +94,10 @@ services:
     environment:
       - TZ=Asia/Taipei
       - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
-      - POSEIDON_REDIS_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_REDIS_CELERY_URL=redis://host.docker.internal:6379/0
+      - POSEIDON_REDIS_CACHE_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_REDIS_STREAM_URL=redis://host.docker.internal:6379/2
+      - POSEIDON_REDIS_RATELIMIT_URL=redis://host.docker.internal:6379/3
       - POSEIDON_FINMIND_TOKEN=${POSEIDON_FINMIND_TOKEN}
       - POSEIDON_FINLAB_API_TOKEN=${POSEIDON_FINLAB_API_TOKEN}
       - POSEIDON_TW_STOCK_DATA_BACKEND=${POSEIDON_TW_STOCK_DATA_BACKEND:-finlab}
@@ -115,7 +127,10 @@ services:
     environment:
       - TZ=Asia/Taipei
       - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
-      - POSEIDON_REDIS_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_REDIS_CELERY_URL=redis://host.docker.internal:6379/0
+      - POSEIDON_REDIS_CACHE_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_REDIS_STREAM_URL=redis://host.docker.internal:6379/2
+      - POSEIDON_REDIS_RATELIMIT_URL=redis://host.docker.internal:6379/3
       - POSEIDON_FINMIND_TOKEN=${POSEIDON_FINMIND_TOKEN}
       - POSEIDON_FINLAB_API_TOKEN=${POSEIDON_FINLAB_API_TOKEN}
       - POSEIDON_TW_STOCK_DATA_BACKEND=${POSEIDON_TW_STOCK_DATA_BACKEND:-finlab}
@@ -146,7 +161,10 @@ services:
     environment:
       - TZ=Asia/Taipei
       - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
-      - POSEIDON_REDIS_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_REDIS_CELERY_URL=redis://host.docker.internal:6379/0
+      - POSEIDON_REDIS_CACHE_URL=redis://host.docker.internal:6379/1
+      - POSEIDON_REDIS_STREAM_URL=redis://host.docker.internal:6379/2
+      - POSEIDON_REDIS_RATELIMIT_URL=redis://host.docker.internal:6379/3
       - POSEIDON_FINMIND_TOKEN=${POSEIDON_FINMIND_TOKEN}
       - POSEIDON_FINLAB_API_TOKEN=${POSEIDON_FINLAB_API_TOKEN}
       - POSEIDON_TW_STOCK_DATA_BACKEND=${POSEIDON_TW_STOCK_DATA_BACKEND:-finlab}

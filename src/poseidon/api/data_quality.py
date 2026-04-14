@@ -41,8 +41,9 @@ class QualityScoresResponse(PydanticBase):
 
 
 def _get_redis_client() -> redis_lib.Redis:
-    """Create a Redis client for provider health queries."""
-    return redis_lib.from_url(settings.redis_url, decode_responses=False)
+    """Redis client for rate limiter and circuit breaker state (ratelimit, DB 3)."""
+    from poseidon.core.redis import get_redis
+    return get_redis("ratelimit")
 
 
 @router.get("/providers")
