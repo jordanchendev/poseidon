@@ -22,6 +22,12 @@ class TestSettingsRedisUrls:
         assert "/2" in s.redis_stream_url
         assert "/3" in s.redis_ratelimit_url
 
+    def test_settings_env_override(self, monkeypatch):
+        """POSEIDON_REDIS_CACHE_URL env var overrides the default."""
+        monkeypatch.setenv("POSEIDON_REDIS_CACHE_URL", "redis://custom:6379/99")
+        s = Settings(_env_file=None)
+        assert s.redis_cache_url == "redis://custom:6379/99"
+
     def test_legacy_redis_url_preserved(self):
         """Legacy redis_url attribute still exists."""
         s = Settings(_env_file=None)
@@ -29,7 +35,7 @@ class TestSettingsRedisUrls:
         assert "redis://" in s.redis_url
 
 
-class TestGetRedisFactory:
+class TestGetRedis:
     """Tests for get_redis() factory function."""
 
     def test_import_factory(self):

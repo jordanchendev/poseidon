@@ -8,6 +8,10 @@ def test_settings(monkeypatch):
     monkeypatch.setenv("POSEIDON_API_KEY", "test-key")
     monkeypatch.setenv("POSEIDON_DATABASE_URL", "postgresql://test:test@localhost:5432/test_poseidon")
     monkeypatch.setenv("POSEIDON_REDIS_URL", "redis://localhost:6379/1")
+    monkeypatch.setenv("POSEIDON_REDIS_CELERY_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("POSEIDON_REDIS_CACHE_URL", "redis://localhost:6379/1")
+    monkeypatch.setenv("POSEIDON_REDIS_STREAM_URL", "redis://localhost:6379/2")
+    monkeypatch.setenv("POSEIDON_REDIS_RATELIMIT_URL", "redis://localhost:6379/3")
 
 
 @pytest.fixture
