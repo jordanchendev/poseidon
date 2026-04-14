@@ -4,7 +4,7 @@
 markets:
   tw_stock:
     instrument: spot
-    intervals: ["1d"]
+    intervals: ["1d", "1h", "30m", "15m", "5m"]
     symbols:
       - { id: "2330", name: "TSMC" }
       - { id: "2317", name: "Hon Hai" }
@@ -31,7 +31,7 @@ markets:
 
   tw_futures:
     instrument: futures
-    intervals: ["1d"]
+    intervals: ["1d", "1h", "30m", "15m", "5m"]
     symbols:
       - { id: "TX", name: "TAIEX Futures" }
       - { id: "MTX", name: "Mini TAIEX Futures" }

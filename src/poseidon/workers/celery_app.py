@@ -45,11 +45,59 @@ celery_app.conf.update(
             "schedule": crontab(hour=6, minute=0),
             "args": ["tw_stock", "1d"],
         },
+        # TW stock: 5m during trading hours (09:00-13:30 UTC+8 = 01:00-05:30 UTC)
+        "fetch-tw-stock-5m": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute="*/5", hour="1,2,3,4,5"),
+            "args": ["tw_stock", "5m"],
+        },
+        # TW stock: 15m during trading hours
+        "fetch-tw-stock-15m": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute="1,16,31,46", hour="1,2,3,4,5"),
+            "args": ["tw_stock", "15m"],
+        },
+        # TW stock: 30m during trading hours
+        "fetch-tw-stock-30m": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute="2,32", hour="1,2,3,4,5"),
+            "args": ["tw_stock", "30m"],
+        },
+        # TW stock: 1h during trading hours
+        "fetch-tw-stock-1h": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute=5, hour="1,2,3,4,5"),
+            "args": ["tw_stock", "1h"],
+        },
         # Taiwan futures: daily after market close (same schedule as TW stocks)
         "fetch-tw-futures-daily": {
             "task": "poseidon.workers.cpu_tasks.fetch_market_data",
             "schedule": crontab(hour=6, minute=0),
             "args": ["tw_futures", "1d"],
+        },
+        # TW futures: 5m during trading hours (08:45-13:45 UTC+8 = 00:45-05:45 UTC)
+        "fetch-tw-futures-5m": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute="*/5", hour="1,2,3,4,5"),
+            "args": ["tw_futures", "5m"],
+        },
+        # TW futures: 15m during trading hours
+        "fetch-tw-futures-15m": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute="1,16,31,46", hour="1,2,3,4,5"),
+            "args": ["tw_futures", "15m"],
+        },
+        # TW futures: 30m during trading hours
+        "fetch-tw-futures-30m": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute="2,32", hour="1,2,3,4,5"),
+            "args": ["tw_futures", "30m"],
+        },
+        # TW futures: 1h during trading hours
+        "fetch-tw-futures-1h": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute=5, hour="1,2,3,4,5"),
+            "args": ["tw_futures", "1h"],
         },
         # US stocks: daily after market close (16:15 US/Eastern ~ 21:15 UTC, buffer to 21:30)
         "fetch-us-daily": {

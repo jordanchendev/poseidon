@@ -73,9 +73,9 @@ def get_fetcher(market: str, backend: str | None = None) -> BaseFetcher:
     elif resolved_backend == "polygon":
         fetcher = PolygonFetcher()
     elif resolved_backend == "shioaji":
-        if market != "tw_stock":
-            raise ValueError("Shioaji backend currently supports only tw_stock")
-        fetcher = ShioajiFetcher()
+        if market not in ("tw_stock", "tw_futures"):
+            raise ValueError("Shioaji backend supports only tw_stock and tw_futures")
+        fetcher = ShioajiFetcher(market=market)
     # Default routing: FinLab for stocks/futures, CCXT for crypto
     elif market in ("tw_stock", "tw_futures", "us_stock"):
         try:
