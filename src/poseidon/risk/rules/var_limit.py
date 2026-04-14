@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 import msgpack
 import redis
 
-from poseidon.core.config import settings
 from poseidon.risk.base import BaseRule, RuleResult
 from poseidon.signals.schemas import Signal, SignalAction
 
@@ -48,7 +47,8 @@ class VaRLimitRule(BaseRule):
 
     def _get_redis(self) -> redis.Redis:
         if self._redis is None:
-            self._redis = redis.from_url(settings.redis_url)
+            from poseidon.core.redis import get_redis
+            self._redis = get_redis("cache")
         return self._redis
 
     def check(self, signal: Signal, portfolio: VirtualPortfolio) -> RuleResult:

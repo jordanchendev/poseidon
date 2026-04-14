@@ -99,12 +99,13 @@ _TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 
 
 def _get_redis_client() -> redis_lib.Redis:
-    """Create a Redis client for rate limiter and circuit breaker.
+    """Create a Redis client for rate limiter and circuit breaker (DB 3).
 
     Exposed as a module-level function so unit tests can monkeypatch it and
     avoid touching a real Redis instance.
     """
-    return redis_lib.from_url(settings.redis_url, decode_responses=False)
+    from poseidon.core.redis import get_redis
+    return get_redis("ratelimit")
 
 
 def _parse_ts(value: str | None) -> datetime | None:

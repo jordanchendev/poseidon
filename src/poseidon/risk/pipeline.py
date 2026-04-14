@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 
-from poseidon.core.config import settings
 from poseidon.risk.engine import RiskEngine
 from poseidon.risk.portfolio import VirtualPortfolio
 from poseidon.signals.delivery import SignalDeliveryService
@@ -33,7 +32,7 @@ class SignalPipeline:
         self._db = db_session
         self._engine = RiskEngine()
         self._portfolio = VirtualPortfolio()
-        self._delivery = SignalDeliveryService(redis_url or settings.redis_url)
+        self._delivery = SignalDeliveryService(redis_url)
         self._repository = SignalRepository(db_session)
         # Rebuild portfolio state from historical passed signals
         self._portfolio.rebuild_from_db(db_session)

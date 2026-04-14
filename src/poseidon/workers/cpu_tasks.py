@@ -17,6 +17,7 @@ from poseidon.core.config import settings
 from sqlalchemy import text as sa_text
 from poseidon.data.feature_engine import FeatureEngine
 from poseidon.data.fetchers import get_fetcher
+from poseidon.core.redis import get_redis
 from poseidon.data.cache import CacheManager
 from poseidon.data.rate_limiter import CircuitBreaker, DistributedRateLimiter, PROVIDER_LIMITS
 from poseidon.data.validation import validate_ohlcv
@@ -85,8 +86,12 @@ def _build_tw_stock_broker(broker_cfg):
 
 
 def _get_redis_client() -> redis_lib.Redis:
-    """Create a Redis client for rate limiter and circuit breaker."""
-    return redis_lib.from_url(settings.redis_url, decode_responses=False)
+    """Create a Redis client for rate limiter and circuit breaker (DB 3).
+
+    NOTE: Phase 54 — this now returns a ratelimit-purpose client.
+    CacheManager callers must use get_redis("cache") separately.
+    """
+    return get_redis("ratelimit")
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.fetch_market_data")
@@ -133,16 +138,17 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
 
     # Initialize rate limiter and circuit breaker once per task call
     provider = _get_provider_for_market(market)
-    redis_client = _get_redis_client()
+    ratelimit_client = _get_redis_client()
+    cache_client = get_redis("cache")
     circuit = CircuitBreaker(
-        redis_client,
+        ratelimit_client,
         provider,
         failure_threshold=settings.circuit_failure_threshold,
         open_timeout=settings.circuit_open_timeout,
         failure_window=settings.circuit_failure_window,
     )
-    rate_limiter = DistributedRateLimiter(redis_client)
-    cache = CacheManager(redis_client) if settings.cache_enabled else None
+    rate_limiter = DistributedRateLimiter(ratelimit_client)
+    cache = CacheManager(cache_client) if settings.cache_enabled else None
     provider_cfg = PROVIDER_LIMITS.get(provider, {})
     window = provider_cfg.get("window_seconds", 3600)
     limit = getattr(settings, provider_cfg.get("limit_key", "ratelimit_finmind_hourly"), 500)
@@ -261,15 +267,15 @@ def _fetch_market_data_cursor(market: str, interval: str, symbols, market_cfg) -
 
     # Rate limit / circuit breaker init (mirror legacy path)
     provider = _get_provider_for_market(market)
-    redis_client = _get_redis_client()
+    ratelimit_client = _get_redis_client()
     circuit = CircuitBreaker(
-        redis_client,
+        ratelimit_client,
         provider,
         failure_threshold=settings.circuit_failure_threshold,
         open_timeout=settings.circuit_open_timeout,
         failure_window=settings.circuit_failure_window,
     )
-    rate_limiter = DistributedRateLimiter(redis_client)
+    rate_limiter = DistributedRateLimiter(ratelimit_client)
     provider_cfg = PROVIDER_LIMITS.get(provider, {})
     window = provider_cfg.get("window_seconds", 3600)
     limit = getattr(
@@ -889,7 +895,7 @@ def compute_var_snapshot(method: str = "all") -> dict:
     from poseidon.risk.var.types import VaRMethod
 
     db = SessionLocal()
-    redis_client = _get_redis_client()
+    redis_client = get_redis("cache")
     try:
         # 1. Rebuild portfolio from DB
         portfolio = VirtualPortfolio()
@@ -1038,7 +1044,7 @@ def compute_mc_var() -> dict:
     from poseidon.risk.var.covariance import load_cached_covariance
 
     db = SessionLocal()
-    redis_client = _get_redis_client()
+    redis_client = get_redis("cache")
     try:
         # 1. Load cached covariance (per D-06: never recompute inline)
         cached = load_cached_covariance(redis_client)
@@ -1133,7 +1139,7 @@ def update_covariance_matrix() -> dict:
     from poseidon.risk.var.returns import align_returns, compute_returns
 
     db = SessionLocal()
-    redis_client = _get_redis_client()
+    redis_client = get_redis("cache")
     try:
         # 1. Get active portfolio symbols
         portfolio = VirtualPortfolio()
@@ -1207,8 +1213,6 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
     Returns:
         {"status": "completed"|"stopped", "markets_processed": int, "report": dict}
     """
-    import redis as redis_lib
-
     from poseidon.autoresearch.report import generate_report
     from poseidon.autoresearch.runner import AutoResearchRunner, MarketSpec
     from poseidon.backtest.experiment_tracker import ExperimentTracker
@@ -1218,7 +1222,7 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
 
     started_at = datetime.now(timezone.utc)
     db = SessionLocal()
-    redis_client = redis_lib.from_url(celery_app.conf.broker_url)
+    redis_client = get_redis("celery")
 
     try:
         # Reconstruct SearchConfig from plain dict
@@ -1445,7 +1449,7 @@ def run_stress_test(
     from poseidon.risk.var.returns import align_returns, compute_returns
 
     db = SessionLocal()
-    redis_client = _get_redis_client()
+    redis_client = get_redis("cache")
     try:
         # 1. Rebuild portfolio from DB
         portfolio = VirtualPortfolio()

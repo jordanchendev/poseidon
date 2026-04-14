@@ -20,8 +20,12 @@ class SignalDeliveryService:
     CONSUMER_GROUP = "default"
     RETENTION_DAYS = 7
 
-    def __init__(self, redis_url: str):
-        self._redis = redis.from_url(redis_url, decode_responses=True)
+    def __init__(self, redis_url: str | None = None):
+        if redis_url:
+            self._redis = redis.from_url(redis_url, decode_responses=True)
+        else:
+            from poseidon.core.redis import get_redis
+            self._redis = get_redis("stream", decode_responses=True)
 
     def deliver(self, signal: Signal) -> str | None:
         """Write a passed signal to the appropriate Redis Stream.

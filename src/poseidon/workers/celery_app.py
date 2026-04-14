@@ -5,7 +5,7 @@ from celery.schedules import crontab
 
 from poseidon.core.config import settings
 
-celery_app = Celery("poseidon", broker=settings.redis_url, backend=settings.redis_url)
+celery_app = Celery("poseidon", broker=settings.redis_celery_url, backend=settings.redis_celery_url)
 
 celery_app.conf.update(
     # Task routing
@@ -34,7 +34,7 @@ celery_app.conf.update(
 
     # RedBeat scheduler (persists schedule state in Redis)
     beat_scheduler="redbeat.RedBeatScheduler",
-    redbeat_redis_url=settings.redis_url,
+    redbeat_redis_url=settings.redis_celery_url,
     redbeat_key_prefix="poseidon:redbeat:",
 
     # Beat schedule
