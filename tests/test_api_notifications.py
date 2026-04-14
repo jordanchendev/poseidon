@@ -45,7 +45,7 @@ def test_get_notifications_returns_feed(client):
 
     mock_redis.xrevrange.side_effect = xrevrange_side_effect
 
-    with patch("poseidon.api.notifications._get_redis_client", return_value=mock_redis):
+    with patch("poseidon.api.notifications.get_redis", return_value=mock_redis):
         resp = client.get("/api/notifications")
 
     assert resp.status_code == 200
@@ -64,7 +64,7 @@ def test_get_notifications_empty(client):
     mock_redis = MagicMock()
     mock_redis.xrevrange.return_value = []
 
-    with patch("poseidon.api.notifications._get_redis_client", return_value=mock_redis):
+    with patch("poseidon.api.notifications.get_redis", return_value=mock_redis):
         resp = client.get("/api/notifications")
 
     assert resp.status_code == 200
@@ -93,7 +93,7 @@ def test_get_notifications_source_filter(client):
 
     mock_redis.xrevrange.side_effect = xrevrange_side_effect
 
-    with patch("poseidon.api.notifications._get_redis_client", return_value=mock_redis):
+    with patch("poseidon.api.notifications.get_redis", return_value=mock_redis):
         resp = client.get("/api/notifications", params={"source": "risk"})
 
     assert resp.status_code == 200
