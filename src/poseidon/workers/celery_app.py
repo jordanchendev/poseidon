@@ -57,6 +57,24 @@ celery_app.conf.update(
             "schedule": crontab(hour=21, minute=30),
             "args": ["us_stock", "1d"],
         },
+        # Crypto spot: every 5 min at :01 past (5m data)
+        "fetch-crypto-5m": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute="*/5"),
+            "args": ["crypto_spot", "5m"],
+        },
+        # Crypto spot: every 15 min at :02 past (15m data)
+        "fetch-crypto-15m": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute="1,16,31,46"),
+            "args": ["crypto_spot", "15m"],
+        },
+        # Crypto spot: every 30 min at :03 past (30m data)
+        "fetch-crypto-30m": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute="2,32"),
+            "args": ["crypto_spot", "30m"],
+        },
         # Crypto spot: hourly at :05 past the hour
         "fetch-crypto-hourly": {
             "task": "poseidon.workers.cpu_tasks.fetch_market_data",
@@ -149,7 +167,31 @@ celery_app.conf.update(
             "task": "poseidon.workers.cpu_tasks.perp_liquidation_monitor",
             "schedule": crontab(minute="*"),
         },
-        # 2. Perp 4h OHLCV fetch (D-04, D-05)
+        # 2a. Perp 5m OHLCV fetch
+        "fetch-crypto-perp-5m": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute="*/5"),
+            "args": ["crypto_perp", "5m"],
+        },
+        # 2b. Perp 15m OHLCV fetch
+        "fetch-crypto-perp-15m": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute="1,16,31,46"),
+            "args": ["crypto_perp", "15m"],
+        },
+        # 2c. Perp 30m OHLCV fetch
+        "fetch-crypto-perp-30m": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute="2,32"),
+            "args": ["crypto_perp", "30m"],
+        },
+        # 2d. Perp 1h OHLCV fetch
+        "fetch-crypto-perp-1h": {
+            "task": "poseidon.workers.cpu_tasks.fetch_market_data",
+            "schedule": crontab(minute=5),
+            "args": ["crypto_perp", "1h"],
+        },
+        # 2e. Perp 4h OHLCV fetch (D-04, D-05)
         "fetch-crypto-perp-4h": {
             "task": "poseidon.workers.cpu_tasks.fetch_market_data",
             "schedule": crontab(hour="0,4,8,12,16,20", minute=0),

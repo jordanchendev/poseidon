@@ -81,7 +81,7 @@ markets:
 
   crypto_perp:
     instrument: perpetual
-    intervals: ["4h"]
+    intervals: ["4h", "1h", "30m", "15m", "5m"]
     symbols:
       - { id: "BTCUSDT", name: "Bitcoin Perp", ccxt_symbol: "BTC/USDT:USDT" }
       - { id: "ETHUSDT", name: "Ethereum Perp", ccxt_symbol: "ETH/USDT:USDT" }
