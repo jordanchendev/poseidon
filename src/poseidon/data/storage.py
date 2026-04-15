@@ -12,11 +12,13 @@ from poseidon.models.ohlcv import OHLCV
 from poseidon.models.sentiment import Sentiment
 
 
-def upsert_ohlcv(session: Session, df: pd.DataFrame, symbol: str, market: str, instrument: str, interval: str) -> int:
-    """Insert or update OHLCV rows. Returns number of rows upserted.
+def _upsert_ohlcv_core(session: Session, df: pd.DataFrame, symbol: str, market: str, instrument: str, interval: str) -> int:
+    """Core upsert logic WITHOUT commit. Used by DataRepository.
 
     DataFrame must have columns: time, open, high, low, close, volume.
     The 'time' column must be timezone-aware (UTC).
+
+    Returns number of rows upserted.
     """
     if df.empty:
         return 0
@@ -49,8 +51,17 @@ def upsert_ohlcv(session: Session, df: pd.DataFrame, symbol: str, market: str, i
         },
     )
     session.execute(stmt)
-    session.commit()
     return len(rows)
+
+
+def upsert_ohlcv(session: Session, df: pd.DataFrame, symbol: str, market: str, instrument: str, interval: str) -> int:
+    """Insert or update OHLCV rows. Commits automatically (legacy behavior).
+
+    Prefer DataRepository.upsert_ohlcv() which does NOT auto-commit.
+    """
+    count = _upsert_ohlcv_core(session, df, symbol, market, instrument, interval)
+    session.commit()
+    return count
 
 
 def read_ohlcv(
@@ -185,8 +196,11 @@ def _read_ohlcv_from_cagg(
     return df
 
 
-def write_fundamentals(session: Session, symbol: str, market: str, report_date: date, data: dict) -> Fundamentals:
-    """Write a fundamentals row. Uses UPSERT on (symbol, market, date)."""
+def _write_fundamentals_core(session: Session, symbol: str, market: str, report_date: date, data: dict) -> Fundamentals:
+    """Core write logic WITHOUT commit. Used by DataRepository.
+
+    Returns the upserted Fundamentals row.
+    """
     stmt = insert(Fundamentals).values(
         symbol=symbol,
         market=market,
@@ -198,8 +212,17 @@ def write_fundamentals(session: Session, symbol: str, market: str, report_date: 
         set_={"data": stmt.excluded.data},
     )
     session.execute(stmt)
-    session.commit()
     return session.query(Fundamentals).filter_by(symbol=symbol, market=market, date=report_date).first()
+
+
+def write_fundamentals(session: Session, symbol: str, market: str, report_date: date, data: dict) -> Fundamentals:
+    """Write a fundamentals row. Commits automatically (legacy behavior).
+
+    Prefer DataRepository.write_fundamentals() which does NOT auto-commit.
+    """
+    result = _write_fundamentals_core(session, symbol, market, report_date, data)
+    session.commit()
+    return result
 
 
 def read_fundamentals(session: Session, symbol: str, market: str) -> list[Fundamentals]:
@@ -212,10 +235,22 @@ def read_fundamentals(session: Session, symbol: str, market: str) -> list[Fundam
     )
 
 
-def write_sentiment(session: Session, symbol: str, market: str, source_type: str, score: float) -> Sentiment:
-    """Write a sentiment score. Always inserts a new row (no upsert)."""
+def _write_sentiment_core(session: Session, symbol: str, market: str, source_type: str, score: float) -> Sentiment:
+    """Core write logic WITHOUT commit. Used by DataRepository.
+
+    Returns the new Sentiment row (not yet refreshed from DB).
+    """
     row = Sentiment(symbol=symbol, market=market, source_type=source_type, score=score)
     session.add(row)
+    return row
+
+
+def write_sentiment(session: Session, symbol: str, market: str, source_type: str, score: float) -> Sentiment:
+    """Write a sentiment score. Commits automatically (legacy behavior).
+
+    Prefer DataRepository.write_sentiment() which does NOT auto-commit.
+    """
+    row = _write_sentiment_core(session, symbol, market, source_type, score)
     session.commit()
     session.refresh(row)
     return row
