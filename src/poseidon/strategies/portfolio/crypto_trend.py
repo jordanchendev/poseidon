@@ -9,7 +9,7 @@ from datetime import date
 import pandas as pd
 from pydantic import BaseModel
 
-from poseidon.data.loaders.perp_data_loader import PerpDataLoader
+from poseidon.data.repository import DataRepository
 from poseidon.strategies.portfolio.base import PortfolioStrategy
 from poseidon.strategies.portfolio.registry import register_portfolio_strategy
 from poseidon.strategies.portfolio.schemas import TargetPosition
@@ -73,11 +73,11 @@ class CryptoTrendStrategy(PortfolioStrategy):
     def __init__(
         self,
         config: CryptoTrendConfig,
-        loader: PerpDataLoader | None = None,
+        repo: DataRepository | None = None,
     ):
         self.name = config.name
         self.config = config
-        self._loader = loader  # Must be injected with session_factory
+        self._repo = repo  # Must be injected with session
 
     def select_stocks(
         self, universe_df: pd.DataFrame, as_of: date | None = None
@@ -92,8 +92,8 @@ class CryptoTrendStrategy(PortfolioStrategy):
         Returns:
             List of TargetPosition with side (long/short) and leverage.
         """
-        if self._loader is None:
-            logger.error("PerpDataLoader not injected, cannot evaluate strategy")
+        if self._repo is None:
+            logger.error("DataRepository not injected, cannot evaluate strategy")
             return []
 
         cfg = self.config
@@ -101,7 +101,7 @@ class CryptoTrendStrategy(PortfolioStrategy):
 
         for symbol in cfg.symbols:
             # 1. Load 4h OHLCV
-            ohlcv = self._loader.get_ohlcv(
+            ohlcv = self._repo.read_perp_ohlcv(
                 symbol,
                 interval=cfg.momentum.interval,
                 lookback_days=cfg.momentum.lookback_days,
@@ -126,7 +126,7 @@ class CryptoTrendStrategy(PortfolioStrategy):
                 continue
 
             # 3. Funding rate filter (per D-04)
-            funding_rate = self._loader.get_latest_funding_rate(symbol)
+            funding_rate = self._repo.read_latest_funding_rate(symbol)
 
             if funding_rate is not None:
                 if (

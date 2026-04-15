@@ -54,7 +54,7 @@ def train_model(
     # during testing / import-time checks.
     from poseidon.core.database import db_session
     from poseidon.data.feature_engine import FeatureEngine
-    from poseidon.data.storage import read_ohlcv
+    from poseidon.data.repository import DataRepository
     from poseidon.ml.manager import ModelManager
     from poseidon.ml.registry import get_model
 
@@ -62,6 +62,7 @@ def train_model(
         manager = None
         try:
             manager = ModelManager(session)
+            repo = DataRepository(session)
             vid = UUID(version_id)
 
             mv = manager.get_version(vid)
@@ -80,7 +81,7 @@ def train_model(
             # 1. Load OHLCV data
             start_dt = datetime.fromisoformat(start_date) if start_date else None
             end_dt = datetime.fromisoformat(end_date) if end_date else None
-            ohlcv_df = read_ohlcv(session, symbol, market, interval, start=start_dt, end=end_dt)
+            ohlcv_df = repo.read_ohlcv(symbol, market, interval, start=start_dt, end=end_dt)
 
             if ohlcv_df.empty:
                 raise ValueError(
@@ -216,7 +217,7 @@ def run_model_backtest(
     from poseidon.backtest.runner import BacktestRunner
     from poseidon.core.database import db_session
     from poseidon.data.feature_engine import FeatureEngine
-    from poseidon.data.storage import read_ohlcv
+    from poseidon.data.repository import DataRepository
     from poseidon.ml.manager import ModelManager
     from poseidon.ml.registry import get_model
     from poseidon.models.backtest import BacktestRecord
@@ -237,6 +238,7 @@ def run_model_backtest(
 
             # Load model version
             manager = ModelManager(session)
+            repo = DataRepository(session)
             mv = manager.get_version(record.model_version_id)
             if mv is None or mv.status != "ready":
                 raise ValueError(f"Model version {record.model_version_id} not ready")
@@ -261,8 +263,8 @@ def run_model_backtest(
             # Parse dates and load data
             parsed_start = datetime.fromisoformat(start_date) if start_date else None
             parsed_end = datetime.fromisoformat(end_date) if end_date else None
-            ohlcv_df = read_ohlcv(
-                session, record.symbol, record.market, record.interval,
+            ohlcv_df = repo.read_ohlcv(
+                record.symbol, record.market, record.interval,
                 start=parsed_start, end=parsed_end,
             )
             if ohlcv_df.empty:

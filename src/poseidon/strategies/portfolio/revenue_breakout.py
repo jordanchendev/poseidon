@@ -12,6 +12,7 @@ from datetime import date
 import pandas as pd
 
 from poseidon.data.loaders.finlab_loader import FinLabDataLoader
+from poseidon.data.repository import DataRepository
 from poseidon.strategies.portfolio.base import PortfolioStrategy
 from poseidon.strategies.portfolio.registry import register_portfolio_strategy
 from poseidon.strategies.portfolio.schemas import RevenueBreakoutConfig, TargetPosition
@@ -40,10 +41,15 @@ class RevenueBreakoutStrategy(PortfolioStrategy):
         self,
         config: RevenueBreakoutConfig,
         loader: FinLabDataLoader | None = None,
+        repo: DataRepository | None = None,
     ):
         self.name = config.name
         self.config = config
+        # FinLabDataLoader retained for get_dataset() wide DataFrame access
+        # (etl:adj_close, price:成交股數, monthly_revenue) not covered by DataRepository.
+        # DataRepository available for future institutional_flow/margin_transactions migration.
         self._loader = loader or FinLabDataLoader()
+        self._repo = repo
 
     def select_stocks(
         self, universe_df: pd.DataFrame, as_of: date | None = None

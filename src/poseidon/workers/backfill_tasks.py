@@ -51,7 +51,7 @@ from poseidon.data.rate_limiter import (
     CircuitBreaker,
     DistributedRateLimiter,
 )
-from poseidon.data.storage import upsert_ohlcv
+from poseidon.data.repository import DataRepository
 from poseidon.data.symbols import get_market_config, load_symbols
 from poseidon.data.validation import validate_ohlcv
 from poseidon.core.database import db_session
@@ -197,6 +197,7 @@ def _run_backfill_chunk(session, job_id: str) -> dict:
     unfinished tuples remain. See module docstring for full semantics.
     """
     job_uuid = UUID(job_id)
+    repo = DataRepository(session)
     job = session.query(BackfillJob).filter_by(job_id=job_uuid).one()
     if job.status in _TERMINAL_STATUSES:
         return {"job_id": job_id, "status": job.status, "noop": True}
@@ -323,15 +324,16 @@ def _run_backfill_chunk(session, job_id: str) -> dict:
                             "chunks_done": chunks_done_total,
                         }
                     # --- CRITICAL SECTION (Phase 38 D-08) ------------------
-                    count = upsert_ohlcv(
-                        session,
+                    count = repo.upsert_ohlcv(
                         df,
                         current_symbol,
                         job.market,
                         instrument,
                         current_interval,
                     )
-                    # upsert_ohlcv commits. SIGKILL here is safe: replay
+                    session.commit()
+                    # Explicit commit: DataRepository.upsert_ohlcv does NOT
+                    # auto-commit (D-10). SIGKILL here is safe: replay
                     # hits ON CONFLICT pk_ohlcv and dedupes (D-09).
                     # ------------------------------------------------------
                     rows_written_total += int(count or 0)
