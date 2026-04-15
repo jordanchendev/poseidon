@@ -27,6 +27,14 @@ _MAX_CHUNK_DAYS = 180
 
 _SUPPORTED_INTERVALS = {"1m", "5m", "15m", "30m", "1h", "1d"}
 
+# Canonical symbol -> Shioaji futures product code
+_FUTURES_SYMBOL_MAP = {
+    "TX": "TXF",
+    "MTX": "MXF",
+    "TE": "EXF",
+    "TF": "FXF",
+}
+
 # Resample rules for pandas: interval -> freq string
 _RESAMPLE_FREQ = {
     "1m": None,  # no resample needed (raw data)
@@ -214,16 +222,21 @@ class ShioajiFetcher(BaseFetcher):
     def _resolve_futures_contract(api, symbol: str):
         """Resolve a futures contract by product code (e.g. TX, MTX).
 
-        Uses the first available contract (near-month) for the given product.
+        Maps canonical symbols (TX, MTX, TE, TF) to Shioaji product codes
+        (TXF, MXF, EXF, FXF). Uses the first available (near-month) contract.
         """
+        shioaji_code = _FUTURES_SYMBOL_MAP.get(symbol, symbol)
         futures = api.Contracts.Futures
-        product = getattr(futures, symbol, None)
+        product = getattr(futures, shioaji_code, None)
         if product is not None:
             # Get the first (near-month) contract
             contracts = list(product)
             if contracts:
                 return contracts[0]
-        raise KeyError(f"Could not resolve Shioaji futures contract for symbol: {symbol}")
+        raise KeyError(
+            f"Could not resolve Shioaji futures contract for symbol: {symbol} "
+            f"(mapped to: {shioaji_code}). Available: {[a for a in dir(futures) if not a.startswith('_')][:20]}"
+        )
 
     # ── API lifecycle ───────────────────────────────────────────────
 
