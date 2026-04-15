@@ -28,7 +28,7 @@ from poseidon.data.storage import (
 from poseidon.data.symbols import get_market_config, get_symbols_for_market, load_symbols
 from poseidon.models.backfill import BackfillJob
 from poseidon.models.backtest import BacktestRecord
-from poseidon.models.base import SessionLocal
+from poseidon.core.database import db_session, SessionLocal
 from poseidon.models.ingest_state import IngestState
 from poseidon.models.strategy import StrategyRecord
 from poseidon.risk.engine import RiskEngine
@@ -153,8 +153,7 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
     window = provider_cfg.get("window_seconds", 3600)
     limit = getattr(settings, provider_cfg.get("limit_key", "ratelimit_finmind_hourly"), 500)
 
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         for sym_info in symbols:
             # 0. Check cache first (three-layer fallback: cache -> DB -> API)
             if cache is not None:
@@ -215,8 +214,6 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
                 logger.info("Fetched %d rows for %s/%s/%s", count, market, sym_info.id, interval)
             else:
                 logger.info("No new data for %s/%s/%s", market, sym_info.id, interval)
-    finally:
-        session.close()
 
     logger.info("Completed fetch for %s/%s: %d total rows", market, interval, fetched_count)
     return {"market": market, "interval": interval, "fetched": fetched_count}
@@ -282,8 +279,7 @@ def _fetch_market_data_cursor(market: str, interval: str, symbols, market_cfg) -
         settings, provider_cfg.get("limit_key", "ratelimit_finmind_hourly"), 500
     )
 
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         for sym_info in symbols:
             cursor = cursor_service.get_or_bootstrap(
                 session, sym_info.id, market, interval
@@ -372,8 +368,6 @@ def _fetch_market_data_cursor(market: str, interval: str, symbols, market_cfg) -
                 )
                 start = batch_end
                 chunks_this_sym += 1
-    finally:
-        session.close()
 
     logger.info(
         "cursor-mode fetch %s/%s: %d total rows", market, interval, fetched_count
@@ -425,155 +419,152 @@ def run_backtest_task(
     Returns:
         Dict with backtest_id, status, and trade_count.
     """
-    session = SessionLocal()
     backtest_id = uuid.uuid4()
-    try:
-        # Load strategy record from DB
-        sid = uuid.UUID(strategy_id)
-        record = session.get(StrategyRecord, sid)
-        if not record:
-            raise ValueError(f"Strategy {strategy_id} not found")
-
-        # Reconstruct strategy object
-        if record.strategy_type == "liquidity_sweep":
-            from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
-            ls_config = {**record.config, "symbol": record.symbol, "market": record.market, "interval": record.interval}
-            strategy = LiquiditySweepStrategy(config=ls_config, strategy_id=record.id)
-        elif record.strategy_type == "rule":
-            strategy = RuleStrategy(config=record.config, strategy_id=record.id)
-        elif record.strategy_type == "voting":
-            strategy = VotingStrategy(config=record.config, strategy_id=record.id)
-        elif record.strategy_type == "model":
-            # Route to GPU worker which has model dependencies
-            from poseidon.workers.gpu_tasks import run_model_backtest
-            result = run_model_backtest.delay(
-                strategy_id, start_date, end_date, initial_capital,
-                sizing_mode, sizing_params,
-            )
-            logger.info("Routed model backtest to GPU worker: %s", result.id)
-            return {"backtest_id": result.id, "status": "routed_to_gpu", "trade_count": 0}
-        else:
-            raise ValueError(f"Unknown strategy_type: {record.strategy_type!r}")
-
-        # Parse date filters
-        parsed_start = datetime.fromisoformat(start_date) if start_date else None
-        parsed_end = datetime.fromisoformat(end_date) if end_date else None
-
-        # Load OHLCV data
-        ohlcv_df = read_ohlcv(
-            session, record.symbol, record.market, record.interval,
-            start=parsed_start, end=parsed_end,
-        )
-        if ohlcv_df.empty:
-            raise ValueError(
-                f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}"
-            )
-
-        # Build pipeline components
-        feature_engine = FeatureEngine()
-        risk_engine = RiskEngine()
-        cost_model = COST_MODELS[record.market]
-        sizing_cfg = SizingConfig(
-            mode=SizingMode(sizing_mode),
-            **(sizing_params or {}),
-        )
-
-        # Resolve fill model enum (Phase 53 API-01)
-        from poseidon.backtest.pending_orders import FillModel
-
-        fill_model_enum = FillModel(fill_model) if fill_model else None
-
-        # Load funding rates if requested and market is crypto_perp (Phase 53 API-01)
-        funding_df = None
-        if include_funding and record.market == "crypto_perp":
-            from poseidon.models.funding_rate import FundingRateRecord
-
-            rows = (
-                session.query(FundingRateRecord)
-                .filter(FundingRateRecord.symbol == record.symbol)
-                .order_by(FundingRateRecord.time)
-                .all()
-            )
-            if rows:
-                funding_df = pd.DataFrame(
-                    [{"datetime": r.time, "funding_rate": r.funding_rate} for r in rows]
-                )
-                funding_df.index = pd.to_datetime(funding_df["datetime"], utc=True)
-                funding_df = funding_df.drop(columns=["datetime"])
-
-        # Run backtest
-        runner = BacktestRunner(
-            strategy=strategy,
-            feature_engine=feature_engine,
-            risk_engine=risk_engine,
-            cost_model=cost_model,
-            initial_capital=initial_capital,
-            sizing_config=sizing_cfg,
-            fill_model=fill_model_enum,
-            include_funding=include_funding,
-            funding_rates=funding_df,
-        )
-        result = runner.run(ohlcv_df)
-        backtest_id = result.backtest_id
-
-        # Build BacktestConfig for repository persistence
-        bt_config = BacktestConfig(
-            strategy_type=record.strategy_type,
-            symbol=record.symbol,
-            market=record.market,
-            interval=record.interval,
-            initial_capital=initial_capital,
-            start_date=parsed_start,
-            end_date=parsed_end,
-            strategy_params=record.config,
-        )
-
-        # Persist via BacktestRepository (trades + equity curve included)
-        repo = BacktestRepository(session)
-        repo.save_result(
-            config=bt_config,
-            result=result,
-            trades=runner.portfolio.trades if runner.portfolio else [],
-            equity_curve=runner.portfolio.equity_curve if runner.portfolio else [],
-            strategy_id=sid,
-            completed_at=datetime.now(timezone.utc),
-        )
-        session.commit()
-
-        logger.info(
-            "Backtest completed: %s (strategy=%s, trades=%d)",
-            backtest_id, strategy_id, result.trade_count,
-        )
-        return {
-            "backtest_id": str(backtest_id),
-            "status": result.status,
-            "trade_count": result.trade_count,
-        }
-
-    except Exception as exc:
-        # Persist error state
+    with db_session() as session:
         try:
-            error_record = BacktestRecord(
-                id=backtest_id,
-                strategy_id=uuid.UUID(strategy_id) if strategy_id else None,
-                strategy_type="unknown",
-                symbol="",
-                market="",
-                interval="1d",
-                config={},
-                status="failed",
-                error_message=str(exc),
-            )
-            session.rollback()
-            session.add(error_record)
-            session.commit()
-        except Exception:
-            logger.exception("Failed to persist error backtest record")
-        logger.exception("Backtest task failed for strategy %s", strategy_id)
-        raise
+            # Load strategy record from DB
+            sid = uuid.UUID(strategy_id)
+            record = session.get(StrategyRecord, sid)
+            if not record:
+                raise ValueError(f"Strategy {strategy_id} not found")
 
-    finally:
-        session.close()
+            # Reconstruct strategy object
+            if record.strategy_type == "liquidity_sweep":
+                from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
+                ls_config = {**record.config, "symbol": record.symbol, "market": record.market, "interval": record.interval}
+                strategy = LiquiditySweepStrategy(config=ls_config, strategy_id=record.id)
+            elif record.strategy_type == "rule":
+                strategy = RuleStrategy(config=record.config, strategy_id=record.id)
+            elif record.strategy_type == "voting":
+                strategy = VotingStrategy(config=record.config, strategy_id=record.id)
+            elif record.strategy_type == "model":
+                # Route to GPU worker which has model dependencies
+                from poseidon.workers.gpu_tasks import run_model_backtest
+                result = run_model_backtest.delay(
+                    strategy_id, start_date, end_date, initial_capital,
+                    sizing_mode, sizing_params,
+                )
+                logger.info("Routed model backtest to GPU worker: %s", result.id)
+                return {"backtest_id": result.id, "status": "routed_to_gpu", "trade_count": 0}
+            else:
+                raise ValueError(f"Unknown strategy_type: {record.strategy_type!r}")
+
+            # Parse date filters
+            parsed_start = datetime.fromisoformat(start_date) if start_date else None
+            parsed_end = datetime.fromisoformat(end_date) if end_date else None
+
+            # Load OHLCV data
+            ohlcv_df = read_ohlcv(
+                session, record.symbol, record.market, record.interval,
+                start=parsed_start, end=parsed_end,
+            )
+            if ohlcv_df.empty:
+                raise ValueError(
+                    f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}"
+                )
+
+            # Build pipeline components
+            feature_engine = FeatureEngine()
+            risk_engine = RiskEngine()
+            cost_model = COST_MODELS[record.market]
+            sizing_cfg = SizingConfig(
+                mode=SizingMode(sizing_mode),
+                **(sizing_params or {}),
+            )
+
+            # Resolve fill model enum (Phase 53 API-01)
+            from poseidon.backtest.pending_orders import FillModel
+
+            fill_model_enum = FillModel(fill_model) if fill_model else None
+
+            # Load funding rates if requested and market is crypto_perp (Phase 53 API-01)
+            funding_df = None
+            if include_funding and record.market == "crypto_perp":
+                from poseidon.models.funding_rate import FundingRateRecord
+
+                rows = (
+                    session.query(FundingRateRecord)
+                    .filter(FundingRateRecord.symbol == record.symbol)
+                    .order_by(FundingRateRecord.time)
+                    .all()
+                )
+                if rows:
+                    funding_df = pd.DataFrame(
+                        [{"datetime": r.time, "funding_rate": r.funding_rate} for r in rows]
+                    )
+                    funding_df.index = pd.to_datetime(funding_df["datetime"], utc=True)
+                    funding_df = funding_df.drop(columns=["datetime"])
+
+            # Run backtest
+            runner = BacktestRunner(
+                strategy=strategy,
+                feature_engine=feature_engine,
+                risk_engine=risk_engine,
+                cost_model=cost_model,
+                initial_capital=initial_capital,
+                sizing_config=sizing_cfg,
+                fill_model=fill_model_enum,
+                include_funding=include_funding,
+                funding_rates=funding_df,
+            )
+            result = runner.run(ohlcv_df)
+            backtest_id = result.backtest_id
+
+            # Build BacktestConfig for repository persistence
+            bt_config = BacktestConfig(
+                strategy_type=record.strategy_type,
+                symbol=record.symbol,
+                market=record.market,
+                interval=record.interval,
+                initial_capital=initial_capital,
+                start_date=parsed_start,
+                end_date=parsed_end,
+                strategy_params=record.config,
+            )
+
+            # Persist via BacktestRepository (trades + equity curve included)
+            repo = BacktestRepository(session)
+            repo.save_result(
+                config=bt_config,
+                result=result,
+                trades=runner.portfolio.trades if runner.portfolio else [],
+                equity_curve=runner.portfolio.equity_curve if runner.portfolio else [],
+                strategy_id=sid,
+                completed_at=datetime.now(timezone.utc),
+            )
+            session.commit()
+
+            logger.info(
+                "Backtest completed: %s (strategy=%s, trades=%d)",
+                backtest_id, strategy_id, result.trade_count,
+            )
+            return {
+                "backtest_id": str(backtest_id),
+                "status": result.status,
+                "trade_count": result.trade_count,
+            }
+
+        except Exception as exc:
+            # Persist error state
+            try:
+                error_record = BacktestRecord(
+                    id=backtest_id,
+                    strategy_id=uuid.UUID(strategy_id) if strategy_id else None,
+                    strategy_type="unknown",
+                    symbol="",
+                    market="",
+                    interval="1d",
+                    config={},
+                    status="failed",
+                    error_message=str(exc),
+                )
+                session.rollback()
+                session.add(error_record)
+                session.commit()
+            except Exception:
+                logger.exception("Failed to persist error backtest record")
+            logger.exception("Backtest task failed for strategy %s", strategy_id)
+            raise
 
 
 @celery_app.task(
@@ -611,99 +602,97 @@ def run_dual_mode_task(
     from poseidon.backtest.comparison import run_dual_mode_comparison
     from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
 
-    session = SessionLocal()
-    try:
-        sid = uuid.UUID(strategy_id)
-        record = session.get(StrategyRecord, sid)
-        if not record:
-            raise ValueError(f"Strategy {strategy_id} not found")
+    with db_session() as session:
+        try:
+            sid = uuid.UUID(strategy_id)
+            record = session.get(StrategyRecord, sid)
+            if not record:
+                raise ValueError(f"Strategy {strategy_id} not found")
 
-        # Build strategy factory based on strategy_type (Phase 53 API-03)
-        if record.strategy_type == "voting":
-            strategy_factory = lambda: VotingStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
-        elif record.strategy_type == "liquidity_sweep":
-            from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
+            # Build strategy factory based on strategy_type (Phase 53 API-03)
+            if record.strategy_type == "voting":
+                strategy_factory = lambda: VotingStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
+            elif record.strategy_type == "liquidity_sweep":
+                from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
 
-            ls_config = {**record.config, "symbol": record.symbol, "market": record.market, "interval": record.interval}
-            strategy_factory = lambda: LiquiditySweepStrategyFactory.from_config(ls_config)  # noqa: E731
-        elif record.strategy_type == "rule":
-            strategy_factory = lambda: RuleStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
-        elif record.strategy_type == "model":
-            raise ValueError("Dual-mode comparison not supported for model strategies")
-        else:
-            raise ValueError(f"Unknown strategy_type: {record.strategy_type!r}")
+                ls_config = {**record.config, "symbol": record.symbol, "market": record.market, "interval": record.interval}
+                strategy_factory = lambda: LiquiditySweepStrategyFactory.from_config(ls_config)  # noqa: E731
+            elif record.strategy_type == "rule":
+                strategy_factory = lambda: RuleStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
+            elif record.strategy_type == "model":
+                raise ValueError("Dual-mode comparison not supported for model strategies")
+            else:
+                raise ValueError(f"Unknown strategy_type: {record.strategy_type!r}")
 
-        # Parse date filters
-        parsed_start = datetime.fromisoformat(start_date) if start_date else None
-        parsed_end = datetime.fromisoformat(end_date) if end_date else None
+            # Parse date filters
+            parsed_start = datetime.fromisoformat(start_date) if start_date else None
+            parsed_end = datetime.fromisoformat(end_date) if end_date else None
 
-        # Load OHLCV data
-        ohlcv_df = read_ohlcv(
-            session, record.symbol, record.market, record.interval,
-            start=parsed_start, end=parsed_end,
-        )
-        if ohlcv_df.empty:
-            raise ValueError(
-                f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}"
+            # Load OHLCV data
+            ohlcv_df = read_ohlcv(
+                session, record.symbol, record.market, record.interval,
+                start=parsed_start, end=parsed_end,
             )
-
-        # Build pipeline components
-        feature_engine = FeatureEngine()
-        risk_engine = RiskEngine()
-        cost_model = COST_MODELS[record.market]
-        sizing_cfg = SizingConfig(
-            mode=SizingMode(sizing_mode),
-            **(sizing_params or {}),
-        )
-
-        # Load funding rates if requested (Phase 53 API-03)
-        funding_df = None
-        if include_funding and record.market == "crypto_perp":
-            from poseidon.models.funding_rate import FundingRateRecord
-
-            rows = (
-                session.query(FundingRateRecord)
-                .filter(FundingRateRecord.symbol == record.symbol)
-                .order_by(FundingRateRecord.time)
-                .all()
-            )
-            if rows:
-                funding_df = pd.DataFrame(
-                    [{"datetime": r.time, "funding_rate": r.funding_rate} for r in rows]
+            if ohlcv_df.empty:
+                raise ValueError(
+                    f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}"
                 )
-                funding_df.index = pd.to_datetime(funding_df["datetime"], utc=True)
-                funding_df = funding_df.drop(columns=["datetime"])
 
-        # Run dual-mode comparison
-        dual_result = run_dual_mode_comparison(
-            strategy_factory=strategy_factory,
-            ohlcv=ohlcv_df,
-            feature_engine=feature_engine,
-            risk_engine=risk_engine,
-            cost_model=cost_model,
-            initial_capital=initial_capital,
-            sizing_config=sizing_cfg,
-            include_funding=include_funding,
-            db_session=session,
-            funding_rates=funding_df,
-        )
+            # Build pipeline components
+            feature_engine = FeatureEngine()
+            risk_engine = RiskEngine()
+            cost_model = COST_MODELS[record.market]
+            sizing_cfg = SizingConfig(
+                mode=SizingMode(sizing_mode),
+                **(sizing_params or {}),
+            )
 
-        logger.info(
-            "Dual-mode comparison completed: strategy=%s, is_viable=%s",
-            strategy_id, dual_result.is_viable,
-        )
-        return {
-            "optimistic_metrics": dual_result.optimistic_result.metrics,
-            "pessimistic_metrics": dual_result.pessimistic_result.metrics,
-            "delta_metrics": dual_result.delta_metrics,
-            "is_viable": dual_result.is_viable,
-        }
+            # Load funding rates if requested (Phase 53 API-03)
+            funding_df = None
+            if include_funding and record.market == "crypto_perp":
+                from poseidon.models.funding_rate import FundingRateRecord
 
-    except Exception:
-        logger.exception("Dual-mode task failed for strategy %s", strategy_id)
-        raise
-    finally:
-        session.close()
+                rows = (
+                    session.query(FundingRateRecord)
+                    .filter(FundingRateRecord.symbol == record.symbol)
+                    .order_by(FundingRateRecord.time)
+                    .all()
+                )
+                if rows:
+                    funding_df = pd.DataFrame(
+                        [{"datetime": r.time, "funding_rate": r.funding_rate} for r in rows]
+                    )
+                    funding_df.index = pd.to_datetime(funding_df["datetime"], utc=True)
+                    funding_df = funding_df.drop(columns=["datetime"])
+
+            # Run dual-mode comparison
+            dual_result = run_dual_mode_comparison(
+                strategy_factory=strategy_factory,
+                ohlcv=ohlcv_df,
+                feature_engine=feature_engine,
+                risk_engine=risk_engine,
+                cost_model=cost_model,
+                initial_capital=initial_capital,
+                sizing_config=sizing_cfg,
+                include_funding=include_funding,
+                db_session=session,
+                funding_rates=funding_df,
+            )
+
+            logger.info(
+                "Dual-mode comparison completed: strategy=%s, is_viable=%s",
+                strategy_id, dual_result.is_viable,
+            )
+            return {
+                "optimistic_metrics": dual_result.optimistic_result.metrics,
+                "pessimistic_metrics": dual_result.pessimistic_result.metrics,
+                "delta_metrics": dual_result.delta_metrics,
+                "is_viable": dual_result.is_viable,
+            }
+
+        except Exception:
+            logger.exception("Dual-mode task failed for strategy %s", strategy_id)
+            raise
 
 
 @celery_app.task(
@@ -740,138 +729,135 @@ def run_optimization_task(
     Returns:
         Dict with trial count, best params, and best metric value.
     """
-    session = SessionLocal()
-    try:
-        # Load strategy record from DB
-        sid = uuid.UUID(strategy_id)
-        record = session.get(StrategyRecord, sid)
-        if not record:
-            raise ValueError(f"Strategy {strategy_id} not found")
+    with db_session() as session:
+        try:
+            # Load strategy record from DB
+            sid = uuid.UUID(strategy_id)
+            record = session.get(StrategyRecord, sid)
+            if not record:
+                raise ValueError(f"Strategy {strategy_id} not found")
 
-        if record.strategy_type != "rule":
-            raise NotImplementedError(
-                f"Optimization for strategy_type={record.strategy_type!r} not yet supported"
+            if record.strategy_type != "rule":
+                raise NotImplementedError(
+                    f"Optimization for strategy_type={record.strategy_type!r} not yet supported"
+                )
+
+            # Parse date filters
+            parsed_start = datetime.fromisoformat(start_date) if start_date else None
+            parsed_end = datetime.fromisoformat(end_date) if end_date else None
+
+            # Load OHLCV data
+            ohlcv_df = read_ohlcv(
+                session, record.symbol, record.market, record.interval,
+                start=parsed_start, end=parsed_end,
+            )
+            if ohlcv_df.empty:
+                raise ValueError(
+                    f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}"
+                )
+
+            # Build pipeline components
+            feature_engine = FeatureEngine()
+            risk_engine = RiskEngine()
+            cost_model = COST_MODELS[record.market]
+            sizing_cfg = SizingConfig(
+                mode=SizingMode(sizing_mode),
+                **(sizing_params or {}),
             )
 
-        # Parse date filters
-        parsed_start = datetime.fromisoformat(start_date) if start_date else None
-        parsed_end = datetime.fromisoformat(end_date) if end_date else None
+            # Strategy factory: merges param_grid values into the base config
+            base_config = dict(record.config) if record.config else {}
 
-        # Load OHLCV data
-        ohlcv_df = read_ohlcv(
-            session, record.symbol, record.market, record.interval,
-            start=parsed_start, end=parsed_end,
-        )
-        if ohlcv_df.empty:
-            raise ValueError(
-                f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}"
+            def strategy_factory(params: dict) -> RuleStrategy:
+                merged = {**base_config, **params}
+                return RuleStrategy(config=merged, strategy_id=record.id)
+
+            # Run optimization
+            if method == "grid":
+                optimizer = GridSearchOptimizer(
+                    feature_engine=feature_engine,
+                    risk_engine=risk_engine,
+                    cost_model=cost_model,
+                    initial_capital=1_000_000.0,
+                    sizing_config=sizing_cfg,
+                )
+                trials = optimizer.optimize(
+                    strategy_factory=strategy_factory,
+                    ohlcv=ohlcv_df,
+                    param_grid=param_grid,
+                    metric=target_metric,
+                )
+            elif method == "bayesian":
+                optimizer = BayesianOptimizer(
+                    feature_engine=feature_engine,
+                    risk_engine=risk_engine,
+                    cost_model=cost_model,
+                    initial_capital=1_000_000.0,
+                    sizing_config=sizing_cfg,
+                )
+                # Convert param_grid to Bayesian param_space format
+                # Expected input: {"param": [low, high, "int"|"float"]}
+                param_space = {}
+                for key, spec in param_grid.items():
+                    if isinstance(spec, (list, tuple)) and len(spec) == 3:
+                        param_space[key] = (spec[0], spec[1], spec[2])
+                    else:
+                        raise ValueError(
+                            f"Bayesian param_grid[{key!r}] must be [low, high, type], "
+                            f"got {spec!r}"
+                        )
+                trials = optimizer.optimize(
+                    strategy_factory=strategy_factory,
+                    ohlcv=ohlcv_df,
+                    param_space=param_space,
+                    n_trials=n_trials,
+                    metric=target_metric,
+                )
+            else:
+                raise ValueError(f"Unknown optimization method: {method!r}. Use 'grid' or 'bayesian'.")
+
+            # Persist best result as a BacktestRecord with walk_forward metadata
+            best = trials[0] if trials else None
+            if best:
+                bt_record = BacktestRecord(
+                    id=uuid.uuid4(),
+                    strategy_id=sid,
+                    strategy_type=record.strategy_type,
+                    symbol=record.symbol,
+                    market=record.market,
+                    interval=record.interval,
+                    config={
+                        "optimization_method": method,
+                        "param_grid": param_grid,
+                        "target_metric": target_metric,
+                        "strategy_params": record.config,
+                    },
+                    metrics=best.metrics,
+                    walk_forward={
+                        "best_params": best.params,
+                        "best_metric_value": best.metric_value,
+                        "total_trials": len(trials),
+                    },
+                    status="completed",
+                    completed_at=datetime.now(timezone.utc),
+                )
+                session.add(bt_record)
+                session.commit()
+
+            logger.info(
+                "Optimization completed: strategy=%s method=%s trials=%d best_metric=%.4f",
+                strategy_id, method, len(trials),
+                best.metric_value if best else 0.0,
             )
+            return {
+                "trials": len(trials),
+                "best_params": best.params if best else {},
+                "best_metric": best.metric_value if best else 0.0,
+            }
 
-        # Build pipeline components
-        feature_engine = FeatureEngine()
-        risk_engine = RiskEngine()
-        cost_model = COST_MODELS[record.market]
-        sizing_cfg = SizingConfig(
-            mode=SizingMode(sizing_mode),
-            **(sizing_params or {}),
-        )
-
-        # Strategy factory: merges param_grid values into the base config
-        base_config = dict(record.config) if record.config else {}
-
-        def strategy_factory(params: dict) -> RuleStrategy:
-            merged = {**base_config, **params}
-            return RuleStrategy(config=merged, strategy_id=record.id)
-
-        # Run optimization
-        if method == "grid":
-            optimizer = GridSearchOptimizer(
-                feature_engine=feature_engine,
-                risk_engine=risk_engine,
-                cost_model=cost_model,
-                initial_capital=1_000_000.0,
-                sizing_config=sizing_cfg,
-            )
-            trials = optimizer.optimize(
-                strategy_factory=strategy_factory,
-                ohlcv=ohlcv_df,
-                param_grid=param_grid,
-                metric=target_metric,
-            )
-        elif method == "bayesian":
-            optimizer = BayesianOptimizer(
-                feature_engine=feature_engine,
-                risk_engine=risk_engine,
-                cost_model=cost_model,
-                initial_capital=1_000_000.0,
-                sizing_config=sizing_cfg,
-            )
-            # Convert param_grid to Bayesian param_space format
-            # Expected input: {"param": [low, high, "int"|"float"]}
-            param_space = {}
-            for key, spec in param_grid.items():
-                if isinstance(spec, (list, tuple)) and len(spec) == 3:
-                    param_space[key] = (spec[0], spec[1], spec[2])
-                else:
-                    raise ValueError(
-                        f"Bayesian param_grid[{key!r}] must be [low, high, type], "
-                        f"got {spec!r}"
-                    )
-            trials = optimizer.optimize(
-                strategy_factory=strategy_factory,
-                ohlcv=ohlcv_df,
-                param_space=param_space,
-                n_trials=n_trials,
-                metric=target_metric,
-            )
-        else:
-            raise ValueError(f"Unknown optimization method: {method!r}. Use 'grid' or 'bayesian'.")
-
-        # Persist best result as a BacktestRecord with walk_forward metadata
-        best = trials[0] if trials else None
-        if best:
-            bt_record = BacktestRecord(
-                id=uuid.uuid4(),
-                strategy_id=sid,
-                strategy_type=record.strategy_type,
-                symbol=record.symbol,
-                market=record.market,
-                interval=record.interval,
-                config={
-                    "optimization_method": method,
-                    "param_grid": param_grid,
-                    "target_metric": target_metric,
-                    "strategy_params": record.config,
-                },
-                metrics=best.metrics,
-                walk_forward={
-                    "best_params": best.params,
-                    "best_metric_value": best.metric_value,
-                    "total_trials": len(trials),
-                },
-                status="completed",
-                completed_at=datetime.now(timezone.utc),
-            )
-            session.add(bt_record)
-            session.commit()
-
-        logger.info(
-            "Optimization completed: strategy=%s method=%s trials=%d best_metric=%.4f",
-            strategy_id, method, len(trials),
-            best.metric_value if best else 0.0,
-        )
-        return {
-            "trials": len(trials),
-            "best_params": best.params if best else {},
-            "best_metric": best.metric_value if best else 0.0,
-        }
-
-    except Exception as exc:
-        logger.exception("Optimization task failed for strategy %s", strategy_id)
-        raise
-
-    finally:
-        session.close()
+        except Exception as exc:
+            logger.exception("Optimization task failed for strategy %s", strategy_id)
+            raise
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.compute_var_snapshot")
@@ -894,9 +880,8 @@ def compute_var_snapshot(method: str = "all") -> dict:
     from poseidon.risk.var.returns import align_returns, compute_returns
     from poseidon.risk.var.types import VaRMethod
 
-    db = SessionLocal()
     redis_client = get_redis("cache")
-    try:
+    with db_session() as db:
         # 1. Rebuild portfolio from DB
         portfolio = VirtualPortfolio()
         portfolio.rebuild_from_db(db)
@@ -1017,12 +1002,6 @@ def compute_var_snapshot(method: str = "all") -> dict:
         computed_methods = [r.method for r in results]
         logger.info("VaR computation completed: methods=%s", computed_methods)
         return {"status": "ok", "methods": computed_methods}
-    except Exception:
-        db.rollback()
-        logger.exception("VaR computation failed")
-        raise
-    finally:
-        db.close()
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.compute_mc_var")
@@ -1043,9 +1022,8 @@ def compute_mc_var() -> dict:
     from poseidon.risk.var.calculators import VaRCalculator
     from poseidon.risk.var.covariance import load_cached_covariance
 
-    db = SessionLocal()
     redis_client = get_redis("cache")
-    try:
+    with db_session() as db:
         # 1. Load cached covariance (per D-06: never recompute inline)
         cached = load_cached_covariance(redis_client)
         if cached is None:
@@ -1114,12 +1092,6 @@ def compute_mc_var() -> dict:
             "var_95": result.var_95,
             "var_99": result.var_99,
         }
-    except Exception:
-        db.rollback()
-        logger.exception("MC VaR computation failed")
-        raise
-    finally:
-        db.close()
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.update_covariance_matrix")
@@ -1138,9 +1110,8 @@ def update_covariance_matrix() -> dict:
     from poseidon.risk.var.covariance import cache_covariance, compute_covariance
     from poseidon.risk.var.returns import align_returns, compute_returns
 
-    db = SessionLocal()
     redis_client = get_redis("cache")
-    try:
+    with db_session() as db:
         # 1. Get active portfolio symbols
         portfolio = VirtualPortfolio()
         portfolio.rebuild_from_db(db)
@@ -1190,12 +1161,6 @@ def update_covariance_matrix() -> dict:
         logger.info("Covariance matrix updated: %d symbols, %d observations", len(cov_symbols), len(aligned))
         return {"status": "ok", "symbols": len(cov_symbols), "observations": len(aligned)}
 
-    except Exception:
-        logger.exception("Covariance matrix update failed")
-        raise
-    finally:
-        db.close()
-
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.autoresearch_run", bind=True)
 def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
@@ -1221,94 +1186,93 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
     from poseidon.backtest.walk_forward import WalkForwardConfig
 
     started_at = datetime.now(timezone.utc)
-    db = SessionLocal()
     redis_client = get_redis("celery")
+    task_id = self.request.id or "local"
 
-    try:
-        # Reconstruct SearchConfig from plain dict
-        holdout_dict = search_config.get("holdout", {})
-        wf_dict = search_config.get("walk_forward", {})
-        cfg = SearchConfigClass(
-            n_trials=search_config.get("n_trials", 50),
-            max_trials=search_config.get("max_trials", 100),
-            min_wfe=search_config.get("min_wfe", 0.50),
-            seed=search_config.get("seed", 42),
-            storage_url=search_config.get("storage_url"),
-            holdout=HoldoutConfig(**holdout_dict) if holdout_dict else HoldoutConfig(),
-            walk_forward=WalkForwardConfig(**wf_dict) if wf_dict else WalkForwardConfig(),
-            strategy_mode=search_config.get("strategy_mode", "bidirectional"),
-        )
-
-        market_specs = [MarketSpec(**m) for m in markets]
-        task_id = self.request.id or "local"
-
-        # D-12: graceful stop check via Redis flag
-        def check_stop() -> bool:
-            return bool(redis_client.get(f"autoresearch:stop:{task_id}"))
-
-        # D-11: heartbeat via Celery task state update
-        def update_progress(current: int, total: int, symbol: str) -> None:
-            self.update_state(
-                state="PROGRESS",
-                meta={
-                    "current_market": current + 1,
-                    "total_markets": total,
-                    "symbol": symbol,
-                },
+    with db_session() as db:
+        try:
+            # Reconstruct SearchConfig from plain dict
+            holdout_dict = search_config.get("holdout", {})
+            wf_dict = search_config.get("walk_forward", {})
+            cfg = SearchConfigClass(
+                n_trials=search_config.get("n_trials", 50),
+                max_trials=search_config.get("max_trials", 100),
+                min_wfe=search_config.get("min_wfe", 0.50),
+                seed=search_config.get("seed", 42),
+                storage_url=search_config.get("storage_url"),
+                holdout=HoldoutConfig(**holdout_dict) if holdout_dict else HoldoutConfig(),
+                walk_forward=WalkForwardConfig(**wf_dict) if wf_dict else WalkForwardConfig(),
+                strategy_mode=search_config.get("strategy_mode", "bidirectional"),
             )
 
-        # Phase 45: optional ML model for sub-signal search (D-20)
-        mv_id = search_config.get("model_version_id")
+            market_specs = [MarketSpec(**m) for m in markets]
 
-        # Phase 53 API-02: inject strategy factory based on strategy_type
-        strategy_type = search_config.get("strategy_type", "voting")
-        strategy_factory = None  # None = VotingStrategyFactory (backward compat)
-        if strategy_type == "liquidity_sweep":
-            from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
+            # D-12: graceful stop check via Redis flag
+            def check_stop() -> bool:
+                return bool(redis_client.get(f"autoresearch:stop:{task_id}"))
 
-            strategy_factory = LiquiditySweepStrategyFactory()
+            # D-11: heartbeat via Celery task state update
+            def update_progress(current: int, total: int, symbol: str) -> None:
+                self.update_state(
+                    state="PROGRESS",
+                    meta={
+                        "current_market": current + 1,
+                        "total_markets": total,
+                        "symbol": symbol,
+                    },
+                )
 
-        runner = AutoResearchRunner(
-            db_session=db,
-            search_config=cfg,
-            stop_check=check_stop,
-            progress_callback=update_progress,
-            feature_specs="r2",  # Signal runner to use get_r2_specs() per-market
-            model_version_id=mv_id,
-            strategy_factory=strategy_factory,
-        )
-        results = runner.run(market_specs)
+            # Phase 45: optional ML model for sub-signal search (D-20)
+            mv_id = search_config.get("model_version_id")
 
-        # Generate report (D-15, D-16)
-        completed_at = datetime.now(timezone.utc)
-        tracker = ExperimentTracker(db)
-        study_names = [
-            r.search_result.study_name
-            for r in results
-            if r.search_result is not None
-        ]
-        report = generate_report(
-            tracker,
-            study_names,
-            run_id=task_id,
-            started_at=started_at,
-            completed_at=completed_at,
-        )
-        report["markets_failed"] = sum(1 for r in results if r.error is not None)
+            # Phase 53 API-02: inject strategy factory based on strategy_type
+            strategy_type = search_config.get("strategy_type", "voting")
+            strategy_factory = None  # None = VotingStrategyFactory (backward compat)
+            if strategy_type == "liquidity_sweep":
+                from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
 
-        was_stopped = check_stop()
-        return {
-            "status": "stopped" if was_stopped else "completed",
-            "markets_processed": len(results),
-            "report": report,
-        }
-    finally:
-        # D-12: clean up stop flag
-        try:
-            redis_client.delete(f"autoresearch:stop:{task_id}")
-        except Exception:
-            pass
-        db.close()
+                strategy_factory = LiquiditySweepStrategyFactory()
+
+            runner = AutoResearchRunner(
+                db_session=db,
+                search_config=cfg,
+                stop_check=check_stop,
+                progress_callback=update_progress,
+                feature_specs="r2",  # Signal runner to use get_r2_specs() per-market
+                model_version_id=mv_id,
+                strategy_factory=strategy_factory,
+            )
+            results = runner.run(market_specs)
+
+            # Generate report (D-15, D-16)
+            completed_at = datetime.now(timezone.utc)
+            tracker = ExperimentTracker(db)
+            study_names = [
+                r.search_result.study_name
+                for r in results
+                if r.search_result is not None
+            ]
+            report = generate_report(
+                tracker,
+                study_names,
+                run_id=task_id,
+                started_at=started_at,
+                completed_at=completed_at,
+            )
+            report["markets_failed"] = sum(1 for r in results if r.error is not None)
+
+            was_stopped = check_stop()
+            return {
+                "status": "stopped" if was_stopped else "completed",
+                "markets_processed": len(results),
+                "report": report,
+            }
+        finally:
+            # D-12: clean up stop flag
+            try:
+                redis_client.delete(f"autoresearch:stop:{task_id}")
+            except Exception:
+                pass
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.compute_quality_scores")
@@ -1323,7 +1287,6 @@ def compute_quality_scores() -> dict:
     from poseidon.data.quality_scorer import DataQualityScorer
     from poseidon.data.storage import read_ohlcv
     from poseidon.data.symbols import load_symbols
-    from poseidon.models.base import SessionLocal
     from poseidon.models.quality_score import QualityScore
     from poseidon.risk.var.returns import MARKET_CALENDARS
 
@@ -1334,8 +1297,7 @@ def compute_quality_scores() -> dict:
     scored = 0
     skipped = 0
 
-    db = SessionLocal()
-    try:
+    with db_session() as db:
         for market_name, market_cfg in config.markets.items():
             calendar = MARKET_CALENDARS.get(market_name, {"freq": "B", "tz": "UTC"})
             symbols = market_cfg.symbols
@@ -1408,12 +1370,6 @@ def compute_quality_scores() -> dict:
 
         db.commit()
         logger.info("Quality scoring complete: scored=%d, skipped=%d", scored, skipped)
-    except Exception:
-        db.rollback()
-        logger.exception("Quality scoring failed")
-        raise
-    finally:
-        db.close()
 
     return {"scored": scored, "skipped": skipped}
 
@@ -1448,9 +1404,8 @@ def run_stress_test(
     from poseidon.risk.var.covariance import load_cached_covariance
     from poseidon.risk.var.returns import align_returns, compute_returns
 
-    db = SessionLocal()
     redis_client = get_redis("cache")
-    try:
+    with db_session() as db:
         # 1. Rebuild portfolio from DB
         portfolio = VirtualPortfolio()
         portfolio.rebuild_from_db(db)
@@ -1542,11 +1497,6 @@ def run_stress_test(
                 result.computed_at.isoformat() if result.computed_at else None
             ),
         }
-    except Exception:
-        logger.exception("Stress test failed for scenario=%s", scenario_name)
-        raise
-    finally:
-        db.close()
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.evaluate_active_strategies")
@@ -1577,8 +1527,7 @@ def evaluate_active_strategies(
     if not market or not interval:
         return {"error": "market and interval required"}
 
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         strategies = (
             session.query(StrategyRecord)
             .filter(
@@ -1626,8 +1575,6 @@ def evaluate_active_strategies(
             "signals_generated": total_signals,
             "errors": errors,
         }
-    finally:
-        session.close()
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.trigger_risk_update")
@@ -1714,16 +1661,13 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
     protection_mgr = ProtectionManager.from_defaults()
 
     # Check portfolio-level protections first (daily_loss halts ALL trading)
-    prot_db = SessionLocal()
-    try:
+    with db_session() as prot_db:
         daily_results = protection_mgr.check_all("__portfolio__", strategy_cfg.market, prot_db)
         portfolio_locked = any(r.locked and r.protection_type == "daily_loss" for r in daily_results)
         if portfolio_locked:
             reason = next(r.reason for r in daily_results if r.locked and r.protection_type == "daily_loss")
             logger.warning("portfolio_monthly_rebalance: portfolio locked by daily_loss protection — %s", reason)
             return {"skipped": "protection_locked", "reason": reason}
-    finally:
-        prot_db.close()
 
     # Run strategy
     strategy = RevenueBreakoutStrategy(strategy_cfg)
@@ -1738,8 +1682,7 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
         return {"rebalanced": True, "orders": 0, "sells": 0}
 
     # Filter out locked symbols (per D-12)
-    prot_db = SessionLocal()
-    try:
+    with db_session() as prot_db:
         unlocked_orders = []
         for ro in rebalance_orders:
             if protection_mgr.is_locked(ro.symbol, strategy_cfg.market, prot_db):
@@ -1749,8 +1692,6 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
             else:
                 unlocked_orders.append(ro)
         rebalance_orders = unlocked_orders
-    finally:
-        prot_db.close()
 
     if not rebalance_orders:
         logger.info("portfolio_monthly_rebalance: all symbols locked by protection")
@@ -1765,8 +1706,7 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
 
     # Capture sell holding info BEFORE execution (positions get closed)
     sell_holdings_info: dict[str, dict] = {}
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         for ro in rebalance_orders:
             if ro.action == "sell":
                 record = (
@@ -1783,8 +1723,6 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
                         "entry_date": record.entry_date,
                         "shares": record.shares,
                     }
-    finally:
-        session.close()
 
     # Execute rebalance
     results = order_manager.execute_rebalance(
@@ -1793,8 +1731,7 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
 
     # Create TradeLogRecords for filled sell orders
     trade_log_count = 0
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         for result in results:
             if result.success and result.order.action == "sell":
                 sym = result.order.symbol
@@ -1820,11 +1757,6 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
                     session.add(trade_log)
                     trade_log_count += 1
         session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
     logger.info(
         "portfolio_monthly_rebalance: %d orders, %d trade logs",
@@ -1919,8 +1851,7 @@ def portfolio_stop_loss_monitor() -> dict:
         )
 
         # Create TradeLogRecords for stopped-out positions
-        session = SessionLocal()
-        try:
+        with db_session() as session:
             for result in results:
                 if result.success:
                     sym = result.order.symbol
@@ -1942,11 +1873,6 @@ def portfolio_stop_loss_monitor() -> dict:
                         )
                         session.add(trade_log)
             session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
     logger.info(
         "portfolio_stop_loss_monitor: checked=%d stopped_out=%s",
@@ -1999,8 +1925,7 @@ def portfolio_nav_snapshot() -> dict:
     total_nav = holdings_value + cash
 
     today = date_type.today()
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         # Upsert: avoid duplicate if re-run on same day
         existing = (
             session.query(NavSnapshotRecord)
@@ -2022,11 +1947,6 @@ def portfolio_nav_snapshot() -> dict:
             )
             session.add(record)
         session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
     logger.info(
         "portfolio_nav_snapshot: date=%s total_nav=%.2f holdings=%d",
@@ -2061,8 +1981,7 @@ def _ensure_ohlcv_data(symbols: list[str], market: str = "tw_stock") -> None:
     from poseidon.data.fetchers import get_fetcher
     from poseidon.data.storage import upsert_ohlcv
 
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         existing = set(
             row[0]
             for row in session.query(OHLCV.symbol)
@@ -2070,8 +1989,6 @@ def _ensure_ohlcv_data(symbols: list[str], market: str = "tw_stock") -> None:
             .distinct()
             .all()
         )
-    finally:
-        session.close()
 
     missing = [s for s in symbols if s not in existing]
     if not missing:
@@ -2083,8 +2000,7 @@ def _ensure_ohlcv_data(symbols: list[str], market: str = "tw_stock") -> None:
     end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     start_date = (datetime.now(timezone.utc) - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
 
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         for sym in missing:
             try:
                 df = fetcher.fetch_ohlcv(sym, "1d", start_date, end_date)
@@ -2097,8 +2013,6 @@ def _ensure_ohlcv_data(symbols: list[str], market: str = "tw_stock") -> None:
             except Exception as e:
                 session.rollback()
                 logger.warning("_ensure_ohlcv_data: failed to fetch %s: %s", sym, e)
-    finally:
-        session.close()
 
 
 def _get_latest_prices(symbols: list[str]) -> dict[str, float]:
@@ -2110,8 +2024,7 @@ def _get_latest_prices(symbols: list[str]) -> dict[str, float]:
     from poseidon.models.ohlcv import OHLCV
 
     prices: dict[str, float] = {}
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         for sym in symbols:
             record = (
                 session.query(OHLCV)
@@ -2121,8 +2034,6 @@ def _get_latest_prices(symbols: list[str]) -> dict[str, float]:
             )
             if record:
                 prices[sym] = float(record.close)
-    finally:
-        session.close()
     return prices
 
 
@@ -2141,8 +2052,7 @@ def _build_perp_adapter_from_db():
     from poseidon.models.portfolio_holding import PortfolioHoldingRecord
 
     adapter = PerpPaperAdapter(SessionLocal)
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         perp_holdings = (
             session.query(PortfolioHoldingRecord)
             .filter(
@@ -2168,8 +2078,6 @@ def _build_perp_adapter_from_db():
                 margin=entry_price * quantity / leverage,
                 liquidation_price=liq_price,
             )
-    finally:
-        session.close()
 
     return adapter
 
@@ -2179,8 +2087,7 @@ def _get_perp_mark_prices(symbols: list[str]) -> dict[str, float]:
     from poseidon.models.ohlcv import OHLCV
 
     prices = {}
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         for sym in symbols:
             record = (
                 session.query(OHLCV.close)
@@ -2193,8 +2100,6 @@ def _get_perp_mark_prices(symbols: list[str]) -> dict[str, float]:
             )
             if record:
                 prices[sym] = float(record.close)
-    finally:
-        session.close()
     return prices
 
 
@@ -2304,8 +2209,7 @@ def perp_liquidation_monitor() -> dict:
     # 6. Create TradeLogRecords for liquidation-closed positions
     closed_symbols = []
     now = datetime.now(timezone.utc)
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         for result in results:
             if result.success:
                 sym = result.order.symbol
@@ -2329,11 +2233,6 @@ def perp_liquidation_monitor() -> dict:
                     session.add(trade_log)
                 closed_symbols.append(sym)
         session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
     logger.warning(
         "LIQUIDATION PROTECTION: closed %d perp positions: %s",
@@ -2422,16 +2321,13 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
     protection_mgr = ProtectionManager.from_defaults()
 
     # Check portfolio-level protections first (daily_loss halts ALL trading)
-    prot_db = SessionLocal()
-    try:
+    with db_session() as prot_db:
         daily_results = protection_mgr.check_all("__portfolio__", strategy_cfg.market, prot_db)
         portfolio_locked = any(r.locked and r.protection_type == "daily_loss" for r in daily_results)
         if portfolio_locked:
             reason = next(r.reason for r in daily_results if r.locked and r.protection_type == "daily_loss")
             logger.warning("perp_rebalance: portfolio locked by daily_loss protection — %s", reason)
             return {"skipped": "protection_locked", "reason": reason}
-    finally:
-        prot_db.close()
 
     # Run strategy
     targets = strategy.select_stocks(pd.DataFrame(), as_of=now.date())
@@ -2448,8 +2344,7 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
         return {"rebalanced": True, "orders": 0, "sells": 0}
 
     # Filter out locked symbols (per D-12)
-    prot_db = SessionLocal()
-    try:
+    with db_session() as prot_db:
         unlocked_orders = []
         for ro in rebalance_orders:
             if protection_mgr.is_locked(ro.symbol, strategy_cfg.market, prot_db):
@@ -2459,8 +2354,6 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
             else:
                 unlocked_orders.append(ro)
         rebalance_orders = unlocked_orders
-    finally:
-        prot_db.close()
 
     if not rebalance_orders:
         logger.info("perp_rebalance: all symbols locked by protection")
@@ -2492,8 +2385,7 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
 
     # Create TradeLogRecords for filled sell orders
     trade_log_count = 0
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         for result in results:
             if result.success and result.order.action == "sell":
                 sym = result.order.symbol
@@ -2520,11 +2412,6 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
                     session.add(trade_log)
                     trade_log_count += 1
         session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
     logger.info(
         "perp_rebalance: %d orders, %d trade logs",
@@ -2567,8 +2454,7 @@ def perp_funding_settlement() -> dict:
 
     # Get latest funding rates from DB
     settled_symbols = []
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         for sym, pos in adapter._positions.items():
             # Query latest funding rate for this symbol
             funding_record = (
@@ -2607,8 +2493,6 @@ def perp_funding_settlement() -> dict:
                     "Funding settled %s: rate=%.6f amount=%.4f",
                     sym, funding_rate, funding_amount,
                 )
-    finally:
-        session.close()
 
     return {"settled": len(settled_symbols), "symbols": settled_symbols}
 
@@ -2665,8 +2549,7 @@ def perp_nav_snapshot() -> dict:
     total_nav = holdings_value + cash
 
     today = date_type.today()
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         # Upsert: check for existing snapshot for this date+market
         existing = (
             session.query(NavSnapshotRecord)
@@ -2692,11 +2575,6 @@ def perp_nav_snapshot() -> dict:
             )
             session.add(record)
         session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
     logger.info(
         "perp_nav_snapshot: date=%s total_nav=%.2f holdings=%d",
@@ -2724,41 +2602,38 @@ def refresh_universe(self, market: str):
     from poseidon.universe.snapshot import save_snapshot
     from poseidon.universe.yaml_source import YamlSource  # ensure registered
 
-    session = SessionLocal()
-    try:
-        # TODO: make source/filter configurable per market (D-03)
-        # For now, default to YamlSource with no filters
-        source = YamlSource()
-        pipeline = UniversePipeline(source=source, filters=[])
-        symbols = pipeline.run(market, db_session=session)
+    with db_session() as session:
+        try:
+            # TODO: make source/filter configurable per market (D-03)
+            # For now, default to YamlSource with no filters
+            source = YamlSource()
+            pipeline = UniversePipeline(source=source, filters=[])
+            symbols = pipeline.run(market, db_session=session)
 
-        if not symbols:
-            logger.warning(
-                "refresh_universe: empty result for market=%s, skipping snapshot",
-                market,
+            if not symbols:
+                logger.warning(
+                    "refresh_universe: empty result for market=%s, skipping snapshot",
+                    market,
+                )
+                return {"market": market, "symbols": 0, "status": "skipped_empty"}
+
+            snapshot = save_snapshot(
+                db=session,
+                market=market,
+                snapshot_time=datetime.now(timezone.utc),
+                symbols=symbols,
+                source_type=source.name,
+                filter_config=None,
             )
-            return {"market": market, "symbols": 0, "status": "skipped_empty"}
-
-        snapshot = save_snapshot(
-            db=session,
-            market=market,
-            snapshot_time=datetime.now(timezone.utc),
-            symbols=symbols,
-            source_type=source.name,
-            filter_config=None,
-        )
-        logger.info("refresh_universe: market=%s, symbols=%d", market, len(symbols))
-        return {
-            "market": market,
-            "symbols": len(symbols),
-            "snapshot_id": str(snapshot.id),
-        }
-    except Exception as exc:
-        logger.error("refresh_universe failed for market=%s: %s", market, exc)
-        session.rollback()
-        raise self.retry(exc=exc, countdown=60)
-    finally:
-        session.close()
+            logger.info("refresh_universe: market=%s, symbols=%d", market, len(symbols))
+            return {
+                "market": market,
+                "symbols": len(symbols),
+                "snapshot_id": str(snapshot.id),
+            }
+        except Exception as exc:
+            logger.error("refresh_universe failed for market=%s: %s", market, exc)
+            raise self.retry(exc=exc, countdown=60)
 
 
 # ---------------------------------------------------------------------------
@@ -2837,11 +2712,10 @@ def historical_backfill_dispatcher() -> dict:
 
     config = load_symbols()
 
-    session = SessionLocal()
     created: list[str] = []
     skipped_done: list[str] = []
     skipped_duplicate: list[str] = []
-    try:
+    with db_session() as session:
         # Pre-fetch all active (pending/running) backfill jobs once so we
         # do not issue O(N tuples) queries.
         active_jobs = (
@@ -2908,11 +2782,6 @@ def historical_backfill_dispatcher() -> dict:
             "skipped_first_backfill_done": len(skipped_done),
             "skipped_duplicate": len(skipped_duplicate),
         }
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -2940,10 +2809,9 @@ def data_gap_audit() -> dict:
         upsert_gaps,
     )
 
-    session = SessionLocal()
     inserted = 0
     scanned = 0
-    try:
+    with db_session() as session:
         tuple_rows = session.execute(
             sa_text(
                 """
@@ -2972,11 +2840,6 @@ def data_gap_audit() -> dict:
             healed,
         )
         return {"scanned": scanned, "inserted": inserted, "healed": healed}
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -3004,8 +2867,7 @@ def ingest_freshness_watchdog() -> dict:
         ping_monitor,
     )
 
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         now = datetime.now(timezone.utc)
         records = evaluate_freshness(
             session, now=now, sla_dict=settings.freshness_sla
@@ -3054,11 +2916,6 @@ def ingest_freshness_watchdog() -> dict:
             "unknown": len(unknown),
             "monitor_pinged": monitor_pinged,
         }
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 # --- Factor Analysis Tasks (Phase 47, D-13, D-15) ---
@@ -3075,39 +2932,37 @@ def factor_ic_analysis(self, run_id: str):
     from poseidon.models.factor_analysis_run import FactorAnalysisRun
     from poseidon.research.ic_analysis import run_ic_analysis
 
-    session = SessionLocal()
-    run = None
-    try:
-        run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).one()
-        run.status = "running"
-        run.error = None
-        session.commit()
+    with db_session() as session:
+        run = None
+        try:
+            run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).one()
+            run.status = "running"
+            run.error = None
+            session.commit()
 
-        config = run.config_json
-        run.results_json = run_ic_analysis(
-            market=config["market"],
-            symbols=config.get("symbols"),
-            start_date=config["start_date"],
-            end_date=config["end_date"],
-            horizons=config.get("horizons", [1, 5, 20]),
-            features=config.get("features"),
-            interval=config.get("interval", "1d"),
-        )
-        run.status = "succeeded"
-        session.commit()
-        return {"run_id": run_id, "status": "succeeded"}
-    except Exception as exc:
-        logger.exception("factor_ic_analysis failed for run_id=%s", run_id)
-        if run is not None:
-            session.rollback()
-            run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).first()
+            config = run.config_json
+            run.results_json = run_ic_analysis(
+                market=config["market"],
+                symbols=config.get("symbols"),
+                start_date=config["start_date"],
+                end_date=config["end_date"],
+                horizons=config.get("horizons", [1, 5, 20]),
+                features=config.get("features"),
+                interval=config.get("interval", "1d"),
+            )
+            run.status = "succeeded"
+            session.commit()
+            return {"run_id": run_id, "status": "succeeded"}
+        except Exception as exc:
+            logger.exception("factor_ic_analysis failed for run_id=%s", run_id)
             if run is not None:
-                run.status = "failed"
-                run.error = str(exc)[:2000]
-                session.commit()
-        return {"run_id": run_id, "status": "failed", "error": str(exc)}
-    finally:
-        session.close()
+                session.rollback()
+                run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).first()
+                if run is not None:
+                    run.status = "failed"
+                    run.error = str(exc)[:2000]
+                    session.commit()
+            return {"run_id": run_id, "status": "failed", "error": str(exc)}
 
 
 @celery_app.task(
@@ -3121,36 +2976,34 @@ def factor_centrality_analysis(self, run_id: str):
     from poseidon.models.factor_analysis_run import FactorAnalysisRun
     from poseidon.research.centrality_analysis import run_centrality_analysis
 
-    session = SessionLocal()
-    run = None
-    try:
-        run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).one()
-        run.status = "running"
-        run.error = None
-        session.commit()
+    with db_session() as session:
+        run = None
+        try:
+            run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).one()
+            run.status = "running"
+            run.error = None
+            session.commit()
 
-        config = run.config_json
-        run.results_json = run_centrality_analysis(
-            market=config["market"],
-            sub_signals=config["sub_signals"],
-            symbols=config.get("symbols"),
-            start_date=config["start_date"],
-            end_date=config["end_date"],
-            interval=config.get("interval", "1d"),
-            distance_threshold=config.get("distance_threshold", 0.7),
-        )
-        run.status = "succeeded"
-        session.commit()
-        return {"run_id": run_id, "status": "succeeded"}
-    except Exception as exc:
-        logger.exception("factor_centrality_analysis failed for run_id=%s", run_id)
-        if run is not None:
-            session.rollback()
-            run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).first()
+            config = run.config_json
+            run.results_json = run_centrality_analysis(
+                market=config["market"],
+                sub_signals=config["sub_signals"],
+                symbols=config.get("symbols"),
+                start_date=config["start_date"],
+                end_date=config["end_date"],
+                interval=config.get("interval", "1d"),
+                distance_threshold=config.get("distance_threshold", 0.7),
+            )
+            run.status = "succeeded"
+            session.commit()
+            return {"run_id": run_id, "status": "succeeded"}
+        except Exception as exc:
+            logger.exception("factor_centrality_analysis failed for run_id=%s", run_id)
             if run is not None:
-                run.status = "failed"
-                run.error = str(exc)[:2000]
-                session.commit()
-        return {"run_id": run_id, "status": "failed", "error": str(exc)}
-    finally:
-        session.close()
+                session.rollback()
+                run = session.query(FactorAnalysisRun).filter_by(id=uuid.UUID(run_id)).first()
+                if run is not None:
+                    run.status = "failed"
+                    run.error = str(exc)[:2000]
+                    session.commit()
+            return {"run_id": run_id, "status": "failed", "error": str(exc)}
