@@ -21,10 +21,7 @@ from poseidon.core.redis import get_redis
 from poseidon.data.cache import CacheManager
 from poseidon.data.rate_limiter import CircuitBreaker, DistributedRateLimiter, PROVIDER_LIMITS
 from poseidon.data.validation import validate_ohlcv
-from poseidon.data.storage import (
-    read_ohlcv,
-    upsert_ohlcv,
-)
+from poseidon.data.repository import DataRepository
 from poseidon.data.symbols import get_market_config, get_symbols_for_market, load_symbols
 from poseidon.models.backfill import BackfillJob
 from poseidon.models.backtest import BacktestRecord
@@ -154,13 +151,15 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
     limit = getattr(settings, provider_cfg.get("limit_key", "ratelimit_finmind_hourly"), 500)
 
     with db_session() as session:
+        repo = DataRepository(session)
         for sym_info in symbols:
             # 0. Check cache first (three-layer fallback: cache -> DB -> API)
             if cache is not None:
                 cached_df = cache.get(sym_info.id, interval, start_date, end_date)
                 if cached_df is not None and not cached_df.empty:
                     logger.debug("Cache hit for %s/%s/%s", market, sym_info.id, interval)
-                    count = upsert_ohlcv(session, cached_df, sym_info.id, market, instrument, interval)
+                    count = repo.upsert_ohlcv(cached_df, sym_info.id, market, instrument, interval)
+                    session.commit()  # explicit commit (was auto-commit in storage.upsert_ohlcv)
                     fetched_count += count
                     continue
 
@@ -206,7 +205,8 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
                         [c for c in vresult.checks if not c.passed and c.severity.value == "warning"],
                     )
                 # 5. Upsert (only if no CRITICAL)
-                count = upsert_ohlcv(session, df, sym_info.id, market, instrument, interval)
+                count = repo.upsert_ohlcv(df, sym_info.id, market, instrument, interval)
+                session.commit()  # explicit commit (was auto-commit in storage.upsert_ohlcv)
                 fetched_count += count
                 # 6. Cache the validated data
                 if cache is not None:
@@ -280,6 +280,7 @@ def _fetch_market_data_cursor(market: str, interval: str, symbols, market_cfg) -
     )
 
     with db_session() as session:
+        repo = DataRepository(session)
         for sym_info in symbols:
             cursor = cursor_service.get_or_bootstrap(
                 session, sym_info.id, market, interval
@@ -358,9 +359,10 @@ def _fetch_market_data_cursor(market: str, interval: str, symbols, market_cfg) -
                     )
                     break
 
-                n = upsert_ohlcv(
-                    session, df, sym_info.id, market, instrument, interval
+                n = repo.upsert_ohlcv(
+                    df, sym_info.id, market, instrument, interval
                 )
+                session.commit()  # explicit commit (was auto-commit in storage.upsert_ohlcv)
                 fetched_count += n
                 # Advance AFTER upsert commits (D-03, D-08).
                 cursor_service.advance(
@@ -421,6 +423,7 @@ def run_backtest_task(
     """
     backtest_id = uuid.uuid4()
     with db_session() as session:
+        repo = DataRepository(session)
         try:
             # Load strategy record from DB
             sid = uuid.UUID(strategy_id)
@@ -454,8 +457,8 @@ def run_backtest_task(
             parsed_end = datetime.fromisoformat(end_date) if end_date else None
 
             # Load OHLCV data
-            ohlcv_df = read_ohlcv(
-                session, record.symbol, record.market, record.interval,
+            ohlcv_df = repo.read_ohlcv(
+                record.symbol, record.market, record.interval,
                 start=parsed_start, end=parsed_end,
             )
             if ohlcv_df.empty:
@@ -603,6 +606,7 @@ def run_dual_mode_task(
     from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
 
     with db_session() as session:
+        repo = DataRepository(session)
         try:
             sid = uuid.UUID(strategy_id)
             record = session.get(StrategyRecord, sid)
@@ -629,8 +633,8 @@ def run_dual_mode_task(
             parsed_end = datetime.fromisoformat(end_date) if end_date else None
 
             # Load OHLCV data
-            ohlcv_df = read_ohlcv(
-                session, record.symbol, record.market, record.interval,
+            ohlcv_df = repo.read_ohlcv(
+                record.symbol, record.market, record.interval,
                 start=parsed_start, end=parsed_end,
             )
             if ohlcv_df.empty:
@@ -730,6 +734,7 @@ def run_optimization_task(
         Dict with trial count, best params, and best metric value.
     """
     with db_session() as session:
+        repo = DataRepository(session)
         try:
             # Load strategy record from DB
             sid = uuid.UUID(strategy_id)
@@ -747,8 +752,8 @@ def run_optimization_task(
             parsed_end = datetime.fromisoformat(end_date) if end_date else None
 
             # Load OHLCV data
-            ohlcv_df = read_ohlcv(
-                session, record.symbol, record.market, record.interval,
+            ohlcv_df = repo.read_ohlcv(
+                record.symbol, record.market, record.interval,
                 start=parsed_start, end=parsed_end,
             )
             if ohlcv_df.empty:
@@ -882,6 +887,7 @@ def compute_var_snapshot(method: str = "all") -> dict:
 
     redis_client = get_redis("cache")
     with db_session() as db:
+        repo = DataRepository(db)
         # 1. Rebuild portfolio from DB
         portfolio = VirtualPortfolio()
         portfolio.rebuild_from_db(db)
@@ -911,9 +917,9 @@ def compute_var_snapshot(method: str = "all") -> dict:
         try:
             return_series = {}
             for sym in symbols:
-                ohlcv_df = read_ohlcv(db, sym, market="", interval="1d",
-                                      start=as_of - timedelta(days=settings.var_lookback_days),
-                                      end=as_of)
+                ohlcv_df = repo.read_ohlcv(sym, market="", interval="1d",
+                                           start=as_of - timedelta(days=settings.var_lookback_days),
+                                           end=as_of)
                 if not ohlcv_df.empty and "close" in ohlcv_df.columns:
                     close = ohlcv_df["close"]
                     if hasattr(close, "index"):
@@ -1112,6 +1118,7 @@ def update_covariance_matrix() -> dict:
 
     redis_client = get_redis("cache")
     with db_session() as db:
+        repo = DataRepository(db)
         # 1. Get active portfolio symbols
         portfolio = VirtualPortfolio()
         portfolio.rebuild_from_db(db)
@@ -1126,8 +1133,8 @@ def update_covariance_matrix() -> dict:
         return_series = {}
         for sym in symbols:
             start = as_of - timedelta(days=settings.var_lookback_days)
-            ohlcv_df = read_ohlcv(db, sym, market="", interval="1d",
-                                  start=start, end=as_of)
+            ohlcv_df = repo.read_ohlcv(sym, market="", interval="1d",
+                                       start=start, end=as_of)
             if ohlcv_df.empty:
                 logger.warning("No OHLCV data for %s, skipping in covariance", sym)
                 continue
@@ -1285,7 +1292,6 @@ def compute_quality_scores() -> dict:
     Runs daily at 02:00 UTC via Celery Beat.
     """
     from poseidon.data.quality_scorer import DataQualityScorer
-    from poseidon.data.storage import read_ohlcv
     from poseidon.data.symbols import load_symbols
     from poseidon.models.quality_score import QualityScore
     from poseidon.risk.var.returns import MARKET_CALENDARS
@@ -1298,6 +1304,7 @@ def compute_quality_scores() -> dict:
     skipped = 0
 
     with db_session() as db:
+        repo = DataRepository(db)
         for market_name, market_cfg in config.markets.items():
             calendar = MARKET_CALENDARS.get(market_name, {"freq": "B", "tz": "UTC"})
             symbols = market_cfg.symbols
@@ -1322,8 +1329,7 @@ def compute_quality_scores() -> dict:
                         expected_rows *= 288  # 24*60/5
 
                     # Read recent OHLCV data
-                    df = read_ohlcv(
-                        db,
+                    df = repo.read_ohlcv(
                         symbol=sym.id,
                         market=market_name,
                         interval=interval,
@@ -1406,6 +1412,7 @@ def run_stress_test(
 
     redis_client = get_redis("cache")
     with db_session() as db:
+        repo = DataRepository(db)
         # 1. Rebuild portfolio from DB
         portfolio = VirtualPortfolio()
         portfolio.rebuild_from_db(db)
@@ -1429,8 +1436,8 @@ def run_stress_test(
         try:
             return_series = {}
             for sym in symbols:
-                ohlcv_df = read_ohlcv(
-                    db, sym, market="", interval="1d",
+                ohlcv_df = repo.read_ohlcv(
+                    sym, market="", interval="1d",
                     start=as_of - timedelta(days=settings.var_lookback_days),
                     end=as_of,
                 )
@@ -1979,7 +1986,6 @@ def _ensure_ohlcv_data(symbols: list[str], market: str = "tw_stock") -> None:
     """
     from poseidon.models.ohlcv import OHLCV
     from poseidon.data.fetchers import get_fetcher
-    from poseidon.data.storage import upsert_ohlcv
 
     with db_session() as session:
         existing = set(
@@ -2001,12 +2007,13 @@ def _ensure_ohlcv_data(symbols: list[str], market: str = "tw_stock") -> None:
     start_date = (datetime.now(timezone.utc) - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
 
     with db_session() as session:
+        repo = DataRepository(session)
         for sym in missing:
             try:
                 df = fetcher.fetch_ohlcv(sym, "1d", start_date, end_date)
                 if df is not None and not df.empty:
-                    upsert_ohlcv(session, df, sym, market, "spot", "1d")
-                    session.commit()
+                    repo.upsert_ohlcv(df, sym, market, "spot", "1d")
+                    session.commit()  # explicit commit (was auto-commit in storage.upsert_ohlcv)
                     logger.info("_ensure_ohlcv_data: fetched %d rows for %s", len(df), sym)
                 else:
                     logger.warning("_ensure_ohlcv_data: no data returned for %s", sym)
@@ -2255,7 +2262,6 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
 
     from poseidon.broker.config import BrokerConfig
     from poseidon.broker.perp_paper_adapter import PerpPaperAdapter
-    from poseidon.data.loaders.perp_data_loader import PerpDataLoader
     from poseidon.models.trade_log import TradeLogRecord
     from poseidon.orders.manager import OrderManager
     from poseidon.orders.risk_checker import OrderRiskChecker
@@ -2291,8 +2297,8 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
 
     # Build components
     position_tracker = _build_position_tracker()
-    data_loader = PerpDataLoader(SessionLocal)
-    strategy = CryptoTrendStrategy(strategy_cfg, data_loader)
+    # Phase 56: CryptoTrendStrategy now uses DataRepository instead of PerpDataLoader
+    strategy = CryptoTrendStrategy(strategy_cfg)
     adapter = PerpPaperAdapter(SessionLocal, leverage=strategy_cfg.allocation.leverage)
 
     # Set per-symbol leverage on adapter
@@ -2329,8 +2335,10 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
             logger.warning("perp_rebalance: portfolio locked by daily_loss protection — %s", reason)
             return {"skipped": "protection_locked", "reason": reason}
 
-    # Run strategy
-    targets = strategy.select_stocks(pd.DataFrame(), as_of=now.date())
+    # Run strategy (inject DataRepository with session for perp data access)
+    with db_session() as strategy_db:
+        strategy._repo = DataRepository(strategy_db)
+        targets = strategy.select_stocks(pd.DataFrame(), as_of=now.date())
 
     # Compute differential orders
     current_holdings = {
