@@ -1,19 +1,7 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase
 
-from poseidon.core.config import settings
-
-engine = create_engine(settings.database_url)
-SessionLocal = sessionmaker(bind=engine)
+from poseidon.core.database import engine  # noqa: F401 -- needed for metadata.create_all
 
 
 class Base(DeclarativeBase):
     pass
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
