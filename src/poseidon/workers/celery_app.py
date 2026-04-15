@@ -328,6 +328,43 @@ celery_app.conf.update(
             "task": "poseidon.workers.cpu_tasks.ingest_freshness_watchdog",
             "schedule": crontab(minute="*/15"),
         },
+        # --- Phase 57 Plan 02: Non-price data ingest (FEAT-02 ingest-first) ---
+        "ingest-macro-data": {
+            "task": "poseidon.workers.cpu_tasks.ingest_macro_data",
+            "schedule": crontab(hour=7, minute=0),  # Daily 07:00 UTC (after US market close)
+            "kwargs": {"backfill": False},
+            "options": {"queue": "cpu"},
+        },
+        "ingest-funding-rates": {
+            "task": "poseidon.workers.cpu_tasks.ingest_funding_rates",
+            "schedule": crontab(hour="*/8", minute=30),  # Every 8h at :30
+            "kwargs": {"backfill": False},
+            "options": {"queue": "cpu"},
+        },
+        "ingest-finlab-institutional": {
+            "task": "poseidon.workers.cpu_tasks.ingest_finlab_data",
+            "schedule": crontab(hour=8, minute=0),  # Daily 08:00 UTC (after TW market close)
+            "kwargs": {"category": "institutional", "backfill": False},
+            "options": {"queue": "cpu"},
+        },
+        "ingest-finlab-fundamental": {
+            "task": "poseidon.workers.cpu_tasks.ingest_finlab_data",
+            "schedule": crontab(hour=8, minute=15),
+            "kwargs": {"category": "fundamental", "backfill": False},
+            "options": {"queue": "cpu"},
+        },
+        "ingest-finlab-margin": {
+            "task": "poseidon.workers.cpu_tasks.ingest_finlab_data",
+            "schedule": crontab(hour=8, minute=30),
+            "kwargs": {"category": "margin", "backfill": False},
+            "options": {"queue": "cpu"},
+        },
+        "ingest-finlab-trade-structure": {
+            "task": "poseidon.workers.cpu_tasks.ingest_finlab_data",
+            "schedule": crontab(hour=8, minute=45),
+            "kwargs": {"category": "trade_structure", "backfill": False},
+            "options": {"queue": "cpu"},
+        },
     },
 
     # Auto-discover task modules

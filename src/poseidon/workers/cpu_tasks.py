@@ -3015,3 +3015,143 @@ def factor_centrality_analysis(self, run_id: str):
                     run.error = str(exc)[:2000]
                     session.commit()
             return {"run_id": run_id, "status": "failed", "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Phase 57 Plan 02: Non-price data ingest tasks (FEAT-02 ingest-first pattern)
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.ingest_macro_data")
+def ingest_macro_data(backfill: bool = False):
+    """Fetch macro indices (VIX, DXY, TNX, TWDUSD) from yfinance and persist to macro_index table.
+
+    Args:
+        backfill: If True, fetch from 2020-01-01; else from 2024-01-01.
+    """
+    from poseidon.data.loaders.macro_loader import MacroIndexLoader
+    from poseidon.models.macro_index import MacroIndex
+
+    start = "2020-01-01" if backfill else "2024-01-01"
+    logger.info("ingest_macro_data start=%s backfill=%s", start, backfill)
+
+    loader = MacroIndexLoader()
+    df = loader.get_macro_data(start=start)
+
+    if df.empty:
+        logger.warning("ingest_macro_data: no data returned from yfinance")
+        return {"status": "ok", "records": 0}
+
+    count = 0
+    with db_session() as session:
+        for indicator_name in df.columns:
+            col = df[indicator_name].dropna()
+            for date_val, value in col.items():
+                obj = MacroIndex(
+                    date=date_val.date() if hasattr(date_val, "date") else date_val,
+                    indicator=indicator_name,
+                    value=float(value),
+                )
+                session.merge(obj)
+                count += 1
+        session.commit()
+
+    logger.info("ingest_macro_data: stored %d records", count)
+    return {"status": "ok", "records": count}
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.ingest_funding_rates")
+def ingest_funding_rates(symbols: list[str] | None = None, backfill: bool = False):
+    """Fetch funding rates via existing FundingRateLoader.fetch_and_store().
+
+    This is a thin Celery wrapper -- it does NOT reimplement the fetch logic.
+
+    Args:
+        symbols: List of symbols (default: ["BTCUSDT", "ETHUSDT"]).
+        backfill: If True, fetch from 2020-01-01; else from 2024-01-01.
+    """
+    from poseidon.data.loaders.funding_loader import FundingRateLoader
+
+    if symbols is None:
+        symbols = ["BTCUSDT", "ETHUSDT"]
+
+    start = "2020-01-01" if backfill else "2024-01-01"
+    logger.info("ingest_funding_rates symbols=%s start=%s backfill=%s", symbols, start, backfill)
+
+    loader = FundingRateLoader(session_factory=SessionLocal)
+    for sym in symbols:
+        try:
+            stored = loader.fetch_and_store(symbol=sym, start=start)
+            logger.info("ingest_funding_rates: %s -> %d records", sym, stored)
+        except Exception:
+            logger.exception("ingest_funding_rates: failed for %s", sym)
+
+    return {"status": "ok", "symbols": len(symbols)}
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.ingest_finlab_data")
+def ingest_finlab_data(category: str, backfill: bool = False):
+    """Fetch FinLab non-price data and persist to nonprice_timeseries table.
+
+    Args:
+        category: One of "institutional", "fundamental", "margin", "trade_structure".
+        backfill: If True, no date filter (full history); else recent data only.
+    """
+    from poseidon.data.loaders.finlab_loader import FinLabDataLoader
+    from poseidon.models.nonprice_timeseries import NonpriceTimeseries
+
+    # Category -> loader method mapping
+    METHOD_MAP = {
+        "institutional": "get_institutional_flow",
+        "fundamental": "get_fundamentals",
+        "margin": "get_margin_data",
+        "trade_structure": "get_trade_structure",
+    }
+
+    if category not in METHOD_MAP:
+        raise ValueError(f"Unknown category: {category}. Must be one of {list(METHOD_MAP.keys())}")
+
+    # Default TW stock symbols for initial release
+    symbols = ["2330", "2317", "2454"]
+
+    logger.info(
+        "ingest_finlab_data category=%s symbols=%s backfill=%s",
+        category, symbols, backfill,
+    )
+
+    loader = FinLabDataLoader()
+    method_name = METHOD_MAP[category]
+    total_count = 0
+
+    with db_session() as session:
+        for symbol in symbols:
+            try:
+                df = getattr(loader, method_name)(symbol)
+                if df.empty:
+                    logger.debug("ingest_finlab_data: no data for %s/%s", category, symbol)
+                    continue
+
+                count = 0
+                for col in df.columns:
+                    for date_val, value in df[col].dropna().items():
+                        obj = NonpriceTimeseries(
+                            date=date_val.date() if hasattr(date_val, "date") else date_val,
+                            symbol=symbol,
+                            category=category,
+                            indicator=col,
+                            value=float(value),
+                        )
+                        session.merge(obj)
+                        count += 1
+                total_count += count
+                logger.info(
+                    "ingest_finlab_data: %s/%s -> %d records", category, symbol, count
+                )
+            except Exception:
+                logger.exception(
+                    "ingest_finlab_data: failed for %s/%s", category, symbol
+                )
+        session.commit()
+
+    logger.info("ingest_finlab_data: category=%s total=%d records", category, total_count)
+    return {"status": "ok", "category": category, "symbols": len(symbols), "records": total_count}
