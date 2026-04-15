@@ -34,7 +34,7 @@ def mock_signal():
     return sig
 
 
-@patch("poseidon.workers.cpu_tasks.SessionLocal")
+@patch("poseidon.workers.cpu_tasks.db_session")
 @patch("poseidon.workers.cpu_tasks.FeatureEngine")
 @patch("poseidon.workers.cpu_tasks.RuleStrategy")
 @patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
@@ -44,7 +44,7 @@ def test_evaluate_active_strategies_processes_rule_strategy(
     mock_pipeline_init,
     mock_rule_cls,
     mock_engine_cls,
-    mock_session_cls,
+    mock_db_session,
     mock_strategy_record,
     mock_signal,
 ):
@@ -54,7 +54,8 @@ def test_evaluate_active_strategies_processes_rule_strategy(
     record = mock_strategy_record(strategy_type="rule")
     session = MagicMock()
     session.query.return_value.filter.return_value.all.return_value = [record]
-    mock_session_cls.return_value = session
+    mock_db_session.return_value.__enter__ = MagicMock(return_value=session)
+    mock_db_session.return_value.__exit__ = MagicMock(return_value=False)
 
     mock_engine = MagicMock()
     mock_engine.compute.return_value = pd.DataFrame({"close": [100, 101]})
@@ -73,7 +74,7 @@ def test_evaluate_active_strategies_processes_rule_strategy(
     mock_pipeline_process.assert_called_once_with(mock_signal)
 
 
-@patch("poseidon.workers.cpu_tasks.SessionLocal")
+@patch("poseidon.workers.cpu_tasks.db_session")
 @patch("poseidon.workers.cpu_tasks.FeatureEngine")
 @patch("poseidon.workers.cpu_tasks.evaluate_active_strategies.__wrapped__", None)
 @patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
@@ -82,7 +83,7 @@ def test_evaluate_active_strategies_processes_voting_strategy(
     mock_pipeline_process,
     mock_pipeline_init,
     mock_engine_cls,
-    mock_session_cls,
+    mock_db_session,
     mock_strategy_record,
     mock_signal,
 ):
@@ -92,7 +93,8 @@ def test_evaluate_active_strategies_processes_voting_strategy(
     record = mock_strategy_record(strategy_type="voting", config={"rules": []})
     session = MagicMock()
     session.query.return_value.filter.return_value.all.return_value = [record]
-    mock_session_cls.return_value = session
+    mock_db_session.return_value.__enter__ = MagicMock(return_value=session)
+    mock_db_session.return_value.__exit__ = MagicMock(return_value=False)
 
     mock_engine = MagicMock()
     mock_engine.compute.return_value = pd.DataFrame({"close": [100, 101]})
@@ -117,13 +119,13 @@ def test_evaluate_active_strategies_processes_voting_strategy(
         assert passed_config["interval"] == record.interval
 
 
-@patch("poseidon.workers.cpu_tasks.SessionLocal")
+@patch("poseidon.workers.cpu_tasks.db_session")
 @patch("poseidon.workers.cpu_tasks.FeatureEngine")
 @patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
 def test_evaluate_active_strategies_skips_model_type(
     mock_pipeline_init,
     mock_engine_cls,
-    mock_session_cls,
+    mock_db_session,
     mock_strategy_record,
 ):
     """Model-type strategies are skipped (use GPU predict path)."""
@@ -132,7 +134,8 @@ def test_evaluate_active_strategies_skips_model_type(
     record = mock_strategy_record(strategy_type="model")
     session = MagicMock()
     session.query.return_value.filter.return_value.all.return_value = [record]
-    mock_session_cls.return_value = session
+    mock_db_session.return_value.__enter__ = MagicMock(return_value=session)
+    mock_db_session.return_value.__exit__ = MagicMock(return_value=False)
 
     mock_engine = MagicMock()
     mock_engine_cls.return_value = mock_engine
@@ -145,7 +148,7 @@ def test_evaluate_active_strategies_skips_model_type(
     mock_engine.compute.assert_not_called()
 
 
-@patch("poseidon.workers.cpu_tasks.SessionLocal")
+@patch("poseidon.workers.cpu_tasks.db_session")
 @patch("poseidon.workers.cpu_tasks.FeatureEngine")
 @patch("poseidon.workers.cpu_tasks.RuleStrategy")
 @patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
@@ -155,7 +158,7 @@ def test_evaluate_active_strategies_from_fetch_result(
     mock_pipeline_init,
     mock_rule_cls,
     mock_engine_cls,
-    mock_session_cls,
+    mock_db_session,
     mock_strategy_record,
     mock_signal,
 ):
@@ -165,7 +168,8 @@ def test_evaluate_active_strategies_from_fetch_result(
     record = mock_strategy_record(strategy_type="rule")
     session = MagicMock()
     session.query.return_value.filter.return_value.all.return_value = [record]
-    mock_session_cls.return_value = session
+    mock_db_session.return_value.__enter__ = MagicMock(return_value=session)
+    mock_db_session.return_value.__exit__ = MagicMock(return_value=False)
 
     mock_engine = MagicMock()
     mock_engine.compute.return_value = pd.DataFrame({"close": [100]})
@@ -185,7 +189,7 @@ def test_evaluate_active_strategies_from_fetch_result(
     assert result["strategies_evaluated"] == 1
 
 
-@patch("poseidon.workers.cpu_tasks.SessionLocal")
+@patch("poseidon.workers.cpu_tasks.db_session")
 @patch("poseidon.workers.cpu_tasks.FeatureEngine")
 @patch("poseidon.workers.cpu_tasks.RuleStrategy")
 @patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
@@ -195,7 +199,7 @@ def test_evaluate_active_strategies_continues_on_error(
     mock_pipeline_init,
     mock_rule_cls,
     mock_engine_cls,
-    mock_session_cls,
+    mock_db_session,
     mock_strategy_record,
     mock_signal,
 ):
@@ -206,7 +210,8 @@ def test_evaluate_active_strategies_continues_on_error(
     record_ok = mock_strategy_record(strategy_type="rule", name="ok-strat")
     session = MagicMock()
     session.query.return_value.filter.return_value.all.return_value = [record_fail, record_ok]
-    mock_session_cls.return_value = session
+    mock_db_session.return_value.__enter__ = MagicMock(return_value=session)
+    mock_db_session.return_value.__exit__ = MagicMock(return_value=False)
 
     mock_engine = MagicMock()
     mock_engine.compute.return_value = pd.DataFrame({"close": [100]})

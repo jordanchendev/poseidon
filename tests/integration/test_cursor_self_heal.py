@@ -114,7 +114,13 @@ def test_long_gap_recovery(db_session, hypertable_seed_ohlcv, ingest_state_seed,
                 {"wait_and_acquire": lambda self, *a, **kw: True},
             )(),
         )
-        monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: _SessionProxy(db_session))
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _mock_db_session():
+            yield _SessionProxy(db_session)
+
+        monkeypatch.setattr(cpu_tasks, "db_session", _mock_db_session)
 
         sym_info = SymbolInfo(id=symbol, name=symbol)
         market_cfg = type("MC", (), {"instrument": "perp"})()

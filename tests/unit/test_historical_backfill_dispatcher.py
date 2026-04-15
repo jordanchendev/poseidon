@@ -103,14 +103,27 @@ def fake_symbols_config():
 
 @pytest.fixture
 def patch_dispatcher(monkeypatch, fake_symbols_config):
-    """Replace SessionLocal + load_symbols inside the dispatcher module.
+    """Replace db_session + load_symbols inside the dispatcher module.
 
-    The dispatcher is a Celery task that builds its own SessionLocal; the
+    The dispatcher is a Celery task that uses db_session(); the
     test wants it to talk to the SQLite in-memory engine instead.
     """
+    from contextlib import contextmanager
+
     from poseidon.workers import cpu_tasks
 
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", TestingSessionLocal)
+    @contextmanager
+    def mock_db_session():
+        session = TestingSessionLocal()
+        try:
+            yield session
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    monkeypatch.setattr(cpu_tasks, "db_session", mock_db_session)
     monkeypatch.setattr(cpu_tasks, "load_symbols", lambda: fake_symbols_config)
     return cpu_tasks
 

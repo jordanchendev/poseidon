@@ -321,10 +321,23 @@ class TestIngestFreshnessWatchdogTask:
 
         monkeypatch.setattr("requests.get", fake_get)
 
-        # Monkeypatch SessionLocal to use our test session
+        # Monkeypatch db_session to use our test session
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _mock_db_session():
+            s = TestingSessionLocal()
+            try:
+                yield s
+            except Exception:
+                s.rollback()
+                raise
+            finally:
+                s.close()
+
         monkeypatch.setattr(
-            "poseidon.workers.cpu_tasks.SessionLocal",
-            lambda: TestingSessionLocal(),
+            "poseidon.workers.cpu_tasks.db_session",
+            _mock_db_session,
         )
         monkeypatch.setattr(
             "poseidon.core.config.settings.freshness_sla",
@@ -356,9 +369,22 @@ class TestIngestFreshnessWatchdogTask:
             calls.append((url, params, timeout))
 
         monkeypatch.setattr("requests.get", fake_get)
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _mock_db_session():
+            s = TestingSessionLocal()
+            try:
+                yield s
+            except Exception:
+                s.rollback()
+                raise
+            finally:
+                s.close()
+
         monkeypatch.setattr(
-            "poseidon.workers.cpu_tasks.SessionLocal",
-            lambda: TestingSessionLocal(),
+            "poseidon.workers.cpu_tasks.db_session",
+            _mock_db_session,
         )
         monkeypatch.setattr(
             "poseidon.core.config.settings.freshness_sla",
@@ -389,9 +415,22 @@ class TestIngestFreshnessWatchdogTask:
             calls.append((url, params, timeout))
 
         monkeypatch.setattr("requests.get", fake_get)
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _mock_db_session():
+            s = TestingSessionLocal()
+            try:
+                yield s
+            except Exception:
+                s.rollback()
+                raise
+            finally:
+                s.close()
+
         monkeypatch.setattr(
-            "poseidon.workers.cpu_tasks.SessionLocal",
-            lambda: TestingSessionLocal(),
+            "poseidon.workers.cpu_tasks.db_session",
+            _mock_db_session,
         )
         monkeypatch.setattr(
             "poseidon.core.config.settings.freshness_sla",
@@ -419,9 +458,22 @@ class TestIngestFreshnessWatchdogTask:
             raise requests_mod.ConnectionError("boom")
 
         monkeypatch.setattr("requests.get", fake_get)
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _mock_db_session():
+            s = TestingSessionLocal()
+            try:
+                yield s
+            except Exception:
+                s.rollback()
+                raise
+            finally:
+                s.close()
+
         monkeypatch.setattr(
-            "poseidon.workers.cpu_tasks.SessionLocal",
-            lambda: TestingSessionLocal(),
+            "poseidon.workers.cpu_tasks.db_session",
+            _mock_db_session,
         )
         monkeypatch.setattr(
             "poseidon.core.config.settings.freshness_sla",

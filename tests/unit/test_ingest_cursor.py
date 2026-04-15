@@ -198,9 +198,15 @@ def test_chunked_loop_bounded(db_session, ingest_state_seed, monkeypatch):
                 {"wait_and_acquire": lambda self, *a, **kw: True},
             )(),
         )
-        # Stub SessionLocal to return our live db_session so the helper sees
+        # Stub db_session to return our live db_session so the helper sees
         # the seeded cursor row without opening a separate connection.
-        monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: _SessionProxy(db_session))
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _mock_db_session():
+            yield _SessionProxy(db_session)
+
+        monkeypatch.setattr(cpu_tasks, "db_session", _mock_db_session)
 
         # Shrink the per-tick bound so the test finishes fast
         monkeypatch.setattr(cpu_tasks, "MAX_CHUNKS_PER_TICK", 3)
