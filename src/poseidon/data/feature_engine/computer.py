@@ -1,8 +1,8 @@
 """FeatureComputer -- pure feature computation, zero I/O.
 
 Extracted from the monolithic FeatureEngine class. This module must NOT
-import from poseidon.data.repository, poseidon.core.database,
-poseidon.autoresearch, requests, ccxt, yfinance, finlab, or sqlalchemy.
+import any I/O library (repository, database, requests, ccxt, yfinance,
+finlab, sqlalchemy) or cross-module dependency.
 
 Only allowed imports: logging, pandas, poseidon.data.features.base.get_feature,
 and poseidon.data.feature_engine.specs.
