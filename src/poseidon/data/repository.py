@@ -96,14 +96,20 @@ class DataRepository:
         return _write_sentiment_core(self._session, symbol, market, source_type, score)
 
     # ------------------------------------------------------------------
-    # Non-price data (lazy loader composition)
+    # Non-price data (DB reads -- FEAT-02 ingest-first pattern)
     # ------------------------------------------------------------------
 
     def read_funding_rates(self, symbol: str, start: str = "2024-01-01") -> pd.DataFrame:
-        """Read daily funding rates. Lazily creates FundingRateLoader."""
+        """Read daily funding rates from funding_rates DB table.
+
+        Delegates to FundingRateLoader.get_daily_funding_rate_from_db() which
+        queries the DB and aggregates to daily sums.
+        """
         from poseidon.data.loaders import FundingRateLoader
 
-        return FundingRateLoader().get_daily_funding_rate(symbol, start=start)
+        return FundingRateLoader(
+            session_factory=lambda: self._session
+        ).get_daily_funding_rate_from_db(symbol, start=start)
 
     def read_open_interest(
         self, symbol: str, interval: str = "1h", start: str = "2024-01-01"
@@ -117,34 +123,65 @@ class DataRepository:
         )
 
     def read_macro(self, start: str = "2020-01-01") -> pd.DataFrame:
-        """Read macro economic indices (VIX, DXY, TNX, TWDUSD)."""
-        from poseidon.data.loaders import MacroIndexLoader
+        """Read macro economic indices from macro_index DB table."""
+        from poseidon.models.macro_index import MacroIndex
 
-        return MacroIndexLoader().get_macro_data(start)
+        start_date = pd.Timestamp(start).date()
+        rows = (
+            self._session.query(MacroIndex)
+            .filter(MacroIndex.date >= start_date)
+            .order_by(MacroIndex.date)
+            .all()
+        )
+        if not rows:
+            return pd.DataFrame()
+        data = [{"date": r.date, "indicator": r.indicator, "value": r.value} for r in rows]
+        df = pd.DataFrame(data)
+        result = df.pivot(index="date", columns="indicator", values="value")
+        result.index = pd.to_datetime(result.index)
+        result = result.ffill()
+        return result
 
     def read_institutional_flow(self, symbol: str) -> pd.DataFrame:
-        """Read institutional investor flow data for a TW stock symbol."""
-        from poseidon.data.loaders import FinLabDataLoader
-
-        return FinLabDataLoader().get_institutional_flow(symbol)
+        """Read institutional investor flow data from nonprice_timeseries DB table."""
+        return self._read_nonprice_category(symbol, "institutional")
 
     def read_margin_transactions(self, symbol: str) -> pd.DataFrame:
-        """Read margin transaction data for a TW stock symbol."""
-        from poseidon.data.loaders import FinLabDataLoader
-
-        return FinLabDataLoader().get_margin_data(symbol)
+        """Read margin transaction data from nonprice_timeseries DB table."""
+        return self._read_nonprice_category(symbol, "margin")
 
     def read_fundamentals_df(self, symbol: str) -> pd.DataFrame:
-        """Read fundamentals as DataFrame for feature computation (PE, PB, revenue, ROE, ROA)."""
-        from poseidon.data.loaders import FinLabDataLoader
-
-        return FinLabDataLoader().get_fundamentals(symbol)
+        """Read fundamentals (PE, PB, revenue, ROE, ROA) from nonprice_timeseries DB table."""
+        return self._read_nonprice_category(symbol, "fundamental")
 
     def read_trade_structure(self, symbol: str) -> pd.DataFrame:
-        """Read trade structure data (avg_trade_size, turnover_ratio) for a TW stock symbol."""
-        from poseidon.data.loaders import FinLabDataLoader
+        """Read trade structure data from nonprice_timeseries DB table."""
+        return self._read_nonprice_category(symbol, "trade_structure")
 
-        return FinLabDataLoader().get_trade_structure(symbol)
+    def _read_nonprice_category(self, symbol: str, category: str) -> pd.DataFrame:
+        """Read a non-price data category from nonprice_timeseries DB table.
+
+        Shared helper for institutional, fundamental, margin, trade_structure reads.
+        Pivots the long-format rows into a wide DataFrame indexed by date.
+        """
+        from poseidon.models.nonprice_timeseries import NonpriceTimeseries
+
+        rows = (
+            self._session.query(NonpriceTimeseries)
+            .filter(
+                NonpriceTimeseries.symbol == symbol,
+                NonpriceTimeseries.category == category,
+            )
+            .order_by(NonpriceTimeseries.date)
+            .all()
+        )
+        if not rows:
+            return pd.DataFrame()
+        data = [{"date": r.date, "indicator": r.indicator, "value": r.value} for r in rows]
+        df = pd.DataFrame(data)
+        result = df.pivot(index="date", columns="indicator", values="value")
+        result.index = pd.to_datetime(result.index)
+        return result
 
     # ------------------------------------------------------------------
     # Perpetual contract data (PerpDataLoader wrapping)
