@@ -10,12 +10,12 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from poseidon.autoresearch.guard import autoresearch_context
+from poseidon.autoresearch.guard import autoresearch_context, autoresearch_guard
 from poseidon.backtest.cost_model import COST_MODELS, CostModel
 from poseidon.backtest.experiment_tracker import ExperimentTracker
 from poseidon.backtest.param_search import ParameterSearchPipeline, SearchConfig, SearchResult
 from poseidon.backtest.portfolio import SizingConfig
-from poseidon.data.feature_engine import FeatureEngine, get_cross_asset_specs, get_r2_specs
+from poseidon.data.feature_engine import FeatureOrchestrator, get_cross_asset_specs, get_r2_specs
 from poseidon.data.repository import DataRepository
 from poseidon.ml.manager import ModelManager
 from poseidon.risk.engine import RiskEngine
@@ -87,7 +87,8 @@ class AutoResearchRunner:
         results: list[MarketResult] = []
 
         with autoresearch_context():
-            feature_engine = FeatureEngine()
+            GuardedOrchestrator = autoresearch_guard(FeatureOrchestrator)
+            feature_engine = GuardedOrchestrator()
             risk_engine = RiskEngine()
             tracker = ExperimentTracker(self.db_session)
             repo = DataRepository(self.db_session)

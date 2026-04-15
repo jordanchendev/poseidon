@@ -54,7 +54,7 @@ def run_shapley_analysis(
     from qlib.data.dataset import DatasetH
 
     from poseidon.core.database import db_session
-    from poseidon.data.feature_engine import _is_nonprice_spec, get_r2_specs
+    from poseidon.data.feature_engine import is_nonprice_spec, get_r2_specs
     from poseidon.ml.artifacts import get_predictions_path
     from poseidon.models.model_version import ModelVersion
     from poseidon.models.training_run import TrainingRun
@@ -108,7 +108,7 @@ def run_shapley_analysis(
                 training_run.market,
             )
             feature_specs = [
-                (name, params) for name, params in all_r2 if _is_nonprice_spec(name)
+                (name, params) for name, params in all_r2 if is_nonprice_spec(name)
             ]
 
         dataset_builder = DatasetBuilder(

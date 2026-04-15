@@ -100,7 +100,7 @@ def qlib_train(self, run_id: str) -> dict:
             ds_builder = DatasetBuilder(session=session, market=run.market, interval=run.interval)
 
             # Step 6b2: Resolve feature_specs for expanded features (Phase 42)
-            from poseidon.data.feature_engine import get_r2_specs, _is_nonprice_spec
+            from poseidon.data.feature_engine import get_r2_specs, is_nonprice_spec
 
             expand_features = run.model_params.get("expand_features", True)
             feature_specs = None
@@ -108,7 +108,7 @@ def qlib_train(self, run_id: str) -> dict:
                 all_r2 = get_r2_specs(run.symbols[0] if run.symbols else "", run.market)
                 # Only pass nonprice features to DatasetBuilder -- TA features are
                 # already handled by Qlib Alpha158/360 expressions via DataHandlerLP.
-                feature_specs = [(name, params) for name, params in all_r2 if _is_nonprice_spec(name)]
+                feature_specs = [(name, params) for name, params in all_r2 if is_nonprice_spec(name)]
                 if feature_specs:
                     logger.info("Expanded features: %d nonprice specs for market=%s", len(feature_specs), run.market)
 

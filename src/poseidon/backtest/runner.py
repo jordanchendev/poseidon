@@ -30,7 +30,7 @@ from poseidon.backtest.metrics import compute_metrics
 from poseidon.backtest.pending_orders import FillModel, PendingOrderBook
 from poseidon.backtest.portfolio import BacktestPortfolio, SizingConfig, SizingMode
 from poseidon.backtest.schemas import BacktestConfig, BacktestResult
-from poseidon.data.feature_engine import FeatureEngine, _is_nonprice_spec
+from poseidon.data.feature_engine import FeatureEngine, is_nonprice_spec
 from poseidon.risk.engine import RiskEngine
 from poseidon.signals.schemas import OrderType, SignalAction, SignalStatus
 from poseidon.strategies.base import BaseStrategy
@@ -560,7 +560,7 @@ class BacktestRunner:
 
         # Use compute_with_companions when non-price features are present
         has_nonprice = feature_specs is not None and any(
-            _is_nonprice_spec(name) for name, _ in feature_specs
+            is_nonprice_spec(name) for name, _ in feature_specs
         )
         if has_nonprice:
             features = self.feature_engine.compute_with_companions(

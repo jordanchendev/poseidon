@@ -131,12 +131,12 @@ class TestGetR2Specs:
         assert "roa" not in spec_names
 
     def test_nonprice_spec_detection(self):
-        from poseidon.data.feature_engine import _is_nonprice_spec, _nonprice_data_key
-        assert _is_nonprice_spec("roe") is True
-        assert _is_nonprice_spec("roa") is True
-        assert _is_nonprice_spec("margin_buy_ratio") is True
-        assert _is_nonprice_spec("margin_sell_ratio") is True
-        assert _nonprice_data_key("roe") == "fundamental_data"
-        assert _nonprice_data_key("roa") == "fundamental_data"
-        assert _nonprice_data_key("margin_buy_ratio") == "margin_data"
-        assert _nonprice_data_key("margin_sell_ratio") == "margin_data"
+        from poseidon.data.feature_engine import is_nonprice_spec, nonprice_data_key
+        assert is_nonprice_spec("roe") is True
+        assert is_nonprice_spec("roa") is True
+        assert is_nonprice_spec("margin_buy_ratio") is True
+        assert is_nonprice_spec("margin_sell_ratio") is True
+        assert nonprice_data_key("roe") == "fundamental_data"
+        assert nonprice_data_key("roa") == "fundamental_data"
+        assert nonprice_data_key("margin_buy_ratio") == "margin_data"
+        assert nonprice_data_key("margin_sell_ratio") == "margin_data"
