@@ -53,16 +53,15 @@ def run_shapley_analysis(
     from qlib.config import REG_CN
     from qlib.data.dataset import DatasetH
 
+    from poseidon.core.database import db_session
     from poseidon.data.feature_engine import _is_nonprice_spec, get_r2_specs
     from poseidon.ml.artifacts import get_predictions_path
-    from poseidon.models.base import SessionLocal
     from poseidon.models.model_version import ModelVersion
     from poseidon.models.training_run import TrainingRun
     from poseidon.qlib.data_handler import PoseidonDataHandler
     from poseidon.qlib.dataset_builder import DatasetBuilder
 
-    session = SessionLocal()
-    try:
+    with db_session() as session:
         model_version = (
             session.query(ModelVersion)
             .filter(ModelVersion.id == uuid.UUID(model_version_id))
@@ -160,5 +159,3 @@ def run_shapley_analysis(
         results["model_version_id"] = model_version_id
         results["market"] = training_run.market
         return results
-    finally:
-        session.close()

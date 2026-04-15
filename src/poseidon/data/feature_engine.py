@@ -10,9 +10,9 @@ from datetime import datetime
 import pandas as pd
 
 from poseidon.autoresearch.guard import autoresearch_guard
+from poseidon.core.database import SessionLocal, db_session
 from poseidon.data.features.base import get_feature
 from poseidon.data.storage import read_ohlcv
-from poseidon.models.base import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -314,11 +314,8 @@ class FeatureEngine:
             Wide DataFrame with columns: time, open, high, low, close, volume, + feature columns.
             Empty DataFrame if no OHLCV data found.
         """
-        session = SessionLocal()
-        try:
+        with db_session() as session:
             ohlcv = read_ohlcv(session, symbol, market, interval, start, end)
-        finally:
-            session.close()
 
         if ohlcv.empty:
             logger.warning("No OHLCV data for %s/%s/%s", market, symbol, interval)

@@ -51,8 +51,8 @@ class VolumeFilter(UniverseFilter):
         Returns mapping of symbol_id -> avg_volume.
         Symbols with no OHLCV data are omitted from the result.
         """
+        from poseidon.core.database import db_session
         from poseidon.data.storage import read_ohlcv
-        from poseidon.models.base import SessionLocal
 
         # Pick the densest interval available for the market so "average
         # daily volume" is derived from the finest-grained data we have.
@@ -62,7 +62,7 @@ class VolumeFilter(UniverseFilter):
         now = datetime.now(timezone.utc)
         start = now - timedelta(days=self.lookback_days)
         volumes: dict[str, float] = {}
-        with SessionLocal() as db:
+        with db_session() as db:
             for s in symbols:
                 try:
                     df = read_ohlcv(db, s.id, market, interval, start=start, end=now)
@@ -107,14 +107,14 @@ class ListingAgeFilter(UniverseFilter):
 
         Returns mapping of symbol_id -> days_since_first_record.
         """
+        from poseidon.core.database import db_session
         from poseidon.data.storage import read_ohlcv
-        from poseidon.models.base import SessionLocal
 
         interval = "4h" if market in {"crypto_spot", "crypto_perp"} else "1d"
 
         now = datetime.now(timezone.utc)
         ages: dict[str, int] = {}
-        with SessionLocal() as db:
+        with db_session() as db:
             for s in symbols:
                 try:
                     # Unbounded start/end to catch the true earliest record

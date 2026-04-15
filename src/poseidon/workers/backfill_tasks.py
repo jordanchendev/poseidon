@@ -54,8 +54,8 @@ from poseidon.data.rate_limiter import (
 from poseidon.data.storage import upsert_ohlcv
 from poseidon.data.symbols import get_market_config, load_symbols
 from poseidon.data.validation import validate_ohlcv
+from poseidon.core.database import db_session
 from poseidon.models.backfill import BackfillJob
-from poseidon.models.base import SessionLocal
 from poseidon.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -482,21 +482,19 @@ def backfill_chunk(self, job_id: str) -> dict:
     ``pk_ohlcv``), and advances the cursor AFTER the write commits
     (Phase 38 D-08).
     """
-    session = SessionLocal()
-    try:
-        return _run_backfill_chunk(session, job_id)
-    except Exception as exc:  # noqa: BLE001
-        session.rollback()
-        job = session.query(BackfillJob).filter_by(job_id=UUID(job_id)).first()
-        if job is not None:
-            job.status = "failed"
-            job.error = str(exc)[:2000]
-            job.finished_at = datetime.now(timezone.utc)
-            session.commit()
-        logger.exception("backfill_chunk failed for job_id=%s", job_id)
-        raise self.retry(exc=exc)
-    finally:
-        session.close()
+    with db_session() as session:
+        try:
+            return _run_backfill_chunk(session, job_id)
+        except Exception as exc:  # noqa: BLE001
+            session.rollback()
+            job = session.query(BackfillJob).filter_by(job_id=UUID(job_id)).first()
+            if job is not None:
+                job.status = "failed"
+                job.error = str(exc)[:2000]
+                job.finished_at = datetime.now(timezone.utc)
+                session.commit()
+            logger.exception("backfill_chunk failed for job_id=%s", job_id)
+            raise self.retry(exc=exc)
 
 
 @celery_app.task(
@@ -517,13 +515,11 @@ def coverage_view_refresh(self) -> dict:
     Runs on the dedicated ``backfill`` queue so it never contends with
     live-ingest or model-training workers.
     """
-    session = SessionLocal()
-    try:
-        coverage_helpers.refresh_data_coverage_mv(session)
-        return {"status": "refreshed"}
-    except Exception as exc:  # noqa: BLE001
-        session.rollback()
-        logger.exception("coverage_view_refresh failed: %s", exc)
-        raise self.retry(exc=exc)
-    finally:
-        session.close()
+    with db_session() as session:
+        try:
+            coverage_helpers.refresh_data_coverage_mv(session)
+            return {"status": "refreshed"}
+        except Exception as exc:  # noqa: BLE001
+            session.rollback()
+            logger.exception("coverage_view_refresh failed: %s", exc)
+            raise self.retry(exc=exc)

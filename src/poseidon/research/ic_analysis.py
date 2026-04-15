@@ -72,14 +72,13 @@ def run_ic_analysis(
     interval: str,
 ) -> dict:
     """Run pooled IC analysis across symbols for a market/date range."""
+    from poseidon.core.database import db_session
     from poseidon.data.feature_engine import FeatureEngine
     from poseidon.data.storage import read_ohlcv
     from poseidon.data.symbols import get_symbols_for_market
-    from poseidon.models.base import SessionLocal
 
-    session = SessionLocal()
-    engine = FeatureEngine()
-    try:
+    with db_session() as session:
+        engine = FeatureEngine()
         symbol_list = symbols or [info.id for info in get_symbols_for_market(market)]
         start = pd.Timestamp(start_date).to_pydatetime()
         end = pd.Timestamp(end_date).to_pydatetime()
@@ -134,5 +133,3 @@ def run_ic_analysis(
             "symbols_used": symbols_used,
             "total_observations": total_observations,
         }
-    finally:
-        session.close()

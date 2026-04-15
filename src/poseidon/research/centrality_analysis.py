@@ -87,15 +87,14 @@ def run_centrality_analysis(
     distance_threshold: float = 0.7,
 ) -> dict:
     """Replay sub-signal votes across symbols and compute overlap clusters."""
+    from poseidon.core.database import db_session
     from poseidon.data.feature_engine import FeatureEngine
     from poseidon.data.storage import read_ohlcv
     from poseidon.data.symbols import get_symbols_for_market
-    from poseidon.models.base import SessionLocal
     from poseidon.strategies.voting_strategy import VotingStrategy
 
-    session = SessionLocal()
-    engine = FeatureEngine()
-    try:
+    with db_session() as session:
+        engine = FeatureEngine()
         symbol_list = symbols or [info.id for info in get_symbols_for_market(market)]
         start = pd.Timestamp(start_date).to_pydatetime()
         end = pd.Timestamp(end_date).to_pydatetime()
@@ -135,5 +134,3 @@ def run_centrality_analysis(
         results = compute_centrality(combined_votes, distance_threshold)
         results["symbols_used"] = symbols_used
         return results
-    finally:
-        session.close()
