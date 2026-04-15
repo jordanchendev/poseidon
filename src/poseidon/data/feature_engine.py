@@ -12,7 +12,7 @@ import pandas as pd
 from poseidon.autoresearch.guard import autoresearch_guard
 from poseidon.core.database import SessionLocal, db_session
 from poseidon.data.features.base import get_feature
-from poseidon.data.storage import read_ohlcv
+from poseidon.data.repository import DataRepository
 
 logger = logging.getLogger(__name__)
 
@@ -315,7 +315,8 @@ class FeatureEngine:
             Empty DataFrame if no OHLCV data found.
         """
         with db_session() as session:
-            ohlcv = read_ohlcv(session, symbol, market, interval, start, end)
+            repo = DataRepository(session)
+            ohlcv = repo.read_ohlcv(symbol, market, interval, start, end)
 
         if ohlcv.empty:
             logger.warning("No OHLCV data for %s/%s/%s", market, symbol, interval)
@@ -430,6 +431,8 @@ class FeatureEngine:
             db_session = SessionLocal()
             close_session = True
 
+        repo = DataRepository(db_session)
+
         try:
             # --- Cross-asset features ---
             companion_cache: dict[tuple[str, str], pd.DataFrame] = {}
@@ -440,8 +443,8 @@ class FeatureEngine:
                 cache_key = (comp_market, comp_symbol)
 
                 if cache_key not in companion_cache:
-                    companion_cache[cache_key] = read_ohlcv(
-                        db_session, comp_symbol, comp_market, interval,
+                    companion_cache[cache_key] = repo.read_ohlcv(
+                        comp_symbol, comp_market, interval,
                     )
 
                 companion_df = companion_cache[cache_key]
@@ -462,7 +465,7 @@ class FeatureEngine:
             # --- Non-price data features ---
             if nonprice_specs:
                 nonprice_data = self._load_nonprice_data(
-                    nonprice_specs, symbol,
+                    nonprice_specs, symbol, repo,
                 )
                 # Merge externally-injected non-price data (e.g., prediction_data
                 # from BacktestRunner). External data takes precedence over loader.
@@ -498,52 +501,57 @@ class FeatureEngine:
     def _load_nonprice_data(
         nonprice_specs: list[tuple[str, dict]],
         symbol: str,
+        repo: DataRepository | None = None,
     ) -> dict[str, pd.DataFrame]:
-        """Lazily load non-price data required by the given specs.
+        """Lazily load non-price data required by the given specs via DataRepository.
 
-        Only instantiates loaders and fetches data when the corresponding
-        feature names are present in *nonprice_specs*.
+        Only fetches data when the corresponding feature names are present
+        in *nonprice_specs*. All data access goes through DataRepository.
+
+        Args:
+            nonprice_specs: Feature specs requiring non-price data.
+            symbol: Symbol identifier.
+            repo: DataRepository instance. If None, creates one from SessionLocal
+                (backward compat for callers not yet migrated).
         """
-        nonprice_data: dict[str, pd.DataFrame] = {}
+        close_repo_session = False
+        if repo is None:
+            _session = SessionLocal()
+            repo = DataRepository(_session)
+            close_repo_session = True
 
-        needs_institutional = any(
-            n.startswith(_INSTITUTIONAL_PREFIXES) for n, _ in nonprice_specs
-        )
-        needs_fundamental = any(n in _FUNDAMENTAL_NAMES for n, _ in nonprice_specs)
-        needs_trade_structure = any(n in _TRADE_STRUCTURE_NAMES for n, _ in nonprice_specs)
-        needs_funding = any(n in _FUNDING_NAMES for n, _ in nonprice_specs)
-        needs_margin = any(n in _MARGIN_NAMES for n, _ in nonprice_specs)
-        needs_oi = any(n in _OI_NAMES for n, _ in nonprice_specs)
-        needs_macro = any(n.startswith(_MACRO_PREFIX) for n, _ in nonprice_specs)
+        try:
+            nonprice_data: dict[str, pd.DataFrame] = {}
 
-        if needs_institutional or needs_fundamental or needs_trade_structure or needs_margin:
-            from poseidon.data.loaders import FinLabDataLoader
+            needs_institutional = any(
+                n.startswith(_INSTITUTIONAL_PREFIXES) for n, _ in nonprice_specs
+            )
+            needs_fundamental = any(n in _FUNDAMENTAL_NAMES for n, _ in nonprice_specs)
+            needs_trade_structure = any(n in _TRADE_STRUCTURE_NAMES for n, _ in nonprice_specs)
+            needs_funding = any(n in _FUNDING_NAMES for n, _ in nonprice_specs)
+            needs_margin = any(n in _MARGIN_NAMES for n, _ in nonprice_specs)
+            needs_oi = any(n in _OI_NAMES for n, _ in nonprice_specs)
+            needs_macro = any(n.startswith(_MACRO_PREFIX) for n, _ in nonprice_specs)
 
-            finlab = FinLabDataLoader()
             if needs_institutional:
-                nonprice_data["institutional_data"] = finlab.get_institutional_flow(symbol)
+                nonprice_data["institutional_data"] = repo.read_institutional_flow(symbol)
             if needs_fundamental:
-                nonprice_data["fundamental_data"] = finlab.get_fundamentals(symbol)
+                nonprice_data["fundamental_data"] = repo.read_fundamentals_df(symbol)
             if needs_trade_structure:
-                nonprice_data["trade_structure_data"] = finlab.get_trade_structure(symbol)
+                nonprice_data["trade_structure_data"] = repo.read_trade_structure(symbol)
             if needs_margin:
-                nonprice_data["margin_data"] = finlab.get_margin_data(symbol)
+                nonprice_data["margin_data"] = repo.read_margin_transactions(symbol)
 
-        if needs_funding:
-            from poseidon.data.loaders import FundingRateLoader
+            if needs_funding:
+                nonprice_data["funding_data"] = repo.read_funding_rates(symbol)
 
-            nonprice_data["funding_data"] = FundingRateLoader().get_daily_funding_rate(symbol)
+            if needs_oi:
+                nonprice_data["oi_data"] = repo.read_open_interest(symbol)
 
-        if needs_oi:
-            from poseidon.data.loaders import OpenInterestLoader
+            if needs_macro:
+                nonprice_data["macro_data"] = repo.read_macro()
 
-            nonprice_data["oi_data"] = OpenInterestLoader(
-                session_factory=SessionLocal
-            ).get_oi_series(symbol)
-
-        if needs_macro:
-            from poseidon.data.loaders import MacroIndexLoader
-
-            nonprice_data["macro_data"] = MacroIndexLoader().get_macro_data()
-
-        return nonprice_data
+            return nonprice_data
+        finally:
+            if close_repo_session:
+                _session.close()

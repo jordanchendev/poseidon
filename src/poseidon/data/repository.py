@@ -134,6 +134,18 @@ class DataRepository:
 
         return FinLabDataLoader().get_margin_data(symbol)
 
+    def read_fundamentals_df(self, symbol: str) -> pd.DataFrame:
+        """Read fundamentals as DataFrame for feature computation (PE, PB, revenue, ROE, ROA)."""
+        from poseidon.data.loaders import FinLabDataLoader
+
+        return FinLabDataLoader().get_fundamentals(symbol)
+
+    def read_trade_structure(self, symbol: str) -> pd.DataFrame:
+        """Read trade structure data (avg_trade_size, turnover_ratio) for a TW stock symbol."""
+        from poseidon.data.loaders import FinLabDataLoader
+
+        return FinLabDataLoader().get_trade_structure(symbol)
+
     # ------------------------------------------------------------------
     # Perpetual contract data (PerpDataLoader wrapping)
     # ------------------------------------------------------------------
