@@ -6,7 +6,9 @@ from poseidon.core.database import SessionLocal, engine, get_db  # noqa: F401
 from poseidon.models.experiment import ExperimentRecord  # noqa: F401
 from poseidon.models.factor_analysis_run import FactorAnalysisRun  # noqa: F401
 from poseidon.models.fundamentals import Fundamentals  # noqa: F401
+from poseidon.models.macro_index import MacroIndex  # noqa: F401
 from poseidon.models.model_version import ModelVersion  # noqa: F401
+from poseidon.models.nonprice_timeseries import NonpriceTimeseries  # noqa: F401
 from poseidon.models.ohlcv import OHLCV  # noqa: F401
 from poseidon.models.risk_rule import RiskRuleRecord  # noqa: F401
 from poseidon.models.sentiment import Sentiment  # noqa: F401
