@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
+from poseidon.data.repository import DataRepository
 from poseidon.data.symbols import SymbolInfo
 from poseidon.universe.base import UniverseFilter
 from poseidon.universe.registry import register_filter
@@ -52,7 +53,6 @@ class VolumeFilter(UniverseFilter):
         Symbols with no OHLCV data are omitted from the result.
         """
         from poseidon.core.database import db_session
-        from poseidon.data.storage import read_ohlcv
 
         # Pick the densest interval available for the market so "average
         # daily volume" is derived from the finest-grained data we have.
@@ -63,9 +63,10 @@ class VolumeFilter(UniverseFilter):
         start = now - timedelta(days=self.lookback_days)
         volumes: dict[str, float] = {}
         with db_session() as db:
+            repo = DataRepository(db)
             for s in symbols:
                 try:
-                    df = read_ohlcv(db, s.id, market, interval, start=start, end=now)
+                    df = repo.read_ohlcv(s.id, market, interval, start=start, end=now)
                     if df is not None and not df.empty and "volume" in df.columns:
                         volumes[s.id] = float(df["volume"].mean())
                 except Exception:
@@ -108,17 +109,17 @@ class ListingAgeFilter(UniverseFilter):
         Returns mapping of symbol_id -> days_since_first_record.
         """
         from poseidon.core.database import db_session
-        from poseidon.data.storage import read_ohlcv
 
         interval = "4h" if market in {"crypto_spot", "crypto_perp"} else "1d"
 
         now = datetime.now(timezone.utc)
         ages: dict[str, int] = {}
         with db_session() as db:
+            repo = DataRepository(db)
             for s in symbols:
                 try:
                     # Unbounded start/end to catch the true earliest record
-                    df = read_ohlcv(db, s.id, market, interval)
+                    df = repo.read_ohlcv(s.id, market, interval)
                     if df is not None and not df.empty:
                         first_date = df.index.min()
                         if hasattr(first_date, "to_pydatetime"):

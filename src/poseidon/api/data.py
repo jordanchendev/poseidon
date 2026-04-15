@@ -357,9 +357,10 @@ async def get_ohlcv(
     db: Session = Depends(get_db),
 ) -> OHLCVResponse:
     """Return OHLCV candlestick data for a given symbol/market/interval/date range."""
-    from poseidon.data.storage import read_ohlcv
+    from poseidon.data.repository import DataRepository
 
-    df = read_ohlcv(db, symbol, market, interval, start=start, end=end)
+    repo = DataRepository(db)
+    df = repo.read_ohlcv(symbol, market, interval, start=start, end=end)
     if df.empty:
         return OHLCVResponse(data=[], symbol=symbol, market=market, interval=interval, count=0)
     records = df.reset_index()

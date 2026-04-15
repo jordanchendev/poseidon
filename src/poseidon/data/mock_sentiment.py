@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from poseidon.data.storage import read_ohlcv, write_sentiment
+from poseidon.data.repository import DataRepository
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +50,11 @@ def generate_mock_sentiment(
     Returns:
         Number of sentiment rows created.
     """
+    repo = DataRepository(session)
     end = datetime.now(timezone.utc)
     start = end - pd.Timedelta(days=days + 5)  # Extra buffer for return calculation
 
-    df = read_ohlcv(session, symbol, market, interval, start, end)
+    df = repo.read_ohlcv(symbol, market, interval, start, end)
     if df.empty or len(df) < 2:
         logger.warning("Not enough OHLCV data for %s/%s to generate mock sentiment", market, symbol)
         return 0
@@ -82,8 +83,9 @@ def generate_mock_sentiment(
         # Choose a random source type
         source_type = random.choice(MOCK_SOURCE_TYPES)
 
-        write_sentiment(session, symbol, market, source_type, round(sentiment_score, 4))
+        repo.write_sentiment(symbol, market, source_type, round(sentiment_score, 4))
         count += 1
 
+    session.commit()
     logger.info("Generated %d mock sentiment scores for %s/%s", count, market, symbol)
     return count

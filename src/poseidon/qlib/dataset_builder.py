@@ -13,7 +13,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from poseidon.data.feature_engine import FeatureEngine
-from poseidon.data.storage import read_ohlcv
+from poseidon.data.repository import DataRepository
 from poseidon.qlib.column_adapter import adapt_columns
 from poseidon.universe.snapshot import get_snapshot_at
 
@@ -99,10 +99,11 @@ class DatasetBuilder:
 
         frames: list[pd.DataFrame] = []
         engine = FeatureEngine() if feature_specs else None
+        repo = DataRepository(self.session)
 
         for symbol in resolved_symbols:
-            df = read_ohlcv(
-                self.session, symbol, self.market, self.interval, start, end
+            df = repo.read_ohlcv(
+                symbol, self.market, self.interval, start, end
             )
             if df.empty:
                 logger.warning(

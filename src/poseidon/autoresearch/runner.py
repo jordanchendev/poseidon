@@ -16,7 +16,7 @@ from poseidon.backtest.experiment_tracker import ExperimentTracker
 from poseidon.backtest.param_search import ParameterSearchPipeline, SearchConfig, SearchResult
 from poseidon.backtest.portfolio import SizingConfig
 from poseidon.data.feature_engine import FeatureEngine, get_cross_asset_specs, get_r2_specs
-from poseidon.data.storage import read_ohlcv
+from poseidon.data.repository import DataRepository
 from poseidon.ml.manager import ModelManager
 from poseidon.risk.engine import RiskEngine
 
@@ -90,6 +90,7 @@ class AutoResearchRunner:
             feature_engine = FeatureEngine()
             risk_engine = RiskEngine()
             tracker = ExperimentTracker(self.db_session)
+            repo = DataRepository(self.db_session)
 
             for i, spec in enumerate(markets):
                 # D-12: graceful stop check
@@ -115,8 +116,8 @@ class AutoResearchRunner:
                             description=f"Default zero-cost model for {spec.market}",
                         )
 
-                    ohlcv = read_ohlcv(
-                        self.db_session, spec.symbol, spec.market, spec.interval,
+                    ohlcv = repo.read_ohlcv(
+                        spec.symbol, spec.market, spec.interval,
                     )
                     if ohlcv.empty:
                         logger.warning(
