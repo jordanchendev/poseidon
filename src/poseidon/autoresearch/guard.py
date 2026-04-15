@@ -57,9 +57,15 @@ def autoresearch_guard(cls=None, *, mutable_attrs: frozenset[str] = frozenset())
                 )
             object.__setattr__(self, name, value)
 
-        cls.__init__ = guarded_init
-        cls.__setattr__ = guarded_setattr
-        return cls
+        # Create a NEW subclass instead of mutating the original.
+        # This ensures `autoresearch_guard(Cls) is not Cls`.
+        guarded_cls = type(cls.__name__, (cls,), {
+            "__init__": guarded_init,
+            "__setattr__": guarded_setattr,
+            "__module__": cls.__module__,
+            "__qualname__": cls.__qualname__,
+        })
+        return guarded_cls
 
     if cls is not None:
         # Called as @autoresearch_guard without arguments
