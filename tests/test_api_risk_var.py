@@ -84,7 +84,7 @@ def test_exposure_endpoint(client):
     mock_portfolio.total_exposure.return_value = 0.8
 
     with (
-        patch("poseidon.models.base.SessionLocal") as mock_session_cls,
+        patch("poseidon.core.database.SessionLocal") as mock_session_cls,
         patch("poseidon.risk.portfolio.VirtualPortfolio", return_value=mock_portfolio),
     ):
         mock_db = MagicMock()

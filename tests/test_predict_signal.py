@@ -18,7 +18,7 @@ def _make_mock_signal(action: str, confidence: float) -> MagicMock:
     return sig
 
 
-@patch("poseidon.models.base.SessionLocal")
+@patch("poseidon.core.database.SessionLocal")
 @patch("poseidon.ml.manager.ModelManager")
 @patch("poseidon.ml.registry.get_model")
 @patch("poseidon.data.feature_engine.FeatureEngine")
@@ -89,7 +89,7 @@ def test_run_prediction_loads_model_and_generates_signals(
     mock_pipeline.process.assert_called_once_with(sig_high)
 
 
-@patch("poseidon.models.base.SessionLocal")
+@patch("poseidon.core.database.SessionLocal")
 @patch("poseidon.ml.manager.ModelManager")
 def test_run_prediction_model_not_found(mock_manager_cls, mock_session_local):
     """run_prediction raises ValueError when model version not found."""

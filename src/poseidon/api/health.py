@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
-from poseidon.models.base import SessionLocal
+from poseidon.core.database import db_session
 from poseidon.models.ohlcv import OHLCV
 from poseidon.workers.celery_app import celery_app
 
@@ -35,23 +35,19 @@ async def health(details: bool = Query(False)):
     components: dict = {}
 
     # 1. Database check + data freshness
-    db = None
     try:
-        db = SessionLocal()
-        db.execute(select(func.now()))
-        components["database"] = "ok"
+        with db_session() as db:
+            db.execute(select(func.now()))
+            components["database"] = "ok"
 
-        # Data freshness: latest OHLCV timestamp
-        latest = db.execute(select(func.max(OHLCV.time))).scalar()
-        components["data_freshness"] = {
-            "latest_ohlcv": latest.isoformat() if latest else None,
-        }
+            # Data freshness: latest OHLCV timestamp
+            latest = db.execute(select(func.max(OHLCV.time))).scalar()
+            components["data_freshness"] = {
+                "latest_ohlcv": latest.isoformat() if latest else None,
+            }
     except Exception as e:
         components["database"] = f"error: {e}"
         components["data_freshness"] = {"latest_ohlcv": None}
-    finally:
-        if db is not None:
-            db.close()
 
     # 2. Redis check (Celery broker, DB 0)
     try:

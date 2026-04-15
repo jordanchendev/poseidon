@@ -10,9 +10,11 @@ import logging
 
 import msgpack
 import redis as redis_lib
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel as PydanticBase
+from sqlalchemy.orm import Session
 
+from poseidon.core.database import get_db
 from poseidon.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -102,21 +104,16 @@ def get_var():
 
 
 @router.get("/exposure", response_model=ExposureResponse)
-def get_exposure():
+def get_exposure(db: Session = Depends(get_db)):
     """Return portfolio exposure breakdown by market and total (per D-13).
 
     Rebuilds VirtualPortfolio from DB signals, then aggregates
     quantity_pct by market.
     """
-    from poseidon.models.base import SessionLocal
     from poseidon.risk.portfolio import VirtualPortfolio
 
     portfolio = VirtualPortfolio()
-    db = SessionLocal()
-    try:
-        portfolio.rebuild_from_db(db)
-    finally:
-        db.close()
+    portfolio.rebuild_from_db(db)
 
     # Aggregate by market
     market_exposure: dict[str, float] = {}

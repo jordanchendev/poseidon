@@ -13,7 +13,7 @@ from pydantic import BaseModel as PydanticBase
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from poseidon.models.base import get_db
+from poseidon.core.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -294,7 +294,7 @@ def get_perp_holdings(db: Session = Depends(get_db)):
         PerpPosition,
         calc_liquidation_price,
     )
-    from poseidon.models.base import SessionLocal
+    from poseidon.core.database import SessionLocal
     from poseidon.models.ohlcv import OHLCV
     from poseidon.models.portfolio_holding import PortfolioHoldingRecord
     from poseidon.models.trade_log import TradeLogRecord

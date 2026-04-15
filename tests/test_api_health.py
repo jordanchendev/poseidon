@@ -3,8 +3,12 @@
 After Phase 54 Redis isolation, health.py uses ``get_redis("celery")`` from
 ``poseidon.core.redis`` instead of the old ``redis.from_url(settings.redis_url)``.
 Tests mock ``poseidon.core.redis.get_redis`` to inject a fake Redis instance.
+
+After Phase 55-02 session unification, health.py uses ``db_session()`` context
+manager from ``poseidon.core.database`` instead of direct ``SessionLocal()``.
 """
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,27 +28,12 @@ client = TestClient(_test_app)
 # --------------- Helpers ---------------
 
 
-def _mock_all_healthy():
-    """Return context managers that mock all external dependencies as healthy."""
-    # Mock DB session
-    mock_db = MagicMock()
-    mock_db.execute.return_value.scalar.return_value = None  # no OHLCV data
-
-    mock_session_local = MagicMock(return_value=mock_db)
-
-    # Mock Redis
-    mock_redis_instance = MagicMock()
-    mock_redis_instance.ping.return_value = True
-
-    # Mock Celery inspect
-    mock_inspect = MagicMock()
-    mock_inspect.active.return_value = {"worker1": []}
-    mock_inspect.reserved.return_value = {"worker1": []}
-
-    mock_celery = MagicMock()
-    mock_celery.control.inspect.return_value = mock_inspect
-
-    return mock_session_local, mock_redis_instance, mock_celery
+def _mock_db_session(mock_db):
+    """Create a mock context manager that yields mock_db for db_session()."""
+    @contextmanager
+    def _fake_db_session():
+        yield mock_db
+    return _fake_db_session
 
 
 # --------------- Tests ---------------
@@ -52,12 +41,12 @@ def _mock_all_healthy():
 
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.core.redis.get_redis")
-@patch("poseidon.api.health.SessionLocal")
-def test_health_lightweight_skips_celery_inspect(mock_session_local, mock_get_redis, mock_celery):
+@patch("poseidon.api.health.db_session")
+def test_health_lightweight_skips_celery_inspect(mock_db_session_fn, mock_get_redis, mock_celery):
     """Default /health stays lightweight for Docker liveness checks."""
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None
-    mock_session_local.return_value = mock_db
+    mock_db_session_fn.side_effect = _mock_db_session(mock_db)
 
     mock_redis_instance = MagicMock()
     mock_redis_instance.ping.return_value = True
@@ -77,11 +66,11 @@ def test_health_lightweight_skips_celery_inspect(mock_session_local, mock_get_re
 
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.core.redis.get_redis")
-@patch("poseidon.api.health.SessionLocal")
-def test_health_returns_200(mock_session_local, mock_get_redis, mock_celery):
+@patch("poseidon.api.health.db_session")
+def test_health_returns_200(mock_db_session_fn, mock_get_redis, mock_celery):
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None
-    mock_session_local.return_value = mock_db
+    mock_db_session_fn.side_effect = _mock_db_session(mock_db)
 
     mock_redis_instance = MagicMock()
     mock_redis_instance.ping.return_value = True
@@ -100,11 +89,11 @@ def test_health_returns_200(mock_session_local, mock_get_redis, mock_celery):
 
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.core.redis.get_redis")
-@patch("poseidon.api.health.SessionLocal")
-def test_health_response_structure(mock_session_local, mock_get_redis, mock_celery):
+@patch("poseidon.api.health.db_session")
+def test_health_response_structure(mock_db_session_fn, mock_get_redis, mock_celery):
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None
-    mock_session_local.return_value = mock_db
+    mock_db_session_fn.side_effect = _mock_db_session(mock_db)
 
     mock_redis_instance = MagicMock()
     mock_redis_instance.ping.return_value = True
@@ -129,11 +118,11 @@ def test_health_response_structure(mock_session_local, mock_get_redis, mock_cele
 
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.core.redis.get_redis")
-@patch("poseidon.api.health.SessionLocal")
-def test_health_all_ok(mock_session_local, mock_get_redis, mock_celery):
+@patch("poseidon.api.health.db_session")
+def test_health_all_ok(mock_db_session_fn, mock_get_redis, mock_celery):
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None
-    mock_session_local.return_value = mock_db
+    mock_db_session_fn.side_effect = _mock_db_session(mock_db)
 
     mock_redis_instance = MagicMock()
     mock_redis_instance.ping.return_value = True
@@ -158,9 +147,10 @@ def test_health_all_ok(mock_session_local, mock_get_redis, mock_celery):
 
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.core.redis.get_redis")
-@patch("poseidon.api.health.SessionLocal")
-def test_health_degraded_on_db_error(mock_session_local, mock_get_redis, mock_celery):
-    mock_session_local.return_value.execute.side_effect = Exception("connection refused")
+@patch("poseidon.api.health.db_session")
+def test_health_degraded_on_db_error(mock_db_session_fn, mock_get_redis, mock_celery):
+    # db_session() itself raises (simulating connection failure)
+    mock_db_session_fn.side_effect = Exception("connection refused")
 
     mock_redis_instance = MagicMock()
     mock_redis_instance.ping.return_value = True
@@ -180,11 +170,11 @@ def test_health_degraded_on_db_error(mock_session_local, mock_get_redis, mock_ce
 
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.core.redis.get_redis")
-@patch("poseidon.api.health.SessionLocal")
-def test_health_degraded_on_redis_error(mock_session_local, mock_get_redis, mock_celery):
+@patch("poseidon.api.health.db_session")
+def test_health_degraded_on_redis_error(mock_db_session_fn, mock_get_redis, mock_celery):
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None
-    mock_session_local.return_value = mock_db
+    mock_db_session_fn.side_effect = _mock_db_session(mock_db)
 
     mock_get_redis.side_effect = Exception("redis down")
 
@@ -202,12 +192,12 @@ def test_health_degraded_on_redis_error(mock_session_local, mock_get_redis, mock
 
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.core.redis.get_redis")
-@patch("poseidon.api.health.SessionLocal")
-def test_gpu_worker_ping(mock_session_local, mock_get_redis, mock_celery):
+@patch("poseidon.api.health.db_session")
+def test_gpu_worker_ping(mock_db_session_fn, mock_get_redis, mock_celery):
     """GPU component reports available when GPU workers respond to ping."""
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None
-    mock_session_local.return_value = mock_db
+    mock_db_session_fn.side_effect = _mock_db_session(mock_db)
 
     mock_redis_instance = MagicMock()
     mock_redis_instance.ping.return_value = True
@@ -237,12 +227,12 @@ def test_gpu_worker_ping(mock_session_local, mock_get_redis, mock_celery):
 
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.core.redis.get_redis")
-@patch("poseidon.api.health.SessionLocal")
-def test_gpu_worker_unavailable(mock_session_local, mock_get_redis, mock_celery):
+@patch("poseidon.api.health.db_session")
+def test_gpu_worker_unavailable(mock_db_session_fn, mock_get_redis, mock_celery):
     """GPU component reports unavailable when no GPU workers respond."""
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None
-    mock_session_local.return_value = mock_db
+    mock_db_session_fn.side_effect = _mock_db_session(mock_db)
 
     mock_redis_instance = MagicMock()
     mock_redis_instance.ping.return_value = True
@@ -268,13 +258,13 @@ def test_gpu_worker_unavailable(mock_session_local, mock_get_redis, mock_celery)
 
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.core.redis.get_redis")
-@patch("poseidon.api.health.SessionLocal")
+@patch("poseidon.api.health.db_session")
 def test_health_data_freshness_null_when_no_data(
-    mock_session_local, mock_get_redis, mock_celery
+    mock_db_session_fn, mock_get_redis, mock_celery
 ):
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None
-    mock_session_local.return_value = mock_db
+    mock_db_session_fn.side_effect = _mock_db_session(mock_db)
 
     mock_redis_instance = MagicMock()
     mock_redis_instance.ping.return_value = True

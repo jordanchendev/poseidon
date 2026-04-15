@@ -285,10 +285,9 @@ def test_backfill_chunk_wrapper_marks_failed_and_retries(monkeypatch, backfill_j
     """The Celery task wrapper must rollback, persist ``status=failed`` +
     error, and invoke ``self.retry``. Simulate by calling ``run`` directly
     on a fake task instance."""
-    # Patch SessionLocal to produce a real session so the wrapper touches DB.
-    from poseidon.models.base import SessionLocal as RealSessionLocal  # noqa: F401
-
+    # Patch db_session to produce a real session so the wrapper touches DB.
     import os
+    from contextlib import contextmanager
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     real_dsn = (
@@ -298,7 +297,18 @@ def test_backfill_chunk_wrapper_marks_failed_and_retries(monkeypatch, backfill_j
     engine = create_engine(real_dsn, future=True)
     LiveSession = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
-    monkeypatch.setattr(backfill_tasks, "SessionLocal", LiveSession)
+    @contextmanager
+    def mock_db_session():
+        session = LiveSession()
+        try:
+            yield session
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    monkeypatch.setattr(backfill_tasks, "db_session", mock_db_session)
 
     # Force _run_backfill_chunk to raise.
     def _boom(session, job_id):
