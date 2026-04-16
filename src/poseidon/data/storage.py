@@ -134,14 +134,14 @@ def _read_ohlcv_from_cagg(
 ) -> pd.DataFrame:
     """SELECT 1d candles from ``ohlcv_1d_cagg`` (Phase 40 D-17..D-22).
 
-    The CAGG can carry multiple rows per (symbol, time_bucket_day) if
-    a tuple has more than one sub-daily source interval. We collapse
-    per-day with first/max/min/last/sum so the response stays one row
-    per day, matching the raw path's contract.
+    The CAGG groups by interval_source, producing one row per source
+    interval per day. All sources yield identical OHLCV values, so we
+    filter to a single source ('1h') to get exactly one row per day
+    with correct volume (no SUM inflation).
 
     Response schema MUST be identical to the raw read_ohlcv path.
     """
-    where_clauses = ["market = :market", "symbol = :symbol"]
+    where_clauses = ["market = :market", "symbol = :symbol", "interval_source = '1h'"]
     params: dict = {"market": market, "symbol": symbol}
     if start is not None:
         where_clauses.append("time_bucket_day >= :start")
@@ -151,24 +151,13 @@ def _read_ohlcv_from_cagg(
         params["end"] = end
     where_sql = " AND ".join(where_clauses)
 
-    # GROUP BY collapse: handles the multi-source case (e.g. both
-    # 1h and 4h source rows for the same day) by re-running the
-    # CAGG aggregations across rows. For the v8.0 default markets
-    # (crypto_perp, crypto_spot) this is a no-op because only one
-    # sub-daily source exists per tuple, but it future-proofs the
-    # contract.
     stmt = text(
         f"""
         SELECT
             time_bucket_day AS time,
-            MIN(open)  AS open,
-            MAX(high)  AS high,
-            MIN(low)   AS low,
-            MAX(close) AS close,
-            SUM(volume) AS volume
+            open, high, low, close, volume
         FROM ohlcv_1d_cagg
         WHERE {where_sql}
-        GROUP BY time_bucket_day
         ORDER BY time_bucket_day ASC
         """
     )
