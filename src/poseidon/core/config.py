@@ -130,8 +130,7 @@ class Settings(BaseSettings):
         default_factory=lambda: ["crypto_perp", "crypto_spot"]
     )
 
-    # Phase 60: Data source switching and Thalassa connectivity
-    poseidon_data_source: Literal["local", "remote"] = "local"
+    # Phase 60: Thalassa connectivity (Phase 61: always remote, no feature flag)
     thalassa_base_url: str = ""
     thalassa_api_key: str = ""
     thalassa_timeout: float = 30.0
