@@ -64,6 +64,19 @@ class RemoteDataRepository:
             recovery_timeout=cb_recovery_timeout,
         )
 
+    @classmethod
+    def from_settings(cls) -> "RemoteDataRepository":
+        """Construct from Poseidon Settings -- preferred construction method."""
+        from poseidon.core.config import settings
+
+        return cls(
+            base_url=settings.thalassa_base_url,
+            api_key=settings.thalassa_api_key,
+            timeout=settings.thalassa_timeout,
+            cb_threshold=settings.thalassa_cb_threshold,
+            cb_recovery_timeout=settings.thalassa_cb_recovery_timeout,
+        )
+
     # ------------------------------------------------------------------
     # Core request infrastructure
     # ------------------------------------------------------------------

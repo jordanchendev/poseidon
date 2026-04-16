@@ -9,7 +9,7 @@ from datetime import date
 import pandas as pd
 from pydantic import BaseModel
 
-from poseidon.data.repository import DataRepository
+from poseidon.data.remote_repository import RemoteDataRepository
 from poseidon.strategies.portfolio.base import PortfolioStrategy
 from poseidon.strategies.portfolio.registry import register_portfolio_strategy
 from poseidon.strategies.portfolio.schemas import TargetPosition
@@ -73,7 +73,7 @@ class CryptoTrendStrategy(PortfolioStrategy):
     def __init__(
         self,
         config: CryptoTrendConfig,
-        repo: DataRepository | None = None,
+        repo: RemoteDataRepository | None = None,
     ):
         self.name = config.name
         self.config = config

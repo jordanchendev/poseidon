@@ -1,11 +1,14 @@
-"""CPU worker Celery tasks for data fetching, backfill, backtest, and optimization."""
+"""CPU worker Celery tasks for backtest, optimization, trading, and research.
+
+Phase 61: All data-fetching / ingest / backfill tasks removed.
+Poseidon reads data exclusively via Thalassa RemoteDataRepository.
+"""
 
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
-import redis as redis_lib
 
 from poseidon.backtest.cost_model import COST_MODELS
 from poseidon.backtest.optimizer import BayesianOptimizer, GridSearchOptimizer
@@ -14,19 +17,11 @@ from poseidon.backtest.repository import BacktestRepository
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.backtest.schemas import BacktestConfig
 from poseidon.core.config import settings
-from sqlalchemy import text as sa_text
-from poseidon.data.feature_engine import FeatureEngine
-from poseidon.data.fetchers import get_fetcher
-from poseidon.core.redis import get_redis
-from poseidon.data.cache import CacheManager
-from poseidon.data.rate_limiter import CircuitBreaker, DistributedRateLimiter, PROVIDER_LIMITS
-from poseidon.data.validation import validate_ohlcv
-from poseidon.data.factory import get_data_repository
-from poseidon.data.symbols import get_market_config, get_symbols_for_market, load_symbols
-from poseidon.models.backfill import BackfillJob
-from poseidon.models.backtest import BacktestRecord
 from poseidon.core.database import db_session, SessionLocal
-from poseidon.models.ingest_state import IngestState
+from poseidon.core.redis import get_redis
+from poseidon.data.feature_engine import FeatureEngine
+from poseidon.data.symbols import load_symbols
+from poseidon.models.backtest import BacktestRecord
 from poseidon.models.strategy import StrategyRecord
 from poseidon.risk.engine import RiskEngine
 from poseidon.strategies.rule_strategy import RuleStrategy
@@ -35,25 +30,6 @@ from poseidon.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-# Market -> provider mapping for rate limiting and circuit breaker
-MARKET_TO_PROVIDER = {
-    "tw_stock": "finlab",
-    "tw_futures": "finlab",
-    "us_stock": "yfinance",
-    "crypto_spot": "ccxt",
-    "crypto_perp": "ccxt",
-}
-
-
-def _get_provider_for_market(market: str) -> str:
-    """Resolve the provider name used for rate limiting and circuit health."""
-    if market == "tw_stock":
-        return settings.tw_stock_data_backend
-    if market == "tw_futures":
-        return settings.tw_futures_data_backend
-    if market == "us_stock":
-        return settings.us_stock_data_backend
-    return MARKET_TO_PROVIDER.get(market, "unknown")
 
 
 def _build_tw_stock_broker(broker_cfg):
@@ -82,309 +58,14 @@ def _build_tw_stock_broker(broker_cfg):
     return broker
 
 
-def _get_redis_client() -> redis_lib.Redis:
-    """Create a Redis client for rate limiter and circuit breaker (DB 3).
-
-    NOTE: Phase 54 — this now returns a ratelimit-purpose client.
-    CacheManager callers must use get_redis("cache") separately.
-    """
-    return get_redis("ratelimit")
-
-
 @celery_app.task(name="poseidon.workers.cpu_tasks.fetch_market_data")
 def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> dict:
-    """Fetch latest data for all symbols (or a specific symbol) in a market.
+    """Removed in Phase 61 -- data fetching moved to Thalassa.
 
-    This is the task called by Celery Beat on schedule.
-
-    Args:
-        market: Market name (e.g., "crypto_spot", "tw_stock").
-        interval: Candle interval ("1d" or "1h").
-        symbol: Optional symbol ID to fetch. If None, fetches all symbols in the market.
+    Task name kept so any stale Beat schedule entry does not crash the worker.
     """
-    config = load_symbols()
-    symbols = get_symbols_for_market(market, config)
-    market_cfg = get_market_config(market, config)
-
-    # Filter to specific symbol if requested
-    if symbol and symbols:
-        symbols = [s for s in symbols if s.id == symbol or s.ccxt_symbol == symbol]
-
-    # If a specific symbol was requested but not found in config, create an ad-hoc entry
-    if not symbols and symbol:
-        from poseidon.data.symbols import SymbolInfo
-        symbols = [SymbolInfo(id=symbol, name=symbol)]
-        logger.info("Symbol %s not in config, fetching ad-hoc for market %s", symbol, market)
-    elif not symbols:
-        logger.warning("No symbols configured for market: %s", market)
-        return {"market": market, "interval": interval, "fetched": 0}
-
-    # Phase 38 D-04: cursor-mode branch. Legacy path below is UNCHANGED so
-    # flag=legacy is byte-identical to v7.0 behavior.
-    if settings.ingest_cursor_mode == "cursor":
-        return _fetch_market_data_cursor(market, interval, symbols, market_cfg)
-
-    fetcher = get_fetcher(market)
-    instrument = market_cfg.instrument if market_cfg else "spot"
-
-    # Determine date range: fetch last 7 days to catch any missed data
-    end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    start_date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
-
-    fetched_count = 0
-
-    # Initialize rate limiter and circuit breaker once per task call
-    provider = _get_provider_for_market(market)
-    ratelimit_client = _get_redis_client()
-    cache_client = get_redis("cache")
-    circuit = CircuitBreaker(
-        ratelimit_client,
-        provider,
-        failure_threshold=settings.circuit_failure_threshold,
-        open_timeout=settings.circuit_open_timeout,
-        failure_window=settings.circuit_failure_window,
-    )
-    rate_limiter = DistributedRateLimiter(ratelimit_client)
-    cache = CacheManager(cache_client) if settings.cache_enabled else None
-    provider_cfg = PROVIDER_LIMITS.get(provider, {})
-    window = provider_cfg.get("window_seconds", 3600)
-    limit = getattr(settings, provider_cfg.get("limit_key", "ratelimit_finmind_hourly"), 500)
-
-    with db_session() as session:
-        repo = get_data_repository(session)
-        for sym_info in symbols:
-            # 0. Check cache first (three-layer fallback: cache -> DB -> API)
-            if cache is not None:
-                cached_df = cache.get(sym_info.id, interval, start_date, end_date)
-                if cached_df is not None and not cached_df.empty:
-                    logger.debug("Cache hit for %s/%s/%s", market, sym_info.id, interval)
-                    count = repo.upsert_ohlcv(cached_df, sym_info.id, market, instrument, interval)
-                    session.commit()  # explicit commit (was auto-commit in storage.upsert_ohlcv)
-                    fetched_count += count
-                    continue
-
-            # 1. Check circuit breaker
-            if not circuit.allow_request():
-                logger.warning("Circuit open for %s, skipping %s", provider, sym_info.id)
-                continue
-
-            # 2. Acquire rate limit (wait up to 30s)
-            if not rate_limiter.wait_and_acquire(
-                provider, window, limit, timeout=30, budget_class="live_ingest"
-            ):
-                logger.warning("Rate limit timeout for %s, skipping %s", provider, sym_info.id)
-                continue
-
-            # 3. Fetch
-            try:
-                fetch_symbol = sym_info.ccxt_symbol or sym_info.id
-                df = fetcher.fetch_ohlcv(fetch_symbol, interval, start_date, end_date)
-                circuit.record_success()
-            except Exception as exc:
-                circuit.record_failure()
-                session.rollback()
-                logger.error("Failed to fetch %s/%s/%s: %s", market, sym_info.id, interval, exc)
-                continue
-
-            # 4. Validate (per D-01: between fetch and upsert)
-            if not df.empty:
-                vresult = validate_ohlcv(df, market)
-                if vresult.has_critical:
-                    logger.error(
-                        "CRITICAL validation failure for %s/%s: %s",
-                        market,
-                        sym_info.id,
-                        [c for c in vresult.checks if not c.passed and c.severity.value == "critical"],
-                    )
-                    continue  # skip upsert per D-03
-                if vresult.warning_count > 0:
-                    logger.warning(
-                        "Validation warnings for %s/%s: %s",
-                        market,
-                        sym_info.id,
-                        [c for c in vresult.checks if not c.passed and c.severity.value == "warning"],
-                    )
-                # 5. Upsert (only if no CRITICAL)
-                count = repo.upsert_ohlcv(df, sym_info.id, market, instrument, interval)
-                session.commit()  # explicit commit (was auto-commit in storage.upsert_ohlcv)
-                fetched_count += count
-                # 6. Cache the validated data
-                if cache is not None:
-                    cache.set(sym_info.id, interval, start_date, end_date, df)
-                logger.info("Fetched %d rows for %s/%s/%s", count, market, sym_info.id, interval)
-            else:
-                logger.info("No new data for %s/%s/%s", market, sym_info.id, interval)
-
-    logger.info("Completed fetch for %s/%s: %d total rows", market, interval, fetched_count)
-    return {"market": market, "interval": interval, "fetched": fetched_count}
-
-
-# ---------------------------------------------------------------------------
-# Phase 38 cursor-mode ingest (D-01..D-08) — self-contained; NEVER delegates to
-# backfill_jobs per D-07. Guarded by settings.ingest_cursor_mode.
-# ---------------------------------------------------------------------------
-
-CHUNK_CANDLES = 1000
-MAX_CHUNKS_PER_TICK = 10  # hard upper bound per symbol per tick (D-06)
-TICK_WALL_BUDGET_SEC = 30  # soft wall-clock budget per tick (D-06)
-
-_INTERVAL_SECONDS = {
-    "1m": 60,
-    "5m": 300,
-    "15m": 900,
-    "30m": 1800,
-    "1h": 3600,
-    "4h": 14400,
-    "1d": 86400,
-}
-
-
-def _fetch_market_data_cursor(market: str, interval: str, symbols, market_cfg) -> dict:
-    """Cursor-mode ingest helper — DATA-FOUND-01/02/03.
-
-    Self-contained (D-07): does NOT delegate to backfill_jobs. Loops over each
-    resolved symbol, bootstraps last_successful_ts from MAX(time) when missing,
-    chunks gaps into CHUNK_CANDLES batches, upserts, then advances the cursor
-    AFTER commit (D-03, D-08). Respects CHUNK_CANDLES, MAX_CHUNKS_PER_TICK, and
-    TICK_WALL_BUDGET_SEC so a long gap is closed over successive Celery Beat
-    ticks without monopolising a worker.
-    """
-    import time as _time
-
-    from poseidon.data.ingest_cursor import IngestCursorService
-
-    cursor_service = IngestCursorService()
-    fetcher = get_fetcher(market)
-    instrument = market_cfg.instrument if market_cfg else "spot"
-    now = datetime.now(timezone.utc)
-    interval_sec = _INTERVAL_SECONDS.get(interval, 3600)
-    chunk_td = timedelta(seconds=interval_sec * CHUNK_CANDLES)
-    fetched_count = 0
-    tick_start = _time.monotonic()
-
-    # Rate limit / circuit breaker init (mirror legacy path)
-    provider = _get_provider_for_market(market)
-    ratelimit_client = _get_redis_client()
-    circuit = CircuitBreaker(
-        ratelimit_client,
-        provider,
-        failure_threshold=settings.circuit_failure_threshold,
-        open_timeout=settings.circuit_open_timeout,
-        failure_window=settings.circuit_failure_window,
-    )
-    rate_limiter = DistributedRateLimiter(ratelimit_client)
-    provider_cfg = PROVIDER_LIMITS.get(provider, {})
-    window = provider_cfg.get("window_seconds", 3600)
-    limit = getattr(
-        settings, provider_cfg.get("limit_key", "ratelimit_finmind_hourly"), 500
-    )
-
-    with db_session() as session:
-        repo = get_data_repository(session)
-        for sym_info in symbols:
-            cursor = cursor_service.get_or_bootstrap(
-                session, sym_info.id, market, interval
-            )
-            # Fresh symbol (no history) falls back to a 7-day warm-up window.
-            start = cursor or (now - timedelta(days=7))
-            chunks_this_sym = 0
-            while start < now and chunks_this_sym < MAX_CHUNKS_PER_TICK:
-                if _time.monotonic() - tick_start > TICK_WALL_BUDGET_SEC:
-                    logger.info(
-                        "cursor ingest tick wall-budget exceeded for %s/%s/%s; deferring",
-                        market,
-                        sym_info.id,
-                        interval,
-                    )
-                    break
-                if not circuit.allow_request():
-                    logger.warning(
-                        "Circuit open for %s, skipping %s", provider, sym_info.id
-                    )
-                    break
-                if not rate_limiter.wait_and_acquire(
-                    provider, window, limit, timeout=30, budget_class="live_ingest"
-                ):
-                    logger.warning(
-                        "Rate limit timeout for %s, skipping %s", provider, sym_info.id
-                    )
-                    break
-
-                batch_end = min(start + chunk_td, now)
-                fetch_symbol = sym_info.ccxt_symbol or sym_info.id
-                try:
-                    df = fetcher.fetch_ohlcv(
-                        fetch_symbol,
-                        interval,
-                        start.strftime("%Y-%m-%d"),
-                        batch_end.strftime("%Y-%m-%d"),
-                    )
-                    circuit.record_success()
-                except Exception as exc:  # noqa: BLE001
-                    circuit.record_failure()
-                    session.rollback()
-                    cursor_service.record_error(
-                        session, sym_info.id, market, interval, str(exc)
-                    )
-                    logger.error(
-                        "cursor fetch failed %s/%s/%s: %s",
-                        market,
-                        sym_info.id,
-                        interval,
-                        exc,
-                    )
-                    break
-
-                if df is None or df.empty:
-                    # No data in this chunk — still advance cursor to avoid
-                    # re-requesting the same empty window forever.
-                    cursor_service.advance(
-                        session, sym_info.id, market, interval, batch_end
-                    )
-                    start = batch_end
-                    chunks_this_sym += 1
-                    continue
-
-                vresult = validate_ohlcv(df, market)
-                if vresult.has_critical:
-                    cursor_service.record_error(
-                        session,
-                        sym_info.id,
-                        market,
-                        interval,
-                        "critical validation failure",
-                    )
-                    logger.error(
-                        "cursor CRITICAL validation %s/%s/%s", market, sym_info.id, interval
-                    )
-                    break
-
-                n = repo.upsert_ohlcv(
-                    df, sym_info.id, market, instrument, interval
-                )
-                session.commit()  # explicit commit (was auto-commit in storage.upsert_ohlcv)
-                fetched_count += n
-                # Advance AFTER upsert commits (D-03, D-08).
-                cursor_service.advance(
-                    session, sym_info.id, market, interval, batch_end
-                )
-                start = batch_end
-                chunks_this_sym += 1
-
-    logger.info(
-        "cursor-mode fetch %s/%s: %d total rows", market, interval, fetched_count
-    )
-    return {
-        "market": market,
-        "interval": interval,
-        "fetched": fetched_count,
-        "mode": "cursor",
-    }
-
-
-# Phase 38 D-10: legacy backfill_symbol + trigger_backfill tasks deleted.
-# BackfillJob substrate lives in poseidon.workers.backfill_tasks.backfill_chunk;
-# Phase 39 will ship the REST dispatcher that enqueues on the 'backfill' queue.
+    logger.warning("fetch_market_data: removed in Phase 61 — data fetching is now handled by Thalassa")
+    return {"skipped": "removed_phase_61", "market": market, "interval": interval}
 
 
 @celery_app.task(
@@ -423,7 +104,8 @@ def run_backtest_task(
     """
     backtest_id = uuid.uuid4()
     with db_session() as session:
-        repo = get_data_repository(session)
+        from poseidon.data.remote_repository import RemoteDataRepository
+        repo = RemoteDataRepository.from_settings()
         try:
             # Load strategy record from DB
             sid = uuid.UUID(strategy_id)
@@ -606,7 +288,8 @@ def run_dual_mode_task(
     from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
 
     with db_session() as session:
-        repo = get_data_repository(session)
+        from poseidon.data.remote_repository import RemoteDataRepository
+        repo = RemoteDataRepository.from_settings()
         try:
             sid = uuid.UUID(strategy_id)
             record = session.get(StrategyRecord, sid)
@@ -734,7 +417,8 @@ def run_optimization_task(
         Dict with trial count, best params, and best metric value.
     """
     with db_session() as session:
-        repo = get_data_repository(session)
+        from poseidon.data.remote_repository import RemoteDataRepository
+        repo = RemoteDataRepository.from_settings()
         try:
             # Load strategy record from DB
             sid = uuid.UUID(strategy_id)
@@ -887,7 +571,8 @@ def compute_var_snapshot(method: str = "all") -> dict:
 
     redis_client = get_redis("cache")
     with db_session() as db:
-        repo = get_data_repository(db)
+        from poseidon.data.remote_repository import RemoteDataRepository
+        repo = RemoteDataRepository.from_settings()
         # 1. Rebuild portfolio from DB
         portfolio = VirtualPortfolio()
         portfolio.rebuild_from_db(db)
@@ -1118,7 +803,8 @@ def update_covariance_matrix() -> dict:
 
     redis_client = get_redis("cache")
     with db_session() as db:
-        repo = get_data_repository(db)
+        from poseidon.data.remote_repository import RemoteDataRepository
+        repo = RemoteDataRepository.from_settings()
         # 1. Get active portfolio symbols
         portfolio = VirtualPortfolio()
         portfolio.rebuild_from_db(db)
@@ -1282,104 +968,6 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
                 pass
 
 
-@celery_app.task(name="poseidon.workers.cpu_tasks.compute_quality_scores")
-def compute_quality_scores() -> dict:
-    """Compute data quality scores for all symbols (per D-09, DVAL-05).
-
-    Iterates over symbols in symbols.yaml, computes quality score per
-    symbol+interval, stores results in quality_scores table.
-
-    Runs daily at 02:00 UTC via Celery Beat.
-    """
-    from poseidon.data.quality_scorer import DataQualityScorer
-    from poseidon.data.symbols import load_symbols
-    from poseidon.models.quality_score import QualityScore
-    from poseidon.risk.var.returns import MARKET_CALENDARS
-
-    scorer = DataQualityScorer()
-    config = load_symbols()
-    now = datetime.now(timezone.utc)
-    lookback_days = settings.var_lookback_days  # default 252
-    scored = 0
-    skipped = 0
-
-    with db_session() as db:
-        repo = get_data_repository(db)
-        for market_name, market_cfg in config.markets.items():
-            calendar = MARKET_CALENDARS.get(market_name, {"freq": "B", "tz": "UTC"})
-            symbols = market_cfg.symbols
-            intervals = market_cfg.intervals
-
-            for sym in symbols:
-                for interval in intervals:
-                    # Compute expected rows using market calendar
-                    start_date = now - timedelta(days=lookback_days)
-                    if calendar["freq"] == "D":
-                        # Calendar days (crypto)
-                        expected_rows = lookback_days
-                    else:
-                        # Business days (TW/US): approximate with pandas
-                        bdays = pd.bdate_range(start=start_date, end=now)
-                        expected_rows = len(bdays)
-
-                    # For intraday intervals, multiply by bars per day
-                    if interval == "1h":
-                        expected_rows *= 24
-                    elif interval == "5m":
-                        expected_rows *= 288  # 24*60/5
-
-                    # Read recent OHLCV data
-                    df = repo.read_ohlcv(
-                        symbol=sym.id,
-                        market=market_name,
-                        interval=interval,
-                        start=start_date,
-                        end=now,
-                    )
-
-                    # Skip symbols with no data in last 7 days
-                    if df.empty:
-                        skipped += 1
-                        continue
-                    # read_ohlcv returns time as index, not column
-                    latest_time = pd.Timestamp(df.index.max())
-                    if latest_time.tzinfo is None:
-                        latest_time = latest_time.tz_localize("UTC")
-                    if (now - latest_time).days > 7:
-                        skipped += 1
-                        continue
-
-                    # Compute quality score
-                    # reset_index so validation_rules can access df["time"]
-                    df = df.reset_index()
-                    dims = scorer.compute(
-                        df,
-                        market=market_name,
-                        interval=interval,
-                        expected_rows=expected_rows,
-                        latest_expected=now,
-                    )
-
-                    # Insert QualityScore row
-                    row = QualityScore(
-                        time=now,
-                        symbol=sym.id,
-                        interval=interval,
-                        score=dims.composite,
-                        completeness=dims.completeness,
-                        consistency=dims.consistency,
-                        anomaly_free=dims.anomaly_free,
-                        timeliness=dims.timeliness,
-                    )
-                    db.merge(row)
-                    scored += 1
-
-        db.commit()
-        logger.info("Quality scoring complete: scored=%d, skipped=%d", scored, skipped)
-
-    return {"scored": scored, "skipped": skipped}
-
-
 @celery_app.task(name="poseidon.workers.cpu_tasks.run_stress_test")
 def run_stress_test(
     scenario_name: str, custom_shocks: dict | None = None
@@ -1412,7 +1000,8 @@ def run_stress_test(
 
     redis_client = get_redis("cache")
     with db_session() as db:
-        repo = get_data_repository(db)
+        from poseidon.data.remote_repository import RemoteDataRepository
+        repo = RemoteDataRepository.from_settings()
         # 1. Rebuild portfolio from DB
         portfolio = VirtualPortfolio()
         portfolio.rebuild_from_db(db)
@@ -1612,165 +1201,17 @@ def trigger_risk_update(eval_result: dict | None = None) -> dict:
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.portfolio_monthly_rebalance")
 def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
-    """Monthly rebalance: run RevenueBreakoutStrategy -> Rebalancer -> OrderManager.
+    """Monthly rebalance -- currently disabled.
 
-    Triggered on the 15th of each month at 01:30 UTC (09:30 UTC+8, after TW open).
-    Skips weekends. Creates TradeLogRecord for each sell fill.
-
-    Args:
-        signal_id: Optional signal UUID that triggered this rebalance.
+    RevenueBreakoutStrategy removed in Phase 61 (FinLab data access
+    not yet available via Thalassa). Re-implement when Thalassa
+    serves FinLab-equivalent data.
     """
-    from datetime import date as date_type
-
-    import yaml
-
-    from poseidon.broker.config import BrokerConfig
-    from poseidon.models.ohlcv import OHLCV
-    from poseidon.models.portfolio_holding import PortfolioHoldingRecord
-    from poseidon.models.trade_log import TradeLogRecord
-    from poseidon.orders.risk_checker import OrderRiskChecker
-    from poseidon.orders.manager import OrderManager
-    from poseidon.strategies.portfolio.rebalancer import PortfolioRebalancer
-    from poseidon.strategies.portfolio.revenue_breakout import RevenueBreakoutStrategy
-    from poseidon.strategies.portfolio.schemas import RevenueBreakoutConfig
-
-    now = datetime.now(timezone.utc)
-
-    # Skip weekends
-    if now.weekday() >= 5:
-        logger.info("portfolio_monthly_rebalance: skipping weekend (weekday=%d)", now.weekday())
-        return {"skipped": "weekend"}
-
-    # Load strategy config from YAML
-    config_path = "config/strategies/revenue_breakout.yaml"
-    with open(config_path) as f:
-        raw_cfg = yaml.safe_load(f)
-    strategy_cfg = RevenueBreakoutConfig(**raw_cfg)
-
-    # Load broker config from YAML
-    broker_yaml_path = "config/broker.yaml"
-    with open(broker_yaml_path) as bf:
-        broker_raw = yaml.safe_load(bf)
-    broker_cfg = BrokerConfig(**broker_raw)
-    position_tracker = _build_position_tracker()
-    broker = _build_tw_stock_broker(broker_cfg)
-    risk_checker = OrderRiskChecker(
-        position_limit_pct=strategy_cfg.allocation.position_limit_pct,
-        max_exposure=1.0,
-        stop_loss_pct=strategy_cfg.allocation.stop_loss_pct,
+    logger.warning(
+        "portfolio_monthly_rebalance: skipped — RevenueBreakoutStrategy "
+        "removed (FinLab data not available via Thalassa)"
     )
-    order_manager = OrderManager(broker, risk_checker, position_tracker, SessionLocal, broker_cfg)
-    rebalancer = PortfolioRebalancer()
-
-    # --- Protection checks (D-11, D-12, D-13) ---
-    from poseidon.protections.manager import ProtectionManager
-
-    protection_mgr = ProtectionManager.from_defaults()
-
-    # Check portfolio-level protections first (daily_loss halts ALL trading)
-    with db_session() as prot_db:
-        daily_results = protection_mgr.check_all("__portfolio__", strategy_cfg.market, prot_db)
-        portfolio_locked = any(r.locked and r.protection_type == "daily_loss" for r in daily_results)
-        if portfolio_locked:
-            reason = next(r.reason for r in daily_results if r.locked and r.protection_type == "daily_loss")
-            logger.warning("portfolio_monthly_rebalance: portfolio locked by daily_loss protection — %s", reason)
-            return {"skipped": "protection_locked", "reason": reason}
-
-    # Run strategy
-    strategy = RevenueBreakoutStrategy(strategy_cfg)
-    targets = strategy.select_stocks(pd.DataFrame(), as_of=date_type.today())
-
-    # Compute differential orders
-    current_holdings = position_tracker.current_holdings()
-    rebalance_orders = rebalancer.rebalance(targets, current_holdings)
-
-    if not rebalance_orders:
-        logger.info("portfolio_monthly_rebalance: no rebalance orders")
-        return {"rebalanced": True, "orders": 0, "sells": 0}
-
-    # Filter out locked symbols (per D-12)
-    with db_session() as prot_db:
-        unlocked_orders = []
-        for ro in rebalance_orders:
-            if protection_mgr.is_locked(ro.symbol, strategy_cfg.market, prot_db):
-                locks = protection_mgr.check_all(ro.symbol, strategy_cfg.market, prot_db)
-                active = [r for r in locks if r.locked]
-                logger.info("portfolio_monthly_rebalance: skipping %s — locked by %s", ro.symbol, [r.protection_type for r in active])
-            else:
-                unlocked_orders.append(ro)
-        rebalance_orders = unlocked_orders
-
-    if not rebalance_orders:
-        logger.info("portfolio_monthly_rebalance: all symbols locked by protection")
-        return {"rebalanced": True, "orders": 0, "sells": 0, "protection_filtered": True}
-
-    # Ensure OHLCV data exists for all selected symbols (fetch missing ones)
-    order_symbols = [ro.symbol for ro in rebalance_orders]
-    _ensure_ohlcv_data(order_symbols, market=strategy_cfg.market)
-
-    # Get latest prices for weight-to-shares conversion
-    prices = _get_latest_prices(order_symbols)
-
-    # Capture sell holding info BEFORE execution (positions get closed)
-    sell_holdings_info: dict[str, dict] = {}
-    with db_session() as session:
-        for ro in rebalance_orders:
-            if ro.action == "sell":
-                record = (
-                    session.query(PortfolioHoldingRecord)
-                    .filter(
-                        PortfolioHoldingRecord.symbol == ro.symbol,
-                        PortfolioHoldingRecord.closed == False,  # noqa: E712
-                    )
-                    .first()
-                )
-                if record:
-                    sell_holdings_info[ro.symbol] = {
-                        "entry_price": record.entry_price,
-                        "entry_date": record.entry_date,
-                        "shares": record.shares,
-                    }
-
-    # Execute rebalance
-    results = order_manager.execute_rebalance(
-        rebalance_orders, strategy_name=strategy_cfg.name, prices=prices, market=strategy_cfg.market,
-    )
-
-    # Create TradeLogRecords for filled sell orders
-    trade_log_count = 0
-    with db_session() as session:
-        for result in results:
-            if result.success and result.order.action == "sell":
-                sym = result.order.symbol
-                info = sell_holdings_info.get(sym)
-                if info and info.get("entry_price") and info.get("shares"):
-                    exit_price = prices.get(sym, 0.0)
-                    entry_price = info["entry_price"]
-                    shares = info["shares"]
-                    entry_date = info["entry_date"]
-                    trade_log = TradeLogRecord(
-                        strategy_name=strategy_cfg.name,
-                        symbol=sym,
-                        market=strategy_cfg.market,
-                        entry_price=entry_price,
-                        exit_price=exit_price,
-                        entry_date=entry_date,
-                        exit_date=now,
-                        shares=shares,
-                        realized_pnl=(exit_price - entry_price) * shares,
-                        holding_days=(now - entry_date).days if entry_date else 0,
-                        signal_id=uuid.UUID(signal_id) if signal_id else None,
-                    )
-                    session.add(trade_log)
-                    trade_log_count += 1
-        session.commit()
-
-    logger.info(
-        "portfolio_monthly_rebalance: %d orders, %d trade logs",
-        len(results),
-        trade_log_count,
-    )
-    return {"rebalanced": True, "orders": len(results), "sells": trade_log_count}
+    return {"skipped": "strategy_unavailable", "reason": "RevenueBreakoutStrategy removed — Phase 61"}
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.portfolio_stop_loss_monitor")
@@ -1974,52 +1415,6 @@ def _build_position_tracker():
     tracker = PositionTracker(SessionLocal)
     tracker.rebuild_from_db()
     return tracker
-
-
-def _ensure_ohlcv_data(symbols: list[str], market: str = "tw_stock") -> None:
-    """Ensure OHLCV data exists in DB for given symbols.
-
-    Checks which symbols are missing from the DB and fetches recent data
-    (last 30 days) using the appropriate market fetcher. This maintains the
-    three-layer architecture: strategy selects from full universe (FinLab),
-    then we ensure Poseidon DB has the data for order execution.
-    """
-    from poseidon.models.ohlcv import OHLCV
-    from poseidon.data.fetchers import get_fetcher
-
-    with db_session() as session:
-        existing = set(
-            row[0]
-            for row in session.query(OHLCV.symbol)
-            .filter(OHLCV.market == market, OHLCV.interval == "1d")
-            .distinct()
-            .all()
-        )
-
-    missing = [s for s in symbols if s not in existing]
-    if not missing:
-        return
-
-    logger.info("_ensure_ohlcv_data: fetching %d missing symbols: %s", len(missing), missing)
-
-    fetcher = get_fetcher(market)
-    end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    start_date = (datetime.now(timezone.utc) - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
-
-    with db_session() as session:
-        repo = get_data_repository(session)
-        for sym in missing:
-            try:
-                df = fetcher.fetch_ohlcv(sym, "1d", start_date, end_date)
-                if df is not None and not df.empty:
-                    repo.upsert_ohlcv(df, sym, market, "spot", "1d")
-                    session.commit()  # explicit commit (was auto-commit in storage.upsert_ohlcv)
-                    logger.info("_ensure_ohlcv_data: fetched %d rows for %s", len(df), sym)
-                else:
-                    logger.warning("_ensure_ohlcv_data: no data returned for %s", sym)
-            except Exception as e:
-                session.rollback()
-                logger.warning("_ensure_ohlcv_data: failed to fetch %s: %s", sym, e)
 
 
 def _get_latest_prices(symbols: list[str]) -> dict[str, float]:
@@ -2337,7 +1732,8 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
 
     # Run strategy (inject DataRepository with session for perp data access)
     with db_session() as strategy_db:
-        strategy._repo = get_data_repository(strategy_db)
+        from poseidon.data.remote_repository import RemoteDataRepository
+        strategy._repo = RemoteDataRepository.from_settings()
         targets = strategy.select_stocks(pd.DataFrame(), as_of=now.date())
 
     # Compute differential orders
@@ -2591,339 +1987,6 @@ def perp_nav_snapshot() -> dict:
     return {"date": str(today), "total_nav": total_nav, "holdings_count": len(perp_holdings)}
 
 
-# ---------------------------------------------------------------------------
-# Universe refresh (Phase 35)
-# ---------------------------------------------------------------------------
-
-
-@celery_app.task(
-    name="poseidon.workers.cpu_tasks.refresh_universe",
-    bind=True,
-    max_retries=2,
-)
-def refresh_universe(self, market: str):
-    """Refresh trading universe for a market: resolve source -> filter -> persist snapshot.
-
-    If refresh fails, previous snapshot remains active (D-15).
-    """
-    from poseidon.universe.pipeline import UniversePipeline
-    from poseidon.universe.snapshot import save_snapshot
-    from poseidon.universe.yaml_source import YamlSource  # ensure registered
-
-    with db_session() as session:
-        try:
-            # TODO: make source/filter configurable per market (D-03)
-            # For now, default to YamlSource with no filters
-            source = YamlSource()
-            pipeline = UniversePipeline(source=source, filters=[])
-            symbols = pipeline.run(market, db_session=session)
-
-            if not symbols:
-                logger.warning(
-                    "refresh_universe: empty result for market=%s, skipping snapshot",
-                    market,
-                )
-                return {"market": market, "symbols": 0, "status": "skipped_empty"}
-
-            snapshot = save_snapshot(
-                db=session,
-                market=market,
-                snapshot_time=datetime.now(timezone.utc),
-                symbols=symbols,
-                source_type=source.name,
-                filter_config=None,
-            )
-            logger.info("refresh_universe: market=%s, symbols=%d", market, len(symbols))
-            return {
-                "market": market,
-                "symbols": len(symbols),
-                "snapshot_id": str(snapshot.id),
-            }
-        except Exception as exc:
-            logger.error("refresh_universe failed for market=%s: %s", market, exc)
-            raise self.retry(exc=exc, countdown=60)
-
-
-# ---------------------------------------------------------------------------
-# Phase 39 plan 39-04 — historical_backfill_dispatcher (BACKFILL-05)
-# ---------------------------------------------------------------------------
-
-# Default lookback windows for first-time history backfill, in days.
-# Source: 39-RESEARCH.md Recommendation 5. These are intentionally fixed
-# rather than per-symbol because symbols.yaml has no `history_start` key
-# in v8.0; explicit per-symbol overrides can be added later if needed.
-_BACKFILL_DEFAULT_LOOKBACK_DAYS = {
-    "1d": 730,
-    "4h": 730,
-    "1h": 180,
-    "30m": 90,
-    "15m": 60,
-    "5m": 30,
-}
-
-# Statuses that mean "this job is still going to do the work, do not
-# dispatch a duplicate". Anything terminal (succeeded/failed/cancelled)
-# is NOT considered active so the dispatcher can retry on the next tick.
-_ACTIVE_BACKFILL_STATUSES = frozenset({"pending", "running"})
-
-
-def _job_covers_tuple(job, market: str, symbol: str, interval: str) -> bool:
-    """Return True if ``job`` is an active job already covering this tuple.
-
-    A job covers the tuple iff:
-    - its market matches AND
-    - its symbols list contains ``symbol`` (or legacy ``job.symbol == symbol``) AND
-    - its intervals list contains ``interval`` (or legacy ``job.interval == interval``).
-    """
-    if job.market != market:
-        return False
-    job_symbols = list(job.symbols or [])
-    if not job_symbols and job.symbol:
-        job_symbols = [job.symbol]
-    if symbol not in job_symbols:
-        return False
-    job_intervals = list(job.intervals or [])
-    if not job_intervals and job.interval:
-        job_intervals = [job.interval]
-    if interval not in job_intervals:
-        return False
-    return True
-
-
-@celery_app.task(name="poseidon.workers.cpu_tasks.historical_backfill_dispatcher")
-def historical_backfill_dispatcher() -> dict:
-    """Auto-create first-time BackfillJob rows for tuples that have no history.
-
-    Phase 39 plan 39-04 / BACKFILL-05.
-
-    Walks every ``(market, symbol, interval)`` tuple in ``symbols.yaml`` and:
-
-    1. Reads ``ingest_state`` for the tuple. If a row exists with
-       ``first_backfill_done = true`` the tuple already has history and is
-       skipped.
-    2. Looks at every BackfillJob row in status ``pending``/``running`` and
-       checks whether any active job already covers this tuple. If yes the
-       dispatcher does NOT enqueue a duplicate (Phase 39 RESEARCH Pitfall 5).
-    3. Otherwise creates a new BackfillJob via
-       :func:`poseidon.data.backfill_jobs.create_backfill_job` with
-       ``requested_by="dispatcher"``. The default lookback window is taken
-       from ``_BACKFILL_DEFAULT_LOOKBACK_DAYS`` per interval.
-
-    The dedicated ``backfill-worker`` from plan 39-02 picks up these rows
-    via the existing ``backfill_chunk`` task on the ``backfill`` queue, so
-    the dispatcher only writes durable rows and never spawns chunk tasks
-    itself. This is intentional — the dispatcher runs on the ``cpu`` queue
-    and would otherwise contend with live ingest scheduling.
-    """
-    from poseidon.core.schemas import BackfillRequest
-    from poseidon.data.backfill_jobs import create_backfill_job
-
-    config = load_symbols()
-
-    created: list[str] = []
-    skipped_done: list[str] = []
-    skipped_duplicate: list[str] = []
-    with db_session() as session:
-        # Pre-fetch all active (pending/running) backfill jobs once so we
-        # do not issue O(N tuples) queries.
-        active_jobs = (
-            session.query(BackfillJob)
-            .filter(BackfillJob.status.in_(list(_ACTIVE_BACKFILL_STATUSES)))
-            .all()
-        )
-
-        now = datetime.now(timezone.utc)
-
-        for market_name, market_cfg in config.markets.items():
-            for sym_info in market_cfg.symbols:
-                for interval in market_cfg.intervals:
-                    tuple_label = f"{market_name}/{sym_info.id}/{interval}"
-
-                    state = (
-                        session.query(IngestState)
-                        .filter_by(
-                            symbol=sym_info.id,
-                            market=market_name,
-                            interval=interval,
-                        )
-                        .one_or_none()
-                    )
-                    if state is not None and state.first_backfill_done:
-                        skipped_done.append(tuple_label)
-                        continue
-
-                    if any(
-                        _job_covers_tuple(job, market_name, sym_info.id, interval)
-                        for job in active_jobs
-                    ):
-                        skipped_duplicate.append(tuple_label)
-                        continue
-
-                    lookback_days = _BACKFILL_DEFAULT_LOOKBACK_DAYS.get(interval, 730)
-                    start_ts = now - timedelta(days=lookback_days)
-
-                    request = BackfillRequest(
-                        market=market_name,
-                        symbols=[sym_info.id],
-                        intervals=[interval],
-                        start=start_ts,
-                        end=now,
-                    )
-                    job = create_backfill_job(
-                        session, request, requested_by="dispatcher"
-                    )
-                    # Append to the in-memory active list so the next loop
-                    # iteration de-duplicates against the row we just made
-                    # in case the same tuple appears twice in the config.
-                    active_jobs.append(job)
-                    created.append(tuple_label)
-
-        logger.info(
-            "historical_backfill_dispatcher: created=%d skipped_done=%d "
-            "skipped_duplicate=%d",
-            len(created),
-            len(skipped_done),
-            len(skipped_duplicate),
-        )
-        return {
-            "created": len(created),
-            "skipped_first_backfill_done": len(skipped_done),
-            "skipped_duplicate": len(skipped_duplicate),
-        }
-
-
-# ---------------------------------------------------------------------------
-# Phase 40 plan 40-02 — data_gap_audit (COVERAGE-03 / COVERAGE-04)
-# ---------------------------------------------------------------------------
-
-
-@celery_app.task(name="poseidon.workers.cpu_tasks.data_gap_audit")
-def data_gap_audit() -> dict:
-    """Daily audit: scan data_coverage_mv tuples for missing bars.
-
-    Phase 40 D-04..D-09. For every (market, symbol, interval) tuple
-    present in data_coverage_mv (which auto-tracks the active universe
-    via Phase 39 substrate), runs detect_gaps_for_tuple, idempotently
-    UPSERTS the result into data_gaps, and finally heals any previously
-    recorded gap whose window is now fully populated.
-
-    Runs on the cpu queue via the existing
-    ``poseidon.workers.cpu_tasks.*`` task_routes rule. Daily at 03:00
-    UTC via Celery Beat (D-08).
-    """
-    from poseidon.data.gaps import (
-        detect_gaps_for_tuple,
-        heal_resolved_gaps,
-        upsert_gaps,
-    )
-
-    inserted = 0
-    scanned = 0
-    with db_session() as session:
-        tuple_rows = session.execute(
-            sa_text(
-                """
-                SELECT market, symbol, interval
-                FROM data_coverage_mv
-                ORDER BY market, symbol, interval
-                """
-            )
-        ).fetchall()
-
-        for row in tuple_rows:
-            scanned += 1
-            gaps = detect_gaps_for_tuple(
-                session,
-                market=row.market,
-                symbol=row.symbol,
-                interval=row.interval,
-            )
-            inserted += upsert_gaps(session, gaps)
-
-        healed = heal_resolved_gaps(session)
-        logger.info(
-            "data_gap_audit: scanned=%d inserted=%d healed=%d",
-            scanned,
-            inserted,
-            healed,
-        )
-        return {"scanned": scanned, "inserted": inserted, "healed": healed}
-
-
-# ---------------------------------------------------------------------------
-# Phase 40 plan 40-03 — ingest_freshness_watchdog (FRESH-01..04)
-# ---------------------------------------------------------------------------
-
-
-@celery_app.task(name="poseidon.workers.cpu_tasks.ingest_freshness_watchdog")
-def ingest_freshness_watchdog() -> dict:
-    """Every-15-min watchdog: per-tuple freshness vs SLA + Uptime Kuma ping.
-
-    Phase 40 D-10..D-16. The watchdog itself IS the heartbeat -- Beat
-    dying or this task dying both produce silence on the Uptime Kuma
-    push monitor, and it fires the dead-man's-switch alert automatically (D-12).
-
-    Returns ``{checked, violations, unknown, monitor_pinged}`` for operator
-    visibility in Celery logs. ``monitor_pinged`` is one of:
-    - ``"success"`` -- heartbeat sent (all tuples within SLA)
-    - ``"fail"``    -- violation alert sent (one or more tuples stale)
-    - ``"skipped"`` -- UPTIME_KUMA_PUSH_URL is empty (local/dev)
-    """
-    from poseidon.core.config import settings
-    from poseidon.data.freshness import (
-        evaluate_freshness,
-        ping_monitor,
-    )
-
-    with db_session() as session:
-        now = datetime.now(timezone.utc)
-        records = evaluate_freshness(
-            session, now=now, sla_dict=settings.freshness_sla
-        )
-
-        violations = [r for r in records if r.status == "violation"]
-        unknown = [r for r in records if r.status == "unknown"]
-
-        for r in violations:
-            logger.warning(
-                "freshness_watchdog VIOLATION market=%s interval=%s "
-                "observed=%.0fs sla=%ds last_successful_ts=%s",
-                r.market,
-                r.interval,
-                r.observed_lag_seconds,
-                r.expected_lag_seconds,
-                r.last_successful_ts,
-            )
-
-        url = settings.uptime_kuma_push_url
-        if not url:
-            monitor_pinged = "skipped"
-        else:
-            if violations:
-                msg = "; ".join(
-                    f"{r.market}:{r.interval} stale {r.observed_lag_seconds:.0f}s"
-                    for r in violations
-                )
-                ping_monitor(url, success=False, message=msg)
-                monitor_pinged = "fail"
-            else:
-                ping_monitor(url, success=True)
-                monitor_pinged = "success"
-
-        logger.info(
-            "ingest_freshness_watchdog: checked=%d violations=%d "
-            "unknown=%d monitor_pinged=%s",
-            len(records),
-            len(violations),
-            len(unknown),
-            monitor_pinged,
-        )
-        return {
-            "checked": len(records),
-            "violations": len(violations),
-            "unknown": len(unknown),
-            "monitor_pinged": monitor_pinged,
-        }
 
 
 # --- Factor Analysis Tasks (Phase 47, D-13, D-15) ---
@@ -3015,143 +2078,3 @@ def factor_centrality_analysis(self, run_id: str):
                     run.error = str(exc)[:2000]
                     session.commit()
             return {"run_id": run_id, "status": "failed", "error": str(exc)}
-
-
-# ---------------------------------------------------------------------------
-# Phase 57 Plan 02: Non-price data ingest tasks (FEAT-02 ingest-first pattern)
-# ---------------------------------------------------------------------------
-
-
-@celery_app.task(name="poseidon.workers.cpu_tasks.ingest_macro_data")
-def ingest_macro_data(backfill: bool = False):
-    """Fetch macro indices (VIX, DXY, TNX, TWDUSD) from yfinance and persist to macro_index table.
-
-    Args:
-        backfill: If True, fetch from 2020-01-01; else from 2024-01-01.
-    """
-    from poseidon.data.loaders.macro_loader import MacroIndexLoader
-    from poseidon.models.macro_index import MacroIndex
-
-    start = "2020-01-01" if backfill else "2024-01-01"
-    logger.info("ingest_macro_data start=%s backfill=%s", start, backfill)
-
-    loader = MacroIndexLoader()
-    df = loader.get_macro_data(start=start)
-
-    if df.empty:
-        logger.warning("ingest_macro_data: no data returned from yfinance")
-        return {"status": "ok", "records": 0}
-
-    count = 0
-    with db_session() as session:
-        for indicator_name in df.columns:
-            col = df[indicator_name].dropna()
-            for date_val, value in col.items():
-                obj = MacroIndex(
-                    date=date_val.date() if hasattr(date_val, "date") else date_val,
-                    indicator=indicator_name,
-                    value=float(value),
-                )
-                session.merge(obj)
-                count += 1
-        session.commit()
-
-    logger.info("ingest_macro_data: stored %d records", count)
-    return {"status": "ok", "records": count}
-
-
-@celery_app.task(name="poseidon.workers.cpu_tasks.ingest_funding_rates")
-def ingest_funding_rates(symbols: list[str] | None = None, backfill: bool = False):
-    """Fetch funding rates via existing FundingRateLoader.fetch_and_store().
-
-    This is a thin Celery wrapper -- it does NOT reimplement the fetch logic.
-
-    Args:
-        symbols: List of symbols (default: ["BTCUSDT", "ETHUSDT"]).
-        backfill: If True, fetch from 2020-01-01; else from 2024-01-01.
-    """
-    from poseidon.data.loaders.funding_loader import FundingRateLoader
-
-    if symbols is None:
-        symbols = ["BTCUSDT", "ETHUSDT"]
-
-    start = "2020-01-01" if backfill else "2024-01-01"
-    logger.info("ingest_funding_rates symbols=%s start=%s backfill=%s", symbols, start, backfill)
-
-    loader = FundingRateLoader(session_factory=SessionLocal)
-    for sym in symbols:
-        try:
-            stored = loader.fetch_and_store(symbol=sym, start=start)
-            logger.info("ingest_funding_rates: %s -> %d records", sym, stored)
-        except Exception:
-            logger.exception("ingest_funding_rates: failed for %s", sym)
-
-    return {"status": "ok", "symbols": len(symbols)}
-
-
-@celery_app.task(name="poseidon.workers.cpu_tasks.ingest_finlab_data")
-def ingest_finlab_data(category: str, backfill: bool = False):
-    """Fetch FinLab non-price data and persist to nonprice_timeseries table.
-
-    Args:
-        category: One of "institutional", "fundamental", "margin", "trade_structure".
-        backfill: If True, no date filter (full history); else recent data only.
-    """
-    from poseidon.data.loaders.finlab_loader import FinLabDataLoader
-    from poseidon.models.nonprice_timeseries import NonpriceTimeseries
-
-    # Category -> loader method mapping
-    METHOD_MAP = {
-        "institutional": "get_institutional_flow",
-        "fundamental": "get_fundamentals",
-        "margin": "get_margin_data",
-        "trade_structure": "get_trade_structure",
-    }
-
-    if category not in METHOD_MAP:
-        raise ValueError(f"Unknown category: {category}. Must be one of {list(METHOD_MAP.keys())}")
-
-    # Default TW stock symbols for initial release
-    symbols = ["2330", "2317", "2454"]
-
-    logger.info(
-        "ingest_finlab_data category=%s symbols=%s backfill=%s",
-        category, symbols, backfill,
-    )
-
-    loader = FinLabDataLoader()
-    method_name = METHOD_MAP[category]
-    total_count = 0
-
-    with db_session() as session:
-        for symbol in symbols:
-            try:
-                df = getattr(loader, method_name)(symbol)
-                if df.empty:
-                    logger.debug("ingest_finlab_data: no data for %s/%s", category, symbol)
-                    continue
-
-                count = 0
-                for col in df.columns:
-                    for date_val, value in df[col].dropna().items():
-                        obj = NonpriceTimeseries(
-                            date=date_val.date() if hasattr(date_val, "date") else date_val,
-                            symbol=symbol,
-                            category=category,
-                            indicator=col,
-                            value=float(value),
-                        )
-                        session.merge(obj)
-                        count += 1
-                total_count += count
-                logger.info(
-                    "ingest_finlab_data: %s/%s -> %d records", category, symbol, count
-                )
-            except Exception:
-                logger.exception(
-                    "ingest_finlab_data: failed for %s/%s", category, symbol
-                )
-        session.commit()
-
-    logger.info("ingest_finlab_data: category=%s total=%d records", category, total_count)
-    return {"status": "ok", "category": category, "symbols": len(symbols), "records": total_count}
