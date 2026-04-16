@@ -29,7 +29,7 @@ class FundingRateDaily(BaseFeature):
         Args:
             ohlcv: Primary symbol OHLCV DataFrame.
             funding_data: DataFrame with a ``funding_rate_daily`` column,
-                typically produced by :class:`FundingRateLoader`.
+                typically loaded via Thalassa DataService.
             **kwargs: Ignored extra keyword arguments.
 
         Returns:
