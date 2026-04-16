@@ -11,13 +11,6 @@ services:
       - POSEIDON_REDIS_STREAM_URL=redis://host.docker.internal:6379/2
       - POSEIDON_REDIS_RATELIMIT_URL=redis://host.docker.internal:6379/3
       - POSEIDON_API_KEY=${POSEIDON_API_KEY}
-      - POSEIDON_TW_STOCK_DATA_BACKEND=${POSEIDON_TW_STOCK_DATA_BACKEND:-finlab}
-      - POSEIDON_SHIOAJI_DATA_API_KEY=${POSEIDON_SHIOAJI_DATA_API_KEY:-}
-      - POSEIDON_SHIOAJI_DATA_SECRET_KEY=${POSEIDON_SHIOAJI_DATA_SECRET_KEY:-}
-      - POSEIDON_SHIOAJI_DATA_SIMULATION=${POSEIDON_SHIOAJI_DATA_SIMULATION:-true}
-      - POSEIDON_US_STOCK_DATA_BACKEND=${POSEIDON_US_STOCK_DATA_BACKEND:-yfinance}
-      - POSEIDON_POLYGON_API_KEY=${POSEIDON_POLYGON_API_KEY:-}
-      - POSEIDON_DATA_SOURCE=${POSEIDON_DATA_SOURCE:-local}
       - POSEIDON_THALASSA_BASE_URL=${POSEIDON_THALASSA_BASE_URL:-}
       - POSEIDON_THALASSA_API_KEY=${POSEIDON_THALASSA_API_KEY:-}
     volumes:
@@ -42,13 +35,6 @@ services:
       - POSEIDON_REDIS_CACHE_URL=redis://host.docker.internal:6379/1
       - POSEIDON_REDIS_STREAM_URL=redis://host.docker.internal:6379/2
       - POSEIDON_REDIS_RATELIMIT_URL=redis://host.docker.internal:6379/3
-      - POSEIDON_TW_STOCK_DATA_BACKEND=${POSEIDON_TW_STOCK_DATA_BACKEND:-finlab}
-      - POSEIDON_SHIOAJI_DATA_API_KEY=${POSEIDON_SHIOAJI_DATA_API_KEY:-}
-      - POSEIDON_SHIOAJI_DATA_SECRET_KEY=${POSEIDON_SHIOAJI_DATA_SECRET_KEY:-}
-      - POSEIDON_SHIOAJI_DATA_SIMULATION=${POSEIDON_SHIOAJI_DATA_SIMULATION:-true}
-      - POSEIDON_US_STOCK_DATA_BACKEND=${POSEIDON_US_STOCK_DATA_BACKEND:-yfinance}
-      - POSEIDON_POLYGON_API_KEY=${POSEIDON_POLYGON_API_KEY:-}
-      - POSEIDON_DATA_SOURCE=${POSEIDON_DATA_SOURCE:-local}
       - POSEIDON_THALASSA_BASE_URL=${POSEIDON_THALASSA_BASE_URL:-}
       - POSEIDON_THALASSA_API_KEY=${POSEIDON_THALASSA_API_KEY:-}
     extra_hosts:
@@ -70,15 +56,6 @@ services:
       - POSEIDON_REDIS_CACHE_URL=redis://host.docker.internal:6379/1
       - POSEIDON_REDIS_STREAM_URL=redis://host.docker.internal:6379/2
       - POSEIDON_REDIS_RATELIMIT_URL=redis://host.docker.internal:6379/3
-      - POSEIDON_FINMIND_TOKEN=${POSEIDON_FINMIND_TOKEN}
-      - POSEIDON_FINLAB_API_TOKEN=${POSEIDON_FINLAB_API_TOKEN}
-      - POSEIDON_TW_STOCK_DATA_BACKEND=${POSEIDON_TW_STOCK_DATA_BACKEND:-finlab}
-      - POSEIDON_SHIOAJI_DATA_API_KEY=${POSEIDON_SHIOAJI_DATA_API_KEY:-}
-      - POSEIDON_SHIOAJI_DATA_SECRET_KEY=${POSEIDON_SHIOAJI_DATA_SECRET_KEY:-}
-      - POSEIDON_SHIOAJI_DATA_SIMULATION=${POSEIDON_SHIOAJI_DATA_SIMULATION:-true}
-      - POSEIDON_US_STOCK_DATA_BACKEND=${POSEIDON_US_STOCK_DATA_BACKEND:-yfinance}
-      - POSEIDON_POLYGON_API_KEY=${POSEIDON_POLYGON_API_KEY:-}
-      - POSEIDON_DATA_SOURCE=${POSEIDON_DATA_SOURCE:-local}
       - POSEIDON_THALASSA_BASE_URL=${POSEIDON_THALASSA_BASE_URL:-}
       - POSEIDON_THALASSA_API_KEY=${POSEIDON_THALASSA_API_KEY:-}
     extra_hosts:
@@ -107,51 +84,6 @@ services:
       - POSEIDON_REDIS_CACHE_URL=redis://host.docker.internal:6379/1
       - POSEIDON_REDIS_STREAM_URL=redis://host.docker.internal:6379/2
       - POSEIDON_REDIS_RATELIMIT_URL=redis://host.docker.internal:6379/3
-      - POSEIDON_FINMIND_TOKEN=${POSEIDON_FINMIND_TOKEN}
-      - POSEIDON_FINLAB_API_TOKEN=${POSEIDON_FINLAB_API_TOKEN}
-      - POSEIDON_TW_STOCK_DATA_BACKEND=${POSEIDON_TW_STOCK_DATA_BACKEND:-finlab}
-      - POSEIDON_SHIOAJI_DATA_API_KEY=${POSEIDON_SHIOAJI_DATA_API_KEY:-}
-      - POSEIDON_SHIOAJI_DATA_SECRET_KEY=${POSEIDON_SHIOAJI_DATA_SECRET_KEY:-}
-      - POSEIDON_SHIOAJI_DATA_SIMULATION=${POSEIDON_SHIOAJI_DATA_SIMULATION:-true}
-      - POSEIDON_US_STOCK_DATA_BACKEND=${POSEIDON_US_STOCK_DATA_BACKEND:-yfinance}
-      - POSEIDON_POLYGON_API_KEY=${POSEIDON_POLYGON_API_KEY:-}
-      - UPTIME_KUMA_PUSH_URL=${UPTIME_KUMA_PUSH_URL:-}
-      - POSEIDON_DATA_SOURCE=${POSEIDON_DATA_SOURCE:-local}
-      - POSEIDON_THALASSA_BASE_URL=${POSEIDON_THALASSA_BASE_URL:-}
-      - POSEIDON_THALASSA_API_KEY=${POSEIDON_THALASSA_API_KEY:-}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - model-artifacts:/data/models
-    depends_on:
-      api:
-        condition: service_healthy
-    restart: unless-stopped
-
-  backfill-worker:
-    # Phase 39-02 Task 3: dedicated consumer for the 'backfill' queue so a
-    # one-shot historical job never starves live ingest on cpu-worker.
-    # Smoke check after deploy:
-    #   docker compose exec api celery -A poseidon.workers.celery_app \
-    #       inspect active_queues
-    build: .
-    command: celery -A poseidon.workers.celery_app worker -Q backfill -c 1 --loglevel=info
-    environment:
-      - TZ=Asia/Taipei
-      - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
-      - POSEIDON_REDIS_CELERY_URL=redis://host.docker.internal:6379/0
-      - POSEIDON_REDIS_CACHE_URL=redis://host.docker.internal:6379/1
-      - POSEIDON_REDIS_STREAM_URL=redis://host.docker.internal:6379/2
-      - POSEIDON_REDIS_RATELIMIT_URL=redis://host.docker.internal:6379/3
-      - POSEIDON_FINMIND_TOKEN=${POSEIDON_FINMIND_TOKEN}
-      - POSEIDON_FINLAB_API_TOKEN=${POSEIDON_FINLAB_API_TOKEN}
-      - POSEIDON_TW_STOCK_DATA_BACKEND=${POSEIDON_TW_STOCK_DATA_BACKEND:-finlab}
-      - POSEIDON_SHIOAJI_DATA_API_KEY=${POSEIDON_SHIOAJI_DATA_API_KEY:-}
-      - POSEIDON_SHIOAJI_DATA_SECRET_KEY=${POSEIDON_SHIOAJI_DATA_SECRET_KEY:-}
-      - POSEIDON_SHIOAJI_DATA_SIMULATION=${POSEIDON_SHIOAJI_DATA_SIMULATION:-true}
-      - POSEIDON_US_STOCK_DATA_BACKEND=${POSEIDON_US_STOCK_DATA_BACKEND:-yfinance}
-      - POSEIDON_POLYGON_API_KEY=${POSEIDON_POLYGON_API_KEY:-}
-      - POSEIDON_DATA_SOURCE=${POSEIDON_DATA_SOURCE:-local}
       - POSEIDON_THALASSA_BASE_URL=${POSEIDON_THALASSA_BASE_URL:-}
       - POSEIDON_THALASSA_API_KEY=${POSEIDON_THALASSA_API_KEY:-}
     extra_hosts:
@@ -180,15 +112,6 @@ services:
       - POSEIDON_REDIS_CACHE_URL=redis://host.docker.internal:6379/1
       - POSEIDON_REDIS_STREAM_URL=redis://host.docker.internal:6379/2
       - POSEIDON_REDIS_RATELIMIT_URL=redis://host.docker.internal:6379/3
-      - POSEIDON_FINMIND_TOKEN=${POSEIDON_FINMIND_TOKEN}
-      - POSEIDON_FINLAB_API_TOKEN=${POSEIDON_FINLAB_API_TOKEN}
-      - POSEIDON_TW_STOCK_DATA_BACKEND=${POSEIDON_TW_STOCK_DATA_BACKEND:-finlab}
-      - POSEIDON_SHIOAJI_DATA_API_KEY=${POSEIDON_SHIOAJI_DATA_API_KEY:-}
-      - POSEIDON_SHIOAJI_DATA_SECRET_KEY=${POSEIDON_SHIOAJI_DATA_SECRET_KEY:-}
-      - POSEIDON_SHIOAJI_DATA_SIMULATION=${POSEIDON_SHIOAJI_DATA_SIMULATION:-true}
-      - POSEIDON_US_STOCK_DATA_BACKEND=${POSEIDON_US_STOCK_DATA_BACKEND:-yfinance}
-      - POSEIDON_POLYGON_API_KEY=${POSEIDON_POLYGON_API_KEY:-}
-      - POSEIDON_DATA_SOURCE=${POSEIDON_DATA_SOURCE:-local}
       - POSEIDON_THALASSA_BASE_URL=${POSEIDON_THALASSA_BASE_URL:-}
       - POSEIDON_THALASSA_API_KEY=${POSEIDON_THALASSA_API_KEY:-}
       - MLFLOW_TRACKING_URI=postgresql+psycopg2://poseidon:poseidon@host.docker.internal:5433/poseidon?options=-csearch_path%3Dmlflow,public
@@ -199,9 +122,6 @@ services:
       # Mount source for live edits during research sessions
       - ./src:/app/src
       - ./tests:/app/tests
-      # Phase 39-02 Task 3: expose docker-compose.yml read-only so the
-      # integration test suite can grep the backfill-worker service block
-      # from inside the container.
       - ./docker-compose.yml:/app/docker-compose.yml:ro
       # Phase 39-03 Task 1: expose alembic/ read-only so migration shape
       # tests (e.g. data_coverage_mv DDL assertions) can read migration
