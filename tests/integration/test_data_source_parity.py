@@ -58,21 +58,22 @@ def _load_ohlcv(data_source: str) -> pd.DataFrame:
     try:
         settings.poseidon_data_source = data_source
 
+        # Use yesterday midnight as end to avoid boundary issues with
+        # today's incomplete candle differing between local and remote DBs.
+        end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+        start = end - timedelta(days=GOLDEN_LOOKBACK_DAYS)
+
         if data_source == "local":
             from poseidon.core.database import db_session
 
             with db_session() as session:
                 repo = get_data_repository(session)
-                end = datetime.now(timezone.utc)
-                start = end - timedelta(days=GOLDEN_LOOKBACK_DAYS)
                 df = repo.read_ohlcv(
                     GOLDEN_SYMBOL, GOLDEN_MARKET, GOLDEN_INTERVAL,
                     start=start, end=end,
                 )
         else:
             repo = get_data_repository()
-            end = datetime.now(timezone.utc)
-            start = end - timedelta(days=GOLDEN_LOOKBACK_DAYS)
             df = repo.read_ohlcv(
                 GOLDEN_SYMBOL, GOLDEN_MARKET, GOLDEN_INTERVAL,
                 start=start, end=end,
