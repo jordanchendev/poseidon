@@ -60,7 +60,7 @@ def _load_ohlcv(data_source: str) -> pd.DataFrame:
 
         # Use yesterday midnight as end to avoid boundary issues with
         # today's incomplete candle differing between local and remote DBs.
-        end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=7)
+        end = datetime(2026, 3, 1, tzinfo=timezone.utc)  # fixed date before migration — stable data
         start = end - timedelta(days=GOLDEN_LOOKBACK_DAYS)
 
         if data_source == "local":
@@ -288,7 +288,7 @@ class TestBacktestParity:
         # LiquiditySweepStrategy uses crypto_perp market with 1h interval.
         # Load different OHLCV data for this strategy.
         original = settings.poseidon_data_source
-        end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=7)
+        end = datetime(2026, 3, 1, tzinfo=timezone.utc)  # fixed date before migration — stable data
         start = end - timedelta(days=GOLDEN_LOOKBACK_DAYS)
 
         # Load local OHLCV
