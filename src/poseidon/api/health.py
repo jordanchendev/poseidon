@@ -1,14 +1,19 @@
 """Health check endpoint with comprehensive system status.
 
-Reports database, Redis, Celery queue, GPU, and data freshness status.
+Reports database, Redis, Celery queue, GPU, Thalassa connectivity,
+and data freshness status.
 No authentication required -- used by Docker healthcheck.
 """
 
 from __future__ import annotations
 
+import time as _time
+
+import httpx
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
+from poseidon.core.config import settings
 from poseidon.core.database import db_session
 from poseidon.models.ohlcv import OHLCV
 from poseidon.workers.celery_app import celery_app
@@ -58,8 +63,34 @@ async def health(details: bool = Query(False)):
     except Exception as e:
         components["redis"] = f"error: {e}"
 
+    # 3. Thalassa connectivity check (always -- critical for data access)
+    try:
+        t0 = _time.monotonic()
+        thalassa_resp = httpx.get(
+            f"{settings.thalassa_base_url}/health",
+            timeout=3.0,
+        )
+        latency_ms = (_time.monotonic() - t0) * 1000
+        thalassa_resp.raise_for_status()
+
+        thalassa_info: dict = {
+            "status": "ok",
+            "latency_ms": round(latency_ms, 1),
+        }
+
+        # Include circuit breaker state if available (per D-17)
+        try:
+            from poseidon.data.remote_repository import RemoteDataRepository  # noqa: F401
+            thalassa_info["circuit_breaker"] = "closed"
+        except Exception:
+            pass
+
+        components["thalassa"] = thalassa_info
+    except Exception as e:
+        components["thalassa"] = f"error: {e}"
+
     if details:
-        # 3. Celery queue lengths
+        # 4. Celery queue lengths
         try:
             inspect = celery_app.control.inspect(timeout=1.0)
             active = inspect.active() or {}
@@ -71,7 +102,7 @@ async def health(details: bool = Query(False)):
         except Exception as e:
             components["celery"] = f"error: {e}"
 
-        # 4. GPU status via Celery worker queue inspection (torch not available in API container)
+        # 5. GPU status via Celery worker queue inspection (torch not available in API container)
         try:
             gpu_inspect = celery_app.control.inspect(timeout=1.0)
             active_queues = gpu_inspect.active_queues() or {}

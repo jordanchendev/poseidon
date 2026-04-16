@@ -6,11 +6,16 @@ Tests mock ``poseidon.core.redis.get_redis`` to inject a fake Redis instance.
 
 After Phase 55-02 session unification, health.py uses ``db_session()`` context
 manager from ``poseidon.core.database`` instead of direct ``SessionLocal()``.
+
+After Phase 61-02 Thalassa health integration, health.py uses ``httpx.get`` to
+probe Thalassa connectivity. Tests mock ``poseidon.api.health.httpx`` for
+isolation.
 """
 
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -279,3 +284,96 @@ def test_health_data_freshness_null_when_no_data(
     data = resp.json()
 
     assert data["components"]["data_freshness"]["latest_ohlcv"] is None
+
+
+# --------------- Thalassa connectivity tests (Phase 61-02) ---------------
+
+
+@patch("poseidon.api.health.httpx")
+@patch("poseidon.api.health.celery_app")
+@patch("poseidon.core.redis.get_redis")
+@patch("poseidon.api.health.db_session")
+def test_health_includes_thalassa_ok(
+    mock_db_session_fn, mock_get_redis, mock_celery, mock_httpx
+):
+    """Thalassa component shows ok with latency when reachable."""
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar.return_value = None
+    mock_db_session_fn.side_effect = _mock_db_session(mock_db)
+
+    mock_redis_instance = MagicMock()
+    mock_redis_instance.ping.return_value = True
+    mock_get_redis.return_value = mock_redis_instance
+
+    # Mock httpx.get to return a successful response
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status.return_value = None
+    mock_httpx.get.return_value = mock_response
+
+    resp = client.get("/health")
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["status"] == "ok"
+    thalassa = data["components"]["thalassa"]
+    assert isinstance(thalassa, dict)
+    assert thalassa["status"] == "ok"
+    assert "latency_ms" in thalassa
+    assert isinstance(thalassa["latency_ms"], (int, float))
+
+
+@patch("poseidon.api.health.httpx")
+@patch("poseidon.api.health.celery_app")
+@patch("poseidon.core.redis.get_redis")
+@patch("poseidon.api.health.db_session")
+def test_health_thalassa_unreachable_degrades(
+    mock_db_session_fn, mock_get_redis, mock_celery, mock_httpx
+):
+    """Overall status degrades when Thalassa is unreachable."""
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar.return_value = None
+    mock_db_session_fn.side_effect = _mock_db_session(mock_db)
+
+    mock_redis_instance = MagicMock()
+    mock_redis_instance.ping.return_value = True
+    mock_get_redis.return_value = mock_redis_instance
+
+    # Mock httpx.get to raise ConnectError
+    mock_httpx.get.side_effect = httpx.ConnectError("Connection refused")
+
+    resp = client.get("/health")
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["status"] == "degraded"
+    assert isinstance(data["components"]["thalassa"], str)
+    assert data["components"]["thalassa"].startswith("error")
+
+
+@patch("poseidon.api.health.httpx")
+@patch("poseidon.api.health.celery_app")
+@patch("poseidon.core.redis.get_redis")
+@patch("poseidon.api.health.db_session")
+def test_health_thalassa_timeout_degrades(
+    mock_db_session_fn, mock_get_redis, mock_celery, mock_httpx
+):
+    """Overall status degrades when Thalassa times out."""
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar.return_value = None
+    mock_db_session_fn.side_effect = _mock_db_session(mock_db)
+
+    mock_redis_instance = MagicMock()
+    mock_redis_instance.ping.return_value = True
+    mock_get_redis.return_value = mock_redis_instance
+
+    # Mock httpx.get to raise ReadTimeout
+    mock_httpx.get.side_effect = httpx.ReadTimeout("Thalassa timeout")
+
+    resp = client.get("/health")
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["status"] == "degraded"
+    assert isinstance(data["components"]["thalassa"], str)
+    assert data["components"]["thalassa"].startswith("error")
