@@ -87,51 +87,48 @@ def run_centrality_analysis(
     distance_threshold: float = 0.7,
 ) -> dict:
     """Replay sub-signal votes across symbols and compute overlap clusters."""
-    from poseidon.core.database import db_session
     from poseidon.data.feature_engine import FeatureEngine
-    from poseidon.data.factory import get_data_repository
+    from poseidon.data.remote_repository import RemoteDataRepository
     from poseidon.data.symbols import get_symbols_for_market
     from poseidon.strategies.voting_strategy import VotingStrategy
 
-    with db_session() as session:
-        repo = get_data_repository(session)
-        engine = FeatureEngine()
-        symbol_list = symbols or [info.id for info in get_symbols_for_market(market)]
-        start = pd.Timestamp(start_date).to_pydatetime()
-        end = pd.Timestamp(end_date).to_pydatetime()
+    repo = RemoteDataRepository.from_settings()
+    engine = FeatureEngine()
+    symbol_list = symbols or [info.id for info in get_symbols_for_market(market)]
+    start = pd.Timestamp(start_date).to_pydatetime()
+    end = pd.Timestamp(end_date).to_pydatetime()
 
-        strategy = VotingStrategy(
-            config={
-                "name": "factor_centrality_analysis",
-                "market": market,
-                "interval": interval,
-                "sub_signals": sub_signals,
-                "bear_sub_signals": [],
-                "min_votes": 1,
-            }
+    strategy = VotingStrategy(
+        config={
+            "name": "factor_centrality_analysis",
+            "market": market,
+            "interval": interval,
+            "sub_signals": sub_signals,
+            "bear_sub_signals": [],
+            "min_votes": 1,
+        }
+    )
+    feature_specs = strategy.get_feature_specs()
+
+    all_votes: list[pd.DataFrame] = []
+    symbols_used = 0
+    for symbol in symbol_list:
+        ohlcv = repo.read_ohlcv(symbol, market, interval, start=start, end=end)
+        if ohlcv.empty:
+            continue
+
+        computed = engine.compute_with_companions(
+            ohlcv,
+            symbol=symbol,
+            market=market,
+            interval=interval,
+            feature_specs=feature_specs,
         )
-        feature_specs = strategy.get_feature_specs()
+        votes = replay_sub_signal_votes(sub_signals, computed)
+        all_votes.append(votes)
+        symbols_used += 1
 
-        all_votes: list[pd.DataFrame] = []
-        symbols_used = 0
-        for symbol in symbol_list:
-            ohlcv = repo.read_ohlcv(symbol, market, interval, start=start, end=end)
-            if ohlcv.empty:
-                continue
-
-            computed = engine.compute_with_companions(
-                ohlcv,
-                symbol=symbol,
-                market=market,
-                interval=interval,
-                feature_specs=feature_specs,
-                db_session=session,
-            )
-            votes = replay_sub_signal_votes(sub_signals, computed)
-            all_votes.append(votes)
-            symbols_used += 1
-
-        combined_votes = pd.concat(all_votes, axis=0) if all_votes else pd.DataFrame()
-        results = compute_centrality(combined_votes, distance_threshold)
-        results["symbols_used"] = symbols_used
-        return results
+    combined_votes = pd.concat(all_votes, axis=0) if all_votes else pd.DataFrame()
+    results = compute_centrality(combined_votes, distance_threshold)
+    results["symbols_used"] = symbols_used
+    return results

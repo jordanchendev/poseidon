@@ -26,8 +26,7 @@ from poseidon.data.feature_engine.specs import (
     is_nonprice_spec,
     nonprice_data_key,
 )
-from poseidon.data.factory import get_data_repository
-from poseidon.data.repository import DataRepository
+from poseidon.data.remote_repository import RemoteDataRepository
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ class FeatureOrchestrator:
     - compute_with_companions(): handles cross-asset + non-price features with DB loading
     """
 
-    def __init__(self, repo: DataRepository | None = None) -> None:
+    def __init__(self, repo: RemoteDataRepository | None = None) -> None:
         self._repo = repo
         self._computer = FeatureComputer()
 
@@ -68,9 +67,8 @@ class FeatureOrchestrator:
             Wide DataFrame with columns: time, open, high, low, close, volume, + feature columns.
             Empty DataFrame if no OHLCV data found.
         """
-        with db_session() as session:
-            repo = get_data_repository(session)
-            ohlcv = repo.read_ohlcv(symbol, market, interval, start, end)
+        repo = RemoteDataRepository.from_settings()
+        ohlcv = repo.read_ohlcv(symbol, market, interval, start, end)
 
         if ohlcv.empty:
             logger.warning("No OHLCV data for %s/%s/%s", market, symbol, interval)
@@ -155,12 +153,7 @@ class FeatureOrchestrator:
             return result
 
         # Load companion data and compute cross-asset features
-        close_session = False
-        if db_session is None:
-            db_session = SessionLocal()
-            close_session = True
-
-        repo = get_data_repository(db_session)
+        repo = RemoteDataRepository.from_settings()
 
         try:
             # --- Cross-asset features ---
@@ -214,8 +207,7 @@ class FeatureOrchestrator:
                         for col in computed.columns:
                             result[col] = computed[col]
         finally:
-            if close_session:
-                db_session.close()
+            pass
 
         logger.info(
             "Computed %d single + %d cross-asset + %d non-price specs -> %d total columns",
@@ -230,24 +222,20 @@ class FeatureOrchestrator:
     def _load_nonprice_data(
         nonprice_specs: list[tuple[str, dict]],
         symbol: str,
-        repo: DataRepository | None = None,
+        repo: RemoteDataRepository | None = None,
     ) -> dict[str, pd.DataFrame]:
-        """Lazily load non-price data required by the given specs via DataRepository.
+        """Lazily load non-price data required by the given specs via RemoteDataRepository.
 
         Only fetches data when the corresponding feature names are present
-        in *nonprice_specs*. All data access goes through DataRepository.
+        in *nonprice_specs*. All data access goes through RemoteDataRepository.
 
         Args:
             nonprice_specs: Feature specs requiring non-price data.
             symbol: Symbol identifier.
-            repo: DataRepository instance. If None, creates one from SessionLocal
-                (backward compat for callers not yet migrated).
+            repo: RemoteDataRepository instance. If None, creates one from settings.
         """
-        close_repo_session = False
         if repo is None:
-            _session = SessionLocal()
-            repo = get_data_repository(_session)
-            close_repo_session = True
+            repo = RemoteDataRepository.from_settings()
 
         try:
             nonprice_data: dict[str, pd.DataFrame] = {}
@@ -282,8 +270,7 @@ class FeatureOrchestrator:
 
             return nonprice_data
         finally:
-            if close_repo_session:
-                _session.close()
+            pass
 
 
 # Need get_feature for cross-asset computation in compute_with_companions

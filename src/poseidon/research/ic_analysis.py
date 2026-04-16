@@ -72,65 +72,62 @@ def run_ic_analysis(
     interval: str,
 ) -> dict:
     """Run pooled IC analysis across symbols for a market/date range."""
-    from poseidon.core.database import db_session
     from poseidon.data.feature_engine import FeatureEngine
-    from poseidon.data.factory import get_data_repository
+    from poseidon.data.remote_repository import RemoteDataRepository
     from poseidon.data.symbols import get_symbols_for_market
 
-    with db_session() as session:
-        repo = get_data_repository(session)
-        engine = FeatureEngine()
-        symbol_list = symbols or [info.id for info in get_symbols_for_market(market)]
-        start = pd.Timestamp(start_date).to_pydatetime()
-        end = pd.Timestamp(end_date).to_pydatetime()
+    repo = RemoteDataRepository.from_settings()
+    engine = FeatureEngine()
+    symbol_list = symbols or [info.id for info in get_symbols_for_market(market)]
+    start = pd.Timestamp(start_date).to_pydatetime()
+    end = pd.Timestamp(end_date).to_pydatetime()
 
-        horizon_frames: dict[int, list[pd.DataFrame]] = {horizon: [] for horizon in horizons}
-        symbols_used = 0
+    horizon_frames: dict[int, list[pd.DataFrame]] = {horizon: [] for horizon in horizons}
+    symbols_used = 0
 
-        for symbol in symbol_list:
-            ohlcv = repo.read_ohlcv(symbol, market, interval, start=start, end=end)
-            if ohlcv.empty:
-                continue
+    for symbol in symbol_list:
+        ohlcv = repo.read_ohlcv(symbol, market, interval, start=start, end=end)
+        if ohlcv.empty:
+            continue
 
-            computed = engine.compute_with_companions(
-                ohlcv,
-                symbol=symbol,
-                market=market,
-                interval=interval,
-                db_session=session,
-            )
-            feature_columns = _select_feature_columns(computed, features)
-            if not feature_columns:
-                continue
+        computed = engine.compute_with_companions(
+            ohlcv,
+            symbol=symbol,
+            market=market,
+            interval=interval,
+        )
+        feature_columns = _select_feature_columns(computed, features)
+        if not feature_columns:
+            continue
 
-            forward_returns = compute_forward_returns(computed["close"], horizons)
-            for horizon, returns_series in forward_returns.items():
-                frame = computed[feature_columns].copy()
-                frame["forward_return"] = returns_series
-                horizon_frames[horizon].append(frame)
+        forward_returns = compute_forward_returns(computed["close"], horizons)
+        for horizon, returns_series in forward_returns.items():
+            frame = computed[feature_columns].copy()
+            frame["forward_return"] = returns_series
+            horizon_frames[horizon].append(frame)
 
-            symbols_used += 1
+        symbols_used += 1
 
-        results: dict[str, dict[str, float | None]] = {}
-        total_observations = 0
-        for horizon in horizons:
-            frames = horizon_frames[horizon]
-            if not frames:
-                continue
+    results: dict[str, dict[str, float | None]] = {}
+    total_observations = 0
+    for horizon in horizons:
+        frames = horizon_frames[horizon]
+        if not frames:
+            continue
 
-            combined = pd.concat(frames, axis=0)
-            total_observations += len(combined.dropna(subset=["forward_return"]))
-            feature_columns = [column for column in combined.columns if column != "forward_return"]
-            ic_values = compute_rank_ic(
-                combined[feature_columns],
-                combined["forward_return"],
-                feature_columns,
-            )
-            for feature_name, value in ic_values.items():
-                results.setdefault(feature_name, {})[str(horizon)] = value
+        combined = pd.concat(frames, axis=0)
+        total_observations += len(combined.dropna(subset=["forward_return"]))
+        feature_columns = [column for column in combined.columns if column != "forward_return"]
+        ic_values = compute_rank_ic(
+            combined[feature_columns],
+            combined["forward_return"],
+            feature_columns,
+        )
+        for feature_name, value in ic_values.items():
+            results.setdefault(feature_name, {})[str(horizon)] = value
 
-        return {
-            "features": results,
-            "symbols_used": symbols_used,
-            "total_observations": total_observations,
-        }
+    return {
+        "features": results,
+        "symbols_used": symbols_used,
+        "total_observations": total_observations,
+    }
