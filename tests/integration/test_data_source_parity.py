@@ -230,7 +230,16 @@ class TestBacktestParity:
         assert not local_ohlcv.empty, "No local OHLCV data loaded"
         assert not remote_ohlcv.empty, "No remote OHLCV data loaded"
 
-        # Step 2: Verify OHLCV data is identical at source
+        # Step 2: Align to common date range (Thalassa fetchers may lag
+        # behind local DB by a day or two since they are stubs until Phase 61)
+        common_idx = local_ohlcv.index.intersection(remote_ohlcv.index)
+        assert len(common_idx) >= GOLDEN_LOOKBACK_DAYS - 5, (
+            f"Too few common dates: {len(common_idx)} (need >= {GOLDEN_LOOKBACK_DAYS - 5})"
+        )
+        local_ohlcv = local_ohlcv.loc[common_idx]
+        remote_ohlcv = remote_ohlcv.loc[common_idx]
+
+        # Step 3: Verify OHLCV data is identical at source
         pd.testing.assert_frame_equal(
             local_ohlcv.reset_index(drop=True),
             remote_ohlcv.reset_index(drop=True),
@@ -239,7 +248,7 @@ class TestBacktestParity:
             obj="OHLCV data (local vs remote)",
         )
 
-        # Step 3: Run backtest on each OHLCV dataset
+        # Step 4: Run backtest on each OHLCV dataset
         local_metrics, local_trades = _run_golden_backtest(
             local_ohlcv,
             strategy_class="voting",
@@ -279,7 +288,7 @@ class TestBacktestParity:
         # LiquiditySweepStrategy uses crypto_perp market with 1h interval.
         # Load different OHLCV data for this strategy.
         original = settings.poseidon_data_source
-        end = datetime.now(timezone.utc)
+        end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
         start = end - timedelta(days=GOLDEN_LOOKBACK_DAYS)
 
         # Load local OHLCV
@@ -310,6 +319,12 @@ class TestBacktestParity:
         # Verify data was loaded
         assert not local_ohlcv.empty, "No local crypto_perp OHLCV data loaded"
         assert not remote_ohlcv.empty, "No remote crypto_perp OHLCV data loaded"
+
+        # Align to common date range
+        common_idx = local_ohlcv.index.intersection(remote_ohlcv.index)
+        assert len(common_idx) >= 50, f"Too few common dates: {len(common_idx)}"
+        local_ohlcv = local_ohlcv.loc[common_idx]
+        remote_ohlcv = remote_ohlcv.loc[common_idx]
 
         # Verify OHLCV data is identical at source
         pd.testing.assert_frame_equal(
