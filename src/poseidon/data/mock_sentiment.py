@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from poseidon.data.repository import DataRepository
+from poseidon.data.factory import get_data_repository
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ def generate_mock_sentiment(
     Returns:
         Number of sentiment rows created.
     """
-    repo = DataRepository(session)
+    repo = get_data_repository(session)
     end = datetime.now(timezone.utc)
     start = end - pd.Timedelta(days=days + 5)  # Extra buffer for return calculation
 

@@ -16,7 +16,7 @@ from poseidon.backtest.experiment_tracker import ExperimentTracker
 from poseidon.backtest.param_search import ParameterSearchPipeline, SearchConfig, SearchResult
 from poseidon.backtest.portfolio import SizingConfig
 from poseidon.data.feature_engine import FeatureOrchestrator, get_cross_asset_specs, get_r2_specs
-from poseidon.data.repository import DataRepository
+from poseidon.data.factory import get_data_repository
 from poseidon.ml.manager import ModelManager
 from poseidon.risk.engine import RiskEngine
 
@@ -91,7 +91,7 @@ class AutoResearchRunner:
             feature_engine = GuardedOrchestrator()
             risk_engine = RiskEngine()
             tracker = ExperimentTracker(self.db_session)
-            repo = DataRepository(self.db_session)
+            repo = get_data_repository(self.db_session)
 
             for i, spec in enumerate(markets):
                 # D-12: graceful stop check

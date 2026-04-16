@@ -51,7 +51,7 @@ from poseidon.data.rate_limiter import (
     CircuitBreaker,
     DistributedRateLimiter,
 )
-from poseidon.data.repository import DataRepository
+from poseidon.data.factory import get_data_repository
 from poseidon.data.symbols import get_market_config, load_symbols
 from poseidon.data.validation import validate_ohlcv
 from poseidon.core.database import db_session
@@ -197,7 +197,7 @@ def _run_backfill_chunk(session, job_id: str) -> dict:
     unfinished tuples remain. See module docstring for full semantics.
     """
     job_uuid = UUID(job_id)
-    repo = DataRepository(session)
+    repo = get_data_repository(session)
     job = session.query(BackfillJob).filter_by(job_id=job_uuid).one()
     if job.status in _TERMINAL_STATUSES:
         return {"job_id": job_id, "status": job.status, "noop": True}

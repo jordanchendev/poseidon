@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from poseidon.data.repository import DataRepository
+from poseidon.data.factory import get_data_repository
 from poseidon.data.symbols import SymbolInfo
 from poseidon.universe.base import UniverseFilter
 from poseidon.universe.registry import register_filter
@@ -63,7 +63,7 @@ class VolumeFilter(UniverseFilter):
         start = now - timedelta(days=self.lookback_days)
         volumes: dict[str, float] = {}
         with db_session() as db:
-            repo = DataRepository(db)
+            repo = get_data_repository(db)
             for s in symbols:
                 try:
                     df = repo.read_ohlcv(s.id, market, interval, start=start, end=now)
@@ -115,7 +115,7 @@ class ListingAgeFilter(UniverseFilter):
         now = datetime.now(timezone.utc)
         ages: dict[str, int] = {}
         with db_session() as db:
-            repo = DataRepository(db)
+            repo = get_data_repository(db)
             for s in symbols:
                 try:
                     # Unbounded start/end to catch the true earliest record

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from poseidon.core.schemas import SentimentCreate, SentimentResponse
-from poseidon.data.repository import DataRepository
+from poseidon.data.factory import get_data_repository
 from poseidon.models.base import get_db
 
 router = APIRouter()
@@ -19,7 +19,7 @@ async def create_sentiment(
 
     The score must be between -1.0 (most negative) and 1.0 (most positive).
     """
-    repo = DataRepository(db)
+    repo = get_data_repository(db)
     row = repo.write_sentiment(
         symbol=body.symbol,
         market=body.market,
@@ -39,6 +39,6 @@ async def list_sentiment(
     db: Session = Depends(get_db),
 ):
     """Get sentiment scores for a symbol, most recent first."""
-    repo = DataRepository(db)
+    repo = get_data_repository(db)
     rows = repo.read_sentiment(symbol=symbol, market=market, limit=limit)
     return rows

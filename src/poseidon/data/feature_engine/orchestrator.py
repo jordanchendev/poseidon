@@ -26,6 +26,7 @@ from poseidon.data.feature_engine.specs import (
     is_nonprice_spec,
     nonprice_data_key,
 )
+from poseidon.data.factory import get_data_repository
 from poseidon.data.repository import DataRepository
 
 logger = logging.getLogger(__name__)
@@ -68,7 +69,7 @@ class FeatureOrchestrator:
             Empty DataFrame if no OHLCV data found.
         """
         with db_session() as session:
-            repo = DataRepository(session)
+            repo = get_data_repository(session)
             ohlcv = repo.read_ohlcv(symbol, market, interval, start, end)
 
         if ohlcv.empty:
@@ -159,7 +160,7 @@ class FeatureOrchestrator:
             db_session = SessionLocal()
             close_session = True
 
-        repo = DataRepository(db_session)
+        repo = get_data_repository(db_session)
 
         try:
             # --- Cross-asset features ---
@@ -245,7 +246,7 @@ class FeatureOrchestrator:
         close_repo_session = False
         if repo is None:
             _session = SessionLocal()
-            repo = DataRepository(_session)
+            repo = get_data_repository(_session)
             close_repo_session = True
 
         try:

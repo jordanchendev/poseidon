@@ -54,7 +54,7 @@ def train_model(
     # during testing / import-time checks.
     from poseidon.core.database import db_session
     from poseidon.data.feature_engine import FeatureEngine
-    from poseidon.data.repository import DataRepository
+    from poseidon.data.factory import get_data_repository
     from poseidon.ml.manager import ModelManager
     from poseidon.ml.registry import get_model
 
@@ -62,7 +62,7 @@ def train_model(
         manager = None
         try:
             manager = ModelManager(session)
-            repo = DataRepository(session)
+            repo = get_data_repository(session)
             vid = UUID(version_id)
 
             mv = manager.get_version(vid)
@@ -217,7 +217,7 @@ def run_model_backtest(
     from poseidon.backtest.runner import BacktestRunner
     from poseidon.core.database import db_session
     from poseidon.data.feature_engine import FeatureEngine
-    from poseidon.data.repository import DataRepository
+    from poseidon.data.factory import get_data_repository
     from poseidon.ml.manager import ModelManager
     from poseidon.ml.registry import get_model
     from poseidon.models.backtest import BacktestRecord
@@ -238,7 +238,7 @@ def run_model_backtest(
 
             # Load model version
             manager = ModelManager(session)
-            repo = DataRepository(session)
+            repo = get_data_repository(session)
             mv = manager.get_version(record.model_version_id)
             if mv is None or mv.status != "ready":
                 raise ValueError(f"Model version {record.model_version_id} not ready")

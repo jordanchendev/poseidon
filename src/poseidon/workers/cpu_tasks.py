@@ -21,7 +21,7 @@ from poseidon.core.redis import get_redis
 from poseidon.data.cache import CacheManager
 from poseidon.data.rate_limiter import CircuitBreaker, DistributedRateLimiter, PROVIDER_LIMITS
 from poseidon.data.validation import validate_ohlcv
-from poseidon.data.repository import DataRepository
+from poseidon.data.factory import get_data_repository
 from poseidon.data.symbols import get_market_config, get_symbols_for_market, load_symbols
 from poseidon.models.backfill import BackfillJob
 from poseidon.models.backtest import BacktestRecord
@@ -151,7 +151,7 @@ def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> 
     limit = getattr(settings, provider_cfg.get("limit_key", "ratelimit_finmind_hourly"), 500)
 
     with db_session() as session:
-        repo = DataRepository(session)
+        repo = get_data_repository(session)
         for sym_info in symbols:
             # 0. Check cache first (three-layer fallback: cache -> DB -> API)
             if cache is not None:
@@ -280,7 +280,7 @@ def _fetch_market_data_cursor(market: str, interval: str, symbols, market_cfg) -
     )
 
     with db_session() as session:
-        repo = DataRepository(session)
+        repo = get_data_repository(session)
         for sym_info in symbols:
             cursor = cursor_service.get_or_bootstrap(
                 session, sym_info.id, market, interval
@@ -423,7 +423,7 @@ def run_backtest_task(
     """
     backtest_id = uuid.uuid4()
     with db_session() as session:
-        repo = DataRepository(session)
+        repo = get_data_repository(session)
         try:
             # Load strategy record from DB
             sid = uuid.UUID(strategy_id)
@@ -606,7 +606,7 @@ def run_dual_mode_task(
     from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
 
     with db_session() as session:
-        repo = DataRepository(session)
+        repo = get_data_repository(session)
         try:
             sid = uuid.UUID(strategy_id)
             record = session.get(StrategyRecord, sid)
@@ -734,7 +734,7 @@ def run_optimization_task(
         Dict with trial count, best params, and best metric value.
     """
     with db_session() as session:
-        repo = DataRepository(session)
+        repo = get_data_repository(session)
         try:
             # Load strategy record from DB
             sid = uuid.UUID(strategy_id)
@@ -887,7 +887,7 @@ def compute_var_snapshot(method: str = "all") -> dict:
 
     redis_client = get_redis("cache")
     with db_session() as db:
-        repo = DataRepository(db)
+        repo = get_data_repository(db)
         # 1. Rebuild portfolio from DB
         portfolio = VirtualPortfolio()
         portfolio.rebuild_from_db(db)
@@ -1118,7 +1118,7 @@ def update_covariance_matrix() -> dict:
 
     redis_client = get_redis("cache")
     with db_session() as db:
-        repo = DataRepository(db)
+        repo = get_data_repository(db)
         # 1. Get active portfolio symbols
         portfolio = VirtualPortfolio()
         portfolio.rebuild_from_db(db)
@@ -1304,7 +1304,7 @@ def compute_quality_scores() -> dict:
     skipped = 0
 
     with db_session() as db:
-        repo = DataRepository(db)
+        repo = get_data_repository(db)
         for market_name, market_cfg in config.markets.items():
             calendar = MARKET_CALENDARS.get(market_name, {"freq": "B", "tz": "UTC"})
             symbols = market_cfg.symbols
@@ -1412,7 +1412,7 @@ def run_stress_test(
 
     redis_client = get_redis("cache")
     with db_session() as db:
-        repo = DataRepository(db)
+        repo = get_data_repository(db)
         # 1. Rebuild portfolio from DB
         portfolio = VirtualPortfolio()
         portfolio.rebuild_from_db(db)
@@ -2007,7 +2007,7 @@ def _ensure_ohlcv_data(symbols: list[str], market: str = "tw_stock") -> None:
     start_date = (datetime.now(timezone.utc) - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
 
     with db_session() as session:
-        repo = DataRepository(session)
+        repo = get_data_repository(session)
         for sym in missing:
             try:
                 df = fetcher.fetch_ohlcv(sym, "1d", start_date, end_date)
@@ -2337,7 +2337,7 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
 
     # Run strategy (inject DataRepository with session for perp data access)
     with db_session() as strategy_db:
-        strategy._repo = DataRepository(strategy_db)
+        strategy._repo = get_data_repository(strategy_db)
         targets = strategy.select_stocks(pd.DataFrame(), as_of=now.date())
 
     # Compute differential orders
