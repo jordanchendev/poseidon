@@ -148,14 +148,11 @@ class DataGapResponse(BaseModel):
 
 
 class DataFreshnessResponse(BaseModel):
-    """Per-(market, interval) freshness snapshot (Phase 40 D-03, D-11, D-16).
+    """Per-(market, interval) freshness snapshot.
 
-    Returned by the freshness helper the Kairos ``/data-health`` view polls.
-    Computed live from ``ingest_state.last_successful_ts`` + the per-tuple
-    SLA in ``settings.freshness_sla`` — there is no snapshot table
-    (D-16: stateless watchdog).
+    Returned by the Thalassa freshness API, proxied to Kairos ``/data-health``.
 
-    * ``expected_lag_seconds`` — SLA pulled from ``settings.freshness_sla``
+    * ``expected_lag_seconds`` — SLA configured in Thalassa
     * ``observed_lag_seconds`` — ``now() - last_successful_ts`` at read time
     * ``status`` — ``"ok"`` | ``"violation"`` | ``"unknown"`` (``unknown``
       when ``last_successful_ts`` is NULL, i.e. first-time bootstrap)
