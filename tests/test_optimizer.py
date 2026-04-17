@@ -20,6 +20,7 @@ from poseidon.backtest.optimizer import (
     GridSearchOptimizer,
     OptimizationTrial,
 )
+from poseidon.backtest.pending_orders import FillModel
 from poseidon.backtest.schemas import BacktestConfig, BacktestResult
 
 
@@ -381,3 +382,40 @@ class TestBayesianOptimizer:
         # metric_value should correspond to total_return, not sharpe_ratio
         for r in results:
             assert r.metric_value == r.metrics["total_return"]
+
+
+class TestBayesianOptimizerFillModel:
+    """Tests for BayesianOptimizer fill_model passthrough (D-05, FIX-02)."""
+
+    def test_fill_model_default_is_none(self, mock_components):
+        """fill_model defaults to None when not provided."""
+        fe, re, cm = mock_components
+        optimizer = BayesianOptimizer(fe, re, cm)
+        assert optimizer.fill_model is None
+
+    def test_fill_model_pessimistic_stored(self, mock_components):
+        """fill_model=PESSIMISTIC is stored on optimizer."""
+        fe, re, cm = mock_components
+        optimizer = BayesianOptimizer(fe, re, cm, fill_model=FillModel.PESSIMISTIC)
+        assert optimizer.fill_model == FillModel.PESSIMISTIC
+
+    def test_fill_model_passed_to_runner(self, mock_components, sample_ohlcv):
+        """BayesianOptimizer passes fill_model to BacktestRunner."""
+        fe, re, cm = mock_components
+        optimizer = BayesianOptimizer(fe, re, cm, fill_model=FillModel.PESSIMISTIC)
+
+        strategy_factory = MagicMock()
+        param_space = {"x": (1, 10, "int")}
+
+        with patch("poseidon.backtest.optimizer.BacktestRunner") as MockRunner:
+            mock_runner_instance = MagicMock()
+            mock_runner_instance.run.return_value = _make_mock_result(1.0)
+            MockRunner.return_value = mock_runner_instance
+
+            optimizer.optimize(
+                strategy_factory, sample_ohlcv, param_space, n_trials=1,
+            )
+
+            # Verify BacktestRunner was constructed with fill_model=PESSIMISTIC
+            call_kwargs = MockRunner.call_args
+            assert call_kwargs.kwargs.get("fill_model") == FillModel.PESSIMISTIC

@@ -22,6 +22,7 @@ import optuna
 import pandas as pd
 
 from poseidon.backtest.cost_model import CostModel
+from poseidon.backtest.pending_orders import FillModel
 from poseidon.backtest.portfolio import SizingConfig
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.data.feature_engine import FeatureEngine
@@ -140,6 +141,7 @@ class BayesianOptimizer:
         initial_capital: float = 1_000_000.0,
         sizing_config: SizingConfig | None = None,
         db_session: Any | None = None,
+        fill_model: FillModel | None = None,
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
@@ -147,6 +149,7 @@ class BayesianOptimizer:
         self.initial_capital = initial_capital
         self.sizing_config = sizing_config or SizingConfig()
         self.db_session = db_session
+        self.fill_model = fill_model
 
     def optimize(
         self,
@@ -212,6 +215,7 @@ class BayesianOptimizer:
                 cost_model=self.cost_model,
                 initial_capital=self.initial_capital,
                 sizing_config=self.sizing_config,
+                fill_model=self.fill_model,
             )
             result = runner.run(ohlcv, db_session=self.db_session)
 

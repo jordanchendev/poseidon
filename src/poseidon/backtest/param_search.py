@@ -18,6 +18,7 @@ from poseidon.backtest.experiment_tracker import ExperimentTracker
 from poseidon.backtest.holdout import HoldoutConfig
 from poseidon.backtest.metrics import compute_composite_score
 from poseidon.backtest.optimizer import BayesianOptimizer
+from poseidon.backtest.pending_orders import FillModel
 from poseidon.backtest.portfolio import SizingConfig
 from poseidon.backtest.voting_strategy_factory import (
     VotingStrategyFactory,
@@ -86,6 +87,7 @@ class ParameterSearchPipeline:
         sizing_config: SizingConfig | None = None,
         db_session: Any | None = None,
         strategy_factory: Any | None = None,  # D-02: injectable strategy factory
+        fill_model: FillModel | None = None,  # D-05: injectable fill model for PESSIMISTIC mode
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
@@ -95,6 +97,7 @@ class ParameterSearchPipeline:
         self.sizing_config = sizing_config or SizingConfig()
         self.db_session = db_session
         self.strategy_factory = strategy_factory  # None = VotingStrategyFactory (backward compat)
+        self.fill_model = fill_model
 
     def run(
         self,
@@ -146,6 +149,7 @@ class ParameterSearchPipeline:
             initial_capital=self.initial_capital,
             sizing_config=self.sizing_config,
             db_session=self.db_session,
+            fill_model=self.fill_model,
         )
 
         # Strategy factory for optimizer: wraps VotingStrategyFactory.from_config
@@ -211,6 +215,7 @@ class ParameterSearchPipeline:
             sizing_config=self.sizing_config,
             db_session=self.db_session,
             strategy_factory=self.strategy_factory,
+            fill_model=self.fill_model,
         )
 
         passed_count = 0
