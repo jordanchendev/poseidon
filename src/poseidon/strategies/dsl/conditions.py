@@ -186,7 +186,7 @@ def eval_bollinger_width_percentile(condition: dict, features: pd.DataFrame, row
     params = condition.get("params", {})
     period = params.get("period", 20)
     lookback = params.get("lookback", 168)  # 1 week of hourly bars
-    threshold = condition.get("threshold", 0.2)  # below 20th percentile = squeeze
+    threshold = condition.get("threshold", 0.85)  # Nunchi proven: below 85th percentile
 
     upper_col = f"bb_upper_{period}"
     lower_col = f"bb_lower_{period}"

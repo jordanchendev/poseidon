@@ -210,6 +210,7 @@ class ParameterSearchPipeline:
             initial_capital=self.initial_capital,
             sizing_config=self.sizing_config,
             db_session=self.db_session,
+            strategy_factory=self.strategy_factory,
         )
 
         passed_count = 0

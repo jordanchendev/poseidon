@@ -294,6 +294,85 @@ class TestWalkForwardResult:
 # ---------------------------------------------------------------------------
 
 
+class TestStrategyFactoryInjection:
+    """Test polymorphic strategy_factory injection in WalkForwardAnalyzer."""
+
+    @patch("poseidon.backtest.walk_forward.BacktestRunner")
+    def test_custom_factory_used_instead_of_voting(self, MockRunner):
+        """When strategy_factory is provided, VotingStrategyFactory is NOT used."""
+        mock_result = MagicMock()
+        mock_result.metrics = {
+            "annualized_return": 0.15,
+            "trade_count": 40,
+            "total_return": 0.12,
+            "sharpe_ratio": 1.2,
+            "max_drawdown": 0.08,
+            "calmar_ratio": 1.5,
+            "win_rate": 0.55,
+            "profit_factor": 1.4,
+            "avg_win": 80.0,
+            "avg_loss": -40.0,
+        }
+        runner_instance = MagicMock()
+        runner_instance.run.return_value = mock_result
+        MockRunner.return_value = runner_instance
+
+        # Mock factory that tracks calls
+        class MockFactory:
+            to_config_calls = 0
+            from_config_calls = 0
+
+            @staticmethod
+            def to_config_dict(strategy):
+                MockFactory.to_config_calls += 1
+                return {"mock": True}
+
+            @staticmethod
+            def from_config(config):
+                MockFactory.from_config_calls += 1
+                mock_strategy = MagicMock()
+                mock_strategy.reset = MagicMock()
+                return mock_strategy
+
+        fe = MagicMock()
+        re = MagicMock()
+        cost_model = MagicMock()
+
+        analyzer = WalkForwardAnalyzer(
+            feature_engine=fe,
+            risk_engine=re,
+            cost_model=cost_model,
+            strategy_factory=MockFactory,
+        )
+
+        ohlcv = _make_ohlcv(400)
+        cfg = WalkForwardConfig(train_days=252, test_days=63, step_days=63)
+        result = analyzer.analyze(MagicMock(), ohlcv, cfg)
+
+        # MockFactory was used for serialization and reconstruction
+        assert MockFactory.to_config_calls == 1
+        assert MockFactory.from_config_calls > 0
+        assert len(result.per_window) > 0
+
+    def test_default_factory_is_none(self):
+        """When strategy_factory is not provided, it defaults to None."""
+        fe = MagicMock()
+        re = MagicMock()
+        cost_model = MagicMock()
+        analyzer = WalkForwardAnalyzer(fe, re, cost_model)
+        assert analyzer._strategy_factory is None
+
+    def test_fill_model_stored(self):
+        """fill_model parameter is stored on analyzer."""
+        fe = MagicMock()
+        re = MagicMock()
+        cost_model = MagicMock()
+        analyzer = WalkForwardAnalyzer(
+            fe, re, cost_model, fill_model="pessimistic",
+        )
+        assert analyzer._fill_model == "pessimistic"
+
+
 class TestAnalyzeIntegration:
     """Integration tests for WalkForwardAnalyzer.analyze with mocked runner."""
 

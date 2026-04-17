@@ -125,6 +125,8 @@ class WalkForwardAnalyzer:
         initial_capital: float = 1_000_000.0,
         sizing_config: SizingConfig | None = None,
         db_session: Any | None = None,
+        strategy_factory: Any | None = None,
+        fill_model: Any | None = None,
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
@@ -132,6 +134,8 @@ class WalkForwardAnalyzer:
         self.initial_capital = initial_capital
         self.sizing_config = sizing_config or SizingConfig()
         self.db_session = db_session
+        self._strategy_factory = strategy_factory
+        self._fill_model = fill_model
 
     def generate_windows(
         self,
@@ -216,10 +220,14 @@ class WalkForwardAnalyzer:
                 per_window=[], aggregate_oos_metrics={}, config=config,
             )
 
-        # Extract strategy config for per-window reconstruction
-        from poseidon.backtest.voting_strategy_factory import VotingStrategyFactory
+        # Extract strategy config for per-window reconstruction (polymorphic)
+        if self._strategy_factory is not None:
+            factory = self._strategy_factory
+        else:
+            from poseidon.backtest.voting_strategy_factory import VotingStrategyFactory
+            factory = VotingStrategyFactory
 
-        strategy_config = VotingStrategyFactory.to_config_dict(strategy)
+        strategy_config = factory.to_config_dict(strategy)
 
         per_window: list[WindowResult] = []
 
@@ -230,7 +238,7 @@ class WalkForwardAnalyzer:
             oos_ohlcv = ohlcv.iloc[test_start:test_end].reset_index(drop=True)
 
             # Fresh strategy per window to avoid state leakage
-            window_strategy = VotingStrategyFactory.from_config(strategy_config)
+            window_strategy = factory.from_config(strategy_config)
 
             # IS backtest
             is_runner = BacktestRunner(
@@ -240,6 +248,7 @@ class WalkForwardAnalyzer:
                 cost_model=self.cost_model,
                 initial_capital=self.initial_capital,
                 sizing_config=self.sizing_config,
+                fill_model=self._fill_model,
             )
             is_result = is_runner.run(is_ohlcv, db_session=self.db_session)
 
@@ -252,6 +261,7 @@ class WalkForwardAnalyzer:
                 cost_model=self.cost_model,
                 initial_capital=self.initial_capital,
                 sizing_config=self.sizing_config,
+                fill_model=self._fill_model,
             )
             oos_result = oos_runner.run(oos_ohlcv, db_session=self.db_session)
 
