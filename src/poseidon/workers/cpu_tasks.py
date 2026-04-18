@@ -930,7 +930,7 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
                 from poseidon.data.feature_engine import FeatureOrchestrator
                 from poseidon.risk.engine import RiskEngine
                 from poseidon.backtest.cost_model import COST_MODELS
-                from poseidon.data.remote_data_repository import RemoteDataRepository
+                from poseidon.data.remote_repository import RemoteDataRepository
 
                 regime_tracker = ET(db)
                 feature_engine = FeatureOrchestrator()
@@ -978,7 +978,7 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
                         experiment_tracker=regime_tracker,
                     )
                     regime_cfg = RegimeSearchConfig(
-                        n_trials_per_regime=cfg.n_trials // 3 or 10,
+                        n_trials_per_regime=max(cfg.n_trials // 3, 10),
                         seed=cfg.seed,
                     )
                     result = pipeline.run(

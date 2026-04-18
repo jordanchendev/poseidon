@@ -25,7 +25,6 @@ PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "threshold_1": (0.0, 100.0, "float"),
     "threshold_2": (-1.0, 1.0, "float"),
     "composite_threshold": (1, 3, "int"),
-    "atr_multiplier": (1.5, 8.0, "float"),
     "position_pct": (0.03, 0.15, "float"),
 }
 
@@ -56,8 +55,6 @@ def _build_config_from_params(
     Returns:
         Dict that passes RuleConfig(**config) validation.
     """
-    n_features = len(feature_names)
-
     # Build conditions from available features
     conditions = []
     for i, fname in enumerate(feature_names):
