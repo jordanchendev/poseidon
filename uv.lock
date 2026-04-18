@@ -3410,6 +3410,7 @@ qlib = [
     { name = "pyqlib" },
     { name = "setuptools" },
     { name = "shap" },
+    { name = "xgboost" },
 ]
 
 [package.dev-dependencies]
@@ -3460,6 +3461,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'gpu'", specifier = ">=2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
     { name = "xgboost", marker = "extra == 'gpu'", specifier = ">=2.0" },
+    { name = "xgboost", marker = "extra == 'qlib'", specifier = ">=2.0" },
     { name = "yfinance", specifier = ">=0.2.40" },
 ]
 provides-extras = ["gpu", "dev", "qlib"]

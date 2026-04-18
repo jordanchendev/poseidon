@@ -49,6 +49,9 @@ dev = [
 qlib = [
     "pyqlib>=0.9",
     "shap>=0.50",
+    # Phase 68: qlib research runs include XGBModel, so the research image
+    # must install xgboost with the qlib extra instead of relying on gpu-only deps.
+    "xgboost>=2.0",
     # Phase 41 D-14: mlflow as explicit dependency for the metrics bridge
     # (previously transitive via pyqlib). The qlib_train task scrapes
     # mlflow.get_run() metrics into training_runs.metrics JSONB.
