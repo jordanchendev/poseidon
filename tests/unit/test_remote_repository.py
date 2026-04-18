@@ -203,3 +203,105 @@ class TestRetryAndCircuitBreaker:
                 repo.read_latest_funding_rate("BTCUSDT")
 
         assert repo._cb._failure_count == 1
+
+
+class TestNonpriceExtendedEndpoints:
+    """Tests for Phase 66 nonprice reader methods."""
+
+    def test_read_fundamentals_extended_df_returns_dataframe(self, repo):
+        mock_resp = _mock_response({
+            "data": [
+                {"date": "2025-03-31", "gross_margin": 0.35, "operating_margin": 0.20,
+                 "debt_ratio": 0.40, "eps": 5.0},
+            ],
+            "columns": ["date", "gross_margin", "operating_margin", "debt_ratio", "eps"],
+            "count": 1,
+        })
+        with patch.object(repo._client, "request", return_value=mock_resp):
+            df = repo.read_fundamentals_extended_df("2330")
+            assert isinstance(df, pd.DataFrame)
+            assert "gross_margin" in df.columns
+
+    def test_read_fundamentals_extended_df_passes_as_of_date(self, repo):
+        mock_resp = _mock_response({"data": [], "columns": [], "count": 0})
+        with patch.object(repo._client, "request", return_value=mock_resp) as mock_req:
+            repo.read_fundamentals_extended_df("2330", as_of_date="2025-06-01")
+            call_kwargs = mock_req.call_args
+            params = call_kwargs.kwargs.get("params") or call_kwargs[1].get("params", {})
+            assert params.get("as_of_date") == "2025-06-01"
+
+    def test_read_monthly_revenue_returns_dataframe(self, repo):
+        mock_resp = _mock_response({
+            "data": [
+                {"date": "2025-01-31", "monthly_rev": 5000.0, "monthly_rev_yoy": 0.12,
+                 "cum_rev": 5000.0, "cum_rev_yoy": 0.12},
+            ],
+            "columns": ["date", "monthly_rev", "monthly_rev_yoy", "cum_rev", "cum_rev_yoy"],
+            "count": 1,
+        })
+        with patch.object(repo._client, "request", return_value=mock_resp):
+            df = repo.read_monthly_revenue("2330")
+            assert isinstance(df, pd.DataFrame)
+            assert "monthly_rev_yoy" in df.columns
+
+    def test_read_monthly_revenue_passes_as_of_date(self, repo):
+        mock_resp = _mock_response({"data": [], "columns": [], "count": 0})
+        with patch.object(repo._client, "request", return_value=mock_resp) as mock_req:
+            repo.read_monthly_revenue("2330", as_of_date="2025-03-01")
+            call_kwargs = mock_req.call_args
+            params = call_kwargs.kwargs.get("params") or call_kwargs[1].get("params", {})
+            assert params.get("as_of_date") == "2025-03-01"
+
+    def test_read_foreign_holding_returns_dataframe(self, repo):
+        mock_resp = _mock_response({
+            "data": [
+                {"date": "2025-01-15", "foreign_holding_ratio": 0.75},
+            ],
+            "columns": ["date", "foreign_holding_ratio"],
+            "count": 1,
+        })
+        with patch.object(repo._client, "request", return_value=mock_resp):
+            df = repo.read_foreign_holding("2330")
+            assert isinstance(df, pd.DataFrame)
+            assert "foreign_holding_ratio" in df.columns
+
+    def test_read_quality_factor_returns_dataframe(self, repo):
+        mock_resp = _mock_response({
+            "data": [
+                {"date": "2025-03-31", "profitability_z": 0.5, "growth_z": 0.3, "safety_z": -0.1},
+            ],
+            "columns": ["date", "profitability_z", "growth_z", "safety_z"],
+            "count": 1,
+        })
+        with patch.object(repo._client, "request", return_value=mock_resp):
+            df = repo.read_quality_factor("2330")
+            assert isinstance(df, pd.DataFrame)
+            assert "profitability_z" in df.columns
+
+    def test_read_pe_pbr_returns_dataframe(self, repo):
+        mock_resp = _mock_response({
+            "data": [
+                {"date": "2025-01-15", "pe_ratio": 15.0, "pb_ratio": 2.0, "dividend_yield": 0.03},
+            ],
+            "columns": ["date", "pe_ratio", "pb_ratio", "dividend_yield"],
+            "count": 1,
+        })
+        with patch.object(repo._client, "request", return_value=mock_resp):
+            df = repo.read_pe_pbr("2330")
+            assert isinstance(df, pd.DataFrame)
+            assert "dividend_yield" in df.columns
+
+    def test_read_risk_filters_active_returns_list(self, repo):
+        mock_resp = _mock_response({"excluded_symbols": ["2330", "2317"]})
+        with patch.object(repo._client, "request", return_value=mock_resp):
+            result = repo.read_risk_filters_active("2025-01-15")
+            assert isinstance(result, list)
+            assert "2330" in result
+            assert len(result) == 2
+
+    def test_read_risk_filters_active_empty(self, repo):
+        mock_resp = _mock_response({"excluded_symbols": []})
+        with patch.object(repo._client, "request", return_value=mock_resp):
+            result = repo.read_risk_filters_active("2025-01-15")
+            assert isinstance(result, list)
+            assert len(result) == 0
