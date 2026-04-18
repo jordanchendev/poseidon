@@ -31,8 +31,6 @@ PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "atr_mult_regime_3": (1.5, 3.0, "float"),   # Extreme vol
     # Exit parameters
     "cooldown_bars": (2, 12, "int"),
-    # Risk parameters
-    "risk_pct": (0.005, 0.03, "float"),
     # Trailing stop parameters (D-09)
     "trailing_activation_r": (0.5, 2.0, "float"),
     "trail_atr_multiplier": (1.0, 3.0, "float"),
