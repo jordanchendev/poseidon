@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import pandas as pd
-import yaml
 
 from poseidon.ml.artifacts import get_predictions_path
+from poseidon.data.symbols import load_symbols
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -23,18 +22,12 @@ DEFAULT_PHASE68_SEGMENTS = {
     "test": ["2023-01-01", "2026-04-15"],
 }
 
-
-def _symbols_config_path() -> Path:
-    return Path(__file__).resolve().parents[3] / "config" / "symbols.yaml"
-
-
 def _load_phase68_symbols() -> list[str]:
-    with _symbols_config_path().open() as handle:
-        config = yaml.safe_load(handle)
-    return [
-        symbol["id"]
-        for symbol in config["markets"]["tw_stock"]["symbols"]
-    ]
+    config = load_symbols()
+    market = config.markets.get("tw_stock")
+    if market is None:
+        raise ValueError("tw_stock symbols unavailable from configured symbol source")
+    return [symbol.id for symbol in market.symbols]
 
 
 DEFAULT_PHASE68_SYMBOLS = _load_phase68_symbols()
