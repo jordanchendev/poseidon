@@ -73,6 +73,7 @@ class RevenueBreakoutConfig(BaseModel):
     strategy: str = "revenue_breakout"
     name: str = "Revenue Breakout Pure"
     market: str = "tw_stock"
+    symbols: list[str] = []  # Universe symbols (set by backtester or config)
     selection: SelectionConfig = SelectionConfig()
     allocation: AllocationConfig = AllocationConfig()
     rebalance: RebalanceConfig = RebalanceConfig()
