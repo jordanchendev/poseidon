@@ -50,8 +50,16 @@ class AutoResearchRequest(BaseModel):
     )
     strategy_type: str = Field(
         "voting",
-        pattern="^(voting|liquidity_sweep)$",
-        description="Strategy factory: 'voting' (VotingStrategyFactory, default) or 'liquidity_sweep' (LiquiditySweepStrategyFactory)",
+        pattern="^(voting|liquidity_sweep|rule|model|regime_router)$",
+        description="Strategy factory: 'voting' (default), 'liquidity_sweep', 'rule' (RuleStrategyFactory), 'model' (ModelStrategyFactory), or 'regime_router' (RegimeSearchPipeline)",
+    )
+    feature_names: list[str] | None = Field(
+        None,
+        description="Feature column names for RuleStrategyFactory conditions (required when strategy_type='rule')",
+    )
+    base_config_json: dict | None = Field(
+        None,
+        description="Base VotingStrategy config dict for RegimeRouter search (used when strategy_type='regime_router')",
     )
 
 
@@ -97,6 +105,8 @@ async def run_autoresearch(request: AutoResearchRequest) -> MessageResponse:
         "seed": request.seed,
         "strategy_mode": request.strategy_mode,
         "strategy_type": request.strategy_type,
+        "feature_names": request.feature_names,
+        "base_config_json": request.base_config_json,
     }
     markets = [m.model_dump() for m in request.markets]
 

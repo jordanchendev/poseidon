@@ -77,6 +77,10 @@ class RegimeSearchPipeline:
         base_config: dict,
         regime_model: XGBoostRegimeModel,
         config: RegimeSearchConfig | None = None,
+        *,
+        market: str = "",
+        symbol: str = "",
+        interval: str = "",
     ) -> dict[str, dict]:
         """Execute per-regime parameter search.
 
@@ -85,6 +89,9 @@ class RegimeSearchPipeline:
             base_config: Base VotingStrategy config dict.
             regime_model: Trained XGBoostRegimeModel for regime prediction.
             config: Search configuration. Uses defaults if None.
+            market: Market identifier for experiment tracking.
+            symbol: Symbol identifier for experiment tracking.
+            interval: Time interval for experiment tracking.
 
         Returns:
             Dict mapping regime names to optimized {min_votes, position_pct, bear_min_votes, bear_position_pct}.
@@ -127,6 +134,20 @@ class RegimeSearchPipeline:
                 best_params["bear_min_votes"],
                 best_params["bear_position_pct"],
             )
+
+        # FACT-03: persist per-regime results to experiments table
+        if self._tracker is not None:
+            for regime_name, best_params in result.items():
+                self._tracker.save(
+                    study_name=f"regime_{regime_name}_{market}_{symbol}_{interval}",
+                    config_json=best_params,
+                    market=market,
+                    interval=interval,
+                    metrics_json=None,
+                    composite_score=None,
+                    wfe_score=None,
+                    status="passed",
+                )
 
         return result
 

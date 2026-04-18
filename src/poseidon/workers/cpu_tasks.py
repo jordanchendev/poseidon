@@ -918,13 +918,107 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
             # Phase 45: optional ML model for sub-signal search (D-20)
             mv_id = search_config.get("model_version_id")
 
-            # Phase 53 API-02: inject strategy factory based on strategy_type
+            # Phase 69: extract new dispatch fields from search_config
             strategy_type = search_config.get("strategy_type", "voting")
-            strategy_factory = None  # None = VotingStrategyFactory (backward compat)
-            if strategy_type == "liquidity_sweep":
-                from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
+            feature_names = search_config.get("feature_names")
+            base_config_json = search_config.get("base_config_json")
 
-                strategy_factory = LiquiditySweepStrategyFactory()
+            # D-11: regime_router special path -- does NOT use AutoResearchRunner
+            if strategy_type == "regime_router":
+                from poseidon.backtest.regime_search import RegimeSearchPipeline, RegimeSearchConfig
+                from poseidon.backtest.experiment_tracker import ExperimentTracker as ET
+                from poseidon.data.feature_engine import FeatureOrchestrator
+                from poseidon.risk.engine import RiskEngine
+                from poseidon.backtest.cost_model import COST_MODELS
+                from poseidon.data.remote_data_repository import RemoteDataRepository
+
+                regime_tracker = ET(db)
+                feature_engine = FeatureOrchestrator()
+                risk_engine = RiskEngine()
+
+                base_config = base_config_json or {}
+                regime_results_all = []
+
+                for i, spec_dict in enumerate(markets):
+                    spec = MarketSpec(**spec_dict)
+                    if check_stop():
+                        break
+                    update_progress(i, len(markets), spec.symbol)
+
+                    cost_model = COST_MODELS.get(spec.market)
+                    if cost_model is None:
+                        from poseidon.backtest.cost_model import CostModel
+                        cost_model = CostModel(market=spec.market, buy_commission_rate=0.0,
+                                               sell_commission_rate=0.0, tax_rate=0.0,
+                                               slippage_pct=0.0, slippage_ticks=0.0,
+                                               description=f"Default for {spec.market}")
+
+                    repo = RemoteDataRepository.from_settings()
+                    ohlcv = repo.read_ohlcv(spec.symbol, spec.market, spec.interval)
+                    if ohlcv.empty:
+                        continue
+
+                    # Load regime model
+                    from poseidon.ml.manager import ModelManager
+                    manager = ModelManager(db)
+                    regime_models = manager.list_ready_models(spec.market)
+                    regime_model = None
+                    for m in regime_models:
+                        if "regime" in m.name.lower():
+                            regime_model = m
+                            break
+                    if regime_model is None:
+                        logger.warning("No regime model found for %s, skipping regime_router", spec.market)
+                        continue
+
+                    pipeline = RegimeSearchPipeline(
+                        feature_engine=feature_engine,
+                        risk_engine=risk_engine,
+                        cost_model=cost_model,
+                        experiment_tracker=regime_tracker,
+                    )
+                    regime_cfg = RegimeSearchConfig(
+                        n_trials_per_regime=cfg.n_trials // 3 or 10,
+                        seed=cfg.seed,
+                    )
+                    result = pipeline.run(
+                        ohlcv=ohlcv, base_config=base_config, regime_model=regime_model,
+                        config=regime_cfg,
+                        market=spec.market, symbol=spec.symbol, interval=spec.interval,
+                    )
+                    regime_results_all.append({"spec": spec_dict, "result": result})
+
+                completed_at = datetime.now(timezone.utc)
+                return {
+                    "status": "stopped" if check_stop() else "completed",
+                    "markets_processed": len(regime_results_all),
+                    "report": {"regime_results": regime_results_all},
+                }
+
+            # D-15: FACTORY_REGISTRY dict for standard AutoResearchRunner path.
+            # voting maps to None (VotingStrategyFactory is the default when strategy_factory=None).
+            # rule uses a lambda to capture feature_names at dispatch time (constructor arg).
+            # model is initialised with available_models=None; AutoResearchRunner's per-market loop
+            #   (runner.py:164-173, Phase 46 pattern) calls list_ready_models(market) and passes
+            #   available_models into the pipeline, which reaches build_trial_factory() dynamically.
+            from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
+            from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory
+            from poseidon.backtest.model_strategy_factory import ModelStrategyFactory
+
+            FACTORY_REGISTRY = {
+                "voting": lambda: None,
+                "liquidity_sweep": lambda: LiquiditySweepStrategyFactory(),
+                "rule": lambda: RuleStrategyFactory(
+                    feature_names=feature_names or [],
+                    direction_mode=search_config.get("strategy_mode", "bidirectional"),
+                ),
+                "model": lambda: ModelStrategyFactory(available_models=None),
+            }
+
+            factory_builder = FACTORY_REGISTRY.get(strategy_type)
+            if factory_builder is None:
+                raise ValueError(f"Unknown strategy_type {strategy_type!r}; should have been caught by API validation")
+            strategy_factory = factory_builder()
 
             runner = AutoResearchRunner(
                 db_session=db,
