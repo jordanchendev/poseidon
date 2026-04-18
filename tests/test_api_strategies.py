@@ -126,6 +126,24 @@ def test_create_strategy():
     assert "updated_at" in data
 
 
+def test_create_portfolio_strategy():
+    resp = _create_strategy(
+        name="TW Fundamental Portfolio",
+        strategy_type="portfolio_strategy",
+        config={
+            "strategy": "fundamental_selection",
+            "symbols": ["2330", "2317"],
+            "max_stocks": 10,
+        },
+        symbol="TW_STOCK_POOL",
+        market="tw_stock",
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["strategy_type"] == "portfolio_strategy"
+    assert data["config"]["strategy"] == "fundamental_selection"
+
+
 def test_create_strategy_invalid_type():
     resp = _create_strategy(strategy_type="invalid", name="bad-type")
     assert resp.status_code == 400
@@ -174,6 +192,29 @@ def test_update_strategy():
     # Unchanged fields preserved
     assert data["name"] == "update-test"
     assert data["strategy_type"] == "rule"
+
+
+def test_update_strategy_to_portfolio_strategy():
+    create_resp = _create_strategy(name="portfolio-update-test")
+    assert create_resp.status_code == 201
+    strategy_id = create_resp.json()["id"]
+
+    resp = client.put(
+        f"{PREFIX}/{strategy_id}",
+        json={
+            "strategy_type": "portfolio_strategy",
+            "config": {
+                "strategy": "fundamental_selection",
+                "symbols": ["2330", "2317"],
+            },
+            "symbol": "TW_STOCK_POOL",
+            "market": "tw_stock",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["strategy_type"] == "portfolio_strategy"
+    assert data["config"]["strategy"] == "fundamental_selection"
 
 
 def test_update_strategy_not_found():

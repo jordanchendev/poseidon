@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 
 from poseidon.protections.base import BaseProtection, ProtectionResult
@@ -149,6 +150,28 @@ class TestCapabilityMetadata:
         assert cls.stateful is True
         assert cls.supports_backtest is True
         assert cls.bias_risk == []
+
+
+def test_volatility_spike_reads_remote_ohlcv():
+    protection = VolatilitySpikeProtection(lookback_days=5, vol_std_multiplier=1.5)
+    db = MagicMock()
+    db.query.side_effect = AssertionError("local OHLCV queries should not be used")
+
+    closes = [100, 102, 101, 104, 103, 106, 105, 108, 109, 107, 110, 111]
+    ohlcv = pd.DataFrame(
+        {"close": closes},
+        index=pd.date_range("2026-04-01", periods=len(closes), freq="D", tz="UTC", name="time"),
+    )
+    mock_repo = MagicMock()
+    mock_repo.read_ohlcv.return_value = ohlcv
+
+    with patch("poseidon.data.remote_repository.RemoteDataRepository.from_settings", return_value=mock_repo):
+        result = protection._get_volatility_data("2330", "tw_stock", db)
+
+    assert result is not None
+    current_vol, avg_vol = result
+    assert current_vol > 0
+    assert avg_vol > 0
 
 
 # ---------------------------------------------------------------------------

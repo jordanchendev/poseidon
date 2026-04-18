@@ -124,28 +124,26 @@ class VolatilitySpikeProtection(BaseProtection):
         or None if insufficient data.
         """
         try:
-            from poseidon.models.ohlcv import OHLCV
-
-            now = datetime.now(timezone.utc)
-            # Get OHLCV data for lookback period (use 2x for avg calculation)
             from datetime import timedelta
 
+            from poseidon.data.remote_repository import RemoteDataRepository
+
+            repo = RemoteDataRepository.from_settings()
+            now = datetime.now(timezone.utc)
+            # Get OHLCV data for lookback period (use 2x for avg calculation)
             lookback_start = now - timedelta(days=self.lookback_days * 2)
 
-            rows = (
-                db.query(OHLCV.close, OHLCV.timestamp)
-                .filter(
-                    OHLCV.symbol == symbol,
-                    OHLCV.timestamp >= lookback_start,
-                )
-                .order_by(OHLCV.timestamp.asc())
-                .all()
+            ohlcv = repo.read_ohlcv(
+                symbol,
+                market,
+                "1d",
+                start=lookback_start,
+                end=now,
             )
-
-            if len(rows) < 10:  # Need minimum data
+            if len(ohlcv) < 10:  # Need minimum data
                 return None
 
-            closes = [float(r.close) for r in rows]
+            closes = [float(value) for value in ohlcv["close"].tolist()]
 
             # Calculate log returns
             log_returns = []

@@ -15,7 +15,6 @@ from sqlalchemy import func, select
 
 from poseidon.core.config import settings
 from poseidon.core.database import db_session
-from poseidon.models.ohlcv import OHLCV
 from poseidon.workers.celery_app import celery_app
 
 router = APIRouter()
@@ -37,22 +36,20 @@ async def health(details: bool = Query(False)):
     Returns ``{"status": "ok"}`` when all components are healthy,
     ``{"status": "degraded"}`` when any component reports an error.
     """
-    components: dict = {}
+    components: dict = {
+        "data_freshness": {
+            "source": "thalassa",
+            "local_ohlcv_table": "removed",
+        }
+    }
 
     # 1. Database check + data freshness
     try:
         with db_session() as db:
             db.execute(select(func.now()))
             components["database"] = "ok"
-
-            # Data freshness: latest OHLCV timestamp
-            latest = db.execute(select(func.max(OHLCV.time))).scalar()
-            components["data_freshness"] = {
-                "latest_ohlcv": latest.isoformat() if latest else None,
-            }
     except Exception as e:
         components["database"] = f"error: {e}"
-        components["data_freshness"] = {"latest_ohlcv": None}
 
     # 2. Redis check (Celery broker, DB 0)
     try:

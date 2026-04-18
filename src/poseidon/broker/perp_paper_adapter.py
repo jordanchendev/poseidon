@@ -103,7 +103,7 @@ class PerpPaperAdapter(BrokerAdapter):
         return True
 
     def place_order(self, order: Order) -> str:
-        """Fill order at latest perpetual OHLCV close price.
+        """Fill order at the latest perpetual mark price from Thalassa.
 
         Creates or updates a PerpPosition with margin tracking and
         liquidation price calculation. Closing orders (sell-when-long,
@@ -111,37 +111,16 @@ class PerpPaperAdapter(BrokerAdapter):
 
         Raises ValueError if no perpetual price data exists for the symbol.
         """
-        from poseidon.models.ohlcv import OHLCV
+        from poseidon.data.remote_repository import RemoteDataRepository
 
+        repo = RemoteDataRepository.from_settings()
+        latest_price = repo.read_latest_price(order.symbol)
+        if latest_price is None:
+            raise ValueError(f"No perpetual price data for {order.symbol}")
+
+        fill_price = float(latest_price)
         session = self._session_factory()
         try:
-            # Query latest perpetual candle for this symbol
-            record = (
-                session.query(OHLCV)
-                .filter(
-                    OHLCV.symbol == order.symbol,
-                    OHLCV.instrument == "perpetual",
-                )
-                .order_by(OHLCV.time.desc())
-                .first()
-            )
-            if record is None:
-                # Fallback: try crypto_perp market
-                record = (
-                    session.query(OHLCV)
-                    .filter(
-                        OHLCV.symbol == order.symbol,
-                        OHLCV.market == "crypto_perp",
-                    )
-                    .order_by(OHLCV.time.desc())
-                    .first()
-                )
-            if record is None:
-                raise ValueError(
-                    f"No perpetual price data for {order.symbol}"
-                )
-
-            fill_price = float(record.close)
             leverage = self._leverage_per_symbol.get(
                 order.symbol, self._default_leverage
             )

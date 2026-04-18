@@ -14,6 +14,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from poseidon.core.database import get_db
+from poseidon.data.remote_repository import RemoteDataRepository
 
 logger = logging.getLogger(__name__)
 
@@ -193,8 +194,7 @@ def get_performance(
 
 @router.get("/holdings", response_model=HoldingsResponse)
 def get_holdings(db: Session = Depends(get_db)):
-    """Return current open holdings with unrealized PnL from latest OHLCV close."""
-    from poseidon.models.ohlcv import OHLCV
+    """Return current open holdings with unrealized PnL from remote market data."""
     from poseidon.models.portfolio_holding import PortfolioHoldingRecord
 
     holdings = (
@@ -203,25 +203,15 @@ def get_holdings(db: Session = Depends(get_db)):
         .all()
     )
 
+    repo = RemoteDataRepository.from_settings()
     result = []
     for h in holdings:
-        # Fetch latest daily close price
-        latest = (
-            db.query(OHLCV.close)
-            .filter(
-                OHLCV.symbol == h.symbol,
-                OHLCV.market == h.market,
-                OHLCV.interval == "1d",
-            )
-            .order_by(OHLCV.time.desc())
-            .first()
-        )
-
         current_price: float | None = None
         unrealized_pnl: float | None = None
 
-        if latest is not None:
-            current_price = float(latest.close)
+        latest = repo.read_ohlcv(h.symbol, h.market, "1d")
+        if not latest.empty:
+            current_price = float(latest["close"].iloc[-1])
             if h.entry_price is not None and h.shares is not None:
                 direction = 1 if h.side == "long" else -1
                 unrealized_pnl = round((current_price - h.entry_price) * h.shares * direction, 2)
@@ -295,7 +285,6 @@ def get_perp_holdings(db: Session = Depends(get_db)):
         calc_liquidation_price,
     )
     from poseidon.core.database import SessionLocal
-    from poseidon.models.ohlcv import OHLCV
     from poseidon.models.portfolio_holding import PortfolioHoldingRecord
     from poseidon.models.trade_log import TradeLogRecord
 
@@ -331,20 +320,13 @@ def get_perp_holdings(db: Session = Depends(get_db)):
             liquidation_price=liq_price,
         )
 
-    # Get latest mark prices from DB (perpetual OHLCV)
+    # Get latest mark prices from Thalassa
+    repo = RemoteDataRepository.from_settings()
     mark_prices: dict[str, float] = {}
     for h in perp_holdings:
-        latest = (
-            db.query(OHLCV.close)
-            .filter(
-                OHLCV.symbol == h.symbol,
-                OHLCV.market == "crypto_perp",
-            )
-            .order_by(OHLCV.time.desc())
-            .first()
-        )
-        if latest:
-            mark_prices[h.symbol] = float(latest.close)
+        latest = repo.read_latest_price(h.symbol)
+        if latest is not None:
+            mark_prices[h.symbol] = float(latest)
 
     # Update mark prices for PnL calculation
     adapter.update_mark_prices(mark_prices)

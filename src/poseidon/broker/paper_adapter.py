@@ -1,4 +1,4 @@
-"""Paper trading broker adapter -- fills at latest DB close price."""
+"""Paper trading broker adapter -- fills at the latest remote close price."""
 
 import uuid
 from datetime import datetime, timezone
@@ -23,35 +23,27 @@ class PaperBrokerAdapter(BrokerAdapter):
         return True
 
     def place_order(self, order: Order) -> str:
-        """Fill order at latest close price from OHLCV DB.
+        """Fill order at the latest close price from Thalassa.
 
         Raises ValueError if no price data exists for the symbol.
         """
-        from poseidon.models.ohlcv import OHLCV
+        from poseidon.data.remote_repository import RemoteDataRepository
 
-        session = self._session_factory()
-        try:
-            record = (
-                session.query(OHLCV)
-                .filter(OHLCV.symbol == order.symbol)
-                .order_by(OHLCV.time.desc())
-                .first()
-            )
-            if record is None:
-                raise ValueError(f"No price data for {order.symbol}")
+        repo = RemoteDataRepository.from_settings()
+        latest = repo.read_ohlcv(order.symbol, order.market, "1d")
+        if latest.empty:
+            raise ValueError(f"No price data for {order.symbol}")
 
-            broker_order_id = f"PAPER-{uuid.uuid4().hex[:12]}"
-            fill = Fill(
-                order_id=order.id,
-                fill_price=float(record.close),
-                fill_quantity=order.quantity,
-                fill_time=datetime.now(timezone.utc),
-                broker_fill_id=broker_order_id,
-            )
-            self._fills[broker_order_id] = [fill]
-            return broker_order_id
-        finally:
-            session.close()
+        broker_order_id = f"PAPER-{uuid.uuid4().hex[:12]}"
+        fill = Fill(
+            order_id=order.id,
+            fill_price=float(latest["close"].iloc[-1]),
+            fill_quantity=order.quantity,
+            fill_time=datetime.now(timezone.utc),
+            broker_fill_id=broker_order_id,
+        )
+        self._fills[broker_order_id] = [fill]
+        return broker_order_id
 
     def query_fills(self, broker_order_id: str) -> list[Fill]:
         """Return fills for a given broker order ID."""

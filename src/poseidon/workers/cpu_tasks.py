@@ -31,6 +31,93 @@ from poseidon.workers.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
+def _build_portfolio_strategy(record, repo):  # noqa: ANN001
+    """Build a PortfolioStrategy instance from StrategyRecord config."""
+    from poseidon.strategies.portfolio.crypto_trend import CryptoTrendConfig
+    from poseidon.strategies.portfolio.fundamental_selection import (
+        FundamentalSelectionConfig,
+    )
+    from poseidon.strategies.portfolio.prediction_ranking import (
+        PredictionRankingConfig,
+    )
+    from poseidon.strategies.portfolio.registry import get_portfolio_strategy
+    from poseidon.strategies.portfolio.schemas import RevenueBreakoutConfig
+
+    raw_cfg = dict(record.config or {})
+    strategy_name = raw_cfg.get("strategy")
+    if not strategy_name:
+        raise ValueError("portfolio_strategy config must include 'strategy'")
+
+    raw_cfg.setdefault("market", record.market)
+    raw_cfg.setdefault("symbols", [record.symbol] if record.symbol else [])
+
+    config_models = {
+        "fundamental_selection": FundamentalSelectionConfig,
+        "revenue_breakout": RevenueBreakoutConfig,
+        "crypto_trend": CryptoTrendConfig,
+        "prediction_ranking": PredictionRankingConfig,
+    }
+    if strategy_name not in config_models:
+        raise ValueError(f"Unknown portfolio strategy: {strategy_name!r}")
+
+    strategy_cls = get_portfolio_strategy(strategy_name)
+    strategy_cfg = config_models[strategy_name](**raw_cfg)
+
+    try:
+        return strategy_cls(strategy_cfg, repo=repo)
+    except TypeError:
+        return strategy_cls(strategy_cfg)
+
+
+def _serialize_portfolio_trades(trades: list[dict]):  # noqa: ANN001
+    """Convert portfolio backtester trade dicts to repository TradeRecord objects."""
+    from poseidon.backtest.portfolio import TradeRecord
+
+    result: list[TradeRecord] = []
+    for trade in trades:
+        trade_dt = datetime.fromisoformat(trade["date"]).replace(tzinfo=timezone.utc)
+        metadata = {
+            key: value
+            for key, value in trade.items()
+            if key not in {"symbol", "action", "date", "price", "shares"}
+        }
+        result.append(
+            TradeRecord(
+                symbol=trade["symbol"],
+                action=trade["action"],
+                entry_time=trade_dt,
+                entry_price=float(trade["price"]),
+                quantity=float(trade.get("shares", 0.0)),
+                fees=0.0,
+                metadata=metadata,
+            )
+        )
+    return result
+
+
+def _serialize_portfolio_equity_curve(equity_curve: list[tuple]):  # noqa: ANN001
+    """Convert portfolio equity points to repository-compatible tuples."""
+    result: list[tuple[datetime, float, float]] = []
+    peak = 0.0
+
+    for point_in_time, equity in equity_curve:
+        if isinstance(point_in_time, datetime):
+            ts = point_in_time if point_in_time.tzinfo else point_in_time.replace(tzinfo=timezone.utc)
+        else:
+            ts = datetime(
+                point_in_time.year,
+                point_in_time.month,
+                point_in_time.day,
+                tzinfo=timezone.utc,
+            )
+
+        equity_value = float(equity)
+        peak = max(peak, equity_value)
+        drawdown = 0.0 if peak <= 0 else (peak - equity_value) / peak
+        result.append((ts, equity_value, drawdown))
+
+    return result
+
 
 def _build_tw_stock_broker(broker_cfg):
     """Build the existing TW stock execution adapter from broker config."""
@@ -131,6 +218,102 @@ def run_backtest_task(
                 )
                 logger.info("Routed model backtest to GPU worker: %s", result.id)
                 return {"backtest_id": result.id, "status": "routed_to_gpu", "trade_count": 0}
+            elif record.strategy_type == "portfolio_strategy":
+                from poseidon.backtest.portfolio_backtester import PortfolioBacktester
+                from poseidon.backtest.schemas import BacktestResult
+
+                parsed_start = datetime.fromisoformat(start_date) if start_date else None
+                parsed_end = datetime.fromisoformat(end_date) if end_date else None
+
+                strategy = _build_portfolio_strategy(record, repo)
+                symbols = list(
+                    dict.fromkeys(
+                        (record.config or {}).get("symbols")
+                        or ([record.symbol] if record.symbol else [])
+                    )
+                )
+                if not symbols:
+                    raise ValueError("portfolio_strategy config must include at least one symbol")
+
+                ohlcv_dict: dict[str, pd.DataFrame] = {}
+                for symbol in symbols:
+                    symbol_ohlcv = repo.read_ohlcv(
+                        symbol,
+                        record.market,
+                        record.interval,
+                        start=parsed_start,
+                        end=parsed_end,
+                    )
+                    if not symbol_ohlcv.empty:
+                        ohlcv_dict[symbol] = symbol_ohlcv
+
+                if not ohlcv_dict:
+                    raise ValueError(f"No OHLCV data for portfolio strategy {record.id}")
+
+                if parsed_start is None:
+                    parsed_start = min(
+                        pd.Timestamp(df.index.min()).to_pydatetime()
+                        for df in ohlcv_dict.values()
+                    )
+                if parsed_end is None:
+                    parsed_end = max(
+                        pd.Timestamp(df.index.max()).to_pydatetime()
+                        for df in ohlcv_dict.values()
+                    )
+
+                backtester = PortfolioBacktester(
+                    cost_model=COST_MODELS[record.market],
+                    initial_capital=initial_capital,
+                )
+                portfolio_result = backtester.run(
+                    strategy=strategy,
+                    ohlcv_dict=ohlcv_dict,
+                    start_date=parsed_start.date(),
+                    end_date=parsed_end.date(),
+                )
+
+                trade_records = _serialize_portfolio_trades(portfolio_result.trades)
+                equity_curve = _serialize_portfolio_equity_curve(
+                    portfolio_result.equity_curve
+                )
+                bt_config = BacktestConfig(
+                    strategy_type=record.strategy_type,
+                    symbol=record.symbol,
+                    market=record.market,
+                    interval=record.interval,
+                    initial_capital=initial_capital,
+                    start_date=parsed_start,
+                    end_date=parsed_end,
+                    strategy_params=record.config,
+                    sizing_mode=sizing_mode,
+                    sizing_params=sizing_params or {},
+                )
+                result_model = BacktestResult(
+                    config=bt_config,
+                    metrics=portfolio_result.metrics,
+                    trade_count=len(trade_records),
+                    equity_curve_length=len(equity_curve),
+                    status=portfolio_result.status,
+                    error_message=portfolio_result.error_message,
+                    trades=portfolio_result.trades,
+                )
+
+                repo = BacktestRepository(session)
+                repo.save_result(
+                    config=bt_config,
+                    result=result_model,
+                    trades=trade_records,
+                    equity_curve=equity_curve,
+                    strategy_id=sid,
+                    completed_at=datetime.now(timezone.utc),
+                )
+                session.commit()
+
+                return {
+                    "backtest_id": str(result_model.backtest_id),
+                    "status": portfolio_result.status,
+                    "trade_count": len(trade_records),
+                }
             else:
                 raise ValueError(f"Unknown strategy_type: {record.strategy_type!r}")
 
@@ -1319,7 +1502,6 @@ def portfolio_stop_loss_monitor() -> dict:
 
     from poseidon.broker.config import BrokerConfig
     from poseidon.broker.paper_adapter import PaperBrokerAdapter
-    from poseidon.models.ohlcv import OHLCV
     from poseidon.models.portfolio_holding import PortfolioHoldingRecord
     from poseidon.models.trade_log import TradeLogRecord
     from poseidon.orders.risk_checker import OrderRiskChecker
@@ -1512,24 +1694,19 @@ def _build_position_tracker():
 
 
 def _get_latest_prices(symbols: list[str]) -> dict[str, float]:
-    """Get latest close prices from OHLCV for given symbols.
+    """Get latest close prices from Thalassa for given symbols.
 
     Returns:
         Dict mapping symbol -> latest close price.
     """
-    from poseidon.models.ohlcv import OHLCV
+    from poseidon.data.remote_repository import RemoteDataRepository
 
+    repo = RemoteDataRepository.from_settings()
     prices: dict[str, float] = {}
-    with db_session() as session:
-        for sym in symbols:
-            record = (
-                session.query(OHLCV)
-                .filter(OHLCV.symbol == sym, OHLCV.market == "tw_stock", OHLCV.interval == "1d")
-                .order_by(OHLCV.time.desc())
-                .first()
-            )
-            if record:
-                prices[sym] = float(record.close)
+    for sym in symbols:
+        latest = repo.read_ohlcv(sym, "tw_stock", "1d")
+        if not latest.empty:
+            prices[sym] = float(latest["close"].iloc[-1])
     return prices
 
 
@@ -1579,23 +1756,15 @@ def _build_perp_adapter_from_db():
 
 
 def _get_perp_mark_prices(symbols: list[str]) -> dict[str, float]:
-    """Get latest perpetual OHLCV close prices as mark prices."""
-    from poseidon.models.ohlcv import OHLCV
+    """Get latest perpetual mark prices from Thalassa."""
+    from poseidon.data.remote_repository import RemoteDataRepository
 
+    repo = RemoteDataRepository.from_settings()
     prices = {}
-    with db_session() as session:
-        for sym in symbols:
-            record = (
-                session.query(OHLCV.close)
-                .filter(
-                    OHLCV.symbol == sym,
-                    OHLCV.market == "crypto_perp",
-                )
-                .order_by(OHLCV.time.desc())
-                .first()
-            )
-            if record:
-                prices[sym] = float(record.close)
+    for sym in symbols:
+        latest = repo.read_latest_price(sym)
+        if latest is not None:
+            prices[sym] = float(latest)
     return prices
 
 

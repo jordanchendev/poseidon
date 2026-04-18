@@ -41,6 +41,16 @@ def _mock_db_session(mock_db):
     return _fake_db_session
 
 
+@pytest.fixture(autouse=True)
+def mock_thalassa_ok():
+    """Default all health tests to a reachable Thalassa unless overridden."""
+    with patch("poseidon.api.health.httpx.get") as mock_get:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+        yield mock_get
+
+
 # --------------- Tests ---------------
 
 
@@ -283,7 +293,8 @@ def test_health_data_freshness_null_when_no_data(
     resp = client.get("/health?details=true")
     data = resp.json()
 
-    assert data["components"]["data_freshness"]["latest_ohlcv"] is None
+    assert data["components"]["data_freshness"]["source"] == "thalassa"
+    assert data["components"]["data_freshness"]["local_ohlcv_table"] == "removed"
 
 
 # --------------- Thalassa connectivity tests (Phase 61-02) ---------------

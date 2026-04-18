@@ -95,7 +95,14 @@ def test_post_run_returns_202(mock_task):
     assert "Backtest dispatched" in data["message"]
 
     mock_task.delay.assert_called_once_with(
-        strategy_id, None, None, 500_000.0,
+        strategy_id,
+        None,
+        None,
+        500_000.0,
+        "fixed_notional",
+        None,
+        None,
+        False,
     )
 
 
