@@ -133,6 +133,7 @@ def build_monthly_rank_targets(
         raise ValueError("top_n must be positive")
 
     frame = _normalize_prediction_frame(prediction_frame).reset_index()
+    frame["datetime"] = pd.to_datetime(frame["datetime"], utc=True).dt.tz_localize(None)
     frame["rebalance_month"] = frame["datetime"].dt.to_period("M")
 
     monthly_targets: dict[pd.Timestamp, list[str]] = {}

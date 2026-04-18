@@ -108,3 +108,19 @@ def test_tz_aware_predictions_align_with_naive_as_of_dates() -> None:
     positions = strategy.select_stocks(pd.DataFrame(), as_of=date(2023, 2, 28))
 
     assert [position.symbol for position in positions] == ["2454", "2330"]
+
+
+def test_tz_aware_monthly_selection_keys_align_with_naive_as_of_dates() -> None:
+    strategy = PredictionRankingStrategy(
+        PredictionRankingConfig(
+            symbols=["2330", "2317", "2454"],
+            top_n=2,
+            monthly_selections={
+                pd.Timestamp("2023-02-28T00:00:00Z"): ["2454", "2330"],
+            },
+        )
+    )
+
+    positions = strategy.select_stocks(pd.DataFrame(), as_of=date(2023, 2, 28))
+
+    assert [position.symbol for position in positions] == ["2454", "2330"]

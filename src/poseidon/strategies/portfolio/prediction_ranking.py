@@ -41,7 +41,7 @@ class PredictionRankingStrategy(PortfolioStrategy):
 
         if config.monthly_selections is not None:
             self._monthly_selections = {
-                pd.Timestamp(key): list(value)
+                self._normalize_rebalance_timestamp(pd.Timestamp(key)): list(value)
                 for key, value in config.monthly_selections.items()
             }
         elif config.prediction_frame is not None:
@@ -73,9 +73,9 @@ class PredictionRankingStrategy(PortfolioStrategy):
 
         as_of_ts = pd.Timestamp(as_of)
         rebalance_dates = [
-            rebalance_date
+            normalized
             for rebalance_date in self._monthly_selections
-            if rebalance_date <= as_of_ts
+            if (normalized := self._normalize_rebalance_timestamp(rebalance_date)) <= as_of_ts
         ]
         if not rebalance_dates:
             return []
@@ -104,3 +104,10 @@ class PredictionRankingStrategy(PortfolioStrategy):
 
     def validate_config(self) -> bool:
         return self.config.top_n > 0 and bool(self.config.symbols)
+
+    @staticmethod
+    def _normalize_rebalance_timestamp(value: pd.Timestamp) -> pd.Timestamp:
+        timestamp = pd.Timestamp(value)
+        if timestamp.tzinfo is not None:
+            return timestamp.tz_localize(None)
+        return timestamp
