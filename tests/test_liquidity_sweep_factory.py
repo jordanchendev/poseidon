@@ -81,8 +81,6 @@ EXPECTED_PARAM_KEYS = {
     "atr_mult_regime_3",
     # Exit
     "cooldown_bars",
-    # Risk
-    "risk_pct",
     # Trailing stop
     "trailing_activation_r",
     "trail_atr_multiplier",
