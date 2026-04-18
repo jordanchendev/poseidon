@@ -210,3 +210,27 @@ class TestGetAllCapabilities:
             assert hasattr(cap, "supports_live")
             assert hasattr(cap, "bias_risk")
             assert hasattr(cap, "stateful")
+
+    def test_discovers_portfolio_strategies_without_prior_imports(self):
+        """Portfolio strategies should be discoverable even if nothing imported
+        the portfolio modules yet.
+        """
+        import sys
+
+        from poseidon.capabilities.registry import get_all_capabilities
+        from poseidon.strategies.portfolio import registry as portfolio_registry
+
+        portfolio_registry._registry.clear()
+        for name in list(sys.modules):
+            if name.startswith("poseidon.strategies.portfolio.") and not name.endswith(".registry"):
+                sys.modules.pop(name, None)
+
+        caps = get_all_capabilities()
+        portfolio_names = {
+            cap.name for cap in caps if cap.component_type == "portfolio_strategy"
+        }
+
+        assert "fundamental_selection" in portfolio_names
+        assert "crypto_trend" in portfolio_names
+        assert "prediction_ranking" in portfolio_names
+        assert "revenue_breakout" in portfolio_names
