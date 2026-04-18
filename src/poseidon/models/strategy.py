@@ -16,7 +16,7 @@ class StrategyRecord(Base):
         UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
-    strategy_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    strategy_type: Mapped[str] = mapped_column(String(32), nullable=False)
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     market: Mapped[str] = mapped_column(String(32), nullable=False)
