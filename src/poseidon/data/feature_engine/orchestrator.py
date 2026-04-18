@@ -15,14 +15,19 @@ from poseidon.core.database import SessionLocal, db_session
 from poseidon.data.feature_engine.computer import FeatureComputer
 from poseidon.data.feature_engine.specs import (
     DEFAULT_FEATURES,
+    FOREIGN_HOLDING_NAMES,
+    FUNDAMENTAL_EXTENDED_NAMES,
     FUNDING_NAMES,
     FUNDAMENTAL_NAMES,
     INSTITUTIONAL_PREFIXES,
     MACRO_PREFIX,
     MARGIN_NAMES,
+    MONTHLY_REVENUE_NAMES,
     OI_NAMES,
     PREDICTION_NAMES,
+    QUALITY_FACTOR_NAMES,
     TRADE_STRUCTURE_NAMES,
+    VALUATION_NAMES,
     is_nonprice_spec,
     nonprice_data_key,
 )
@@ -241,7 +246,8 @@ class FeatureOrchestrator:
             nonprice_data: dict[str, pd.DataFrame] = {}
 
             needs_institutional = any(
-                n.startswith(INSTITUTIONAL_PREFIXES) for n, _ in nonprice_specs
+                n.startswith(INSTITUTIONAL_PREFIXES) or n == "net_buy_consecutive_days"
+                for n, _ in nonprice_specs
             )
             needs_fundamental = any(n in FUNDAMENTAL_NAMES for n, _ in nonprice_specs)
             needs_trade_structure = any(n in TRADE_STRUCTURE_NAMES for n, _ in nonprice_specs)
@@ -267,6 +273,26 @@ class FeatureOrchestrator:
 
             if needs_macro:
                 nonprice_data["macro_data"] = repo.read_macro()
+
+            # Phase 66: Extended nonprice data categories
+            needs_fundamental_extended = any(
+                n in FUNDAMENTAL_EXTENDED_NAMES for n, _ in nonprice_specs
+            )
+            needs_quality = any(n in QUALITY_FACTOR_NAMES for n, _ in nonprice_specs)
+            needs_monthly_revenue = any(n in MONTHLY_REVENUE_NAMES for n, _ in nonprice_specs)
+            needs_pe_pbr = any(n in VALUATION_NAMES for n, _ in nonprice_specs)
+            needs_foreign_holding = any(n in FOREIGN_HOLDING_NAMES for n, _ in nonprice_specs)
+
+            if needs_fundamental_extended:
+                nonprice_data["fundamental_extended_data"] = repo.read_fundamentals_extended_df(symbol)
+            if needs_quality:
+                nonprice_data["quality_factor_data"] = repo.read_quality_factor(symbol)
+            if needs_monthly_revenue:
+                nonprice_data["monthly_revenue_data"] = repo.read_monthly_revenue(symbol)
+            if needs_pe_pbr:
+                nonprice_data["pe_pbr_data"] = repo.read_pe_pbr(symbol)
+            if needs_foreign_holding:
+                nonprice_data["foreign_holding_data"] = repo.read_foreign_holding(symbol)
 
             return nonprice_data
         finally:

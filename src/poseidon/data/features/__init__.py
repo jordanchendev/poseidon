@@ -16,13 +16,16 @@ from poseidon.data.features import intermarket  # noqa: F401
 from poseidon.data.features import macro  # noqa: F401
 from poseidon.data.features import margin  # noqa: F401
 from poseidon.data.features import model_prediction  # noqa: F401
+from poseidon.data.features import monthly_revenue  # noqa: F401
 from poseidon.data.features import open_interest  # noqa: F401
+from poseidon.data.features import quality_factor  # noqa: F401
 from poseidon.data.features import regime  # noqa: F401
 from poseidon.data.features import returns  # noqa: F401
 from poseidon.data.features import swing  # noqa: F401
 from poseidon.data.features import technical  # noqa: F401
 from poseidon.data.features import trade_structure  # noqa: F401
 from poseidon.data.features import trend  # noqa: F401
+from poseidon.data.features import valuation  # noqa: F401
 from poseidon.data.features import volatility  # noqa: F401
 from poseidon.data.features import volume  # noqa: F401
 from poseidon.data.features import volume_profile  # noqa: F401

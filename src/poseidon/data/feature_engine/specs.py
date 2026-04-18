@@ -79,10 +79,26 @@ INSTITUTIONAL_PREFIXES = ("foreign_net_buy", "trust_net_buy", "dealer_net_buy")
 FUNDAMENTAL_NAMES = frozenset({"pe_ratio", "pb_ratio", "revenue_mom", "revenue_yoy", "roe", "roa"})
 TRADE_STRUCTURE_NAMES = frozenset({"avg_trade_size", "turnover_ratio"})
 FUNDING_NAMES = frozenset({"funding_rate_daily", "funding_rate_extreme"})
-MARGIN_NAMES = frozenset({"margin_buy_ratio", "margin_sell_ratio"})
+MARGIN_NAMES = frozenset({"margin_buy_ratio", "margin_sell_ratio", "margin_utilization_rate"})
 OI_NAMES = frozenset({"oi_change", "oi_buildup", "oi_cost_basis"})
 PREDICTION_NAMES = frozenset({"qlib_prediction"})
 MACRO_PREFIX = "macro_"
+
+# Phase 66: Extended nonprice feature name sets
+FUNDAMENTAL_EXTENDED_NAMES = frozenset({
+    "gross_margin", "operating_margin", "debt_ratio", "eps",
+    "roe_growth", "roa_growth",
+})
+QUALITY_FACTOR_NAMES = frozenset({
+    "quality_profitability_z", "quality_growth_z", "quality_safety_z",
+})
+MONTHLY_REVENUE_NAMES = frozenset({
+    "cumulative_revenue_growth", "revenue_acceleration_months",
+})
+VALUATION_NAMES = frozenset({
+    "pe_percentile", "pbr_percentile", "dividend_yield_percentile", "dividend_yield",
+})
+FOREIGN_HOLDING_NAMES = frozenset({"foreign_holding_change"})
 
 
 def is_nonprice_spec(name: str) -> bool:
@@ -90,12 +106,18 @@ def is_nonprice_spec(name: str) -> bool:
     return (
         name.startswith(INSTITUTIONAL_PREFIXES)
         or name in FUNDAMENTAL_NAMES
+        or name in FUNDAMENTAL_EXTENDED_NAMES
         or name in TRADE_STRUCTURE_NAMES
         or name in FUNDING_NAMES
         or name in MARGIN_NAMES
         or name in OI_NAMES
         or name in PREDICTION_NAMES
         or name.startswith(MACRO_PREFIX)
+        or name in QUALITY_FACTOR_NAMES
+        or name in MONTHLY_REVENUE_NAMES
+        or name in VALUATION_NAMES
+        or name in FOREIGN_HOLDING_NAMES
+        or name == "net_buy_consecutive_days"
     )
 
 
@@ -117,6 +139,18 @@ def nonprice_data_key(name: str) -> str:
         return "prediction_data"
     if name.startswith(MACRO_PREFIX):
         return "macro_data"
+    if name in FUNDAMENTAL_EXTENDED_NAMES:
+        return "fundamental_extended_data"
+    if name in QUALITY_FACTOR_NAMES:
+        return "quality_factor_data"
+    if name in MONTHLY_REVENUE_NAMES:
+        return "monthly_revenue_data"
+    if name in VALUATION_NAMES:
+        return "pe_pbr_data"
+    if name in FOREIGN_HOLDING_NAMES:
+        return "foreign_holding_data"
+    if name == "net_buy_consecutive_days":
+        return "institutional_data"
     raise ValueError(f"Not a non-price feature: {name}")
 
 
@@ -235,6 +269,49 @@ EXPANDED_FEATURES_R2: list[tuple[str, dict]] = [
     ("macro_tnx", {}),
     ("macro_twdusd", {}),
 ]
+
+
+# Phase 66: TW stock fundamental + institutional + quality features
+TW_STOCK_FUNDAMENTAL_FEATURES: list[tuple[str, dict]] = [
+    # FEAT-01: Fundamental extended
+    ("gross_margin", {}),
+    ("operating_margin", {}),
+    ("debt_ratio", {}),
+    ("eps", {}),
+    ("roe_growth", {}),
+    ("roa_growth", {}),
+    # FEAT-02: Institutional + margin
+    ("foreign_holding_change", {}),
+    ("net_buy_consecutive_days", {}),
+    ("margin_utilization_rate", {}),
+    # FEAT-03: Quality factor
+    ("quality_profitability_z", {}),
+    ("quality_growth_z", {}),
+    ("quality_safety_z", {}),
+    # FEAT-04: Monthly revenue momentum
+    ("cumulative_revenue_growth", {}),
+    ("revenue_acceleration_months", {}),
+    # FEAT-05: Valuation
+    ("pe_percentile", {}),
+    ("pbr_percentile", {}),
+    ("dividend_yield_percentile", {}),
+    ("dividend_yield", {}),
+]
+
+
+def get_available_features(market: str) -> list[str]:
+    """Return all available feature names for the given market.
+
+    tw_stock includes DEFAULT_FEATURES + R2 tw_stock features + TW_STOCK_FUNDAMENTAL_FEATURES.
+    Other markets return DEFAULT_FEATURES + R2 market-specific features.
+    """
+    base = [name for name, _ in DEFAULT_FEATURES]
+    r2_extra = [name for name, _ in get_r2_specs("", market)]
+    combined = base + r2_extra
+    if market == "tw_stock":
+        fund_extra = [name for name, _ in TW_STOCK_FUNDAMENTAL_FEATURES]
+        combined += fund_extra
+    return list(dict.fromkeys(combined))  # deduplicate preserving order
 
 
 def get_cross_asset_specs(

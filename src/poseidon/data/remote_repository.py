@@ -294,6 +294,77 @@ class RemoteDataRepository:
         return self._parse_dataframe_response(resp.json())
 
     # ------------------------------------------------------------------
+    # Phase 66: Extended nonprice endpoints (6 methods)
+    # ------------------------------------------------------------------
+
+    def read_fundamentals_extended_df(
+        self, symbol: str, as_of_date: str | None = None
+    ) -> pd.DataFrame:
+        """Read extended fundamentals (gross_margin, eps, etc.) from Thalassa."""
+        params: dict = {"symbol": symbol}
+        if as_of_date is not None:
+            params["as_of_date"] = as_of_date
+        resp = self._request(
+            "GET", "/api/v1/nonprice/fundamentals-extended", params=params
+        )
+        return self._parse_dataframe_response(resp.json())
+
+    def read_monthly_revenue(
+        self, symbol: str, as_of_date: str | None = None
+    ) -> pd.DataFrame:
+        """Read monthly revenue series from Thalassa."""
+        params: dict = {"symbol": symbol}
+        if as_of_date is not None:
+            params["as_of_date"] = as_of_date
+        resp = self._request(
+            "GET", "/api/v1/nonprice/monthly-revenue", params=params
+        )
+        return self._parse_dataframe_response(resp.json())
+
+    def read_foreign_holding(
+        self, symbol: str, as_of_date: str | None = None
+    ) -> pd.DataFrame:
+        """Read foreign holding ratio series from Thalassa."""
+        params: dict = {"symbol": symbol}
+        if as_of_date is not None:
+            params["as_of_date"] = as_of_date
+        resp = self._request(
+            "GET", "/api/v1/nonprice/foreign-holding", params=params
+        )
+        return self._parse_dataframe_response(resp.json())
+
+    def read_quality_factor(
+        self, symbol: str, as_of_date: str | None = None
+    ) -> pd.DataFrame:
+        """Read quality factor Z-scores from Thalassa."""
+        params: dict = {"symbol": symbol}
+        if as_of_date is not None:
+            params["as_of_date"] = as_of_date
+        resp = self._request(
+            "GET", "/api/v1/nonprice/quality-factor", params=params
+        )
+        return self._parse_dataframe_response(resp.json())
+
+    def read_pe_pbr(
+        self, symbol: str, as_of_date: str | None = None
+    ) -> pd.DataFrame:
+        """Read PE/PBR/dividend yield series from Thalassa."""
+        params: dict = {"symbol": symbol}
+        if as_of_date is not None:
+            params["as_of_date"] = as_of_date
+        resp = self._request(
+            "GET", "/api/v1/nonprice/pe-pbr", params=params
+        )
+        return self._parse_dataframe_response(resp.json())
+
+    def read_risk_filters_active(self, ref_date: str) -> list[str]:
+        """Return list of symbols under any active risk flag on the given date."""
+        resp = self._request(
+            "GET", "/api/v1/risk-filters/active", params={"date": ref_date}
+        )
+        return resp.json().get("excluded_symbols", [])
+
+    # ------------------------------------------------------------------
     # Perpetual contract endpoints
     # ------------------------------------------------------------------
 
