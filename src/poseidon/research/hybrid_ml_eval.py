@@ -60,6 +60,8 @@ def _normalize_prediction_frame(prediction_frame: pd.DataFrame) -> pd.DataFrame:
         )
 
     datetimes = pd.to_datetime(frame.index.get_level_values("datetime"))
+    if getattr(datetimes, "tz", None) is not None:
+        datetimes = datetimes.tz_localize(None)
     instruments = frame.index.get_level_values("instrument").astype(str)
     frame.index = pd.MultiIndex.from_arrays(
         [datetimes, instruments],
