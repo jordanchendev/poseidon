@@ -192,14 +192,16 @@ class RevenueBreakoutStrategy(PortfolioStrategy):
         latest_rev = revenue_df.iloc[-1]
 
         # Check YoY > threshold
-        revenue_yoy = latest_rev.get("revenue_yoy")
+        # Thalassa returns monthly_rev_yoy; fall back to revenue_yoy for compatibility
+        revenue_yoy = latest_rev.get("monthly_rev_yoy") or latest_rev.get("revenue_yoy")
         if revenue_yoy is None or pd.isna(revenue_yoy):
             return None
         if revenue_yoy <= cfg.selection.revenue_yoy_min:
             return None
 
         # Check MoM > threshold
-        revenue_mom = latest_rev.get("revenue_mom")
+        # Thalassa returns monthly_rev_mom; fall back to revenue_mom for compatibility
+        revenue_mom = latest_rev.get("monthly_rev_mom") or latest_rev.get("revenue_mom")
         if revenue_mom is None or pd.isna(revenue_mom):
             return None
         if revenue_mom <= cfg.selection.revenue_mom_min:

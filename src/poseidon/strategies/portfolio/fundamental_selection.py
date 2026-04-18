@@ -142,9 +142,9 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                 last_row = qf.iloc[-1]
                 q_vals: list[float] = []
                 for col in [
-                    "quality_profitability_z",
-                    "quality_growth_z",
-                    "quality_safety_z",
+                    "profitability_z",
+                    "growth_z",
+                    "safety_z",
                 ]:
                     if col in qf.columns and pd.notna(last_row.get(col)):
                         q_vals.append(float(last_row[col]))
@@ -152,11 +152,14 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                     quality_raw[symbol] = sum(q_vals) / len(q_vals)
 
             # Growth dimension: revenue_yoy + eps (D-02)
+            # Thalassa returns monthly_rev_yoy; fall back to revenue_yoy for compatibility
             rev = self._repo.read_monthly_revenue(symbol, as_of_date=as_of_str)
-            if not rev.empty and "revenue_yoy" in rev.columns:
-                val = rev.iloc[-1].get("revenue_yoy")
-                if pd.notna(val):
-                    rev_yoy_raw[symbol] = float(val)
+            if not rev.empty:
+                yoy_col = "monthly_rev_yoy" if "monthly_rev_yoy" in rev.columns else "revenue_yoy"
+                if yoy_col in rev.columns:
+                    val = rev.iloc[-1].get(yoy_col)
+                    if pd.notna(val):
+                        rev_yoy_raw[symbol] = float(val)
 
             fund = self._repo.read_fundamentals_extended_df(
                 symbol, as_of_date=as_of_str
@@ -166,17 +169,31 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                 if pd.notna(val):
                     eps_raw[symbol] = float(val)
 
-            # Flow dimension: foreign_net_buy_ratio + foreign_holding_change (D-02)
+            # Flow dimension: institutional foreign buy + holding ratio change (D-02)
+            # Use institutional_flow 'foreign' as net buy proxy,
+            # and foreign_holding_ratio diff as holding change proxy
+            try:
+                inst = self._repo.read_institutional_flow(symbol)
+                if not inst.empty and "foreign" in inst.columns:
+                    # Apply as_of filter for look-ahead bias prevention
+                    if as_of is not None and hasattr(inst.index, 'date'):
+                        try:
+                            inst = inst[inst.index <= pd.Timestamp(as_of)]
+                        except Exception:
+                            pass
+                    if not inst.empty:
+                        val = inst.iloc[-1].get("foreign")
+                        if pd.notna(val):
+                            net_buy_ratio_raw[symbol] = float(val)
+            except Exception:
+                pass  # institutional_flow may not exist for all symbols
+
             fh = self._repo.read_foreign_holding(symbol, as_of_date=as_of_str)
-            if not fh.empty:
-                if "foreign_net_buy_ratio" in fh.columns:
-                    val = fh.iloc[-1].get("foreign_net_buy_ratio")
-                    if pd.notna(val):
-                        net_buy_ratio_raw[symbol] = float(val)
-                if "foreign_holding_change" in fh.columns:
-                    val = fh.iloc[-1].get("foreign_holding_change")
-                    if pd.notna(val):
-                        fh_change_raw[symbol] = float(val)
+            if not fh.empty and "foreign_holding_ratio" in fh.columns:
+                fh_series = fh["foreign_holding_ratio"].dropna()
+                if len(fh_series) >= 2:
+                    # Holding change = latest - previous (percentage point change)
+                    fh_change_raw[symbol] = float(fh_series.iloc[-1] - fh_series.iloc[-2])
 
         # Step 4: Percentile rank each dimension (per D-02)
         quality_rank = pd.Series(quality_raw).rank(pct=True)
