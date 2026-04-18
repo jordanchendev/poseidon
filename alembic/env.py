@@ -5,7 +5,6 @@ from sqlalchemy import engine_from_config, pool
 
 from poseidon.core.config import settings
 from poseidon.models.base import Base
-from poseidon.models.ohlcv import OHLCV  # noqa: F401
 from poseidon.models.fundamentals import Fundamentals  # noqa: F401
 from poseidon.models.sentiment import Sentiment  # noqa: F401
 from poseidon.models.backfill import BackfillJob  # noqa: F401
