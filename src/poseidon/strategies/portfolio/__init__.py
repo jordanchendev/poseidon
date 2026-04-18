@@ -3,6 +3,9 @@ from poseidon.strategies.portfolio.crypto_trend import CryptoTrendStrategy
 from poseidon.strategies.portfolio.fundamental_selection import (
     FundamentalSelectionStrategy,
 )
+from poseidon.strategies.portfolio.prediction_ranking import (
+    PredictionRankingStrategy,
+)
 from poseidon.strategies.portfolio.position_tracker import PositionTracker
 from poseidon.strategies.portfolio.rebalancer import PortfolioRebalancer
 from poseidon.strategies.portfolio.revenue_breakout import RevenueBreakoutStrategy
@@ -19,6 +22,7 @@ __all__ = [
     "PortfolioStrategy",
     "CryptoTrendStrategy",
     "FundamentalSelectionStrategy",
+    "PredictionRankingStrategy",
     "RevenueBreakoutStrategy",
     "PortfolioRebalancer",
     "PositionTracker",
