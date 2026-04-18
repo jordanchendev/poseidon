@@ -144,7 +144,7 @@ def test_ic_trigger_creates_pending_run_and_dispatches_cpu_queue(client, celery_
     assert len(celery_calls) == 1
     assert celery_calls[0]["task"] == "poseidon.workers.cpu_tasks.factor_ic_analysis"
     assert celery_calls[0]["args"] == [body["id"]]
-    assert celery_calls[0]["queue"] == "cpu"
+    assert celery_calls[0]["queue"] == "poseidon_cpu"
 
 
 def test_shapley_trigger_rejects_invalid_uuid(client):
@@ -176,7 +176,7 @@ def test_shapley_trigger_creates_pending_run_and_dispatches_qlib_queue(client, c
     assert len(celery_calls) == 1
     assert celery_calls[0]["task"] == "poseidon.workers.qlib_tasks.factor_shapley_analysis"
     assert celery_calls[0]["args"] == [body["id"]]
-    assert celery_calls[0]["queue"] == "qlib_queue"
+    assert celery_calls[0]["queue"] == "poseidon_qlib"
 
 
 def test_centrality_trigger_creates_pending_run_and_dispatches_cpu_queue(client, celery_calls):
@@ -198,7 +198,7 @@ def test_centrality_trigger_creates_pending_run_and_dispatches_cpu_queue(client,
     assert len(celery_calls) == 1
     assert celery_calls[0]["task"] == "poseidon.workers.cpu_tasks.factor_centrality_analysis"
     assert celery_calls[0]["args"] == [body["id"]]
-    assert celery_calls[0]["queue"] == "cpu"
+    assert celery_calls[0]["queue"] == "poseidon_cpu"
 
 
 def test_run_list_and_detail_endpoints_return_serialized_runs(client):

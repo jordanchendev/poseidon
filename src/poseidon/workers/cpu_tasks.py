@@ -2257,7 +2257,7 @@ def perp_nav_snapshot() -> dict:
 
 @celery_app.task(
     name="poseidon.workers.cpu_tasks.factor_ic_analysis",
-    queue="cpu",
+    queue="poseidon_cpu",
     bind=True,
     max_retries=0,
 )
@@ -2301,7 +2301,7 @@ def factor_ic_analysis(self, run_id: str):
 
 @celery_app.task(
     name="poseidon.workers.cpu_tasks.factor_centrality_analysis",
-    queue="cpu",
+    queue="poseidon_cpu",
     bind=True,
     max_retries=0,
 )

@@ -48,7 +48,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.gpu
-    command: celery -A poseidon.workers.celery_app worker -Q gpu -c 1 --loglevel=info
+    command: celery -A poseidon.workers.celery_app worker -Q poseidon_gpu -c 1 --loglevel=info
     environment:
       - TZ=Asia/Taipei
       - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
@@ -76,7 +76,7 @@ services:
 
   cpu-worker:
     build: .
-    command: celery -A poseidon.workers.celery_app worker -Q cpu -c 6 --loglevel=info
+    command: celery -A poseidon.workers.celery_app worker -Q poseidon_cpu -c 6 --loglevel=info
     environment:
       - TZ=Asia/Taipei
       - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon
@@ -104,7 +104,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.qlib
-    command: celery -A poseidon.workers.celery_app worker -Q qlib_queue -c 1 --pool=solo --loglevel=info --include=poseidon.workers.qlib_tasks
+    command: celery -A poseidon.workers.celery_app worker -Q poseidon_qlib -c 1 --pool=solo --loglevel=info --include=poseidon.workers.qlib_tasks
     environment:
       - TZ=Asia/Taipei
       - POSEIDON_DATABASE_URL=postgresql://poseidon:poseidon@host.docker.internal:5433/poseidon

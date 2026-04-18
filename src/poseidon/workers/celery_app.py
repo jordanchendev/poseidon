@@ -5,14 +5,18 @@ from celery.schedules import crontab
 
 from poseidon.core.config import settings
 
+POSEIDON_CPU_QUEUE = "poseidon_cpu"
+POSEIDON_GPU_QUEUE = "poseidon_gpu"
+POSEIDON_QLIB_QUEUE = "poseidon_qlib"
+
 celery_app = Celery("poseidon", broker=settings.redis_celery_url, backend=settings.redis_celery_url)
 
 celery_app.conf.update(
     # Task routing
     task_routes={
-        "poseidon.workers.gpu_tasks.*": {"queue": "gpu"},
-        "poseidon.workers.cpu_tasks.*": {"queue": "cpu"},
-        "poseidon.workers.qlib_tasks.*": {"queue": "qlib_queue"},
+        "poseidon.workers.gpu_tasks.*": {"queue": "poseidon_gpu"},
+        "poseidon.workers.cpu_tasks.*": {"queue": "poseidon_cpu"},
+        "poseidon.workers.qlib_tasks.*": {"queue": "poseidon_qlib"},
     },
 
     # Serialization

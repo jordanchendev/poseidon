@@ -33,7 +33,7 @@ from poseidon.models.base import get_db
 from poseidon.models.model_version import ModelVersion
 from poseidon.models.training_run import TrainingRun
 from poseidon.qlib.allowlist import resolve_handler, resolve_model
-from poseidon.workers.celery_app import celery_app
+from poseidon.workers.celery_app import POSEIDON_QLIB_QUEUE, celery_app
 
 router = APIRouter()
 
@@ -90,7 +90,7 @@ async def create_training_run(
     celery_app.send_task(
         "poseidon.workers.qlib_tasks.qlib_train",
         args=[str(run.run_id)],
-        queue="qlib_queue",
+        queue=POSEIDON_QLIB_QUEUE,
     )
 
     return TrainingRunResponse.model_validate(run)

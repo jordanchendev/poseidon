@@ -34,7 +34,7 @@ def _run_cancelled(session, run_id: str) -> bool:
 
 @celery_app.task(
     name="poseidon.workers.qlib_tasks.qlib_train",
-    queue="qlib_queue",
+    queue="poseidon_qlib",
     bind=True,
     max_retries=0,
 )
@@ -290,7 +290,7 @@ def qlib_train(self, run_id: str) -> dict:
 
 @celery_app.task(
     name="poseidon.workers.qlib_tasks.factor_shapley_analysis",
-    queue="qlib_queue",
+    queue="poseidon_qlib",
     bind=True,
     max_retries=0,
 )

@@ -19,7 +19,11 @@ from poseidon.models.base import get_db
 from poseidon.models.factor_analysis_run import FactorAnalysisRun
 from poseidon.models.model_version import ModelVersion
 from poseidon.models.training_run import TrainingRun
-from poseidon.workers.celery_app import celery_app
+from poseidon.workers.celery_app import (
+    POSEIDON_CPU_QUEUE,
+    POSEIDON_QLIB_QUEUE,
+    celery_app,
+)
 
 router = APIRouter()
 
@@ -57,7 +61,7 @@ async def create_ic_analysis_run(
     celery_app.send_task(
         "poseidon.workers.cpu_tasks.factor_ic_analysis",
         args=[str(run.id)],
-        queue="cpu",
+        queue=POSEIDON_CPU_QUEUE,
     )
     return FactorAnalysisTriggerResponse(id=str(run.id), status=run.status)
 
@@ -106,7 +110,7 @@ async def create_shapley_analysis_run(
     celery_app.send_task(
         "poseidon.workers.qlib_tasks.factor_shapley_analysis",
         args=[str(run.id)],
-        queue="qlib_queue",
+        queue=POSEIDON_QLIB_QUEUE,
     )
     return FactorAnalysisTriggerResponse(id=str(run.id), status=run.status)
 
@@ -130,7 +134,7 @@ async def create_centrality_analysis_run(
     celery_app.send_task(
         "poseidon.workers.cpu_tasks.factor_centrality_analysis",
         args=[str(run.id)],
-        queue="cpu",
+        queue=POSEIDON_CPU_QUEUE,
     )
     return FactorAnalysisTriggerResponse(id=str(run.id), status=run.status)
 
