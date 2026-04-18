@@ -30,6 +30,23 @@ _VALID_STRATEGY_TYPES = {
 }
 
 
+def _validate_strategy_payload(strategy_type: str, config: dict | None) -> None:
+    if strategy_type not in _VALID_STRATEGY_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid strategy_type '{strategy_type}'. "
+            f"Must be one of: {sorted(_VALID_STRATEGY_TYPES)}",
+        )
+
+    if strategy_type == "portfolio_strategy":
+        strategy_name = (config or {}).get("strategy")
+        if not isinstance(strategy_name, str) or not strategy_name.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="portfolio_strategy config must include 'strategy'",
+            )
+
+
 # --------------- Pydantic schemas ---------------
 
 
@@ -104,12 +121,7 @@ async def create_strategy(
     Validates that ``strategy_type`` is 'model' or 'rule'
     and that ``name`` is unique.
     """
-    if body.strategy_type not in _VALID_STRATEGY_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid strategy_type '{body.strategy_type}'. "
-            f"Must be one of: {sorted(_VALID_STRATEGY_TYPES)}",
-        )
+    _validate_strategy_payload(body.strategy_type, body.config)
 
     existing = (
         db.query(StrategyRecord)
@@ -176,12 +188,18 @@ async def update_strategy(
                 )
         record.name = body.name
     if body.strategy_type is not None:
-        if body.strategy_type not in _VALID_STRATEGY_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid strategy_type '{body.strategy_type}'. "
-                f"Must be one of: {sorted(_VALID_STRATEGY_TYPES)}",
-            )
+        next_strategy_type = body.strategy_type
+    else:
+        next_strategy_type = record.strategy_type
+
+    if body.config is not None:
+        next_config = body.config
+    else:
+        next_config = record.config
+
+    _validate_strategy_payload(next_strategy_type, next_config)
+
+    if body.strategy_type is not None:
         record.strategy_type = body.strategy_type
     if body.config is not None:
         record.config = body.config

@@ -144,6 +144,18 @@ def test_create_portfolio_strategy():
     assert data["config"]["strategy"] == "fundamental_selection"
 
 
+def test_create_portfolio_strategy_requires_strategy_key():
+    resp = _create_strategy(
+        name="Invalid Portfolio Strategy",
+        strategy_type="portfolio_strategy",
+        config={"symbols": ["2330", "2317"]},
+        symbol="TW_STOCK_POOL",
+        market="tw_stock",
+    )
+    assert resp.status_code == 400
+    assert "portfolio_strategy config must include 'strategy'" in resp.json()["detail"]
+
+
 def test_create_strategy_invalid_type():
     resp = _create_strategy(strategy_type="invalid", name="bad-type")
     assert resp.status_code == 400
@@ -215,6 +227,24 @@ def test_update_strategy_to_portfolio_strategy():
     data = resp.json()
     assert data["strategy_type"] == "portfolio_strategy"
     assert data["config"]["strategy"] == "fundamental_selection"
+
+
+def test_update_strategy_to_invalid_portfolio_strategy_rejected():
+    create_resp = _create_strategy(name="invalid-portfolio-update-test")
+    assert create_resp.status_code == 201
+    strategy_id = create_resp.json()["id"]
+
+    resp = client.put(
+        f"{PREFIX}/{strategy_id}",
+        json={
+            "strategy_type": "portfolio_strategy",
+            "config": {"symbols": ["2330", "2317"]},
+            "symbol": "TW_STOCK_POOL",
+            "market": "tw_stock",
+        },
+    )
+    assert resp.status_code == 400
+    assert "portfolio_strategy config must include 'strategy'" in resp.json()["detail"]
 
 
 def test_update_strategy_not_found():
