@@ -1,0 +1,47 @@
+{
+    "name": "voting_tw_stock_fundamental",
+    "description": "6-signal voting strategy for tw_stock with fundamental sub-signals (quality_profitability_z + foreign_net_buy_ratio)",
+    "symbol": "2330",
+    "market": "tw_stock",
+    "interval": "1d",
+    "min_votes": 4,
+    "position_pct": 0.08,
+    "atr_multiplier": 5.5,
+    "cooldown_bars": 12,
+    "conviction_gap": 2,
+    "sub_signals": [
+        {
+            "type": "indicator_above",
+            "indicator": "rsi",
+            "params": {"period": 8},
+            "threshold": 50
+        },
+        {
+            "type": "indicator_above",
+            "indicator": "cum_return",
+            "params": {"period": 6},
+            "threshold": 0
+        },
+        {
+            "type": "indicator_above",
+            "indicator": "macd_histogram",
+            "params": {},
+            "threshold": 0
+        },
+        {
+            "type": "bollinger_width_percentile",
+            "params": {"period": 20, "lookback": 168},
+            "threshold": 0.85
+        },
+        {
+            "type": "feature_above",
+            "column": "quality_profitability_z",
+            "threshold": 0.5
+        },
+        {
+            "type": "feature_above",
+            "column": "foreign_net_buy_ratio",
+            "threshold": 0.0
+        }
+    ]
+}
