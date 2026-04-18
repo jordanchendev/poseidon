@@ -26,6 +26,20 @@ def _align_to_index(
     return source.reindex(target_index, method=method)
 
 
+def _ffill_to_index(source: pd.Series, target_index: pd.Index) -> pd.Series:
+    """Forward-fill a sparse series to a dense target index.
+
+    First drops NaN from the source to get clean data points, then
+    reindexes to the target with forward-fill. Handles tz mismatch.
+    """
+    clean = source.dropna()
+    if isinstance(clean.index, pd.DatetimeIndex) and isinstance(target_index, pd.DatetimeIndex):
+        if clean.index.tz is None and target_index.tz is not None:
+            clean = clean.copy()
+            clean.index = clean.index.tz_localize("UTC")
+    return clean.reindex(target_index, method="ffill")
+
+
 def _nan_series(index: pd.Index, name: str) -> pd.Series:
     """Return a NaN-filled Series with the given index and name."""
     return pd.Series(np.nan, index=index, name=name, dtype=float)
@@ -197,5 +211,64 @@ class DealerNetBuyRatio(BaseFeature):
         aligned = _align_to_index(institutional_data["dealer"], ohlcv.index)
         result = aligned / ohlcv["volume"]
         result = result.replace([np.inf, -np.inf], np.nan)
+        result.name = col_name
+        return result
+
+
+# --- Extended institutional features ---
+
+
+@register_feature
+class ForeignHoldingChange(BaseFeature):
+    """Change in foreign holding ratio (point-in-time daily diff)."""
+
+    name = "foreign_holding_change"
+    description = "Daily change in foreign investor holding ratio"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        foreign_holding_data: pd.DataFrame | None = None,
+        **kwargs,
+    ) -> pd.Series:
+        col_name = "foreign_holding_change"
+        if not self._validate(ohlcv):
+            return pd.Series(dtype=float, name=col_name)
+        if foreign_holding_data is None or foreign_holding_data.empty:
+            return _nan_series(ohlcv.index, col_name)
+        if "foreign_holding_ratio" not in foreign_holding_data.columns:
+            return _nan_series(ohlcv.index, col_name)
+        ffilled = _ffill_to_index(foreign_holding_data["foreign_holding_ratio"], ohlcv.index)
+        result = ffilled.diff()
+        result = result.replace([np.inf, -np.inf], np.nan)
+        result.name = col_name
+        return result
+
+
+@register_feature
+class NetBuyConsecutiveDays(BaseFeature):
+    """Consecutive days of positive foreign net buy."""
+
+    name = "net_buy_consecutive_days"
+    description = "Consecutive trading days of positive foreign investor net buy"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        institutional_data: pd.DataFrame | None = None,
+        **kwargs,
+    ) -> pd.Series:
+        col_name = "net_buy_consecutive_days"
+        if not self._validate(ohlcv):
+            return pd.Series(dtype=float, name=col_name)
+        if institutional_data is None or institutional_data.empty:
+            return _nan_series(ohlcv.index, col_name)
+        if "foreign" not in institutional_data.columns:
+            return _nan_series(ohlcv.index, col_name)
+        aligned = _align_to_index(institutional_data["foreign"], ohlcv.index)
+        is_buy = (aligned > 0).astype(int)
+        groups = (is_buy != is_buy.shift()).cumsum()
+        consecutive = is_buy.groupby(groups).cumsum()
+        result = consecutive.astype(float)
         result.name = col_name
         return result

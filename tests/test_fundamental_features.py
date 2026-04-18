@@ -5,10 +5,16 @@ import pandas as pd
 import pytest
 
 from poseidon.data.features.fundamentals import (
+    DebtRatio,
+    EPS,
+    GrossMargin,
+    OperatingMargin,
     PBRatio,
     PERatio,
     ROA,
+    ROAGrowth,
     ROE,
+    ROEGrowth,
     RevenueMoM,
     RevenueYoY,
 )
@@ -195,3 +201,133 @@ class TestROA:
         result = feat.compute(ohlcv, fundamental_data=pd.DataFrame())
         assert result.name == "roa"
         assert result.isna().all()
+
+
+# --- Tests for extended fundamental features (fundamental_extended_data) ---
+
+
+@pytest.fixture
+def fundamental_extended_data(ohlcv):
+    """Synthetic extended fundamental data (quarterly)."""
+    idx = ohlcv.index
+    quarterly_dates = [idx[0], idx[25], idx[50], idx[75]]
+    df = pd.DataFrame(index=pd.DatetimeIndex(quarterly_dates))
+    df["gross_margin"] = [0.35, 0.36, 0.34, 0.37]
+    df["operating_margin"] = [0.20, 0.21, 0.19, 0.22]
+    df["debt_ratio"] = [0.40, 0.38, 0.42, 0.39]
+    df["eps"] = [5.0, 5.5, 4.8, 6.0]
+    df["roe"] = [0.15, 0.18, 0.12, 0.20]
+    df["roa"] = [0.08, 0.09, 0.07, 0.10]
+    return df
+
+
+class TestGrossMargin:
+    def test_forward_fill_quarterly(self, ohlcv, fundamental_extended_data):
+        feat = GrossMargin()
+        result = feat.compute(ohlcv, fundamental_extended_data=fundamental_extended_data)
+        assert result.name == "gross_margin"
+        assert len(result) == len(ohlcv)
+        assert result.iloc[0] == 0.35
+        assert result.iloc[26] == 0.36
+        assert not result.iloc[0:76].isna().any()
+
+    def test_none_data_returns_nan(self, ohlcv):
+        feat = GrossMargin()
+        result = feat.compute(ohlcv, fundamental_extended_data=None)
+        assert result.name == "gross_margin"
+        assert result.isna().all()
+
+
+class TestOperatingMargin:
+    def test_forward_fill_quarterly(self, ohlcv, fundamental_extended_data):
+        feat = OperatingMargin()
+        result = feat.compute(ohlcv, fundamental_extended_data=fundamental_extended_data)
+        assert result.name == "operating_margin"
+        assert len(result) == len(ohlcv)
+        assert result.iloc[0] == 0.20
+        assert result.iloc[26] == 0.21
+        assert not result.iloc[0:76].isna().any()
+
+    def test_none_data_returns_nan(self, ohlcv):
+        feat = OperatingMargin()
+        result = feat.compute(ohlcv, fundamental_extended_data=None)
+        assert result.name == "operating_margin"
+        assert result.isna().all()
+
+
+class TestDebtRatio:
+    def test_forward_fill_quarterly(self, ohlcv, fundamental_extended_data):
+        feat = DebtRatio()
+        result = feat.compute(ohlcv, fundamental_extended_data=fundamental_extended_data)
+        assert result.name == "debt_ratio"
+        assert len(result) == len(ohlcv)
+        assert result.iloc[0] == 0.40
+        assert result.iloc[26] == 0.38
+        assert not result.iloc[0:76].isna().any()
+
+    def test_none_data_returns_nan(self, ohlcv):
+        feat = DebtRatio()
+        result = feat.compute(ohlcv, fundamental_extended_data=None)
+        assert result.name == "debt_ratio"
+        assert result.isna().all()
+
+
+class TestEPS:
+    def test_forward_fill_quarterly(self, ohlcv, fundamental_extended_data):
+        feat = EPS()
+        result = feat.compute(ohlcv, fundamental_extended_data=fundamental_extended_data)
+        assert result.name == "eps"
+        assert len(result) == len(ohlcv)
+        assert result.iloc[0] == 5.0
+        assert result.iloc[26] == 5.5
+        assert not result.iloc[0:76].isna().any()
+
+    def test_none_data_returns_nan(self, ohlcv):
+        feat = EPS()
+        result = feat.compute(ohlcv, fundamental_extended_data=None)
+        assert result.name == "eps"
+        assert result.isna().all()
+
+
+class TestROEGrowth:
+    def test_forward_fill_quarterly(self, ohlcv, fundamental_extended_data):
+        feat = ROEGrowth()
+        result = feat.compute(ohlcv, fundamental_extended_data=fundamental_extended_data)
+        assert result.name == "roe_growth"
+        assert len(result) == len(ohlcv)
+        # First value is NaN (pct_change has no previous)
+        assert np.isnan(result.iloc[0])
+        # Some non-NaN values should exist after first data point
+        assert result.dropna().shape[0] > 0
+
+    def test_none_data_returns_nan(self, ohlcv):
+        feat = ROEGrowth()
+        result = feat.compute(ohlcv, fundamental_extended_data=None)
+        assert result.name == "roe_growth"
+        assert result.isna().all()
+
+    def test_inf_replaced_with_nan(self, ohlcv, fundamental_extended_data):
+        feat = ROEGrowth()
+        result = feat.compute(ohlcv, fundamental_extended_data=fundamental_extended_data)
+        assert not np.isinf(result.dropna()).any()
+
+
+class TestROAGrowth:
+    def test_forward_fill_quarterly(self, ohlcv, fundamental_extended_data):
+        feat = ROAGrowth()
+        result = feat.compute(ohlcv, fundamental_extended_data=fundamental_extended_data)
+        assert result.name == "roa_growth"
+        assert len(result) == len(ohlcv)
+        assert np.isnan(result.iloc[0])
+        assert result.dropna().shape[0] > 0
+
+    def test_none_data_returns_nan(self, ohlcv):
+        feat = ROAGrowth()
+        result = feat.compute(ohlcv, fundamental_extended_data=None)
+        assert result.name == "roa_growth"
+        assert result.isna().all()
+
+    def test_inf_replaced_with_nan(self, ohlcv, fundamental_extended_data):
+        feat = ROAGrowth()
+        result = feat.compute(ohlcv, fundamental_extended_data=fundamental_extended_data)
+        assert not np.isinf(result.dropna()).any()

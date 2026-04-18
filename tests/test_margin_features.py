@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from poseidon.data.features.margin import MarginBuyRatio, MarginSellRatio
+from poseidon.data.features.margin import MarginBuyRatio, MarginSellRatio, MarginUtilizationRate
 
 
 @pytest.fixture
@@ -90,4 +90,43 @@ class TestMarginSellRatio:
         feat = MarginSellRatio()
         result = feat.compute(ohlcv, margin_data=pd.DataFrame())
         assert result.name == "margin_sell_ratio"
+        assert result.isna().all()
+
+
+class TestMarginUtilizationRate:
+    def test_compute_both_present(self, ohlcv, margin_data):
+        feat = MarginUtilizationRate()
+        result = feat.compute(ohlcv, margin_data=margin_data)
+        assert result.name == "margin_utilization_rate"
+        assert len(result) == len(ohlcv)
+        # Values should be non-NaN (timezone alignment worked)
+        assert not result.isna().all()
+        # Combined rate should be between individual buy and sell rates
+        assert result.dropna().min() >= 0.0
+
+    def test_compute_buy_only(self, ohlcv, margin_data):
+        feat = MarginUtilizationRate()
+        buy_only = margin_data[["margin_buy_ratio"]].copy()
+        result = feat.compute(ohlcv, margin_data=buy_only)
+        assert result.name == "margin_utilization_rate"
+        assert not result.isna().all()
+
+    def test_compute_sell_only(self, ohlcv, margin_data):
+        feat = MarginUtilizationRate()
+        sell_only = margin_data[["margin_sell_ratio"]].copy()
+        result = feat.compute(ohlcv, margin_data=sell_only)
+        assert result.name == "margin_utilization_rate"
+        assert not result.isna().all()
+
+    def test_none_data_returns_nan(self, ohlcv):
+        feat = MarginUtilizationRate()
+        result = feat.compute(ohlcv, margin_data=None)
+        assert result.name == "margin_utilization_rate"
+        assert result.isna().all()
+
+    def test_no_relevant_columns_returns_nan(self, ohlcv):
+        feat = MarginUtilizationRate()
+        wrong = pd.DataFrame({"wrong_col": [1.0]}, index=ohlcv.index[:1])
+        result = feat.compute(ohlcv, margin_data=wrong)
+        assert result.name == "margin_utilization_rate"
         assert result.isna().all()

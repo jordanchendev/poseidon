@@ -94,3 +94,35 @@ class MarginSellRatio(BaseFeature):
         result = _align_to_index(margin_data["margin_sell_ratio"], ohlcv.index)
         result.name = col_name
         return result
+
+
+@register_feature
+class MarginUtilizationRate(BaseFeature):
+    """Combined margin utilization rate (average of buy and sell ratios)."""
+
+    name = "margin_utilization_rate"
+    description = "Combined margin buy + sell utilization rate"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        margin_data: pd.DataFrame | None = None,
+        **kwargs,
+    ) -> pd.Series:
+        col_name = "margin_utilization_rate"
+        if not self._validate(ohlcv):
+            return pd.Series(dtype=float, name=col_name)
+        if margin_data is None or margin_data.empty:
+            return _nan_series(ohlcv.index, col_name)
+        has_buy = "margin_buy_ratio" in margin_data.columns
+        has_sell = "margin_sell_ratio" in margin_data.columns
+        if not has_buy and not has_sell:
+            return _nan_series(ohlcv.index, col_name)
+        parts = []
+        if has_buy:
+            parts.append(_align_to_index(margin_data["margin_buy_ratio"], ohlcv.index))
+        if has_sell:
+            parts.append(_align_to_index(margin_data["margin_sell_ratio"], ohlcv.index))
+        result = pd.concat(parts, axis=1).mean(axis=1)
+        result.name = col_name
+        return result

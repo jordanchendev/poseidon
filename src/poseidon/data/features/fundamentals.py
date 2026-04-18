@@ -211,3 +211,160 @@ class ROA(BaseFeature):
         result = _ffill_to_index(fundamental_data["roa"], ohlcv.index)
         result.name = col_name
         return result
+
+
+# --- Extended fundamental features (from Thalassa fundamental_extended endpoint) ---
+
+
+@register_feature
+class GrossMargin(BaseFeature):
+    """Gross margin rate, forward-filled from quarterly data to daily."""
+
+    name = "gross_margin"
+    description = "Gross margin rate (quarterly, forward-filled)"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        fundamental_extended_data: pd.DataFrame | None = None,
+        **kwargs,
+    ) -> pd.Series:
+        col_name = "gross_margin"
+        if not self._validate(ohlcv):
+            return pd.Series(dtype=float, name=col_name)
+        if fundamental_extended_data is None or fundamental_extended_data.empty:
+            return _nan_series(ohlcv.index, col_name)
+        if col_name not in fundamental_extended_data.columns:
+            return _nan_series(ohlcv.index, col_name)
+        result = _ffill_to_index(fundamental_extended_data[col_name], ohlcv.index)
+        result.name = col_name
+        return result
+
+
+@register_feature
+class OperatingMargin(BaseFeature):
+    """Operating margin rate, forward-filled from quarterly data to daily."""
+
+    name = "operating_margin"
+    description = "Operating margin rate (quarterly, forward-filled)"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        fundamental_extended_data: pd.DataFrame | None = None,
+        **kwargs,
+    ) -> pd.Series:
+        col_name = "operating_margin"
+        if not self._validate(ohlcv):
+            return pd.Series(dtype=float, name=col_name)
+        if fundamental_extended_data is None or fundamental_extended_data.empty:
+            return _nan_series(ohlcv.index, col_name)
+        if col_name not in fundamental_extended_data.columns:
+            return _nan_series(ohlcv.index, col_name)
+        result = _ffill_to_index(fundamental_extended_data[col_name], ohlcv.index)
+        result.name = col_name
+        return result
+
+
+@register_feature
+class DebtRatio(BaseFeature):
+    """Debt ratio, forward-filled from quarterly data to daily."""
+
+    name = "debt_ratio"
+    description = "Debt ratio (quarterly, forward-filled)"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        fundamental_extended_data: pd.DataFrame | None = None,
+        **kwargs,
+    ) -> pd.Series:
+        col_name = "debt_ratio"
+        if not self._validate(ohlcv):
+            return pd.Series(dtype=float, name=col_name)
+        if fundamental_extended_data is None or fundamental_extended_data.empty:
+            return _nan_series(ohlcv.index, col_name)
+        if col_name not in fundamental_extended_data.columns:
+            return _nan_series(ohlcv.index, col_name)
+        result = _ffill_to_index(fundamental_extended_data[col_name], ohlcv.index)
+        result.name = col_name
+        return result
+
+
+@register_feature
+class EPS(BaseFeature):
+    """Earnings per share, forward-filled from quarterly data to daily."""
+
+    name = "eps"
+    description = "Earnings per share (quarterly, forward-filled)"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        fundamental_extended_data: pd.DataFrame | None = None,
+        **kwargs,
+    ) -> pd.Series:
+        col_name = "eps"
+        if not self._validate(ohlcv):
+            return pd.Series(dtype=float, name=col_name)
+        if fundamental_extended_data is None or fundamental_extended_data.empty:
+            return _nan_series(ohlcv.index, col_name)
+        if col_name not in fundamental_extended_data.columns:
+            return _nan_series(ohlcv.index, col_name)
+        result = _ffill_to_index(fundamental_extended_data[col_name], ohlcv.index)
+        result.name = col_name
+        return result
+
+
+@register_feature
+class ROEGrowth(BaseFeature):
+    """Quarter-over-quarter ROE growth rate."""
+
+    name = "roe_growth"
+    description = "Quarter-over-quarter ROE growth rate"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        fundamental_extended_data: pd.DataFrame | None = None,
+        **kwargs,
+    ) -> pd.Series:
+        col_name = "roe_growth"
+        if not self._validate(ohlcv):
+            return pd.Series(dtype=float, name=col_name)
+        if fundamental_extended_data is None or fundamental_extended_data.empty:
+            return _nan_series(ohlcv.index, col_name)
+        if "roe" not in fundamental_extended_data.columns:
+            return _nan_series(ohlcv.index, col_name)
+        ffilled = _ffill_to_index(fundamental_extended_data["roe"], ohlcv.index)
+        result = ffilled.pct_change()
+        result = result.replace([np.inf, -np.inf], np.nan)
+        result.name = col_name
+        return result
+
+
+@register_feature
+class ROAGrowth(BaseFeature):
+    """Quarter-over-quarter ROA growth rate."""
+
+    name = "roa_growth"
+    description = "Quarter-over-quarter ROA growth rate"
+
+    def compute(
+        self,
+        ohlcv: pd.DataFrame,
+        fundamental_extended_data: pd.DataFrame | None = None,
+        **kwargs,
+    ) -> pd.Series:
+        col_name = "roa_growth"
+        if not self._validate(ohlcv):
+            return pd.Series(dtype=float, name=col_name)
+        if fundamental_extended_data is None or fundamental_extended_data.empty:
+            return _nan_series(ohlcv.index, col_name)
+        if "roa" not in fundamental_extended_data.columns:
+            return _nan_series(ohlcv.index, col_name)
+        ffilled = _ffill_to_index(fundamental_extended_data["roa"], ohlcv.index)
+        result = ffilled.pct_change()
+        result = result.replace([np.inf, -np.inf], np.nan)
+        result.name = col_name
+        return result
