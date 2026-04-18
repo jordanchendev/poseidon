@@ -73,7 +73,6 @@ EXPECTED_PARAM_KEYS = {
     "threshold_1",
     "threshold_2",
     "composite_threshold",
-    "atr_multiplier",
     "position_pct",
 }
 
@@ -300,5 +299,4 @@ def test_fewer_features_trims_param_bounds():
     assert "threshold_2" not in bounds
     # Non-threshold keys should still be present
     assert "composite_threshold" in bounds
-    assert "atr_multiplier" in bounds
     assert "position_pct" in bounds
