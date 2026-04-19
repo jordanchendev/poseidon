@@ -15,6 +15,7 @@ import pytest
 from poseidon.strategies.portfolio.revenue_breakout import RevenueBreakoutStrategy
 from poseidon.strategies.portfolio.schemas import (
     AllocationConfig,
+    RebalanceConfig,
     RevenueBreakoutConfig,
     SelectionConfig,
     TargetPosition,
@@ -175,7 +176,7 @@ class TestRevenueBreakoutStrategy:
             assert t.weight == pytest.approx(expected_weight)
 
     def test_as_of_date_passed_to_repo(self):
-        """read_ohlcv and read_monthly_revenue must receive as_of date params."""
+        """OHLCV uses current as_of; revenue uses the default 10-day publication lag."""
         config = _make_config(symbols=["2330"])
         repo = _make_mock_repo(_make_ohlcv_new_high(), _make_revenue_positive())
         strategy = RevenueBreakoutStrategy(config=config, repo=repo)
@@ -197,10 +198,29 @@ class TestRevenueBreakoutStrategy:
             assert end_arg.month == as_of.month
             assert end_arg.day == as_of.day
 
-        # read_monthly_revenue should be called with as_of_date
+        # read_monthly_revenue should be called with lagged as_of_date
         repo.read_monthly_revenue.assert_called_once()
         rev_call_kwargs = repo.read_monthly_revenue.call_args
         as_of_date_arg = rev_call_kwargs.kwargs.get("as_of_date") or (
             rev_call_kwargs[0][1] if len(rev_call_kwargs[0]) > 1 else None
         )
-        assert as_of_date_arg == as_of.isoformat()
+        assert as_of_date_arg == "2023-06-05"
+
+    def test_publication_lag_days_shifts_revenue_as_of_date(self):
+        """Revenue reads should honor rebalance.publication_lag_days."""
+        config = RevenueBreakoutConfig(
+            symbols=["2330"],
+            selection=SelectionConfig(new_high_days=250, revenue_yoy_min=0.0, revenue_mom_min=0.0),
+            allocation=AllocationConfig(position_limit_pct=0.15),
+            rebalance=RebalanceConfig(day_of_month=15, publication_lag_days=7),
+        )
+        repo = _make_mock_repo(_make_ohlcv_new_high(), _make_revenue_positive())
+        strategy = RevenueBreakoutStrategy(config=config, repo=repo)
+
+        strategy.select_stocks(pd.DataFrame(), as_of=date(2023, 6, 15))
+
+        rev_call_kwargs = repo.read_monthly_revenue.call_args
+        as_of_date_arg = rev_call_kwargs.kwargs.get("as_of_date") or (
+            rev_call_kwargs[0][1] if len(rev_call_kwargs[0]) > 1 else None
+        )
+        assert as_of_date_arg == "2023-06-08"

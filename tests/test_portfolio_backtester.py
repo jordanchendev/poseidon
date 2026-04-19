@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import date
 from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -66,6 +67,23 @@ class MockStrategy(PortfolioStrategy):
 
     def validate_config(self) -> bool:
         return True
+
+
+class ConfigurableMockStrategy(MockStrategy):
+    """Mock strategy with flat config fields used by portfolio strategies."""
+
+    def __init__(
+        self,
+        targets: list[TargetPosition] | None = None,
+        *,
+        rebalance_day_of_month: int = 15,
+        stop_loss_pct: float | None = None,
+    ):
+        super().__init__(targets=targets)
+        self.config = SimpleNamespace(
+            rebalance_day_of_month=rebalance_day_of_month,
+            stop_loss_pct=stop_loss_pct,
+        )
 
 
 class FailingStrategy(PortfolioStrategy):
@@ -197,3 +215,54 @@ class TestPortfolioBacktester:
         assert len(result.equity_curve) > 0
         final_nav = result.equity_curve[-1][1]
         assert final_nav == pytest.approx(1_000_000.0, abs=0.01)
+
+    def test_flat_rebalance_day_of_month_is_respected(self, cost_model, ohlcv_dict):
+        """Portfolio strategies with flat rebalance_day_of_month should drive rebalance dates."""
+        strategy = ConfigurableMockStrategy(
+            targets=[TargetPosition(symbol="2330", weight=0.5, reason="test")],
+            rebalance_day_of_month=5,
+        )
+        backtester = PortfolioBacktester(cost_model=cost_model)
+
+        result = backtester.run(
+            strategy=strategy,
+            ohlcv_dict=ohlcv_dict,
+            start_date=date(2023, 1, 2),
+            end_date=date(2023, 3, 31),
+        )
+
+        assert result.status == "completed"
+        rebalance_days = [entry["date"] for entry in result.rebalance_log]
+        assert rebalance_days[:3] == ["2023-01-05", "2023-02-06", "2023-03-06"]
+
+    def test_stop_loss_pct_triggers_exit_between_rebalances(self, cost_model):
+        """Configured stop loss should liquidate holdings on daily mark-to-market breach."""
+        dates = pd.to_datetime(["2023-01-02", "2023-01-05", "2023-01-06", "2023-01-09"])
+        ohlcv = pd.DataFrame(
+            {
+                "open": [100.0, 100.0, 87.0, 86.0],
+                "high": [101.0, 101.0, 88.0, 87.0],
+                "low": [99.0, 99.0, 86.0, 85.0],
+                "close": [100.0, 100.0, 87.0, 86.0],
+                "volume": [1000, 1000, 1000, 1000],
+            },
+            index=dates,
+        )
+        strategy = ConfigurableMockStrategy(
+            targets=[TargetPosition(symbol="2330", weight=1.0, reason="test")],
+            rebalance_day_of_month=2,
+            stop_loss_pct=0.10,
+        )
+        backtester = PortfolioBacktester(cost_model=cost_model, initial_capital=100_000.0)
+
+        result = backtester.run(
+            strategy=strategy,
+            ohlcv_dict={"2330": ohlcv},
+            start_date=date(2023, 1, 2),
+            end_date=date(2023, 1, 9),
+        )
+
+        assert result.status == "completed"
+        sell_trades = [trade for trade in result.trades if trade["action"] == "sell"]
+        assert len(sell_trades) == 1
+        assert sell_trades[0]["date"] == "2023-01-06"

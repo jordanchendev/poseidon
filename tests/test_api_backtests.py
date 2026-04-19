@@ -1,6 +1,7 @@
 """Tests for backtest API endpoints."""
 
 import uuid
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -227,6 +228,69 @@ def test_list_backtests_with_limit():
     resp = client.get(f"{PREFIX}?limit=1")
     assert resp.status_code == 200
     assert len(resp.json()) == 1
+
+
+def test_post_query_returns_latest_backtest_per_strategy():
+    """POST /backtest/query should support batch latest result lookup by strategy IDs."""
+    strategy_a = uuid.uuid4()
+    strategy_b = uuid.uuid4()
+    db = TestingSessionLocal()
+
+    base_time = datetime(2026, 4, 19, 1, 0, 0)
+    records = [
+        BacktestRecord(
+            id=uuid.uuid4(),
+            strategy_id=strategy_a,
+            strategy_type="portfolio_strategy",
+            symbol="TW_STOCK_POOL",
+            market="tw_stock",
+            interval="1d",
+            config={"run": "old-a"},
+            status="completed",
+            created_at=base_time,
+        ),
+        BacktestRecord(
+            id=uuid.uuid4(),
+            strategy_id=strategy_a,
+            strategy_type="portfolio_strategy",
+            symbol="TW_STOCK_POOL",
+            market="tw_stock",
+            interval="1d",
+            config={"run": "new-a"},
+            status="completed",
+            created_at=base_time + timedelta(minutes=1),
+        ),
+        BacktestRecord(
+            id=uuid.uuid4(),
+            strategy_id=strategy_b,
+            strategy_type="portfolio_strategy",
+            symbol="TW_STOCK_POOL",
+            market="tw_stock",
+            interval="1d",
+            config={"run": "only-b"},
+            status="completed",
+            created_at=base_time + timedelta(minutes=2),
+        ),
+    ]
+    for record in records:
+        db.add(record)
+    db.commit()
+    db.close()
+
+    resp = client.post(
+        f"{PREFIX}/query",
+        json={
+            "strategy_ids": [str(strategy_a), str(strategy_b)],
+            "latest_only": True,
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    assert [item["strategy_id"] for item in data] == [str(strategy_a), str(strategy_b)]
+    assert data[0]["config"]["run"] == "new-a"
+    assert data[1]["config"]["run"] == "only-b"
 
 
 # --------------- Trade endpoint tests ---------------

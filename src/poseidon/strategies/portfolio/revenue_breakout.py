@@ -179,9 +179,10 @@ class RevenueBreakoutStrategy(PortfolioStrategy):
             return None
 
         # 3. Read monthly revenue with as_of_date (T-67-01)
+        revenue_as_of = as_of - timedelta(days=cfg.rebalance.publication_lag_days)
         revenue_df = self._repo.read_monthly_revenue(
             symbol=symbol,
-            as_of_date=as_of.isoformat(),
+            as_of_date=revenue_as_of.isoformat(),
         )
 
         if revenue_df.empty or len(revenue_df) < 2:

@@ -135,6 +135,39 @@ class BacktestRepository:
             query = query.filter(BacktestRecord.strategy_id == strategy_id)
         return query.order_by(BacktestRecord.created_at.desc()).limit(limit).all()
 
+    def list_backtests_batch(
+        self,
+        strategy_ids: list[uuid.UUID],
+        *,
+        latest_only: bool = True,
+        limit: int = 200,
+    ) -> list[BacktestRecord]:
+        """List backtests for multiple strategies, optionally latest record per strategy."""
+        if not strategy_ids:
+            return []
+
+        query = (
+            self._db.query(BacktestRecord)
+            .filter(BacktestRecord.strategy_id.in_(strategy_ids))
+            .order_by(BacktestRecord.created_at.desc())
+        )
+        records = query.limit(limit if not latest_only else max(limit, len(strategy_ids) * 10)).all()
+
+        if not latest_only:
+            return records
+
+        latest_by_strategy: dict[uuid.UUID, BacktestRecord] = {}
+        for record in records:
+            if record.strategy_id is None or record.strategy_id in latest_by_strategy:
+                continue
+            latest_by_strategy[record.strategy_id] = record
+
+        return [
+            latest_by_strategy[strategy_id]
+            for strategy_id in strategy_ids
+            if strategy_id in latest_by_strategy
+        ]
+
     def get_trades(self, backtest_id: uuid.UUID) -> list[BacktestTradeRecord]:
         """Retrieve all trades for a backtest.
 

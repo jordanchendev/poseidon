@@ -10,7 +10,7 @@ All data reads use as_of_date for look-ahead bias prevention (D-03).
 """
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 from pydantic import BaseModel
@@ -110,6 +110,11 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
 
         cfg = self.config
         as_of_str = as_of.isoformat() if as_of else None
+        lagged_as_of_str = (
+            (as_of - timedelta(days=cfg.publication_lag_days)).isoformat()
+            if as_of
+            else None
+        )
 
         # Step 1: Risk filter (D-08, D-09 -- STRAT-02)
         excluded: set[str] = set()
@@ -137,23 +142,25 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
 
         for symbol in universe_symbols:
             # Quality dimension: Thalassa quality_factor Z-score (D-02)
-            qf = self._repo.read_quality_factor(symbol, as_of_date=as_of_str)
+            qf = self._repo.read_quality_factor(symbol, as_of_date=lagged_as_of_str)
             if not qf.empty:
                 last_row = qf.iloc[-1]
                 q_vals: list[float] = []
-                for col in [
-                    "profitability_z",
-                    "growth_z",
-                    "safety_z",
+                for candidates in [
+                    ("profitability_z", "quality_profitability_z"),
+                    ("growth_z", "quality_growth_z"),
+                    ("safety_z", "quality_safety_z"),
                 ]:
-                    if col in qf.columns and pd.notna(last_row.get(col)):
-                        q_vals.append(float(last_row[col]))
+                    for col in candidates:
+                        if col in qf.columns and pd.notna(last_row.get(col)):
+                            q_vals.append(float(last_row[col]))
+                            break
                 if q_vals:
                     quality_raw[symbol] = sum(q_vals) / len(q_vals)
 
             # Growth dimension: revenue_yoy + eps (D-02)
             # Thalassa returns monthly_rev_yoy; fall back to revenue_yoy for compatibility
-            rev = self._repo.read_monthly_revenue(symbol, as_of_date=as_of_str)
+            rev = self._repo.read_monthly_revenue(symbol, as_of_date=lagged_as_of_str)
             if not rev.empty:
                 yoy_col = "monthly_rev_yoy" if "monthly_rev_yoy" in rev.columns else "revenue_yoy"
                 if yoy_col in rev.columns:
@@ -162,7 +169,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                         rev_yoy_raw[symbol] = float(val)
 
             fund = self._repo.read_fundamentals_extended_df(
-                symbol, as_of_date=as_of_str
+                symbol, as_of_date=lagged_as_of_str
             )
             if not fund.empty and "eps" in fund.columns:
                 val = fund.iloc[-1].get("eps")
@@ -189,11 +196,20 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                 pass  # institutional_flow may not exist for all symbols
 
             fh = self._repo.read_foreign_holding(symbol, as_of_date=as_of_str)
-            if not fh.empty and "foreign_holding_ratio" in fh.columns:
-                fh_series = fh["foreign_holding_ratio"].dropna()
-                if len(fh_series) >= 2:
-                    # Holding change = latest - previous (percentage point change)
-                    fh_change_raw[symbol] = float(fh_series.iloc[-1] - fh_series.iloc[-2])
+            if not fh.empty:
+                if "foreign_net_buy_ratio" in fh.columns:
+                    val = fh.iloc[-1].get("foreign_net_buy_ratio")
+                    if pd.notna(val):
+                        net_buy_ratio_raw[symbol] = float(val)
+                if "foreign_holding_change" in fh.columns:
+                    val = fh.iloc[-1].get("foreign_holding_change")
+                    if pd.notna(val):
+                        fh_change_raw[symbol] = float(val)
+                elif "foreign_holding_ratio" in fh.columns:
+                    fh_series = fh["foreign_holding_ratio"].dropna()
+                    if len(fh_series) >= 2:
+                        # Holding change = latest - previous (percentage point change)
+                        fh_change_raw[symbol] = float(fh_series.iloc[-1] - fh_series.iloc[-2])
 
         # Step 4: Percentile rank each dimension (per D-02)
         quality_rank = pd.Series(quality_raw).rank(pct=True)

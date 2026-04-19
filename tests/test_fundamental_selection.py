@@ -209,6 +209,31 @@ class TestCompositeScoring:
         for t in targets:
             assert t.weight == pytest.approx(0.10)  # min(1/10, 0.10) = 0.10
 
+    def test_publication_lag_days_shifts_fundamental_data_as_of_date(self):
+        """Lagged configs should read quality/revenue/fundamentals from a prior as_of_date."""
+        repo = _make_mock_repo(
+            symbols_data={
+                "2330": {
+                    "quality_z": 0.9,
+                    "revenue_yoy": 0.30,
+                    "eps": 5.0,
+                    "net_buy_ratio": 0.10,
+                    "holding_change": 0.05,
+                },
+            }
+        )
+        cfg = FundamentalSelectionConfig(
+            symbols=["2330"],
+            publication_lag_days=7,
+        )
+        strategy = FundamentalSelectionStrategy(cfg, repo=repo)
+
+        strategy.select_stocks(pd.DataFrame(), as_of=date(2025, 6, 15))
+
+        repo.read_quality_factor.assert_called_once_with("2330", as_of_date="2025-06-08")
+        repo.read_monthly_revenue.assert_called_once_with("2330", as_of_date="2025-06-08")
+        repo.read_fundamentals_extended_df.assert_called_once_with("2330", as_of_date="2025-06-08")
+
     def test_nan_symbols_excluded_from_ranking(self):
         """Symbol with empty quality_factor DataFrame should not appear in targets."""
         symbols_data = {
@@ -473,7 +498,7 @@ class TestLookAheadPrevention:
     """Tests for D-03 look-ahead bias prevention."""
 
     def test_as_of_date_passed_to_all_readers(self):
-        """All data readers should receive as_of_date='2025-06-15'."""
+        """Lagged readers use publication lag; flow readers use current as_of date."""
         symbols_data = {
             "2330": {
                 "quality_z": 0.5,
@@ -489,16 +514,17 @@ class TestLookAheadPrevention:
 
         strategy.select_stocks(pd.DataFrame(), as_of=date(2025, 6, 15))
 
-        # Verify all readers called with as_of_date="2025-06-15"
+        # Fundamental and revenue reads honor the default 10-day publication lag.
         repo.read_quality_factor.assert_called_once_with(
-            "2330", as_of_date="2025-06-15"
+            "2330", as_of_date="2025-06-05"
         )
         repo.read_monthly_revenue.assert_called_once_with(
-            "2330", as_of_date="2025-06-15"
+            "2330", as_of_date="2025-06-05"
         )
         repo.read_fundamentals_extended_df.assert_called_once_with(
-            "2330", as_of_date="2025-06-15"
+            "2330", as_of_date="2025-06-05"
         )
+        # Flow readers stay on the current as_of date.
         repo.read_foreign_holding.assert_called_once_with(
             "2330", as_of_date="2025-06-15"
         )

@@ -97,6 +97,14 @@ class BacktestResponse(PydanticBase):
     completed_at: datetime | None
 
 
+class BatchBacktestQueryRequest(PydanticBase):
+    """Request body for batch querying backtests by strategy IDs."""
+
+    strategy_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+    latest_only: bool = True
+    limit: int = Field(200, ge=1, le=1000)
+
+
 # --------------- Endpoints ---------------
 
 
@@ -174,6 +182,20 @@ async def list_backtests(
     """List completed backtests, optionally filtered by strategy_id."""
     repo = BacktestRepository(db)
     return repo.list_backtests(strategy_id=strategy_id, limit=limit)
+
+
+@router.post("/query", response_model=list[BacktestResponse])
+async def query_backtests(
+    request: BatchBacktestQueryRequest,
+    db: Session = Depends(get_db),
+) -> list[BacktestResponse]:
+    """Query backtests for multiple strategy IDs in one request."""
+    repo = BacktestRepository(db)
+    return repo.list_backtests_batch(
+        strategy_ids=request.strategy_ids,
+        latest_only=request.latest_only,
+        limit=request.limit,
+    )
 
 
 class BacktestTradeResponse(PydanticBase):

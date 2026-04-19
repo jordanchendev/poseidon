@@ -109,9 +109,8 @@ class PortfolioBacktester:
         4. Build equity series, compute metrics
         """
         # Step 1: Generate monthly rebalance dates
-        day_of_month = 15
-        if hasattr(strategy, "config") and hasattr(strategy.config, "rebalance"):
-            day_of_month = strategy.config.rebalance.day_of_month
+        day_of_month = self._resolve_rebalance_day_of_month(strategy)
+        strategy_stop_loss_pct = self._resolve_stop_loss_pct(strategy)
         rebalance_dates = self._generate_monthly_dates(start_date, end_date, day_of_month)
 
         # Step 2: Collect all unique trading dates from ohlcv_dict
@@ -162,6 +161,11 @@ class PortfolioBacktester:
 
         # Step 4: Daily loop
         for d in all_dates:
+            cash, current_holdings, stop_loss_trades = self._apply_stop_losses(
+                cash, current_holdings, d, ohlcv_dict,
+            )
+            trades.extend(stop_loss_trades)
+
             # Rebalance on rebalance dates
             if d in rebalance_date_set:
                 targets = strategy.select_stocks(universe_df=pd.DataFrame(), as_of=d)
@@ -172,7 +176,13 @@ class PortfolioBacktester:
                 nav = self._compute_nav(cash, current_holdings, d, ohlcv_dict)
 
                 cash, current_holdings, new_trades = self._execute_orders(
-                    orders, cash, current_holdings, d, ohlcv_dict, nav,
+                    orders,
+                    cash,
+                    current_holdings,
+                    d,
+                    ohlcv_dict,
+                    nav,
+                    strategy_stop_loss_pct,
                 )
                 trades.extend(new_trades)
 
@@ -247,6 +257,7 @@ class PortfolioBacktester:
         d: date,
         ohlcv_dict: dict[str, pd.DataFrame],
         nav: float,
+        stop_loss_pct: float | None,
     ) -> tuple[float, dict[str, Holding], list[dict]]:
         """Execute rebalance orders, updating cash and holdings.
 
@@ -327,6 +338,7 @@ class PortfolioBacktester:
                 shares=shares,
                 entry_price=price,
                 entry_date=datetime(d.year, d.month, d.day),
+                stop_loss_pct=stop_loss_pct,
             )
             trade_records.append({
                 "symbol": order.symbol,
@@ -369,6 +381,7 @@ class PortfolioBacktester:
                             shares=additional_shares,
                             entry_price=price,
                             entry_date=datetime(d.year, d.month, d.day),
+                            stop_loss_pct=stop_loss_pct,
                         )
                     holdings[order.symbol].weight = order.target_weight
                     trade_records.append({
@@ -405,6 +418,74 @@ class PortfolioBacktester:
                 })
                 if h.shares <= 0:
                     del holdings[order.symbol]
+
+        return cash, holdings, trade_records
+
+    def _resolve_rebalance_day_of_month(self, strategy: PortfolioStrategy) -> int:
+        """Resolve rebalance day from either flat or nested portfolio config."""
+        if not hasattr(strategy, "config"):
+            return 15
+
+        config = strategy.config
+        if hasattr(config, "rebalance_day_of_month"):
+            return int(config.rebalance_day_of_month)
+        if hasattr(config, "rebalance") and hasattr(config.rebalance, "day_of_month"):
+            return int(config.rebalance.day_of_month)
+        return 15
+
+    def _resolve_stop_loss_pct(self, strategy: PortfolioStrategy) -> float | None:
+        """Resolve stop loss from either flat or nested portfolio config."""
+        if not hasattr(strategy, "config"):
+            return None
+
+        config = strategy.config
+        if hasattr(config, "stop_loss_pct"):
+            return config.stop_loss_pct
+        if hasattr(config, "allocation") and hasattr(config.allocation, "stop_loss_pct"):
+            return config.allocation.stop_loss_pct
+        return None
+
+    def _apply_stop_losses(
+        self,
+        cash: float,
+        holdings: dict[str, Holding],
+        d: date,
+        ohlcv_dict: dict[str, pd.DataFrame],
+    ) -> tuple[float, dict[str, Holding], list[dict]]:
+        """Liquidate holdings when daily close breaches configured stop loss."""
+        trade_records: list[dict] = []
+
+        for symbol, holding in list(holdings.items()):
+            if (
+                holding.stop_loss_pct is None
+                or holding.entry_price is None
+                or holding.shares is None
+                or holding.shares <= 0
+            ):
+                continue
+
+            price = self._get_close_price(ohlcv_dict.get(symbol, pd.DataFrame()), d)
+            if price is None:
+                continue
+
+            stop_price = holding.entry_price * (1 - holding.stop_loss_pct)
+            if price > stop_price:
+                continue
+
+            proceeds = holding.shares * price * (
+                1 - self.cost_model.sell_commission_rate - self.cost_model.tax_rate
+            )
+            cash += proceeds
+            trade_records.append({
+                "symbol": symbol,
+                "action": "sell",
+                "date": d.isoformat(),
+                "price": price,
+                "shares": holding.shares,
+                "proceeds": proceeds,
+                "reason": "stop_loss",
+            })
+            del holdings[symbol]
 
         return cash, holdings, trade_records
 
