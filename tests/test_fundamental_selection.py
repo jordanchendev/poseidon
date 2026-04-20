@@ -549,3 +549,46 @@ class TestValidateConfig:
         cfg = FundamentalSelectionConfig(max_stocks=0)
         strategy = FundamentalSelectionStrategy(cfg)
         assert strategy.validate_config() is False
+
+
+# ---------------------------------------------------------------------------
+# TestFourDimensionScoring (Phase 71)
+# ---------------------------------------------------------------------------
+
+
+class TestFourDimensionScoring:
+    """Phase 71: 4-dimension scoring with momentum (D-04)."""
+
+    def test_validate_config_4d_weights_sum_to_one(self):
+        config = FundamentalSelectionConfig(
+            symbols=["2330"],
+            scoring=ScoringWeightConfig(
+                quality_weight=0.25, growth_weight=0.25,
+                flow_weight=0.25, momentum_weight=0.25,
+            ),
+        )
+        strategy = FundamentalSelectionStrategy(config=config)
+        assert strategy.validate_config() is True
+
+    def test_validate_config_3d_backward_compat(self):
+        """momentum_weight=0.0 should still validate (backward compat)."""
+        config = FundamentalSelectionConfig(
+            symbols=["2330"],
+            scoring=ScoringWeightConfig(
+                quality_weight=0.333, growth_weight=0.333,
+                flow_weight=0.334, momentum_weight=0.0,
+            ),
+        )
+        strategy = FundamentalSelectionStrategy(config=config)
+        assert strategy.validate_config() is True
+
+    def test_validate_config_4d_invalid_sum(self):
+        config = FundamentalSelectionConfig(
+            symbols=["2330"],
+            scoring=ScoringWeightConfig(
+                quality_weight=0.25, growth_weight=0.25,
+                flow_weight=0.25, momentum_weight=0.50,
+            ),
+        )
+        strategy = FundamentalSelectionStrategy(config=config)
+        assert strategy.validate_config() is False

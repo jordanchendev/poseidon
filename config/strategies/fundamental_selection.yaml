@@ -3,15 +3,16 @@ name: "Fundamental Selection"
 market: tw_stock
 
 scoring:
-  quality_weight: 0.333
-  growth_weight: 0.333
-  flow_weight: 0.334
+  quality_weight: 0.25
+  growth_weight: 0.25
+  flow_weight: 0.25
+  momentum_weight: 0.25
 
 max_stocks: 10
 min_score: 0.0
 
-allocation_method: equal_weight
-position_limit_pct: 0.10
+allocation_method: market_cap_weight
+position_limit_pct: 0.20
 stop_loss_pct: 0.10
 
 rebalance_frequency: monthly

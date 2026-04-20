@@ -108,6 +108,11 @@ class MarketCapWeightedAllocator:
             else:
                 raw[s] = equal_w  # fallback per D-08
 
+        # Normalize so raw weights sum to 1.0 (mixed known/unknown case)
+        raw_total = sum(raw.values())
+        if raw_total > 0:
+            raw = {s: w / raw_total for s, w in raw.items()}
+
         # Step 2: Iterative clamping
         weights = dict(raw)
         limit = self.position_limit_pct
