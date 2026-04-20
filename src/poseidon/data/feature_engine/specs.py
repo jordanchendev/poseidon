@@ -100,6 +100,9 @@ VALUATION_NAMES = frozenset({
 })
 FOREIGN_HOLDING_NAMES = frozenset({"foreign_holding_change"})
 
+# Phase 71: Price momentum (OHLCV-derived, NOT nonprice)
+MOMENTUM_NAMES = frozenset({"momentum_3m", "momentum_6m", "momentum_12m"})
+
 
 def is_nonprice_spec(name: str) -> bool:
     """Return True if the feature name requires non-price data injection."""
@@ -296,6 +299,10 @@ TW_STOCK_FUNDAMENTAL_FEATURES: list[tuple[str, dict]] = [
     ("pbr_percentile", {}),
     ("dividend_yield_percentile", {}),
     ("dividend_yield", {}),
+    # FEAT-06: Price momentum (Phase 71 D-13)
+    ("momentum_3m", {}),
+    ("momentum_6m", {}),
+    ("momentum_12m", {}),
 ]
 
 

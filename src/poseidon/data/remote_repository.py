@@ -357,6 +357,18 @@ class RemoteDataRepository:
         )
         return self._parse_dataframe_response(resp.json())
 
+    def read_market_value(
+        self, symbol: str, as_of_date: str | None = None
+    ) -> pd.DataFrame:
+        """Read daily market value (float shares * price) from Thalassa (Phase 71 D-06)."""
+        params: dict = {"symbol": symbol}
+        if as_of_date is not None:
+            params["as_of_date"] = as_of_date
+        resp = self._request(
+            "GET", "/api/v1/nonprice/market-value", params=params
+        )
+        return self._parse_dataframe_response(resp.json())
+
     def read_risk_filters_active(self, ref_date: str) -> list[str]:
         """Return list of symbols under any active risk flag on the given date."""
         resp = self._request(
