@@ -18,6 +18,7 @@ from poseidon.data.features import margin  # noqa: F401
 from poseidon.data.features import model_prediction  # noqa: F401
 from poseidon.data.features import monthly_revenue  # noqa: F401
 from poseidon.data.features import open_interest  # noqa: F401
+from poseidon.data.features import price_momentum  # noqa: F401
 from poseidon.data.features import quality_factor  # noqa: F401
 from poseidon.data.features import regime  # noqa: F401
 from poseidon.data.features import returns  # noqa: F401
