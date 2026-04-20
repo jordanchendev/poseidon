@@ -297,7 +297,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                         symbol=symbol,
                         market="tw_stock",
                         interval="1d",
-                        end=datetime.combine(as_of, time.min).isoformat() if as_of else None,
+                        end=datetime.combine(as_of, time.min) if as_of else None,
                     )
                     if ohlcv.empty or len(ohlcv) < 252:
                         continue
