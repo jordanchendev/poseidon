@@ -1,16 +1,21 @@
-"""FundamentalSelectionStrategy -- quality+growth+flow composite scoring for TW stocks.
+"""FundamentalSelectionStrategy -- quality+growth+flow+momentum composite scoring for TW stocks.
 
 Selects top N stocks monthly based on cross-sectional percentile ranking of:
   - Quality dimension: average of quality_profitability_z, quality_growth_z, quality_safety_z
   - Growth dimension: average of revenue_yoy rank + eps rank
   - Flow dimension: average of foreign_net_buy_ratio rank + foreign_holding_change rank
+  - Momentum dimension (Phase 71): average of 3M/6M/12M simple returns from OHLCV close
+
+Allocation methods:
+  - equal_weight: 1/max_stocks capped by position_limit_pct (default)
+  - market_cap_weight: market-value proportional with iterative position_limit_pct clamping
 
 Risk-filtered symbols (disposition, full_cash_delivery, attention) are excluded before scoring.
 All data reads use as_of_date for look-ahead bias prevention (D-03).
 """
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pandas as pd
 from pydantic import BaseModel
@@ -30,6 +35,7 @@ class ScoringWeightConfig(BaseModel):
     quality_weight: float = 0.333
     growth_weight: float = 0.333
     flow_weight: float = 0.334
+    momentum_weight: float = 0.0  # Phase 71 D-04: 4th dimension (0.25 when enabled)
 
 
 class FundamentalSelectionConfig(BaseModel):
@@ -53,6 +59,72 @@ class FundamentalSelectionConfig(BaseModel):
     rebalance_frequency: str = "monthly"
     rebalance_day_of_month: int = 15  # D-07
     publication_lag_days: int = 10  # D-07
+
+
+# --- Allocator ---
+
+
+class MarketCapWeightedAllocator:
+    """Compute market-cap weighted allocations with position size caps (Phase 71 D-07).
+
+    Iterative clamping algorithm:
+    1. Raw weights = market_value_i / sum(market_values)
+    2. Symbols missing market_value fall back to equal weight 1/N (D-08)
+    3. Clamp any weight exceeding position_limit_pct
+    4. Redistribute excess proportionally to unclamped symbols
+    5. Repeat until convergence (at most N iterations)
+    """
+
+    def __init__(self, position_limit_pct: float = 0.20):
+        self.position_limit_pct = position_limit_pct
+
+    def allocate(
+        self,
+        symbols: list[str],
+        market_values: dict[str, float],
+    ) -> dict[str, float]:
+        """Return {symbol: weight} with weights summing to ~1.0.
+
+        Args:
+            symbols: Selected stock symbols to allocate.
+            market_values: {symbol: market_cap_value} for available symbols.
+
+        Returns:
+            Weight dict. All weights <= position_limit_pct (within floating-point tolerance).
+        """
+        n = len(symbols)
+        if n == 0:
+            return {}
+        equal_w = 1.0 / n
+
+        # Step 1: Raw proportional weights
+        raw: dict[str, float] = {}
+        known_mvs = {s: market_values[s] for s in symbols if s in market_values and market_values[s] > 0}
+        total_mv = sum(known_mvs.values())
+
+        for s in symbols:
+            if s in known_mvs and total_mv > 0:
+                raw[s] = known_mvs[s] / total_mv
+            else:
+                raw[s] = equal_w  # fallback per D-08
+
+        # Step 2: Iterative clamping
+        weights = dict(raw)
+        limit = self.position_limit_pct
+        for _ in range(n):
+            over = {s: w for s, w in weights.items() if w > limit}
+            if not over:
+                break
+            excess = sum(w - limit for w in over.values())
+            for s in over:
+                weights[s] = limit
+            under = {s: w for s, w in weights.items() if s not in over}
+            under_total = sum(under.values())
+            if under_total > 0:
+                for s in under:
+                    weights[s] += excess * (under[s] / under_total)
+
+        return weights
 
 
 # --- Strategy ---
@@ -211,12 +283,37 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                         # Holding change = latest - previous (percentage point change)
                         fh_change_raw[symbol] = float(fh_series.iloc[-1] - fh_series.iloc[-2])
 
+        # Momentum dimension (Phase 71 D-01/D-03): 3M/6M/12M simple returns from OHLCV close
+        momentum_raw: dict[str, float] = {}
+        if cfg.scoring.momentum_weight > 0:
+            for symbol in universe_symbols:
+                try:
+                    ohlcv = self._repo.read_ohlcv(
+                        symbol=symbol,
+                        market="tw_stock",
+                        interval="1d",
+                        end=datetime.combine(as_of, time.min).isoformat() if as_of else None,
+                    )
+                    if ohlcv.empty or len(ohlcv) < 252:
+                        continue
+                    close = ohlcv["close"]
+                    rets = []
+                    for days in [63, 126, 252]:
+                        if len(close) > days:
+                            r = float(close.iloc[-1] / close.iloc[-days] - 1.0)
+                            rets.append(r)
+                    if rets:
+                        momentum_raw[symbol] = sum(rets) / len(rets)
+                except Exception:
+                    pass  # OHLCV may not be available for all symbols
+
         # Step 4: Percentile rank each dimension (per D-02)
         quality_rank = pd.Series(quality_raw).rank(pct=True)
         rev_rank = pd.Series(rev_yoy_raw).rank(pct=True)
         eps_rank = pd.Series(eps_raw).rank(pct=True)
         net_buy_rank = pd.Series(net_buy_ratio_raw).rank(pct=True)
         fh_change_rank = pd.Series(fh_change_raw).rank(pct=True)
+        momentum_rank = pd.Series(momentum_raw).rank(pct=True)
 
         # Step 5: Composite scoring
         scores: dict[str, float] = {}
@@ -246,11 +343,23 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                 continue
             flow_score = sum(flow_parts) / len(flow_parts)
 
-            # Composite (D-02): weighted average of three dimensions
+            # Momentum dimension (Phase 71 D-04)
+            momentum_score = 0.0
+            if cfg.scoring.momentum_weight > 0:
+                m_r = momentum_rank.get(symbol)
+                if m_r is not None and not pd.isna(m_r):
+                    momentum_score = float(m_r)
+                else:
+                    # Symbol lacks momentum data; skip if momentum is significant
+                    if cfg.scoring.momentum_weight > 0.1:
+                        continue
+
+            # Composite (D-02/D-04): weighted average of dimensions
             composite = (
                 cfg.scoring.quality_weight * quality_score
                 + cfg.scoring.growth_weight * growth_score
                 + cfg.scoring.flow_weight * flow_score
+                + cfg.scoring.momentum_weight * momentum_score
             )
             scores[symbol] = composite
 
@@ -263,17 +372,45 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
             logger.info("No symbols passed composite scoring threshold")
             return []
 
-        # Step 7: Build TargetPosition list with equal weight (D-06)
-        weight = min(1.0 / cfg.max_stocks, cfg.position_limit_pct)
-        targets = [
-            TargetPosition(
-                symbol=sym,
-                weight=weight,
-                reason=f"composite={score:.4f}",
-                side="long",
+        # Step 7: Allocate weights (Phase 71 D-07)
+        selected_symbols = [sym for sym, _ in selected]
+        if cfg.allocation_method == "market_cap_weight":
+            # Market-cap weighted allocation (D-07/D-08)
+            market_values: dict[str, float] = {}
+            for sym in selected_symbols:
+                try:
+                    mv_df = self._repo.read_market_value(sym, as_of_date=as_of_str)
+                    if not mv_df.empty and "market_value" in mv_df.columns:
+                        val = mv_df.iloc[-1].get("market_value")
+                        if pd.notna(val) and float(val) > 0:
+                            market_values[sym] = float(val)
+                except Exception:
+                    pass  # fallback to equal_weight for this symbol (D-08)
+            allocator = MarketCapWeightedAllocator(
+                position_limit_pct=cfg.position_limit_pct
             )
-            for sym, score in selected
-        ]
+            weight_map = allocator.allocate(selected_symbols, market_values)
+            targets = [
+                TargetPosition(
+                    symbol=sym,
+                    weight=weight_map.get(sym, 1.0 / len(selected_symbols)),
+                    reason=f"composite={score:.4f}",
+                    side="long",
+                )
+                for sym, score in selected
+            ]
+        else:
+            # Equal weight allocation (existing behavior)
+            weight = min(1.0 / cfg.max_stocks, cfg.position_limit_pct)
+            targets = [
+                TargetPosition(
+                    symbol=sym,
+                    weight=weight,
+                    reason=f"composite={score:.4f}",
+                    side="long",
+                )
+                for sym, score in selected
+            ]
 
         logger.info(
             "FundamentalSelectionStrategy selected %d positions from %d candidates "
@@ -293,6 +430,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                 self.config.scoring.quality_weight
                 + self.config.scoring.growth_weight
                 + self.config.scoring.flow_weight
+                + self.config.scoring.momentum_weight
                 - 1.0
             )
             < 0.01
