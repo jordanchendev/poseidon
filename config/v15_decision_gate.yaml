@@ -1,0 +1,24 @@
+# v15.0 Decision Gate -- Frozen Criteria
+# Committed BEFORE any optimization work (RES-03).
+# Phase 78 evaluates against these criteria. Do NOT modify after commit.
+version: "v15.0"
+frozen_date: "2026-04-21"
+criteria:
+  oos_sharpe_min: 0.0              # OOS Sharpe > 0 (pessimistic fill, post-ETF only)
+  min_total_signals: 100            # >= 100 total signals across BTC+ETH
+  min_signals_per_fold: 30          # minimum 30 signals per WFE fold
+  wfe_degradation_max: 0.40         # WFE degradation < 40%
+  max_strategy_variations: 3        # Max 3 variations tested (GATE-04)
+  beat_random_baseline: true        # Must beat random-date entry baseline (GATE-05)
+data:
+  start_date: "2024-01-01"          # Post-ETF only (D-01)
+  end_date: null                    # null = current date at runtime
+  symbols: ["BTCUSDT", "ETHUSDT"]
+  interval: "4h"
+  cost_model: "crypto_perp"         # maker 0.02%, taker 0.05%, slippage 0.05%
+  fill_model: "pessimistic"
+  initial_capital: 100000.0         # USDT
+funding_hurdle:
+  rate_per_8h: 0.0001              # 0.01% per 8h
+  annualized: 0.1095               # ~10.95%/year
+  taker_fee: 0.0005                # 0.05%

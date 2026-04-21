@@ -25,7 +25,6 @@ _VALID_STRATEGY_TYPES = {
     "model",
     "rule",
     "voting",
-    "liquidity_sweep",
     "portfolio_strategy",
 }
 

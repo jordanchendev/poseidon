@@ -50,8 +50,8 @@ class AutoResearchRequest(BaseModel):
     )
     strategy_type: str = Field(
         "voting",
-        pattern="^(voting|liquidity_sweep|rule|model|regime_router)$",
-        description="Strategy factory: 'voting' (default), 'liquidity_sweep', 'rule' (RuleStrategyFactory), 'model' (ModelStrategyFactory), or 'regime_router' (RegimeSearchPipeline)",
+        pattern="^(voting|rule|model|regime_router)$",
+        description="Strategy factory: 'voting' (default), 'rule' (RuleStrategyFactory), 'model' (ModelStrategyFactory), or 'regime_router' (RegimeSearchPipeline)",
     )
     feature_names: list[str] | None = Field(
         None,

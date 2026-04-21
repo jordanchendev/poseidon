@@ -202,9 +202,7 @@ def run_backtest_task(
 
             # Reconstruct strategy object
             if record.strategy_type == "liquidity_sweep":
-                from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
-                ls_config = {**record.config, "symbol": record.symbol, "market": record.market, "interval": record.interval}
-                strategy = LiquiditySweepStrategy(config=ls_config, strategy_id=record.id)
+                raise ValueError("liquidity_sweep strategy archived in v15.0 -- see _archived/")
             elif record.strategy_type == "rule":
                 strategy = RuleStrategy(config=record.config, strategy_id=record.id)
             elif record.strategy_type == "voting":
@@ -468,7 +466,6 @@ def run_dual_mode_task(
         Dict with optimistic_metrics, pessimistic_metrics, delta_metrics, is_viable.
     """
     from poseidon.backtest.comparison import run_dual_mode_comparison
-    from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
 
     with db_session() as session:
         from poseidon.data.remote_repository import RemoteDataRepository
@@ -483,10 +480,7 @@ def run_dual_mode_task(
             if record.strategy_type == "voting":
                 strategy_factory = lambda: VotingStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
             elif record.strategy_type == "liquidity_sweep":
-                from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
-
-                ls_config = {**record.config, "symbol": record.symbol, "market": record.market, "interval": record.interval}
-                strategy_factory = lambda: LiquiditySweepStrategyFactory.from_config(ls_config)  # noqa: E731
+                raise ValueError("liquidity_sweep strategy archived in v15.0 -- see _archived/")
             elif record.strategy_type == "rule":
                 strategy_factory = lambda: RuleStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
             elif record.strategy_type == "model":
@@ -1184,13 +1178,11 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
             # model is initialised with available_models=None; AutoResearchRunner's per-market loop
             #   (runner.py:164-173, Phase 46 pattern) calls list_ready_models(market) and passes
             #   available_models into the pipeline, which reaches build_trial_factory() dynamically.
-            from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
             from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory
             from poseidon.backtest.model_strategy_factory import ModelStrategyFactory
 
             FACTORY_REGISTRY = {
                 "voting": lambda: None,
-                "liquidity_sweep": lambda: LiquiditySweepStrategyFactory(),
                 "rule": lambda: RuleStrategyFactory(
                     feature_names=feature_names or [],
                     direction_mode=search_config.get("strategy_mode", "bidirectional"),
