@@ -15,7 +15,8 @@ allocation_method: market_cap_weight
 position_limit_pct: 0.20
 stop_loss_pct: 0.10
 
-rebalance_frequency: monthly
+rebalance_frequency: weekly
+rebalance_day_of_week: 4
 rebalance_day_of_month: 15
 publication_lag_days: 10
 
