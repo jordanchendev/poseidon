@@ -105,7 +105,7 @@ CONFIGS = [
 def compute_benchmark_metrics(ohlcv_0050: pd.DataFrame, start: date, end: date) -> dict:
     """Compute buy-and-hold metrics for 0050 ETF (D-10)."""
     if ohlcv_0050.empty:
-        return {"error": "No 0050 OHLCV data"}
+        return {"label": "0050 buy-and-hold benchmark", "error": "No 0050 OHLCV data"}
     start_price = float(ohlcv_0050.iloc[0]["close"])
     end_price = float(ohlcv_0050.iloc[-1]["close"])
     total_return = end_price / start_price - 1
