@@ -6,28 +6,60 @@ markets:
     instrument: spot
     intervals: ["1d", "1h", "30m", "15m", "5m"]
     symbols:
-      - { id: "2330", name: "TSMC" }
-      - { id: "2317", name: "Hon Hai" }
-      - { id: "2454", name: "MediaTek" }
-      - { id: "2308", name: "Delta Electronics" }
-      - { id: "2881", name: "Fubon FHC" }
-      - { id: "2882", name: "Cathay FHC" }
-      - { id: "2891", name: "CTBC FHC" }
-      - { id: "2303", name: "UMC" }
+      - { id: "0050", name: "Yuanta Taiwan 50 ETF" }
+      - { id: "1216", name: "Uni-President" }
       - { id: "1301", name: "Formosa Plastics" }
       - { id: "1303", name: "Nan Ya Plastics" }
       - { id: "2002", name: "China Steel" }
+      - { id: "2059", name: "King Slide" }
+      - { id: "2301", name: "Lite-On Technology" }
+      - { id: "2303", name: "UMC" }
+      - { id: "2308", name: "Delta Electronics" }
+      - { id: "2317", name: "Hon Hai" }
+      - { id: "2327", name: "Yageo" }
+      - { id: "2330", name: "TSMC" }
+      - { id: "2344", name: "Winbond Electronics" }
+      - { id: "2345", name: "Accton Technology" }
+      - { id: "2357", name: "ASUS" }
+      - { id: "2360", name: "Chroma ATE" }
+      - { id: "2368", name: "Gold Circuit Electronics" }
+      - { id: "2379", name: "Realtek Semiconductor" }
+      - { id: "2382", name: "Quanta Computer" }
+      - { id: "2383", name: "Elite Material" }
+      - { id: "2395", name: "Advantech" }
+      - { id: "2408", name: "Nanya Technology" }
       - { id: "2412", name: "Chunghwa Telecom" }
-      - { id: "3711", name: "ASE Technology" }
+      - { id: "2449", name: "King Yuan Electronics" }
+      - { id: "2454", name: "MediaTek" }
+      - { id: "2603", name: "Evergreen Marine" }
+      - { id: "2615", name: "Wan Hai Lines" }
+      - { id: "2880", name: "Hua Nan FHC" }
+      - { id: "2881", name: "Fubon FHC" }
+      - { id: "2882", name: "Cathay FHC" }
+      - { id: "2883", name: "KGI Financial" }
+      - { id: "2884", name: "E.SUN Financial" }
+      - { id: "2885", name: "Yuanta Financial" }
       - { id: "2886", name: "Mega FHC" }
-      - { id: "6505", name: "Formosa Chemicals" }
+      - { id: "2887", name: "Taishin Financial" }
+      - { id: "2890", name: "SinoPac Financial" }
+      - { id: "2891", name: "CTBC FHC" }
       - { id: "2892", name: "First FHC" }
       - { id: "3008", name: "LARGAN Precision" }
-      - { id: "2382", name: "Quanta Computer" }
-      - { id: "2357", name: "ASUS" }
+      - { id: "3017", name: "AVC" }
+      - { id: "3034", name: "Novatek Microelectronics" }
+      - { id: "3037", name: "Unimicron Technology" }
       - { id: "3045", name: "Taiwan Mobile" }
-      - { id: "2603", name: "Evergreen Marine" }
-      - { id: "2880", name: "Hua Nan FHC" }
+      - { id: "3231", name: "Wistron" }
+      - { id: "3653", name: "Jentech Precision" }
+      - { id: "3661", name: "Alchip Technologies" }
+      - { id: "3711", name: "ASE Technology" }
+      - { id: "4904", name: "Far EasTone Telecom" }
+      - { id: "4938", name: "Pegatron" }
+      - { id: "5871", name: "Chailease Holding" }
+      - { id: "5876", name: "Shanghai Commercial Bank" }
+      - { id: "5880", name: "Taiwan Cooperative Financial" }
+      - { id: "6505", name: "Formosa Chemicals" }
+      - { id: "6669", name: "Wiwynn" }
 
   tw_futures:
     instrument: futures
