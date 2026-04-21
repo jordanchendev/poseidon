@@ -77,11 +77,15 @@ class ConfigurableMockStrategy(MockStrategy):
         targets: list[TargetPosition] | None = None,
         *,
         rebalance_day_of_month: int = 15,
+        rebalance_frequency: str = "monthly",
+        rebalance_day_of_week: int = 4,
         stop_loss_pct: float | None = None,
     ):
         super().__init__(targets=targets)
         self.config = SimpleNamespace(
             rebalance_day_of_month=rebalance_day_of_month,
+            rebalance_frequency=rebalance_frequency,
+            rebalance_day_of_week=rebalance_day_of_week,
             stop_loss_pct=stop_loss_pct,
         )
 
@@ -258,6 +262,108 @@ class TestPortfolioBacktester:
         assert result.status == "completed"
         rebalance_days = [entry["date"] for entry in result.rebalance_log]
         assert rebalance_days[:3] == ["2023-01-05", "2023-02-06", "2023-03-06"]
+
+    # --- Phase 73: weekly rebalance tests ---
+
+    def test_weekly_rebalance_dates(self, cost_model, ohlcv_dict):
+        """Weekly rebalance should produce ~13 rebalances over 3 months, mostly on Fridays."""
+        strategy = ConfigurableMockStrategy(
+            targets=[
+                TargetPosition(symbol="2330", weight=0.5, reason="test"),
+                TargetPosition(symbol="2317", weight=0.5, reason="test"),
+            ],
+            rebalance_frequency="weekly",
+            rebalance_day_of_week=4,
+        )
+        backtester = PortfolioBacktester(cost_model=cost_model, initial_capital=1_000_000.0)
+
+        result = backtester.run(
+            strategy=strategy,
+            ohlcv_dict=ohlcv_dict,
+            start_date=date(2023, 1, 2),
+            end_date=date(2023, 3, 31),
+        )
+
+        assert result.status == "completed"
+        assert len(result.rebalance_log) >= 12  # ~13 weeks in 3 months
+        # Most rebalance dates should be Fridays (weekday 4); some may snap backward to Thu
+        friday_count = sum(
+            1 for e in result.rebalance_log
+            if date.fromisoformat(e["date"]).weekday() == 4
+        )
+        assert friday_count >= 10, f"Expected >=10 Fridays, got {friday_count}"
+        # All rebalance dates must be weekdays
+        assert all(
+            date.fromisoformat(e["date"]).weekday() in {0, 1, 2, 3, 4}
+            for e in result.rebalance_log
+        )
+
+    def test_monthly_rebalance_backward_compat(self, cost_model, ohlcv_dict):
+        """Monthly rebalance with day_of_month=5 should produce identical dates as before refactor."""
+        strategy = ConfigurableMockStrategy(
+            targets=[TargetPosition(symbol="2330", weight=0.5, reason="test")],
+            rebalance_day_of_month=5,
+            rebalance_frequency="monthly",
+        )
+        backtester = PortfolioBacktester(cost_model=cost_model)
+
+        result = backtester.run(
+            strategy=strategy,
+            ohlcv_dict=ohlcv_dict,
+            start_date=date(2023, 1, 2),
+            end_date=date(2023, 3, 31),
+        )
+
+        assert result.status == "completed"
+        rebalance_days = [entry["date"] for entry in result.rebalance_log]
+        # Identical to test_flat_rebalance_day_of_month_is_respected
+        assert rebalance_days[:3] == ["2023-01-05", "2023-02-06", "2023-03-06"]
+
+    def test_generate_rebalance_dates_weekly_produces_fridays(self, cost_model):
+        """Direct unit test: weekly frequency should produce every Friday in range."""
+        backtester = PortfolioBacktester(cost_model=cost_model)
+        dates = backtester._generate_rebalance_dates(
+            start_date=date(2023, 1, 2),
+            end_date=date(2023, 1, 31),
+            frequency="weekly",
+            day_of_week=4,
+        )
+        # January 2023 has Fridays on: 6, 13, 20, 27
+        assert dates == [date(2023, 1, 6), date(2023, 1, 13), date(2023, 1, 20), date(2023, 1, 27)]
+
+    def test_generate_rebalance_dates_monthly_unchanged(self, cost_model):
+        """Direct unit test: monthly frequency produces same dates as old _generate_monthly_dates."""
+        backtester = PortfolioBacktester(cost_model=cost_model)
+        dates = backtester._generate_rebalance_dates(
+            start_date=date(2023, 1, 1),
+            end_date=date(2023, 3, 31),
+            frequency="monthly",
+            day_of_month=15,
+        )
+        assert dates == [date(2023, 1, 15), date(2023, 2, 15), date(2023, 3, 15)]
+
+    def test_generate_rebalance_dates_invalid_frequency(self, cost_model):
+        """Invalid frequency should raise ValueError."""
+        backtester = PortfolioBacktester(cost_model=cost_model)
+        with pytest.raises(ValueError, match="Unsupported rebalance frequency"):
+            backtester._generate_rebalance_dates(
+                start_date=date(2023, 1, 1),
+                end_date=date(2023, 3, 31),
+                frequency="daily",
+            )
+
+    def test_generate_rebalance_dates_weekly_wednesday(self, cost_model):
+        """Weekly frequency with day_of_week=2 (Wednesday) should produce Wednesdays."""
+        backtester = PortfolioBacktester(cost_model=cost_model)
+        dates = backtester._generate_rebalance_dates(
+            start_date=date(2023, 1, 2),
+            end_date=date(2023, 1, 31),
+            frequency="weekly",
+            day_of_week=2,
+        )
+        # January 2023 has Wednesdays on: 4, 11, 18, 25
+        assert dates == [date(2023, 1, 4), date(2023, 1, 11), date(2023, 1, 18), date(2023, 1, 25)]
+        assert all(d.weekday() == 2 for d in dates)
 
     def test_stop_loss_pct_triggers_exit_between_rebalances(self, cost_model):
         """Configured stop loss should liquidate holdings on daily mark-to-market breach."""
