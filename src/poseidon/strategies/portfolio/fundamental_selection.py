@@ -23,12 +23,25 @@ from pydantic import BaseModel
 from poseidon.data.remote_repository import RemoteDataRepository
 from poseidon.strategies.portfolio.base import PortfolioStrategy
 from poseidon.strategies.portfolio.registry import register_portfolio_strategy
-from poseidon.strategies.portfolio.schemas import TargetPosition
+from poseidon.strategies.portfolio.schemas import Holding, TargetPosition
 
 logger = logging.getLogger(__name__)
 
 
 # --- Pydantic config models (per D-04) ---
+
+
+class HoldUntilCondition(BaseModel):
+    """Single hold_until exit condition (D-03)."""
+
+    type: str  # "revenue_yoy_positive" | "score_above_threshold" | "max_holding_days"
+    value: float | None = None  # threshold or max days
+
+
+class HoldUntilConfig(BaseModel):
+    """Configuration for hold_until exit conditions (D-03)."""
+
+    conditions: list[HoldUntilCondition] = []
 
 
 class ScoringWeightConfig(BaseModel):
@@ -59,6 +72,9 @@ class FundamentalSelectionConfig(BaseModel):
     rebalance_frequency: str = "monthly"
     rebalance_day_of_month: int = 15  # D-07
     publication_lag_days: int = 10  # D-07
+
+    # Phase 72: hold_until exit conditions
+    hold_until: HoldUntilConfig | None = None
 
 
 # --- Allocator ---
@@ -440,3 +456,65 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
             )
             < 0.01
         )
+
+    # --- Phase 72: hold_until exit condition evaluation ---
+
+    def check_hold_until(self, symbol: str, as_of: date, holding: Holding) -> bool:
+        """Check if all hold_until conditions are still met for a position.
+
+        Returns True if position should be kept, False if should be exited.
+        Missing data -> True (D-07: don't sell on missing data).
+        All conditions use AND logic (D-03): any condition failed -> exit.
+        """
+        cfg = self.config
+        if cfg.hold_until is None:
+            return True  # no hold_until configured -> always hold (backward compat)
+
+        for condition in cfg.hold_until.conditions:
+            if condition.type == "revenue_yoy_positive":
+                if not self._check_revenue_yoy(symbol, as_of):
+                    return False
+            elif condition.type == "score_above_threshold":
+                pass  # reserved for future (RESEARCH.md open question #2)
+            elif condition.type == "max_holding_days":
+                if condition.value is not None and holding.entry_date is not None:
+                    days_held = (as_of - holding.entry_date.date()).days
+                    if days_held > int(condition.value):
+                        return False
+
+        return True  # all conditions met
+
+    def _check_revenue_yoy(self, symbol: str, as_of: date) -> bool:
+        """Revenue YoY > 0 check with publication lag and missing data handling (D-05/D-06/D-07).
+
+        Uses per-symbol monthly cache to avoid redundant Thalassa API calls in backtest.
+        """
+        cfg = self.config
+        lagged = as_of - timedelta(days=cfg.publication_lag_days)
+        cache_key = (symbol, lagged.year, lagged.month)
+
+        if not hasattr(self, "_revenue_cache"):
+            self._revenue_cache: dict[tuple, bool | None] = {}
+
+        if cache_key in self._revenue_cache:
+            cached = self._revenue_cache[cache_key]
+            return cached if cached is not None else True
+
+        rev = self._repo.read_monthly_revenue(symbol, as_of_date=lagged.isoformat())
+        if rev.empty:
+            self._revenue_cache[cache_key] = None  # None = missing -> hold
+            return True  # D-07: missing data -> hold
+
+        yoy_col = "monthly_rev_yoy" if "monthly_rev_yoy" in rev.columns else "revenue_yoy"
+        if yoy_col not in rev.columns:
+            self._revenue_cache[cache_key] = None
+            return True  # no YoY column -> hold
+
+        val = rev.iloc[-1].get(yoy_col)
+        if pd.isna(val):
+            self._revenue_cache[cache_key] = None
+            return True  # NaN -> hold
+
+        result = float(val) > 0
+        self._revenue_cache[cache_key] = result
+        return result
