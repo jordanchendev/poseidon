@@ -161,14 +161,34 @@ class PortfolioBacktester:
 
         # Step 4: Daily loop
         for d in all_dates:
+            # Step 4a: Stop-loss exits (existing)
             cash, current_holdings, stop_loss_trades = self._apply_stop_losses(
                 cash, current_holdings, d, ohlcv_dict,
             )
             trades.extend(stop_loss_trades)
 
+            # Step 4b: Hold_until exits (Phase 72 D-11: after stop_loss, before rebalance)
+            cash, current_holdings, hold_until_trades = self._apply_hold_until_exits(
+                cash, current_holdings, d, ohlcv_dict, strategy,
+            )
+            trades.extend(hold_until_trades)
+
             # Rebalance on rebalance dates
             if d in rebalance_date_set:
                 targets = strategy.select_stocks(universe_df=pd.DataFrame(), as_of=d)
+
+                # Phase 72 D-04/D-13: retain hold_until valid positions not in new targets
+                if hasattr(strategy, "check_hold_until") and current_holdings:
+                    target_symbols = {t.symbol for t in targets}
+                    for sym, h in list(current_holdings.items()):
+                        if sym not in target_symbols and strategy.check_hold_until(sym, d, h):
+                            # Retain position with current weight (avoid unnecessary adjust trades)
+                            targets.append(TargetPosition(
+                                symbol=sym,
+                                weight=h.weight,
+                                reason="hold_until_retained",
+                                side=h.side,
+                            ))
 
                 orders = self.rebalancer.rebalance(targets, current_holdings)
 
@@ -484,6 +504,51 @@ class PortfolioBacktester:
                 "shares": holding.shares,
                 "proceeds": proceeds,
                 "reason": "stop_loss",
+            })
+            del holdings[symbol]
+
+        return cash, holdings, trade_records
+
+    def _apply_hold_until_exits(
+        self,
+        cash: float,
+        holdings: dict[str, Holding],
+        d: date,
+        ohlcv_dict: dict[str, pd.DataFrame],
+        strategy: PortfolioStrategy,
+    ) -> tuple[float, dict[str, Holding], list[dict]]:
+        """Exit holdings whose hold_until conditions are no longer met (D-02/D-09)."""
+        trade_records: list[dict] = []
+
+        # Duck-typing: only check if strategy supports hold_until (D-12: don't modify ABC)
+        if not hasattr(strategy, "check_hold_until"):
+            return cash, holdings, trade_records
+
+        for symbol, holding in list(holdings.items()):
+            if holding.shares is None or holding.shares <= 0:
+                continue
+
+            # Ask strategy whether to continue holding
+            if strategy.check_hold_until(symbol, d, holding):
+                continue  # conditions still met, keep holding
+
+            # Hold_until condition failed -> exit at close price (D-09)
+            price = self._get_close_price(ohlcv_dict.get(symbol, pd.DataFrame()), d)
+            if price is None:
+                continue
+
+            proceeds = holding.shares * price * (
+                1 - self.cost_model.sell_commission_rate - self.cost_model.tax_rate
+            )
+            cash += proceeds
+            trade_records.append({
+                "symbol": symbol,
+                "action": "sell",
+                "date": d.isoformat(),
+                "price": price,
+                "shares": holding.shares,
+                "proceeds": proceeds,
+                "reason": "hold_until_exit",
             })
             del holdings[symbol]
 
