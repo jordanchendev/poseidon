@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Strategy Pivot
 status: In progress
-stopped_at: Phase 72 code complete — awaiting stormtrooper validation checkpoint
-last_updated: "2026-04-21T02:47:49.203Z"
+stopped_at: Phase 72 complete — hold_until mechanism verified on stormtrooper (Sharpe 0.82, 138 revenue exits, mechanism works but needs tuning)
+last_updated: "2026-04-21T03:08:06.700Z"
 progress:
   total_phases: 6
   completed_phases: 5
@@ -84,7 +84,7 @@ Plan: 4 of 4 (complete)
 
 ## Last Session
 
-- **Stopped at:** Phase 72 code complete — awaiting stormtrooper validation checkpoint
+- **Stopped at:** Phase 72 complete — hold_until mechanism verified on stormtrooper (Sharpe 0.82, 138 revenue exits, mechanism works but needs tuning)
 - **Resume file:** .planning/phases/72-signal-driven-entry-exit-strategy-hold-until-revenue-trigger/72-03-SUMMARY.md
 - **Next step:** Phase 16 planning (Portfolio VaR Engine)
 
