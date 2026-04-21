@@ -66,6 +66,7 @@ class AllocationConfig(BaseModel):
 class RebalanceConfig(BaseModel):
     frequency: str = "monthly"
     day_of_month: int = 15
+    day_of_week: int = 4  # 0=Mon..4=Fri, only used when frequency=weekly
     publication_lag_days: int = 10
 
 

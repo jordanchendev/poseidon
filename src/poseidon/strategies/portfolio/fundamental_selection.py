@@ -18,7 +18,7 @@ import logging
 from datetime import date, datetime, time, timedelta
 
 import pandas as pd
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from poseidon.data.remote_repository import RemoteDataRepository
 from poseidon.strategies.portfolio.base import PortfolioStrategy
@@ -70,8 +70,16 @@ class FundamentalSelectionConfig(BaseModel):
 
     # Rebalance parameters
     rebalance_frequency: str = "monthly"
+    rebalance_day_of_week: int = 4  # 0=Mon..4=Fri, only used when frequency=weekly (D-06)
     rebalance_day_of_month: int = 15  # D-07
     publication_lag_days: int = 10  # D-07
+
+    @field_validator("rebalance_day_of_week")
+    @classmethod
+    def _validate_day_of_week(cls, v: int) -> int:
+        if not (0 <= v <= 4):
+            raise ValueError("rebalance_day_of_week must be 0-4 (Mon-Fri)")
+        return v
 
     # Phase 72: hold_until exit conditions
     hold_until: HoldUntilConfig | None = None
