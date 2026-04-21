@@ -18,3 +18,10 @@ stop_loss_pct: 0.10
 rebalance_frequency: monthly
 rebalance_day_of_month: 15
 publication_lag_days: 10
+
+# Phase 72: hold_until exit conditions (D-03)
+hold_until:
+  conditions:
+    - type: revenue_yoy_positive
+    - type: max_holding_days
+      value: 180
