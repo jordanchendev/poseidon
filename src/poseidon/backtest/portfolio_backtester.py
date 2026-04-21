@@ -1,10 +1,11 @@
-"""PortfolioBacktester -- monthly rebalance backtest engine for PortfolioStrategy.
+"""PortfolioBacktester -- configurable-frequency rebalance backtest engine for PortfolioStrategy.
 
-Runs a monthly rebalance simulation over multiple symbols with daily mark-to-market.
+Runs a configurable rebalance simulation (monthly or weekly) over multiple symbols
+with daily mark-to-market.
 Strategy-agnostic: accepts ANY PortfolioStrategy subclass via select_stocks() interface.
 
 Pipeline:
-1. Generate monthly rebalance dates
+1. Generate rebalance dates based on frequency config (monthly/weekly)
 2. For each trading day: mark-to-market all holdings
 3. On rebalance dates: call strategy.select_stocks() -> rebalancer.rebalance() -> execute orders
 4. Compute metrics from equity curve via compute_metrics()
@@ -40,11 +41,12 @@ class PortfolioBacktestResult:
 
 
 class PortfolioBacktester:
-    """Monthly rebalance backtest engine for PortfolioStrategy subclasses.
+    """Configurable-frequency rebalance backtest engine for PortfolioStrategy subclasses.
 
     Accepts any PortfolioStrategy via select_stocks() interface.
     Uses PortfolioRebalancer for differential order generation.
     Applies CostModel fees on each buy/sell.
+    Supports monthly (default) and weekly rebalance frequencies.
     """
 
     def __init__(
@@ -98,20 +100,25 @@ class PortfolioBacktester:
         start_date: date,
         end_date: date,
     ) -> PortfolioBacktestResult:
-        """Core monthly rebalance loop with daily mark-to-market.
+        """Core rebalance loop (monthly or weekly) with daily mark-to-market.
 
         Steps:
-        1. Generate monthly rebalance dates
+        1. Generate rebalance dates based on frequency config
         2. Collect all unique trading dates from ohlcv_dict
         3. For each trading day:
            - If rebalance date: select stocks -> rebalance -> execute orders
            - Daily mark-to-market: compute NAV
         4. Build equity series, compute metrics
         """
-        # Step 1: Generate monthly rebalance dates
+        # Step 1: Generate rebalance dates based on frequency config
         day_of_month = self._resolve_rebalance_day_of_month(strategy)
+        frequency = self._resolve_rebalance_frequency(strategy)
+        day_of_week = self._resolve_rebalance_day_of_week(strategy)
         strategy_stop_loss_pct = self._resolve_stop_loss_pct(strategy)
-        rebalance_dates = self._generate_monthly_dates(start_date, end_date, day_of_month)
+        rebalance_dates = self._generate_rebalance_dates(
+            start_date, end_date, frequency=frequency,
+            day_of_month=day_of_month, day_of_week=day_of_week,
+        )
 
         # Step 2: Collect all unique trading dates from ohlcv_dict
         all_dates_set: set[date] = set()
@@ -141,16 +148,24 @@ class PortfolioBacktester:
             )
 
         # Snap rebalance dates to nearest trading day
+        backward_snap = (frequency == "weekly")  # D-05: weekly snaps to prior trading day
         rebalance_date_set = set()
         for rd in rebalance_dates:
-            # Find the closest trading day >= rd
-            snapped = None
-            for td in all_dates:
-                if td >= rd:
-                    snapped = td
-                    break
-            if snapped is not None:
-                rebalance_date_set.add(snapped)
+            if backward_snap:
+                # D-05: snap to nearest prior trading day
+                candidates = [td for td in all_dates if td <= rd]
+                if candidates:
+                    snap_date = candidates[-1]  # last trading day <= rd
+                else:
+                    snap_date = all_dates[0]  # edge case: use earliest
+            else:
+                # Existing forward snap for monthly (unchanged)
+                candidates = [td for td in all_dates if td >= rd]
+                if candidates:
+                    snap_date = candidates[0]
+                else:
+                    snap_date = all_dates[-1]
+            rebalance_date_set.add(snap_date)
 
         # Step 3: Initialize state
         cash = self.initial_capital
@@ -453,6 +468,28 @@ class PortfolioBacktester:
             return int(config.rebalance.day_of_month)
         return 15
 
+    def _resolve_rebalance_frequency(self, strategy: PortfolioStrategy) -> str:
+        """Resolve rebalance frequency from either flat or nested portfolio config."""
+        if not hasattr(strategy, "config"):
+            return "monthly"
+        config = strategy.config
+        if hasattr(config, "rebalance_frequency"):
+            return str(config.rebalance_frequency)
+        if hasattr(config, "rebalance") and hasattr(config.rebalance, "frequency"):
+            return str(config.rebalance.frequency)
+        return "monthly"
+
+    def _resolve_rebalance_day_of_week(self, strategy: PortfolioStrategy) -> int:
+        """Resolve rebalance day of week from either flat or nested portfolio config."""
+        if not hasattr(strategy, "config"):
+            return 4
+        config = strategy.config
+        if hasattr(config, "rebalance_day_of_week"):
+            return int(config.rebalance_day_of_week)
+        if hasattr(config, "rebalance") and hasattr(config.rebalance, "day_of_week"):
+            return int(config.rebalance.day_of_week)
+        return 4
+
     def _resolve_stop_loss_pct(self, strategy: PortfolioStrategy) -> float | None:
         """Resolve stop loss from either flat or nested portfolio config."""
         if not hasattr(strategy, "config"):
@@ -554,42 +591,61 @@ class PortfolioBacktester:
 
         return cash, holdings, trade_records
 
-    def _generate_monthly_dates(
+    def _generate_rebalance_dates(
         self,
         start_date: date,
         end_date: date,
+        frequency: str = "monthly",
         day_of_month: int = 15,
+        day_of_week: int = 4,
     ) -> list[date]:
-        """Generate monthly rebalance dates.
-
-        Creates a date at day_of_month for each month between start and end.
-        If day_of_month exceeds month's days, uses last day of month.
+        """Generate rebalance dates for monthly or weekly frequency.
 
         Args:
             start_date: Start of range (inclusive).
             end_date: End of range (inclusive).
-            day_of_month: Day to rebalance on (default 15).
+            frequency: "monthly" or "weekly".
+            day_of_month: Day to rebalance on for monthly (default 15).
+            day_of_week: Day of week for weekly (0=Mon..4=Fri, default 4=Fri).
 
         Returns:
             Sorted list of rebalance dates.
+
+        Raises:
+            ValueError: If frequency is not "monthly" or "weekly".
         """
-        dates: list[date] = []
-        # Generate month starts
-        month_starts = pd.date_range(
-            start=pd.Timestamp(start_date).replace(day=1),
-            end=pd.Timestamp(end_date),
-            freq="MS",
-        )
+        if frequency == "monthly":
+            dates: list[date] = []
+            # Generate month starts
+            month_starts = pd.date_range(
+                start=pd.Timestamp(start_date).replace(day=1),
+                end=pd.Timestamp(end_date),
+                freq="MS",
+            )
 
-        for ms in month_starts:
-            # Compute target day, clamped to month length
-            import calendar
+            for ms in month_starts:
+                # Compute target day, clamped to month length
+                import calendar
 
-            _, max_day = calendar.monthrange(ms.year, ms.month)
-            target_day = min(day_of_month, max_day)
-            target_date = date(ms.year, ms.month, target_day)
+                _, max_day = calendar.monthrange(ms.year, ms.month)
+                target_day = min(day_of_month, max_day)
+                target_date = date(ms.year, ms.month, target_day)
 
-            if start_date <= target_date <= end_date:
-                dates.append(target_date)
+                if start_date <= target_date <= end_date:
+                    dates.append(target_date)
 
-        return sorted(dates)
+            return sorted(dates)
+
+        elif frequency == "weekly":
+            day_names = ["MON", "TUE", "WED", "THU", "FRI"]
+            freq_str = f"W-{day_names[day_of_week]}"
+            weekly_dates = pd.date_range(
+                start=pd.Timestamp(start_date),
+                end=pd.Timestamp(end_date),
+                freq=freq_str,
+            )
+            result = [ts.date() for ts in weekly_dates if start_date <= ts.date() <= end_date]
+            return sorted(result)
+
+        else:
+            raise ValueError(f"Unsupported rebalance frequency: {frequency}")
