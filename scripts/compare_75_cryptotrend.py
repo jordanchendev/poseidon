@@ -61,6 +61,17 @@ REGIME_REDUCTION = 0.5  # D-09: 50% weight reduction in high-vol regime
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _as_of_to_ts(as_of: date | None) -> pd.Timestamp | None:
+    """Convert date to end-of-day naive Timestamp for OHLCV index comparison.
+
+    OHLCV indices are tz-stripped after fetch, so we use naive timestamps.
+    """
+    if as_of is None:
+        return None
+    ts = pd.Timestamp(as_of)
+    return ts + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+
+
 def compute_atr(ohlcv: pd.DataFrame, period: int = 14) -> pd.Series:
     """Compute Average True Range (ATR) from OHLCV DataFrame."""
     high = ohlcv["high"]
@@ -126,9 +137,7 @@ class BacktestCryptoTrend:
 
             # Slice data up to as_of for point-in-time correctness
             if as_of is not None:
-                as_of_ts = pd.Timestamp(as_of)
-                # Include all bars up to end of as_of day
-                as_of_end = as_of_ts + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                as_of_end = _as_of_to_ts(as_of)
                 ohlcv_slice = ohlcv[ohlcv.index <= as_of_end]
             else:
                 ohlcv_slice = ohlcv
@@ -239,8 +248,8 @@ class VolSizingWrapper:
     def _get_atr_at(self, atr_series: pd.Series, as_of: date | None) -> float:
         if as_of is None:
             return float(atr_series.iloc[-1])
-        as_of_ts = pd.Timestamp(as_of)
-        valid = atr_series[atr_series.index <= as_of_ts + pd.Timedelta(days=1)]
+        as_of_end = _as_of_to_ts(as_of)
+        valid = atr_series[atr_series.index <= as_of_end]
         if valid.empty:
             return float(atr_series.iloc[0]) if not atr_series.empty else 0.0
         return float(valid.iloc[-1])
@@ -317,8 +326,8 @@ class RegimeFilterWrapper:
             return 0.0
         if as_of is None:
             return float(labels.iloc[-1])
-        as_of_ts = pd.Timestamp(as_of)
-        valid = labels[labels.index <= as_of_ts + pd.Timedelta(days=1)]
+        as_of_end = _as_of_to_ts(as_of)
+        valid = labels[labels.index <= as_of_end]
         if valid.empty:
             return 0.0
         return float(valid.iloc[-1])
@@ -432,6 +441,13 @@ def run_comparison() -> int:
     if not ohlcv_dict:
         print("ERROR: No OHLCV data loaded. Aborting.")
         return 1
+
+    # Strip timezone from OHLCV indices so PortfolioBacktester can compare
+    # with naive Timestamps (its _get_close_price uses pd.Timestamp(date)).
+    for symbol in list(ohlcv_dict):
+        df = ohlcv_dict[symbol]
+        if hasattr(df.index, "tz") and df.index.tz is not None:
+            ohlcv_dict[symbol] = df.tz_localize(None)
 
     # Step 2: Build base config (same params as live CryptoTrendConfig defaults)
     base_config = CryptoTrendConfig(
