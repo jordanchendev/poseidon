@@ -103,8 +103,14 @@ def compute_rank_ic_with_counts(
         Dict of {feature_name: {ic, n, p_value, sufficient}}.
     """
     results: dict[str, dict] = {}
+
+    # Reset index to avoid duplicate-index issues when pooling
+    # multiple symbols (BTC+ETH have overlapping timestamps).
+    features_reset = features_df.reset_index(drop=True)
+    fwd_reset = forward_returns.reset_index(drop=True)
+
     for column in feature_columns:
-        if column not in features_df.columns:
+        if column not in features_reset.columns:
             results[column] = {
                 "ic": None,
                 "n": 0,
@@ -114,9 +120,8 @@ def compute_rank_ic_with_counts(
             continue
 
         paired = pd.concat(
-            [features_df[column], forward_returns.rename("forward_return")],
+            [features_reset[column], fwd_reset.rename("forward_return")],
             axis=1,
-            join="inner",
         ).dropna()
         n = len(paired)
 
