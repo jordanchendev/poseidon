@@ -500,6 +500,9 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
             cached = self._revenue_cache[cache_key]
             return cached if cached is not None else True
 
+        if self._repo is None:
+            return True  # no repo -> hold (safety)
+
         rev = self._repo.read_monthly_revenue(symbol, as_of_date=lagged.isoformat())
         if rev.empty:
             self._revenue_cache[cache_key] = None  # None = missing -> hold
