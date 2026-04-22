@@ -411,8 +411,10 @@ def run_grid_search_variation(
         combined = _run_combined_window(btc_ohlcv, eth_ohlcv, params, use_cvd)
 
         trial = {
-            "params": {k: v for k, v in params.items()
-                       if k in list(param_grid.keys()) + ["use_cvd_filter"]},
+            "params": {
+                **{k: v for k, v in params.items() if k in param_grid},
+                "use_cvd_filter": use_cvd,
+            },
             "net_sharpe": combined["net_sharpe"],
             "sharpe_ratio": combined["sharpe_ratio"],
             "trade_count": combined["trade_count"],
