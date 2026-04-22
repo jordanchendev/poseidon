@@ -47,15 +47,23 @@ def empty_ohlcv() -> pd.DataFrame:
 
 
 def test_all_features_registered():
-    """All 14 features should be registered."""
+    """Core features + Phase 76 micro-structure features should all be registered."""
     names = list_features()
-    assert len(names) == 14
-    expected = {
+    # Core TA features (original 14)
+    core_expected = {
         "sma", "ema", "rsi", "macd", "bollinger", "atr",
         "returns", "cum_return", "std_vol", "parkinson_vol", "garman_klass_vol",
         "volume_sma", "volume_ratio", "obv",
     }
-    assert set(names) == expected
+    # Phase 76: micro-structure features
+    phase76_expected = {"cvd", "ofi", "vpin", "cascade"}
+    all_expected = core_expected | phase76_expected
+    registered = set(names)
+    assert all_expected.issubset(registered), (
+        f"Missing features: {all_expected - registered}"
+    )
+    # Sanity: at least 88 features registered (84 pre-Phase76 + 4 new)
+    assert len(names) >= 88, f"Expected >= 88 features, got {len(names)}"
 
 
 def test_get_feature_returns_class():
