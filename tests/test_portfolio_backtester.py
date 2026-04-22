@@ -570,6 +570,118 @@ class TestPortfolioBacktester:
         hold_until_sells = [t for t in result.trades if t.get("reason") == "hold_until_exit"]
         assert len(hold_until_sells) == 0
 
+    # --- Phase 74: adj_close tests ---
+
+    def test_compute_nav_uses_adj_close(self, cost_model):
+        """NAV mark-to-market should use adj_close (continuous) not close (discontinuous)."""
+        from poseidon.strategies.portfolio.schemas import Holding
+
+        # Simulate a 1:4 stock split at index 2:
+        # close drops by 4x (raw price), adj_close stays smooth (adjusted)
+        dates = pd.to_datetime(["2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05"])
+        ohlcv = pd.DataFrame(
+            {
+                "open": [400.0, 400.0, 100.0, 101.0],
+                "high": [405.0, 405.0, 105.0, 106.0],
+                "low": [395.0, 395.0, 95.0, 96.0],
+                "close": [400.0, 400.0, 100.0, 101.0],  # raw: drops 4x at split
+                "volume": [1000, 1000, 4000, 4000],
+                "adj_close": [400.0, 400.0, 400.0, 404.0],  # adjusted: continuous
+            },
+            index=dates,
+        )
+        backtester = PortfolioBacktester(cost_model=cost_model, initial_capital=0.0)
+        holdings = {
+            "2330": Holding(
+                symbol="2330", market="tw_stock", weight=1.0,
+                shares=10.0, entry_price=400.0,
+            ),
+        }
+        # On 2023-01-04 (post-split): close=100, adj_close=400
+        nav = backtester._compute_nav(0.0, holdings, date(2023, 1, 4), {"2330": ohlcv})
+        # Should use adj_close (400), not close (100)
+        assert nav == pytest.approx(4000.0, abs=1.0)  # 10 shares * 400
+
+    def test_get_adj_close_price_fallback_to_close(self, cost_model):
+        """_get_adj_close_price should return close when adj_close column is absent."""
+        dates = pd.to_datetime(["2023-01-02", "2023-01-03"])
+        ohlcv = pd.DataFrame(
+            {
+                "open": [100.0, 101.0],
+                "high": [105.0, 106.0],
+                "low": [95.0, 96.0],
+                "close": [100.0, 101.0],
+                "volume": [1000, 1000],
+            },
+            index=dates,
+        )
+        backtester = PortfolioBacktester(cost_model=cost_model)
+        price = backtester._get_adj_close_price(ohlcv, date(2023, 1, 2))
+        assert price == pytest.approx(100.0)
+
+    def test_execute_orders_uses_close_not_adj_close(self, cost_model):
+        """Order fills should use close price, not adj_close (D-12)."""
+        dates = pd.to_datetime(["2023-01-02"])
+        ohlcv = pd.DataFrame(
+            {
+                "open": [100.0],
+                "high": [105.0],
+                "low": [95.0],
+                "close": [100.0],
+                "volume": [1000],
+                "adj_close": [200.0],  # deliberately different
+            },
+            index=dates,
+        )
+        strategy = ConfigurableMockStrategy(
+            targets=[TargetPosition(symbol="TEST", weight=1.0, reason="test")],
+            rebalance_day_of_month=2,
+        )
+        backtester = PortfolioBacktester(cost_model=cost_model, initial_capital=1_000_000.0)
+        result = backtester.run(
+            strategy=strategy,
+            ohlcv_dict={"TEST": ohlcv},
+            start_date=date(2023, 1, 2),
+            end_date=date(2023, 1, 2),
+        )
+        assert result.status == "completed"
+        buy_trades = [t for t in result.trades if t["action"] == "buy"]
+        assert len(buy_trades) == 1
+        # Fill price should be close (100), not adj_close (200)
+        assert buy_trades[0]["price"] == pytest.approx(100.0)
+
+    def test_stop_loss_uses_adj_close(self, cost_model):
+        """Stop loss check should use adj_close, not close (D-09)."""
+        # adj_close stays above stop level (entry * 0.9 = 90), close drops below
+        dates = pd.to_datetime(["2023-01-02", "2023-01-03", "2023-01-04"])
+        ohlcv = pd.DataFrame(
+            {
+                "open": [100.0, 100.0, 85.0],
+                "high": [105.0, 105.0, 90.0],
+                "low": [95.0, 95.0, 80.0],
+                "close": [100.0, 100.0, 85.0],  # close drops below stop (90)
+                "volume": [1000, 1000, 1000],
+                "adj_close": [100.0, 100.0, 95.0],  # adj_close stays above stop (90)
+            },
+            index=dates,
+        )
+        strategy = ConfigurableMockStrategy(
+            targets=[TargetPosition(symbol="2330", weight=1.0, reason="test")],
+            rebalance_day_of_month=2,
+            stop_loss_pct=0.10,  # stop at 90
+        )
+        backtester = PortfolioBacktester(cost_model=cost_model, initial_capital=100_000.0)
+        result = backtester.run(
+            strategy=strategy,
+            ohlcv_dict={"2330": ohlcv},
+            start_date=date(2023, 1, 2),
+            end_date=date(2023, 1, 4),
+        )
+        assert result.status == "completed"
+        # adj_close=95 > stop_price=90, so NO stop-loss should fire
+        stop_sells = [t for t in result.trades if t.get("reason") == "stop_loss"]
+        assert len(stop_sells) == 0, f"Stop loss should NOT fire (adj_close=95 > stop=90), but got: {stop_sells}"
+
     def test_stop_loss_priority_over_hold_until(self, cost_model):
         """Stop loss should fire before hold_until; same symbol should not get double-sold."""
         # Price drops below 10% stop on 2023-01-06

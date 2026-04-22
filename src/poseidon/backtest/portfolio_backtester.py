@@ -256,12 +256,15 @@ class PortfolioBacktester:
         d: date,
         ohlcv_dict: dict[str, pd.DataFrame],
     ) -> float:
-        """Compute net asset value: cash + market value of all holdings."""
+        """Compute net asset value: cash + market value of all holdings.
+
+        Uses adj_close for mark-to-market valuation (D-09).
+        """
         nav = cash
         for sym, h in holdings.items():
             if sym not in ohlcv_dict or h.shares is None:
                 continue
-            price = self._get_close_price(ohlcv_dict[sym], d)
+            price = self._get_adj_close_price(ohlcv_dict[sym], d)
             if price is not None:
                 nav += h.shares * price
         return nav
@@ -270,6 +273,7 @@ class PortfolioBacktester:
         """Get close price for a date from an OHLCV DataFrame.
 
         Handles both Timestamp and date indices.
+        Used for order execution fill prices (D-12: close for fills).
         """
         # Try direct lookup with Timestamp
         ts = pd.Timestamp(d)
@@ -281,6 +285,29 @@ class PortfolioBacktester:
             idx_date = idx.date() if isinstance(idx, (pd.Timestamp, datetime)) else idx
             if idx_date == d:
                 return float(df.loc[idx, "close"])
+
+        return None
+
+    def _get_adj_close_price(self, df: pd.DataFrame, d: date) -> float | None:
+        """Get adj_close for return calculation, falling back to close (D-09).
+
+        Used for mark-to-market, stop loss, and hold_until exit valuation.
+        Order execution fills use _get_close_price instead (D-12).
+        """
+        ts = pd.Timestamp(d)
+        if ts in df.index:
+            row = df.loc[ts]
+            if "adj_close" in df.columns and pd.notna(row.get("adj_close")):
+                return float(row["adj_close"])
+            return float(row["close"])
+
+        for idx in df.index:
+            idx_date = idx.date() if isinstance(idx, (pd.Timestamp, datetime)) else idx
+            if idx_date == d:
+                row = df.loc[idx]
+                if "adj_close" in df.columns and pd.notna(row.get("adj_close")):
+                    return float(row["adj_close"])
+                return float(row["close"])
 
         return None
 
@@ -509,7 +536,7 @@ class PortfolioBacktester:
         d: date,
         ohlcv_dict: dict[str, pd.DataFrame],
     ) -> tuple[float, dict[str, Holding], list[dict]]:
-        """Liquidate holdings when daily close breaches configured stop loss."""
+        """Liquidate holdings when daily adj_close breaches configured stop loss (D-09)."""
         trade_records: list[dict] = []
 
         for symbol, holding in list(holdings.items()):
@@ -521,7 +548,7 @@ class PortfolioBacktester:
             ):
                 continue
 
-            price = self._get_close_price(ohlcv_dict.get(symbol, pd.DataFrame()), d)
+            price = self._get_adj_close_price(ohlcv_dict.get(symbol, pd.DataFrame()), d)
             if price is None:
                 continue
 
@@ -569,8 +596,8 @@ class PortfolioBacktester:
             if strategy.check_hold_until(symbol, d, holding):
                 continue  # conditions still met, keep holding
 
-            # Hold_until condition failed -> exit at close price (D-09)
-            price = self._get_close_price(ohlcv_dict.get(symbol, pd.DataFrame()), d)
+            # Hold_until condition failed -> exit at adj_close price (D-09)
+            price = self._get_adj_close_price(ohlcv_dict.get(symbol, pd.DataFrame()), d)
             if price is None:
                 continue
 
