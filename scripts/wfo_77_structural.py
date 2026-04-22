@@ -155,8 +155,9 @@ def _load_ohlcv(repo: RemoteDataRepository, symbol: str) -> pd.DataFrame:
         return df
 
     # Strip timezone if present (BacktestRunner expects naive timestamps)
+    # Convert to UTC first to avoid silent timestamp corruption for non-UTC sources
     if hasattr(df.index, "tz") and df.index.tz is not None:
-        df = df.tz_localize(None)
+        df = df.tz_convert("UTC").tz_localize(None)
 
     # Filter to post-ETF only (>= 2024-01-01)
     post_etf = pd.Timestamp("2024-01-01")
