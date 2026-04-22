@@ -80,7 +80,7 @@ FUNDAMENTAL_NAMES = frozenset({"pe_ratio", "pb_ratio", "revenue_mom", "revenue_y
 TRADE_STRUCTURE_NAMES = frozenset({"avg_trade_size", "turnover_ratio"})
 FUNDING_NAMES = frozenset({"funding_rate_daily", "funding_rate_extreme"})
 MARGIN_NAMES = frozenset({"margin_buy_ratio", "margin_sell_ratio", "margin_utilization_rate"})
-OI_NAMES = frozenset({"oi_change", "oi_buildup", "oi_cost_basis"})
+OI_NAMES = frozenset({"oi_change", "oi_buildup", "oi_cost_basis", "cascade"})
 PREDICTION_NAMES = frozenset({"qlib_prediction"})
 MACRO_PREFIX = "macro_"
 
@@ -226,6 +226,14 @@ def get_r2_specs(symbol: str, market: str) -> list[tuple[str, dict]]:
             ("adx", {"period": 14}),
             ("trend_strength", {"long_period": 100, "atr_period": 14}),
             ("hour_of_day", {}),
+            # Phase 76: IC-validated micro-structure features
+            # CVD: IC=-0.027 (h=1), p=0.006, n=10052 -- PASS
+            ("cvd", {"period": 20}),
+            # Cascade: IC=0.034 (h=20), p=0.0006, n=10054 -- PASS
+            # (oi_data injected via OI_NAMES registration)
+            ("cascade", {"threshold": 2}),
+            # OFI: IC=0.008 -- FAIL (below 0.015 threshold, research-only)
+            # VPIN: IC=0.004 -- FAIL (below 0.015 threshold, research-only)
         ])
 
     # Macro indices for ALL markets

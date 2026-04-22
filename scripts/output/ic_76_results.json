@@ -1,0 +1,203 @@
+{
+  "phase": 76,
+  "interval": "4h",
+  "gate_threshold": {
+    "ic": 0.015,
+    "min_events": 100
+  },
+  "results": {
+    "cvd_change_20": {
+      "ic": -0.027184708920131487,
+      "n": 10052,
+      "p_value": 0.006416635957873799,
+      "sufficient": true,
+      "pass_gate": true
+    },
+    "ofi_5": {
+      "ic": 0.007581834306502954,
+      "n": 10082,
+      "p_value": 0.44653631420892287,
+      "sufficient": true,
+      "pass_gate": false
+    },
+    "vpin_50": {
+      "ic": -0.004358571659487015,
+      "n": 9910,
+      "p_value": 0.664405573697282,
+      "sufficient": true,
+      "pass_gate": false
+    },
+    "cascade_signal": {
+      "ic": 0.021010369467129943,
+      "n": 10074,
+      "p_value": 0.0349646526220302,
+      "sufficient": true,
+      "pass_gate": true
+    },
+    "cascade_direction": {
+      "ic": 0.03430673220721171,
+      "n": 10054,
+      "p_value": 0.0005806221000634861,
+      "sufficient": true,
+      "pass_gate": true
+    }
+  },
+  "horizon_detail": {
+    "cvd_change_20": {
+      "1": {
+        "ic": -0.027184708920131487,
+        "n": 10052,
+        "p_value": 0.006416635957873799,
+        "sufficient": true
+      },
+      "5": {
+        "ic": -0.023761549877359123,
+        "n": 10044,
+        "p_value": 0.01724619511718842,
+        "sufficient": true
+      },
+      "10": {
+        "ic": -0.010642412939631585,
+        "n": 10034,
+        "p_value": 0.28644789920208164,
+        "sufficient": true
+      },
+      "20": {
+        "ic": -0.02326361387480272,
+        "n": 10014,
+        "p_value": 0.019911376611099794,
+        "sufficient": true
+      }
+    },
+    "ofi_5": {
+      "1": {
+        "ic": 0.007581834306502954,
+        "n": 10082,
+        "p_value": 0.44653631420892287,
+        "sufficient": true
+      },
+      "5": {
+        "ic": -0.007529753393397064,
+        "n": 10074,
+        "p_value": 0.4498451900208618,
+        "sufficient": true
+      },
+      "10": {
+        "ic": 0.0037969321584043537,
+        "n": 10064,
+        "p_value": 0.7033068708327929,
+        "sufficient": true
+      },
+      "20": {
+        "ic": 0.0004311964466149621,
+        "n": 10044,
+        "p_value": 0.9655349090477767,
+        "sufficient": true
+      }
+    },
+    "vpin_50": {
+      "1": {
+        "ic": -0.001963878978974204,
+        "n": 9948,
+        "p_value": 0.8447258524969172,
+        "sufficient": true
+      },
+      "5": {
+        "ic": 0.0020277172466360094,
+        "n": 9940,
+        "p_value": 0.8398094059134308,
+        "sufficient": true
+      },
+      "10": {
+        "ic": 0.0026326294587871108,
+        "n": 9930,
+        "p_value": 0.7930845064133673,
+        "sufficient": true
+      },
+      "20": {
+        "ic": -0.004358571659487015,
+        "n": 9910,
+        "p_value": 0.664405573697282,
+        "sufficient": true
+      }
+    },
+    "cascade_signal": {
+      "1": {
+        "ic": 0.009915892593217887,
+        "n": 10092,
+        "p_value": 0.31923011662571943,
+        "sufficient": true
+      },
+      "5": {
+        "ic": 0.017523479648271646,
+        "n": 10084,
+        "p_value": 0.07847405858776291,
+        "sufficient": true
+      },
+      "10": {
+        "ic": 0.021010369467129943,
+        "n": 10074,
+        "p_value": 0.0349646526220302,
+        "sufficient": true
+      },
+      "20": {
+        "ic": 0.020916588873584295,
+        "n": 10054,
+        "p_value": 0.035969909642283165,
+        "sufficient": true
+      }
+    },
+    "cascade_direction": {
+      "1": {
+        "ic": 0.017631688784638465,
+        "n": 10092,
+        "p_value": 0.07653091485040821,
+        "sufficient": true
+      },
+      "5": {
+        "ic": 0.022609462656907067,
+        "n": 10084,
+        "p_value": 0.02318143768434921,
+        "sufficient": true
+      },
+      "10": {
+        "ic": 0.018959685120396422,
+        "n": 10074,
+        "p_value": 0.05705286981678492,
+        "sufficient": true
+      },
+      "20": {
+        "ic": 0.03430673220721171,
+        "n": 10054,
+        "p_value": 0.0005806221000634861,
+        "sufficient": true
+      }
+    }
+  },
+  "features_passing_gate": [
+    "cvd_change_20",
+    "cascade_signal",
+    "cascade_direction"
+  ],
+  "features_failing_gate": [
+    "ofi_5",
+    "vpin_50"
+  ],
+  "metadata": {
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT"
+    ],
+    "market": "crypto_perp",
+    "horizons": [
+      1,
+      5,
+      10,
+      20
+    ],
+    "start_date": "2024-01-01",
+    "end_date": "2026-04-21",
+    "min_observations": 100,
+    "timestamp": "2026-04-22T03:25:33.039555Z"
+  }
+}
