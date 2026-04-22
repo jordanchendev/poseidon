@@ -248,17 +248,10 @@ def _compute_net_sharpe(metrics: dict, trades: list, total_bars: int) -> float:
     # Funding cost as annualized drag
     funding_cost_annual = FUNDING_RATE_ANNUAL * time_in_market_fraction
 
-    # Convert funding cost to Sharpe-equivalent deduction
-    ann_return = metrics.get("annualized_return", 0.0)
-    if abs(gross_sharpe) > 0.001 and abs(ann_return) > 0.001:
-        ann_vol = ann_return / gross_sharpe
-        funding_sharpe_deduction = (
-            funding_cost_annual / abs(ann_vol) if abs(ann_vol) > 0.001 else 0.0
-        )
-    else:
-        funding_sharpe_deduction = funding_cost_annual
-
-    return gross_sharpe - funding_sharpe_deduction
+    # Direct subtraction of annualised funding cost from gross Sharpe (D-24).
+    # This matches the canonical formula validated in test_net_sharpe_deduction:
+    #   net_sharpe = gross_sharpe - (funding_rate_annual * time_in_market_fraction)
+    return gross_sharpe - funding_cost_annual
 
 
 def _run_single_backtest(

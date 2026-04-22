@@ -185,22 +185,10 @@ def _compute_funding_deduction(
     # Funding cost as annualized drag
     funding_cost_annual = FUNDING_RATE_ANNUAL * time_in_market_fraction
 
-    # Convert funding cost to Sharpe-equivalent deduction
-    # net_sharpe = gross_sharpe - (funding_cost / annualized_vol)
-    # But since Sharpe = mean_return / vol, and funding reduces mean_return:
-    # net_sharpe ~= gross_sharpe - funding_cost_annual / vol
-    # For a simpler and more conservative approach:
-    # Estimate vol from Sharpe and return: vol = ann_return / sharpe
-    ann_return = metrics.get("annualized_return", 0.0)
-    if abs(gross_sharpe) > 0.001 and abs(ann_return) > 0.001:
-        ann_vol = ann_return / gross_sharpe
-        funding_sharpe_deduction = (
-            funding_cost_annual / abs(ann_vol) if abs(ann_vol) > 0.001 else 0.0
-        )
-    else:
-        # Fallback: direct subtraction (conservative)
-        funding_sharpe_deduction = funding_cost_annual
-
+    # Direct subtraction of annualised funding cost from gross Sharpe (D-24).
+    # This matches the canonical formula validated in test_net_sharpe_deduction:
+    #   net_sharpe = gross_sharpe - (funding_rate_annual * time_in_market_fraction)
+    funding_sharpe_deduction = funding_cost_annual
     net_sharpe = gross_sharpe - funding_sharpe_deduction
 
     return {
