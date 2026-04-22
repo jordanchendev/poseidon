@@ -312,7 +312,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                         # Holding change = latest - previous (percentage point change)
                         fh_change_raw[symbol] = float(fh_series.iloc[-1] - fh_series.iloc[-2])
 
-        # Momentum dimension (Phase 71 D-01/D-03): 3M/6M/12M simple returns from OHLCV close
+        # Momentum dimension (Phase 71 D-01/D-03): 3M/6M/12M simple returns from adj_close
         momentum_raw: dict[str, float] = {}
         if cfg.scoring.momentum_weight > 0:
             for symbol in universe_symbols:
@@ -325,7 +325,9 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                     )
                     if ohlcv.empty or len(ohlcv) < 252:
                         continue
-                    close = ohlcv["close"]
+                    # Phase 74 D-10: use adj_close for momentum (split/dividend adjusted)
+                    price_col = "adj_close" if "adj_close" in ohlcv.columns else "close"
+                    close = ohlcv[price_col]
                     rets = []
                     for days in [63, 126, 252]:
                         if len(close) > days:

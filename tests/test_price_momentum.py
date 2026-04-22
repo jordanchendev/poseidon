@@ -90,3 +90,52 @@ class TestPriceMomentum:
         assert is_nonprice_spec("momentum_3m") is False
         assert is_nonprice_spec("momentum_6m") is False
         assert is_nonprice_spec("momentum_12m") is False
+
+    # --- Phase 74: adj_close tests ---
+
+    def test_momentum_3m_uses_adj_close(self):
+        """Momentum should use adj_close when available (Phase 74 D-10)."""
+        n_rows = 200
+        dates = pd.date_range("2020-01-01", periods=n_rows, freq="B")
+        # close has a 4x drop at midpoint (simulating split), adj_close is smooth
+        close_vals = np.ones(n_rows) * 400.0
+        close_vals[100:] = 100.0  # raw close drops 4x at index 100
+
+        adj_close_vals = np.ones(n_rows) * 400.0  # adjusted: no discontinuity
+        adj_close_vals = 400.0 * (1 + 0.001) ** np.arange(n_rows)  # smooth uptrend
+
+        ohlcv = pd.DataFrame({
+            "time": dates,
+            "open": close_vals * 0.99,
+            "high": close_vals * 1.01,
+            "low": close_vals * 0.98,
+            "close": close_vals,
+            "volume": np.random.randint(1000, 10000, n_rows),
+            "adj_close": adj_close_vals,
+        }).set_index("time")
+
+        feat = PriceMomentum3M()
+        result = feat.compute(ohlcv)
+
+        # Check at index 120 (post-split): should use adj_close, not close
+        idx = 120
+        expected = adj_close_vals[idx] / adj_close_vals[idx - _DAYS_3M] - 1.0
+        assert abs(result.iloc[idx] - expected) < 1e-10
+
+        # If it used close, the result would be 100/400 - 1 = -0.75 (wrong)
+        wrong_val = close_vals[idx] / close_vals[idx - _DAYS_3M] - 1.0
+        assert abs(result.iloc[idx] - wrong_val) > 0.1  # must NOT match close-based calc
+
+    def test_momentum_3m_fallback_to_close(self):
+        """Momentum should fall back to close when adj_close is absent (backward compat)."""
+        ohlcv = _make_ohlcv(n_rows=200, growth=0.002)
+        # _make_ohlcv does NOT include adj_close column
+        assert "adj_close" not in ohlcv.columns
+
+        feat = PriceMomentum3M()
+        result = feat.compute(ohlcv)
+
+        # Should compute from close (same as before Phase 74)
+        idx = 100
+        expected = ohlcv["close"].iloc[idx] / ohlcv["close"].iloc[idx - _DAYS_3M] - 1.0
+        assert abs(result.iloc[idx] - expected) < 1e-10

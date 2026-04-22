@@ -103,14 +103,16 @@ CONFIGS = [
 
 
 def compute_benchmark_metrics(ohlcv_0050: pd.DataFrame, start: date, end: date) -> dict:
-    """Compute buy-and-hold metrics for 0050 ETF (D-10)."""
+    """Compute buy-and-hold metrics for 0050 ETF (D-10, D-11: adj_close)."""
     if ohlcv_0050.empty:
         return {"label": "0050 buy-and-hold benchmark", "error": "No 0050 OHLCV data"}
-    start_price = float(ohlcv_0050.iloc[0]["close"])
-    end_price = float(ohlcv_0050.iloc[-1]["close"])
+    # Phase 74 D-11: use adj_close for benchmark (split/dividend adjusted)
+    price_col = "adj_close" if "adj_close" in ohlcv_0050.columns else "close"
+    start_price = float(ohlcv_0050.iloc[0][price_col])
+    end_price = float(ohlcv_0050.iloc[-1][price_col])
     total_return = end_price / start_price - 1
 
-    equity = ohlcv_0050["close"] / start_price * 1_000_000
+    equity = ohlcv_0050[price_col] / start_price * 1_000_000
     returns = equity.pct_change().dropna()
     sharpe = float((returns.mean() / returns.std()) * np.sqrt(252)) if returns.std() > 0 else 0.0
 
@@ -195,10 +197,11 @@ def run_comparison() -> int:
     if benchmark_ohlcv.empty:
         print("WARNING: No 0050 OHLCV data -- benchmark metrics will be empty")
 
-    # Build benchmark equity series for excess metrics
+    # Build benchmark equity series for excess metrics (Phase 74 D-11: adj_close)
     if not benchmark_ohlcv.empty:
-        bench_start_price = float(benchmark_ohlcv.iloc[0]["close"])
-        benchmark_equity = benchmark_ohlcv["close"] / bench_start_price * 1_000_000
+        price_col = "adj_close" if "adj_close" in benchmark_ohlcv.columns else "close"
+        bench_start_price = float(benchmark_ohlcv.iloc[0][price_col])
+        benchmark_equity = benchmark_ohlcv[price_col] / bench_start_price * 1_000_000
         benchmark_equity.name = "benchmark_equity"
     else:
         benchmark_equity = pd.Series(dtype=float, name="benchmark_equity")
