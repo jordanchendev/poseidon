@@ -291,8 +291,9 @@ class PortfolioBacktester:
     def _get_adj_close_price(self, df: pd.DataFrame, d: date) -> float | None:
         """Get adj_close for return calculation, falling back to close (D-09).
 
-        Used for mark-to-market, stop loss, and hold_until exit valuation.
-        Order execution fills use _get_close_price instead (D-12).
+        Used for ALL backtester price lookups: mark-to-market, order fills,
+        stop loss, and hold_until exit valuation. Unified to avoid mixing
+        raw close (lower) with adj_close (higher) which inflates returns.
         """
         ts = pd.Timestamp(d)
         if ts in df.index:
@@ -349,7 +350,7 @@ class PortfolioBacktester:
             if h.shares is None or h.shares <= 0:
                 continue
 
-            price = self._get_close_price(ohlcv_dict.get(order.symbol, pd.DataFrame()), d)
+            price = self._get_adj_close_price(ohlcv_dict.get(order.symbol, pd.DataFrame()), d)
             if price is None:
                 continue
 
@@ -371,7 +372,7 @@ class PortfolioBacktester:
         # Execute buys
         for order in buy_orders:
             if order.symbol in ohlcv_dict:
-                price = self._get_close_price(ohlcv_dict[order.symbol], d)
+                price = self._get_adj_close_price(ohlcv_dict[order.symbol], d)
             else:
                 price = None
 
@@ -416,7 +417,7 @@ class PortfolioBacktester:
             if order.symbol not in ohlcv_dict:
                 continue
 
-            price = self._get_close_price(ohlcv_dict[order.symbol], d)
+            price = self._get_adj_close_price(ohlcv_dict[order.symbol], d)
             if price is None or price <= 0:
                 continue
 
