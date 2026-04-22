@@ -1,0 +1,1432 @@
+{
+  "phase": "77",
+  "plan": "03",
+  "description": "WFE + grid search + random baseline",
+  "period": {
+    "start": "2024-01-01",
+    "end": "2026-04-22"
+  },
+  "wf_config": {
+    "train_bars": 1080,
+    "test_bars": 540,
+    "step_bars": 540,
+    "min_trades_oos": 30,
+    "min_wfe": 0.6
+  },
+  "variations": {
+    "v1_2cond": {
+      "best_params": {
+        "atr_multiplier": 0.5,
+        "stop_atr_multiplier": 2.0,
+        "use_cvd_filter": false
+      },
+      "net_sharpe": 0.0,
+      "sharpe_ratio": 0.0,
+      "trade_count": 0,
+      "trials": [
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 4.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 4.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 4.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 4.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        }
+      ]
+    },
+    "v2_3cond": {
+      "best_params": {
+        "atr_multiplier": 0.5,
+        "stop_atr_multiplier": 2.0,
+        "use_cvd_filter": true
+      },
+      "net_sharpe": 0.0,
+      "sharpe_ratio": 0.0,
+      "trade_count": 0,
+      "trials": [
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 2.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 3.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 4.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 5.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 2.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 3.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 4.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 5.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 2.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 3.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 4.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 5.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 2.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 3.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 4.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 5.0,
+            "use_cvd_filter": true
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        }
+      ]
+    },
+    "v3_threshold": {
+      "best_params": {
+        "atr_multiplier": 0.5,
+        "stop_atr_multiplier": 2.0,
+        "oiwap_threshold": 2.0,
+        "use_cvd_filter": false
+      },
+      "net_sharpe": 0.0,
+      "sharpe_ratio": 0.0,
+      "trade_count": 0,
+      "trials": [
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 0.5,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.0,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 1.5,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 2.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 3.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 4.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 2.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 3.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 5.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        },
+        {
+          "params": {
+            "atr_multiplier": 2.0,
+            "stop_atr_multiplier": 5.0,
+            "oiwap_threshold": 7.0,
+            "use_cvd_filter": false
+          },
+          "net_sharpe": 0.0,
+          "sharpe_ratio": 0.0,
+          "trade_count": 0,
+          "max_drawdown": 0.0,
+          "annualized_return": 0.0
+        }
+      ]
+    }
+  },
+  "best_variation": "v1_2cond",
+  "best_params": {
+    "atr_multiplier": 0.5,
+    "stop_atr_multiplier": 2.0,
+    "use_cvd_filter": false
+  },
+  "wfe": {
+    "windows": [
+      {
+        "window": 0,
+        "train_range": [
+          0,
+          1080
+        ],
+        "test_range": [
+          1080,
+          1620
+        ],
+        "is_ann_return": 0.0,
+        "is_net_sharpe": 0.0,
+        "is_trade_count": 0,
+        "oos_ann_return": 0.0,
+        "oos_net_sharpe": 0.0,
+        "oos_trade_count": 0,
+        "oos_max_drawdown": 0.0,
+        "wfe": 0.0
+      },
+      {
+        "window": 1,
+        "train_range": [
+          540,
+          1620
+        ],
+        "test_range": [
+          1620,
+          2160
+        ],
+        "is_ann_return": 0.0,
+        "is_net_sharpe": 0.0,
+        "is_trade_count": 0,
+        "oos_ann_return": 0.0,
+        "oos_net_sharpe": 0.0,
+        "oos_trade_count": 0,
+        "oos_max_drawdown": 0.0,
+        "wfe": 0.0
+      },
+      {
+        "window": 2,
+        "train_range": [
+          1080,
+          2160
+        ],
+        "test_range": [
+          2160,
+          2700
+        ],
+        "is_ann_return": 0.0,
+        "is_net_sharpe": 0.0,
+        "is_trade_count": 0,
+        "oos_ann_return": 0.0,
+        "oos_net_sharpe": 0.0,
+        "oos_trade_count": 0,
+        "oos_max_drawdown": 0.0,
+        "wfe": 0.0
+      },
+      {
+        "window": 3,
+        "train_range": [
+          1620,
+          2700
+        ],
+        "test_range": [
+          2700,
+          3240
+        ],
+        "is_ann_return": 0.0,
+        "is_net_sharpe": 0.0,
+        "is_trade_count": 0,
+        "oos_ann_return": 0.0,
+        "oos_net_sharpe": 0.0,
+        "oos_trade_count": 0,
+        "oos_max_drawdown": 0.0,
+        "wfe": 0.0
+      },
+      {
+        "window": 4,
+        "train_range": [
+          2160,
+          3240
+        ],
+        "test_range": [
+          3240,
+          3780
+        ],
+        "is_ann_return": 0.0,
+        "is_net_sharpe": 0.0,
+        "is_trade_count": 0,
+        "oos_ann_return": 0.0,
+        "oos_net_sharpe": 0.0,
+        "oos_trade_count": 0,
+        "oos_max_drawdown": 0.0,
+        "wfe": 0.0
+      },
+      {
+        "window": 5,
+        "train_range": [
+          2700,
+          3780
+        ],
+        "test_range": [
+          3780,
+          4320
+        ],
+        "is_ann_return": 0.0,
+        "is_net_sharpe": 0.0,
+        "is_trade_count": 0,
+        "oos_ann_return": 0.0,
+        "oos_net_sharpe": 0.0,
+        "oos_trade_count": 0,
+        "oos_max_drawdown": 0.0,
+        "wfe": 0.0
+      },
+      {
+        "window": 6,
+        "train_range": [
+          3240,
+          4320
+        ],
+        "test_range": [
+          4320,
+          4860
+        ],
+        "is_ann_return": 0.0,
+        "is_net_sharpe": 0.0,
+        "is_trade_count": 0,
+        "oos_ann_return": 0.0,
+        "oos_net_sharpe": 0.0,
+        "oos_trade_count": 0,
+        "oos_max_drawdown": 0.0,
+        "wfe": 0.0
+      }
+    ],
+    "avg_wfe": 0.0,
+    "degradation": 1.0,
+    "passes_gate": false,
+    "avg_oos_net_sharpe": 0.0,
+    "total_oos_signals": 0
+  },
+  "random_baseline": {
+    "median": 0.0,
+    "p25": 0.0,
+    "p75": 0.0,
+    "count": 100,
+    "entry_probability": 0.01
+  },
+  "gate_check": {
+    "beats_random": false,
+    "oos_sharpe_positive": false,
+    "total_signals": 0,
+    "wfe_degradation_below_40pct": false
+  }
+}
