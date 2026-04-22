@@ -1,0 +1,22 @@
+strategy: structural_reversal
+name: "Structural Reversal 4H"
+market: crypto_perp
+interval: "4h"
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+
+# Entry conditions
+oiwap_threshold: 3.0       # D-07: primary gate
+use_cvd_filter: false      # D-09: set true for 3-condition variant
+
+# Limit price derivation (D-12, D-13)
+atr_multiplier: 1.0        # optimizable: 0.5 / 1.0 / 1.5 / 2.0
+
+# Exit parameters (D-16, D-17, D-18)
+stop_atr_multiplier: 3.0   # optimizable: 2.0 / 3.0 / 4.0 / 5.0
+max_holding_bars: 40        # ~7 days at 4H
+order_expiry_bars: 6        # 24h at 4H
+
+# Risk (D-25)
+max_drawdown: 0.20          # 20% portfolio-level hard stop
