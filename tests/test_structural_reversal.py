@@ -525,3 +525,85 @@ class TestEdgeCases:
         features = make_structural_features()
         signals = strategy.evaluate(features)
         assert signals[0].confidence == 0.5
+
+
+# ---------------------------------------------------------------------------
+# D-27: MaxDD Integration Verification
+# ---------------------------------------------------------------------------
+
+
+class TestMaxDDIntegration:
+    """D-27: Verify strategy-internal MaxDD enforcement in backtest context.
+
+    Simulates a mini backtest loop where set_equity() is called before
+    each evaluate(), confirming MaxDD gate correctly suppresses new entries
+    while allowing existing position management.
+    """
+
+    def test_maxdd_suppresses_entries_in_backtest_loop(self):
+        """Simulate backtest loop: equity drop -> suppress -> recovery -> allow."""
+        strategy = _make_strategy(max_drawdown=0.20)
+        features = make_structural_features()
+
+        # Step 1: Initial equity, baseline works
+        strategy.set_equity(100000)
+        signals = strategy.evaluate(features)
+        assert len(signals) == 1, "Baseline: should emit entry signal"
+        assert signals[0].action == SignalAction.LONG
+
+        # Step 2: Simulate drawdown to 21% (79000)
+        strategy.set_equity(79000)
+        signals = strategy.evaluate(features)
+        assert len(signals) == 0, "MaxDD gate active: should suppress entry"
+
+        # Step 3: Partial recovery to 85000 (still 15% from peak=100000)
+        strategy.set_equity(85000)
+        signals = strategy.evaluate(features)
+        assert len(signals) == 1, "DD recovered below 20%: should allow entry"
+        assert signals[0].action == SignalAction.LONG
+
+    def test_maxdd_does_not_block_existing_position_management(self):
+        """When in position and MaxDD breached, HOLD/CLOSE signals still work.
+
+        D-26: Only new entries are blocked, not position management.
+        """
+        strategy = _make_strategy(max_drawdown=0.20, max_holding_bars=40)
+
+        # Set equity to trigger MaxDD
+        strategy.set_equity(100000)
+        strategy.set_equity(79000)  # 21% drawdown
+
+        # Manually put strategy in position near time expiry
+        strategy.on_fill(fill_price=49500.0, side="long", atr=500.0)
+        strategy._bars_in_position = 39  # next evaluate increments to 40
+
+        # Evaluate -- should still emit CLOSE (time expiry) despite MaxDD
+        features = make_structural_features()
+        signals = strategy.evaluate(features)
+        assert len(signals) == 1
+        sig = signals[0]
+        assert sig.action == SignalAction.CLOSE
+        assert sig.metadata["exit_reason"] == "max_holding_bars"
+
+    def test_maxdd_does_not_block_trailing_stop_hold(self):
+        """When in position and MaxDD breached, trailing stop HOLD still works."""
+        strategy = _make_strategy(max_drawdown=0.20, stop_atr_multiplier=3.0)
+
+        # Set equity to trigger MaxDD
+        strategy.set_equity(100000)
+        strategy.set_equity(79000)  # 21% drawdown
+
+        # Put strategy in position
+        strategy.on_fill(fill_price=49500.0, side="long", atr=500.0)
+
+        # Price moved up significantly -> trailing stop should tighten
+        features = make_structural_features(close=52000.0)
+        signals = strategy.evaluate(features)
+
+        # Should emit HOLD with updated_stop_loss despite MaxDD
+        assert len(signals) == 1
+        sig = signals[0]
+        assert sig.action == SignalAction.HOLD
+        assert "updated_stop_loss" in sig.metadata
+        # New SL = 52000 - 3*500 = 50500
+        assert sig.metadata["updated_stop_loss"] == 50500.0
