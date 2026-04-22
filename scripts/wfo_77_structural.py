@@ -332,7 +332,8 @@ def _run_combined_window(
             index=pd.DatetimeIndex([t for t, _, _ in eth_eq]),
         )
         combined = pd.concat([btc_series, eth_series], axis=1)
-        combined = combined.ffill().bfill()
+        combined = combined.ffill()
+        combined = combined.dropna(how="all")
         combined_equity = combined.sum(axis=1)
 
         combined_metrics = compute_metrics(
@@ -595,7 +596,8 @@ def run_random_baseline(
                     [eq for _, eq, _ in eth_portfolio.equity_curve],
                     index=pd.DatetimeIndex([t for t, _, _ in eth_portfolio.equity_curve]),
                 )
-                combined = pd.concat([btc_eq, eth_eq], axis=1).ffill().bfill()
+                combined = pd.concat([btc_eq, eth_eq], axis=1).ffill()
+                combined = combined.dropna(how="all")
                 combined_equity = combined.sum(axis=1)
                 combined_metrics = compute_metrics(
                     combined_equity, all_trades, bars_per_year=BARS_PER_YEAR

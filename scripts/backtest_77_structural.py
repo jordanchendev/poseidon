@@ -242,7 +242,9 @@ def _combine_equity_curves(
 
     # Align all equity series on the union of timestamps
     combined = pd.concat(equity_series_list, axis=1)
-    combined = combined.ffill().bfill()
+    combined = combined.ffill()
+    # Drop leading NaN rows where neither symbol has data yet
+    combined = combined.dropna(how="all")
     # Sum across symbols (combined portfolio equity)
     combined_equity = combined.sum(axis=1)
     return combined_equity
