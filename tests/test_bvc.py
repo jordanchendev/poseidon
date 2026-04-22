@@ -83,7 +83,7 @@ def test_volume_conservation(sample_ohlcv: pd.DataFrame):
     result = classify_volume(sample_ohlcv)
     total = result["buy_volume"] + result["sell_volume"]
     pd.testing.assert_series_equal(
-        total, sample_ohlcv["volume"], check_names=False, atol=1e-10
+        total, sample_ohlcv["volume"].astype(float), check_names=False, atol=1e-10
     )
 
 
