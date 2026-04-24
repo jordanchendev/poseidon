@@ -12,6 +12,7 @@ from poseidon.strategies.model_strategy import ModelStrategy
 from poseidon.strategies.regime_router import RegimeRouter
 from poseidon.strategies.rule_strategy import RuleStrategy
 from poseidon.strategies.structural_reversal import StructuralReversalStrategy
+from poseidon.strategies.tw_futures.trend_following import TrendFollowingStrategy
 from poseidon.strategies.voting_strategy import VotingStrategy
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "RuleStrategy",
     "StrategyType",
     "StructuralReversalStrategy",
+    "TrendFollowingStrategy",
     "VotingStrategy",
 ]
