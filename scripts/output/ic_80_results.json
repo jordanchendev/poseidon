@@ -1,0 +1,1056 @@
+{
+  "results_post_etf": {
+    "h1": {
+      "funding_rate_daily": {
+        "ic": 0.010790719692388942,
+        "n": 10128,
+        "p_value": 0.2775437483322601,
+        "sufficient": true
+      },
+      "funding_zscore": {
+        "ic": 0.010666534255474236,
+        "n": 9258,
+        "p_value": 0.3047932917938613,
+        "sufficient": true
+      },
+      "funding_extreme": {
+        "ic": -0.0009300857715442278,
+        "n": 10128,
+        "p_value": 0.9254345306362454,
+        "sufficient": true
+      },
+      "funding_direction": {
+        "ic": 6.796533897572449e-05,
+        "n": 10128,
+        "p_value": 0.9945432707830444,
+        "sufficient": true
+      },
+      "oi_change_pct": {
+        "ic": -0.003438939601029314,
+        "n": 488,
+        "p_value": 0.9395988528888489,
+        "sufficient": true
+      },
+      "oi_change_zscore_20": {
+        "ic": 0.00012705859355910667,
+        "n": 360,
+        "p_value": 0.9980831773848489,
+        "sufficient": true
+      },
+      "oi_buildup_24": {
+        "ic": -0.09040064720062539,
+        "n": 442,
+        "p_value": 0.05755490178303693,
+        "sufficient": true
+      },
+      "oi_price_divergence_24": {
+        "ic": -0.07258864650218483,
+        "n": 442,
+        "p_value": 0.12756414631174356,
+        "sufficient": true
+      },
+      "oiwap_168": {
+        "ic": -0.035312306517013226,
+        "n": 487,
+        "p_value": 0.4368552033597679,
+        "sufficient": true
+      },
+      "oiwap_distance_168": {
+        "ic": -0.05559576450773557,
+        "n": 487,
+        "p_value": 0.22069350891798387,
+        "sufficient": true
+      },
+      "wick_ratio_lower": {
+        "ic": -0.022143510635216333,
+        "n": 10128,
+        "p_value": 0.025848789371622764,
+        "sufficient": true
+      },
+      "wick_ratio_total": {
+        "ic": 0.005330034242753858,
+        "n": 10128,
+        "p_value": 0.5917226216530754,
+        "sufficient": true
+      },
+      "wick_ratio_upper": {
+        "ic": 0.02886818935287581,
+        "n": 10128,
+        "p_value": 0.0036668707929565793,
+        "sufficient": true
+      },
+      "range_expansion_14": {
+        "ic": 0.02791852622769588,
+        "n": 10102,
+        "p_value": 0.005012106220763046,
+        "sufficient": true
+      },
+      "body_ratio": {
+        "ic": -0.005329909748758404,
+        "n": 10128,
+        "p_value": 0.5917312781541486,
+        "sufficient": true
+      },
+      "volume_sma_20": {
+        "ic": 0.011665565303933388,
+        "n": 10090,
+        "p_value": 0.24132195519725488,
+        "sufficient": true
+      },
+      "volume_ratio_20": {
+        "ic": 0.03112449386006049,
+        "n": 10090,
+        "p_value": 0.0017672360310861718,
+        "sufficient": true
+      },
+      "obv": {
+        "ic": -0.0013783828256942517,
+        "n": 10126,
+        "p_value": 0.8896975797464745,
+        "sufficient": true
+      },
+      "cvd_change_20": {
+        "ic": -0.027855753251653872,
+        "n": 10088,
+        "p_value": 0.0051419919174304635,
+        "sufficient": true
+      },
+      "cascade_signal": {
+        "ic": 0.01139900725662601,
+        "n": 10128,
+        "p_value": 0.251353284742161,
+        "sufficient": true
+      },
+      "cascade_direction": {
+        "ic": 0.013595462801783193,
+        "n": 10128,
+        "p_value": 0.17127637718619856,
+        "sufficient": true
+      }
+    },
+    "h5": {
+      "funding_rate_daily": {
+        "ic": 0.008695669126109867,
+        "n": 10120,
+        "p_value": 0.3817495504042268,
+        "sufficient": true
+      },
+      "funding_zscore": {
+        "ic": -0.0004503395417137592,
+        "n": 9250,
+        "p_value": 0.9654572743727092,
+        "sufficient": true
+      },
+      "funding_extreme": {
+        "ic": 0.021669094969475205,
+        "n": 10120,
+        "p_value": 0.029267926857715523,
+        "sufficient": true
+      },
+      "funding_direction": {
+        "ic": -0.00916986792538004,
+        "n": 10120,
+        "p_value": 0.3563315724330732,
+        "sufficient": true
+      },
+      "oi_change_pct": {
+        "ic": -0.03148277833359353,
+        "n": 480,
+        "p_value": 0.4913738689747755,
+        "sufficient": true
+      },
+      "oi_change_zscore_20": {
+        "ic": -0.040942959950822665,
+        "n": 360,
+        "p_value": 0.43865812370291446,
+        "sufficient": true
+      },
+      "oi_buildup_24": {
+        "ic": -0.09247998592943325,
+        "n": 434,
+        "p_value": 0.054207371714245195,
+        "sufficient": true
+      },
+      "oi_price_divergence_24": {
+        "ic": -0.10182441798119468,
+        "n": 434,
+        "p_value": 0.03394949399649675,
+        "sufficient": true
+      },
+      "oiwap_168": {
+        "ic": -0.06366137837456214,
+        "n": 479,
+        "p_value": 0.1642047148182313,
+        "sufficient": true
+      },
+      "oiwap_distance_168": {
+        "ic": -0.10458171292020386,
+        "n": 479,
+        "p_value": 0.02206873015170702,
+        "sufficient": true
+      },
+      "wick_ratio_lower": {
+        "ic": 0.002028691244059244,
+        "n": 10120,
+        "p_value": 0.8383084015328414,
+        "sufficient": true
+      },
+      "wick_ratio_total": {
+        "ic": 0.0005178186301187971,
+        "n": 10120,
+        "p_value": 0.9584608083963528,
+        "sufficient": true
+      },
+      "wick_ratio_upper": {
+        "ic": -0.000766090684522729,
+        "n": 10120,
+        "p_value": 0.9385775291022392,
+        "sufficient": true
+      },
+      "range_expansion_14": {
+        "ic": 0.00970303278042132,
+        "n": 10094,
+        "p_value": 0.329681678796529,
+        "sufficient": true
+      },
+      "body_ratio": {
+        "ic": -0.0005177808968794411,
+        "n": 10120,
+        "p_value": 0.9584638326053233,
+        "sufficient": true
+      },
+      "volume_sma_20": {
+        "ic": 0.007927447021638402,
+        "n": 10082,
+        "p_value": 0.42608892341290144,
+        "sufficient": true
+      },
+      "volume_ratio_20": {
+        "ic": 0.026880357156347272,
+        "n": 10082,
+        "p_value": 0.00695090667356742,
+        "sufficient": true
+      },
+      "obv": {
+        "ic": 0.0025023963635314632,
+        "n": 10118,
+        "p_value": 0.801287632161604,
+        "sufficient": true
+      },
+      "cvd_change_20": {
+        "ic": -0.02569011714367658,
+        "n": 10080,
+        "p_value": 0.009897981956734636,
+        "sufficient": true
+      },
+      "cascade_signal": {
+        "ic": 0.01772481789974599,
+        "n": 10120,
+        "p_value": 0.07458552748860682,
+        "sufficient": true
+      },
+      "cascade_direction": {
+        "ic": 0.01705894135016595,
+        "n": 10120,
+        "p_value": 0.08615987347649158,
+        "sufficient": true
+      }
+    },
+    "h10": {
+      "funding_rate_daily": {
+        "ic": -0.0028016861282987053,
+        "n": 10110,
+        "p_value": 0.7781957574439541,
+        "sufficient": true
+      },
+      "funding_zscore": {
+        "ic": -0.0038922142087816068,
+        "n": 9240,
+        "p_value": 0.7083376751439159,
+        "sufficient": true
+      },
+      "funding_extreme": {
+        "ic": 0.009829828351622152,
+        "n": 10110,
+        "p_value": 0.3230174378501343,
+        "sufficient": true
+      },
+      "funding_direction": {
+        "ic": -0.02122679046129112,
+        "n": 10110,
+        "p_value": 0.03281836232604798,
+        "sufficient": true
+      },
+      "oi_change_pct": {
+        "ic": -0.10838354562482863,
+        "n": 470,
+        "p_value": 0.01875476311639828,
+        "sufficient": true
+      },
+      "oi_change_zscore_20": {
+        "ic": -0.09432325866711933,
+        "n": 360,
+        "p_value": 0.07386949118669638,
+        "sufficient": true
+      },
+      "oi_buildup_24": {
+        "ic": -0.022877029031740586,
+        "n": 424,
+        "p_value": 0.6385424332800439,
+        "sufficient": true
+      },
+      "oi_price_divergence_24": {
+        "ic": 0.03180579497957352,
+        "n": 424,
+        "p_value": 0.5136574786529131,
+        "sufficient": true
+      },
+      "oiwap_168": {
+        "ic": -0.15022224062962622,
+        "n": 469,
+        "p_value": 0.001101896728776525,
+        "sufficient": true
+      },
+      "oiwap_distance_168": {
+        "ic": -0.08589423951944279,
+        "n": 469,
+        "p_value": 0.06307917765658329,
+        "sufficient": true
+      },
+      "wick_ratio_lower": {
+        "ic": -0.009376895471842032,
+        "n": 10110,
+        "p_value": 0.3458155045594669,
+        "sufficient": true
+      },
+      "wick_ratio_total": {
+        "ic": -0.004312750961030462,
+        "n": 10110,
+        "p_value": 0.6645869098545619,
+        "sufficient": true
+      },
+      "wick_ratio_upper": {
+        "ic": 0.008348265423540948,
+        "n": 10110,
+        "p_value": 0.4012918023985426,
+        "sufficient": true
+      },
+      "range_expansion_14": {
+        "ic": 0.014654064122079402,
+        "n": 10084,
+        "p_value": 0.141170857958291,
+        "sufficient": true
+      },
+      "body_ratio": {
+        "ic": 0.004312828225152561,
+        "n": 10110,
+        "p_value": 0.6645812680039945,
+        "sufficient": true
+      },
+      "volume_sma_20": {
+        "ic": 0.011902004069895085,
+        "n": 10072,
+        "p_value": 0.23233268287810419,
+        "sufficient": true
+      },
+      "volume_ratio_20": {
+        "ic": 0.02586815959781188,
+        "n": 10072,
+        "p_value": 0.00942545974064347,
+        "sufficient": true
+      },
+      "obv": {
+        "ic": -0.0036013701552494452,
+        "n": 10108,
+        "p_value": 0.7173274240016678,
+        "sufficient": true
+      },
+      "cvd_change_20": {
+        "ic": -0.011411697245062304,
+        "n": 10070,
+        "p_value": 0.25218762718298987,
+        "sufficient": true
+      },
+      "cascade_signal": {
+        "ic": 0.02697114002528615,
+        "n": 10110,
+        "p_value": 0.006686536544321499,
+        "sufficient": true
+      },
+      "cascade_direction": {
+        "ic": 0.011858688959863285,
+        "n": 10110,
+        "p_value": 0.23315624744049304,
+        "sufficient": true
+      }
+    },
+    "h20": {
+      "funding_rate_daily": {
+        "ic": -0.008850373723735086,
+        "n": 10090,
+        "p_value": 0.37404694353888573,
+        "sufficient": true
+      },
+      "funding_zscore": {
+        "ic": -0.009025185588098793,
+        "n": 9220,
+        "p_value": 0.3862127543730232,
+        "sufficient": true
+      },
+      "funding_extreme": {
+        "ic": 0.01518842195496094,
+        "n": 10090,
+        "p_value": 0.12711931892373668,
+        "sufficient": true
+      },
+      "funding_direction": {
+        "ic": -0.04375277204582755,
+        "n": 10090,
+        "p_value": 1.100191757413959e-05,
+        "sufficient": true
+      },
+      "oi_change_pct": {
+        "ic": -0.056360465928909635,
+        "n": 450,
+        "p_value": 0.23278740636517037,
+        "sufficient": true
+      },
+      "oi_change_zscore_20": {
+        "ic": -0.018491912231833062,
+        "n": 360,
+        "p_value": 0.7265870799354234,
+        "sufficient": true
+      },
+      "oi_buildup_24": {
+        "ic": -0.054689676034974745,
+        "n": 404,
+        "p_value": 0.272788388406764,
+        "sufficient": true
+      },
+      "oi_price_divergence_24": {
+        "ic": -0.06921793916364341,
+        "n": 404,
+        "p_value": 0.16494878838733346,
+        "sufficient": true
+      },
+      "oiwap_168": {
+        "ic": -0.22507236460500887,
+        "n": 449,
+        "p_value": 1.451081837426019e-06,
+        "sufficient": true
+      },
+      "oiwap_distance_168": {
+        "ic": -0.09714683745449011,
+        "n": 449,
+        "p_value": 0.03962513644187794,
+        "sufficient": true
+      },
+      "wick_ratio_lower": {
+        "ic": -0.009094997076769085,
+        "n": 10090,
+        "p_value": 0.36098541918513605,
+        "sufficient": true
+      },
+      "wick_ratio_total": {
+        "ic": -0.0012770761191860528,
+        "n": 10090,
+        "p_value": 0.8979391291123684,
+        "sufficient": true
+      },
+      "wick_ratio_upper": {
+        "ic": 0.004428412670318172,
+        "n": 10090,
+        "p_value": 0.6564811639253781,
+        "sufficient": true
+      },
+      "range_expansion_14": {
+        "ic": 0.015270654203870604,
+        "n": 10064,
+        "p_value": 0.12556111782341353,
+        "sufficient": true
+      },
+      "body_ratio": {
+        "ic": 0.001277153265431593,
+        "n": 10090,
+        "p_value": 0.897932997503411,
+        "sufficient": true
+      },
+      "volume_sma_20": {
+        "ic": 0.017678299252025048,
+        "n": 10052,
+        "p_value": 0.07633840192024698,
+        "sufficient": true
+      },
+      "volume_ratio_20": {
+        "ic": 0.010904256233869862,
+        "n": 10052,
+        "p_value": 0.2743263690328307,
+        "sufficient": true
+      },
+      "obv": {
+        "ic": -0.005768667081342741,
+        "n": 10088,
+        "p_value": 0.5623649180160417,
+        "sufficient": true
+      },
+      "cvd_change_20": {
+        "ic": -0.023334991924382608,
+        "n": 10050,
+        "p_value": 0.01931716153115834,
+        "sufficient": true
+      },
+      "cascade_signal": {
+        "ic": 0.024498546489212812,
+        "n": 10090,
+        "p_value": 0.013858175120565093,
+        "sufficient": true
+      },
+      "cascade_direction": {
+        "ic": 0.027152432730204238,
+        "n": 10090,
+        "p_value": 0.006379702592502694,
+        "sufficient": true
+      }
+    }
+  },
+  "results_pre_etf": {
+    "h1": {
+      "funding_rate_daily": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "funding_zscore": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "funding_extreme": {
+        "ic": null,
+        "n": 18415,
+        "p_value": null,
+        "sufficient": true
+      },
+      "funding_direction": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_change_pct": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_change_zscore_20": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_buildup_24": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_price_divergence_24": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oiwap_168": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oiwap_distance_168": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "wick_ratio_lower": {
+        "ic": -0.032246333761309025,
+        "n": 18414,
+        "p_value": 1.2053920580868303e-05,
+        "sufficient": true
+      },
+      "wick_ratio_total": {
+        "ic": -0.013823620293374424,
+        "n": 18414,
+        "p_value": 0.06068239192390042,
+        "sufficient": true
+      },
+      "wick_ratio_upper": {
+        "ic": 0.015871404649376378,
+        "n": 18414,
+        "p_value": 0.03126289074779921,
+        "sufficient": true
+      },
+      "range_expansion_14": {
+        "ic": 0.012416640982866285,
+        "n": 18389,
+        "p_value": 0.09223539941890248,
+        "sufficient": true
+      },
+      "body_ratio": {
+        "ic": 0.013766422816083977,
+        "n": 18415,
+        "p_value": 0.061749367422702275,
+        "sufficient": true
+      },
+      "volume_sma_20": {
+        "ic": 0.012692124726290948,
+        "n": 18377,
+        "p_value": 0.08533806039931262,
+        "sufficient": true
+      },
+      "volume_ratio_20": {
+        "ic": 0.009965690719203925,
+        "n": 18377,
+        "p_value": 0.1767247259084954,
+        "sufficient": true
+      },
+      "obv": {
+        "ic": 0.005843563694075804,
+        "n": 18413,
+        "p_value": 0.4278404875388729,
+        "sufficient": true
+      },
+      "cvd_change_20": {
+        "ic": 0.0022207880992836373,
+        "n": 18375,
+        "p_value": 0.7634011285702815,
+        "sufficient": true
+      },
+      "cascade_signal": {
+        "ic": -0.004827565091430663,
+        "n": 18415,
+        "p_value": 0.512423329166912,
+        "sufficient": true
+      },
+      "cascade_direction": {
+        "ic": null,
+        "n": 18415,
+        "p_value": null,
+        "sufficient": true
+      }
+    },
+    "h5": {
+      "funding_rate_daily": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "funding_zscore": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "funding_extreme": {
+        "ic": null,
+        "n": 18407,
+        "p_value": null,
+        "sufficient": true
+      },
+      "funding_direction": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_change_pct": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_change_zscore_20": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_buildup_24": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_price_divergence_24": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oiwap_168": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oiwap_distance_168": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "wick_ratio_lower": {
+        "ic": -0.03707518662184591,
+        "n": 18406,
+        "p_value": 4.870864429793435e-07,
+        "sufficient": true
+      },
+      "wick_ratio_total": {
+        "ic": -0.04187405718900706,
+        "n": 18406,
+        "p_value": 1.3227007527731044e-08,
+        "sufficient": true
+      },
+      "wick_ratio_upper": {
+        "ic": -0.015419678062043208,
+        "n": 18406,
+        "p_value": 0.036442972746933484,
+        "sufficient": true
+      },
+      "range_expansion_14": {
+        "ic": 0.023993486345399103,
+        "n": 18381,
+        "p_value": 0.0011411271387532036,
+        "sufficient": true
+      },
+      "body_ratio": {
+        "ic": 0.04173974557931111,
+        "n": 18407,
+        "p_value": 1.4701121556858185e-08,
+        "sufficient": true
+      },
+      "volume_sma_20": {
+        "ic": 0.022235660172366382,
+        "n": 18369,
+        "p_value": 0.0025798310658330377,
+        "sufficient": true
+      },
+      "volume_ratio_20": {
+        "ic": 0.020365495315686207,
+        "n": 18369,
+        "p_value": 0.005775175130592975,
+        "sufficient": true
+      },
+      "obv": {
+        "ic": 0.012014884647209702,
+        "n": 18405,
+        "p_value": 0.10311253213738415,
+        "sufficient": true
+      },
+      "cvd_change_20": {
+        "ic": -0.004423900304780719,
+        "n": 18367,
+        "p_value": 0.548832310840737,
+        "sufficient": true
+      },
+      "cascade_signal": {
+        "ic": -0.003923464797984079,
+        "n": 18407,
+        "p_value": 0.5945377725865089,
+        "sufficient": true
+      },
+      "cascade_direction": {
+        "ic": null,
+        "n": 18407,
+        "p_value": null,
+        "sufficient": true
+      }
+    },
+    "h10": {
+      "funding_rate_daily": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "funding_zscore": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "funding_extreme": {
+        "ic": null,
+        "n": 18397,
+        "p_value": null,
+        "sufficient": true
+      },
+      "funding_direction": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_change_pct": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_change_zscore_20": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_buildup_24": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_price_divergence_24": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oiwap_168": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oiwap_distance_168": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "wick_ratio_lower": {
+        "ic": -0.017325247009040447,
+        "n": 18396,
+        "p_value": 0.018779864834856868,
+        "sufficient": true
+      },
+      "wick_ratio_total": {
+        "ic": -0.01727806793812088,
+        "n": 18396,
+        "p_value": 0.01910519243731731,
+        "sufficient": true
+      },
+      "wick_ratio_upper": {
+        "ic": -0.0053084244472999444,
+        "n": 18396,
+        "p_value": 0.47155725867535125,
+        "sufficient": true
+      },
+      "range_expansion_14": {
+        "ic": 0.02317079230319567,
+        "n": 18371,
+        "p_value": 0.001685047160357516,
+        "sufficient": true
+      },
+      "body_ratio": {
+        "ic": 0.017188335997647197,
+        "n": 18397,
+        "p_value": 0.019734224069356456,
+        "sufficient": true
+      },
+      "volume_sma_20": {
+        "ic": 0.02395539946064026,
+        "n": 18359,
+        "p_value": 0.0011700147209142517,
+        "sufficient": true
+      },
+      "volume_ratio_20": {
+        "ic": 0.025473316501923186,
+        "n": 18359,
+        "p_value": 0.0005567737526623487,
+        "sufficient": true
+      },
+      "obv": {
+        "ic": 0.0094777235754268,
+        "n": 18395,
+        "p_value": 0.19865680212516196,
+        "sufficient": true
+      },
+      "cvd_change_20": {
+        "ic": 0.006322674510889352,
+        "n": 18357,
+        "p_value": 0.39166775804295595,
+        "sufficient": true
+      },
+      "cascade_signal": {
+        "ic": -0.006030571480732645,
+        "n": 18397,
+        "p_value": 0.4134076184468854,
+        "sufficient": true
+      },
+      "cascade_direction": {
+        "ic": null,
+        "n": 18397,
+        "p_value": null,
+        "sufficient": true
+      }
+    },
+    "h20": {
+      "funding_rate_daily": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "funding_zscore": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "funding_extreme": {
+        "ic": null,
+        "n": 18377,
+        "p_value": null,
+        "sufficient": true
+      },
+      "funding_direction": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_change_pct": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_change_zscore_20": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_buildup_24": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oi_price_divergence_24": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oiwap_168": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "oiwap_distance_168": {
+        "ic": null,
+        "n": 0,
+        "p_value": null,
+        "sufficient": false
+      },
+      "wick_ratio_lower": {
+        "ic": -0.01104740986680903,
+        "n": 18376,
+        "p_value": 0.13426066441271672,
+        "sufficient": true
+      },
+      "wick_ratio_total": {
+        "ic": -0.009296706948597336,
+        "n": 18376,
+        "p_value": 0.20760245832734642,
+        "sufficient": true
+      },
+      "wick_ratio_upper": {
+        "ic": -0.0024637620756374928,
+        "n": 18376,
+        "p_value": 0.7384092092474518,
+        "sufficient": true
+      },
+      "range_expansion_14": {
+        "ic": 0.018277728392969542,
+        "n": 18351,
+        "p_value": 0.013284631058734798,
+        "sufficient": true
+      },
+      "body_ratio": {
+        "ic": 0.009223568095138811,
+        "n": 18377,
+        "p_value": 0.21118816025056084,
+        "sufficient": true
+      },
+      "volume_sma_20": {
+        "ic": 0.037230899201985045,
+        "n": 18339,
+        "p_value": 4.576396260262728e-07,
+        "sufficient": true
+      },
+      "volume_ratio_20": {
+        "ic": 0.022270653553555977,
+        "n": 18339,
+        "p_value": 0.00256052854391797,
+        "sufficient": true
+      },
+      "obv": {
+        "ic": 0.012902601483242366,
+        "n": 18375,
+        "p_value": 0.08029820463879775,
+        "sufficient": true
+      },
+      "cvd_change_20": {
+        "ic": 0.011453493263707442,
+        "n": 18337,
+        "p_value": 0.12092312712659867,
+        "sufficient": true
+      },
+      "cascade_signal": {
+        "ic": -0.005216916930576235,
+        "n": 18377,
+        "p_value": 0.479460016649424,
+        "sufficient": true
+      },
+      "cascade_direction": {
+        "ic": null,
+        "n": 18377,
+        "p_value": null,
+        "sufficient": true
+      }
+    }
+  },
+  "metadata": {
+    "regimes": {
+      "post_etf": {
+        "start": "2024-01-01",
+        "end": "2026-04-24"
+      },
+      "pre_etf": {
+        "start": "2019-01-01",
+        "end": "2023-12-31"
+      }
+    },
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT"
+    ],
+    "horizons": [
+      1,
+      5,
+      10,
+      20
+    ],
+    "interval": "4h",
+    "min_observations": 30,
+    "phase": "80",
+    "timestamp": "2026-04-24T07:00:55.367192Z"
+  }
+}
