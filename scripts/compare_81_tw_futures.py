@@ -250,6 +250,7 @@ def run_comparison() -> int:
                 "profit_factor": round(metrics.get("profit_factor", 0.0), 4),
                 "trade_count": metrics.get("trade_count", 0),
                 "closed_trade_count": metrics.get("closed_trade_count", 0),
+                "avg_holding_period": round(metrics.get("avg_holding_period", 0.0), 2),
                 "bars_per_year": bpy,
             }
             results.append(row)
@@ -263,6 +264,7 @@ def run_comparison() -> int:
             print(f"  Profit Factor:      {row['profit_factor']:.4f}")
             print(f"  Trade Count:        {row['trade_count']}")
             print(f"  Closed Trades:      {row['closed_trade_count']}")
+            print(f"  Avg Holding (days):  {row['avg_holding_period']:.2f}")
 
         except Exception as exc:
             logger.exception("Strategy '%s' failed", label)
@@ -289,10 +291,10 @@ def run_comparison() -> int:
 
     header = (
         f"{'Strategy':<35} {'Sharpe':>8} {'MaxDD':>8} {'Return':>10} "
-        f"{'Trades':>7} {'WinRate':>8}"
+        f"{'Trades':>7} {'WinRate':>8} {'AvgHold(d)':>11}"
     )
     print(header)
-    print("-" * 80)
+    print("-" * 91)
 
     for r in results:
         if "error" in r:
@@ -303,9 +305,11 @@ def run_comparison() -> int:
         total_ret = r.get("total_return", 0.0)
         trades = r.get("trade_count", 0)
         win_rate = r.get("win_rate", 0.0)
+        avg_hold = r.get("avg_holding_period", 0.0)
         print(
             f"{r['label']:<35} {sharpe:>8.2f} {max_dd:>7.1%} "
             f"{total_ret:>9.1%} {trades:>7} {win_rate:>7.1%}"
+            f"{avg_hold:>10.2f}"
         )
 
     # Look-ahead bias gate
