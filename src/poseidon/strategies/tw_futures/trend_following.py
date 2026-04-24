@@ -182,6 +182,15 @@ class TrendFollowingStrategy(BaseStrategy):
         self._position_side = None
         self._trailing_stop = None
 
+    def reset(self) -> None:
+        """Reset all stateful tracking for walk-forward window reuse.
+
+        Called by WalkForwardAnalyzer.analyze() between IS and OOS runs.
+        Clears _position_side and _trailing_stop to prevent state leakage
+        across windows (Phase 82 WFE requirement).
+        """
+        self._reset_state()
+
     def _make_signal(
         self,
         action: SignalAction,

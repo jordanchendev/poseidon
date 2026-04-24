@@ -1,0 +1,44 @@
+# v82 Decision Gate -- Frozen Criteria
+# Committed BEFORE any optimization work (same as v15.0 RES-03 pattern).
+# Phase 82 gate evaluation reads these criteria. Do NOT modify after commit.
+version: "v82"
+frozen_date: "2026-04-24"
+description: "TW Futures TrendFollowing walk-forward decision gate"
+criteria:
+  gate_01:
+    name: "OOS Sharpe > 0"
+    metric: "oos_aggregate_sharpe"
+    operator: ">"
+    threshold: 0.0
+  gate_02:
+    name: "WFE >= 50%"
+    metric: "wfe"
+    operator: ">="
+    threshold: 0.50
+  gate_03:
+    name: "OOS Sharpe beats B&H"
+    metric: "oos_aggregate_sharpe"
+    comparator: "bh_oos_sharpe"
+    operator: ">"
+  gate_04:
+    name: "MaxDD < 50%"
+    metric: "oos_aggregate_max_drawdown"
+    operator: "<"
+    threshold: 0.50
+  min_pass: 3
+data:
+  symbol: "TX"
+  market: "tw_futures"
+  interval: "1d"
+  cost_model: "tw_futures"
+  initial_capital: 1000000.0
+walk_forward:
+  train_days: 252
+  test_days: 63
+  step_days: 63
+  min_trades_per_oos: 5
+  min_wfe: 0.50
+optuna:
+  n_trials: 100
+  objective: "sharpe_ratio"
+  seed: 42
