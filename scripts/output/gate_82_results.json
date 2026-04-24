@@ -1,0 +1,47 @@
+{
+  "phase": "82",
+  "script": "gate_82_tw_futures.py",
+  "gate_yaml_path": "config/v82_decision_gate.yaml",
+  "wfe_json_path": "scripts/output/wfe_82_results.json",
+  "verdict": {
+    "gates": {
+      "gate_01": {
+        "name": "OOS Sharpe > 0",
+        "value": 1.4932144658573505,
+        "threshold": 0.0,
+        "operator": ">",
+        "passed": true
+      },
+      "gate_02": {
+        "name": "WFE >= 50%",
+        "value": 13.189219172500895,
+        "threshold": 0.5,
+        "operator": ">=",
+        "passed": true
+      },
+      "gate_03": {
+        "name": "OOS Sharpe beats B&H",
+        "value": 1.4932144658573505,
+        "comparator_value": 1.8698268547878856,
+        "operator": ">",
+        "passed": false
+      },
+      "gate_04": {
+        "name": "MaxDD < 50%",
+        "value": 0.5118777063390239,
+        "threshold": 0.5,
+        "operator": "<",
+        "passed": false
+      }
+    },
+    "passed_count": 2,
+    "min_pass": 3,
+    "overall": "FAIL"
+  },
+  "input_metrics": {
+    "oos_aggregate_sharpe": 1.4932144658573505,
+    "avg_wfe": 13.189219172500895,
+    "bh_oos_sharpe": 1.8698268547878856,
+    "oos_aggregate_max_drawdown": 0.5118777063390239
+  }
+}

@@ -1,0 +1,272 @@
+{
+  "phase": "82",
+  "script": "optuna_82_tw_futures.py",
+  "n_trials": 100,
+  "n_completed": 17,
+  "bars_per_year": 252,
+  "cost_model": "tw_futures",
+  "period": {
+    "start": "2021-03-22",
+    "end": "2026-04-24"
+  },
+  "baseline_sharpe": 0.21417200812385367,
+  "baseline_params": {
+    "ema_fast": 20,
+    "ema_slow": 60,
+    "atr_period": 14,
+    "atr_multiplier": 2.0
+  },
+  "best_params": {
+    "ema_fast": 5,
+    "ema_slow": 21,
+    "atr_period": 10,
+    "atr_multiplier": 3.9132149372352547
+  },
+  "best_sharpe": 0.4941937927645781,
+  "best_metrics": {
+    "total_return": 0.010889866961160788,
+    "annualized_return": 0.0022000105502801848,
+    "sharpe_ratio": 0.4941937927645781,
+    "max_drawdown": 0.6287390830538502,
+    "calmar_ratio": 0.003499083498348008,
+    "win_rate": 0.30434782608695654,
+    "profit_factor": 1.5518442092549736,
+    "avg_win": 292409.85969148175,
+    "avg_loss": -82436.95652699634,
+    "trade_count": 138,
+    "closed_trade_count": 69,
+    "avg_holding_period": 25.608695652173914
+  },
+  "top_10_trials": [
+    {
+      "params": {
+        "ema_fast": 5,
+        "ema_slow": 21,
+        "atr_period": 10,
+        "atr_multiplier": 3.9132149372352547
+      },
+      "sharpe": 0.4941937927645781,
+      "metrics": {
+        "total_return": 0.010889866961160788,
+        "annualized_return": 0.0022000105502801848,
+        "sharpe_ratio": 0.4941937927645781,
+        "max_drawdown": 0.6287390830538502,
+        "calmar_ratio": 0.003499083498348008,
+        "win_rate": 0.30434782608695654,
+        "profit_factor": 1.5518442092549736,
+        "avg_win": 292409.85969148175,
+        "avg_loss": -82436.95652699634,
+        "trade_count": 138,
+        "closed_trade_count": 69,
+        "avg_holding_period": 25.608695652173914
+      }
+    },
+    {
+      "params": {
+        "ema_fast": 5,
+        "ema_slow": 20,
+        "atr_period": 11,
+        "atr_multiplier": 3.1698231635318193
+      },
+      "sharpe": 0.4139220538084068,
+      "metrics": {
+        "total_return": 0.0017673966238240801,
+        "annualized_return": 0.00035834988223615305,
+        "sharpe_ratio": 0.4139220538084068,
+        "max_drawdown": 0.529891986981051,
+        "calmar_ratio": 0.0006762696757838832,
+        "win_rate": 0.273972602739726,
+        "profit_factor": 1.0849224301347722,
+        "avg_win": 229621.03317433578,
+        "avg_loss": -79866.95092119866,
+        "trade_count": 146,
+        "closed_trade_count": 73,
+        "avg_holding_period": 20.0
+      }
+    },
+    {
+      "params": {
+        "ema_fast": 5,
+        "ema_slow": 54,
+        "atr_period": 7,
+        "atr_multiplier": 3.9284196995739853
+      },
+      "sharpe": 0.36689542368085537,
+      "metrics": {
+        "total_return": -0.0016921986309387238,
+        "annualized_return": -0.00034357644566229695,
+        "sharpe_ratio": 0.36689542368085537,
+        "max_drawdown": 0.5572396283289606,
+        "calmar_ratio": -0.0006165685787505949,
+        "win_rate": 0.24444444444444444,
+        "profit_factor": 0.8906414232103999,
+        "avg_win": 247991.34900961642,
+        "avg_loss": -90083.94756512849,
+        "trade_count": 90,
+        "closed_trade_count": 45,
+        "avg_holding_period": 27.22222222222222
+      }
+    },
+    {
+      "params": {
+        "ema_fast": 12,
+        "ema_slow": 35,
+        "atr_period": 8,
+        "atr_multiplier": 3.5985284373248057
+      },
+      "sharpe": 0.3622812774207732,
+      "metrics": {
+        "total_return": 0.0007099975536311032,
+        "annualized_return": 0.00014401672802932808,
+        "sharpe_ratio": 0.3622812774207732,
+        "max_drawdown": 0.5515759696459872,
+        "calmar_ratio": 0.0002611004393860033,
+        "win_rate": 0.34285714285714286,
+        "profit_factor": 1.0600397428801263,
+        "avg_win": 212988.5254097907,
+        "avg_loss": -104830.45450538096,
+        "trade_count": 70,
+        "closed_trade_count": 35,
+        "avg_holding_period": 33.542857142857144
+      }
+    },
+    {
+      "params": {
+        "ema_fast": 6,
+        "ema_slow": 48,
+        "atr_period": 10,
+        "atr_multiplier": 3.2421825619156275
+      },
+      "sharpe": 0.3451133634276535,
+      "metrics": {
+        "total_return": -0.002208113213938101,
+        "annualized_return": -0.0004484177737088535,
+        "sharpe_ratio": 0.3451133634276535,
+        "max_drawdown": 0.5522601687191945,
+        "calmar_ratio": -0.0008119683422920524,
+        "win_rate": 0.24444444444444444,
+        "profit_factor": 0.851276457621751,
+        "avg_win": 227931.68955275652,
+        "avg_loss": -86625.9189753196,
+        "trade_count": 90,
+        "closed_trade_count": 45,
+        "avg_holding_period": 23.866666666666667
+      }
+    },
+    {
+      "params": {
+        "ema_fast": 10,
+        "ema_slow": 70,
+        "atr_period": 7,
+        "atr_multiplier": 3.7279612062363463
+      },
+      "sharpe": 0.33120773248069524,
+      "metrics": {
+        "total_return": -0.004190881865527296,
+        "annualized_return": -0.0008517477109207805,
+        "sharpe_ratio": 0.33120773248069524,
+        "max_drawdown": 0.6479917262001635,
+        "calmar_ratio": -0.0013144422628903708,
+        "win_rate": 0.3103448275862069,
+        "profit_factor": 0.6923406731949397,
+        "avg_win": 209000.92278889852,
+        "avg_loss": -135844.12832629133,
+        "trade_count": 58,
+        "closed_trade_count": 29,
+        "avg_holding_period": 31.551724137931036
+      }
+    },
+    {
+      "params": {
+        "ema_fast": 13,
+        "ema_slow": 49,
+        "atr_period": 7,
+        "atr_multiplier": 3.2342500581734743
+      },
+      "sharpe": 0.3104066908448406,
+      "metrics": {
+        "total_return": 0.0020200570962984887,
+        "annualized_return": 0.000409537074275379,
+        "sharpe_ratio": 0.3104066908448406,
+        "max_drawdown": 0.604873413898431,
+        "calmar_ratio": 0.0006770624478862409,
+        "win_rate": 0.30434782608695654,
+        "profit_factor": 1.2777811267778327,
+        "avg_win": 266631.7335126808,
+        "avg_loss": -91292.1477451748,
+        "trade_count": 46,
+        "closed_trade_count": 23,
+        "avg_holding_period": 35.73913043478261
+      }
+    },
+    {
+      "params": {
+        "ema_fast": 42,
+        "ema_slow": 64,
+        "atr_period": 15,
+        "atr_multiplier": 3.9940822863069423
+      },
+      "sharpe": 0.2879048420860994,
+      "metrics": {
+        "total_return": 0.007088692910684147,
+        "annualized_return": 0.001434239238371049,
+        "sharpe_ratio": 0.2879048420860994,
+        "max_drawdown": 0.5564381713471007,
+        "calmar_ratio": 0.0025775356764235796,
+        "win_rate": 0.46153846153846156,
+        "profit_factor": 3.9302080023483303,
+        "avg_win": 317157.0086044273,
+        "avg_loss": -69169.07816473038,
+        "trade_count": 26,
+        "closed_trade_count": 13,
+        "avg_holding_period": 53.07692307692308
+      }
+    },
+    {
+      "params": {
+        "ema_fast": 7,
+        "ema_slow": 115,
+        "atr_period": 28,
+        "atr_multiplier": 3.4251920443493833
+      },
+      "sharpe": 0.27106567867897124,
+      "metrics": {
+        "total_return": -0.003882475571761579,
+        "annualized_return": -0.000788970442865522,
+        "sharpe_ratio": 0.27106567867897124,
+        "max_drawdown": 0.5686366017033713,
+        "calmar_ratio": -0.0013874774161602205,
+        "win_rate": 0.2962962962962963,
+        "profit_factor": 0.6575465571383832,
+        "avg_win": 185859.0934952725,
+        "avg_loss": -119012.80535880402,
+        "trade_count": 54,
+        "closed_trade_count": 27,
+        "avg_holding_period": 24.925925925925927
+      }
+    },
+    {
+      "params": {
+        "ema_fast": 16,
+        "ema_slow": 86,
+        "atr_period": 13,
+        "atr_multiplier": 2.5602040635334324
+      },
+      "sharpe": 0.23720365633943993,
+      "metrics": {
+        "total_return": -0.000863179843503481,
+        "annualized_return": -0.00017519822155531717,
+        "sharpe_ratio": 0.23720365633943993,
+        "max_drawdown": 0.52608391340669,
+        "calmar_ratio": -0.0003330233392251245,
+        "win_rate": 0.3157894736842105,
+        "profit_factor": 0.8791946642634753,
+        "avg_win": 207574.9058775919,
+        "avg_loss": -108967.67986301659,
+        "trade_count": 38,
+        "closed_trade_count": 19,
+        "avg_holding_period": 19.68421052631579
+      }
+    }
+  ]
+}
