@@ -20,7 +20,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from poseidon.backtest.cost_model import COST_MODELS, CostModel
@@ -101,6 +100,11 @@ def fetch_ohlcv_data(
         if df.empty:
             logger.error("TX %s: NO DATA returned", interval)
             continue
+
+        # Strip timezone from OHLCV index so BacktestRunner can work
+        # with naive Timestamps (same approach as compare_75_cryptotrend.py)
+        if hasattr(df.index, "tz") and df.index.tz is not None:
+            df = df.tz_localize(None)
 
         # Check data availability
         actual_start = df.index[0]
