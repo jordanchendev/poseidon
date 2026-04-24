@@ -25,6 +25,29 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
+# ── Symbol mapping ─────────────────────────────────────────────────────
+# Thalassa funding_rates table stores symbols in CCXT perp format
+# (e.g. "BTC/USDT:USDT"), but Poseidon uses short format ("BTCUSDT").
+# read_funding_rates needs the CCXT format to match DB records.
+CCXT_SYMBOL_MAP = {
+    "BTCUSDT": "BTC/USDT:USDT",
+    "ETHUSDT": "ETH/USDT:USDT",
+}
+
+
+def to_ccxt_symbol(symbol: str) -> str:
+    """Convert Poseidon symbol to CCXT perpetual format for funding rate queries."""
+    if symbol in CCXT_SYMBOL_MAP:
+        return CCXT_SYMBOL_MAP[symbol]
+    if ":" in symbol:
+        return symbol  # Already CCXT format
+    # Generic fallback: XXXUSDT -> XXX/USDT:USDT
+    if symbol.endswith("USDT"):
+        base = symbol[:-4]
+        return f"{base}/USDT:USDT"
+    return symbol
+
+
 # ── Configuration ───────────────────────────────────────────────────────
 SYMBOLS = ["BTCUSDT", "ETHUSDT"]
 MARKET = "crypto_perp"
@@ -317,7 +340,8 @@ def run_two_regime_ic_analysis(
             # read_funding_rates returns NO pre-ETF funding data.
             if regime_name == "pre_etf":
                 print(f"    Pre-ETF: fetching funding data from {regime_start} ...")
-                funding_data = repo.read_funding_rates(symbol, start=regime_start)
+                ccxt_sym = to_ccxt_symbol(symbol)
+                funding_data = repo.read_funding_rates(ccxt_sym, start=regime_start)
                 print(f"    Funding data: {len(funding_data)} rows")
                 extra_nonprice = {"funding_data": funding_data}
                 computed = engine.compute_with_companions(
@@ -326,10 +350,17 @@ def run_two_regime_ic_analysis(
                     extra_nonprice_data=extra_nonprice,
                 )
             else:
-                # Post-ETF: default funding start "2024-01-01" is correct
+                # Post-ETF: also need CCXT symbol for funding rate query
+                # (Thalassa stores funding rates with CCXT format symbols)
+                print(f"    Post-ETF: fetching funding data from 2024-01-01 ...")
+                ccxt_sym = to_ccxt_symbol(symbol)
+                funding_data = repo.read_funding_rates(ccxt_sym, start="2024-01-01")
+                print(f"    Funding data: {len(funding_data)} rows")
+                extra_nonprice = {"funding_data": funding_data}
                 computed = engine.compute_with_companions(
                     ohlcv, symbol=symbol, market=MARKET, interval=INTERVAL,
                     feature_specs=specs,
+                    extra_nonprice_data=extra_nonprice,
                 )
             print(f"    Computed: {len(computed.columns)} columns")
 

@@ -50,6 +50,27 @@ from poseidon.strategies.portfolio.crypto_trend import (
 )
 from poseidon.strategies.portfolio.schemas import TargetPosition
 
+# ── Symbol mapping ─────────────────────────────────────────────────────
+# Thalassa funding_rates table stores symbols in CCXT perp format
+# (e.g. "BTC/USDT:USDT"), but Poseidon uses short format ("BTCUSDT").
+CCXT_SYMBOL_MAP = {
+    "BTCUSDT": "BTC/USDT:USDT",
+    "ETHUSDT": "ETH/USDT:USDT",
+}
+
+
+def to_ccxt_symbol(symbol: str) -> str:
+    """Convert Poseidon symbol to CCXT perpetual format for funding rate queries."""
+    if symbol in CCXT_SYMBOL_MAP:
+        return CCXT_SYMBOL_MAP[symbol]
+    if ":" in symbol:
+        return symbol
+    if symbol.endswith("USDT"):
+        base = symbol[:-4]
+        return f"{base}/USDT:USDT"
+    return symbol
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
@@ -539,7 +560,8 @@ def main() -> int:
     funding_dict: dict[str, pd.DataFrame] = {}
 
     for symbol in SYMBOLS:
-        funding = repo.read_funding_rates(symbol=symbol, start="2024-01-01")
+        ccxt_sym = to_ccxt_symbol(symbol)
+        funding = repo.read_funding_rates(symbol=ccxt_sym, start="2024-01-01")
         if not funding.empty:
             # Ensure DatetimeIndex and strip timezone for consistency
             if not isinstance(funding.index, pd.DatetimeIndex):
