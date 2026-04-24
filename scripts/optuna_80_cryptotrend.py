@@ -39,7 +39,7 @@ from poseidon.backtest.cost_model import COST_MODELS
 from poseidon.backtest.metrics import compute_metrics
 from poseidon.backtest.portfolio_backtester import PortfolioBacktester
 from poseidon.backtest.walk_forward import WalkForwardAnalyzer, WalkForwardConfig, compute_wfe
-from poseidon.data.features.engine import FeatureEngine
+from poseidon.data.feature_engine import FeatureEngine
 from poseidon.data.remote_repository import RemoteDataRepository
 from poseidon.risk.engine import RiskEngine
 from poseidon.strategies.portfolio.crypto_trend import (
