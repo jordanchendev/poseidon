@@ -27,10 +27,10 @@ def compute_metrics(
         bars_per_year: Trading bars per year. 252 for daily, 252*6.5 for hourly, etc.
 
     Returns:
-        Dictionary with 11 metrics:
+        Dictionary with 12 metrics:
         total_return, annualized_return, sharpe_ratio, max_drawdown,
         calmar_ratio, win_rate, profit_factor, avg_win, avg_loss,
-        trade_count, closed_trade_count.
+        trade_count, closed_trade_count, avg_holding_period.
     """
     returns = equity_series.pct_change().dropna()
     total_return = (equity_series.iloc[-1] / equity_series.iloc[0]) - 1
@@ -71,6 +71,16 @@ def compute_metrics(
     else:
         win_rate = avg_win = avg_loss = profit_factor = 0.0
 
+    # Average holding period in days (closed trades with exit_time)
+    closed_trades_with_exit = [t for t in closed_trades if t.exit_time is not None]
+    if closed_trades_with_exit:
+        avg_holding_period = sum(
+            (t.exit_time - t.entry_time).total_seconds()
+            for t in closed_trades_with_exit
+        ) / len(closed_trades_with_exit) / 86400
+    else:
+        avg_holding_period = 0.0
+
     def _safe(v: float) -> float:
         """Replace NaN/Inf with 0.0 for JSON/DB safety."""
         v = float(v)
@@ -90,6 +100,7 @@ def compute_metrics(
         "avg_loss": _safe(avg_loss),
         "trade_count": len(trades),
         "closed_trade_count": len(closed_trades) if trades else 0,
+        "avg_holding_period": _safe(avg_holding_period),
     }
 
 
