@@ -1,0 +1,75 @@
+{
+  "phase": "81",
+  "description": "TW Futures 3-strategy comparison + TAIEX B&H",
+  "period": {
+    "start": "2021-03-22",
+    "end": "2026-04-24"
+  },
+  "symbol": "TX",
+  "market": "tw_futures",
+  "initial_capital": 1000000.0,
+  "cost_model": "TW futures: ~$50/contract round trip + 1 point slippage",
+  "point_value": 200.0,
+  "tick_size": 1.0,
+  "results": [
+    {
+      "label": "TrendFollowing (EMA20/60 Daily)",
+      "interval": "1d",
+      "sharpe_ratio": 0.2142,
+      "max_drawdown": 0.5087,
+      "total_return": -0.002,
+      "annualized_return": -0.0004,
+      "calmar_ratio": -0.0008,
+      "win_rate": 0.3333,
+      "profit_factor": 0.7135,
+      "trade_count": 42,
+      "closed_trade_count": 21,
+      "bars_per_year": 252
+    },
+    {
+      "label": "MeanReversion (BB+RSI 1H)",
+      "interval": "1h",
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "total_return": 0.0,
+      "annualized_return": 0.0,
+      "calmar_ratio": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "trade_count": 0,
+      "closed_trade_count": 0,
+      "bars_per_year": 4788
+    },
+    {
+      "label": "VolBreakout (20-bar 30M)",
+      "interval": "30m",
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "total_return": 0.0,
+      "annualized_return": 0.0,
+      "calmar_ratio": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "trade_count": 0,
+      "closed_trade_count": 0,
+      "bars_per_year": 9576
+    },
+    {
+      "label": "Buy & Hold TX",
+      "interval": "1d",
+      "total_return": 4.3082,
+      "annualized_return": 0.40310687299978776,
+      "sharpe_ratio": 0.8838156294326976,
+      "max_drawdown": 0.781897491821156,
+      "calmar_ratio": 0.5155495153986128,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "trade_count": 0,
+      "closed_trade_count": 0
+    }
+  ],
+  "winner": "TrendFollowing (EMA20/60 Daily)",
+  "winner_sharpe": 0.2142
+}
