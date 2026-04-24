@@ -113,12 +113,13 @@ class TestCostModel:
         assert cm.sell_commission_rate == 0.001
         assert cm.slippage_pct == 0.0005
 
-    def test_all_7_markets_exist(self):
+    def test_all_markets_exist(self):
         expected = {
             "tw_stock",
             "tw_stock_etf",
             "tw_stock_daytrade",
             "tw_futures",
+            "tw_futures_mtx",
             "us_stock",
             "crypto_spot",
             "crypto_perp",
