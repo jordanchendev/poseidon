@@ -1,0 +1,10 @@
+strategy: trend_following_tx
+name: "Trend Following TX Daily"
+market: tw_futures
+symbol: TX
+interval: "1d"
+ema_fast: 20
+ema_slow: 60
+atr_period: 14
+atr_multiplier: 2.0
+lookback_days: 120
