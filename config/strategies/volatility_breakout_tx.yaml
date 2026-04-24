@@ -1,0 +1,10 @@
+strategy: volatility_breakout_tx
+name: "Volatility Breakout TX 30M"
+market: tw_futures
+symbol: TX
+interval: "30m"
+breakout_period: 20
+atr_period: 14
+atr_sma_period: 50
+trail_r: 1.5
+lookback_days: 14

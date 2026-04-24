@@ -1,0 +1,11 @@
+strategy: mean_reversion_tx
+name: "Mean Reversion TX 1H"
+market: tw_futures
+symbol: TX
+interval: "1h"
+bb_period: 20
+bb_std: 2.0
+rsi_period: 14
+rsi_oversold: 30.0
+rsi_overbought: 70.0
+lookback_days: 30
