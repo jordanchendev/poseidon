@@ -24,6 +24,7 @@
       "profit_factor": 0.7135,
       "trade_count": 42,
       "closed_trade_count": 21,
+      "avg_holding_period": 11.33,
       "bars_per_year": 252
     },
     {
@@ -38,6 +39,7 @@
       "profit_factor": 0.0,
       "trade_count": 0,
       "closed_trade_count": 0,
+      "avg_holding_period": 0.0,
       "bars_per_year": 4788
     },
     {
@@ -52,6 +54,7 @@
       "profit_factor": 0.0,
       "trade_count": 0,
       "closed_trade_count": 0,
+      "avg_holding_period": 0.0,
       "bars_per_year": 9576
     },
     {
@@ -67,7 +70,8 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "trade_count": 0,
-      "closed_trade_count": 0
+      "closed_trade_count": 0,
+      "avg_holding_period": 0.0
     }
   ],
   "winner": "TrendFollowing (EMA20/60 Daily)",
