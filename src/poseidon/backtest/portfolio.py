@@ -138,8 +138,12 @@ class BacktestPortfolio:
         if self.cost_model.slippage_pct > 0:
             slippage += price * self.cost_model.slippage_pct
         if self.cost_model.slippage_ticks > 0:
-            # Approximate tick value as 0.1% of price (conservative estimate)
-            tick_value = price * 0.001
+            tick_size = getattr(self.cost_model, "tick_size", 0.0)
+            if tick_size > 0:
+                tick_value = tick_size
+            else:
+                # Approximate tick value as 0.1% of price (conservative estimate)
+                tick_value = price * 0.001
             slippage += self.cost_model.slippage_ticks * tick_value
 
         if is_buy:
@@ -259,12 +263,13 @@ class BacktestPortfolio:
         exit_fees = trade_value * (self.cost_model.sell_commission_rate + self.cost_model.tax_rate)
         total_fees = entry_fees + exit_fees
 
+        point_value = getattr(self.cost_model, "point_value", 1.0)
         if pos["side"] == "long":
-            pnl = (fill_price - entry_price) * quantity - total_fees
+            pnl = (fill_price - entry_price) * quantity * point_value - total_fees
             self.cash += trade_value - exit_fees
         else:
             # Short close: buy to cover
-            pnl = (entry_price - fill_price) * quantity - total_fees
+            pnl = (entry_price - fill_price) * quantity * point_value - total_fees
             self.cash -= trade_value + exit_fees
 
         trade = TradeRecord(
@@ -312,12 +317,13 @@ class BacktestPortfolio:
         )
         total_fees = entry_fees + exit_fees
 
+        point_value = getattr(self.cost_model, "point_value", 1.0)
         if pos["side"] == "long":
-            pnl = (exit_price - entry_price) * quantity - total_fees
+            pnl = (exit_price - entry_price) * quantity * point_value - total_fees
             self.cash += trade_value - exit_fees
         else:
             # Short close: buy to cover
-            pnl = (entry_price - exit_price) * quantity - total_fees
+            pnl = (entry_price - exit_price) * quantity * point_value - total_fees
             self.cash -= trade_value + exit_fees
 
         trade = TradeRecord(
@@ -440,14 +446,17 @@ class BacktestPortfolio:
         Short positions are valued as (entry_price - current_price) * quantity,
         reflecting profit when price drops and loss when price rises (D-12).
         """
+        point_value = getattr(self.cost_model, "point_value", 1.0)
         position_value = 0.0
         for pos in self.positions.values():
+            entry = pos["entry_price"]
+            qty = pos["quantity"]
             if pos.get("side") == "short":
-                # Short: value = (entry_price - current_price) * quantity
-                position_value += (pos["entry_price"] - current_price) * pos["quantity"]
+                unrealized = (entry - current_price) * qty * point_value
             else:
-                # Long: value = quantity * current_price
-                position_value += pos["quantity"] * current_price
+                unrealized = (current_price - entry) * qty * point_value
+            # Position notional at entry (cash already deducted this amount)
+            position_value += entry * qty + unrealized
         current_equity = self.cash + position_value
 
         self._peak_equity = max(self._peak_equity, current_equity)
