@@ -224,7 +224,7 @@ class BayesianOptimizer:
 
             return result.metrics.get(metric, 0.0)
 
-        study.optimize(objective, n_trials=n_trials)
+        study.optimize(objective, n_trials=n_trials, catch=(ValueError,))
 
         # Build ranked results from completed trials
         trials: list[OptimizationTrial] = []
