@@ -31,7 +31,9 @@ class CapabilitiesResponse(PydanticBaseModel):
 @router.get("/capabilities", response_model=CapabilitiesResponse)
 def get_capabilities(
     live_safe: bool | None = Query(None, description="Filter to live-safe components only"),
-    component_type: str | None = Query(None, description="Filter by type: feature|strategy|model|rule|portfolio_strategy"),
+    component_type: str | None = Query(
+        None, description="Filter by type: feature|strategy|model|rule|portfolio_strategy"
+    ),
 ) -> CapabilitiesResponse:
     """Return capability flags matrix for all registered components.
 
@@ -50,13 +52,15 @@ def get_capabilities(
         # Filter by component_type if specified
         if component_type and cap.component_type != component_type:
             continue
-        results.append(ComponentCapabilityResponse(
-            name=cap.name,
-            component_type=cap.component_type,
-            supports_backtest=cap.supports_backtest,
-            supports_live=cap.supports_live,
-            bias_risk=cap.bias_risk,
-            stateful=cap.stateful,
-        ))
+        results.append(
+            ComponentCapabilityResponse(
+                name=cap.name,
+                component_type=cap.component_type,
+                supports_backtest=cap.supports_backtest,
+                supports_live=cap.supports_live,
+                bias_risk=cap.bias_risk,
+                stateful=cap.stateful,
+            )
+        )
 
     return CapabilitiesResponse(components=results, total=len(results))

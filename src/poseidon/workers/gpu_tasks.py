@@ -84,9 +84,7 @@ def train_model(
             ohlcv_df = repo.read_ohlcv(symbol, market, interval, start=start_dt, end=end_dt)
 
             if ohlcv_df.empty:
-                raise ValueError(
-                    f"No OHLCV data found for {symbol}/{market}/{interval}"
-                )
+                raise ValueError(f"No OHLCV data found for {symbol}/{market}/{interval}")
 
             # 2. Compute features
             engine = FeatureEngine()
@@ -97,6 +95,7 @@ def train_model(
             elif params and params.get("label_mode") == "regime":
                 # Auto-select regime-optimized features when no explicit list given
                 from poseidon.data.feature_engine import REGIME_FEATURES
+
                 feature_specs = REGIME_FEATURES
             features_df = engine.compute_from_df(ohlcv_df, feature_specs=feature_specs)
 
@@ -116,20 +115,13 @@ def train_model(
                 # Direction labels: 0=hold, 1=long, 2=short
                 threshold = effective_params.pop("label_threshold", 0.005)
                 future_returns = ohlcv_df["close"].pct_change().shift(-1).dropna()
-                targets = future_returns.map(
-                    lambda r: 1 if r > threshold else (2 if r < -threshold else 0)
-                )
+                targets = future_returns.map(lambda r: 1 if r > threshold else (2 if r < -threshold else 0))
             elif label_mode == "regime":
                 # Volatility regime labels: 0=low_vol, 1=medium_vol, 2=high_vol
                 regime_horizon = effective_params.pop("regime_horizon", 10)
                 log_returns = np.log(ohlcv_df["close"] / ohlcv_df["close"].shift(1))
                 # Forward-looking realized vol: std of next N log returns
-                forward_vol = (
-                    log_returns.shift(-1)
-                    .rolling(window=regime_horizon)
-                    .std()
-                    .shift(-(regime_horizon - 1))
-                )
+                forward_vol = log_returns.shift(-1).rolling(window=regime_horizon).std().shift(-(regime_horizon - 1))
                 forward_vol = forward_vol.dropna()
 
                 # Classify into 3 regimes using percentile thresholds
@@ -138,9 +130,7 @@ def train_model(
                 low_threshold = forward_vol.quantile(low_pct / 100)
                 high_threshold = forward_vol.quantile(high_pct / 100)
 
-                targets = forward_vol.map(
-                    lambda v: 0 if v <= low_threshold else (2 if v >= high_threshold else 1)
-                )
+                targets = forward_vol.map(lambda v: 0 if v <= low_threshold else (2 if v >= high_threshold else 1))
             else:
                 raise ValueError(f"Unknown label_mode: {label_mode}. Use 'direction' or 'regime'.")
             common_idx = features_df.index.intersection(targets.index)
@@ -264,8 +254,11 @@ def run_model_backtest(
             parsed_start = datetime.fromisoformat(start_date) if start_date else None
             parsed_end = datetime.fromisoformat(end_date) if end_date else None
             ohlcv_df = repo.read_ohlcv(
-                record.symbol, record.market, record.interval,
-                start=parsed_start, end=parsed_end,
+                record.symbol,
+                record.market,
+                record.interval,
+                start=parsed_start,
+                end=parsed_end,
             )
             if ohlcv_df.empty:
                 raise ValueError(f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}")
@@ -318,7 +311,9 @@ def run_model_backtest(
 
             logger.info(
                 "Model backtest completed: %s (strategy=%s, trades=%d)",
-                backtest_id, strategy_id, result.metrics.get("trade_count", 0),
+                backtest_id,
+                strategy_id,
+                result.metrics.get("trade_count", 0),
             )
             return {
                 "backtest_id": str(backtest_id),
@@ -403,15 +398,21 @@ def run_prediction(
         for sig in raw_signals:
             if sig.confidence >= threshold:
                 processed = pipeline.process(sig)
-                results.append({
-                    "signal_id": str(processed.id),
-                    "action": processed.action,
-                    "confidence": processed.confidence,
-                })
+                results.append(
+                    {
+                        "signal_id": str(processed.id),
+                        "action": processed.action,
+                        "confidence": processed.confidence,
+                    }
+                )
 
         logger.info(
             "Prediction complete for %s v%d — %d/%d signals passed threshold %.2f",
-            mv.name, mv.version, len(results), len(raw_signals), threshold,
+            mv.name,
+            mv.version,
+            len(results),
+            len(raw_signals),
+            threshold,
         )
         return {
             "version_id": version_id,
@@ -436,7 +437,7 @@ def gpu_health_probe() -> dict:
         }
         if torch.cuda.is_available():
             result["cuda_device"] = torch.cuda.get_device_name(0)
-            free_mem, total_mem = torch.cuda.mem_get_info(0)
+            free_mem, _total_mem = torch.cuda.mem_get_info(0)
             result["gpu_memory_free_mb"] = round(free_mem / (1024 * 1024), 1)
         return result
     except ImportError:

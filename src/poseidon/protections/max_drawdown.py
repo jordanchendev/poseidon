@@ -6,7 +6,7 @@ Locks a symbol when its drawdown exceeds a configurable threshold.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from poseidon.protections.base import BaseProtection, ProtectionResult
@@ -59,22 +59,17 @@ class MaxDrawdownProtection(BaseProtection):
         # Calculate current drawdown from portfolio holdings
         current_dd = self._get_symbol_drawdown(symbol, market, db)
         if current_dd is not None and current_dd >= self.max_drawdown_pct:
-            expires_at = datetime.now(timezone.utc) + timedelta(hours=self.lock_hours)
+            expires_at = datetime.now(UTC) + timedelta(hours=self.lock_hours)
             self.create_lock(
                 symbol=symbol,
                 market=market,
-                reason=(
-                    f"Drawdown {current_dd:.2%} >= threshold {self.max_drawdown_pct:.2%}"
-                ),
+                reason=(f"Drawdown {current_dd:.2%} >= threshold {self.max_drawdown_pct:.2%}"),
                 expires_at=expires_at,
                 db=db,
             )
             return ProtectionResult(
                 locked=True,
-                reason=(
-                    f"Max drawdown triggered for {symbol}: "
-                    f"{current_dd:.2%} >= {self.max_drawdown_pct:.2%}"
-                ),
+                reason=(f"Max drawdown triggered for {symbol}: {current_dd:.2%} >= {self.max_drawdown_pct:.2%}"),
                 expires_at=expires_at,
                 protection_type=self.name,
             )
@@ -86,9 +81,7 @@ class MaxDrawdownProtection(BaseProtection):
             protection_type=self.name,
         )
 
-    def _get_symbol_drawdown(
-        self, symbol: str, market: str, db: Session
-    ) -> float | None:
+    def _get_symbol_drawdown(self, symbol: str, market: str, db: Session) -> float | None:
         """Calculate current drawdown for a symbol from portfolio holdings.
 
         Returns drawdown as a positive fraction (e.g. 0.15 for 15%),

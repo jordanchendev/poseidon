@@ -18,7 +18,7 @@ Position sizing note (D-10):
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -100,7 +100,7 @@ class VotingStrategy(BaseStrategy):
         # Position state (replaces _in_position bool)
         self._position_direction: str | None = None  # "long", "short", or None
         self._position_high_watermark: float | None = None  # for long trailing stop
-        self._position_low_watermark: float | None = None   # for short trailing stop
+        self._position_low_watermark: float | None = None  # for short trailing stop
 
         # Cooldown state — applies to ALL directions after ANY exit
         self._bars_since_exit: int = 999  # starts high so first trade isn't blocked
@@ -128,11 +128,7 @@ class VotingStrategy(BaseStrategy):
         close = float(features.iloc[row_idx]["close"])
         signals: list[Signal] = []
 
-        signal_time = (
-            features.index[row_idx]
-            if isinstance(features.index[row_idx], datetime)
-            else datetime.now(timezone.utc)
-        )
+        signal_time = features.index[row_idx] if isinstance(features.index[row_idx], datetime) else datetime.now(UTC)
 
         # Increment cooldown counter
         self._bars_since_exit += 1
@@ -154,27 +150,19 @@ class VotingStrategy(BaseStrategy):
             if self._strategy_mode == "regime_gated":
                 atr_col = f"atr_{self._atr_period}"
                 if atr_col in features.columns and row_idx >= self._atr_regime_lookback:
-                    recent_atr = features[atr_col].iloc[
-                        max(0, row_idx - self._atr_regime_lookback) : row_idx + 1
-                    ]
+                    recent_atr = features[atr_col].iloc[max(0, row_idx - self._atr_regime_lookback) : row_idx + 1]
                     if features[atr_col].iloc[row_idx] < recent_atr.median():
                         return signals  # low volatility = sideways, skip entry
 
             # Count bull votes
             bull_votes = self._count_votes(self._sub_signals, features, row_idx)
-            bear_votes = (
-                self._count_votes(self._bear_sub_signals, features, row_idx)
-                if self._bear_sub_signals
-                else 0
-            )
+            bear_votes = self._count_votes(self._bear_sub_signals, features, row_idx) if self._bear_sub_signals else 0
 
             # Conviction gap: require net directional strength before entry
             net_conviction = bull_votes - bear_votes
 
             if bull_votes >= self._min_votes and net_conviction >= self._conviction_gap:
-                confidence = (
-                    bull_votes / len(self._sub_signals) if self._sub_signals else 0.0
-                )
+                confidence = bull_votes / len(self._sub_signals) if self._sub_signals else 0.0
                 signals.append(
                     Signal(
                         strategy_id=self.strategy_id,
@@ -199,11 +187,7 @@ class VotingStrategy(BaseStrategy):
                 and (-net_conviction) >= self._conviction_gap
                 and self._bear_sub_signals
             ):
-                confidence = (
-                    bear_votes / len(self._bear_sub_signals)
-                    if self._bear_sub_signals
-                    else 0.0
-                )
+                confidence = bear_votes / len(self._bear_sub_signals) if self._bear_sub_signals else 0.0
                 signals.append(
                     Signal(
                         strategy_id=self.strategy_id,
@@ -246,7 +230,8 @@ class VotingStrategy(BaseStrategy):
         # Priority 1: ATR trailing stop (D-04)
         if self._position_direction == "long":
             self._position_high_watermark = max(
-                self._position_high_watermark, close  # type: ignore[arg-type]
+                self._position_high_watermark,
+                close,  # type: ignore[arg-type]
             )
             stop_level = self._position_high_watermark - self._atr_multiplier * atr_val
             if close < stop_level:
@@ -258,7 +243,8 @@ class VotingStrategy(BaseStrategy):
                 )
         elif self._position_direction == "short":
             self._position_low_watermark = min(
-                self._position_low_watermark, close  # type: ignore[arg-type]
+                self._position_low_watermark,
+                close,  # type: ignore[arg-type]
             )
             stop_level = self._position_low_watermark + self._atr_multiplier * atr_val
             if close > stop_level:
@@ -274,32 +260,24 @@ class VotingStrategy(BaseStrategy):
         rsi_col = f"rsi_{rsi_period}"
         if rsi_col in features.columns:
             rsi_val = float(features.iloc[row_idx][rsi_col])
-            if self._position_direction == "long" and rsi_val > 69:
-                return self._emit_exit("rsi_exit", signal_time, rsi=rsi_val)
-            elif self._position_direction == "short" and rsi_val < 31:
+            if (self._position_direction == "long" and rsi_val > 69) or (
+                self._position_direction == "short" and rsi_val < 31
+            ):
                 return self._emit_exit("rsi_exit", signal_time, rsi=rsi_val)
 
         # Priority 3: Signal flip (D-02)
         if self._position_direction == "long" and self._bear_sub_signals:
-            bear_votes = self._count_votes(
-                self._bear_sub_signals, features, row_idx
-            )
+            bear_votes = self._count_votes(self._bear_sub_signals, features, row_idx)
             if bear_votes >= self._bear_min_votes:
-                return self._emit_exit(
-                    "signal_flip", signal_time, opposing_votes=bear_votes
-                )
+                return self._emit_exit("signal_flip", signal_time, opposing_votes=bear_votes)
         elif self._position_direction == "short":
             bull_votes = self._count_votes(self._sub_signals, features, row_idx)
             if bull_votes >= self._min_votes:
-                return self._emit_exit(
-                    "signal_flip", signal_time, opposing_votes=bull_votes
-                )
+                return self._emit_exit("signal_flip", signal_time, opposing_votes=bull_votes)
 
         return None
 
-    def _emit_exit(
-        self, reason: str, signal_time: datetime, **metadata: object
-    ) -> Signal:
+    def _emit_exit(self, reason: str, signal_time: datetime, **metadata: object) -> Signal:
         """Create CLOSE signal and reset position state."""
         self._bars_since_exit = 0
         self._position_direction = None
@@ -318,9 +296,7 @@ class VotingStrategy(BaseStrategy):
             metadata={"reason": reason, **metadata},
         )
 
-    def _count_votes(
-        self, conditions: list[dict], features: pd.DataFrame, row_idx: int
-    ) -> int:
+    def _count_votes(self, conditions: list[dict], features: pd.DataFrame, row_idx: int) -> int:
         """Count how many conditions evaluate to True."""
         count = 0
         for cond in conditions:
@@ -331,9 +307,7 @@ class VotingStrategy(BaseStrategy):
                 err_key = str(e)
                 if err_key not in self._warned_signals:
                     self._warned_signals.add(err_key)
-                    logger.warning(
-                        "VotingStrategy '%s' sub-signal error: %s", self.name, e
-                    )
+                    logger.warning("VotingStrategy '%s' sub-signal error: %s", self.name, e)
         return count
 
     def _get_rsi_period(self) -> int:
@@ -408,9 +382,7 @@ class VotingStrategy(BaseStrategy):
     def validate_config(self) -> bool:
         """Validate that the strategy configuration is complete and correct."""
         if not self._sub_signals:
-            raise ValueError(
-                "VotingStrategy requires at least one sub-signal condition"
-            )
+            raise ValueError("VotingStrategy requires at least one sub-signal condition")
         if not self.symbol:
             raise ValueError("VotingStrategy requires a symbol")
         if not self.market:
@@ -418,10 +390,7 @@ class VotingStrategy(BaseStrategy):
         if self._min_votes < 1:
             raise ValueError("min_votes must be >= 1")
         if self._min_votes > len(self._sub_signals):
-            raise ValueError(
-                f"min_votes ({self._min_votes}) > number of sub-signals "
-                f"({len(self._sub_signals)})"
-            )
+            raise ValueError(f"min_votes ({self._min_votes}) > number of sub-signals ({len(self._sub_signals)})")
         # Validate bear_sub_signals if provided
         if self._bear_sub_signals:
             if self._bear_min_votes < 1:

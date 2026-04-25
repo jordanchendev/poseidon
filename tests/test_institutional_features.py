@@ -142,7 +142,7 @@ def foreign_holding_data(ohlcv):
     idx = ohlcv.index
     daily_dates = idx[::5]
     values = [0.70, 0.71, 0.72, 0.71, 0.73, 0.74, 0.73, 0.75, 0.74, 0.76]
-    df = pd.DataFrame(index=daily_dates[:len(values)])
+    df = pd.DataFrame(index=daily_dates[: len(values)])
     df["foreign_holding_ratio"] = values[: len(daily_dates)]
     return df
 

@@ -14,12 +14,13 @@ import uuid
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 # --- SQLite compatibility shims for Postgres-only types ---
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 @compiles(JSONB, "sqlite")
@@ -32,14 +33,12 @@ def _compile_uuid_sqlite(type_, compiler, **kw):  # pragma: no cover
     return "VARCHAR(36)"
 
 
-from poseidon.models.base import Base, get_db  # noqa: E402
-from poseidon.models.training_run import TrainingRun  # noqa: E402,F401
-
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from poseidon.api.research_api import router as research_router  # noqa: E402
-
+from poseidon.models.base import Base, get_db  # noqa: E402
+from poseidon.models.training_run import TrainingRun  # noqa: E402
 
 # --- Test DB / app wiring --------------------------------------------------
 
@@ -271,9 +270,7 @@ def test_cancel_already_succeeded_run(client, celery_calls):
     # Manually flip status to 'succeeded' in DB
     db = TestingSessionLocal()
     try:
-        run = db.query(TrainingRun).filter(
-            TrainingRun.run_id == uuid.UUID(run_id)
-        ).one()
+        run = db.query(TrainingRun).filter(TrainingRun.run_id == uuid.UUID(run_id)).one()
         run.status = "succeeded"
         db.commit()
     finally:

@@ -37,10 +37,7 @@ class CircuitBreakerOpenError(Exception):
     def __init__(self, base_url: str, time_to_recovery: float) -> None:
         self.base_url = base_url
         self.time_to_recovery = time_to_recovery
-        super().__init__(
-            f"Circuit breaker OPEN for {base_url} -- "
-            f"recovery in {time_to_recovery:.1f}s"
-        )
+        super().__init__(f"Circuit breaker OPEN for {base_url} -- recovery in {time_to_recovery:.1f}s")
 
 
 class CircuitBreaker:

@@ -17,7 +17,6 @@ from poseidon.qlib.allowlist import (
     resolve_model,
 )
 
-
 # ---------------------------------------------------------------------------
 # Dict contents
 # ---------------------------------------------------------------------------
@@ -27,14 +26,8 @@ def test_allowed_handler_classes_contains_expected_entries():
     """Alpha158Handler and Alpha360Handler must be present with PoseidonDataHandler paths."""
     assert "Alpha158Handler" in ALLOWED_HANDLER_CLASSES
     assert "Alpha360Handler" in ALLOWED_HANDLER_CLASSES
-    assert (
-        ALLOWED_HANDLER_CLASSES["Alpha158Handler"]
-        == "poseidon.qlib.data_handler.PoseidonDataHandler"
-    )
-    assert (
-        ALLOWED_HANDLER_CLASSES["Alpha360Handler"]
-        == "poseidon.qlib.data_handler.PoseidonDataHandler"
-    )
+    assert ALLOWED_HANDLER_CLASSES["Alpha158Handler"] == "poseidon.qlib.data_handler.PoseidonDataHandler"
+    assert ALLOWED_HANDLER_CLASSES["Alpha360Handler"] == "poseidon.qlib.data_handler.PoseidonDataHandler"
 
 
 def test_allowed_model_classes_contains_expected_entries():
@@ -43,14 +36,8 @@ def test_allowed_model_classes_contains_expected_entries():
     assert "LinearModel" in ALLOWED_MODEL_CLASSES
     assert "XGBModel" in ALLOWED_MODEL_CLASSES
     assert ALLOWED_MODEL_CLASSES["LGBModel"] == "qlib.contrib.model.gbdt.LGBModel"
-    assert (
-        ALLOWED_MODEL_CLASSES["LinearModel"]
-        == "qlib.contrib.model.linear.LinearModel"
-    )
-    assert (
-        ALLOWED_MODEL_CLASSES["XGBModel"]
-        == "qlib.contrib.model.xgboost.XGBModel"
-    )
+    assert ALLOWED_MODEL_CLASSES["LinearModel"] == "qlib.contrib.model.linear.LinearModel"
+    assert ALLOWED_MODEL_CLASSES["XGBModel"] == "qlib.contrib.model.xgboost.XGBModel"
 
 
 # ---------------------------------------------------------------------------
@@ -60,14 +47,8 @@ def test_allowed_model_classes_contains_expected_entries():
 
 def test_resolve_handler_valid():
     """resolve_handler with a valid name returns the correct import path."""
-    assert (
-        resolve_handler("Alpha158Handler")
-        == "poseidon.qlib.data_handler.PoseidonDataHandler"
-    )
-    assert (
-        resolve_handler("Alpha360Handler")
-        == "poseidon.qlib.data_handler.PoseidonDataHandler"
-    )
+    assert resolve_handler("Alpha158Handler") == "poseidon.qlib.data_handler.PoseidonDataHandler"
+    assert resolve_handler("Alpha360Handler") == "poseidon.qlib.data_handler.PoseidonDataHandler"
 
 
 def test_resolve_handler_invalid_raises_valueerror():

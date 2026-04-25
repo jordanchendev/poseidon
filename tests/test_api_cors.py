@@ -1,6 +1,7 @@
 """Tests for CORS middleware configuration."""
 
 from fastapi.testclient import TestClient
+
 from poseidon.main import app
 
 client = TestClient(app, raise_server_exceptions=False)

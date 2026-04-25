@@ -41,8 +41,7 @@ def adapt_columns(df: pd.DataFrame) -> pd.DataFrame:
     missing = _REQUIRED_COLUMNS - set(df.columns)
     if missing:
         raise ValueError(
-            f"Missing required columns for Qlib adaptation: {sorted(missing)}. "
-            f"Expected: {sorted(_REQUIRED_COLUMNS)}"
+            f"Missing required columns for Qlib adaptation: {sorted(missing)}. Expected: {sorted(_REQUIRED_COLUMNS)}"
         )
     return df.rename(columns=COLUMN_MAP)
 
@@ -66,7 +65,6 @@ def restore_columns(df: pd.DataFrame) -> pd.DataFrame:
     missing = required_qlib - set(df.columns)
     if missing:
         raise ValueError(
-            f"Missing required Qlib columns for restoration: {sorted(missing)}. "
-            f"Expected: {sorted(required_qlib)}"
+            f"Missing required Qlib columns for restoration: {sorted(missing)}. Expected: {sorted(required_qlib)}"
         )
     return df.rename(columns=REVERSE_MAP)

@@ -14,9 +14,10 @@ BacktestRunner.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import product as itertools_product
-from typing import Any, Callable
+from typing import Any
 
 import optuna
 import pandas as pd
@@ -99,7 +100,7 @@ class GridSearchOptimizer:
         logger.info("Grid search: %d combinations", total_combos)
 
         for combo in itertools_product(*values):
-            params = dict(zip(keys, combo))
+            params = dict(zip(keys, combo, strict=False))
             strategy = strategy_factory(params)
 
             runner = BacktestRunner(

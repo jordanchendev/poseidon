@@ -80,6 +80,7 @@ class AlertsResponse(PydanticBase):
 def _get_redis_client() -> redis_lib.Redis:
     """Redis client for VaR snapshots and alert streams (cache, DB 1)."""
     from poseidon.core.redis import get_redis
+
     return get_redis("cache")
 
 
@@ -117,13 +118,12 @@ def get_exposure(db: Session = Depends(get_db)):
 
     # Aggregate by market
     market_exposure: dict[str, float] = {}
-    for key, pos in portfolio.positions.items():
+    for _key, pos in portfolio.positions.items():
         market = pos.market
         market_exposure[market] = market_exposure.get(market, 0.0) + pos.quantity_pct
 
     exposures = [
-        ExposureItem(category=market, value=round(value, 6))
-        for market, value in sorted(market_exposure.items())
+        ExposureItem(category=market, value=round(value, 6)) for market, value in sorted(market_exposure.items())
     ]
     total = round(portfolio.total_exposure(), 6)
     return ExposureResponse(exposures=exposures, total=total)

@@ -4,17 +4,17 @@ Tests db_session() context manager lifecycle and backward-compatible imports.
 Uses SQLite in-memory to avoid requiring PostgreSQL.
 """
 
-from contextlib import contextmanager
+import contextlib
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-
 
 # ---------------------------------------------------------------------------
 # Fixtures: test engine + sessionmaker using SQLite in-memory
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def test_session_factory():
@@ -26,6 +26,7 @@ def test_session_factory():
 # ---------------------------------------------------------------------------
 # Test 1: db_session() yields a Session and closes on normal exit
 # ---------------------------------------------------------------------------
+
 
 def test_db_session_yields_session_and_closes(test_session_factory):
     """db_session() must yield a Session object and call close() on exit."""
@@ -46,6 +47,7 @@ def test_db_session_yields_session_and_closes(test_session_factory):
 # Test 2: db_session() rolls back and closes on exception
 # ---------------------------------------------------------------------------
 
+
 def test_db_session_rollback_on_exception(test_session_factory):
     """db_session() must call rollback() then close() on exception."""
     mock_session = MagicMock(spec=Session)
@@ -54,9 +56,8 @@ def test_db_session_rollback_on_exception(test_session_factory):
     with patch("poseidon.core.database.SessionLocal", patched_factory):
         from poseidon.core.database import db_session
 
-        with pytest.raises(ValueError, match="boom"):
-            with db_session() as session:
-                raise ValueError("boom")
+        with pytest.raises(ValueError, match="boom"), db_session():
+            raise ValueError("boom")
 
     mock_session.rollback.assert_called_once()
     mock_session.close.assert_called_once()
@@ -66,6 +67,7 @@ def test_db_session_rollback_on_exception(test_session_factory):
 # Test 3: db_session() does NOT auto-commit on normal exit
 # ---------------------------------------------------------------------------
 
+
 def test_db_session_no_auto_commit(test_session_factory):
     """db_session() must NOT call commit() on normal exit."""
     mock_session = MagicMock(spec=Session)
@@ -74,7 +76,7 @@ def test_db_session_no_auto_commit(test_session_factory):
     with patch("poseidon.core.database.SessionLocal", patched_factory):
         from poseidon.core.database import db_session
 
-        with db_session() as session:
+        with db_session():
             pass  # normal exit, no explicit commit
 
     mock_session.commit.assert_not_called()
@@ -83,6 +85,7 @@ def test_db_session_no_auto_commit(test_session_factory):
 # ---------------------------------------------------------------------------
 # Test 4: get_db() yields a Session and closes on exit (FastAPI dependency)
 # ---------------------------------------------------------------------------
+
 
 def test_get_db_yields_and_closes(test_session_factory):
     """get_db() generator must yield a Session and call close()."""
@@ -97,10 +100,8 @@ def test_get_db_yields_and_closes(test_session_factory):
         assert session is mock_session
 
         # Simulate FastAPI calling .close() on the generator
-        try:
+        with contextlib.suppress(StopIteration):
             next(gen)
-        except StopIteration:
-            pass
 
     mock_session.close.assert_called_once()
 
@@ -108,6 +109,7 @@ def test_get_db_yields_and_closes(test_session_factory):
 # ---------------------------------------------------------------------------
 # Test 5: SessionLocal importable from poseidon.core.database
 # ---------------------------------------------------------------------------
+
 
 def test_session_local_importable_from_core_database():
     """SessionLocal must be importable from poseidon.core.database."""
@@ -121,6 +123,7 @@ def test_session_local_importable_from_core_database():
 # Test 6: SessionLocal still importable from poseidon.models (backward compat)
 # ---------------------------------------------------------------------------
 
+
 def test_session_local_backward_compat_from_models():
     """SessionLocal must still be importable from poseidon.models."""
     from poseidon.models import SessionLocal
@@ -133,6 +136,7 @@ def test_session_local_backward_compat_from_models():
 # Test 7: engine importable from poseidon.core.database
 # ---------------------------------------------------------------------------
 
+
 def test_engine_importable_from_core_database():
     """engine must be importable from poseidon.core.database."""
     from poseidon.core.database import engine
@@ -143,6 +147,7 @@ def test_engine_importable_from_core_database():
 # ---------------------------------------------------------------------------
 # Test 8: db_session importable from poseidon.core.database
 # ---------------------------------------------------------------------------
+
 
 def test_db_session_importable():
     """db_session must be importable from poseidon.core.database."""

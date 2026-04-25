@@ -21,9 +21,7 @@ def test_poseidon_beat_has_no_data_ingest_tasks():
     ]
     for name in schedule:
         for prefix in data_task_prefixes:
-            assert not name.startswith(prefix), (
-                f"Data task '{name}' should not be in Poseidon schedule"
-            )
+            assert not name.startswith(prefix), f"Data task '{name}' should not be in Poseidon schedule"
 
 
 def test_poseidon_beat_has_trading_tasks():
@@ -57,6 +55,4 @@ def test_poseidon_beat_entry_count():
     from poseidon.workers.celery_app import celery_app
 
     schedule = celery_app.conf.beat_schedule
-    assert len(schedule) == 17, (
-        f"Expected 17 entries, got {len(schedule)}: {list(schedule.keys())}"
-    )
+    assert len(schedule) == 17, f"Expected 17 entries, got {len(schedule)}: {list(schedule.keys())}"

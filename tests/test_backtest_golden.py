@@ -5,11 +5,11 @@ Phase 49: Signal schema golden reference tests.
 - Wave 2 (49-03): Golden regression test locking _run_loop behavior before Phase 50
 """
 
+from datetime import UTC
+
 import numpy as np
 import pandas as pd
 import pytest
-from datetime import timezone
-
 
 # ---------------------------------------------------------------------------
 # Golden regression test constants — DO NOT CHANGE after values captured
@@ -27,7 +27,7 @@ def _make_golden_ohlcv() -> pd.DataFrame:
     Uses np.random.default_rng() for isolated RNG (not global np.random.seed()).
     """
     rng = np.random.default_rng(GOLDEN_SEED)
-    times = pd.date_range("2025-06-01", periods=GOLDEN_N_BARS, freq="h", tz=timezone.utc)
+    times = pd.date_range("2025-06-01", periods=GOLDEN_N_BARS, freq="h", tz=UTC)
     returns = rng.standard_normal(GOLDEN_N_BARS) * 0.01
     closes = GOLDEN_BASE_PRICE * np.cumprod(1 + returns)
     highs = closes * (1 + np.abs(rng.standard_normal(GOLDEN_N_BARS) * 0.005))
@@ -145,17 +145,127 @@ EXPECTED_METRICS: dict = {
     "closed_trade_count": 5,
 }
 EXPECTED_TRADES: list[dict] = [
-    {"symbol": "BTCUSDT", "action": "long", "entry_time": "2025-06-01T13:00:00+00:00", "exit_time": None, "entry_price": 49500.76641474099, "exit_price": None, "quantity": 0.2020170741643723, "fees": 2.0, "pnl": None},
-    {"symbol": "BTCUSDT", "action": "close", "entry_time": "2025-06-01T13:00:00+00:00", "exit_time": "2025-06-01T20:00:00+00:00", "entry_price": 49500.76641474099, "exit_price": 50586.41194226201, "quantity": 0.2020170741643723, "fees": 7.109659466524717, "pnl": 212.20927358290922},
-    {"symbol": "BTCUSDT", "action": "long", "entry_time": "2025-06-01T23:00:00+00:00", "exit_time": None, "entry_price": 50115.05428926785, "exit_price": None, "quantity": 0.19954083941083353, "fees": 2.0, "pnl": None},
-    {"symbol": "BTCUSDT", "action": "close", "entry_time": "2025-06-01T23:00:00+00:00", "exit_time": "2025-06-02T07:00:00+00:00", "entry_price": 50115.05428926785, "exit_price": 52500.3369727029, "quantity": 0.19954083941083353, "fees": 7.237980654442377, "pnl": 468.7233282303128},
-    {"symbol": "BTCUSDT", "action": "long", "entry_time": "2025-06-02T10:00:00+00:00", "exit_time": None, "entry_price": 50693.22231538012, "exit_price": None, "quantity": 0.19726502958889716, "fees": 2.0, "pnl": None},
-    {"symbol": "BTCUSDT", "action": "close", "entry_time": "2025-06-02T10:00:00+00:00", "exit_time": "2025-06-03T01:00:00+00:00", "entry_price": 50693.22231538012, "exit_price": 51369.42969394952, "quantity": 0.19726502958889716, "fees": 7.066696034270862, "pnl": 126.32537250745263},
-    {"symbol": "BTCUSDT", "action": "long", "entry_time": "2025-06-03T04:00:00+00:00", "exit_time": None, "entry_price": 52061.719127300705, "exit_price": None, "quantity": 0.19207971168889212, "fees": 2.0, "pnl": None},
-    {"symbol": "BTCUSDT", "action": "close", "entry_time": "2025-06-03T04:00:00+00:00", "exit_time": "2025-06-03T05:00:00+00:00", "entry_price": 52061.719127300705, "exit_price": 52288.83030294377, "quantity": 0.19207971168889212, "fees": 7.021811724569422, "pnl": 36.60163741427524},
-    {"symbol": "BTCUSDT", "action": "long", "entry_time": "2025-06-03T08:00:00+00:00", "exit_time": None, "entry_price": 52402.85691838111, "exit_price": None, "quantity": 0.1908292903872641, "fees": 2.0, "pnl": None},
-    {"symbol": "BTCUSDT", "action": "close", "entry_time": "2025-06-03T08:00:00+00:00", "exit_time": "2025-06-03T23:00:00+00:00", "entry_price": 52402.85691838111, "exit_price": 48186.44378236885, "quantity": 0.1908292903872641, "fees": 6.597692436637621, "pnl": -811.2128191613966},
-    {"symbol": "BTCUSDT", "action": "long", "entry_time": "2025-06-04T07:00:00+00:00", "exit_time": None, "entry_price": 48304.46735624273, "exit_price": None, "quantity": 0.20702018979425987, "fees": 2.0, "pnl": None},
+    {
+        "symbol": "BTCUSDT",
+        "action": "long",
+        "entry_time": "2025-06-01T13:00:00+00:00",
+        "exit_time": None,
+        "entry_price": 49500.76641474099,
+        "exit_price": None,
+        "quantity": 0.2020170741643723,
+        "fees": 2.0,
+        "pnl": None,
+    },
+    {
+        "symbol": "BTCUSDT",
+        "action": "close",
+        "entry_time": "2025-06-01T13:00:00+00:00",
+        "exit_time": "2025-06-01T20:00:00+00:00",
+        "entry_price": 49500.76641474099,
+        "exit_price": 50586.41194226201,
+        "quantity": 0.2020170741643723,
+        "fees": 7.109659466524717,
+        "pnl": 212.20927358290922,
+    },
+    {
+        "symbol": "BTCUSDT",
+        "action": "long",
+        "entry_time": "2025-06-01T23:00:00+00:00",
+        "exit_time": None,
+        "entry_price": 50115.05428926785,
+        "exit_price": None,
+        "quantity": 0.19954083941083353,
+        "fees": 2.0,
+        "pnl": None,
+    },
+    {
+        "symbol": "BTCUSDT",
+        "action": "close",
+        "entry_time": "2025-06-01T23:00:00+00:00",
+        "exit_time": "2025-06-02T07:00:00+00:00",
+        "entry_price": 50115.05428926785,
+        "exit_price": 52500.3369727029,
+        "quantity": 0.19954083941083353,
+        "fees": 7.237980654442377,
+        "pnl": 468.7233282303128,
+    },
+    {
+        "symbol": "BTCUSDT",
+        "action": "long",
+        "entry_time": "2025-06-02T10:00:00+00:00",
+        "exit_time": None,
+        "entry_price": 50693.22231538012,
+        "exit_price": None,
+        "quantity": 0.19726502958889716,
+        "fees": 2.0,
+        "pnl": None,
+    },
+    {
+        "symbol": "BTCUSDT",
+        "action": "close",
+        "entry_time": "2025-06-02T10:00:00+00:00",
+        "exit_time": "2025-06-03T01:00:00+00:00",
+        "entry_price": 50693.22231538012,
+        "exit_price": 51369.42969394952,
+        "quantity": 0.19726502958889716,
+        "fees": 7.066696034270862,
+        "pnl": 126.32537250745263,
+    },
+    {
+        "symbol": "BTCUSDT",
+        "action": "long",
+        "entry_time": "2025-06-03T04:00:00+00:00",
+        "exit_time": None,
+        "entry_price": 52061.719127300705,
+        "exit_price": None,
+        "quantity": 0.19207971168889212,
+        "fees": 2.0,
+        "pnl": None,
+    },
+    {
+        "symbol": "BTCUSDT",
+        "action": "close",
+        "entry_time": "2025-06-03T04:00:00+00:00",
+        "exit_time": "2025-06-03T05:00:00+00:00",
+        "entry_price": 52061.719127300705,
+        "exit_price": 52288.83030294377,
+        "quantity": 0.19207971168889212,
+        "fees": 7.021811724569422,
+        "pnl": 36.60163741427524,
+    },
+    {
+        "symbol": "BTCUSDT",
+        "action": "long",
+        "entry_time": "2025-06-03T08:00:00+00:00",
+        "exit_time": None,
+        "entry_price": 52402.85691838111,
+        "exit_price": None,
+        "quantity": 0.1908292903872641,
+        "fees": 2.0,
+        "pnl": None,
+    },
+    {
+        "symbol": "BTCUSDT",
+        "action": "close",
+        "entry_time": "2025-06-03T08:00:00+00:00",
+        "exit_time": "2025-06-03T23:00:00+00:00",
+        "entry_price": 52402.85691838111,
+        "exit_price": 48186.44378236885,
+        "quantity": 0.1908292903872641,
+        "fees": 6.597692436637621,
+        "pnl": -811.2128191613966,
+    },
+    {
+        "symbol": "BTCUSDT",
+        "action": "long",
+        "entry_time": "2025-06-04T07:00:00+00:00",
+        "exit_time": None,
+        "entry_price": 48304.46735624273,
+        "exit_price": None,
+        "quantity": 0.20702018979425987,
+        "fees": 2.0,
+        "pnl": None,
+    },
 ]
 
 
@@ -251,22 +361,16 @@ class TestBacktestGolden:
         assert len(result.trades) == len(EXPECTED_TRADES), (
             f"Trade list length mismatch: {len(result.trades)} != {len(EXPECTED_TRADES)}"
         )
-        for i, (actual, expected) in enumerate(zip(result.trades, EXPECTED_TRADES)):
-            assert actual["entry_price"] == pytest.approx(
-                expected["entry_price"], abs=1e-6
-            ), f"Trade {i} entry_price mismatch"
-            assert actual["exit_price"] == pytest.approx(
-                expected["exit_price"], abs=1e-6
-            ), f"Trade {i} exit_price mismatch"
-            assert actual["quantity"] == pytest.approx(
-                expected["quantity"], abs=1e-6
-            ), f"Trade {i} quantity mismatch"
-            assert actual["fees"] == pytest.approx(
-                expected["fees"], abs=1e-6
-            ), f"Trade {i} fees mismatch"
-            assert actual["pnl"] == pytest.approx(
-                expected["pnl"], abs=1e-6
-            ), f"Trade {i} pnl mismatch"
+        for i, (actual, expected) in enumerate(zip(result.trades, EXPECTED_TRADES, strict=False)):
+            assert actual["entry_price"] == pytest.approx(expected["entry_price"], abs=1e-6), (
+                f"Trade {i} entry_price mismatch"
+            )
+            assert actual["exit_price"] == pytest.approx(expected["exit_price"], abs=1e-6), (
+                f"Trade {i} exit_price mismatch"
+            )
+            assert actual["quantity"] == pytest.approx(expected["quantity"], abs=1e-6), f"Trade {i} quantity mismatch"
+            assert actual["fees"] == pytest.approx(expected["fees"], abs=1e-6), f"Trade {i} fees mismatch"
+            assert actual["pnl"] == pytest.approx(expected["pnl"], abs=1e-6), f"Trade {i} pnl mismatch"
             assert actual["action"] == expected["action"], f"Trade {i} action mismatch"
             assert actual["symbol"] == expected["symbol"], f"Trade {i} symbol mismatch"
 
@@ -281,9 +385,7 @@ class TestBacktestGolden:
             if expected_val is None:
                 assert result.metrics.get(key) is None, f"Metric {key} should be None"
             elif isinstance(expected_val, (int, float)):
-                assert result.metrics[key] == pytest.approx(
-                    expected_val, abs=1e-6
-                ), f"Metric {key} mismatch"
+                assert result.metrics[key] == pytest.approx(expected_val, abs=1e-6), f"Metric {key} mismatch"
             else:
                 assert result.metrics[key] == expected_val, f"Metric {key} mismatch"
 

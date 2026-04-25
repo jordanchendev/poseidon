@@ -25,6 +25,7 @@ class SignalDeliveryService:
             self._redis = redis.from_url(redis_url, decode_responses=True)
         else:
             from poseidon.core.redis import get_redis
+
             self._redis = get_redis("stream", decode_responses=True)
 
     def deliver(self, signal: Signal) -> str | None:

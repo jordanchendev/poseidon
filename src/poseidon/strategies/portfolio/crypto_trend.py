@@ -3,6 +3,7 @@
 Inherits PortfolioStrategy ABC. Uses PerpDataLoader (not direct DB queries).
 Config via YAML + Pydantic (same pattern as RevenueBreakoutStrategy).
 """
+
 import logging
 from datetime import date
 
@@ -79,9 +80,7 @@ class CryptoTrendStrategy(PortfolioStrategy):
         self.config = config
         self._repo = repo  # Must be injected with session
 
-    def select_stocks(
-        self, universe_df: pd.DataFrame, as_of: date | None = None
-    ) -> list[TargetPosition]:
+    def select_stocks(self, universe_df: pd.DataFrame, as_of: date | None = None) -> list[TargetPosition]:
         """Evaluate EMA crossover + funding rate for each symbol.
 
         Args:
@@ -117,9 +116,7 @@ class CryptoTrendStrategy(PortfolioStrategy):
                 continue
 
             # 2. Compute EMA crossover signal (per D-03)
-            signal = self._compute_ema_signal(
-                ohlcv, cfg.momentum.ema_fast_period, cfg.momentum.ema_slow_period
-            )
+            signal = self._compute_ema_signal(ohlcv, cfg.momentum.ema_fast_period, cfg.momentum.ema_slow_period)
 
             if signal == "neutral":
                 logger.info("Neutral EMA signal for %s, skipping", symbol)
@@ -129,10 +126,7 @@ class CryptoTrendStrategy(PortfolioStrategy):
             funding_rate = self._repo.read_latest_funding_rate(symbol)
 
             if funding_rate is not None:
-                if (
-                    signal == "long"
-                    and funding_rate > cfg.funding_filter.max_funding_rate_long
-                ):
+                if signal == "long" and funding_rate > cfg.funding_filter.max_funding_rate_long:
                     logger.info(
                         "Blocking LONG on %s: funding_rate=%.6f > threshold=%.6f",
                         symbol,
@@ -140,10 +134,7 @@ class CryptoTrendStrategy(PortfolioStrategy):
                         cfg.funding_filter.max_funding_rate_long,
                     )
                     continue
-                if (
-                    signal == "short"
-                    and funding_rate < cfg.funding_filter.max_funding_rate_short
-                ):
+                if signal == "short" and funding_rate < cfg.funding_filter.max_funding_rate_short:
                     logger.info(
                         "Blocking SHORT on %s: funding_rate=%.6f < threshold=%.6f",
                         symbol,
@@ -159,9 +150,7 @@ class CryptoTrendStrategy(PortfolioStrategy):
 
             reason_parts = [
                 f"ema_{cfg.momentum.ema_fast_period}_{cfg.momentum.ema_slow_period}={signal}",
-                f"funding_rate={funding_rate:.6f}"
-                if funding_rate is not None
-                else "funding_rate=N/A",
+                f"funding_rate={funding_rate:.6f}" if funding_rate is not None else "funding_rate=N/A",
             ]
 
             targets.append(
@@ -185,8 +174,7 @@ class CryptoTrendStrategy(PortfolioStrategy):
         """Validate strategy configuration is complete."""
         return (
             self.config.momentum.ema_fast_period > 0
-            and self.config.momentum.ema_slow_period
-            > self.config.momentum.ema_fast_period
+            and self.config.momentum.ema_slow_period > self.config.momentum.ema_fast_period
             and len(self.config.symbols) > 0
         )
 

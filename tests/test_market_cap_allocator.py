@@ -1,7 +1,5 @@
 """Tests for MarketCapWeightedAllocator (Phase 71 D-16)."""
 
-import pytest
-
 from poseidon.strategies.portfolio.fundamental_selection import MarketCapWeightedAllocator
 
 

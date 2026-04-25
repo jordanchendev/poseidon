@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -12,7 +12,6 @@ import pandas as pd
 import pytest
 
 from poseidon.risk.stress.types import ScenarioConfig, StressTestResult
-
 
 # ---------------------------------------------------------------------------
 # Scenario loader tests
@@ -79,8 +78,8 @@ class TestStressTestEngine:
             var_99=0.08,
             cvar_95=0.06,
             cvar_99=0.09,
-            as_of=datetime(2020, 3, 23, tzinfo=timezone.utc),
-            computed_at=datetime.now(timezone.utc),
+            as_of=datetime(2020, 3, 23, tzinfo=UTC),
+            computed_at=datetime.now(UTC),
             portfolio_value=1_000_000.0,
         )
         calc.parametric.return_value = VaRResult(
@@ -89,13 +88,11 @@ class TestStressTestEngine:
             var_99=0.07,
             cvar_95=0.05,
             cvar_99=0.08,
-            as_of=datetime.now(timezone.utc),
-            computed_at=datetime.now(timezone.utc),
+            as_of=datetime.now(UTC),
+            computed_at=datetime.now(UTC),
             portfolio_value=1_000_000.0,
         )
-        calc.compute_portfolio_returns = MagicMock(
-            side_effect=lambda aligned, w: aligned.values @ w
-        )
+        calc.compute_portfolio_returns = MagicMock(side_effect=lambda aligned, w: aligned.values @ w)
         return calc
 
     @pytest.fixture()
@@ -107,9 +104,7 @@ class TestStressTestEngine:
         data = rng.normal(-0.02, 0.03, size=(len(dates), 3))
         return pd.DataFrame(data, index=dates, columns=["A", "B", "C"])
 
-    def test_run_historical(
-        self, mock_calculator: MagicMock, sample_returns: pd.DataFrame
-    ) -> None:
+    def test_run_historical(self, mock_calculator: MagicMock, sample_returns: pd.DataFrame) -> None:
         """_run_historical produces negative portfolio_pnl for crisis scenario."""
         from poseidon.risk.stress.engine import StressTestEngine
 
@@ -124,8 +119,12 @@ class TestStressTestEngine:
         cov = np.eye(3) * 0.01
 
         result = engine.run_config(
-            config, weights, ["A", "B", "C"], cov,
-            aligned_returns=sample_returns, portfolio_value=1_000_000.0,
+            config,
+            weights,
+            ["A", "B", "C"],
+            cov,
+            aligned_returns=sample_returns,
+            portfolio_value=1_000_000.0,
         )
         assert isinstance(result, StressTestResult)
         assert result.scenario_type == "historical"
@@ -147,7 +146,11 @@ class TestStressTestEngine:
         cov = np.eye(3) * 0.01
 
         result = engine.run_config(
-            config, weights, symbols, cov, portfolio_value=1_000_000.0,
+            config,
+            weights,
+            symbols,
+            cov,
+            portfolio_value=1_000_000.0,
         )
         assert isinstance(result, StressTestResult)
         assert result.scenario_type == "hypothetical"
@@ -171,7 +174,11 @@ class TestStressTestEngine:
         weights = np.array([0.4, 0.3, 0.3])
 
         result = engine.run_config(
-            config, weights, ["A", "B", "C"], cov, portfolio_value=1_000_000.0,
+            config,
+            weights,
+            ["A", "B", "C"],
+            cov,
+            portfolio_value=1_000_000.0,
         )
         assert isinstance(result, StressTestResult)
         assert result.scenario_type == "correlation_stress"
@@ -209,7 +216,11 @@ class TestStressTestEngine:
         cov = np.eye(3) * 0.01
 
         result = engine.run_scenario(
-            "covid_2020", weights, ["A", "B", "C"], cov,
-            aligned_returns=sample_returns, portfolio_value=1_000_000.0,
+            "covid_2020",
+            weights,
+            ["A", "B", "C"],
+            cov,
+            aligned_returns=sample_returns,
+            portfolio_value=1_000_000.0,
         )
         assert result.scenario_type == "historical"

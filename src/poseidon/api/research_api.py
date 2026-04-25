@@ -23,10 +23,10 @@ from sqlalchemy.orm import Session
 from poseidon.core.schemas import (
     ModelMetricsResponse,
     PredictionResponse,
-    TrainRequest,
     TrainingRunDetailResponse,
     TrainingRunListResponse,
     TrainingRunResponse,
+    TrainRequest,
 )
 from poseidon.ml.artifacts import delete_version_artifacts, get_predictions_path
 from poseidon.models.base import get_db
@@ -64,11 +64,11 @@ async def create_training_run(
     try:
         resolve_handler(request.handler_class)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     try:
         resolve_model(request.model_class)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
     # Create TrainingRun row
     run = TrainingRun(
@@ -141,9 +141,7 @@ async def get_training_run(
     """
     run = db.query(TrainingRun).filter(TrainingRun.run_id == run_id).first()
     if run is None:
-        raise HTTPException(
-            status_code=404, detail=f"Training run {run_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Training run {run_id} not found")
     return TrainingRunDetailResponse.model_validate(run)
 
 
@@ -159,9 +157,7 @@ async def cancel_training_run(
     """
     run = db.query(TrainingRun).filter(TrainingRun.run_id == run_id).first()
     if run is None:
-        raise HTTPException(
-            status_code=404, detail=f"Training run {run_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Training run {run_id} not found")
     if run.status not in ("pending", "running"):
         raise HTTPException(
             status_code=409,
@@ -186,9 +182,7 @@ async def get_model_metrics(
     """Return a ModelVersion with full metrics JSON (per RESEARCH-API-08)."""
     version = db.query(ModelVersion).filter(ModelVersion.id == model_id).first()
     if version is None:
-        raise HTTPException(
-            status_code=404, detail=f"Model version {model_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Model version {model_id} not found")
     return version
 
 
@@ -205,16 +199,12 @@ async def delete_model(
     """
     version = db.query(ModelVersion).filter(ModelVersion.id == model_id).first()
     if version is None:
-        raise HTTPException(
-            status_code=404, detail=f"Model version {model_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Model version {model_id} not found")
     # Best-effort artifact cleanup
     if version.artifact_path:
         delete_version_artifacts(version.artifact_path)
     # Unlink any training_runs that reference this model_version
-    db.query(TrainingRun).filter(
-        TrainingRun.model_version_id == model_id
-    ).update({"model_version_id": None})
+    db.query(TrainingRun).filter(TrainingRun.model_version_id == model_id).update({"model_version_id": None})
     db.delete(version)
     db.commit()
     return {"detail": f"Model version {model_id} deleted"}
@@ -244,9 +234,7 @@ async def get_predictions(
     """
     version = db.query(ModelVersion).filter(ModelVersion.id == model_id).first()
     if version is None:
-        raise HTTPException(
-            status_code=404, detail=f"Model version {model_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Model version {model_id} not found")
     if not version.artifact_path:
         raise HTTPException(
             status_code=404,

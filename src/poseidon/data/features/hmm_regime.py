@@ -99,9 +99,7 @@ class HMMRegime(BaseFeature):
             labels = remap[raw_labels]
 
             # Transition probability: max probability of transitioning from current regime
-            transition_prob = np.array(
-                [model.transmat_[label].max() for label in labels]
-            )
+            transition_prob = np.array([model.transmat_[label].max() for label in labels])
 
             # Regime duration: count consecutive bars in same regime
             duration = self._compute_duration(labels)

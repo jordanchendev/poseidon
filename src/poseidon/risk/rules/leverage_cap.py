@@ -41,9 +41,6 @@ class LeverageCapRule(BaseRule):
             return RuleResult(
                 passed=False,
                 rule_name=self.name,
-                reason=(
-                    f"Projected exposure {projected:.2f} exceeds "
-                    f"cap {self.max_total_exposure:.2f}"
-                ),
+                reason=(f"Projected exposure {projected:.2f} exceeds cap {self.max_total_exposure:.2f}"),
             )
         return RuleResult(passed=True, rule_name=self.name)

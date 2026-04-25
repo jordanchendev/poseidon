@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import date
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import pandas as pd
 
-from poseidon.ml.artifacts import get_predictions_path
 from poseidon.data.symbols import load_symbols
+from poseidon.ml.artifacts import get_predictions_path
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -21,6 +20,7 @@ DEFAULT_PHASE68_SEGMENTS = {
     "valid": ["2022-01-01", "2022-12-31"],
     "test": ["2023-01-01", "2026-04-15"],
 }
+
 
 def _load_phase68_symbols() -> list[str]:
     config = load_symbols()
@@ -48,9 +48,7 @@ def _normalize_prediction_frame(prediction_frame: pd.DataFrame) -> pd.DataFrame:
     elif {"datetime", "instrument"}.issubset(frame.columns):
         frame = frame.set_index(["datetime", "instrument"])
     else:
-        raise ValueError(
-            "prediction_frame must be indexed by (datetime, instrument) or contain matching columns"
-        )
+        raise ValueError("prediction_frame must be indexed by (datetime, instrument) or contain matching columns")
 
     datetimes = pd.to_datetime(frame.index.get_level_values("datetime"))
     if getattr(datetimes, "tz", None) is not None:
@@ -80,9 +78,7 @@ def resolve_model_version_id(
             raise ValueError(f"TrainingRun {identifier} has no linked model_version_id")
         return run.model_version_id
 
-    model_version = (
-        session.query(ModelVersion).filter(ModelVersion.id == identifier).first()
-    )
+    model_version = session.query(ModelVersion).filter(ModelVersion.id == identifier).first()
     if model_version is None:
         raise ValueError(f"No TrainingRun or ModelVersion found for id={identifier}")
     return model_version.id
@@ -100,9 +96,7 @@ def load_prediction_frame(
     from poseidon.models.model_version import ModelVersion
 
     resolved_id = resolve_model_version_id(model_version_id, session)
-    model_version = (
-        session.query(ModelVersion).filter(ModelVersion.id == resolved_id).first()
-    )
+    model_version = session.query(ModelVersion).filter(ModelVersion.id == resolved_id).first()
     if model_version is None:
         raise ValueError(f"ModelVersion {resolved_id} not found")
     if not model_version.artifact_path:
@@ -110,9 +104,7 @@ def load_prediction_frame(
 
     prediction_path = get_predictions_path(model_version.artifact_path, segment)
     if not prediction_path.exists():
-        raise FileNotFoundError(
-            f"Prediction artifact not found for segment '{segment}': {prediction_path}"
-        )
+        raise FileNotFoundError(f"Prediction artifact not found for segment '{segment}': {prediction_path}")
 
     return _normalize_prediction_frame(pd.read_parquet(prediction_path))
 

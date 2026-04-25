@@ -4,10 +4,10 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     database_url: str = "postgresql://poseidon:poseidon@localhost:5432/poseidon"
     redis_url: str = "redis://localhost:6379/0"
-    redis_celery_url: str = "redis://localhost:6379/0"     # DB 0: Celery broker/backend + RedBeat
-    redis_cache_url: str = "redis://localhost:6379/1"       # DB 1: OHLCV + VaR cache + alert streams
-    redis_stream_url: str = "redis://localhost:6379/2"      # DB 2: Signal delivery to Thalassa
-    redis_ratelimit_url: str = "redis://localhost:6379/3"   # DB 3: Rate limiter + circuit breaker
+    redis_celery_url: str = "redis://localhost:6379/0"  # DB 0: Celery broker/backend + RedBeat
+    redis_cache_url: str = "redis://localhost:6379/1"  # DB 1: OHLCV + VaR cache + alert streams
+    redis_stream_url: str = "redis://localhost:6379/2"  # DB 2: Signal delivery to Thalassa
+    redis_ratelimit_url: str = "redis://localhost:6379/3"  # DB 3: Rate limiter + circuit breaker
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_key: str = ""

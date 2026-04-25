@@ -9,15 +9,10 @@ Covers:
 - Strategy metadata includes updated_stop_loss key
 """
 
-from datetime import datetime, timezone
-
-import numpy as np
 import pandas as pd
-import pytest
 
-from poseidon.signals.schemas import OrderType, SignalAction
+from poseidon.signals.schemas import SignalAction
 from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -149,7 +144,7 @@ class TestTrailingStopNoActivation:
         # Now simulate next bar with close < entry + 1R (not enough profit)
         close_below_1r = entry_price + one_r * 0.5  # only 0.5R profit
         features2 = make_sweep_features(n_rows=201, close=close_below_1r)
-        signals2 = strategy.evaluate(features2)
+        strategy.evaluate(features2)
 
         # Should get empty or HOLD, trailing should NOT be active
         assert strategy._trailing_active is False
@@ -164,10 +159,12 @@ class TestTrailingStopLongActivation:
         """When unrealized profit >= 1R on long, trailing SL moves up."""
         # Use a smaller trail_atr_multiplier so trailing SL can actually tighten
         # above the initial SL with reasonable price moves.
-        config = make_trailing_config(trailing={
-            "activation_r": 1.0,
-            "atr_multiplier": 0.5,  # tight trailing
-        })
+        config = make_trailing_config(
+            trailing={
+                "activation_r": 1.0,
+                "atr_multiplier": 0.5,  # tight trailing
+            }
+        )
         strategy = LiquiditySweepStrategy(config=config)
 
         # Trigger entry
@@ -237,12 +234,16 @@ class TestTrailingStopShortActivation:
         close_below_entry = entry_price - one_r * 3.0
         atr = 500.0
         features2 = make_sweep_features(
-            n_rows=201, close=close_below_entry, atr_14=atr,
-            wick_ratio_upper=0.4, wick_ratio_lower=0.1,
-            breakout_up_24=0.5, breakout_down_24=0.0,
+            n_rows=201,
+            close=close_below_entry,
+            atr_14=atr,
+            wick_ratio_upper=0.4,
+            wick_ratio_lower=0.1,
+            breakout_up_24=0.5,
+            breakout_down_24=0.0,
             funding_rate_daily=-0.01,
         )
-        signals2 = strategy.evaluate(features2)
+        strategy.evaluate(features2)
 
         assert strategy._trailing_active is True
         # For short: new SL should be lower (tighter) than initial
@@ -254,10 +255,12 @@ class TestTrailingStopOnlyTightens:
 
     def test_trailing_sl_does_not_loosen_on_retrace(self):
         """After trailing activates and SL moves up, retrace should NOT move SL back down."""
-        config = make_trailing_config(trailing={
-            "activation_r": 1.0,
-            "atr_multiplier": 0.5,
-        })
+        config = make_trailing_config(
+            trailing={
+                "activation_r": 1.0,
+                "atr_multiplier": 0.5,
+            }
+        )
         strategy = LiquiditySweepStrategy(config=config)
 
         # Trigger long entry
@@ -316,10 +319,12 @@ class TestTrailingStopConfig:
 
     def test_custom_trailing_config(self):
         """Custom activation_r and atr_multiplier should be used."""
-        config = make_trailing_config(trailing={
-            "activation_r": 2.0,
-            "atr_multiplier": 3.0,
-        })
+        config = make_trailing_config(
+            trailing={
+                "activation_r": 2.0,
+                "atr_multiplier": 3.0,
+            }
+        )
         strategy = LiquiditySweepStrategy(config=config)
 
         assert strategy._trailing_activation_r == 2.0
@@ -341,10 +346,12 @@ class TestTrailingStopMetadata:
 
     def test_hold_signal_has_updated_stop_loss(self):
         """When trailing SL changes, the HOLD signal metadata should have updated_stop_loss."""
-        config = make_trailing_config(trailing={
-            "activation_r": 1.0,
-            "atr_multiplier": 0.5,
-        })
+        config = make_trailing_config(
+            trailing={
+                "activation_r": 1.0,
+                "atr_multiplier": 0.5,
+            }
+        )
         strategy = LiquiditySweepStrategy(config=config)
 
         # Trigger entry

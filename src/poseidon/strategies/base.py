@@ -6,14 +6,14 @@ through this common interface.
 """
 
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import StrEnum
 
 import pandas as pd
 
 from poseidon.signals.schemas import Signal
 
 
-class StrategyType(str, Enum):
+class StrategyType(StrEnum):
     """Strategy type discriminator."""
 
     MODEL = "model"

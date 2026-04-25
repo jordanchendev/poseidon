@@ -13,10 +13,6 @@ Covers:
 - Validate config
 """
 
-from datetime import datetime, timezone
-from uuid import uuid4
-
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -25,7 +21,6 @@ from poseidon.strategies.tw_futures.configs import VolatilityBreakoutConfig
 from poseidon.strategies.tw_futures.volatility_breakout import (
     VolatilityBreakoutStrategy,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -168,7 +163,6 @@ class TestTrailingStop:
         signals1 = s.evaluate(df1)
         assert len(signals1) == 1
         assert signals1[0].action == SignalAction.LONG
-        initial_sl = s._trailing_stop
 
         # Second: still in range, no breakout opposite -> HOLD with trailing stop
         n = 55

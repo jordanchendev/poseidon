@@ -12,17 +12,13 @@ Tests cover:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
-from uuid import uuid4
+from datetime import UTC, datetime, timedelta
 
 import msgpack
-import pytest
 
 from poseidon.risk.base import RuleResult
 from poseidon.risk.rules.var_limit import VaRLimitRule
 from poseidon.signals.schemas import Signal, SignalAction
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -52,7 +48,7 @@ def _pack_snapshot(
 ) -> bytes:
     """Pack a VaR snapshot dict into msgpack bytes."""
     if computed_at is None:
-        computed_at = datetime.now(timezone.utc)
+        computed_at = datetime.now(UTC)
     return msgpack.packb(
         {
             "method": method,
@@ -198,7 +194,7 @@ class TestVaRLimitRuleCheck:
     def test_stale_snapshot_still_checks(self):
         """Stale snapshot logs warning but still evaluates the VaR check."""
         redis = FakeRedisClient()
-        stale_time = datetime.now(timezone.utc) - timedelta(hours=5)
+        stale_time = datetime.now(UTC) - timedelta(hours=5)
         redis.set(
             "poseidon:var:latest:parametric",
             _pack_snapshot(var_95=0.03, computed_at=stale_time),

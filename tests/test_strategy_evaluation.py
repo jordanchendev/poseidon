@@ -10,9 +10,16 @@ import pytest
 @pytest.fixture
 def mock_strategy_record():
     """Create a mock StrategyRecord."""
-    def _make(strategy_type="rule", active=True, name="test-strategy",
-              symbol="BTCUSDT", market="crypto_spot", interval="1h",
-              config=None):
+
+    def _make(
+        strategy_type="rule",
+        active=True,
+        name="test-strategy",
+        symbol="BTCUSDT",
+        market="crypto_spot",
+        interval="1h",
+        config=None,
+    ):
         record = MagicMock()
         record.id = uuid.uuid4()
         record.name = name
@@ -23,6 +30,7 @@ def mock_strategy_record():
         record.interval = interval
         record.config = config or {"conditions": []}
         return record
+
     return _make
 
 
@@ -180,9 +188,7 @@ def test_evaluate_active_strategies_from_fetch_result(
     mock_rule_cls.return_value = mock_strategy
 
     # Pass fetch_result instead of explicit market/interval
-    result = evaluate_active_strategies(
-        fetch_result={"market": "crypto_spot", "interval": "1h", "fetched": 5}
-    )
+    result = evaluate_active_strategies(fetch_result={"market": "crypto_spot", "interval": "1h", "fetched": 5})
 
     assert result["market"] == "crypto_spot"
     assert result["interval"] == "1h"

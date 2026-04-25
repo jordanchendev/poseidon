@@ -4,14 +4,14 @@ Both ModelStrategy and RuleStrategy produce Signal objects.
 The risk engine evaluates them equally regardless of source.
 """
 
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
 
-class SignalAction(str, Enum):
+class SignalAction(StrEnum):
     """Valid signal actions."""
 
     LONG = "long"
@@ -20,7 +20,7 @@ class SignalAction(str, Enum):
     HOLD = "hold"
 
 
-class InstrumentType(str, Enum):
+class InstrumentType(StrEnum):
     """Supported instrument types."""
 
     SPOT = "spot"
@@ -29,14 +29,14 @@ class InstrumentType(str, Enum):
     OPTION = "option"
 
 
-class OrderType(str, Enum):
+class OrderType(StrEnum):
     """Order execution type."""
 
     MARKET = "market"
     LIMIT = "limit"
 
 
-class SignalStatus(str, Enum):
+class SignalStatus(StrEnum):
     """Signal risk check status."""
 
     PASSED = "passed"
@@ -63,7 +63,7 @@ class Signal(BaseModel):
     quantity_pct: float | None = Field(None, ge=0.0, le=1.0)
 
     # Time
-    signal_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    signal_time: datetime = Field(default_factory=lambda: datetime.now(UTC))
     valid_until: datetime | None = None
     interval: str = "1d"
 

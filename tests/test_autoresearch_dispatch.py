@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 import pydantic
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Section 1: API Schema Tests (FACT-04)
 # ---------------------------------------------------------------------------
@@ -103,7 +102,7 @@ def test_autoresearch_request_base_config_json_accepted():
 
 def test_regime_search_run_saves_experiments_when_tracker_present():
     """RegimeSearchPipeline.run() calls tracker.save() 3 times (one per regime) when tracker is present."""
-    from poseidon.backtest.regime_search import RegimeSearchPipeline, RegimeSearchConfig, REGIME_NAMES
+    from poseidon.backtest.regime_search import REGIME_NAMES, RegimeSearchConfig, RegimeSearchPipeline
 
     mock_tracker = MagicMock()
     mock_feature_engine = MagicMock()
@@ -125,17 +124,19 @@ def test_regime_search_run_saves_experiments_when_tracker_present():
         "bear_position_pct": 0.08,
     }
 
-    with patch.object(pipeline, "_search_regime", return_value=fake_params) as mock_search, \
-         patch("poseidon.backtest.regime_search.generate_regime_labels", return_value=(None, None)), \
-         patch.object(mock_feature_engine, "compute_from_df", return_value=MagicMock()):
-
+    with (
+        patch.object(pipeline, "_search_regime", return_value=fake_params),
+        patch("poseidon.backtest.regime_search.generate_regime_labels", return_value=(None, None)),
+        patch.object(mock_feature_engine, "compute_from_df", return_value=MagicMock()),
+    ):
         # Create a mock regime_model
         mock_regime_model = MagicMock()
         mock_regime_model.predict.return_value = MagicMock()
 
         # Create minimal ohlcv with enough rows for holdout boundary
-        import pandas as pd
         import numpy as np
+        import pandas as pd
+
         dates = pd.date_range("2023-01-01", periods=500, freq="D")
         ohlcv = pd.DataFrame(
             {
@@ -177,7 +178,7 @@ def test_regime_search_run_saves_experiments_when_tracker_present():
 
 def test_regime_search_run_no_save_when_tracker_none():
     """RegimeSearchPipeline.run() completes without error when tracker is None."""
-    from poseidon.backtest.regime_search import RegimeSearchPipeline, RegimeSearchConfig
+    from poseidon.backtest.regime_search import RegimeSearchConfig, RegimeSearchPipeline
 
     mock_feature_engine = MagicMock()
     mock_risk_engine = MagicMock()
@@ -197,15 +198,17 @@ def test_regime_search_run_no_save_when_tracker_none():
         "bear_position_pct": 0.08,
     }
 
-    with patch.object(pipeline, "_search_regime", return_value=fake_params), \
-         patch("poseidon.backtest.regime_search.generate_regime_labels", return_value=(None, None)), \
-         patch.object(mock_feature_engine, "compute_from_df", return_value=MagicMock()):
-
+    with (
+        patch.object(pipeline, "_search_regime", return_value=fake_params),
+        patch("poseidon.backtest.regime_search.generate_regime_labels", return_value=(None, None)),
+        patch.object(mock_feature_engine, "compute_from_df", return_value=MagicMock()),
+    ):
         mock_regime_model = MagicMock()
         mock_regime_model.predict.return_value = MagicMock()
 
-        import pandas as pd
         import numpy as np
+        import pandas as pd
+
         dates = pd.date_range("2023-01-01", periods=500, freq="D")
         ohlcv = pd.DataFrame(
             {
@@ -232,7 +235,7 @@ def test_regime_search_run_no_save_when_tracker_none():
 
 def test_regime_search_run_accepts_market_symbol_interval_kwargs():
     """run() method accepts market, symbol, interval keyword arguments without TypeError."""
-    from poseidon.backtest.regime_search import RegimeSearchPipeline, RegimeSearchConfig
+    from poseidon.backtest.regime_search import RegimeSearchConfig, RegimeSearchPipeline
 
     pipeline = RegimeSearchPipeline(
         feature_engine=MagicMock(),
@@ -248,15 +251,17 @@ def test_regime_search_run_accepts_market_symbol_interval_kwargs():
         "bear_position_pct": 0.08,
     }
 
-    with patch.object(pipeline, "_search_regime", return_value=fake_params), \
-         patch("poseidon.backtest.regime_search.generate_regime_labels", return_value=(None, None)), \
-         patch.object(pipeline._feature_engine, "compute_from_df", return_value=MagicMock()):
-
+    with (
+        patch.object(pipeline, "_search_regime", return_value=fake_params),
+        patch("poseidon.backtest.regime_search.generate_regime_labels", return_value=(None, None)),
+        patch.object(pipeline._feature_engine, "compute_from_df", return_value=MagicMock()),
+    ):
         mock_regime_model = MagicMock()
         mock_regime_model.predict.return_value = MagicMock()
 
-        import pandas as pd
         import numpy as np
+        import pandas as pd
+
         dates = pd.date_range("2023-01-01", periods=500, freq="D")
         ohlcv = pd.DataFrame(
             {
@@ -292,8 +297,8 @@ def test_factory_registry_voting_returns_none():
     """FACTORY_REGISTRY['voting']() returns None (backward compat with VotingStrategyFactory default)."""
     # Simulate the FACTORY_REGISTRY construction as in cpu_tasks.py
     from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
-    from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory
     from poseidon.backtest.model_strategy_factory import ModelStrategyFactory
+    from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory
 
     feature_names = None
     search_config = {"strategy_mode": "bidirectional"}
@@ -315,8 +320,8 @@ def test_factory_registry_voting_returns_none():
 def test_factory_registry_rule_creates_rule_factory():
     """FACTORY_REGISTRY['rule']() creates RuleStrategyFactory with correct feature_names."""
     from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
-    from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory
     from poseidon.backtest.model_strategy_factory import ModelStrategyFactory
+    from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory
 
     feature_names = ["revenue_yoy_growth", "roe"]
     search_config = {"strategy_mode": "long_only"}
@@ -344,8 +349,8 @@ def test_factory_registry_model_creates_model_factory():
     per-market loop (runner.py:164-173), NOT at factory construction time.
     """
     from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
-    from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory
     from poseidon.backtest.model_strategy_factory import ModelStrategyFactory
+    from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory
 
     feature_names = None
     search_config = {"strategy_mode": "bidirectional"}

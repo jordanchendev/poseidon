@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 
 def _make_ohlcv(n: int, *, seed: int = 42) -> pd.DataFrame:
@@ -51,8 +50,8 @@ def _make_one_sided_ohlcv(n: int) -> pd.DataFrame:
     base = np.full(n, 100.0)
     return pd.DataFrame(
         {
-            "open": base,       # open == low
-            "high": base + 2.0, # close == high
+            "open": base,  # open == low
+            "high": base + 2.0,  # close == high
             "low": base,
             "close": base + 2.0,
             "volume": np.full(n, 500.0),

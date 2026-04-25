@@ -5,7 +5,7 @@ Per-order isolation: rejection of one order does not block others.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from poseidon.broker.base import BrokerAdapter
 from poseidon.broker.config import BrokerConfig
@@ -14,7 +14,7 @@ from poseidon.models.order_fill import OrderFillRecord
 from poseidon.orders.risk_checker import OrderRiskChecker
 from poseidon.orders.schemas import Fill, Order, OrderResult
 from poseidon.orders.state_machine import OrderStatus, transition_order
-from poseidon.strategies.portfolio.schemas import Holding, RebalanceOrder
+from poseidon.strategies.portfolio.schemas import RebalanceOrder
 
 logger = logging.getLogger(__name__)
 
@@ -143,17 +143,14 @@ class OrderManager:
                 max_lev = self._leverage_limits.get(order.symbol)
                 if max_lev is not None:
                     # Read current leverage from broker adapter
-                    actual_leverage = getattr(
-                        self._broker, "_leverage_per_symbol", {}
-                    ).get(
+                    actual_leverage = getattr(self._broker, "_leverage_per_symbol", {}).get(
                         order.symbol,
                         getattr(self._broker, "_default_leverage", 1),
                     )
                     if actual_leverage > max_lev:
                         order.status = OrderStatus.REJECTED
                         order.reject_reason = (
-                            f"leverage_limit: {order.symbol} leverage "
-                            f"{actual_leverage}x exceeds max {max_lev}x"
+                            f"leverage_limit: {order.symbol} leverage {actual_leverage}x exceeds max {max_lev}x"
                         )
                         self._persist_order(order)
                         processed_rorders.append(rorder)
@@ -187,12 +184,13 @@ class OrderManager:
         # orders are skipped via continue without appending to results. Using
         # rebalance_orders here would misalign rorder<->result pairs.
         filled_count = 0
-        for rorder, result in zip(processed_rorders, results):
+        for rorder, result in zip(processed_rorders, results, strict=False):
             if result.success:
                 total_shares = sum(f.fill_quantity for f in result.fills)
                 avg_price = (
                     sum(f.fill_price * f.fill_quantity for f in result.fills) / total_shares
-                    if total_shares > 0 else 0.0
+                    if total_shares > 0
+                    else 0.0
                 )
                 self._tracker.apply_orders(
                     [rorder],
@@ -206,14 +204,15 @@ class OrderManager:
             logger.info("Updated positions: %d filled orders", filled_count)
 
         # Create cooldown protection locks for filled orders (D-14)
-        for rorder, result in zip(processed_rorders, results):
+        for _rorder, result in zip(processed_rorders, results, strict=False):
             if result.success:
                 try:
-                    from poseidon.protections.cooldown import CooldownProtection
                     from datetime import timedelta
 
+                    from poseidon.protections.cooldown import CooldownProtection
+
                     cooldown = CooldownProtection()
-                    expires = datetime.now(timezone.utc) + timedelta(hours=cooldown.cooldown_hours)
+                    expires = datetime.now(UTC) + timedelta(hours=cooldown.cooldown_hours)
                     session = self._session_factory()
                     try:
                         cooldown.create_lock(

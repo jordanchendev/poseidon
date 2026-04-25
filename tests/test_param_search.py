@@ -11,13 +11,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 
 from poseidon.backtest.holdout import HoldoutConfig
 from poseidon.backtest.param_search import (
     ParameterSearchPipeline,
     SearchConfig,
-    SearchResult,
 )
 
 
@@ -95,12 +93,10 @@ class TestParameterSearchPipeline:
             captured_ohlcv["df"] = ohlcv
             return []  # no trials
 
-        with patch(
-            "poseidon.backtest.param_search.BayesianOptimizer"
-        ) as MockOpt:
+        with patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt:
             MockOpt.return_value.optimize = mock_optimize
             cfg = SearchConfig(n_trials=2, storage_url=None)
-            result = pipeline.run(ohlcv, "BTCUSDT", "crypto_spot", "1d", config=cfg)
+            pipeline.run(ohlcv, "BTCUSDT", "crypto_spot", "1d", config=cfg)
 
         # The optimizer should have received only 80 rows (train portion)
         assert len(captured_ohlcv["df"]) == 80
@@ -110,9 +106,7 @@ class TestParameterSearchPipeline:
         pipeline, _tracker = self._make_pipeline()
         ohlcv = _make_ohlcv(100)
 
-        with patch(
-            "poseidon.backtest.param_search.BayesianOptimizer"
-        ) as MockOpt:
+        with patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt:
             MockOpt.return_value.optimize.return_value = []
             cfg = SearchConfig(n_trials=2, storage_url=None)
             result = pipeline.run(ohlcv, "BTCUSDT", "crypto_spot", "1d", config=cfg)
@@ -130,9 +124,7 @@ class TestParameterSearchPipeline:
             captured_storage["url"] = storage
             return []
 
-        with patch(
-            "poseidon.backtest.param_search.BayesianOptimizer"
-        ) as MockOpt:
+        with patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt:
             MockOpt.return_value.optimize = mock_optimize
             cfg = SearchConfig(
                 n_trials=2,
@@ -153,9 +145,7 @@ class TestParameterSearchPipeline:
             captured_storage["url"] = storage
             return []
 
-        with patch(
-            "poseidon.backtest.param_search.BayesianOptimizer"
-        ) as MockOpt:
+        with patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt:
             MockOpt.return_value.optimize = mock_optimize
             cfg = SearchConfig(
                 n_trials=2,
@@ -175,15 +165,27 @@ class TestParameterSearchPipeline:
         from poseidon.backtest.optimizer import OptimizationTrial
 
         mock_trial = OptimizationTrial(
-            params={"rsi_period": 10, "ema_short": 5, "ema_long": 20,
-                    "macd_fast": 12, "macd_slow": 26, "macd_signal": 9,
-                    "bollinger_period": 20, "momentum_short": 5, "momentum_long": 10,
-                    "min_votes": 4, "atr_multiplier": 2.0, "position_pct": 0.08,
-                    "bear_min_votes": 4, "bear_position_pct": 0.06,
-                    "cooldown_bars": 12, "conviction_gap": 2,
-                    "qlib_prediction_threshold": 0.5, "qlib_model_enabled": 0},
-            metrics={"sharpe_ratio": 1.5, "trade_count": 60, "max_drawdown": 0.1,
-                     "total_return": 0.2},
+            params={
+                "rsi_period": 10,
+                "ema_short": 5,
+                "ema_long": 20,
+                "macd_fast": 12,
+                "macd_slow": 26,
+                "macd_signal": 9,
+                "bollinger_period": 20,
+                "momentum_short": 5,
+                "momentum_long": 10,
+                "min_votes": 4,
+                "atr_multiplier": 2.0,
+                "position_pct": 0.08,
+                "bear_min_votes": 4,
+                "bear_position_pct": 0.06,
+                "cooldown_bars": 12,
+                "conviction_gap": 2,
+                "qlib_prediction_threshold": 0.5,
+                "qlib_model_enabled": 0,
+            },
+            metrics={"sharpe_ratio": 1.5, "trade_count": 60, "max_drawdown": 0.1, "total_return": 0.2},
             metric_value=0.8,
         )
 
@@ -192,8 +194,10 @@ class TestParameterSearchPipeline:
         mock_wf_result.wfe = 0.3
         mock_wf_result.passed = False
 
-        with patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt, \
-             patch("poseidon.backtest.param_search.WalkForwardAnalyzer") as MockWF:
+        with (
+            patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt,
+            patch("poseidon.backtest.param_search.WalkForwardAnalyzer") as MockWF,
+        ):
             MockOpt.return_value.optimize.return_value = [mock_trial]
             MockWF.return_value.analyze.return_value = mock_wf_result
             cfg = SearchConfig(n_trials=1, storage_url=None)
@@ -215,15 +219,27 @@ class TestParameterSearchPipeline:
         from poseidon.backtest.optimizer import OptimizationTrial
 
         mock_trial = OptimizationTrial(
-            params={"rsi_period": 10, "ema_short": 5, "ema_long": 20,
-                    "macd_fast": 12, "macd_slow": 26, "macd_signal": 9,
-                    "bollinger_period": 20, "momentum_short": 5, "momentum_long": 10,
-                    "min_votes": 4, "atr_multiplier": 2.0, "position_pct": 0.08,
-                    "bear_min_votes": 4, "bear_position_pct": 0.06,
-                    "cooldown_bars": 12, "conviction_gap": 2,
-                    "qlib_prediction_threshold": 0.5, "qlib_model_enabled": 0},
-            metrics={"sharpe_ratio": 1.5, "trade_count": 60, "max_drawdown": 0.1,
-                     "total_return": 0.2},
+            params={
+                "rsi_period": 10,
+                "ema_short": 5,
+                "ema_long": 20,
+                "macd_fast": 12,
+                "macd_slow": 26,
+                "macd_signal": 9,
+                "bollinger_period": 20,
+                "momentum_short": 5,
+                "momentum_long": 10,
+                "min_votes": 4,
+                "atr_multiplier": 2.0,
+                "position_pct": 0.08,
+                "bear_min_votes": 4,
+                "bear_position_pct": 0.06,
+                "cooldown_bars": 12,
+                "conviction_gap": 2,
+                "qlib_prediction_threshold": 0.5,
+                "qlib_model_enabled": 0,
+            },
+            metrics={"sharpe_ratio": 1.5, "trade_count": 60, "max_drawdown": 0.1, "total_return": 0.2},
             metric_value=0.8,
         )
 
@@ -231,8 +247,10 @@ class TestParameterSearchPipeline:
         mock_wf_result.wfe = 0.6
         mock_wf_result.passed = True
 
-        with patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt, \
-             patch("poseidon.backtest.param_search.WalkForwardAnalyzer") as MockWF:
+        with (
+            patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt,
+            patch("poseidon.backtest.param_search.WalkForwardAnalyzer") as MockWF,
+        ):
             MockOpt.return_value.optimize.return_value = [mock_trial]
             MockWF.return_value.analyze.return_value = mock_wf_result
             cfg = SearchConfig(n_trials=1, storage_url=None)
@@ -315,9 +333,11 @@ class TestParameterSearchPipeline:
             )
             return []
 
-        with patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt, \
-             patch("poseidon.backtest.param_search._build_config_from_params") as mock_build, \
-             patch("poseidon.backtest.param_search.VotingStrategyFactory.from_config") as mock_from_config:
+        with (
+            patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt,
+            patch("poseidon.backtest.param_search._build_config_from_params") as mock_build,
+            patch("poseidon.backtest.param_search.VotingStrategyFactory.from_config") as mock_from_config,
+        ):
             MockOpt.return_value.optimize = mock_optimize
             mock_build.return_value = {"name": "test"}
             mock_from_config.return_value = MagicMock()
@@ -342,9 +362,11 @@ class TestParameterSearchPipeline:
             strategy_factory(self._base_trial_params())
             return []
 
-        with patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt, \
-             patch("poseidon.backtest.param_search._build_config_from_params") as mock_build, \
-             patch("poseidon.backtest.param_search.VotingStrategyFactory.from_config") as mock_from_config:
+        with (
+            patch("poseidon.backtest.param_search.BayesianOptimizer") as MockOpt,
+            patch("poseidon.backtest.param_search._build_config_from_params") as mock_build,
+            patch("poseidon.backtest.param_search.VotingStrategyFactory.from_config") as mock_from_config,
+        ):
             MockOpt.return_value.optimize = mock_optimize
             mock_build.return_value = {"name": "test"}
             mock_from_config.return_value = MagicMock()

@@ -6,7 +6,7 @@ imported on machines without the shioaji package (e.g. Mac dev).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from poseidon.broker.base import BrokerAdapter
 from poseidon.orders.schemas import Fill, Order
@@ -70,7 +70,7 @@ class ShioajiBrokerAdapter(BrokerAdapter):
         Quantity is divided by 1000 because Shioaji uses lots
         (1 lot = 1000 shares for TW stocks).
         """
-        import shioaji as sj  # noqa: F811 -- lazy import
+        import shioaji as sj
 
         if self._api is None:
             raise RuntimeError("Broker not logged in. Call login() first.")
@@ -82,9 +82,7 @@ class ShioajiBrokerAdapter(BrokerAdapter):
             quantity=order.quantity // 1000,
             action=sj.constant.Action.Buy if order.action == "buy" else sj.constant.Action.Sell,
             price_type=(
-                sj.constant.StockPriceType.MKT
-                if order.order_type == "market"
-                else sj.constant.StockPriceType.LMT
+                sj.constant.StockPriceType.MKT if order.order_type == "market" else sj.constant.StockPriceType.LMT
             ),
             order_type=sj.constant.OrderType.ROD,
             order_lot=sj.constant.StockOrderLot.Common,
@@ -108,7 +106,7 @@ class ShioajiBrokerAdapter(BrokerAdapter):
                             order_id=broker_order_id,
                             fill_price=float(deal.price),
                             fill_quantity=int(deal.quantity) * 1000,
-                            fill_time=datetime.now(timezone.utc),
+                            fill_time=datetime.now(UTC),
                             broker_fill_id=str(getattr(deal, "seq", "")),
                         )
                     )

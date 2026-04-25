@@ -9,7 +9,7 @@ Verifies:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pytest
@@ -25,15 +25,13 @@ def calculator() -> VaRCalculator:
 
 @pytest.fixture
 def as_of() -> datetime:
-    return datetime(2026, 3, 28, 12, 0, 0, tzinfo=timezone.utc)
+    return datetime(2026, 3, 28, 12, 0, 0, tzinfo=UTC)
 
 
 class TestMonteCarloVaR:
     """Test suite for VaRCalculator.monte_carlo()."""
 
-    def test_basic_identity_covariance(
-        self, calculator: VaRCalculator, as_of: datetime
-    ) -> None:
+    def test_basic_identity_covariance(self, calculator: VaRCalculator, as_of: datetime) -> None:
         """MC VaR with 2x2 identity cov, equal weights, returns valid VaRResult."""
         weights = np.array([0.5, 0.5])
         cov_matrix = np.eye(2)
@@ -53,9 +51,7 @@ class TestMonteCarloVaR:
         assert result.portfolio_value == 100_000.0
         assert result.holding_period == 1
 
-    def test_empty_weights_returns_zero(
-        self, calculator: VaRCalculator, as_of: datetime
-    ) -> None:
+    def test_empty_weights_returns_zero(self, calculator: VaRCalculator, as_of: datetime) -> None:
         """MC VaR with empty weights returns zero result."""
         weights = np.array([])
         cov_matrix = np.eye(0)
@@ -74,28 +70,30 @@ class TestMonteCarloVaR:
         assert result.cvar_95 == 0.0
         assert result.cvar_99 == 0.0
 
-    def test_deterministic_with_same_seed(
-        self, calculator: VaRCalculator, as_of: datetime
-    ) -> None:
+    def test_deterministic_with_same_seed(self, calculator: VaRCalculator, as_of: datetime) -> None:
         """MC VaR with same seed produces identical results."""
         weights = np.array([0.5, 0.5])
         cov_matrix = np.eye(2)
 
         r1 = calculator.monte_carlo(
-            weights=weights, cov_matrix=cov_matrix,
-            portfolio_value=100_000.0, as_of=as_of, seed=42,
+            weights=weights,
+            cov_matrix=cov_matrix,
+            portfolio_value=100_000.0,
+            as_of=as_of,
+            seed=42,
         )
         r2 = calculator.monte_carlo(
-            weights=weights, cov_matrix=cov_matrix,
-            portfolio_value=100_000.0, as_of=as_of, seed=42,
+            weights=weights,
+            cov_matrix=cov_matrix,
+            portfolio_value=100_000.0,
+            as_of=as_of,
+            seed=42,
         )
 
         assert r1.var_95 == r2.var_95
         assert r1.var_99 == r2.var_99
 
-    def test_non_positive_definite_matrix_returns_zero(
-        self, calculator: VaRCalculator, as_of: datetime
-    ) -> None:
+    def test_non_positive_definite_matrix_returns_zero(self, calculator: VaRCalculator, as_of: datetime) -> None:
         """MC VaR with all-zeros matrix (non-PD) returns zero result gracefully."""
         weights = np.array([0.5, 0.5])
         cov_matrix = np.zeros((2, 2))
@@ -114,9 +112,7 @@ class TestMonteCarloVaR:
         assert result.cvar_95 == 0.0
         assert result.cvar_99 == 0.0
 
-    def test_as_of_preserved_and_computed_at_set(
-        self, calculator: VaRCalculator, as_of: datetime
-    ) -> None:
+    def test_as_of_preserved_and_computed_at_set(self, calculator: VaRCalculator, as_of: datetime) -> None:
         """as_of is preserved in result, computed_at is set."""
         weights = np.array([0.5, 0.5])
         cov_matrix = np.eye(2)

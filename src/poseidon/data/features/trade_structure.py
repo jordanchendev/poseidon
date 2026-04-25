@@ -46,10 +46,14 @@ class AvgTradeSize(BaseFeature):
 
         # Normalize timezone for reindex compatibility
         ts = trade_structure_data
-        if isinstance(ts.index, pd.DatetimeIndex) and isinstance(ohlcv.index, pd.DatetimeIndex):
-            if ts.index.tz is None and ohlcv.index.tz is not None:
-                ts = ts.copy()
-                ts.index = ts.index.tz_localize("UTC")
+        if (
+            isinstance(ts.index, pd.DatetimeIndex)
+            and isinstance(ohlcv.index, pd.DatetimeIndex)
+            and ts.index.tz is None
+            and ohlcv.index.tz is not None
+        ):
+            ts = ts.copy()
+            ts.index = ts.index.tz_localize("UTC")
         aligned = ts.reindex(ohlcv.index, method="ffill")
         result = aligned["trade_value"] / aligned["trade_count"]
         result = result.replace([np.inf, -np.inf], np.nan)
@@ -86,10 +90,14 @@ class TurnoverRatio(BaseFeature):
             return _nan_series(ohlcv.index, col_name)
 
         trade_val = trade_structure_data["trade_value"]
-        if isinstance(trade_val.index, pd.DatetimeIndex) and isinstance(ohlcv.index, pd.DatetimeIndex):
-            if trade_val.index.tz is None and ohlcv.index.tz is not None:
-                trade_val = trade_val.copy()
-                trade_val.index = trade_val.index.tz_localize("UTC")
+        if (
+            isinstance(trade_val.index, pd.DatetimeIndex)
+            and isinstance(ohlcv.index, pd.DatetimeIndex)
+            and trade_val.index.tz is None
+            and ohlcv.index.tz is not None
+        ):
+            trade_val = trade_val.copy()
+            trade_val.index = trade_val.index.tz_localize("UTC")
         aligned_value = trade_val.reindex(ohlcv.index, method="ffill")
         result = aligned_value / (ohlcv["close"] * ohlcv["volume"])
         result = result.replace([np.inf, -np.inf], np.nan)

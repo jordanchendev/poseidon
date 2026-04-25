@@ -17,9 +17,7 @@ _protection_registry: dict[str, type[BaseProtection]] = {}
 def register_protection(cls: type[BaseProtection]) -> type[BaseProtection]:
     """Decorator to register a protection class by its ``name`` attribute."""
     if not getattr(cls, "name", None):
-        raise ValueError(
-            f"Protection class {cls.__name__} must define a 'name' attribute"
-        )
+        raise ValueError(f"Protection class {cls.__name__} must define a 'name' attribute")
     _protection_registry[cls.name] = cls
     return cls
 
@@ -27,10 +25,7 @@ def register_protection(cls: type[BaseProtection]) -> type[BaseProtection]:
 def get_protection(name: str) -> type[BaseProtection]:
     """Look up a registered protection by name."""
     if name not in _protection_registry:
-        raise KeyError(
-            f"Unknown protection: '{name}'. "
-            f"Available: {sorted(_protection_registry.keys())}"
-        )
+        raise KeyError(f"Unknown protection: '{name}'. Available: {sorted(_protection_registry.keys())}")
     return _protection_registry[name]
 
 

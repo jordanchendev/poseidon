@@ -80,9 +80,7 @@ def test_perp_paper_broker_uses_remote_perp_price(mock_from_settings):
 @patch("poseidon.data.remote_repository.RemoteDataRepository.from_settings")
 def test_paper_broker_raises_when_remote_price_missing(mock_from_settings):
     mock_repo = MagicMock()
-    mock_repo.read_ohlcv.return_value = pd.DataFrame(
-        columns=["open", "high", "low", "close", "volume"]
-    )
+    mock_repo.read_ohlcv.return_value = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
     mock_from_settings.return_value = mock_repo
 
     adapter = PaperBrokerAdapter(_session_factory)

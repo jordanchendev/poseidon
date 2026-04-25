@@ -26,8 +26,7 @@ class InvalidTransitionError(Exception):
         self.target = target
         valid = VALID_TRANSITIONS.get(current, [])
         super().__init__(
-            f"Cannot transition from '{current}' to '{target}'. "
-            f"Valid transitions from '{current}': {valid}"
+            f"Cannot transition from '{current}' to '{target}'. Valid transitions from '{current}': {valid}"
         )
 
 

@@ -1,6 +1,6 @@
 """Tests for VirtualPortfolio exposure tracking methods."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pytest
@@ -11,7 +11,7 @@ def _make_portfolio():
     from poseidon.risk.portfolio import PositionEntry, VirtualPortfolio
 
     p = VirtualPortfolio()
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     p.positions["tw_stock:2330"] = PositionEntry(
         symbol="2330",
         market="tw_stock",
@@ -63,14 +63,22 @@ class TestExposureByMarket:
         from poseidon.risk.portfolio import PositionEntry, VirtualPortfolio
 
         p = VirtualPortfolio()
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         p.positions["tw_stock:2330"] = PositionEntry(
-            symbol="2330", market="tw_stock", instrument="spot",
-            side="long", quantity_pct=0.08, entry_time=now,
+            symbol="2330",
+            market="tw_stock",
+            instrument="spot",
+            side="long",
+            quantity_pct=0.08,
+            entry_time=now,
         )
         p.positions["tw_stock:2317"] = PositionEntry(
-            symbol="2317", market="tw_stock", instrument="spot",
-            side="long", quantity_pct=0.06, entry_time=now,
+            symbol="2317",
+            market="tw_stock",
+            instrument="spot",
+            side="long",
+            quantity_pct=0.06,
+            entry_time=now,
         )
         result = p.exposure_by_market()
         assert result == {"tw_stock": pytest.approx(0.14)}

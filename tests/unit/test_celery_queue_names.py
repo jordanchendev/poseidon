@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 CELERY_APP_PATH = ROOT / "src" / "poseidon" / "workers" / "celery_app.py"
 CPU_TASKS_PATH = ROOT / "src" / "poseidon" / "workers" / "cpu_tasks.py"

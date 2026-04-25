@@ -11,7 +11,7 @@ BacktestRunner reads HOLD signal metadata to update portfolio stop-loss price.
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -100,11 +100,7 @@ class TrendFollowingStrategy(BaseStrategy):
 
             # LONG entry
             stop_loss = close - self.config.atr_multiplier * atr
-            signals.append(
-                self._make_signal(
-                    SignalAction.LONG, close, signal_time, stop_loss_price=stop_loss
-                )
-            )
+            signals.append(self._make_signal(SignalAction.LONG, close, signal_time, stop_loss_price=stop_loss))
             self._position_side = "long"
             self._trailing_stop = stop_loss
 
@@ -116,11 +112,7 @@ class TrendFollowingStrategy(BaseStrategy):
 
             # SHORT entry
             stop_loss = close + self.config.atr_multiplier * atr
-            signals.append(
-                self._make_signal(
-                    SignalAction.SHORT, close, signal_time, stop_loss_price=stop_loss
-                )
-            )
+            signals.append(self._make_signal(SignalAction.SHORT, close, signal_time, stop_loss_price=stop_loss))
             self._position_side = "short"
             self._trailing_stop = stop_loss
 
@@ -222,4 +214,4 @@ class TrendFollowingStrategy(BaseStrategy):
             return ts
         if isinstance(ts, pd.Timestamp):
             return ts.to_pydatetime()
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)

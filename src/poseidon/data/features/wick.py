@@ -52,9 +52,7 @@ class RangeExpansion(BaseFeature):
         high_low = ohlcv["high"] - ohlcv["low"]
         high_close_prev = (ohlcv["high"] - ohlcv["close"].shift(1)).abs()
         low_close_prev = (ohlcv["low"] - ohlcv["close"].shift(1)).abs()
-        true_range = pd.concat(
-            [high_low, high_close_prev, low_close_prev], axis=1
-        ).max(axis=1)
+        true_range = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
         atr = true_range.rolling(window=period).mean()
         result = bar_range / atr.replace(0, float("nan"))
         result.name = col

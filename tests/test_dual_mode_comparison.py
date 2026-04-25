@@ -9,23 +9,16 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import numpy as np
 import pandas as pd
-import pytest
 
 from poseidon.backtest.comparison import DualModeResult, run_dual_mode_comparison
 from poseidon.backtest.cost_model import get_cost_model
-from poseidon.backtest.pending_orders import FillModel
 from poseidon.backtest.portfolio import SizingConfig, SizingMode
 from poseidon.backtest.schemas import BacktestResult
 from poseidon.data.feature_engine import FeatureEngine
 from poseidon.risk.engine import RiskEngine
-from poseidon.signals.schemas import OrderType, Signal, SignalAction
-from poseidon.strategies.base import BaseStrategy, StrategyType
 from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -202,7 +195,9 @@ class TestDualModeComparisonResults:
             cost_model=get_cost_model("crypto_perp"),
             initial_capital=1_000_000.0,
             sizing_config=SizingConfig(
-                mode=SizingMode.FIXED_RISK, risk_pct=0.01, max_notional_pct=0.3,
+                mode=SizingMode.FIXED_RISK,
+                risk_pct=0.01,
+                max_notional_pct=0.3,
             ),
             max_pending_bars=10,
             feature_specs=[],
@@ -234,7 +229,9 @@ class TestDualModeComparisonDelta:
             risk_engine=RiskEngine(rules=[]),
             cost_model=get_cost_model("crypto_perp"),
             sizing_config=SizingConfig(
-                mode=SizingMode.FIXED_RISK, risk_pct=0.01, max_notional_pct=0.3,
+                mode=SizingMode.FIXED_RISK,
+                risk_pct=0.01,
+                max_notional_pct=0.3,
             ),
             max_pending_bars=10,
             feature_specs=[],
@@ -274,7 +271,9 @@ class TestDualModeViabilityTrue:
             risk_engine=RiskEngine(rules=[]),
             cost_model=get_cost_model("crypto_perp"),
             sizing_config=SizingConfig(
-                mode=SizingMode.FIXED_RISK, risk_pct=0.01, max_notional_pct=0.3,
+                mode=SizingMode.FIXED_RISK,
+                risk_pct=0.01,
+                max_notional_pct=0.3,
             ),
             max_pending_bars=10,
             feature_specs=[],
@@ -310,7 +309,9 @@ class TestDualModeViabilityFalse:
             risk_engine=RiskEngine(rules=[]),
             cost_model=get_cost_model("crypto_perp"),
             sizing_config=SizingConfig(
-                mode=SizingMode.FIXED_RISK, risk_pct=0.01, max_notional_pct=0.3,
+                mode=SizingMode.FIXED_RISK,
+                risk_pct=0.01,
+                max_notional_pct=0.3,
             ),
             max_pending_bars=10,
             feature_specs=[],
@@ -344,7 +345,9 @@ class TestDualModeIdenticalConfig:
             risk_engine=RiskEngine(rules=[]),
             cost_model=get_cost_model("crypto_perp"),
             sizing_config=SizingConfig(
-                mode=SizingMode.FIXED_RISK, risk_pct=0.01, max_notional_pct=0.3,
+                mode=SizingMode.FIXED_RISK,
+                risk_pct=0.01,
+                max_notional_pct=0.3,
             ),
             max_pending_bars=10,
             feature_specs=[],

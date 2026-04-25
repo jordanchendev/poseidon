@@ -20,9 +20,7 @@ class IngestState(Base):
     last_attempt_ts = Column(DateTime(timezone=True), nullable=True)
     last_error = Column(Text, nullable=True)
     first_backfill_done = Column(Boolean, nullable=False, default=False)
-    created_at = Column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),

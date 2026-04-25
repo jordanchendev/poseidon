@@ -7,7 +7,7 @@ using a fake SQLAlchemy session to avoid hitting a real database.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -25,7 +25,6 @@ from poseidon.protections.registry import (
     register_protection,
 )
 from poseidon.protections.volatility_spike import VolatilitySpikeProtection
-
 
 # ---------------------------------------------------------------------------
 # Fake session helpers
@@ -54,10 +53,10 @@ class FakeQuery:
     def __init__(self, rows: list[FakeLockRow]):
         self._rows = list(rows)
 
-    def filter(self, *args, **kwargs):  # noqa: ARG002 — args ignored
+    def filter(self, *args, **kwargs):
         return self  # No-op; tests pre-filter via FakeSession
 
-    def order_by(self, *args, **kwargs):  # noqa: ARG002
+    def order_by(self, *args, **kwargs):
         return self
 
     def first(self):
@@ -202,7 +201,7 @@ class TestCooldownProtection:
     def test_check_active_lock_returns_locked(self):
         cd = CooldownProtection()
         db = FakeSession()
-        future_expiry = datetime.now(timezone.utc) + timedelta(hours=8)
+        future_expiry = datetime.now(UTC) + timedelta(hours=8)
         db.next_query_rows = [
             FakeLockRow(
                 id=1,
@@ -222,7 +221,7 @@ class TestCooldownProtection:
     def test_check_expired_lock_auto_released(self):
         cd = CooldownProtection()
         db = FakeSession()
-        past_expiry = datetime.now(timezone.utc) - timedelta(hours=1)
+        past_expiry = datetime.now(UTC) - timedelta(hours=1)
         stale_lock = FakeLockRow(
             id=1,
             protection_type="cooldown",
@@ -243,9 +242,9 @@ class TestCooldownProtection:
     def test_trigger_cooldown_creates_lock_with_correct_expiry(self):
         cd = CooldownProtection(cooldown_bars=3, bar_duration_hours=4.0)
         db = FakeSession()
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         cd.trigger_cooldown("BTCUSDT", "crypto_perp", db)
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         assert len(db.added) == 1
         lock = db.added[0]
@@ -304,7 +303,7 @@ class TestDailyLossProtection:
         next_open = DailyLossProtection._next_trading_open("crypto_perp")
         assert next_open.hour == 0
         assert next_open.minute == 0
-        assert next_open.tzinfo == timezone.utc
+        assert next_open.tzinfo == UTC
 
     def test_next_trading_open_tw_stock_is_weekday_morning(self):
         next_open = DailyLossProtection._next_trading_open("tw_stock")
@@ -392,7 +391,7 @@ class TestCreateLock:
     def test_create_lock_persists_record(self):
         cd = CooldownProtection()
         db = FakeSession()
-        expiry = datetime.now(timezone.utc) + timedelta(hours=4)
+        expiry = datetime.now(UTC) + timedelta(hours=4)
         cd.create_lock(
             symbol="ETHUSDT",
             market="crypto_perp",

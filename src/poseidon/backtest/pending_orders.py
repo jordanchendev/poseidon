@@ -8,15 +8,15 @@ Phase 50-01: Core pending order infrastructure for limit order backtesting.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
+from enum import StrEnum
 
 import pandas as pd
 
 from poseidon.signals.schemas import Signal, SignalAction
 
 
-class FillModel(str, Enum):
+class FillModel(StrEnum):
     """Fill model for evaluating pending order fills.
 
     OPTIMISTIC: Touch fills (bar_low <= buy_price or bar_high >= sell_price).
@@ -144,9 +144,7 @@ class PendingOrderBook:
             else:
                 return bar_high > order.order_price
 
-    def expire_orders(
-        self, current_bar_index: int, max_bars: int
-    ) -> list[PendingOrder]:
+    def expire_orders(self, current_bar_index: int, max_bars: int) -> list[PendingOrder]:
         """Remove and return orders that have exceeded the maximum pending bars.
 
         Args:

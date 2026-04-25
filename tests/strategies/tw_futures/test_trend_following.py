@@ -11,17 +11,12 @@ Covers:
 - InstrumentType.FUTURES
 """
 
-from datetime import datetime, timezone
-from uuid import uuid4
-
-import numpy as np
 import pandas as pd
 import pytest
 
 from poseidon.signals.schemas import InstrumentType, SignalAction
 from poseidon.strategies.tw_futures.configs import TrendFollowingConfig
 from poseidon.strategies.tw_futures.trend_following import TrendFollowingStrategy
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -160,9 +155,7 @@ class TestTrailingStop:
         assert len(signals2) == 1
         assert signals2[0].action == SignalAction.HOLD
         assert "updated_stop_loss" in signals2[0].metadata
-        assert signals2[0].metadata["updated_stop_loss"] == pytest.approx(
-            22100 - 2.0 * 100
-        )
+        assert signals2[0].metadata["updated_stop_loss"] == pytest.approx(22100 - 2.0 * 100)
 
     def test_trailing_stop_only_tightens_long(self):
         """For long position, trailing stop only moves up, never down."""
@@ -176,13 +169,13 @@ class TestTrailingStop:
 
         # Price rises -> SL moves up
         df2 = make_tx_features(ema_fast=22300, ema_slow=22000, close=22200, atr=100)
-        signals2 = s.evaluate(df2)
+        s.evaluate(df2)
         assert s._trailing_stop == pytest.approx(22000)  # 22200 - 200
         assert s._trailing_stop > initial_sl
 
         # Price drops -> SL stays (doesn't move down)
         df3 = make_tx_features(ema_fast=22150, ema_slow=22000, close=21900, atr=100)
-        signals3 = s.evaluate(df3)
+        s.evaluate(df3)
         # new_sl would be 21900-200=21700, but max(21700, 22000) = 22000
         assert s._trailing_stop == pytest.approx(22000)
 
@@ -198,13 +191,13 @@ class TestTrailingStop:
 
         # Price drops -> SL moves down
         df2 = make_tx_features(ema_fast=21700, ema_slow=22000, close=21800, atr=100)
-        signals2 = s.evaluate(df2)
+        s.evaluate(df2)
         assert s._trailing_stop == pytest.approx(22000)  # 21800 + 200
         assert s._trailing_stop < initial_sl
 
         # Price rises -> SL stays (doesn't move up)
         df3 = make_tx_features(ema_fast=21850, ema_slow=22000, close=22100, atr=100)
-        signals3 = s.evaluate(df3)
+        s.evaluate(df3)
         # new_sl would be 22100+200=22300, but min(22300, 22000) = 22000
         assert s._trailing_stop == pytest.approx(22000)
 

@@ -7,7 +7,7 @@ Does NOT import or touch VirtualPortfolio (separate system).
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
@@ -86,7 +86,7 @@ class PositionTracker:
         fill_info = fill_info or {}
         session: Session = self._session_factory()
         try:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             for order in orders:
                 shares, entry_price = fill_info.get(order.symbol, (None, None))
                 if order.action == "buy":

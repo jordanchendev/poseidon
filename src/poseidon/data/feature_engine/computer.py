@@ -14,12 +14,12 @@ import logging
 
 import pandas as pd
 
-from poseidon.data.features.base import get_feature
 from poseidon.data.feature_engine.specs import (
     DEFAULT_FEATURES,
     is_nonprice_spec,
     nonprice_data_key,
 )
+from poseidon.data.features.base import get_feature
 
 logger = logging.getLogger(__name__)
 

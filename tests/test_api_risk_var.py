@@ -13,8 +13,8 @@ from fastapi.testclient import TestClient
 @pytest.fixture()
 def client():
     """Create TestClient with API key auth bypassed."""
-    from poseidon.main import app
     from poseidon.api.auth import verify_api_key
+    from poseidon.main import app
 
     app.dependency_overrides[verify_api_key] = lambda: "test-key"
     yield TestClient(app)
@@ -184,9 +184,7 @@ def test_alerts_pagination(client):
     entries = []
     for i in range(15):
         alert = {"event_type": "drawdown_breach", "level": "WARNING", "i": i}
-        entries.append(
-            (f"171160000{i:04d}-0".encode(), {b"data": json.dumps(alert).encode()})
-        )
+        entries.append((f"171160000{i:04d}-0".encode(), {b"data": json.dumps(alert).encode()}))
 
     mock_redis = MagicMock()
     mock_redis.xrevrange.return_value = entries

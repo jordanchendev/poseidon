@@ -63,9 +63,7 @@ def _build_ab_comparison(passed_records: list[ExperimentRecord]) -> dict[str, An
         result["wfe_delta"] = delta
         result["wfe_delta_pct"] = round(pct, 2)
         result["recommendation"] = (
-            f"ML vote improved WFE by +{pct:.1f}%"
-            if delta > 0
-            else "ML vote did not improve over pure TA"
+            f"ML vote improved WFE by +{pct:.1f}%" if delta > 0 else "ML vote did not improve over pure TA"
         )
         return result
 
@@ -76,9 +74,7 @@ def _build_ab_comparison(passed_records: list[ExperimentRecord]) -> dict[str, An
     elif not ml_disabled:
         result["recommendation"] = "A/B comparison unavailable: no ML-disabled trials"
     else:
-        result["recommendation"] = (
-            "A/B comparison unavailable: insufficient WFE data in one or both groups"
-        )
+        result["recommendation"] = "A/B comparison unavailable: insufficient WFE data in one or both groups"
     return result
 
 
@@ -111,11 +107,7 @@ def generate_report(
         passed = tracker.query_passed_by_study(study_name, limit=top_n)
 
         # Count total trials for this study
-        total_query = (
-            tracker._db.query(ExperimentRecord)
-            .filter(ExperimentRecord.optuna_study_name == study_name)
-            .all()
-        )
+        total_query = tracker._db.query(ExperimentRecord).filter(ExperimentRecord.optuna_study_name == study_name).all()
         total = len(total_query) if study_name else 0
 
         best = passed[0] if passed else None
@@ -133,21 +125,20 @@ def generate_report(
         per_market.append(market_entry)
 
         for rec in passed:
-            all_passed.append({
-                "study_name": study_name,
-                "symbol": rec.config_json.get("symbol", ""),
-                "market": rec.market,
-                "composite_score": float(rec.composite_score) if rec.composite_score else 0.0,
-                "wfe_score": float(rec.wfe_score) if rec.wfe_score else None,
-                "config": rec.config_json,
-            })
+            all_passed.append(
+                {
+                    "study_name": study_name,
+                    "symbol": rec.config_json.get("symbol", ""),
+                    "market": rec.market,
+                    "composite_score": float(rec.composite_score) if rec.composite_score else 0.0,
+                    "wfe_score": float(rec.wfe_score) if rec.wfe_score else None,
+                    "config": rec.config_json,
+                }
+            )
 
     # Rank all passed across markets by composite_score
     all_passed.sort(key=lambda x: x.get("composite_score", 0.0), reverse=True)
-    top_configs = [
-        {"rank": i + 1, **entry}
-        for i, entry in enumerate(all_passed[:top_n])
-    ]
+    top_configs = [{"rank": i + 1, **entry} for i, entry in enumerate(all_passed[:top_n])]
 
     total_experiments = sum(m["total_trials"] for m in per_market)
     passed_experiments = sum(m["passed_trials"] for m in per_market)

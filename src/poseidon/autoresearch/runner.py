@@ -7,8 +7,9 @@ Per D-10: receives SearchConfig + market list, loops ParameterSearchPipeline.run
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from poseidon.autoresearch.guard import autoresearch_context, autoresearch_guard
 from poseidon.backtest.cost_model import COST_MODELS, CostModel
@@ -118,12 +119,16 @@ class AutoResearchRunner:
                         )
 
                     ohlcv = repo.read_ohlcv(
-                        spec.symbol, spec.market, spec.interval,
+                        spec.symbol,
+                        spec.market,
+                        spec.interval,
                     )
                     if ohlcv.empty:
                         logger.warning(
                             "No OHLCV data for %s/%s/%s, skipping",
-                            spec.symbol, spec.market, spec.interval,
+                            spec.symbol,
+                            spec.market,
+                            spec.interval,
                         )
                         results.append(MarketResult(spec=spec, error="No OHLCV data"))
                         continue
@@ -137,13 +142,20 @@ class AutoResearchRunner:
                         cross_specs = get_cross_asset_specs(spec.symbol, spec.market)
                         full_specs = list(resolved_specs) + cross_specs
                         ohlcv = feature_engine.compute_with_companions(
-                            ohlcv, spec.symbol, spec.market, spec.interval,
-                            feature_specs=full_specs, db_session=self.db_session,
+                            ohlcv,
+                            spec.symbol,
+                            spec.market,
+                            spec.interval,
+                            feature_specs=full_specs,
+                            db_session=self.db_session,
                         )
                         logger.info(
                             "Pre-computed %d R2 features for %s/%s (%d base + %d cross-asset)",
-                            len(full_specs), spec.symbol, spec.market,
-                            len(resolved_specs), len(cross_specs),
+                            len(full_specs),
+                            spec.symbol,
+                            spec.market,
+                            len(resolved_specs),
+                            len(cross_specs),
                         )
                         # NOTE: If full_specs contains qlib_prediction (ML vote),
                         # the pre-computation returns NaN for that column because
@@ -174,7 +186,11 @@ class AutoResearchRunner:
                             )
 
                     search_result = pipeline.run(
-                        ohlcv, spec.symbol, spec.market, spec.interval, self.search_config,
+                        ohlcv,
+                        spec.symbol,
+                        spec.market,
+                        spec.interval,
+                        self.search_config,
                         model_version_id=self.model_version_id,
                         available_models=available_models,
                     )
@@ -182,7 +198,11 @@ class AutoResearchRunner:
                     self.db_session.commit()
                 except Exception as exc:
                     logger.error(
-                        "Market %s/%s failed: %s", spec.symbol, spec.market, exc, exc_info=True,
+                        "Market %s/%s failed: %s",
+                        spec.symbol,
+                        spec.market,
+                        exc,
+                        exc_info=True,
                     )
                     self.db_session.rollback()
                     results.append(MarketResult(spec=spec, error=str(exc)))

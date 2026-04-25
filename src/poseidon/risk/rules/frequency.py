@@ -48,8 +48,7 @@ class FrequencyRule(BaseRule):
     def check(self, signal: Signal, portfolio: VirtualPortfolio) -> RuleResult:
         # Placeholder: DB access required to count recent passed signals.
         logger.warning(
-            "FrequencyRule is a placeholder — always passes. "
-            "Inject DB session to enable frequency limiting for %s.",
+            "FrequencyRule is a placeholder — always passes. Inject DB session to enable frequency limiting for %s.",
             signal.symbol,
         )
         return RuleResult(passed=True, rule_name=self.name)

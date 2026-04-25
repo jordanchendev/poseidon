@@ -8,7 +8,6 @@ Covers:
 """
 
 import yaml
-import pytest
 
 from poseidon.strategies.tw_futures.configs import (
     MeanReversionConfig,
@@ -66,9 +65,7 @@ class TestTrendFollowingConfig:
         """Load the actual trend_following_tx.yaml config file."""
         import pathlib
 
-        config_path = (
-            pathlib.Path(__file__).parents[3] / "config" / "strategies" / "trend_following_tx.yaml"
-        )
+        config_path = pathlib.Path(__file__).parents[3] / "config" / "strategies" / "trend_following_tx.yaml"
         with open(config_path) as f:
             data = yaml.safe_load(f)
         cfg = TrendFollowingConfig(**data)

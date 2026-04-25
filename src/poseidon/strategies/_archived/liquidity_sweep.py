@@ -13,7 +13,7 @@ Optuna can search them.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -72,9 +72,7 @@ class LiquiditySweepStrategy(BaseStrategy):
         self._fib_level: float = entry.get("fib_level", 0.618)
         raw_multipliers = entry.get("atr_multipliers", {0: 0.5, 1: 1.0, 2: 1.5, 3: 2.0})
         # Ensure keys are int (JSON may deserialize as str)
-        self._atr_multipliers: dict[int, float] = {
-            int(k): float(v) for k, v in raw_multipliers.items()
-        }
+        self._atr_multipliers: dict[int, float] = {int(k): float(v) for k, v in raw_multipliers.items()}
 
         # Exit config (D-20, D-21)
         exit_cfg = config.get("exit", {})
@@ -132,11 +130,7 @@ class LiquiditySweepStrategy(BaseStrategy):
             return []
 
         row = features.iloc[-1]
-        signal_time = (
-            features.index[-1]
-            if isinstance(features.index[-1], datetime)
-            else datetime.now(timezone.utc)
-        )
+        signal_time = features.index[-1] if isinstance(features.index[-1], datetime) else datetime.now(UTC)
 
         signals: list[Signal] = []
 
@@ -148,10 +142,7 @@ class LiquiditySweepStrategy(BaseStrategy):
             self._bars_in_position += 1
 
             # Max holding bars exit (D-21c)
-            if (
-                self._max_holding_bars is not None
-                and self._bars_in_position > self._max_holding_bars
-            ):
+            if self._max_holding_bars is not None and self._bars_in_position > self._max_holding_bars:
                 signals.append(
                     Signal(
                         strategy_id=self.strategy_id,
@@ -199,9 +190,7 @@ class LiquiditySweepStrategy(BaseStrategy):
         zones = self._identify_zones(row)
 
         # Stage 2 & 3: Detect sweeps and calculate entries
-        sweep_candidates: list[tuple[str, float, float]] = (
-            []
-        )  # (direction, score, zone_level)
+        sweep_candidates: list[tuple[str, float, float]] = []  # (direction, score, zone_level)
 
         if self._direction_mode != "short_only" and "downward" in zones:
             triggered, score, zone_level = self._detect_sweep(row, "downward", zones)
@@ -221,16 +210,10 @@ class LiquiditySweepStrategy(BaseStrategy):
         direction, score, zone_level = sweep_candidates[0]
 
         # Stage 3: Calculate entry price (D-12, D-13, D-14)
-        entry_price, stop_loss, take_profit = self._calculate_entry_price(
-            row, zone_level, direction
-        )
+        entry_price, stop_loss, take_profit = self._calculate_entry_price(row, zone_level, direction)
 
         # Determine vol regime for metadata
-        vol_regime = (
-            int(row["vol_regime"])
-            if not pd.isna(row.get("vol_regime", float("nan")))
-            else 1
-        )
+        vol_regime = int(row["vol_regime"]) if not pd.isna(row.get("vol_regime", float("nan"))) else 1
         vol_multiplier = self._atr_multipliers.get(vol_regime, 1.0)
 
         # Emit signal (D-14, D-15)
@@ -380,9 +363,7 @@ class LiquiditySweepStrategy(BaseStrategy):
 
         return zones
 
-    def _detect_sweep(
-        self, row: pd.Series, direction: str, zones: dict
-    ) -> tuple[bool, float, float]:
+    def _detect_sweep(self, row: pd.Series, direction: str, zones: dict) -> tuple[bool, float, float]:
         """Stage 2: Detect sweep event via mandatory gates + confirmatory scoring.
 
         Args:
@@ -447,27 +428,17 @@ class LiquiditySweepStrategy(BaseStrategy):
             funding = 0.0
         funding = float(funding)
 
-        if direction == "downward":
-            # Positive funding = crowded long = supports downward sweep thesis
-            funding_alignment = 1.0 if funding > 0 else 0.0
-        else:
-            # Negative funding = crowded short = supports upward sweep thesis
-            funding_alignment = 1.0 if funding < 0 else 0.0
+        # Positive funding = crowded long (supports downward); negative = crowded short (supports upward)
+        funding_alignment = (1.0 if funding > 0 else 0.0) if direction == "downward" else (1.0 if funding < 0 else 0.0)
 
-        score = (
-            oi_drop_score * self._w_oi_drop
-            + volume_score * self._w_volume
-            + funding_alignment * self._w_funding
-        )
+        score = oi_drop_score * self._w_oi_drop + volume_score * self._w_volume + funding_alignment * self._w_funding
 
         if score < self._confirmation_threshold:
             return False, 0.0, 0.0
 
         return True, score, zone_level
 
-    def _calculate_entry_price(
-        self, row: pd.Series, sweep_level: float, direction: str
-    ) -> tuple[float, float, float]:
+    def _calculate_entry_price(self, row: pd.Series, sweep_level: float, direction: str) -> tuple[float, float, float]:
         """Stage 3: Calculate ambush entry, stop-loss, and take-profit prices.
 
         Uses Fibonacci extension from sweep level with volatility-adaptive
@@ -529,8 +500,7 @@ class LiquiditySweepStrategy(BaseStrategy):
             raise ValueError("entry.fib_level must be > 0 and < 2.0")
         if self._direction_mode not in ("long_only", "short_only", "bidirectional"):
             raise ValueError(
-                f"direction_mode must be one of: long_only, short_only, bidirectional; "
-                f"got '{self._direction_mode}'"
+                f"direction_mode must be one of: long_only, short_only, bidirectional; got '{self._direction_mode}'"
             )
         return True
 

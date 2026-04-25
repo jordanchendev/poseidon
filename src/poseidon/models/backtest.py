@@ -19,9 +19,7 @@ class BacktestRecord(Base):
 
     __tablename__ = "backtests"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     strategy_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     strategy_type: Mapped[str] = mapped_column(String(32), nullable=False)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -32,15 +30,11 @@ class BacktestRecord(Base):
     walk_forward: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="running")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[str] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     completed_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
-    trades: Mapped[list["BacktestTradeRecord"]] = relationship(
-        back_populates="backtest", cascade="all, delete-orphan"
-    )
+    trades: Mapped[list["BacktestTradeRecord"]] = relationship(back_populates="backtest", cascade="all, delete-orphan")
     equity_points: Mapped[list["BacktestEquityRecord"]] = relationship(
         back_populates="backtest", cascade="all, delete-orphan"
     )
@@ -51,9 +45,7 @@ class BacktestTradeRecord(Base):
 
     __tablename__ = "backtest_trades"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     backtest_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("backtests.id"), nullable=False, index=True
     )
@@ -77,9 +69,7 @@ class BacktestEquityRecord(Base):
 
     __tablename__ = "backtest_equity"
 
-    backtest_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("backtests.id"), primary_key=True
-    )
+    backtest_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("backtests.id"), primary_key=True)
     time: Mapped[str] = mapped_column(DateTime(timezone=True), primary_key=True)
     equity: Mapped[float] = mapped_column(Numeric, nullable=False)
     drawdown: Mapped[float] = mapped_column(Numeric, nullable=False, server_default="0")

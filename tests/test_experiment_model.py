@@ -10,10 +10,20 @@ def test_experiment_record_tablename():
 def test_experiment_record_columns():
     col_names = [c.name for c in ExperimentRecord.__table__.columns]
     expected = [
-        "id", "study_name", "config_json", "metrics_json",
-        "composite_score", "wfe_score", "status", "market", "interval",
-        "optuna_study_name", "optuna_trial_number", "holdout_boundary",
-        "created_at", "updated_at",
+        "id",
+        "study_name",
+        "config_json",
+        "metrics_json",
+        "composite_score",
+        "wfe_score",
+        "status",
+        "market",
+        "interval",
+        "optuna_study_name",
+        "optuna_trial_number",
+        "holdout_boundary",
+        "created_at",
+        "updated_at",
     ]
     for name in expected:
         assert name in col_names, f"Missing column: {name}"

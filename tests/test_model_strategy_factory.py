@@ -15,13 +15,10 @@ from typing import Any
 from unittest.mock import MagicMock
 from uuid import uuid4
 
-import pytest
-
 from poseidon.backtest.model_strategy_factory import (
     PARAM_BOUNDS,
     ModelStrategyFactory,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -107,7 +104,9 @@ def test_build_trial_factory_returns_callable_and_bounds():
     """build_trial_factory(symbol, market, interval) returns (callable, dict)."""
     factory = ModelStrategyFactory()
     factory_fn, bounds = factory.build_trial_factory(
-        symbol="2330", market="tw_stock", interval="1d",
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
     )
     assert callable(factory_fn)
     assert isinstance(bounds, dict)
@@ -127,7 +126,9 @@ def test_build_trial_factory_with_multiple_models_adds_model_idx_bound():
     mock2 = _make_mock_model_version("model-2")
     factory = ModelStrategyFactory(available_models=[mock1, mock2])
     _, bounds = factory.build_trial_factory(
-        symbol="2330", market="tw_stock", interval="1d",
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
     )
     assert "model_version_idx" in bounds
     low, high, ptype = bounds["model_version_idx"]
@@ -145,7 +146,9 @@ def test_build_trial_factory_with_no_models_no_idx_bound():
     """With available_models=[], returned bounds do NOT contain model_version_idx."""
     factory = ModelStrategyFactory(available_models=[])
     _, bounds = factory.build_trial_factory(
-        symbol="2330", market="tw_stock", interval="1d",
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
     )
     assert "model_version_idx" not in bounds
 
@@ -160,7 +163,9 @@ def test_build_trial_factory_with_single_model_no_idx_bound():
     mock1 = _make_mock_model_version("model-1")
     factory = ModelStrategyFactory(available_models=[mock1])
     _, bounds = factory.build_trial_factory(
-        symbol="2330", market="tw_stock", interval="1d",
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
     )
     assert "model_version_idx" not in bounds
 
@@ -174,8 +179,10 @@ def test_build_trial_factory_callable_returns_config_or_strategy():
     """Factory callable returns something usable (config dict)."""
     mock1 = _make_mock_model_version("model-1")
     factory = ModelStrategyFactory(available_models=[mock1])
-    factory_fn, bounds = factory.build_trial_factory(
-        symbol="2330", market="tw_stock", interval="1d",
+    factory_fn, _bounds = factory.build_trial_factory(
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
     )
     params = _make_sample_params()
     result = factory_fn(params)

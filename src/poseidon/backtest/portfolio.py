@@ -6,11 +6,9 @@ It tracks cash, positions, completed trades, and an equity curve (per bar).
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
-from typing import Any
+from enum import StrEnum
 
 import pandas as pd
 
@@ -19,7 +17,7 @@ from poseidon.backtest.pending_orders import FillEvent
 from poseidon.signals.schemas import Signal, SignalAction
 
 
-class SizingMode(str, Enum):
+class SizingMode(StrEnum):
     """Position sizing mode for backtests."""
 
     FIXED_PCT = "fixed_pct"
@@ -49,8 +47,8 @@ class SizingConfig:
     target_vol: float = 0.15
     vol_lookback: int = 20
     max_position_pct: float = 0.3
-    risk_pct: float = 0.01           # 1% of equity risked per trade (FIXED_RISK only)
-    max_notional_pct: float = 0.3    # Hard cap as fraction of equity (FIXED_RISK only)
+    risk_pct: float = 0.01  # 1% of equity risked per trade (FIXED_RISK only)
+    max_notional_pct: float = 0.3  # Hard cap as fraction of equity (FIXED_RISK only)
 
 
 @dataclass
@@ -97,9 +95,7 @@ class BacktestPortfolio:
         Without a current price, returns cash + positions at entry price.
         Use record_equity_point() for mark-to-market valuation.
         """
-        position_value = sum(
-            pos["quantity"] * pos["entry_price"] for pos in self.positions.values()
-        )
+        position_value = sum(pos["quantity"] * pos["entry_price"] for pos in self.positions.values())
         return self.cash + position_value
 
     def execute_fill(self, signal: Signal, bar: pd.Series) -> TradeRecord | None:
@@ -139,11 +135,7 @@ class BacktestPortfolio:
             slippage += price * self.cost_model.slippage_pct
         if self.cost_model.slippage_ticks > 0:
             tick_size = getattr(self.cost_model, "tick_size", 0.0)
-            if tick_size > 0:
-                tick_value = tick_size
-            else:
-                # Approximate tick value as 0.1% of price (conservative estimate)
-                tick_value = price * 0.001
+            tick_value = tick_size if tick_size > 0 else price * 0.001
             slippage += self.cost_model.slippage_ticks * tick_value
 
         if is_buy:
@@ -287,7 +279,11 @@ class BacktestPortfolio:
         return trade
 
     def execute_sl_tp_exit(
-        self, key: str, exit_price: float, exit_type: str, bar: pd.Series,
+        self,
+        key: str,
+        exit_price: float,
+        exit_type: str,
+        bar: pd.Series,
     ) -> TradeRecord | None:
         """Close a position via SL or TP trigger at the exact trigger price.
 
@@ -312,9 +308,7 @@ class BacktestPortfolio:
         entry_fees = pos.get("entry_fees", 0.0)
 
         trade_value = exit_price * quantity
-        exit_fees = trade_value * (
-            self.cost_model.sell_commission_rate + self.cost_model.tax_rate
-        )
+        exit_fees = trade_value * (self.cost_model.sell_commission_rate + self.cost_model.tax_rate)
         total_fees = entry_fees + exit_fees
 
         point_value = getattr(self.cost_model, "point_value", 1.0)
@@ -341,7 +335,9 @@ class BacktestPortfolio:
         return trade
 
     def execute_limit_fill(
-        self, fill_event: FillEvent, bar: pd.Series,
+        self,
+        fill_event: FillEvent,
+        bar: pd.Series,
     ) -> TradeRecord | None:
         """Execute a limit order fill using maker fee rate with no slippage.
 
@@ -364,9 +360,7 @@ class BacktestPortfolio:
         if signal.action == SignalAction.LONG:
             quantity_pct = signal.quantity_pct or 0.1
             raw_quantity = self._sizing_base() * quantity_pct / fill_price
-            quantity = (
-                raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
-            )
+            quantity = raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
             if quantity <= 0:
                 return None
 
@@ -402,9 +396,7 @@ class BacktestPortfolio:
         elif signal.action == SignalAction.SHORT:
             quantity_pct = signal.quantity_pct or 0.1
             raw_quantity = self._sizing_base() * quantity_pct / fill_price
-            quantity = (
-                raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
-            )
+            quantity = raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
             if quantity <= 0:
                 return None
 

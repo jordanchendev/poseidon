@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 from poseidon.api.capabilities import router as capabilities_router
 from poseidon.capabilities.registry import ComponentCapability
 
-
 # --------------- Test app setup ---------------
 
 _test_app = FastAPI()

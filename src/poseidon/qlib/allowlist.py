@@ -26,10 +26,7 @@ def resolve_handler(name: str) -> str:
     Raises ``ValueError`` if the name is not in the allowlist.
     """
     if name not in ALLOWED_HANDLER_CLASSES:
-        raise ValueError(
-            f"Unknown handler_class: {name!r}. "
-            f"Allowed: {sorted(ALLOWED_HANDLER_CLASSES)}"
-        )
+        raise ValueError(f"Unknown handler_class: {name!r}. Allowed: {sorted(ALLOWED_HANDLER_CLASSES)}")
     return ALLOWED_HANDLER_CLASSES[name]
 
 
@@ -39,8 +36,5 @@ def resolve_model(name: str) -> str:
     Raises ``ValueError`` if the name is not in the allowlist.
     """
     if name not in ALLOWED_MODEL_CLASSES:
-        raise ValueError(
-            f"Unknown model_class: {name!r}. "
-            f"Allowed: {sorted(ALLOWED_MODEL_CLASSES)}"
-        )
+        raise ValueError(f"Unknown model_class: {name!r}. Allowed: {sorted(ALLOWED_MODEL_CLASSES)}")
     return ALLOWED_MODEL_CLASSES[name]

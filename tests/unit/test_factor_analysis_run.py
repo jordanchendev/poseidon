@@ -7,7 +7,8 @@ import uuid
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine, inspect
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -26,7 +27,6 @@ def _compile_uuid_sqlite(type_, compiler, **kw):  # pragma: no cover
 from poseidon.core.schemas import ShapleyAnalysisRequest  # noqa: E402
 from poseidon.models.base import Base  # noqa: E402
 from poseidon.models.factor_analysis_run import FactorAnalysisRun  # noqa: E402
-
 
 ENGINE = create_engine(
     "sqlite://",

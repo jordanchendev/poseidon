@@ -9,7 +9,7 @@ Hold predictions are filtered out. Only actionable signals (long/short/close) ar
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -78,11 +78,7 @@ class ModelStrategy(BaseStrategy):
             action_str = row["prediction"]
             confidence = float(row["confidence"])
 
-            signal_time = (
-                idx
-                if isinstance(idx, datetime)
-                else datetime.now(timezone.utc)
-            )
+            signal_time = idx if isinstance(idx, datetime) else datetime.now(UTC)
 
             if action_str == "hold":
                 continue
@@ -91,20 +87,32 @@ class ModelStrategy(BaseStrategy):
             if self._current_position is None:
                 # No position → enter
                 self._current_position = action_str
-                signals.append(self._make_signal(
-                    SignalAction(action_str), confidence, signal_time,
-                ))
+                signals.append(
+                    self._make_signal(
+                        SignalAction(action_str),
+                        confidence,
+                        signal_time,
+                    )
+                )
             elif self._current_position != action_str:
                 # Direction changed → close first
-                signals.append(self._make_signal(
-                    SignalAction.CLOSE, confidence, signal_time,
-                ))
+                signals.append(
+                    self._make_signal(
+                        SignalAction.CLOSE,
+                        confidence,
+                        signal_time,
+                    )
+                )
                 # Then enter new direction (if not just closing)
                 if action_str in ("long", "short"):
                     self._current_position = action_str
-                    signals.append(self._make_signal(
-                        SignalAction(action_str), confidence, signal_time,
-                    ))
+                    signals.append(
+                        self._make_signal(
+                            SignalAction(action_str),
+                            confidence,
+                            signal_time,
+                        )
+                    )
                 else:
                     self._current_position = None
             # else: same direction, already in position → no signal

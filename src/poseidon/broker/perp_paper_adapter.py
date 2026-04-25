@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from poseidon.broker.base import BrokerAdapter
 from poseidon.orders.schemas import Fill, Order
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Liquidation price helper
 # ---------------------------------------------------------------------------
+
 
 def calc_liquidation_price(
     entry_price: float,
@@ -45,6 +46,7 @@ def calc_liquidation_price(
 # Internal position state
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class PerpPosition:
     """In-memory state for a single perpetual contract position."""
@@ -63,6 +65,7 @@ class PerpPosition:
 # ---------------------------------------------------------------------------
 # PerpPaperAdapter
 # ---------------------------------------------------------------------------
+
 
 class PerpPaperAdapter(BrokerAdapter):
     """Simulates perpetual contract trading with margin tracking.
@@ -121,9 +124,7 @@ class PerpPaperAdapter(BrokerAdapter):
         fill_price = float(latest_price)
         session = self._session_factory()
         try:
-            leverage = self._leverage_per_symbol.get(
-                order.symbol, self._default_leverage
-            )
+            leverage = self._leverage_per_symbol.get(order.symbol, self._default_leverage)
 
             # Determine if this is a closing order
             existing = self._positions.get(order.symbol)
@@ -146,20 +147,13 @@ class PerpPaperAdapter(BrokerAdapter):
                 notional = fill_price * order.quantity
                 margin = notional / leverage
                 side = order.side
-                liq_price = calc_liquidation_price(
-                    fill_price, leverage, side, self._maint_margin_rate
-                )
+                liq_price = calc_liquidation_price(fill_price, leverage, side, self._maint_margin_rate)
 
                 if existing is not None and existing.side == side:
                     # Average into existing position
                     total_qty = existing.quantity + order.quantity
-                    avg_price = (
-                        existing.entry_price * existing.quantity
-                        + fill_price * order.quantity
-                    ) / total_qty
-                    new_liq = calc_liquidation_price(
-                        avg_price, leverage, side, self._maint_margin_rate
-                    )
+                    avg_price = (existing.entry_price * existing.quantity + fill_price * order.quantity) / total_qty
+                    new_liq = calc_liquidation_price(avg_price, leverage, side, self._maint_margin_rate)
                     existing.entry_price = avg_price
                     existing.quantity = total_qty
                     existing.margin = avg_price * total_qty / leverage
@@ -183,8 +177,7 @@ class PerpPaperAdapter(BrokerAdapter):
                         liquidation_price=liq_price,
                     )
                     logger.info(
-                        "Opened %s position on %s: qty=%.6f price=%.4f "
-                        "margin=%.4f liq=%.4f",
+                        "Opened %s position on %s: qty=%.6f price=%.4f margin=%.4f liq=%.4f",
                         side,
                         order.symbol,
                         order.quantity,
@@ -199,7 +192,7 @@ class PerpPaperAdapter(BrokerAdapter):
                 order_id=order.id,
                 fill_price=fill_price,
                 fill_quantity=order.quantity,
-                fill_time=datetime.now(timezone.utc),
+                fill_time=datetime.now(UTC),
                 broker_fill_id=broker_order_id,
             )
             self._fills[broker_order_id] = [fill]
@@ -216,12 +209,7 @@ class PerpPaperAdapter(BrokerAdapter):
         positions: list[dict] = []
         for pos in self._positions.values():
             mark_price = pos.entry_price  # default if not updated
-            margin_ratio = (
-                (pos.margin + pos.unrealized_pnl)
-                / (mark_price * pos.quantity)
-                if pos.quantity > 0
-                else 0.0
-            )
+            margin_ratio = (pos.margin + pos.unrealized_pnl) / (mark_price * pos.quantity) if pos.quantity > 0 else 0.0
             positions.append(
                 {
                     "symbol": pos.symbol,
@@ -267,9 +255,7 @@ class PerpPaperAdapter(BrokerAdapter):
             if pos is None:
                 continue
             direction = 1 if pos.side == "long" else -1
-            pos.unrealized_pnl = (
-                (mark_price - pos.entry_price) * pos.quantity * direction
-            )
+            pos.unrealized_pnl = (mark_price - pos.entry_price) * pos.quantity * direction
             logger.debug(
                 "Mark price update %s: mark=%.4f pnl=%.4f",
                 symbol,
@@ -318,10 +304,7 @@ class PerpPaperAdapter(BrokerAdapter):
         if pos is None:
             return False
 
-        if pos.side == "long":
-            liquidated = mark_price <= pos.liquidation_price
-        else:
-            liquidated = mark_price >= pos.liquidation_price
+        liquidated = mark_price <= pos.liquidation_price if pos.side == "long" else mark_price >= pos.liquidation_price
 
         if liquidated:
             logger.warning(
@@ -340,12 +323,7 @@ class PerpPaperAdapter(BrokerAdapter):
             return None
 
         mark_price = pos.entry_price  # best available without update
-        margin_ratio = (
-            (pos.margin + pos.unrealized_pnl)
-            / (mark_price * pos.quantity)
-            if pos.quantity > 0
-            else 0.0
-        )
+        margin_ratio = (pos.margin + pos.unrealized_pnl) / (mark_price * pos.quantity) if pos.quantity > 0 else 0.0
         return {
             "symbol": pos.symbol,
             "side": pos.side,

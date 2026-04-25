@@ -20,17 +20,13 @@ from poseidon.data.features.base import BaseFeature, register_feature
 logger = logging.getLogger(__name__)
 
 
-def _align_predictions_to_index(
-    pred_series: pd.Series, target_index: pd.Index, method: str = "ffill"
-) -> pd.Series:
+def _align_predictions_to_index(pred_series: pd.Series, target_index: pd.Index, method: str = "ffill") -> pd.Series:
     """Align prediction series to OHLCV index with forward-fill.
 
     Handles timezone mismatch: prediction data may have different tz
     awareness than the OHLCV index.
     """
-    if isinstance(pred_series.index, pd.DatetimeIndex) and isinstance(
-        target_index, pd.DatetimeIndex
-    ):
+    if isinstance(pred_series.index, pd.DatetimeIndex) and isinstance(target_index, pd.DatetimeIndex):
         if pred_series.index.tz is None and target_index.tz is not None:
             pred_series = pred_series.copy()
             pred_series.index = pred_series.index.tz_localize("UTC")
@@ -89,9 +85,7 @@ class ModelPredictionFeature(BaseFeature):
         if not self._validate(ohlcv):
             return pd.Series(dtype=float, name=col_name)
 
-        if prediction_data is None or (
-            hasattr(prediction_data, "empty") and prediction_data.empty
-        ):
+        if prediction_data is None or (hasattr(prediction_data, "empty") and prediction_data.empty):
             return _nan_series(ohlcv.index, col_name)
 
         if "prediction" not in prediction_data.columns:

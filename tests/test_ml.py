@@ -23,7 +23,6 @@ from poseidon.ml.lifecycle import (
 )
 from poseidon.ml.registry import _registry, get_model, list_models, register_model
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -78,11 +77,13 @@ class DummyModel(BaseModel):
 def sample_features():
     np.random.seed(42)
     n = 50
-    return pd.DataFrame({
-        "sma_20": np.random.randn(n),
-        "rsi_14": np.random.rand(n) * 100,
-        "close": 100 + np.cumsum(np.random.randn(n)),
-    })
+    return pd.DataFrame(
+        {
+            "sma_20": np.random.randn(n),
+            "rsi_14": np.random.rand(n) * 100,
+            "close": 100 + np.cumsum(np.random.randn(n)),
+        }
+    )
 
 
 @pytest.fixture
@@ -157,14 +158,27 @@ class TestRegistry:
             name = "test_registry_model"
             description = "test"
 
-            def train(self, f, t, p): return {}
-            def predict(self, f): return pd.DataFrame()
-            def validate(self, f, t): return {}
-            def save(self, p): pass
+            def train(self, f, t, p):
+                return {}
+
+            def predict(self, f):
+                return pd.DataFrame()
+
+            def validate(self, f, t):
+                return {}
+
+            def save(self, p):
+                pass
+
             @classmethod
-            def load(cls, p): return cls()
-            def get_default_params(self): return {}
-            def get_feature_list(self): return []
+            def load(cls, p):
+                return cls()
+
+            def get_default_params(self):
+                return {}
+
+            def get_feature_list(self):
+                return []
 
         assert "test_registry_model" in _registry
         assert get_model("test_registry_model") is TestModel
@@ -178,17 +192,32 @@ class TestRegistry:
 
     def test_register_without_name_raises(self):
         with pytest.raises(ValueError, match="must define a 'name'"):
+
             @register_model
             class BadModel(BaseModel):
                 name = ""
-                def train(self, f, t, p): return {}
-                def predict(self, f): return pd.DataFrame()
-                def validate(self, f, t): return {}
-                def save(self, p): pass
+
+                def train(self, f, t, p):
+                    return {}
+
+                def predict(self, f):
+                    return pd.DataFrame()
+
+                def validate(self, f, t):
+                    return {}
+
+                def save(self, p):
+                    pass
+
                 @classmethod
-                def load(cls, p): return cls()
-                def get_default_params(self): return {}
-                def get_feature_list(self): return []
+                def load(cls, p):
+                    return cls()
+
+                def get_default_params(self):
+                    return {}
+
+                def get_feature_list(self):
+                    return []
 
     def test_xgboost_registered(self):
         """XGBoost model should be auto-registered via implementations import."""
@@ -207,10 +236,10 @@ class TestRegistry:
 
 class TestLifecycle:
     def test_all_states_defined(self):
-        assert ALL_STATES == {"training", "ready", "shadow", "active", "failed", "retired"}
+        assert {"training", "ready", "shadow", "active", "failed", "retired"} == ALL_STATES
 
     def test_terminal_states(self):
-        assert TERMINAL_STATES == {"failed", "retired"}
+        assert {"failed", "retired"} == TERMINAL_STATES
 
     def test_valid_transitions(self):
         # training -> ready
@@ -268,6 +297,7 @@ class TestArtifacts:
         with patch("poseidon.ml.artifacts.settings") as mock_settings:
             mock_settings.model_artifact_dir = str(tmp_path)
             from poseidon.ml.artifacts import get_version_dir
+
             path = get_version_dir("my_model", 3)
             assert path == tmp_path / "my_model" / "v3"
 
@@ -275,6 +305,7 @@ class TestArtifacts:
         with patch("poseidon.ml.artifacts.settings") as mock_settings:
             mock_settings.model_artifact_dir = str(tmp_path)
             from poseidon.ml.artifacts import ensure_version_dir
+
             path = ensure_version_dir("my_model", 1)
             assert path.exists()
             assert path.is_dir()
@@ -283,6 +314,7 @@ class TestArtifacts:
         with patch("poseidon.ml.artifacts.settings") as mock_settings:
             mock_settings.model_artifact_dir = str(tmp_path)
             from poseidon.ml.artifacts import ensure_version_dir, load_metadata, save_metadata
+
             ensure_version_dir("my_model", 1)
             save_metadata("my_model", 1, {"sharpe": 1.5, "win_rate": 0.6})
             meta = load_metadata("my_model", 1)
@@ -293,6 +325,7 @@ class TestArtifacts:
         with patch("poseidon.ml.artifacts.settings") as mock_settings:
             mock_settings.model_artifact_dir = str(tmp_path)
             from poseidon.ml.artifacts import load_metadata
+
             meta = load_metadata("nonexistent", 99)
             assert meta == {}
 
@@ -304,6 +337,7 @@ class TestArtifacts:
                 get_active_version,
                 set_active_symlink,
             )
+
             ensure_version_dir("my_model", 1)
             ensure_version_dir("my_model", 2)
 
@@ -318,6 +352,7 @@ class TestArtifacts:
         with patch("poseidon.ml.artifacts.settings") as mock_settings:
             mock_settings.model_artifact_dir = str(tmp_path)
             from poseidon.ml.artifacts import set_active_symlink
+
             with pytest.raises(FileNotFoundError):
                 set_active_symlink("my_model", 99)
 
@@ -325,6 +360,7 @@ class TestArtifacts:
         with patch("poseidon.ml.artifacts.settings") as mock_settings:
             mock_settings.model_artifact_dir = str(tmp_path)
             from poseidon.ml.artifacts import get_active_version
+
             assert get_active_version("no_model") is None
 
 

@@ -7,7 +7,7 @@ exceeds a configurable threshold.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from poseidon.protections.base import BaseProtection, ProtectionResult
@@ -62,19 +62,13 @@ class DailyLossProtection(BaseProtection):
             self.create_lock(
                 symbol=None,  # Portfolio-level
                 market=market,
-                reason=(
-                    f"Daily loss {daily_loss_pct:.2%} >= threshold "
-                    f"{self.max_daily_loss_pct:.2%}"
-                ),
+                reason=(f"Daily loss {daily_loss_pct:.2%} >= threshold {self.max_daily_loss_pct:.2%}"),
                 expires_at=expires_at,
                 db=db,
             )
             return ProtectionResult(
                 locked=True,
-                reason=(
-                    f"Daily loss triggered for {market}: "
-                    f"{daily_loss_pct:.2%} >= {self.max_daily_loss_pct:.2%}"
-                ),
+                reason=(f"Daily loss triggered for {market}: {daily_loss_pct:.2%} >= {self.max_daily_loss_pct:.2%}"),
                 expires_at=expires_at,
                 protection_type=self.name,
             )
@@ -94,7 +88,7 @@ class DailyLossProtection(BaseProtection):
         try:
             from poseidon.models.nav_snapshot import NavSnapshotRecord
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
             # Get most recent NAV before today (yesterday's close)
@@ -122,12 +116,8 @@ class DailyLossProtection(BaseProtection):
             if prev_nav is None or current_nav is None:
                 return None
 
-            prev_value = getattr(prev_nav, "nav", None) or getattr(
-                prev_nav, "total_value", None
-            )
-            curr_value = getattr(current_nav, "nav", None) or getattr(
-                current_nav, "total_value", None
-            )
+            prev_value = getattr(prev_nav, "nav", None) or getattr(prev_nav, "total_value", None)
+            curr_value = getattr(current_nav, "nav", None) or getattr(current_nav, "total_value", None)
 
             if prev_value and curr_value and prev_value > 0:
                 loss_pct = (prev_value - curr_value) / prev_value
@@ -149,14 +139,12 @@ class DailyLossProtection(BaseProtection):
         Crypto: Next UTC midnight.
         TW stock: Next weekday 01:30 UTC (09:30 TST).
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if market == "tw_stock":
             # Next weekday at 01:30 UTC (09:30 TST)
             next_day = now + timedelta(days=1)
-            next_open = next_day.replace(
-                hour=1, minute=30, second=0, microsecond=0
-            )
+            next_open = next_day.replace(hour=1, minute=30, second=0, microsecond=0)
             # Skip weekends
             while next_open.weekday() >= 5:  # Saturday=5, Sunday=6
                 next_open += timedelta(days=1)

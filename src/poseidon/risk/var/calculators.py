@@ -6,7 +6,7 @@ E.g., VaR=0.05 means 5% portfolio loss at the given confidence level.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -23,9 +23,7 @@ class VaRCalculator:
     corresponding to the 95% and 99% confidence levels.
     """
 
-    def __init__(
-        self, confidence_levels: tuple[float, ...] = (0.95, 0.99)
-    ) -> None:
+    def __init__(self, confidence_levels: tuple[float, ...] = (0.95, 0.99)) -> None:
         self.confidence_levels = confidence_levels
 
     # ------------------------------------------------------------------
@@ -33,9 +31,7 @@ class VaRCalculator:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _zero_result(
-        method: str, as_of: datetime, portfolio_value: float, holding_period: int = 1
-    ) -> VaRResult:
+    def _zero_result(method: str, as_of: datetime, portfolio_value: float, holding_period: int = 1) -> VaRResult:
         """Return a VaRResult with all-zero VaR/CVaR values."""
         return VaRResult(
             method=method,
@@ -44,14 +40,12 @@ class VaRCalculator:
             cvar_95=0.0,
             cvar_99=0.0,
             as_of=as_of,
-            computed_at=datetime.now(timezone.utc),
+            computed_at=datetime.now(UTC),
             portfolio_value=portfolio_value,
             holding_period=holding_period,
         )
 
-    def compute_portfolio_returns(
-        self, aligned_returns: pd.DataFrame, weights: np.ndarray
-    ) -> np.ndarray:
+    def compute_portfolio_returns(self, aligned_returns: pd.DataFrame, weights: np.ndarray) -> np.ndarray:
         """Compute weighted portfolio returns from aligned asset returns.
 
         Parameters
@@ -100,14 +94,10 @@ class VaRCalculator:
         VaRResult
         """
         if len(weights) == 0:
-            return self._zero_result(
-                VaRMethod.PARAMETRIC.value, as_of, portfolio_value, holding_period
-            )
+            return self._zero_result(VaRMethod.PARAMETRIC.value, as_of, portfolio_value, holding_period)
 
         # Portfolio standard deviation with holding period scaling
-        port_std = float(
-            np.sqrt(weights @ cov_matrix @ weights) * np.sqrt(holding_period)
-        )
+        port_std = float(np.sqrt(weights @ cov_matrix @ weights) * np.sqrt(holding_period))
 
         conf_95, conf_99 = self.confidence_levels
 
@@ -129,7 +119,7 @@ class VaRCalculator:
             cvar_95=cvar_95,
             cvar_99=cvar_99,
             as_of=as_of,
-            computed_at=datetime.now(timezone.utc),
+            computed_at=datetime.now(UTC),
             portfolio_value=portfolio_value,
             holding_period=holding_period,
         )
@@ -163,25 +153,18 @@ class VaRCalculator:
         VaRResult
         """
         if len(portfolio_returns) == 0:
-            return self._zero_result(
-                VaRMethod.HISTORICAL.value, as_of, portfolio_value, holding_period
-            )
+            return self._zero_result(VaRMethod.HISTORICAL.value, as_of, portfolio_value, holding_period)
 
         # Scale for holding period
         scaled = portfolio_returns * np.sqrt(holding_period)
 
         conf_95, conf_99 = self.confidence_levels
 
-        def _hs_var_cvar(
-            returns: np.ndarray, confidence: float
-        ) -> tuple[float, float]:
+        def _hs_var_cvar(returns: np.ndarray, confidence: float) -> tuple[float, float]:
             var = float(-np.percentile(returns, (1 - confidence) * 100))
             var = max(var, 0.0)  # ensure non-negative
             tail = returns[returns <= -var]
-            if len(tail) > 0:
-                cvar = float(-np.mean(tail))
-            else:
-                cvar = var
+            cvar = float(-np.mean(tail)) if len(tail) > 0 else var
             cvar = max(cvar, 0.0)
             return var, cvar
 
@@ -195,7 +178,7 @@ class VaRCalculator:
             cvar_95=cvar_95,
             cvar_99=cvar_99,
             as_of=as_of,
-            computed_at=datetime.now(timezone.utc),
+            computed_at=datetime.now(UTC),
             portfolio_value=portfolio_value,
             holding_period=holding_period,
         )
@@ -246,9 +229,7 @@ class VaRCalculator:
                 holding_period,
             )
 
-        port_std = float(
-            np.sqrt(weights @ cov_matrix @ weights) * np.sqrt(holding_period)
-        )
+        port_std = float(np.sqrt(weights @ cov_matrix @ weights) * np.sqrt(holding_period))
 
         # Fisher's skewness and excess kurtosis
         s = float(skew(portfolio_returns))
@@ -256,17 +237,10 @@ class VaRCalculator:
 
         conf_95, conf_99 = self.confidence_levels
 
-        def _cf_var_cvar(
-            port_std: float, s: float, k: float, confidence: float
-        ) -> tuple[float, float]:
+        def _cf_var_cvar(port_std: float, s: float, k: float, confidence: float) -> tuple[float, float]:
             z = norm.ppf(confidence)
             # Cornish-Fisher expansion
-            z_cf = (
-                z
-                + (z**2 - 1) * s / 6
-                + (z**3 - 3 * z) * k / 24
-                - (2 * z**3 - 5 * z) * s**2 / 36
-            )
+            z_cf = z + (z**2 - 1) * s / 6 + (z**3 - 3 * z) * k / 24 - (2 * z**3 - 5 * z) * s**2 / 36
             var = z_cf * port_std
             # CVaR approximation using adjusted quantile
             cvar = port_std * norm.pdf(z_cf) / (1 - confidence)
@@ -282,7 +256,7 @@ class VaRCalculator:
             cvar_95=cvar_95,
             cvar_99=cvar_99,
             as_of=as_of,
-            computed_at=datetime.now(timezone.utc),
+            computed_at=datetime.now(UTC),
             portfolio_value=portfolio_value,
             holding_period=holding_period,
             details={"skewness": s, "excess_kurtosis": k},
@@ -365,7 +339,7 @@ class VaRCalculator:
             cvar_95=cvar_95,
             cvar_99=cvar_99,
             as_of=as_of,
-            computed_at=datetime.now(timezone.utc),
+            computed_at=datetime.now(UTC),
             portfolio_value=portfolio_value,
             holding_period=holding_period,
             details={"n_simulations": n_simulations, "seed": seed},

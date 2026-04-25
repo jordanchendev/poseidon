@@ -11,7 +11,7 @@ Three scenario types:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -67,9 +67,7 @@ class StressTestEngine:
             Current portfolio value in currency units.
         """
         config = load_scenario(scenario_name, self.scenarios_dir)
-        return self.run_config(
-            config, weights, symbols, cov_matrix, aligned_returns, portfolio_value
-        )
+        return self.run_config(config, weights, symbols, cov_matrix, aligned_returns, portfolio_value)
 
     def run_config(
         self,
@@ -82,17 +80,11 @@ class StressTestEngine:
     ) -> StressTestResult:
         """Run a ScenarioConfig. Dispatches to scenario-specific handler."""
         if config.type == "historical":
-            return self._run_historical(
-                config, weights, symbols, aligned_returns, portfolio_value
-            )
+            return self._run_historical(config, weights, symbols, aligned_returns, portfolio_value)
         elif config.type == "hypothetical":
-            return self._run_hypothetical(
-                config, weights, symbols, portfolio_value
-            )
+            return self._run_hypothetical(config, weights, symbols, portfolio_value)
         elif config.type == "correlation_stress":
-            return self._run_correlation_stress(
-                config, weights, cov_matrix, portfolio_value
-            )
+            return self._run_correlation_stress(config, weights, cov_matrix, portfolio_value)
         else:
             raise ValueError(f"Unknown scenario type: {config.type}")
 
@@ -120,7 +112,7 @@ class StressTestEngine:
                 portfolio_pnl=0.0,
                 worst_case_loss=0.0,
                 details={"error": "no aligned returns provided"},
-                computed_at=datetime.now(timezone.utc),
+                computed_at=datetime.now(UTC),
             )
 
         # Filter to crisis date range
@@ -128,9 +120,7 @@ class StressTestEngine:
         if config.date_range:
             start = pd.Timestamp(config.date_range["start"])
             end = pd.Timestamp(config.date_range["end"])
-            crisis_returns = crisis_returns.loc[
-                (crisis_returns.index >= start) & (crisis_returns.index <= end)
-            ]
+            crisis_returns = crisis_returns.loc[(crisis_returns.index >= start) & (crisis_returns.index <= end)]
 
         if crisis_returns.empty:
             return StressTestResult(
@@ -139,7 +129,7 @@ class StressTestEngine:
                 portfolio_pnl=0.0,
                 worst_case_loss=0.0,
                 details={"error": "no data in date range"},
-                computed_at=datetime.now(timezone.utc),
+                computed_at=datetime.now(UTC),
             )
 
         # Compute portfolio returns during crisis
@@ -154,7 +144,7 @@ class StressTestEngine:
         var_result = self.calculator.historical_simulation(
             portfolio_returns=portfolio_rets,
             portfolio_value=portfolio_value,
-            as_of=datetime.now(timezone.utc),
+            as_of=datetime.now(UTC),
         )
 
         return StressTestResult(
@@ -167,7 +157,7 @@ class StressTestEngine:
                 "crisis_days": len(crisis_returns),
                 "date_range": config.date_range,
             },
-            computed_at=datetime.now(timezone.utc),
+            computed_at=datetime.now(UTC),
         )
 
     # ------------------------------------------------------------------
@@ -193,7 +183,7 @@ class StressTestEngine:
                 portfolio_pnl=0.0,
                 worst_case_loss=0.0,
                 details={"error": "no shocks defined"},
-                computed_at=datetime.now(timezone.utc),
+                computed_at=datetime.now(UTC),
             )
 
         # Build shock vector aligned to symbol positions
@@ -212,12 +202,10 @@ class StressTestEngine:
             portfolio_pnl=pnl,
             worst_case_loss=worst_case,
             details={
-                "shocks_applied": {
-                    sym: config.shocks.get(sym, 0.0) for sym in symbols
-                },
+                "shocks_applied": {sym: config.shocks.get(sym, 0.0) for sym in symbols},
                 "shock_vector": shock_vector.tolist(),
             },
-            computed_at=datetime.now(timezone.utc),
+            computed_at=datetime.now(UTC),
         )
 
     # ------------------------------------------------------------------
@@ -246,7 +234,7 @@ class StressTestEngine:
             weights=weights,
             cov_matrix=stressed_cov,
             portfolio_value=portfolio_value,
-            as_of=datetime.now(timezone.utc),
+            as_of=datetime.now(UTC),
         )
 
         # Also compute baseline VaR for comparison
@@ -254,7 +242,7 @@ class StressTestEngine:
             weights=weights,
             cov_matrix=cov_matrix,
             portfolio_value=portfolio_value,
-            as_of=datetime.now(timezone.utc),
+            as_of=datetime.now(UTC),
         )
 
         return StressTestResult(
@@ -273,13 +261,11 @@ class StressTestEngine:
                     else 0.0
                 ),
             },
-            computed_at=datetime.now(timezone.utc),
+            computed_at=datetime.now(UTC),
         )
 
 
-def _apply_correlation_stress(
-    cov_matrix: np.ndarray, target_correlation: float
-) -> np.ndarray:
+def _apply_correlation_stress(cov_matrix: np.ndarray, target_correlation: float) -> np.ndarray:
     """Replace off-diagonal correlations with target_correlation.
 
     Parameters

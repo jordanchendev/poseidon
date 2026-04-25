@@ -77,15 +77,9 @@ class RegimeRouter(BaseStrategy):
             regime_pred = self._regime_model.predict(features)
             current_regime = regime_pred.iloc[-1]["prediction"]
             overrides = self._regime_configs.get(current_regime, {})
-            self._strategy._min_votes = overrides.get(
-                "min_votes", self._base_config.get("min_votes", 4)
-            )
-            self._strategy._position_pct = overrides.get(
-                "position_pct", self._base_config.get("position_pct", 0.08)
-            )
-            self._strategy._bear_min_votes = overrides.get(
-                "bear_min_votes", self._base_config.get("bear_min_votes", 4)
-            )
+            self._strategy._min_votes = overrides.get("min_votes", self._base_config.get("min_votes", 4))
+            self._strategy._position_pct = overrides.get("position_pct", self._base_config.get("position_pct", 0.08))
+            self._strategy._bear_min_votes = overrides.get("bear_min_votes", self._base_config.get("bear_min_votes", 4))
             self._strategy._bear_position_pct = overrides.get(
                 "bear_position_pct", self._base_config.get("bear_position_pct", 0.06)
             )

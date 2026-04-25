@@ -21,9 +21,7 @@ class NonpriceTimeseries(Base):
     value = Column(Float, nullable=False)
 
     __table_args__ = (
-        PrimaryKeyConstraint(
-            "date", "symbol", "category", "indicator", name="pk_nonprice_ts"
-        ),
+        PrimaryKeyConstraint("date", "symbol", "category", "indicator", name="pk_nonprice_ts"),
         Index("idx_nonprice_ts_sym_cat_date", "symbol", "category", date.desc()),
     )
 

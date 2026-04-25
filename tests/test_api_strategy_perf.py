@@ -5,12 +5,13 @@ from datetime import datetime
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 # --- SQLite compatibility: register before any model import ---
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 @compiles(JSONB, "sqlite")
@@ -24,13 +25,13 @@ def _compile_uuid_sqlite(type_, compiler, **kw):
 
 
 # --- Now import models (registers them with Base.metadata) ---
-from poseidon.models.base import Base, get_db  # noqa: E402
-from poseidon.models.backtest import BacktestRecord  # noqa: E402,F401
-from poseidon.models.strategy import StrategyRecord  # noqa: E402,F401
-
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+
 from poseidon.api.strategies import router as strategies_router  # noqa: E402
+from poseidon.models.backtest import BacktestRecord  # noqa: E402
+from poseidon.models.base import Base, get_db  # noqa: E402
+from poseidon.models.strategy import StrategyRecord  # noqa: E402,F401
 
 # --------------- Test DB setup (SQLite in-memory, shared connection) ---------------
 
@@ -71,6 +72,7 @@ PREFIX = "/api/strategies"
 
 
 # --------------- Helper ---------------
+
 
 def _seed_backtest(
     db,

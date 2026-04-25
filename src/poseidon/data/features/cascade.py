@@ -66,9 +66,9 @@ class CascadeComposite(BaseFeature):
 
         # ── Re-compute component features inline (Pitfall 2) ──────────
 
-        from poseidon.data.features.open_interest import OICostBasis, OIBuildup
-        from poseidon.data.features.wick import WickRatio
+        from poseidon.data.features.open_interest import OIBuildup, OICostBasis
         from poseidon.data.features.volume import VolumeRatio
+        from poseidon.data.features.wick import WickRatio
 
         # OI features (need oi_data companion)
         oiwap_result = OICostBasis().compute(ohlcv, oi_data=oi_data, period=168)
@@ -98,9 +98,8 @@ class CascadeComposite(BaseFeature):
 
         # Condition 3: Wick extreme -- upper > 0.4 OR lower > 0.4
         if isinstance(wick_result, pd.DataFrame) and "wick_ratio_upper" in wick_result.columns:
-            conditions["wick_extreme"] = (
-                (wick_result["wick_ratio_upper"] > 0.4)
-                | (wick_result["wick_ratio_lower"] > 0.4)
+            conditions["wick_extreme"] = (wick_result["wick_ratio_upper"] > 0.4) | (
+                wick_result["wick_ratio_lower"] > 0.4
             )
         else:
             conditions["wick_extreme"] = False
@@ -119,10 +118,7 @@ class CascadeComposite(BaseFeature):
         signal = (n_conditions_met >= threshold).astype(float)
 
         # ── Direction from oiwap_distance sign (D-13) ─────────────────
-        if (
-            isinstance(oiwap_result, pd.DataFrame)
-            and "oiwap_distance_168" in oiwap_result.columns
-        ):
+        if isinstance(oiwap_result, pd.DataFrame) and "oiwap_distance_168" in oiwap_result.columns:
             oiwap_dist = oiwap_result["oiwap_distance_168"]
             direction = pd.Series(
                 np.where(

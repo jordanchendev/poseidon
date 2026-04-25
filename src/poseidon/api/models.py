@@ -130,13 +130,7 @@ async def list_models(
         return manager.list_versions(name)
 
     # All models, newest first, limited to 50
-    rows = list(
-        db.execute(
-            select(ModelVersion)
-            .order_by(ModelVersion.created_at.desc())
-            .limit(50)
-        ).scalars()
-    )
+    rows = list(db.execute(select(ModelVersion).order_by(ModelVersion.created_at.desc()).limit(50)).scalars())
     return rows
 
 
@@ -168,9 +162,9 @@ async def shadow_model(
             metrics=body.metrics if body else None,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from None
     except InvalidTransitionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     return mv
 
 
@@ -189,9 +183,9 @@ async def activate_model(
             metrics=body.metrics if body else None,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from None
     except InvalidTransitionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     return mv
 
 

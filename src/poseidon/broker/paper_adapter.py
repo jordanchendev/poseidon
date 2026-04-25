@@ -1,7 +1,7 @@
 """Paper trading broker adapter -- fills at the latest remote close price."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from poseidon.broker.base import BrokerAdapter
 from poseidon.orders.schemas import Fill, Order
@@ -39,7 +39,7 @@ class PaperBrokerAdapter(BrokerAdapter):
             order_id=order.id,
             fill_price=float(latest["close"].iloc[-1]),
             fill_quantity=order.quantity,
-            fill_time=datetime.now(timezone.utc),
+            fill_time=datetime.now(UTC),
             broker_fill_id=broker_order_id,
         )
         self._fills[broker_order_id] = [fill]

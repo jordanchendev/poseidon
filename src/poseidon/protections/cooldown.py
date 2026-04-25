@@ -7,7 +7,7 @@ re-entry into a symbol for a configurable number of bars.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from poseidon.protections.base import BaseProtection, ProtectionResult
@@ -67,7 +67,7 @@ class CooldownProtection(BaseProtection):
 
         Called externally after a trade or signal trigger.
         """
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=self.cooldown_hours)
+        expires_at = datetime.now(UTC) + timedelta(hours=self.cooldown_hours)
         self.create_lock(
             symbol=symbol,
             market=market,

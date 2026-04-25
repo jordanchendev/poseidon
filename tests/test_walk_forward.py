@@ -6,8 +6,6 @@ flagging logic, and integration with mocked BacktestRunner.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -21,7 +19,6 @@ from poseidon.backtest.walk_forward import (
     WindowResult,
     compute_wfe,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -111,8 +108,7 @@ class TestWindowGeneration:
             _, (_, test_end) = windows[i]
             _, (next_test_start, _) = windows[i + 1]
             assert next_test_start == test_end, (
-                f"Window {i} test_end ({test_end}) != Window {i+1} "
-                f"test_start ({next_test_start})"
+                f"Window {i} test_end ({test_end}) != Window {i + 1} test_start ({next_test_start})"
             )
 
     def test_no_overlap_is_oos(self):
@@ -122,9 +118,7 @@ class TestWindowGeneration:
         windows = analyzer.generate_windows(800, cfg)
 
         for i, ((_, train_end), (test_start, _)) in enumerate(windows):
-            assert test_start >= train_end, (
-                f"Window {i}: test_start ({test_start}) < train_end ({train_end})"
-            )
+            assert test_start >= train_end, f"Window {i}: test_start ({test_start}) < train_end ({train_end})"
 
     def test_first_window_starts_at_zero(self):
         """First window's train starts at index 0."""
@@ -368,7 +362,10 @@ class TestStrategyFactoryInjection:
         re = MagicMock()
         cost_model = MagicMock()
         analyzer = WalkForwardAnalyzer(
-            fe, re, cost_model, fill_model="pessimistic",
+            fe,
+            re,
+            cost_model,
+            fill_model="pessimistic",
         )
         assert analyzer._fill_model == "pessimistic"
 
@@ -376,9 +373,7 @@ class TestStrategyFactoryInjection:
 class TestAnalyzeIntegration:
     """Integration tests for WalkForwardAnalyzer.analyze with mocked runner."""
 
-    def _make_mock_backtest_result(
-        self, ann_return: float, trade_count: int
-    ) -> MagicMock:
+    def _make_mock_backtest_result(self, ann_return: float, trade_count: int) -> MagicMock:
         """Create a mock BacktestResult with predetermined metrics."""
         result = MagicMock()
         result.metrics = {
@@ -394,9 +389,7 @@ class TestAnalyzeIntegration:
             "trade_count": trade_count,
         }
         result.trades = [MagicMock() for _ in range(trade_count)]
-        result.equity_curve = pd.Series(
-            [1_000_000.0 * (1 + ann_return * i / 100) for i in range(63)]
-        )
+        result.equity_curve = pd.Series([1_000_000.0 * (1 + ann_return * i / 100) for i in range(63)])
         return result
 
     @patch("poseidon.backtest.walk_forward.BacktestRunner")

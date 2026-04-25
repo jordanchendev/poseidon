@@ -15,6 +15,4 @@ class Fundamentals(Base):
     date = Column(Date, nullable=False)
     data = Column(JSONB, nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint("symbol", "market", "date", name="uq_fundamentals_symbol_market_date"),
-    )
+    __table_args__ = (UniqueConstraint("symbol", "market", "date", name="uq_fundamentals_symbol_market_date"),)

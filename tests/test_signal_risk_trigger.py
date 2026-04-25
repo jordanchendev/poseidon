@@ -10,7 +10,7 @@ def test_trigger_risk_update_calls_var_snapshot(mock_var_snapshot):
 
     mock_var_snapshot.return_value = {"status": "ok", "methods": ["historical"]}
 
-    result = trigger_risk_update()
+    trigger_risk_update()
 
     mock_var_snapshot.assert_called_once_with("historical")
 

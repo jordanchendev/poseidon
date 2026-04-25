@@ -173,9 +173,7 @@ class TestVaRBreachAlert:
 
     def test_var_breach_alert_published(self, monitor, redis_client):
         """publish_var_breach_alert() publishes to same stream."""
-        result = monitor.publish_var_breach_alert(
-            current_var=0.12, limit=0.10, method="parametric"
-        )
+        result = monitor.publish_var_breach_alert(current_var=0.12, limit=0.10, method="parametric")
         assert result["event_type"] == "var_limit_breach"
         assert result["level"] == "CRITICAL"
         assert result["current_var"] == pytest.approx(0.12, abs=1e-6)
@@ -192,9 +190,7 @@ class TestVaRBreachAlert:
         """VaR breach and drawdown alerts have different event_type."""
         monitor.update(current_equity=100_000)
         monitor.update(current_equity=90_000)  # drawdown alert
-        monitor.publish_var_breach_alert(
-            current_var=0.15, limit=0.10, method="historical"
-        )
+        monitor.publish_var_breach_alert(current_var=0.15, limit=0.10, method="historical")
 
         messages = redis_client.xrange(DrawdownMonitor.STREAM_KEY)
         assert len(messages) == 2

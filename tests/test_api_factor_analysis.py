@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -28,10 +29,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from poseidon.api.factor_analysis import router as factor_analysis_router  # noqa: E402
 from poseidon.models.base import Base, get_db  # noqa: E402
-from poseidon.models.factor_analysis_run import FactorAnalysisRun  # noqa: E402,F401
-from poseidon.models.model_version import ModelVersion  # noqa: E402,F401
-from poseidon.models.training_run import TrainingRun  # noqa: E402,F401
-
+from poseidon.models.factor_analysis_run import FactorAnalysisRun  # noqa: E402
+from poseidon.models.model_version import ModelVersion  # noqa: E402
+from poseidon.models.training_run import TrainingRun  # noqa: E402
 
 ENGINE = create_engine(
     "sqlite://",
@@ -98,7 +98,7 @@ def _seed_model_version(session: sessionmaker) -> ModelVersion:
         params={},
         feature_list=["rsi_14"],
         artifact_path="/tmp/model-artifacts",
-        created_at=datetime(2026, 4, 11, tzinfo=timezone.utc),
+        created_at=datetime(2026, 4, 11, tzinfo=UTC),
     )
     session.add(model_version)
     session.commit()
@@ -211,8 +211,8 @@ def test_run_list_and_detail_endpoints_return_serialized_runs(client):
             results_json={"features": {"rsi_14": {"1": 0.12}}},
             status="succeeded",
             market="tw_stock",
-            created_at=datetime(2026, 4, 11, tzinfo=timezone.utc),
-            updated_at=datetime(2026, 4, 11, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 4, 11, tzinfo=UTC),
+            updated_at=datetime(2026, 4, 11, 1, tzinfo=UTC),
         )
         session.add(run)
         session.commit()

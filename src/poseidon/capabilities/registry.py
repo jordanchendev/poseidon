@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 
-
 _PORTFOLIO_STRATEGY_MODULES = (
     "poseidon.strategies.portfolio.crypto_trend",
     "poseidon.strategies.portfolio.fundamental_selection",
@@ -43,21 +42,25 @@ def _extract_capability(cls: type, component_type: str) -> ComponentCapability:
 
 def _get_feature_registry() -> dict:
     from poseidon.data.features.base import _registry
+
     return _registry
 
 
 def _get_strategy_registry() -> dict:
     from poseidon.strategies.registry import _registry
+
     return _registry
 
 
 def _get_model_registry() -> dict:
     from poseidon.ml.registry import _registry
+
     return _registry
 
 
 def _get_rule_registry() -> dict:
     from poseidon.risk.rules import RULE_REGISTRY
+
     return RULE_REGISTRY
 
 
@@ -65,6 +68,7 @@ def _get_portfolio_registry() -> dict:
     for module_name in _PORTFOLIO_STRATEGY_MODULES:
         import_module(module_name)
     from poseidon.strategies.portfolio.registry import _registry
+
     return _registry
 
 

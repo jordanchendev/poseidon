@@ -5,7 +5,7 @@ from poseidon.strategies.tw_futures.trend_following import TrendFollowingStrateg
 from poseidon.strategies.tw_futures.volatility_breakout import VolatilityBreakoutStrategy
 
 __all__ = [
-    "TrendFollowingStrategy",
     "MeanReversionStrategy",
+    "TrendFollowingStrategy",
     "VolatilityBreakoutStrategy",
 ]

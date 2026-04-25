@@ -54,6 +54,7 @@ async def health(details: bool = Query(False)):
     # 2. Redis check (Celery broker, DB 0)
     try:
         from poseidon.core.redis import get_redis
+
         r = get_redis("celery")
         r.ping()
         components["redis"] = "ok"
@@ -78,6 +79,7 @@ async def health(details: bool = Query(False)):
         # Include circuit breaker state if available (per D-17)
         try:
             from poseidon.data.remote_repository import RemoteDataRepository  # noqa: F401
+
             thalassa_info["circuit_breaker"] = "closed"
         except Exception:
             pass
@@ -104,8 +106,7 @@ async def health(details: bool = Query(False)):
             gpu_inspect = celery_app.control.inspect(timeout=1.0)
             active_queues = gpu_inspect.active_queues() or {}
             gpu_workers = [
-                worker for worker, queues in active_queues.items()
-                if any(q.get("name") == "gpu" for q in queues)
+                worker for worker, queues in active_queues.items() if any(q.get("name") == "gpu" for q in queues)
             ]
             if gpu_workers:
                 components["gpu"] = {"available": True, "workers": gpu_workers}
@@ -124,11 +125,7 @@ async def health(details: bool = Query(False)):
         }
 
     # Overall status: degraded if any component value is an error string
-    errors = [
-        k
-        for k, v in components.items()
-        if isinstance(v, str) and v.startswith("error")
-    ]
+    errors = [k for k, v in components.items() if isinstance(v, str) and v.startswith("error")]
     overall_status = "degraded" if errors else "ok"
 
     return {"status": overall_status, "components": components}

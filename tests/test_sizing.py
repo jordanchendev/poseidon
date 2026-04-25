@@ -1,6 +1,6 @@
 """Tests for position sizing modes: fixed_pct, fixed_notional, vol_target."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import numpy as np
@@ -18,7 +18,6 @@ from poseidon.data.feature_engine import FeatureEngine
 from poseidon.risk.engine import RiskEngine
 from poseidon.signals.schemas import InstrumentType, Signal, SignalAction
 from poseidon.strategies.base import BaseStrategy, StrategyType
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -38,33 +37,37 @@ def _make_signal(
         action=action,
         confidence=confidence,
         quantity_pct=quantity_pct,
-        signal_time=datetime(2025, 1, 15, 9, 0, tzinfo=timezone.utc),
+        signal_time=datetime(2025, 1, 15, 9, 0, tzinfo=UTC),
     )
 
 
 def _make_bar(close: float = 100.0) -> pd.Series:
-    return pd.Series({
-        "time": datetime(2025, 1, 15, tzinfo=timezone.utc),
-        "open": close * 0.99,
-        "high": close * 1.01,
-        "low": close * 0.98,
-        "close": close,
-        "volume": 10000,
-    })
+    return pd.Series(
+        {
+            "time": datetime(2025, 1, 15, tzinfo=UTC),
+            "open": close * 0.99,
+            "high": close * 1.01,
+            "low": close * 0.98,
+            "close": close,
+            "volume": 10000,
+        }
+    )
 
 
 def _make_ohlcv(n_bars: int = 50, base_price: float = 100.0) -> pd.DataFrame:
-    times = pd.date_range("2025-01-01", periods=n_bars, freq="B", tz=timezone.utc)
+    times = pd.date_range("2025-01-01", periods=n_bars, freq="B", tz=UTC)
     np.random.seed(42)
     closes = base_price + np.cumsum(np.random.randn(n_bars) * 2)
-    return pd.DataFrame({
-        "time": times,
-        "open": closes * 0.99,
-        "high": closes * 1.01,
-        "low": closes * 0.98,
-        "close": closes,
-        "volume": np.random.randint(1000, 10000, n_bars),
-    })
+    return pd.DataFrame(
+        {
+            "time": times,
+            "open": closes * 0.99,
+            "high": closes * 1.01,
+            "low": closes * 0.98,
+            "close": closes,
+            "volume": np.random.randint(1000, 10000, n_bars),
+        }
+    )
 
 
 SHORT_FEATURES: list[tuple[str, dict]] = [("sma", {"period": 3}), ("returns", {})]
@@ -89,24 +92,28 @@ class AlternatingStrategy(BaseStrategy):
             return []
         if not self._in_position:
             self._in_position = True
-            return [Signal(
-                symbol=self.symbol,
-                market=self.market,
-                action=SignalAction.LONG,
-                confidence=0.9,
-                quantity_pct=None,  # let runner decide
-                signal_time=features.iloc[-1]["time"],
-            )]
+            return [
+                Signal(
+                    symbol=self.symbol,
+                    market=self.market,
+                    action=SignalAction.LONG,
+                    confidence=0.9,
+                    quantity_pct=None,  # let runner decide
+                    signal_time=features.iloc[-1]["time"],
+                )
+            ]
         else:
             self._in_position = False
-            return [Signal(
-                symbol=self.symbol,
-                market=self.market,
-                action=SignalAction.CLOSE,
-                confidence=0.9,
-                quantity_pct=1.0,
-                signal_time=features.iloc[-1]["time"],
-            )]
+            return [
+                Signal(
+                    symbol=self.symbol,
+                    market=self.market,
+                    action=SignalAction.CLOSE,
+                    confidence=0.9,
+                    quantity_pct=1.0,
+                    signal_time=features.iloc[-1]["time"],
+                )
+            ]
 
     def validate_config(self) -> bool:
         return True
@@ -118,7 +125,6 @@ class AlternatingStrategy(BaseStrategy):
 
 
 class TestSizingConfig:
-
     def test_default_mode_is_fixed_notional(self):
         cfg = SizingConfig()
         assert cfg.mode == SizingMode.FIXED_NOTIONAL
@@ -146,7 +152,6 @@ class TestSizingConfig:
 
 
 class TestSizingBase:
-
     def test_fixed_pct_uses_current_cash(self):
         cfg = SizingConfig(mode=SizingMode.FIXED_PCT)
         cost = get_cost_model("us_stock")
@@ -176,7 +181,6 @@ class TestSizingBase:
 
 
 class TestComputeSizing:
-
     def _make_runner(self, sizing_config: SizingConfig) -> BacktestRunner:
         return BacktestRunner(
             strategy=AlternatingStrategy(),
@@ -277,7 +281,6 @@ class TestComputeSizing:
 
 
 class TestSizingEndToEnd:
-
     def test_fixed_notional_no_compounding(self):
         """With fixed_notional, trade sizes should be consistent regardless of PnL."""
         ohlcv = _make_ohlcv(30)
@@ -305,9 +308,7 @@ class TestSizingEndToEnd:
             # (only differs by price changes, not compounding)
             max_q = max(quantities)
             min_q = min(quantities)
-            assert max_q / min_q < 1.3, (
-                f"Fixed notional quantities should be stable: {quantities}"
-            )
+            assert max_q / min_q < 1.3, f"Fixed notional quantities should be stable: {quantities}"
 
     def test_fixed_pct_allows_compounding(self):
         """With fixed_pct, trade sizes grow as cash grows."""

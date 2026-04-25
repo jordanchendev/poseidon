@@ -6,15 +6,12 @@ Tests SIG2-05: AutoResearch with R2 sub_signals produces valid strategies.
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from poseidon.backtest.voting_strategy_factory import (
     VotingStrategyFactory,
     _build_config_from_params,
-    _build_r2_sub_signals,
     get_param_bounds,
 )
-from poseidon.strategies.voting_strategy import VotingStrategy
 
 
 def _make_r2_dataframe(n_rows: int = 100, market: str = "tw_stock") -> pd.DataFrame:
@@ -116,9 +113,7 @@ class TestR2SubSignalsIntegration:
             "r2_macro_vix_threshold": 22.0,
             "r2_funding_rate_threshold": 0.0,
         }
-        config = _build_config_from_params(
-            params, symbol="2330", market="tw_stock", interval="1d"
-        )
+        config = _build_config_from_params(params, symbol="2330", market="tw_stock", interval="1d")
         strategy = VotingStrategyFactory.from_config(config)
         df = _make_r2_dataframe(100, market="tw_stock")
         signals = strategy.evaluate(df)
@@ -155,9 +150,7 @@ class TestR2SubSignalsIntegration:
             "r2_macro_vix_threshold": 20.0,
             "r2_funding_rate_threshold": 0.0,
         }
-        config = _build_config_from_params(
-            params, symbol="2330", market="tw_stock", interval="1d"
-        )
+        config = _build_config_from_params(params, symbol="2330", market="tw_stock", interval="1d")
         # Verify R2 sub_signal was appended
         assert len(config["sub_signals"]) == 7  # 6 TA + 1 institutional
         r2_sig = config["sub_signals"][6]
@@ -193,9 +186,7 @@ class TestR2SubSignalsIntegration:
             "r2_pe_max": 20.0,
             "r2_pb_max": 3.0,
         }
-        config = _build_config_from_params(
-            params, symbol="BTCUSDT", market="crypto_spot", interval="1d"
-        )
+        config = _build_config_from_params(params, symbol="BTCUSDT", market="crypto_spot", interval="1d")
         assert len(config["sub_signals"]) == 7  # 6 TA + 1 funding
         strategy = VotingStrategyFactory.from_config(config)
         df = _make_r2_dataframe(100, market="crypto_spot")
@@ -231,9 +222,7 @@ class TestR2SubSignalsIntegration:
             "r2_macro_vix_threshold": 22.0,
             "r2_funding_rate_threshold": 0.0,
         }
-        config = _build_config_from_params(
-            params, symbol="2330", market="tw_stock", interval="1d"
-        )
+        config = _build_config_from_params(params, symbol="2330", market="tw_stock", interval="1d")
         strategy = VotingStrategyFactory.from_config(config)
         specs = strategy.get_feature_specs()
         spec_names = [name for name, _ in specs]
@@ -251,9 +240,7 @@ class TestR2SubSignalsIntegration:
                 params[name] = (int(low) + int(high)) // 2
             else:
                 params[name] = (float(low) + float(high)) / 2.0
-        config = _build_config_from_params(
-            params, symbol="2330", market="tw_stock", interval="1d"
-        )
+        config = _build_config_from_params(params, symbol="2330", market="tw_stock", interval="1d")
         strategy = VotingStrategyFactory.from_config(config)
         strategy.validate_config()
         assert len(config["sub_signals"]) > 6  # Has R2 signals appended

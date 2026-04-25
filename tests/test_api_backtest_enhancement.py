@@ -16,12 +16,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 # --- SQLite compatibility: register before any model import ---
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 @compiles(JSONB, "sqlite")
@@ -41,14 +42,14 @@ VALID_API_KEY = "test-api-key-backtest-enhancement"
 settings.api_key = VALID_API_KEY
 
 # --- Import models and app ---
-from poseidon.models.base import Base, get_db  # noqa: E402
-from poseidon.models.strategy import StrategyRecord  # noqa: E402,F401
-from poseidon.models.signal import SignalRecord  # noqa: E402,F401
-from poseidon.models.risk_rule import RiskRuleRecord  # noqa: E402,F401
-from poseidon.models.virtual_position import VirtualPositionRecord  # noqa: E402,F401
-
 from fastapi.testclient import TestClient  # noqa: E402
+
 from poseidon.main import app  # noqa: E402
+from poseidon.models.base import Base, get_db  # noqa: E402
+from poseidon.models.risk_rule import RiskRuleRecord  # noqa: E402,F401
+from poseidon.models.signal import SignalRecord  # noqa: E402,F401
+from poseidon.models.strategy import StrategyRecord  # noqa: E402,F401
+from poseidon.models.virtual_position import VirtualPositionRecord  # noqa: E402,F401
 
 # --------------- Test DB setup ---------------
 
@@ -114,8 +115,9 @@ class TestBacktestRunRequestSchema:
 
     def test_fill_model_invalid_rejected(self):
         """Invalid fill_model value is rejected by pattern validation."""
-        from poseidon.api.backtests import BacktestRunRequest
         from pydantic import ValidationError
+
+        from poseidon.api.backtests import BacktestRunRequest
 
         with pytest.raises(ValidationError):
             BacktestRunRequest(
@@ -145,8 +147,9 @@ class TestBacktestRunRequestSchema:
 
     def test_sizing_mode_invalid_rejected(self):
         """Invalid sizing_mode is rejected."""
-        from poseidon.api.backtests import BacktestRunRequest
         from pydantic import ValidationError
+
+        from poseidon.api.backtests import BacktestRunRequest
 
         with pytest.raises(ValidationError):
             BacktestRunRequest(
@@ -221,8 +224,9 @@ class TestAutoResearchRequestSchema:
 
     def test_strategy_type_invalid_rejected(self):
         """Invalid strategy_type is rejected."""
-        from poseidon.api.autoresearch import AutoResearchRequest
         from pydantic import ValidationError
+
+        from poseidon.api.autoresearch import AutoResearchRequest
 
         with pytest.raises(ValidationError):
             AutoResearchRequest(
@@ -420,8 +424,9 @@ class TestDualModeRequestSchema:
 
     def test_sizing_mode_invalid_rejected(self):
         """Invalid sizing_mode is rejected."""
-        from poseidon.api.backtests import DualModeRequest
         from pydantic import ValidationError
+
+        from poseidon.api.backtests import DualModeRequest
 
         with pytest.raises(ValidationError):
             DualModeRequest(

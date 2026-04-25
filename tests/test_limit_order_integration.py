@@ -8,7 +8,7 @@ All tests run without DB/GPU dependencies (synthetic data only).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC
 
 import numpy as np
 import pandas as pd
@@ -22,7 +22,6 @@ from poseidon.data.feature_engine import FeatureEngine
 from poseidon.risk.engine import RiskEngine
 from poseidon.signals.schemas import OrderType, Signal, SignalAction
 from poseidon.strategies.base import BaseStrategy, StrategyType
-
 
 # ---------------------------------------------------------------------------
 # Test strategies
@@ -214,7 +213,7 @@ def _make_limit_order_ohlcv(n_bars: int = 60) -> pd.DataFrame:
     - Bars 43-49: drop toward 50000 (TP trigger for short)
     - Bars 50-59: continue around 50000
     """
-    times = pd.date_range("2025-06-01", periods=n_bars, freq="h", tz=timezone.utc)
+    times = pd.date_range("2025-06-01", periods=n_bars, freq="h", tz=UTC)
 
     closes = np.full(n_bars, 50000.0)
     highs = np.full(n_bars, 50200.0)
@@ -280,7 +279,7 @@ def _make_sl_trigger_ohlcv(n_bars: int = 30) -> pd.DataFrame:
     Close at bar 5: 50000 (market order fill)
     Bar 10: low=48800 which is <= 49000 (SL trigger for long)
     """
-    times = pd.date_range("2025-06-01", periods=n_bars, freq="h", tz=timezone.utc)
+    times = pd.date_range("2025-06-01", periods=n_bars, freq="h", tz=UTC)
 
     closes = np.full(n_bars, 50000.0)
     highs = np.full(n_bars, 50200.0)
@@ -289,7 +288,7 @@ def _make_sl_trigger_ohlcv(n_bars: int = 30) -> pd.DataFrame:
 
     # Bar 10: drop to trigger SL
     closes[10] = 48900.0
-    lows[10] = 48800.0   # <= 49000 SL trigger
+    lows[10] = 48800.0  # <= 49000 SL trigger
     highs[10] = 49500.0
     opens[10] = 49500.0
 
@@ -312,7 +311,7 @@ def _make_sl_trigger_ohlcv(n_bars: int = 30) -> pd.DataFrame:
 
 def _make_fixed_risk_ohlcv(n_bars: int = 30) -> pd.DataFrame:
     """OHLCV for FIXED_RISK sizing test. Bar 7 dips below 50000 to fill limit buy."""
-    times = pd.date_range("2025-06-01", periods=n_bars, freq="h", tz=timezone.utc)
+    times = pd.date_range("2025-06-01", periods=n_bars, freq="h", tz=UTC)
 
     closes = np.full(n_bars, 50500.0)
     highs = np.full(n_bars, 50700.0)
@@ -322,7 +321,7 @@ def _make_fixed_risk_ohlcv(n_bars: int = 30) -> pd.DataFrame:
     # Bar 7-8: dip below 50000 to trigger limit buy fill
     for i in range(7, 9):
         closes[i] = 49800.0
-        lows[i] = 49700.0   # < 50000 fills
+        lows[i] = 49700.0  # < 50000 fills
         highs[i] = 50100.0
         opens[i] = 50000.0
 
@@ -383,19 +382,12 @@ class TestLimitOrderE2EOptimistic:
 
         assert result.status == "completed"
         # At minimum: LONG fill at bar 17 (limit at 49500) + TP exit
-        assert result.trade_count >= 2, (
-            f"Expected >= 2 trades, got {result.trade_count}. Trades: {result.trades}"
-        )
+        assert result.trade_count >= 2, f"Expected >= 2 trades, got {result.trade_count}. Trades: {result.trades}"
 
         # Verify limit fill uses order_price, not bar close
         entry_trades = [t for t in result.trades if t.get("action") in ("long", "short")]
-        limit_fill_found = any(
-            t["entry_price"] == pytest.approx(49500.0, abs=1e-2)
-            for t in entry_trades
-        )
-        assert limit_fill_found, (
-            f"No trade with entry_price ~49500.0 found. Entry trades: {entry_trades}"
-        )
+        limit_fill_found = any(t["entry_price"] == pytest.approx(49500.0, abs=1e-2) for t in entry_trades)
+        assert limit_fill_found, f"No trade with entry_price ~49500.0 found. Entry trades: {entry_trades}"
 
         # Verify maker fee rate (0.0002) for limit fills
         for t in entry_trades:
@@ -419,9 +411,7 @@ class TestLimitOrderE2EPessimistic:
 
         assert result.status == "completed"
         # OHLCV bars 15-17 have low=49200 < 49500 -> strict penetration fills
-        assert result.trade_count >= 1, (
-            f"Expected >= 1 trade with pessimistic fill, got {result.trade_count}"
-        )
+        assert result.trade_count >= 1, f"Expected >= 1 trade with pessimistic fill, got {result.trade_count}"
 
 
 class TestLimitOrderTimeoutCancellation:
@@ -438,9 +428,7 @@ class TestLimitOrderTimeoutCancellation:
         assert result.status == "completed"
         # No fill should occur — order price 30000 is never reached
         filled_trades = [t for t in result.trades if t.get("action") in ("long", "short")]
-        assert len(filled_trades) == 0, (
-            f"Expected 0 filled trades for unreachable order, got {len(filled_trades)}"
-        )
+        assert len(filled_trades) == 0, f"Expected 0 filled trades for unreachable order, got {len(filled_trades)}"
 
 
 class TestSlTpIntegration:
@@ -455,15 +443,11 @@ class TestSlTpIntegration:
         result = runner.run(ohlcv)
 
         assert result.status == "completed"
-        assert result.trade_count >= 2, (
-            f"Expected >= 2 trades (entry + SL exit), got {result.trade_count}"
-        )
+        assert result.trade_count >= 2, f"Expected >= 2 trades (entry + SL exit), got {result.trade_count}"
 
         # Find the SL exit trade
         sl_exits = [t for t in result.trades if t.get("action") == "close_sl"]
-        assert len(sl_exits) >= 1, (
-            f"Expected SL exit trade, found none. Trades: {result.trades}"
-        )
+        assert len(sl_exits) >= 1, f"Expected SL exit trade, found none. Trades: {result.trades}"
 
         sl_trade = sl_exits[0]
         # SL exit price should be the trigger price (49000), not bar close (48900)
@@ -503,9 +487,7 @@ class TestFixedRiskSizingIntegration:
 
         # Find the filled trade (limit fill at 50000)
         entry_trades = [t for t in result.trades if t.get("action") == "long"]
-        assert len(entry_trades) >= 1, (
-            f"Expected a LONG trade, got {result.trades}"
-        )
+        assert len(entry_trades) >= 1, f"Expected a LONG trade, got {result.trades}"
 
         fill_trade = entry_trades[0]
         # Expected qty ~20 (= 1M * 0.02 / 1000)
@@ -524,6 +506,4 @@ class TestGoldenStillPasses:
 
         result = _run_golden_backtest()
         assert result.status == "completed"
-        assert result.trade_count >= 2, (
-            f"Golden test only produced {result.trade_count} trades, expected >= 2"
-        )
+        assert result.trade_count >= 2, f"Golden test only produced {result.trade_count} trades, expected >= 2"

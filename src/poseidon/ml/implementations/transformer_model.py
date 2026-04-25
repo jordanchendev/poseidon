@@ -36,13 +36,22 @@ REVERSE_LABEL_MAP = {v: k for k, v in LABEL_MAP.items()}
 
 # Default feature set (matching FeatureEngine defaults)
 DEFAULT_FEATURES = [
-    "sma_5", "sma_10", "sma_20", "sma_60",
-    "ema_12", "ema_26",
+    "sma_5",
+    "sma_10",
+    "sma_20",
+    "sma_60",
+    "ema_12",
+    "ema_26",
     "rsi_14",
-    "macd_line", "macd_signal", "macd_histogram",
-    "bb_upper_20", "bb_middle_20", "bb_lower_20",
+    "macd_line",
+    "macd_signal",
+    "macd_histogram",
+    "bb_upper_20",
+    "bb_middle_20",
+    "bb_lower_20",
     "atr_14",
-    "return_1d", "log_return_1d",
+    "return_1d",
+    "log_return_1d",
     "std_vol_20",
     "volume_sma_20",
     "volume_ratio_20",
@@ -77,7 +86,7 @@ if _HAS_TORCH:
 
             # Per-feature standardization (z-score)
             self._mean = self._features.mean(axis=0)  # shape [n_features]
-            self._std = self._features.std(axis=0)     # shape [n_features]
+            self._std = self._features.std(axis=0)  # shape [n_features]
             # Avoid division by zero
             self._std[self._std == 0] = 1.0
             self._features = (self._features - self._mean) / self._std
@@ -130,9 +139,7 @@ if _HAS_TORCH:
             self.patch_proj = nn.Linear(patch_dim, d_model)
 
             # Learnable positional encoding
-            self.pos_embed = nn.Parameter(
-                torch.randn(1, self.num_patches, d_model) * 0.02
-            )
+            self.pos_embed = nn.Parameter(torch.randn(1, self.num_patches, d_model) * 0.02)
 
             # Transformer encoder
             encoder_layer = nn.TransformerEncoderLayer(
@@ -142,9 +149,7 @@ if _HAS_TORCH:
                 dropout=dropout,
                 batch_first=True,
             )
-            self.encoder = nn.TransformerEncoder(
-                encoder_layer, num_layers=num_layers
-            )
+            self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
             # Classification head (after mean-pooling across patches)
             self.head = nn.Linear(d_model, num_classes)
@@ -197,7 +202,7 @@ class TransformerModel(BaseModel):
     supports_live = True
 
     def __init__(self) -> None:
-        self._model: "PatchTST | None" = None  # type: ignore[name-defined]
+        self._model: PatchTST | None = None  # type: ignore[name-defined]
         self._feature_list: list[str] = list(DEFAULT_FEATURES)
         self._device: str = "cpu"
         self._mean: np.ndarray | None = None
@@ -213,9 +218,7 @@ class TransformerModel(BaseModel):
     # ------------------------------------------------------------------
     def train(self, features: pd.DataFrame, targets: pd.Series, params: dict) -> dict:
         if not _HAS_TORCH:
-            raise RuntimeError(
-                "torch is not installed. Install with: pip install torch"
-            )
+            raise RuntimeError("torch is not installed. Install with: pip install torch")
 
         merged = {**self.get_default_params(), **params}
 
@@ -246,8 +249,8 @@ class TransformerModel(BaseModel):
         )
         # Validation set
         val_ds = TimeSeriesDataset(
-            X_np[n_train :],
-            y_np[n_train :],
+            X_np[n_train:],
+            y_np[n_train:],
             lookback_window=lookback_window,
         )
 
@@ -290,7 +293,9 @@ class TransformerModel(BaseModel):
         class_weights = class_weights / class_weights.sum() * len(class_weights)
         logger.info(
             "Class weights: hold=%.3f, long=%.3f, short=%.3f (counts: %s)",
-            class_weights[0], class_weights[1], class_weights[2],
+            class_weights[0],
+            class_weights[1],
+            class_weights[2],
             class_counts.astype(int).tolist(),
         )
         criterion = nn.CrossEntropyLoss(
@@ -367,7 +372,10 @@ class TransformerModel(BaseModel):
             if (epoch + 1) % 10 == 0:
                 logger.info(
                     "Epoch %d/%d  train_loss=%.4f  val_loss=%.4f",
-                    epoch + 1, epochs, avg_train_loss, avg_val_loss,
+                    epoch + 1,
+                    epochs,
+                    avg_train_loss,
+                    avg_val_loss,
                 )
 
             if patience_counter >= patience:
@@ -489,9 +497,7 @@ class TransformerModel(BaseModel):
         for label_idx, label_name in LABEL_MAP.items():
             mask = y == label_idx
             if mask.sum() > 0:
-                result[f"accuracy_{label_name}"] = float(
-                    np.mean(pred_numeric.values[mask.values] == label_idx)
-                )
+                result[f"accuracy_{label_name}"] = float(np.mean(pred_numeric.values[mask.values] == label_idx))
 
         return result
 
@@ -563,9 +569,7 @@ class TransformerModel(BaseModel):
         # Build model and load weights
         model = PatchTST(**model_params)
         device = instance._device
-        state_dict = torch.load(
-            path / "model.pt", map_location=device, weights_only=True
-        )
+        state_dict = torch.load(path / "model.pt", map_location=device, weights_only=True)
         model.load_state_dict(state_dict)
         model.to(device)
         model.eval()

@@ -12,9 +12,7 @@ import pandas as pd
 from poseidon.data.features.base import BaseFeature, register_feature
 
 
-def _align_oi_to_index(
-    oi_series: pd.Series, target_index: pd.Index, method: str = "ffill"
-) -> pd.Series:
+def _align_oi_to_index(oi_series: pd.Series, target_index: pd.Index, method: str = "ffill") -> pd.Series:
     """Align OI series to OHLCV index via forward-fill.
 
     Binance ``fetchOpenInterestHistory`` returns timestamps representing
@@ -38,9 +36,7 @@ def _align_oi_to_index(
     Handles timezone mismatch: OI may have different tz-awareness than
     OHLCV.  Normalises before reindex to prevent silent all-NaN results.
     """
-    if isinstance(oi_series.index, pd.DatetimeIndex) and isinstance(
-        target_index, pd.DatetimeIndex
-    ):
+    if isinstance(oi_series.index, pd.DatetimeIndex) and isinstance(target_index, pd.DatetimeIndex):
         if oi_series.index.tz is None and target_index.tz is not None:
             oi_series = oi_series.copy()
             oi_series.index = oi_series.index.tz_localize("UTC")

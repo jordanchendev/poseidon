@@ -28,10 +28,7 @@ def validate_backtest_components(components: list[Any]) -> None:
     for comp in components:
         if not getattr(comp, "supports_backtest", True):
             name = getattr(comp, "name", type(comp).__name__)
-            raise ValueError(
-                f"Component '{name}' does not support backtest mode "
-                f"(supports_backtest=False)."
-            )
+            raise ValueError(f"Component '{name}' does not support backtest mode (supports_backtest=False).")
 
 
 def warn_bias_risks(components: list[Any]) -> None:
@@ -41,8 +38,7 @@ def warn_bias_risks(components: list[Any]) -> None:
         if risks:
             name = getattr(comp, "name", type(comp).__name__)
             logger.warning(
-                "BIAS WARNING: Component '%s' has bias risks: %s. "
-                "Backtest results may be unreliable.",
+                "BIAS WARNING: Component '%s' has bias risks: %s. Backtest results may be unreliable.",
                 name,
                 ", ".join(risks),
             )

@@ -23,14 +23,16 @@ def sample_ohlcv() -> pd.DataFrame:
     low = close - np.abs(np.random.randn(n)) * 2
     open_ = close + np.random.randn(n) * 0.5
     volume = np.random.randint(1000, 10000, n).astype(float)
-    return pd.DataFrame({
-        "time": dates,
-        "open": open_,
-        "high": high,
-        "low": low,
-        "close": close,
-        "volume": volume,
-    })
+    return pd.DataFrame(
+        {
+            "time": dates,
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+        }
+    )
 
 
 class TestFeatureOrchestratorDelegation:
@@ -41,9 +43,7 @@ class TestFeatureOrchestratorDelegation:
         from poseidon.data.feature_engine.orchestrator import FeatureOrchestrator
 
         orch = FeatureOrchestrator()
-        with patch.object(
-            orch._computer, "compute_from_df", wraps=orch._computer.compute_from_df
-        ) as mock_compute:
+        with patch.object(orch._computer, "compute_from_df", wraps=orch._computer.compute_from_df) as mock_compute:
             result = orch.compute_from_df(sample_ohlcv)
             mock_compute.assert_called_once()
             assert not result.empty
@@ -64,9 +64,9 @@ class TestFeatureOrchestratorDelegation:
         assert hasattr(FeatureOrchestrator, "compute")
         assert hasattr(FeatureOrchestrator, "compute_from_df")
         assert hasattr(FeatureOrchestrator, "compute_with_companions")
-        assert callable(getattr(FeatureOrchestrator, "compute"))
-        assert callable(getattr(FeatureOrchestrator, "compute_from_df"))
-        assert callable(getattr(FeatureOrchestrator, "compute_with_companions"))
+        assert callable(FeatureOrchestrator.compute)
+        assert callable(FeatureOrchestrator.compute_from_df)
+        assert callable(FeatureOrchestrator.compute_with_companions)
 
     def test_orchestrator_default_repo_is_none(self):
         """Default construction has no repo (lazy creation in compute())."""

@@ -3,13 +3,14 @@
 import uuid
 
 import pytest
-from sqlalchemy import JSON, create_engine, event, text
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import create_engine
 
 # --- SQLite compatibility: register before any model import ---
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 @compiles(JSONB, "sqlite")
@@ -29,10 +30,11 @@ _TEST_API_KEY = "test-api-key-for-risk-tests"
 settings.api_key = _TEST_API_KEY
 
 # --- Now import models (registers them with Base.metadata) ---
+from fastapi.testclient import TestClient  # noqa: E402
+
+from poseidon.main import app  # noqa: E402
 from poseidon.models.base import Base, get_db  # noqa: E402
 from poseidon.models.risk_rule import RiskRuleRecord  # noqa: E402,F401
-from poseidon.main import app  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
 
 # --------------- Test DB setup (SQLite in-memory, shared connection) ---------------
 

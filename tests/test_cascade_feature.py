@@ -9,10 +9,8 @@ References: CONTEXT.md D-10, D-11, D-12, D-13.
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from poseidon.data.features.cascade import CascadeComposite
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 
@@ -151,8 +149,7 @@ def test_cascade_fires_when_conditions_met():
     # At least some of those bars should fire
     last_10_signals = result["cascade_signal"].iloc[-10:]
     assert last_10_signals.sum() > 0, (
-        f"Expected some cascade signals in extreme bars, got all zeros. "
-        f"Values: {last_10_signals.tolist()}"
+        f"Expected some cascade signals in extreme bars, got all zeros. Values: {last_10_signals.tolist()}"
     )
 
 
@@ -171,9 +168,7 @@ def test_cascade_no_fire_below_threshold():
     # Allow some bars from random noise, but at least 90% should be zero
     after_warmup = result["cascade_signal"].iloc[170:]  # After OI warmup
     nonzero_frac = (after_warmup > 0).mean()
-    assert nonzero_frac < 0.1, (
-        f"Expected mostly zero signals in quiet data, got {nonzero_frac:.1%} non-zero"
-    )
+    assert nonzero_frac < 0.1, f"Expected mostly zero signals in quiet data, got {nonzero_frac:.1%} non-zero"
 
 
 # ── Test 4: Direction follows oiwap_distance sign (D-13) ─────────────
@@ -243,9 +238,7 @@ def test_cascade_works_without_oi_data():
 
     # Extreme bars have both wick and volume extremes -> should fire
     last_10 = result["cascade_signal"].iloc[-10:]
-    assert last_10.sum() > 0, (
-        "Expected cascade to fire on wick+volume conditions even without OI data"
-    )
+    assert last_10.sum() > 0, "Expected cascade to fire on wick+volume conditions even without OI data"
 
 
 # ── Test 6: Empty DataFrame returns empty with correct columns ────────
@@ -278,9 +271,7 @@ def test_cascade_custom_threshold():
     # Higher threshold should produce <= signals than lower threshold
     signals_t2 = result_t2["cascade_signal"].sum()
     signals_t3 = result_t3["cascade_signal"].sum()
-    assert signals_t3 <= signals_t2, (
-        f"threshold=3 ({signals_t3}) should fire <= threshold=2 ({signals_t2})"
-    )
+    assert signals_t3 <= signals_t2, f"threshold=3 ({signals_t3}) should fire <= threshold=2 ({signals_t2})"
 
 
 # ── Test 8: Direction zero when signal zero ───────────────────────────

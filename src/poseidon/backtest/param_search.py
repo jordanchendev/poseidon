@@ -172,22 +172,24 @@ class ParameterSearchPipeline:
             # (trial_strategy_factory_fn, param_bounds) without importing strategy internals.
             # This keeps param_search.py truly polymorphic per D-02.
             trial_strategy_factory, param_space = self.strategy_factory.build_trial_factory(
-                symbol=symbol, market=market, interval=interval,
+                symbol=symbol,
+                market=market,
+                interval=interval,
             )
         else:
             # Original VotingStrategyFactory path (unchanged for backward compat)
             def trial_strategy_factory(params: dict) -> Any:
                 config_dict = _build_config_from_params(
-                    params, symbol=symbol, market=market, interval=interval,
+                    params,
+                    symbol=symbol,
+                    market=market,
+                    interval=interval,
                     strategy_mode=mode,
                     model_version_id=resolve_model_version_id(params),
                 )
                 return VotingStrategyFactory.from_config(config_dict)
 
-            param_space = {
-                name: (low, high, ptype)
-                for name, (low, high, ptype) in get_param_bounds(market).items()
-            }
+            param_space = {name: (low, high, ptype) for name, (low, high, ptype) in get_param_bounds(market).items()}
             if models_list and model_version_id is None:
                 if len(models_list) > 1:
                     param_space["qlib_model_version"] = (0, len(models_list) - 1, "int")
@@ -233,7 +235,10 @@ class ParameterSearchPipeline:
                 config_dict = trial.params  # Flat params for logging
             else:
                 config_dict = _build_config_from_params(
-                    trial.params, symbol=symbol, market=market, interval=interval,
+                    trial.params,
+                    symbol=symbol,
+                    market=market,
+                    interval=interval,
                     strategy_mode=mode,
                     model_version_id=resolve_model_version_id(trial.params),
                 )

@@ -77,8 +77,7 @@ def evaluate_regime_gate(
 
     if holdout_bars < 200:
         logger.warning(
-            "Holdout has only %d bars (< 200 recommended). "
-            "Gate results may be unreliable.",
+            "Holdout has only %d bars (< 200 recommended). Gate results may be unreliable.",
             holdout_bars,
         )
 

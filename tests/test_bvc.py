@@ -11,7 +11,6 @@ import pytest
 
 from poseidon.data.features.bvc import classify_volume
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────
 
 
@@ -82,9 +81,7 @@ def test_volume_conservation(sample_ohlcv: pd.DataFrame):
     """buy_volume + sell_volume == total volume for every row."""
     result = classify_volume(sample_ohlcv)
     total = result["buy_volume"] + result["sell_volume"]
-    pd.testing.assert_series_equal(
-        total, sample_ohlcv["volume"].astype(float), check_names=False, atol=1e-10
-    )
+    pd.testing.assert_series_equal(total, sample_ohlcv["volume"].astype(float), check_names=False, atol=1e-10)
 
 
 # ── Test: bullish bars ────────────────────────────────────────────────

@@ -42,9 +42,7 @@ def test_run_prediction_loads_model_and_generates_signals(
     mock_session_local.return_value = session
 
     # ModelManager.get_version returns fake ModelVersion
-    mv = SimpleNamespace(
-        name="xgboost", artifact_path="/tmp/model", status="active", version=1
-    )
+    mv = SimpleNamespace(name="xgboost", artifact_path="/tmp/model", status="active", version=1)
     manager = MagicMock()
     manager.get_version.return_value = mv
     mock_manager_cls.return_value = manager

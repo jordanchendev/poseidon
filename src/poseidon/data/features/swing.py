@@ -1,6 +1,5 @@
 """Swing point and breakout distance features for liquidity sweep detection."""
 
-import numpy as np
 import pandas as pd
 
 from poseidon.data.features.base import BaseFeature, register_feature
@@ -13,9 +12,7 @@ class SwingHigh(BaseFeature):
     name = "swing_high"
     description = "Swing high (rolling max of high)"
 
-    def compute(
-        self, ohlcv: pd.DataFrame, period: int = 24, **kwargs
-    ) -> pd.Series:
+    def compute(self, ohlcv: pd.DataFrame, period: int = 24, **kwargs) -> pd.Series:
         col = f"swing_high_{period}"
         if not self._validate(ohlcv, min_rows=period):
             return pd.Series(dtype=float, name=col)
@@ -31,9 +28,7 @@ class SwingLow(BaseFeature):
     name = "swing_low"
     description = "Swing low (rolling min of low)"
 
-    def compute(
-        self, ohlcv: pd.DataFrame, period: int = 24, **kwargs
-    ) -> pd.Series:
+    def compute(self, ohlcv: pd.DataFrame, period: int = 24, **kwargs) -> pd.Series:
         col = f"swing_low_{period}"
         if not self._validate(ohlcv, min_rows=period):
             return pd.Series(dtype=float, name=col)
@@ -67,9 +62,7 @@ class BreakoutDistance(BaseFeature):
         high_low = ohlcv["high"] - ohlcv["low"]
         high_close_prev = (ohlcv["high"] - ohlcv["close"].shift(1)).abs()
         low_close_prev = (ohlcv["low"] - ohlcv["close"].shift(1)).abs()
-        true_range = pd.concat(
-            [high_low, high_close_prev, low_close_prev], axis=1
-        ).max(axis=1)
+        true_range = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
         atr = true_range.rolling(window=atr_period).mean()
         atr_safe = atr.replace(0, float("nan"))
 
@@ -94,9 +87,7 @@ class FibExtension(BaseFeature):
 
     FIB_LEVELS = [0.618, 1.0, 1.618]
 
-    def compute(
-        self, ohlcv: pd.DataFrame, period: int = 24, **kwargs
-    ) -> pd.DataFrame:
+    def compute(self, ohlcv: pd.DataFrame, period: int = 24, **kwargs) -> pd.DataFrame:
         if not self._validate(ohlcv, min_rows=period):
             return pd.DataFrame(dtype=float)
         swing_high = ohlcv["high"].rolling(window=period).max().shift(1)

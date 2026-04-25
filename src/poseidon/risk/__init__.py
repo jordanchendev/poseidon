@@ -11,8 +11,8 @@ from poseidon.risk.portfolio import VirtualPortfolio
 from poseidon.risk.rules import RULE_REGISTRY
 
 __all__ = [
-    "BaseRule",
     "RULE_REGISTRY",
+    "BaseRule",
     "RiskEngine",
     "RuleResult",
     "SignalPipeline",

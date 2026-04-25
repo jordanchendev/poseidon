@@ -72,11 +72,7 @@ async def create_shapley_analysis_run(
     db: Session = Depends(get_db),
 ):
     """Create a SHAP analysis run and dispatch it to qlib-research."""
-    model_version = (
-        db.query(ModelVersion)
-        .filter(ModelVersion.id == UUID(request.model_version_id))
-        .first()
-    )
+    model_version = db.query(ModelVersion).filter(ModelVersion.id == UUID(request.model_version_id)).first()
     if model_version is None:
         raise HTTPException(status_code=404, detail="Model version not found")
     if not model_version.artifact_path:
@@ -155,12 +151,7 @@ async def list_factor_analysis_runs(
         query = query.filter(FactorAnalysisRun.market == market)
 
     total = query.count()
-    runs = (
-        query.order_by(FactorAnalysisRun.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
+    runs = query.order_by(FactorAnalysisRun.created_at.desc()).offset(offset).limit(limit).all()
     return FactorAnalysisRunListResponse(
         runs=[_serialize_run(run) for run in runs],
         total=total,

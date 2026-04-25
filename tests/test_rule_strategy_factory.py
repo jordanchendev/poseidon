@@ -16,8 +16,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from poseidon.backtest.rule_strategy_factory import (
     PARAM_BOUNDS,
     RuleStrategyFactory,
@@ -25,7 +23,6 @@ from poseidon.backtest.rule_strategy_factory import (
 )
 from poseidon.strategies.dsl.schema import RuleConfig
 from poseidon.strategies.rule_strategy import RuleStrategy
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -102,7 +99,10 @@ def test_from_config_returns_valid_strategy():
     """from_config(config_dict) returns a valid RuleStrategy instance."""
     params = _make_sample_params()
     config = _build_config_from_params(
-        params, symbol="2330", market="tw_stock", interval="1d",
+        params,
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
         feature_names=DEFAULT_FEATURE_NAMES,
     )
     strategy = RuleStrategyFactory.from_config(config)
@@ -121,7 +121,10 @@ def test_build_from_trial_suggests_parameters():
     """build_from_trial(trial) suggests expected params and returns valid RuleStrategy."""
     trial = MockTrial()
     strategy = RuleStrategyFactory.build_from_trial(
-        trial, symbol="2330", market="tw_stock", interval="1d",
+        trial,
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
         feature_names=DEFAULT_FEATURE_NAMES,
     )
     assert isinstance(strategy, RuleStrategy)
@@ -139,7 +142,10 @@ def test_to_config_dict_round_trips():
     """to_config_dict(strategy) returns dict that round-trips through from_config()."""
     params = _make_sample_params()
     config = _build_config_from_params(
-        params, symbol="2330", market="tw_stock", interval="1d",
+        params,
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
         feature_names=DEFAULT_FEATURE_NAMES,
     )
     strategy1 = RuleStrategyFactory.from_config(config)
@@ -162,7 +168,10 @@ def test_flat_params_map_to_rule_config():
     """Config from _build_config_from_params has rules with condition.vote.conditions."""
     params = _make_sample_params()
     config = _build_config_from_params(
-        params, symbol="2330", market="tw_stock", interval="1d",
+        params,
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
         feature_names=DEFAULT_FEATURE_NAMES,
     )
 
@@ -213,7 +222,9 @@ def test_build_trial_factory_returns_callable_and_bounds():
     """build_trial_factory(symbol, market, interval) returns (callable, dict)."""
     factory = RuleStrategyFactory(feature_names=DEFAULT_FEATURE_NAMES)
     factory_fn, bounds = factory.build_trial_factory(
-        symbol="2330", market="tw_stock", interval="1d",
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
     )
     assert callable(factory_fn)
     assert isinstance(bounds, dict)
@@ -228,8 +239,10 @@ def test_build_trial_factory_returns_callable_and_bounds():
 def test_build_trial_factory_callable_produces_strategy():
     """build_trial_factory callable accepts params dict and returns a RuleStrategy."""
     factory = RuleStrategyFactory(feature_names=DEFAULT_FEATURE_NAMES)
-    factory_fn, bounds = factory.build_trial_factory(
-        symbol="2330", market="tw_stock", interval="1d",
+    factory_fn, _bounds = factory.build_trial_factory(
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
     )
     params = _make_sample_params()
     strategy = factory_fn(params)
@@ -247,7 +260,10 @@ def test_rule_config_validation_passes():
     """RuleConfig(**config) does not raise for factory-produced configs."""
     params = _make_sample_params()
     config = _build_config_from_params(
-        params, symbol="2330", market="tw_stock", interval="1d",
+        params,
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
         feature_names=DEFAULT_FEATURE_NAMES,
     )
     # Must not raise
@@ -292,7 +308,9 @@ def test_fewer_features_trims_param_bounds():
     """If feature_names has only 1 entry, returned bounds should NOT contain threshold_1, threshold_2."""
     factory = RuleStrategyFactory(feature_names=["revenue_yoy_growth"])
     _, bounds = factory.build_trial_factory(
-        symbol="2330", market="tw_stock", interval="1d",
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
     )
     assert "threshold_0" in bounds
     assert "threshold_1" not in bounds

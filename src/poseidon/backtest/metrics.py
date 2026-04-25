@@ -42,10 +42,7 @@ def compute_metrics(
         ann_return = -1.0 if total_return <= -1 else 0.0
 
     # Sharpe ratio (risk-free rate = 0, sample std ddof=1)
-    if len(returns) > 0 and returns.std() > 0:
-        sharpe = (returns.mean() / returns.std()) * np.sqrt(bars_per_year)
-    else:
-        sharpe = 0.0
+    sharpe = returns.mean() / returns.std() * np.sqrt(bars_per_year) if len(returns) > 0 and returns.std() > 0 else 0.0
 
     # Max drawdown (vectorized)
     cummax = equity_series.cummax()
@@ -74,10 +71,11 @@ def compute_metrics(
     # Average holding period in days (closed trades with exit_time)
     closed_trades_with_exit = [t for t in closed_trades if t.exit_time is not None]
     if closed_trades_with_exit:
-        avg_holding_period = sum(
-            (t.exit_time - t.entry_time).total_seconds()
-            for t in closed_trades_with_exit
-        ) / len(closed_trades_with_exit) / 86400
+        avg_holding_period = (
+            sum((t.exit_time - t.entry_time).total_seconds() for t in closed_trades_with_exit)
+            / len(closed_trades_with_exit)
+            / 86400
+        )
     else:
         avg_holding_period = 0.0
 

@@ -42,9 +42,7 @@ class DataGap(Base):
     gap_start = Column(DateTime(timezone=True), nullable=False)
     gap_end = Column(DateTime(timezone=True), nullable=False)
     missing_bars = Column(Integer, nullable=False)
-    detected_at = Column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    detected_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     healed_at = Column(DateTime(timezone=True), nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover

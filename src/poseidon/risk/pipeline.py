@@ -28,7 +28,7 @@ class SignalPipeline:
         processed = pipeline.process(raw_signal)
     """
 
-    def __init__(self, db_session, redis_url: str | None = None) -> None:  # noqa: ANN001
+    def __init__(self, db_session, redis_url: str | None = None) -> None:
         self._db = db_session
         self._engine = RiskEngine()
         self._portfolio = VirtualPortfolio()
@@ -63,8 +63,7 @@ class SignalPipeline:
                 self._delivery.deliver(signal)
             except Exception:
                 logger.exception(
-                    "Redis delivery failed for signal %s — "
-                    "signal is already persisted and will be committed.",
+                    "Redis delivery failed for signal %s — signal is already persisted and will be committed.",
                     signal.id,
                 )
 

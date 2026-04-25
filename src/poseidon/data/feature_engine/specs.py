@@ -85,19 +85,37 @@ PREDICTION_NAMES = frozenset({"qlib_prediction"})
 MACRO_PREFIX = "macro_"
 
 # Phase 66: Extended nonprice feature name sets
-FUNDAMENTAL_EXTENDED_NAMES = frozenset({
-    "gross_margin", "operating_margin", "debt_ratio", "eps",
-    "roe_growth", "roa_growth",
-})
-QUALITY_FACTOR_NAMES = frozenset({
-    "quality_profitability_z", "quality_growth_z", "quality_safety_z",
-})
-MONTHLY_REVENUE_NAMES = frozenset({
-    "cumulative_revenue_growth", "revenue_acceleration_months",
-})
-VALUATION_NAMES = frozenset({
-    "pe_percentile", "pbr_percentile", "dividend_yield_percentile", "dividend_yield",
-})
+FUNDAMENTAL_EXTENDED_NAMES = frozenset(
+    {
+        "gross_margin",
+        "operating_margin",
+        "debt_ratio",
+        "eps",
+        "roe_growth",
+        "roa_growth",
+    }
+)
+QUALITY_FACTOR_NAMES = frozenset(
+    {
+        "quality_profitability_z",
+        "quality_growth_z",
+        "quality_safety_z",
+    }
+)
+MONTHLY_REVENUE_NAMES = frozenset(
+    {
+        "cumulative_revenue_growth",
+        "revenue_acceleration_months",
+    }
+)
+VALUATION_NAMES = frozenset(
+    {
+        "pe_percentile",
+        "pbr_percentile",
+        "dividend_yield_percentile",
+        "dividend_yield",
+    }
+)
 FOREIGN_HOLDING_NAMES = frozenset({"foreign_holding_change"})
 
 # Phase 71: Price momentum (OHLCV-derived, NOT nonprice)
@@ -176,73 +194,81 @@ def get_r2_specs(symbol: str, market: str) -> list[tuple[str, dict]]:
     specs: list[tuple[str, dict]] = list(EXPANDED_FEATURES)
 
     if market == "tw_stock":
-        specs.extend([
-            ("foreign_net_buy_ratio", {}),
-            ("foreign_net_buy_cum", {"period": 5}),
-            ("foreign_net_buy_cum", {"period": 20}),
-            ("trust_net_buy_ratio", {}),
-            ("trust_net_buy_cum", {"period": 5}),
-            ("trust_net_buy_cum", {"period": 20}),
-            ("dealer_net_buy_ratio", {}),
-            ("pe_ratio", {}),
-            ("pb_ratio", {}),
-            ("revenue_mom", {}),
-            ("revenue_yoy", {}),
-            ("avg_trade_size", {}),
-            ("turnover_ratio", {}),
-            # Fundamental expansion (Phase 42 FEAT-01)
-            ("roe", {}),
-            ("roa", {}),
-            # Margin transaction (Phase 42 FEAT-02)
-            ("margin_buy_ratio", {}),
-            ("margin_sell_ratio", {}),
-        ])
+        specs.extend(
+            [
+                ("foreign_net_buy_ratio", {}),
+                ("foreign_net_buy_cum", {"period": 5}),
+                ("foreign_net_buy_cum", {"period": 20}),
+                ("trust_net_buy_ratio", {}),
+                ("trust_net_buy_cum", {"period": 5}),
+                ("trust_net_buy_cum", {"period": 20}),
+                ("dealer_net_buy_ratio", {}),
+                ("pe_ratio", {}),
+                ("pb_ratio", {}),
+                ("revenue_mom", {}),
+                ("revenue_yoy", {}),
+                ("avg_trade_size", {}),
+                ("turnover_ratio", {}),
+                # Fundamental expansion (Phase 42 FEAT-01)
+                ("roe", {}),
+                ("roa", {}),
+                # Margin transaction (Phase 42 FEAT-02)
+                ("margin_buy_ratio", {}),
+                ("margin_sell_ratio", {}),
+            ]
+        )
 
     if market == "crypto_spot":
-        specs.extend([
-            ("funding_rate_daily", {}),
-        ])
+        specs.extend(
+            [
+                ("funding_rate_daily", {}),
+            ]
+        )
 
     if market == "crypto_perp":
-        specs.extend([
-            ("funding_rate_daily", {}),
-            ("funding_rate_extreme", {"period": 20, "threshold": 2.0}),
-            ("oi_change", {"period": 20}),
-            ("oi_buildup", {"period": 24}),
-            ("oi_cost_basis", {"period": 168}),
-            # Wick & range (G-02)
-            ("wick_ratio", {}),
-            ("range_expansion", {"period": 14}),
-            ("body_ratio", {}),
-            # Swing & breakout (G-03)
-            ("swing_high", {"period": 24}),
-            ("swing_low", {"period": 24}),
-            ("breakout_distance", {"period": 24, "atr_period": 14}),
-            ("fib_extension", {"period": 24}),
-            # Volatility classification (G-04)
-            ("atr_percentile", {"period": 14, "lookback": 100}),
-            ("vol_regime", {"short_period": 5, "long_period": 20}),
-            # Trend filter (G-24)
-            ("adx", {"period": 14}),
-            ("trend_strength", {"long_period": 100, "atr_period": 14}),
-            ("hour_of_day", {}),
-            # Phase 76: IC-validated micro-structure features
-            # CVD: IC=-0.027 (h=1), p=0.006, n=10052 -- PASS
-            ("cvd", {"period": 20}),
-            # Cascade: IC=0.034 (h=20), p=0.0006, n=10054 -- PASS
-            # (oi_data injected via OI_NAMES registration)
-            ("cascade", {"threshold": 2}),
-            # OFI: IC=0.008 -- FAIL (below 0.015 threshold, research-only)
-            # VPIN: IC=0.004 -- FAIL (below 0.015 threshold, research-only)
-        ])
+        specs.extend(
+            [
+                ("funding_rate_daily", {}),
+                ("funding_rate_extreme", {"period": 20, "threshold": 2.0}),
+                ("oi_change", {"period": 20}),
+                ("oi_buildup", {"period": 24}),
+                ("oi_cost_basis", {"period": 168}),
+                # Wick & range (G-02)
+                ("wick_ratio", {}),
+                ("range_expansion", {"period": 14}),
+                ("body_ratio", {}),
+                # Swing & breakout (G-03)
+                ("swing_high", {"period": 24}),
+                ("swing_low", {"period": 24}),
+                ("breakout_distance", {"period": 24, "atr_period": 14}),
+                ("fib_extension", {"period": 24}),
+                # Volatility classification (G-04)
+                ("atr_percentile", {"period": 14, "lookback": 100}),
+                ("vol_regime", {"short_period": 5, "long_period": 20}),
+                # Trend filter (G-24)
+                ("adx", {"period": 14}),
+                ("trend_strength", {"long_period": 100, "atr_period": 14}),
+                ("hour_of_day", {}),
+                # Phase 76: IC-validated micro-structure features
+                # CVD: IC=-0.027 (h=1), p=0.006, n=10052 -- PASS
+                ("cvd", {"period": 20}),
+                # Cascade: IC=0.034 (h=20), p=0.0006, n=10054 -- PASS
+                # (oi_data injected via OI_NAMES registration)
+                ("cascade", {"threshold": 2}),
+                # OFI: IC=0.008 -- FAIL (below 0.015 threshold, research-only)
+                # VPIN: IC=0.004 -- FAIL (below 0.015 threshold, research-only)
+            ]
+        )
 
     # Macro indices for ALL markets
-    specs.extend([
-        ("macro_vix", {}),
-        ("macro_dxy", {}),
-        ("macro_tnx", {}),
-        ("macro_twdusd", {}),
-    ])
+    specs.extend(
+        [
+            ("macro_vix", {}),
+            ("macro_dxy", {}),
+            ("macro_tnx", {}),
+            ("macro_twdusd", {}),
+        ]
+    )
 
     return specs
 
@@ -330,7 +356,9 @@ def get_available_features(market: str) -> list[str]:
 
 
 def get_cross_asset_specs(
-    symbol: str, market: str, periods: tuple[int, ...] = (20, 60),
+    symbol: str,
+    market: str,
+    periods: tuple[int, ...] = (20, 60),
 ) -> list[tuple[str, dict]]:
     """Generate cross-asset feature specs for a symbol based on CROSS_ASSET_PAIRS.
 
@@ -341,21 +369,36 @@ def get_cross_asset_specs(
     specs: list[tuple[str, dict]] = []
     for comp_market, comp_symbol in pairs:
         for period in periods:
-            specs.append(("cross_corr", {
-                "period": period,
-                "companion_symbol": comp_symbol,
-                "companion_market": comp_market,
-            }))
+            specs.append(
+                (
+                    "cross_corr",
+                    {
+                        "period": period,
+                        "companion_symbol": comp_symbol,
+                        "companion_market": comp_market,
+                    },
+                )
+            )
         # Overnight gap (no period)
-        specs.append(("overnight_gap", {
-            "companion_symbol": comp_symbol,
-            "companion_market": comp_market,
-        }))
+        specs.append(
+            (
+                "overnight_gap",
+                {
+                    "companion_symbol": comp_symbol,
+                    "companion_market": comp_market,
+                },
+            )
+        )
         # Correlation shift
-        specs.append(("corr_shift", {
-            "period": 20,
-            "shift_period": 5,
-            "companion_symbol": comp_symbol,
-            "companion_market": comp_market,
-        }))
+        specs.append(
+            (
+                "corr_shift",
+                {
+                    "period": 20,
+                    "shift_period": 5,
+                    "companion_symbol": comp_symbol,
+                    "companion_market": comp_market,
+                },
+            )
+        )
     return specs

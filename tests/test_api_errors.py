@@ -9,12 +9,13 @@ import uuid
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 # --- SQLite compatibility: register before any model import ---
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 @compiles(JSONB, "sqlite")
@@ -34,14 +35,14 @@ VALID_API_KEY = "test-api-key-for-auth-tests"
 settings.api_key = VALID_API_KEY
 
 # --- Now import models and app ---
-from poseidon.models.base import Base, get_db  # noqa: E402
-from poseidon.models.strategy import StrategyRecord  # noqa: E402,F401
-from poseidon.models.signal import SignalRecord  # noqa: E402,F401
-from poseidon.models.risk_rule import RiskRuleRecord  # noqa: E402,F401
-from poseidon.models.virtual_position import VirtualPositionRecord  # noqa: E402,F401
-
 from fastapi.testclient import TestClient  # noqa: E402
+
 from poseidon.main import app  # noqa: E402
+from poseidon.models.base import Base, get_db  # noqa: E402
+from poseidon.models.risk_rule import RiskRuleRecord  # noqa: E402,F401
+from poseidon.models.signal import SignalRecord  # noqa: E402,F401
+from poseidon.models.strategy import StrategyRecord  # noqa: E402,F401
+from poseidon.models.virtual_position import VirtualPositionRecord  # noqa: E402,F401
 
 # --------------- Test DB setup ---------------
 

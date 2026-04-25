@@ -16,6 +16,7 @@ from poseidon.backtest.voting_strategy_factory import (
 
 if TYPE_CHECKING:
     import optuna
+
     from poseidon.strategies.voting_strategy import VotingStrategy
 
 
@@ -34,7 +35,10 @@ class StrategyMutator:
     ) -> VotingStrategy:
         """Bayesian-guided mutation via Optuna trial suggest API (D-02)."""
         return VotingStrategyFactory.from_trial(
-            trial, symbol=symbol, market=market, interval=interval,
+            trial,
+            symbol=symbol,
+            market=market,
+            interval=interval,
             model_version_id=model_version_id,
         )
 
@@ -71,7 +75,10 @@ class StrategyMutator:
             mv_id = models[version_idx].id
 
         config = _build_config_from_params(
-            params, symbol=symbol, market=market, interval=interval,
+            params,
+            symbol=symbol,
+            market=market,
+            interval=interval,
             model_version_id=mv_id,
         )
         # D-04: validate via existing Pydantic validation

@@ -8,7 +8,6 @@ from datetime import date, datetime
 from unittest.mock import MagicMock
 
 import pandas as pd
-import pytest
 
 from poseidon.strategies.portfolio.fundamental_selection import (
     FundamentalSelectionConfig,
@@ -17,7 +16,6 @@ from poseidon.strategies.portfolio.fundamental_selection import (
     HoldUntilConfig,
 )
 from poseidon.strategies.portfolio.schemas import Holding
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -76,7 +74,7 @@ class TestHoldUntilBackwardCompat:
 
     def test_no_hold_until_config_returns_true(self):
         """hold_until=None -> always hold (backward compat)."""
-        strategy, repo = _make_strategy(hold_until_cfg=None)
+        strategy, _repo = _make_strategy(hold_until_cfg=None)
         holding = _make_holding()
         result = strategy.check_hold_until("2330", date(2025, 6, 15), holding)
         assert result is True
@@ -84,7 +82,7 @@ class TestHoldUntilBackwardCompat:
     def test_empty_conditions_list_returns_true(self):
         """hold_until with empty conditions list -> always hold."""
         hu_cfg = HoldUntilConfig(conditions=[])
-        strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
+        strategy, _repo = _make_strategy(hold_until_cfg=hu_cfg)
         holding = _make_holding()
         result = strategy.check_hold_until("2330", date(2025, 6, 15), holding)
         assert result is True
@@ -100,9 +98,7 @@ class TestRevenueYoYPositive:
 
     def test_positive_yoy_returns_true(self):
         """Revenue YoY=0.15 (positive) -> hold."""
-        hu_cfg = HoldUntilConfig(
-            conditions=[HoldUntilCondition(type="revenue_yoy_positive")]
-        )
+        hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="revenue_yoy_positive")])
         strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
         repo.read_monthly_revenue = MagicMock(return_value=_make_revenue_df(0.15))
         holding = _make_holding()
@@ -111,9 +107,7 @@ class TestRevenueYoYPositive:
 
     def test_negative_yoy_returns_false(self):
         """Revenue YoY=-0.05 (negative) -> exit."""
-        hu_cfg = HoldUntilConfig(
-            conditions=[HoldUntilCondition(type="revenue_yoy_positive")]
-        )
+        hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="revenue_yoy_positive")])
         strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
         repo.read_monthly_revenue = MagicMock(return_value=_make_revenue_df(-0.05))
         holding = _make_holding()
@@ -122,9 +116,7 @@ class TestRevenueYoYPositive:
 
     def test_zero_yoy_returns_false(self):
         """Revenue YoY=0.0 (boundary: <= 0) -> exit."""
-        hu_cfg = HoldUntilConfig(
-            conditions=[HoldUntilCondition(type="revenue_yoy_positive")]
-        )
+        hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="revenue_yoy_positive")])
         strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
         repo.read_monthly_revenue = MagicMock(return_value=_make_revenue_df(0.0))
         holding = _make_holding()
@@ -142,9 +134,7 @@ class TestMissingDataGuard:
 
     def test_empty_dataframe_returns_true(self):
         """Empty DataFrame (no revenue data) -> hold per D-07."""
-        hu_cfg = HoldUntilConfig(
-            conditions=[HoldUntilCondition(type="revenue_yoy_positive")]
-        )
+        hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="revenue_yoy_positive")])
         strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
         repo.read_monthly_revenue = MagicMock(return_value=pd.DataFrame())
         holding = _make_holding()
@@ -153,9 +143,7 @@ class TestMissingDataGuard:
 
     def test_nan_yoy_value_returns_true(self):
         """NaN YoY value -> hold per D-07."""
-        hu_cfg = HoldUntilConfig(
-            conditions=[HoldUntilCondition(type="revenue_yoy_positive")]
-        )
+        hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="revenue_yoy_positive")])
         strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
         nan_df = pd.DataFrame(
             {"monthly_rev_yoy": [float("nan")]},
@@ -168,9 +156,7 @@ class TestMissingDataGuard:
 
     def test_no_yoy_column_returns_true(self):
         """DataFrame without YoY column -> hold per D-07."""
-        hu_cfg = HoldUntilConfig(
-            conditions=[HoldUntilCondition(type="revenue_yoy_positive")]
-        )
+        hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="revenue_yoy_positive")])
         strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
         no_col_df = pd.DataFrame(
             {"some_other_col": [100]},
@@ -192,20 +178,14 @@ class TestPublicationLag:
 
     def test_publication_lag_offset(self):
         """as_of=2025-06-15, lag=10 -> read_monthly_revenue called with as_of_date='2025-06-05'."""
-        hu_cfg = HoldUntilConfig(
-            conditions=[HoldUntilCondition(type="revenue_yoy_positive")]
-        )
-        strategy, repo = _make_strategy(
-            hold_until_cfg=hu_cfg, publication_lag_days=10
-        )
+        hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="revenue_yoy_positive")])
+        strategy, repo = _make_strategy(hold_until_cfg=hu_cfg, publication_lag_days=10)
         repo.read_monthly_revenue = MagicMock(return_value=_make_revenue_df(0.10))
         holding = _make_holding()
 
         strategy.check_hold_until("2330", date(2025, 6, 15), holding)
 
-        repo.read_monthly_revenue.assert_called_once_with(
-            "2330", as_of_date="2025-06-05"
-        )
+        repo.read_monthly_revenue.assert_called_once_with("2330", as_of_date="2025-06-05")
 
 
 # ---------------------------------------------------------------------------
@@ -218,10 +198,8 @@ class TestMaxHoldingDays:
 
     def test_exceeded_returns_false(self):
         """max_holding_days=180, entry 200 days ago -> exit."""
-        hu_cfg = HoldUntilConfig(
-            conditions=[HoldUntilCondition(type="max_holding_days", value=180)]
-        )
-        strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
+        hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="max_holding_days", value=180)])
+        strategy, _repo = _make_strategy(hold_until_cfg=hu_cfg)
         # entry_date 200 days before as_of
         as_of = date(2025, 6, 15)
         entry_dt = datetime(2024, 11, 27)  # ~200 days before 2025-06-15
@@ -231,10 +209,8 @@ class TestMaxHoldingDays:
 
     def test_within_limit_returns_true(self):
         """max_holding_days=180, entry 100 days ago -> hold."""
-        hu_cfg = HoldUntilConfig(
-            conditions=[HoldUntilCondition(type="max_holding_days", value=180)]
-        )
-        strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
+        hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="max_holding_days", value=180)])
+        strategy, _repo = _make_strategy(hold_until_cfg=hu_cfg)
         as_of = date(2025, 6, 15)
         entry_dt = datetime(2025, 3, 7)  # ~100 days before 2025-06-15
         holding = _make_holding(entry_date=entry_dt)
@@ -243,10 +219,8 @@ class TestMaxHoldingDays:
 
     def test_entry_date_none_skips_condition(self):
         """entry_date=None + max_holding_days configured -> hold (skip condition)."""
-        hu_cfg = HoldUntilConfig(
-            conditions=[HoldUntilCondition(type="max_holding_days", value=180)]
-        )
-        strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
+        hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="max_holding_days", value=180)])
+        strategy, _repo = _make_strategy(hold_until_cfg=hu_cfg)
         holding = _make_holding(entry_date=None)
         result = strategy.check_hold_until("2330", date(2025, 6, 15), holding)
         assert result is True
@@ -287,9 +261,7 @@ class TestRevenueCache:
 
     def test_cache_hit_no_duplicate_api_call(self):
         """Second call to same (symbol, month) should NOT trigger another API call."""
-        hu_cfg = HoldUntilConfig(
-            conditions=[HoldUntilCondition(type="revenue_yoy_positive")]
-        )
+        hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="revenue_yoy_positive")])
         strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
         repo.read_monthly_revenue = MagicMock(return_value=_make_revenue_df(0.10))
         holding = _make_holding()

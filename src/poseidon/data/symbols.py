@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SymbolInfo:
     """Single symbol entry."""
+
     id: str
     name: str
     ccxt_symbol: str | None = None  # Only for crypto (e.g., "BTC/USDT")
@@ -22,6 +23,7 @@ class SymbolInfo:
 @dataclass
 class MarketConfig:
     """Configuration for a single market."""
+
     instrument: str
     intervals: list[str]
     symbols: list[SymbolInfo]
@@ -30,6 +32,7 @@ class MarketConfig:
 @dataclass
 class SymbolConfig:
     """Full symbol watchlist configuration."""
+
     markets: dict[str, MarketConfig] = field(default_factory=dict)
 
 
@@ -63,11 +66,13 @@ def load_symbols(config_path: str | None = None) -> SymbolConfig:
 
         symbols = []
         for s in market_data.get("symbols", []):
-            symbols.append(SymbolInfo(
-                id=s["id"],
-                name=s["name"],
-                ccxt_symbol=s.get("ccxt_symbol"),
-            ))
+            symbols.append(
+                SymbolInfo(
+                    id=s["id"],
+                    name=s["name"],
+                    ccxt_symbol=s.get("ccxt_symbol"),
+                )
+            )
         config.markets[market_name] = MarketConfig(
             instrument=market_data["instrument"],
             intervals=market_data.get("intervals", ["1d"]),

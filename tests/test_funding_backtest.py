@@ -8,21 +8,16 @@ All tests run without DB/GPU dependencies (synthetic data only).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import numpy as np
 import pandas as pd
-import pytest
 
 from poseidon.backtest.cost_model import get_cost_model
-from poseidon.backtest.portfolio import SizingConfig
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.backtest.schemas import BacktestConfig, BacktestResult
 from poseidon.data.feature_engine import FeatureEngine
 from poseidon.risk.engine import RiskEngine
 from poseidon.signals.schemas import OrderType, Signal, SignalAction
 from poseidon.strategies.base import BaseStrategy, StrategyType
-
 
 # ---------------------------------------------------------------------------
 # Task 1: BacktestResult schema extension tests
@@ -188,7 +183,10 @@ def _make_funding_ohlcv(n_bars: int = 72) -> pd.DataFrame:
     Price hovers around 50000.
     """
     times = pd.date_range(
-        "2025-06-01 00:00:00", periods=n_bars, freq="h", tz="UTC",
+        "2025-06-01 00:00:00",
+        periods=n_bars,
+        freq="h",
+        tz="UTC",
     )
     rng = np.random.default_rng(42)
     closes = 50000.0 + rng.normal(0, 50, n_bars).cumsum()
@@ -273,7 +271,9 @@ class TestFundingSettlementRunner:
         strategy = FundingTestStrategy()
         funding_rates = _make_funding_rates()
         runner = _make_runner_with_funding(
-            strategy, include_funding=True, funding_rates=funding_rates,
+            strategy,
+            include_funding=True,
+            funding_rates=funding_rates,
         )
         ohlcv = _make_funding_ohlcv()
         result = runner.run(ohlcv, feature_specs=[])
@@ -290,7 +290,9 @@ class TestFundingSettlementRunner:
         strategy = FundingTestStrategy()
         funding_rates = _make_funding_rates()
         runner = _make_runner_with_funding(
-            strategy, include_funding=True, funding_rates=funding_rates,
+            strategy,
+            include_funding=True,
+            funding_rates=funding_rates,
         )
         ohlcv = _make_funding_ohlcv()
         result = runner.run(ohlcv, feature_specs=[])
@@ -306,7 +308,9 @@ class TestFundingSettlementRunner:
         strategy = FundingTestStrategy()
         funding_rates = _make_funding_rates()
         runner = _make_runner_with_funding(
-            strategy, include_funding=True, funding_rates=funding_rates,
+            strategy,
+            include_funding=True,
+            funding_rates=funding_rates,
         )
         ohlcv = _make_funding_ohlcv()
         result = runner.run(ohlcv, feature_specs=[])
@@ -324,7 +328,9 @@ class TestFundingSettlementRunner:
         strategy = FundingTestStrategy()
         funding_rates = _make_funding_rates()
         runner = _make_runner_with_funding(
-            strategy, include_funding=True, funding_rates=funding_rates,
+            strategy,
+            include_funding=True,
+            funding_rates=funding_rates,
         )
         ohlcv = _make_funding_ohlcv()
         result = runner.run(ohlcv, feature_specs=[])
@@ -337,7 +343,9 @@ class TestFundingSettlementRunner:
         strategy = NoTradeStrategy()
         funding_rates = _make_funding_rates()
         runner = _make_runner_with_funding(
-            strategy, include_funding=True, funding_rates=funding_rates,
+            strategy,
+            include_funding=True,
+            funding_rates=funding_rates,
         )
         ohlcv = _make_funding_ohlcv()
         result = runner.run(ohlcv, feature_specs=[])
@@ -350,7 +358,9 @@ class TestFundingSettlementRunner:
         strategy = FundingTestStrategy()
         funding_rates = _make_funding_rates()
         runner = _make_runner_with_funding(
-            strategy, include_funding=True, funding_rates=funding_rates,
+            strategy,
+            include_funding=True,
+            funding_rates=funding_rates,
         )
         ohlcv = _make_funding_ohlcv()
         result = runner.run(ohlcv, feature_specs=[])
@@ -365,7 +375,9 @@ class TestFundingSettlementRunner:
         strategy = FundingTestStrategy()
         funding_rates = _make_funding_rates()
         runner = _make_runner_with_funding(
-            strategy, include_funding=True, funding_rates=funding_rates,
+            strategy,
+            include_funding=True,
+            funding_rates=funding_rates,
         )
         ohlcv = _make_funding_ohlcv()
         result = runner.run(ohlcv, feature_specs=[])
@@ -381,7 +393,9 @@ class TestFundingSettlementRunner:
         strategy = FundingTestStrategy()
         funding_rates = _make_funding_rates()
         runner = _make_runner_with_funding(
-            strategy, include_funding=True, funding_rates=funding_rates,
+            strategy,
+            include_funding=True,
+            funding_rates=funding_rates,
         )
         ohlcv = _make_funding_ohlcv()
         result = runner.run(ohlcv, feature_specs=[])

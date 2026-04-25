@@ -75,6 +75,4 @@ class BaseFeature(ABC):
 
     def _validate(self, ohlcv: pd.DataFrame, min_rows: int = 1) -> bool:
         """Check that OHLCV has sufficient data. Returns False if empty or too short."""
-        if ohlcv.empty or len(ohlcv) < min_rows:
-            return False
-        return True
+        return not (ohlcv.empty or len(ohlcv) < min_rows)

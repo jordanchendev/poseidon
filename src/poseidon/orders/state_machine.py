@@ -1,9 +1,9 @@
 """Order status enum and state transition validation."""
 
-from enum import Enum
+from enum import StrEnum
 
 
-class OrderStatus(str, Enum):
+class OrderStatus(StrEnum):
     PENDING = "pending"
     SUBMITTED = "submitted"
     FILLED = "filled"

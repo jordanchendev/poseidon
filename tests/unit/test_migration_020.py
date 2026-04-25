@@ -6,6 +6,7 @@ applied). Verifies:
 - backfill_jobs table shape (DATA-FOUND-04)
 - backfill_progress table has been dropped (D-10)
 """
+
 from __future__ import annotations
 
 import pytest
@@ -29,9 +30,7 @@ def _col_map(inspector, table: str) -> dict[str, dict]:
 
 
 def test_ingest_state_shape(inspector):
-    assert "ingest_state" in inspector.get_table_names(), (
-        "ingest_state table missing — migration 020 not applied"
-    )
+    assert "ingest_state" in inspector.get_table_names(), "ingest_state table missing — migration 020 not applied"
 
     cols = _col_map(inspector, "ingest_state")
     expected = {
@@ -60,9 +59,7 @@ def test_ingest_state_shape(inspector):
 
 
 def test_backfill_jobs_shape(inspector):
-    assert "backfill_jobs" in inspector.get_table_names(), (
-        "backfill_jobs table missing — migration 020 not applied"
-    )
+    assert "backfill_jobs" in inspector.get_table_names(), "backfill_jobs table missing — migration 020 not applied"
 
     cols = _col_map(inspector, "backfill_jobs")
     expected = {
@@ -80,16 +77,12 @@ def test_backfill_jobs_shape(inspector):
     assert expected.issubset(cols.keys()), f"missing cols: {expected - cols.keys()}"
 
     pk = inspector.get_pk_constraint("backfill_jobs")
-    assert pk["constrained_columns"] == ["job_id"], (
-        f"backfill_jobs PK should be job_id, got {pk}"
-    )
+    assert pk["constrained_columns"] == ["job_id"], f"backfill_jobs PK should be job_id, got {pk}"
 
     # status CHECK constraint must exist
     checks = inspector.get_check_constraints("backfill_jobs")
     check_names = {c["name"] for c in checks}
-    assert "ck_backfill_jobs_status" in check_names, (
-        f"status CHECK constraint missing; got {check_names}"
-    )
+    assert "ck_backfill_jobs_status" in check_names, f"status CHECK constraint missing; got {check_names}"
 
     # status index for dispatcher scans
     index_names = {ix["name"] for ix in inspector.get_indexes("backfill_jobs")}
@@ -97,6 +90,4 @@ def test_backfill_jobs_shape(inspector):
 
 
 def test_backfill_progress_dropped(inspector):
-    assert "backfill_progress" not in inspector.get_table_names(), (
-        "backfill_progress must be dropped per Phase 38 D-10"
-    )
+    assert "backfill_progress" not in inspector.get_table_names(), "backfill_progress must be dropped per Phase 38 D-10"

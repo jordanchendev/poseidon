@@ -14,11 +14,11 @@ Key design decisions (D-01 ~ D-05):
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from poseidon.strategies.dsl.schema import RuleConfig
 from poseidon.strategies.rule_strategy import RuleStrategy
-
 
 PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "threshold_0": (0.0, 100.0, "float"),
@@ -61,11 +61,13 @@ def _build_config_from_params(
         threshold_key = f"threshold_{i}"
         if threshold_key not in params:
             break
-        conditions.append({
-            "type": "feature_above",
-            "column": fname,
-            "threshold": float(params[threshold_key]),
-        })
+        conditions.append(
+            {
+                "type": "feature_above",
+                "column": fname,
+                "threshold": float(params[threshold_key]),
+            }
+        )
 
     if not conditions:
         raise ValueError("No conditions could be built: feature_names or params empty")
@@ -98,11 +100,13 @@ def _build_config_from_params(
             threshold_key = f"threshold_{i}"
             if threshold_key not in params:
                 break
-            short_conditions.append({
-                "type": "feature_below",
-                "column": fname,
-                "threshold": float(params[threshold_key]),
-            })
+            short_conditions.append(
+                {
+                    "type": "feature_below",
+                    "column": fname,
+                    "threshold": float(params[threshold_key]),
+                }
+            )
 
         if short_conditions:
             short_rule = {

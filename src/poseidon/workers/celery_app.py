@@ -18,26 +18,21 @@ celery_app.conf.update(
         "poseidon.workers.cpu_tasks.*": {"queue": "poseidon_cpu"},
         "poseidon.workers.qlib_tasks.*": {"queue": "poseidon_qlib"},
     },
-
     # Serialization
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
-
     # Timezone
     timezone="UTC",
     enable_utc=True,
-
     # Task tracking
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
-
     # RedBeat scheduler (persists schedule state in Redis)
     beat_scheduler="redbeat.RedBeatScheduler",
     redbeat_redis_url=settings.redis_celery_url,
     redbeat_key_prefix="poseidon:redbeat:",
-
     # Beat schedule — trading/risk/portfolio/perp tasks ONLY
     # Data ingest tasks (fetch, refresh-universe, ingest, quality, backfill,
     # coverage, gap-audit, freshness) moved to Thalassa in Phase 60.
@@ -133,7 +128,6 @@ celery_app.conf.update(
             "schedule": crontab(hour="0,4,8,12,16,20", minute=15),
         },
     },
-
     # Auto-discover task modules
     imports=[
         "poseidon.workers.cpu_tasks",

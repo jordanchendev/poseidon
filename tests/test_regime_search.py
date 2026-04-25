@@ -1,16 +1,14 @@
 """Tests for per-regime Optuna search pipeline and outperformance gate."""
 
 from unittest.mock import MagicMock, patch
-from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_ohlcv(n_bars: int = 500) -> pd.DataFrame:
     """Create a minimal OHLCV DataFrame with datetime index."""
@@ -103,6 +101,7 @@ def _minimal_base_config() -> dict:
 # ---------------------------------------------------------------------------
 # Task 1: Per-regime Optuna search tests
 # ---------------------------------------------------------------------------
+
 
 class TestRegimeSearchPipeline:
     """Tests for RegimeSearchPipeline."""
@@ -223,8 +222,8 @@ class TestRegimeSearchPipeline:
 
     def test_regime_search_respects_holdout(self):
         """Search data is trimmed to training portion only (before holdout boundary)."""
-        from poseidon.backtest.regime_search import RegimeSearchConfig, RegimeSearchPipeline
         from poseidon.backtest.holdout import HoldoutConfig
+        from poseidon.backtest.regime_search import RegimeSearchConfig, RegimeSearchPipeline
 
         ohlcv = _make_ohlcv(500)
         base_config = _minimal_base_config()
@@ -245,7 +244,9 @@ class TestRegimeSearchPipeline:
 
         holdout_cfg = HoldoutConfig(holdout_pct=0.20)
         config = RegimeSearchConfig(
-            n_trials_per_regime=2, seed=42, holdout=holdout_cfg,
+            n_trials_per_regime=2,
+            seed=42,
+            holdout=holdout_cfg,
         )
         pipeline = RegimeSearchPipeline(feature_engine, risk_engine, cost_model)
 
@@ -264,6 +265,7 @@ class TestRegimeSearchPipeline:
 # Task 2: Outperformance gate tests
 # ---------------------------------------------------------------------------
 
+
 class TestRegimeGate:
     """Tests for evaluate_regime_gate outperformance gate."""
 
@@ -276,7 +278,7 @@ class TestRegimeGate:
 
     def test_gate_enables_on_outperformance(self):
         """When regime score > static score, gate passes and enables router."""
-        from poseidon.backtest.regime_gate import evaluate_regime_gate, GateResult
+        from poseidon.backtest.regime_gate import evaluate_regime_gate
 
         ohlcv = _make_ohlcv(500)
         base_config = _minimal_base_config()
@@ -293,9 +295,11 @@ class TestRegimeGate:
         regime_result = MagicMock()
         regime_result.metrics = {"sharpe_ratio": 2.0, "max_drawdown": 0.05, "total_return": 0.30, "trade_count": 30}
 
-        with patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner, \
-             patch("poseidon.backtest.regime_gate.VotingStrategyFactory") as MockFactory, \
-             patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score:
+        with (
+            patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner,
+            patch("poseidon.backtest.regime_gate.VotingStrategyFactory"),
+            patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score,
+        ):
             # First call = static, second call = regime
             MockRunner.return_value.run.side_effect = [static_result, regime_result]
             mock_score.side_effect = [1.0, 1.5]
@@ -331,9 +335,11 @@ class TestRegimeGate:
         regime_result = MagicMock()
         regime_result.metrics = {}
 
-        with patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner, \
-             patch("poseidon.backtest.regime_gate.VotingStrategyFactory") as MockFactory, \
-             patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score:
+        with (
+            patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner,
+            patch("poseidon.backtest.regime_gate.VotingStrategyFactory"),
+            patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score,
+        ):
             MockRunner.return_value.run.side_effect = [static_result, regime_result]
             mock_score.side_effect = [1.0, 0.8]  # regime < static
 
@@ -366,9 +372,11 @@ class TestRegimeGate:
         regime_result = MagicMock()
         regime_result.metrics = {}
 
-        with patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner, \
-             patch("poseidon.backtest.regime_gate.VotingStrategyFactory") as MockFactory, \
-             patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score:
+        with (
+            patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner,
+            patch("poseidon.backtest.regime_gate.VotingStrategyFactory"),
+            patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score,
+        ):
             MockRunner.return_value.run.side_effect = [static_result, regime_result]
             mock_score.side_effect = [1.0, 1.0]  # equal scores
 
@@ -402,9 +410,11 @@ class TestRegimeGate:
         regime_result = MagicMock()
         regime_result.metrics = {}
 
-        with patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner, \
-             patch("poseidon.backtest.regime_gate.VotingStrategyFactory") as MockFactory, \
-             patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score:
+        with (
+            patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner,
+            patch("poseidon.backtest.regime_gate.VotingStrategyFactory"),
+            patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score,
+        ):
             MockRunner.return_value.run.side_effect = [static_result, regime_result]
             mock_score.side_effect = [1.0, 0.5]  # gate fails
 
@@ -422,8 +432,8 @@ class TestRegimeGate:
 
     def test_gate_uses_holdout_data(self):
         """Gate runs backtests on holdout portion (after boundary), not full data."""
-        from poseidon.backtest.regime_gate import evaluate_regime_gate
         from poseidon.backtest.holdout import HoldoutConfig
+        from poseidon.backtest.regime_gate import evaluate_regime_gate
 
         ohlcv = _make_ohlcv(500)
         base_config = _minimal_base_config()
@@ -440,9 +450,11 @@ class TestRegimeGate:
 
         holdout_cfg = HoldoutConfig(holdout_pct=0.20)
 
-        with patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner, \
-             patch("poseidon.backtest.regime_gate.VotingStrategyFactory") as MockFactory, \
-             patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score:
+        with (
+            patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner,
+            patch("poseidon.backtest.regime_gate.VotingStrategyFactory"),
+            patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score,
+        ):
             MockRunner.return_value.run.side_effect = [static_result, regime_result]
             mock_score.side_effect = [1.0, 1.5]
 
@@ -467,7 +479,7 @@ class TestRegimeGate:
 
     def test_gate_returns_result_dataclass(self):
         """GateResult has fields: passed, static_score, regime_score, holdout_start, holdout_bars."""
-        from poseidon.backtest.regime_gate import evaluate_regime_gate, GateResult
+        from poseidon.backtest.regime_gate import GateResult, evaluate_regime_gate
 
         ohlcv = _make_ohlcv(500)
         base_config = _minimal_base_config()
@@ -482,9 +494,11 @@ class TestRegimeGate:
         regime_result = MagicMock()
         regime_result.metrics = {}
 
-        with patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner, \
-             patch("poseidon.backtest.regime_gate.VotingStrategyFactory") as MockFactory, \
-             patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score:
+        with (
+            patch("poseidon.backtest.regime_gate.BacktestRunner") as MockRunner,
+            patch("poseidon.backtest.regime_gate.VotingStrategyFactory"),
+            patch("poseidon.backtest.regime_gate.compute_composite_score") as mock_score,
+        ):
             MockRunner.return_value.run.side_effect = [static_result, regime_result]
             mock_score.side_effect = [1.0, 1.5]
 

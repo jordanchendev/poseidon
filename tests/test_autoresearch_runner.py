@@ -7,14 +7,13 @@ D-13 (per-market failure isolation), D-14 (10 consecutive experiments).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 
 from poseidon.autoresearch.guard import _AUTORESEARCH_ACTIVE
-from poseidon.autoresearch.runner import AutoResearchRunner, MarketResult, MarketSpec
+from poseidon.autoresearch.runner import AutoResearchRunner, MarketSpec
 from poseidon.backtest.param_search import SearchConfig, SearchResult
 
 
@@ -27,7 +26,7 @@ def _make_search_result(study_name: str = "test_study") -> SearchResult:
         rejected_trials=5,
         best_config={"rsi_period": 14, "threshold": 0.5},
         best_composite_score=0.85,
-        holdout_boundary=datetime(2025, 6, 1, tzinfo=timezone.utc),
+        holdout_boundary=datetime(2025, 6, 1, tzinfo=UTC),
     )
 
 
@@ -79,9 +78,7 @@ class TestAutoResearchRunner:
         assert results[0].error is None
         mock_pipeline.run.assert_called_once()
 
-    def test_graceful_stop(
-        self, mock_risk, mock_feature, mock_model_manager, mock_pipeline_cls, mock_read_ohlcv
-    ):
+    def test_graceful_stop(self, mock_risk, mock_feature, mock_model_manager, mock_pipeline_cls, mock_read_ohlcv):
         """AutoResearchRunner stops after graceful stop is requested (D-12)."""
         mock_read_ohlcv.return_value = _make_ohlcv()
         mock_pipeline = MagicMock()
@@ -172,7 +169,7 @@ class TestAutoResearchRunner:
             MarketSpec(symbol="BTCUSDT", market="crypto_spot", interval="1h"),
             MarketSpec(symbol="ETHUSDT", market="crypto_spot", interval="1h"),
         ]
-        results = runner.run(markets)
+        runner.run(markets)
 
         assert len(progress_calls) == 2
         assert progress_calls[0] == (0, 2, "BTCUSDT")
@@ -205,9 +202,7 @@ class TestAutoResearchRunner:
 
         assert guard_values == [True]
 
-    def test_10_consecutive(
-        self, mock_risk, mock_feature, mock_model_manager, mock_pipeline_cls, mock_read_ohlcv
-    ):
+    def test_10_consecutive(self, mock_risk, mock_feature, mock_model_manager, mock_pipeline_cls, mock_read_ohlcv):
         """10 consecutive experiments run unattended without error (D-14, AUTO-05)."""
         mock_read_ohlcv.return_value = _make_ohlcv()
         mock_model_manager.return_value.list_ready_models.return_value = []
@@ -228,10 +223,7 @@ class TestAutoResearchRunner:
             db_session=mock_session,
             search_config=SearchConfig(n_trials=5),
         )
-        markets = [
-            MarketSpec(symbol=f"SYM{i}", market="crypto_spot", interval="1h")
-            for i in range(10)
-        ]
+        markets = [MarketSpec(symbol=f"SYM{i}", market="crypto_spot", interval="1h") for i in range(10)]
         results = runner.run(markets)
 
         assert len(results) == 10
@@ -286,9 +278,8 @@ class TestCeleryTaskRegistered:
 
     def test_celery_task_registered(self):
         """autoresearch_run is in celery_app.tasks."""
-        from poseidon.workers.celery_app import celery_app
-
         # Force task module import to trigger registration
         import poseidon.workers.cpu_tasks  # noqa: F401
+        from poseidon.workers.celery_app import celery_app
 
         assert "poseidon.workers.cpu_tasks.autoresearch_run" in celery_app.tasks

@@ -21,7 +21,7 @@ class ExperimentTracker:
     metrics, and optional Optuna study/trial linkage.
     """
 
-    def __init__(self, db_session) -> None:  # noqa: ANN001
+    def __init__(self, db_session) -> None:
         self._db = db_session
 
     def save(
@@ -85,15 +85,9 @@ class ExperimentTracker:
         Returns:
             ExperimentRecord or None if not found.
         """
-        return (
-            self._db.query(ExperimentRecord)
-            .filter(ExperimentRecord.id == experiment_id)
-            .first()
-        )
+        return self._db.query(ExperimentRecord).filter(ExperimentRecord.id == experiment_id).first()
 
-    def list_by_date_range(
-        self, start: datetime, end: datetime, limit: int = 100
-    ) -> list[ExperimentRecord]:
+    def list_by_date_range(self, start: datetime, end: datetime, limit: int = 100) -> list[ExperimentRecord]:
         """List experiments within a date range.
 
         Args:
@@ -115,9 +109,7 @@ class ExperimentTracker:
             .all()
         )
 
-    def list_by_market(
-        self, market: str, interval: str, limit: int = 100
-    ) -> list[ExperimentRecord]:
+    def list_by_market(self, market: str, interval: str, limit: int = 100) -> list[ExperimentRecord]:
         """List experiments filtered by market and interval.
 
         Args:
@@ -139,9 +131,7 @@ class ExperimentTracker:
             .all()
         )
 
-    def query_passed_by_study(
-        self, study_name: str, limit: int = 10
-    ) -> list[ExperimentRecord]:
+    def query_passed_by_study(self, study_name: str, limit: int = 10) -> list[ExperimentRecord]:
         """Query passed experiments for a study, ranked by composite_score.
 
         Used by report generation (D-15) to find best configs per market.
@@ -172,11 +162,7 @@ class ExperimentTracker:
         Args:
             experiment_id: UUID of the experiment to reject.
         """
-        record = (
-            self._db.query(ExperimentRecord)
-            .filter(ExperimentRecord.id == experiment_id)
-            .first()
-        )
+        record = self._db.query(ExperimentRecord).filter(ExperimentRecord.id == experiment_id).first()
         if record is not None:
             record.status = "rejected"
             self._db.flush()
@@ -187,11 +173,7 @@ class ExperimentTracker:
         Args:
             experiment_id: UUID of the experiment to pass.
         """
-        record = (
-            self._db.query(ExperimentRecord)
-            .filter(ExperimentRecord.id == experiment_id)
-            .first()
-        )
+        record = self._db.query(ExperimentRecord).filter(ExperimentRecord.id == experiment_id).first()
         if record is not None:
             record.status = "passed"
             self._db.flush()

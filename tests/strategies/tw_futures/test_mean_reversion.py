@@ -12,17 +12,12 @@ Covers:
 - Validate config
 """
 
-from datetime import datetime, timezone
-from uuid import uuid4
-
-import numpy as np
 import pandas as pd
 import pytest
 
 from poseidon.signals.schemas import InstrumentType, SignalAction
 from poseidon.strategies.tw_futures.configs import MeanReversionConfig
 from poseidon.strategies.tw_futures.mean_reversion import MeanReversionStrategy
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -192,9 +187,7 @@ class TestDirectionReversal:
 
         # Overbought reversal (skip exit because close > bb_upper, not >= bb_middle)
         # Set bb_middle high so exit condition doesn't trigger first
-        df2 = make_mr_features(
-            close=22250, bb_upper=22200, bb_middle=22300, bb_lower=21800, rsi=75
-        )
+        df2 = make_mr_features(close=22250, bb_upper=22200, bb_middle=22300, bb_lower=21800, rsi=75)
         signals2 = s.evaluate(df2)
         assert len(signals2) == 2
         assert signals2[0].action == SignalAction.CLOSE

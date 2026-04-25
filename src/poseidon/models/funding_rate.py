@@ -27,7 +27,4 @@ class FundingRateRecord(Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<FundingRateRecord(time={self.time}, symbol={self.symbol}, "
-            f"rate={self.funding_rate})>"
-        )
+        return f"<FundingRateRecord(time={self.time}, symbol={self.symbol}, rate={self.funding_rate})>"

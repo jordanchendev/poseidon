@@ -2,9 +2,8 @@
 
 import numpy as np
 import pandas as pd
-import pytest
 
-from poseidon.data.features.open_interest import OIChange, OIBuildup, OICostBasis, _align_oi_to_index
+from poseidon.data.features.open_interest import OIBuildup, OIChange, OICostBasis, _align_oi_to_index
 
 
 def _make_ohlcv(n: int = 50) -> pd.DataFrame:
@@ -233,8 +232,7 @@ class TestOITimestampAlignment:
 
         # First 5 bars should be NaN -- no OI data available yet
         assert aligned.iloc[:5].isna().all(), (
-            "Look-ahead bias: bars before first OI snapshot must be NaN, "
-            f"got {aligned.iloc[:5].tolist()}"
+            f"Look-ahead bias: bars before first OI snapshot must be NaN, got {aligned.iloc[:5].tolist()}"
         )
         # Bars from index 5 onward should have values
         assert aligned.iloc[5:].notna().all()
@@ -329,8 +327,7 @@ class TestOICostBasis:
         # First 5 bars: close=100, OI rising
         # Last 5 bars: close=200, OI falling
         close_prices = [100.0] * 5 + [200.0] * 5
-        oi_values = [10000.0, 11000.0, 12000.0, 13000.0, 14000.0,
-                     13000.0, 12000.0, 11000.0, 10000.0, 9000.0]
+        oi_values = [10000.0, 11000.0, 12000.0, 13000.0, 14000.0, 13000.0, 12000.0, 11000.0, 10000.0, 9000.0]
         ohlcv = pd.DataFrame(
             {
                 "time": dates,
@@ -350,9 +347,7 @@ class TestOICostBasis:
         # OIWAP in the last bars should still be ~100, not ~200
         # because OI decreases (bars 5-9) are ignored
         last_oiwap = result["oiwap_50"].iloc[-1]
-        assert abs(last_oiwap - 100.0) < 0.01, (
-            f"OI decrease contaminated OIWAP: got {last_oiwap}, expected ~100.0"
-        )
+        assert abs(last_oiwap - 100.0) < 0.01, f"OI decrease contaminated OIWAP: got {last_oiwap}, expected ~100.0"
 
     def test_none_oi_returns_nan(self):
         """OICostBasis with no OI data should return NaN columns (D-11)."""
@@ -430,6 +425,4 @@ class TestOICostBasis:
 
         # After first bar (which has NaN delta from diff), all delta_oi <= 0
         # So rolling_oi_sum is 0 -> OIWAP is NaN for bars 1+
-        assert result["oiwap_50"].iloc[2:].isna().all(), (
-            "OIWAP should be NaN when no OI increases exist in window"
-        )
+        assert result["oiwap_50"].iloc[2:].isna().all(), "OIWAP should be NaN when no OI increases exist in window"

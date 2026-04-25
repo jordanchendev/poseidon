@@ -9,7 +9,7 @@ Covers:
 import json
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,10 +24,10 @@ from poseidon.signals.schemas import (
     SignalStatus,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 def make_signal(**overrides) -> Signal:
     """Create a Signal with sensible defaults for testing."""
@@ -46,6 +46,7 @@ def make_signal(**overrides) -> Signal:
 # ---------------------------------------------------------------------------
 # TestSignalFormat (SIG-01)
 # ---------------------------------------------------------------------------
+
 
 class TestSignalFormat:
     """Verify the Signal Pydantic model satisfies SIG-01 format requirements."""
@@ -83,6 +84,7 @@ class TestSignalFormat:
 # ---------------------------------------------------------------------------
 # TestSignalDelivery (SIG-02)
 # ---------------------------------------------------------------------------
+
 
 class TestSignalDelivery:
     """Verify SignalDeliveryService writes to Redis Streams correctly."""
@@ -166,9 +168,7 @@ class TestSignalDelivery:
 
     def test_consumer_group_busygroup_ignored(self):
         svc, mock_client = self._make_service()
-        mock_client.xgroup_create.side_effect = redis_lib.ResponseError(
-            "BUSYGROUP Consumer Group name already exists"
-        )
+        mock_client.xgroup_create.side_effect = redis_lib.ResponseError("BUSYGROUP Consumer Group name already exists")
         sig = make_signal(status=SignalStatus.PASSED)
         mock_client.xadd.return_value = "123-0"
 
@@ -178,9 +178,7 @@ class TestSignalDelivery:
 
     def test_consumer_group_other_error_raised(self):
         svc, mock_client = self._make_service()
-        mock_client.xgroup_create.side_effect = redis_lib.ResponseError(
-            "ERR something else went wrong"
-        )
+        mock_client.xgroup_create.side_effect = redis_lib.ResponseError("ERR something else went wrong")
         sig = make_signal(status=SignalStatus.PASSED)
 
         with pytest.raises(redis_lib.ResponseError, match="something else"):
@@ -254,6 +252,7 @@ class TestSignalDelivery:
 # TestSignalRepository
 # ---------------------------------------------------------------------------
 
+
 class TestSignalRepository:
     """Verify SignalRepository persists signals to the database."""
 
@@ -262,7 +261,7 @@ class TestSignalRepository:
         repo = SignalRepository(mock_session)
         sig = make_signal(status=SignalStatus.PASSED)
 
-        record = repo.save(sig)
+        repo.save(sig)
 
         mock_session.add.assert_called_once()
         mock_session.flush.assert_called_once()
@@ -320,7 +319,7 @@ class TestSignalRepository:
         mock_query.count.return_value = 3
 
         repo = SignalRepository(mock_session)
-        since = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        since = datetime(2025, 1, 1, tzinfo=UTC)
         count = repo.count_recent_by_symbol("BTCUSDT", "crypto_spot", since)
 
         assert count == 3
@@ -329,6 +328,7 @@ class TestSignalRepository:
 # ---------------------------------------------------------------------------
 # TestRejectedSignals (SIG-02 -- rejected not in Redis)
 # ---------------------------------------------------------------------------
+
 
 class TestRejectedSignals:
     """Rejected signals must be persisted in DB but NOT pushed to Redis."""
@@ -356,6 +356,7 @@ class TestRejectedSignals:
 # ---------------------------------------------------------------------------
 # TestStreamRetention (SIG-02)
 # ---------------------------------------------------------------------------
+
 
 class TestStreamRetention:
     """Verify Redis Stream 7-day retention via MINID trimming."""

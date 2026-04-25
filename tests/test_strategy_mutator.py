@@ -9,11 +9,8 @@ Verifies that:
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from poseidon.autoresearch.mutator import StrategyMutator
 from poseidon.backtest.voting_strategy_factory import PARAM_BOUNDS
-
 
 MARKET_KWARGS = {
     "symbol": "BTCUSDT",
@@ -52,9 +49,7 @@ class TestMutateViaOptuna:
     def test_delegates_to_factory(self):
         """Verify mutate_via_optuna calls VotingStrategyFactory.from_trial()."""
         trial = self._make_mock_trial()
-        with patch(
-            "poseidon.autoresearch.mutator.VotingStrategyFactory.from_trial"
-        ) as mock_from_trial:
+        with patch("poseidon.autoresearch.mutator.VotingStrategyFactory.from_trial") as mock_from_trial:
             mock_from_trial.return_value = MagicMock()
             StrategyMutator.mutate_via_optuna(trial, **MARKET_KWARGS)
             mock_from_trial.assert_called_once_with(
@@ -126,9 +121,11 @@ class TestMutateRandom:
             def uniform(self, low, high):
                 return (low + high) / 2.0
 
-        with patch("poseidon.autoresearch.mutator.random.Random", return_value=FakeRandom()), \
-             patch("poseidon.autoresearch.mutator._build_config_from_params") as mock_build, \
-             patch("poseidon.autoresearch.mutator.VotingStrategyFactory.from_config") as mock_from_config:
+        with (
+            patch("poseidon.autoresearch.mutator.random.Random", return_value=FakeRandom()),
+            patch("poseidon.autoresearch.mutator._build_config_from_params") as mock_build,
+            patch("poseidon.autoresearch.mutator.VotingStrategyFactory.from_config") as mock_from_config,
+        ):
             mock_build.return_value = {"name": "test"}
             mock_from_config.return_value = MagicMock(validate_config=MagicMock())
 
@@ -148,9 +145,11 @@ class TestMutateRandom:
             def uniform(self, low, high):
                 return (low + high) / 2.0
 
-        with patch("poseidon.autoresearch.mutator.random.Random", return_value=FakeRandom()), \
-             patch("poseidon.autoresearch.mutator._build_config_from_params") as mock_build, \
-             patch("poseidon.autoresearch.mutator.VotingStrategyFactory.from_config") as mock_from_config:
+        with (
+            patch("poseidon.autoresearch.mutator.random.Random", return_value=FakeRandom()),
+            patch("poseidon.autoresearch.mutator._build_config_from_params") as mock_build,
+            patch("poseidon.autoresearch.mutator.VotingStrategyFactory.from_config") as mock_from_config,
+        ):
             mock_build.return_value = {"qlib_model_enabled": 0}
             mock_from_config.return_value = MagicMock(validate_config=MagicMock())
 

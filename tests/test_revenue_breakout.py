@@ -7,7 +7,7 @@ All tests use mock RemoteDataRepository to avoid external dependencies.
 from __future__ import annotations
 
 from datetime import date
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
@@ -18,9 +18,7 @@ from poseidon.strategies.portfolio.schemas import (
     RebalanceConfig,
     RevenueBreakoutConfig,
     SelectionConfig,
-    TargetPosition,
 )
-
 
 # --- Helpers ---
 
@@ -116,7 +114,6 @@ def _make_mock_repo(ohlcv: pd.DataFrame, revenue: pd.DataFrame) -> MagicMock:
 
 
 class TestRevenueBreakoutStrategy:
-
     def test_selects_new_high_symbol(self):
         """Symbol at 250-day high with positive revenue should be selected."""
         config = _make_config(symbols=["2330"])

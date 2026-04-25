@@ -11,7 +11,7 @@ and correctly handle direction reversals (CLOSE then new entry).
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -85,12 +85,7 @@ class MeanReversionStrategy(BaseStrategy):
         # NaN guard
         if bb_upper is None or bb_middle is None or bb_lower is None or rsi is None:
             return []
-        if (
-            math.isnan(bb_upper)
-            or math.isnan(bb_middle)
-            or math.isnan(bb_lower)
-            or math.isnan(rsi)
-        ):
+        if math.isnan(bb_upper) or math.isnan(bb_middle) or math.isnan(bb_lower) or math.isnan(rsi):
             return []
 
         close = row["close"]
@@ -116,31 +111,22 @@ class MeanReversionStrategy(BaseStrategy):
             if self._position_side != "long":
                 # Close existing short first
                 if self._position_side == "short":
-                    signals.append(
-                        self._make_signal(SignalAction.CLOSE, close, signal_time)
-                    )
+                    signals.append(self._make_signal(SignalAction.CLOSE, close, signal_time))
                     self._reset_state()
 
                 # LONG entry
-                signals.append(
-                    self._make_signal(SignalAction.LONG, close, signal_time)
-                )
+                signals.append(self._make_signal(SignalAction.LONG, close, signal_time))
                 self._position_side = "long"
 
-        elif close > bb_upper and rsi > self.config.rsi_overbought:
-            if self._position_side != "short":
-                # Close existing long first
-                if self._position_side == "long":
-                    signals.append(
-                        self._make_signal(SignalAction.CLOSE, close, signal_time)
-                    )
-                    self._reset_state()
+        elif close > bb_upper and rsi > self.config.rsi_overbought and self._position_side != "short":
+            # Close existing long first
+            if self._position_side == "long":
+                signals.append(self._make_signal(SignalAction.CLOSE, close, signal_time))
+                self._reset_state()
 
-                # SHORT entry
-                signals.append(
-                    self._make_signal(SignalAction.SHORT, close, signal_time)
-                )
-                self._position_side = "short"
+            # SHORT entry
+            signals.append(self._make_signal(SignalAction.SHORT, close, signal_time))
+            self._position_side = "short"
 
         return signals
 
@@ -153,10 +139,7 @@ class MeanReversionStrategy(BaseStrategy):
         if self.config.rsi_period <= 0:
             raise ValueError("rsi_period must be positive")
         if not (0 < self.config.rsi_oversold < self.config.rsi_overbought < 100):
-            raise ValueError(
-                "rsi_oversold and rsi_overbought must satisfy "
-                "0 < rsi_oversold < rsi_overbought < 100"
-            )
+            raise ValueError("rsi_oversold and rsi_overbought must satisfy 0 < rsi_oversold < rsi_overbought < 100")
         return True
 
     def get_feature_specs(self) -> list[tuple[str, dict]]:
@@ -203,4 +186,4 @@ class MeanReversionStrategy(BaseStrategy):
             return ts
         if isinstance(ts, pd.Timestamp):
             return ts.to_pydatetime()
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)

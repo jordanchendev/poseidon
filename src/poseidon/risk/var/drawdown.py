@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import redis
 
@@ -85,7 +85,7 @@ class DrawdownMonitor:
                     "threshold_pct": threshold,
                     "current_equity": current_equity,
                     "hwm": hwm,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                 }
 
         if triggered_alert is not None:
@@ -111,7 +111,7 @@ class DrawdownMonitor:
             "current_var": round(current_var, 6),
             "var_limit": limit,
             "var_method": method,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._publish_alert(alert)
         return alert

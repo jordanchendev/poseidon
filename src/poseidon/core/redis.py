@@ -31,8 +31,5 @@ def get_redis(purpose: str, *, decode_responses: bool = False) -> redis_lib.Redi
     """
     url_fn = _PURPOSE_URL.get(purpose)
     if url_fn is None:
-        raise ValueError(
-            f"Unknown Redis purpose {purpose!r}. "
-            f"Choose from: {sorted(_PURPOSE_URL)}"
-        )
+        raise ValueError(f"Unknown Redis purpose {purpose!r}. Choose from: {sorted(_PURPOSE_URL)}")
     return redis_lib.from_url(url_fn(), decode_responses=decode_responses)

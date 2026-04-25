@@ -4,11 +4,8 @@ Covers SWEEP-02 (three-stage detection), SWEEP-03 (direction modes),
 SWEEP-04 (volatility-adaptive distance), and E2E backtest integration.
 """
 
-from datetime import datetime, timezone
-
 import numpy as np
 import pandas as pd
-import pytest
 
 from poseidon.backtest.cost_model import get_cost_model
 from poseidon.backtest.pending_orders import FillModel
@@ -18,7 +15,6 @@ from poseidon.data.feature_engine import FeatureEngine
 from poseidon.risk.engine import RiskEngine
 from poseidon.signals.schemas import OrderType, SignalAction
 from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -197,9 +193,11 @@ class TestThreeStageDetection:
 
     def test_cooldown_blocks_entry(self):
         """After a signal, simulate position exit, no new signals during cooldown."""
-        strategy = LiquiditySweepStrategy(config=make_default_config(
-            exit={"cooldown_bars": 4, "max_holding_bars": None},
-        ))
+        strategy = LiquiditySweepStrategy(
+            config=make_default_config(
+                exit={"cooldown_bars": 4, "max_holding_bars": None},
+            )
+        )
 
         # First call: should emit signal
         features = make_sweep_features()
@@ -574,15 +572,12 @@ class TestE2EBacktest:
 
         # Must have at least one filled trade (entry from limit fill)
         assert len(result.trades) >= 1, (
-            f"Expected at least 1 filled trade, got {len(result.trades)}. "
-            f"Trade count: {result.trade_count}"
+            f"Expected at least 1 filled trade, got {len(result.trades)}. Trade count: {result.trade_count}"
         )
 
         # Verify the trade was a long entry (downward sweep -> long limit)
         first_trade = result.trades[0]
-        assert first_trade["action"] in ("long", "short"), (
-            f"Unexpected action: {first_trade['action']}"
-        )
+        assert first_trade["action"] in ("long", "short"), f"Unexpected action: {first_trade['action']}"
 
         # Verify result has equity curve
         assert result.equity_curve_length > 0
@@ -620,6 +615,5 @@ class TestE2EBacktest:
         result_o = runner_o.run(ohlcv2, feature_specs=[])
 
         assert len(result_o.trades) >= len(result_p.trades), (
-            f"Optimistic fills ({len(result_o.trades)}) should be "
-            f">= pessimistic ({len(result_p.trades)})"
+            f"Optimistic fills ({len(result_o.trades)}) should be >= pessimistic ({len(result_p.trades)})"
         )

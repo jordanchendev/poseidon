@@ -24,7 +24,4 @@ class MacroIndex(Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<MacroIndex(date={self.date}, indicator={self.indicator}, "
-            f"value={self.value})>"
-        )
+        return f"<MacroIndex(date={self.date}, indicator={self.indicator}, value={self.value})>"

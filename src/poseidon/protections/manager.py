@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from poseidon.protections.base import BaseProtection, ProtectionResult
-from poseidon.protections.registry import list_protections, get_protection
+from poseidon.protections.registry import get_protection, list_protections
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -39,9 +39,7 @@ class ProtectionManager:
             protections.append(protection_cls())
         return cls(protections=protections)
 
-    def check_all(
-        self, symbol: str, market: str, db: Session
-    ) -> list[ProtectionResult]:
+    def check_all(self, symbol: str, market: str, db: Session) -> list[ProtectionResult]:
         """Check all protections for a symbol/market.
 
         Returns list of ProtectionResult where locked=True.
@@ -72,9 +70,7 @@ class ProtectionManager:
         """Convenience: returns True if any protection lock is active."""
         return len(self.check_all(symbol, market, db)) > 0
 
-    def get_active_locks(
-        self, market: str, db: Session, symbol: str | None = None
-    ) -> list[ProtectionLockRecord]:
+    def get_active_locks(self, market: str, db: Session, symbol: str | None = None) -> list[ProtectionLockRecord]:
         """Query DB directly for all active locks.
 
         Args:

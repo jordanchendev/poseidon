@@ -7,12 +7,13 @@ with an in-memory SQLite session to avoid needing a real database.
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 # --- SQLite compatibility: register before any model import ---
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 @compiles(JSONB, "sqlite")
@@ -32,14 +33,14 @@ VALID_API_KEY = "test-api-key-for-auth-tests"
 settings.api_key = VALID_API_KEY
 
 # --- Now import models and app ---
-from poseidon.models.base import Base, get_db  # noqa: E402
-from poseidon.models.strategy import StrategyRecord  # noqa: E402,F401
-from poseidon.models.signal import SignalRecord  # noqa: E402,F401
-from poseidon.models.risk_rule import RiskRuleRecord  # noqa: E402,F401
-from poseidon.models.virtual_position import VirtualPositionRecord  # noqa: E402,F401
-
 from fastapi.testclient import TestClient  # noqa: E402
+
 from poseidon.main import app  # noqa: E402
+from poseidon.models.base import Base, get_db  # noqa: E402
+from poseidon.models.risk_rule import RiskRuleRecord  # noqa: E402,F401
+from poseidon.models.signal import SignalRecord  # noqa: E402,F401
+from poseidon.models.strategy import StrategyRecord  # noqa: E402,F401
+from poseidon.models.virtual_position import VirtualPositionRecord  # noqa: E402,F401
 
 # --------------- Test DB setup ---------------
 
@@ -105,27 +106,21 @@ SECURED_ENDPOINTS = [
 def test_secured_endpoint_rejects_without_api_key(method, path):
     """All secured endpoints must return 401 when X-API-Key header is missing."""
     resp = client.request(method, path)
-    assert resp.status_code == 401, (
-        f"{method} {path} returned {resp.status_code}, expected 401"
-    )
+    assert resp.status_code == 401, f"{method} {path} returned {resp.status_code}, expected 401"
 
 
 @pytest.mark.parametrize("method,path", SECURED_ENDPOINTS)
 def test_secured_endpoint_rejects_invalid_api_key(method, path):
     """All secured endpoints must return 401 when X-API-Key is wrong."""
     resp = client.request(method, path, headers={"X-API-Key": "wrong-key"})
-    assert resp.status_code == 401, (
-        f"{method} {path} returned {resp.status_code}, expected 401"
-    )
+    assert resp.status_code == 401, f"{method} {path} returned {resp.status_code}, expected 401"
 
 
 def test_health_allows_unauthenticated_access():
     """GET /health must be accessible without any API key."""
     resp = client.get("/health")
     # May return 200 or 503 depending on DB availability, but NOT 401/403
-    assert resp.status_code not in (401, 403), (
-        f"GET /health returned {resp.status_code}, should not require auth"
-    )
+    assert resp.status_code not in (401, 403), f"GET /health returned {resp.status_code}, should not require auth"
 
 
 def test_secured_endpoint_accepts_valid_api_key():
@@ -139,6 +134,4 @@ def test_secured_endpoint_accepts_valid_api_key():
         "/api/strategies",
         headers={"X-API-Key": VALID_API_KEY},
     )
-    assert resp.status_code not in (401, 403), (
-        f"Valid API key was rejected with {resp.status_code}"
-    )
+    assert resp.status_code not in (401, 403), f"Valid API key was rejected with {resp.status_code}"

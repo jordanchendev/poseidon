@@ -28,6 +28,5 @@ class OpenInterest(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<OpenInterest(time={self.time}, symbol={self.symbol}, "
-            f"interval={self.interval}, oi={self.open_interest})>"
+            f"<OpenInterest(time={self.time}, symbol={self.symbol}, interval={self.interval}, oi={self.open_interest})>"
         )

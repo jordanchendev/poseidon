@@ -12,7 +12,6 @@ from poseidon.strategies.portfolio.fundamental_selection import (
     ScoringWeightConfig,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -45,9 +44,7 @@ def _make_fundamentals_df(eps: float = 2.0) -> pd.DataFrame:
     return pd.DataFrame([{"eps": eps}])
 
 
-def _make_foreign_holding_df(
-    net_buy_ratio: float = 0.05, holding_change: float = 0.02
-) -> pd.DataFrame:
+def _make_foreign_holding_df(net_buy_ratio: float = 0.05, holding_change: float = 0.02) -> pd.DataFrame:
     """Create a foreign_holding DataFrame with both flow sub-metrics."""
     return pd.DataFrame(
         [
@@ -111,9 +108,7 @@ def _make_mock_repo(
 
     repo.read_quality_factor = MagicMock(side_effect=read_quality_factor)
     repo.read_monthly_revenue = MagicMock(side_effect=read_monthly_revenue)
-    repo.read_fundamentals_extended_df = MagicMock(
-        side_effect=read_fundamentals_extended_df
-    )
+    repo.read_fundamentals_extended_df = MagicMock(side_effect=read_fundamentals_extended_df)
     repo.read_foreign_holding = MagicMock(side_effect=read_foreign_holding)
     repo.read_risk_filters_active = MagicMock(side_effect=read_risk_filters_active)
 
@@ -425,9 +420,7 @@ class TestRiskFilter:
                 "holding_change": 0.005,
             },
         }
-        repo = _make_mock_repo(
-            symbols_data=symbols_data, excluded_symbols=["1234", "5678"]
-        )
+        repo = _make_mock_repo(symbols_data=symbols_data, excluded_symbols=["1234", "5678"])
         cfg = FundamentalSelectionConfig(
             symbols=list(symbols_data.keys()),
             max_stocks=10,
@@ -478,9 +471,7 @@ class TestRiskFilter:
                 "holding_change": 0.02,
             },
         }
-        repo = _make_mock_repo(
-            symbols_data=symbols_data, excluded_symbols=["A", "B"]
-        )
+        repo = _make_mock_repo(symbols_data=symbols_data, excluded_symbols=["A", "B"])
         cfg = FundamentalSelectionConfig(symbols=["A", "B"], max_stocks=10)
         strategy = FundamentalSelectionStrategy(cfg, repo=repo)
 
@@ -515,19 +506,11 @@ class TestLookAheadPrevention:
         strategy.select_stocks(pd.DataFrame(), as_of=date(2025, 6, 15))
 
         # Fundamental and revenue reads honor the default 10-day publication lag.
-        repo.read_quality_factor.assert_called_once_with(
-            "2330", as_of_date="2025-06-05"
-        )
-        repo.read_monthly_revenue.assert_called_once_with(
-            "2330", as_of_date="2025-06-05"
-        )
-        repo.read_fundamentals_extended_df.assert_called_once_with(
-            "2330", as_of_date="2025-06-05"
-        )
+        repo.read_quality_factor.assert_called_once_with("2330", as_of_date="2025-06-05")
+        repo.read_monthly_revenue.assert_called_once_with("2330", as_of_date="2025-06-05")
+        repo.read_fundamentals_extended_df.assert_called_once_with("2330", as_of_date="2025-06-05")
         # Flow readers stay on the current as_of date.
-        repo.read_foreign_holding.assert_called_once_with(
-            "2330", as_of_date="2025-06-15"
-        )
+        repo.read_foreign_holding.assert_called_once_with("2330", as_of_date="2025-06-15")
 
 
 # ---------------------------------------------------------------------------
@@ -563,8 +546,10 @@ class TestFourDimensionScoring:
         config = FundamentalSelectionConfig(
             symbols=["2330"],
             scoring=ScoringWeightConfig(
-                quality_weight=0.25, growth_weight=0.25,
-                flow_weight=0.25, momentum_weight=0.25,
+                quality_weight=0.25,
+                growth_weight=0.25,
+                flow_weight=0.25,
+                momentum_weight=0.25,
             ),
         )
         strategy = FundamentalSelectionStrategy(config=config)
@@ -575,8 +560,10 @@ class TestFourDimensionScoring:
         config = FundamentalSelectionConfig(
             symbols=["2330"],
             scoring=ScoringWeightConfig(
-                quality_weight=0.333, growth_weight=0.333,
-                flow_weight=0.334, momentum_weight=0.0,
+                quality_weight=0.333,
+                growth_weight=0.333,
+                flow_weight=0.334,
+                momentum_weight=0.0,
             ),
         )
         strategy = FundamentalSelectionStrategy(config=config)
@@ -586,8 +573,10 @@ class TestFourDimensionScoring:
         config = FundamentalSelectionConfig(
             symbols=["2330"],
             scoring=ScoringWeightConfig(
-                quality_weight=0.25, growth_weight=0.25,
-                flow_weight=0.25, momentum_weight=0.50,
+                quality_weight=0.25,
+                growth_weight=0.25,
+                flow_weight=0.25,
+                momentum_weight=0.50,
             ),
         )
         strategy = FundamentalSelectionStrategy(config=config)

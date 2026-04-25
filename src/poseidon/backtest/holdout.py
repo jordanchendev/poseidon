@@ -48,9 +48,7 @@ class HoldoutConfig:
         boundary_idx = int(n * (1.0 - self.holdout_pct))
         return pd.Timestamp(ohlcv.index[boundary_idx]).to_pydatetime()
 
-    def validate_data_range(
-        self, ohlcv: pd.DataFrame, holdout_boundary: datetime
-    ) -> None:
+    def validate_data_range(self, ohlcv: pd.DataFrame, holdout_boundary: datetime) -> None:
         """Raise HoldoutViolationError if ohlcv data extends past holdout_boundary.
 
         Per D-10: optimization must not touch holdout range.

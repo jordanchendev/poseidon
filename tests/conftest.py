@@ -1,5 +1,5 @@
-import pytest
 import fakeredis
+import pytest
 
 
 @pytest.fixture(autouse=True)
@@ -37,9 +37,20 @@ def ingest_state_seed():
             ingest_state_seed(db_session, symbol="BTCUSDT", market="crypto_perp",
                               interval="4h", last_successful_ts=ts)
     """
-    def _seed(db_session, *, symbol, market, interval, last_successful_ts=None,
-              last_attempt_ts=None, last_error=None, first_backfill_done=False):
+
+    def _seed(
+        db_session,
+        *,
+        symbol,
+        market,
+        interval,
+        last_successful_ts=None,
+        last_attempt_ts=None,
+        last_error=None,
+        first_backfill_done=False,
+    ):
         from poseidon.models.ingest_state import IngestState
+
         row = IngestState(
             symbol=symbol,
             market=market,
@@ -52,6 +63,7 @@ def ingest_state_seed():
         db_session.add(row)
         db_session.commit()
         return row
+
     return _seed
 
 
@@ -64,10 +76,23 @@ def hypertable_seed_ohlcv():
             hypertable_seed_ohlcv(db_session, symbol="BTCUSDT", market="crypto_perp",
                                   interval="4h", timestamps=[ts1, ts2, ts3])
     """
-    def _seed(db_session, *, symbol, market, interval, timestamps,
-              instrument="spot",
-              open_=100.0, high=110.0, low=90.0, close=105.0, volume=1000.0):
+
+    def _seed(
+        db_session,
+        *,
+        symbol,
+        market,
+        interval,
+        timestamps,
+        instrument="spot",
+        open_=100.0,
+        high=110.0,
+        low=90.0,
+        close=105.0,
+        volume=1000.0,
+    ):
         from sqlalchemy import text
+
         for ts in timestamps:
             db_session.execute(
                 text(
@@ -76,12 +101,20 @@ def hypertable_seed_ohlcv():
                     "ON CONFLICT DO NOTHING"
                 ),
                 {
-                    "ts": ts, "symbol": symbol, "market": market,
-                    "instrument": instrument, "interval": interval,
-                    "o": open_, "h": high, "l": low, "c": close, "v": volume,
+                    "ts": ts,
+                    "symbol": symbol,
+                    "market": market,
+                    "instrument": instrument,
+                    "interval": interval,
+                    "o": open_,
+                    "h": high,
+                    "l": low,
+                    "c": close,
+                    "v": volume,
                 },
             )
         db_session.commit()
+
     return _seed
 
 
@@ -97,6 +130,7 @@ def db_session():
     DSN). Each test is responsible for cleaning up its own rows.
     """
     import os
+
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 

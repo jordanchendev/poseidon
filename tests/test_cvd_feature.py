@@ -11,7 +11,6 @@ import pytest
 
 from poseidon.data.features.cvd import CVD
 
-
 # -- Fixtures ----------------------------------------------------------------
 
 
@@ -24,9 +23,7 @@ def bullish_ohlcv() -> pd.DataFrame:
     highs = np.full(n, 110.0)
     lows = np.full(n, 95.0)
     volumes = np.full(n, 1000.0)
-    return pd.DataFrame(
-        {"open": opens, "high": highs, "low": lows, "close": closes, "volume": volumes}
-    )
+    return pd.DataFrame({"open": opens, "high": highs, "low": lows, "close": closes, "volume": volumes})
 
 
 @pytest.fixture
@@ -38,9 +35,7 @@ def bearish_ohlcv() -> pd.DataFrame:
     highs = np.full(n, 110.0)
     lows = np.full(n, 95.0)
     volumes = np.full(n, 1000.0)
-    return pd.DataFrame(
-        {"open": opens, "high": highs, "low": lows, "close": closes, "volume": volumes}
-    )
+    return pd.DataFrame({"open": opens, "high": highs, "low": lows, "close": closes, "volume": volumes})
 
 
 @pytest.fixture
@@ -53,9 +48,7 @@ def random_ohlcv() -> pd.DataFrame:
     opens = lows + rng.uniform(0, 1, n) * (highs - lows)
     closes = lows + rng.uniform(0, 1, n) * (highs - lows)
     volumes = rng.uniform(500, 3000, n)
-    return pd.DataFrame(
-        {"open": opens, "high": highs, "low": lows, "close": closes, "volume": volumes}
-    )
+    return pd.DataFrame({"open": opens, "high": highs, "low": lows, "close": closes, "volume": volumes})
 
 
 @pytest.fixture
@@ -113,9 +106,7 @@ def test_rolling_change_is_stationary(random_ohlcv: pd.DataFrame):
     mean_val = valid.mean()
     std_val = valid.std()
     # Mean should be within 2 standard deviations of zero (loose check for stationarity)
-    assert abs(mean_val) < 2 * std_val, (
-        f"Rolling change appears non-stationary: mean={mean_val:.4f}, std={std_val:.4f}"
-    )
+    assert abs(mean_val) < 2 * std_val, f"Rolling change appears non-stationary: mean={mean_val:.4f}, std={std_val:.4f}"
 
 
 # -- Test 5: Empty DataFrame returns empty Series ----------------------------

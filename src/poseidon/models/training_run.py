@@ -39,17 +39,13 @@ class TrainingRun(Base):
     lookback = Column(Text, nullable=True)
     status = Column(String(16), nullable=False, default="pending")
     metrics = Column(JSONB, nullable=True)
-    model_version_id = Column(
-        UUID(as_uuid=True), ForeignKey("model_versions.id"), nullable=True
-    )
+    model_version_id = Column(UUID(as_uuid=True), ForeignKey("model_versions.id"), nullable=True)
     mlflow_run_id = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
     requested_by = Column(String(16), nullable=False, default="api")
     started_at = Column(DateTime(timezone=True), nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),

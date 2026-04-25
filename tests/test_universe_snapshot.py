@@ -1,9 +1,7 @@
 """Tests for universe snapshot persistence and query functions."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from poseidon.data.symbols import SymbolInfo
 from poseidon.universe.snapshot import (
@@ -13,10 +11,10 @@ from poseidon.universe.snapshot import (
     snapshot_to_symbols,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_symbols() -> list[SymbolInfo]:
     return [
@@ -76,11 +74,12 @@ class FakeQuery:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestSaveSnapshot:
     def test_creates_record_with_correct_fields(self):
         """save_snapshot creates a record with market, snapshot_time, symbols, source_type, filter_config."""
         symbols = _make_symbols()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         mock_session = MagicMock()
         mock_session.add = MagicMock()
@@ -92,7 +91,7 @@ class TestSaveSnapshot:
             instance = MagicMock()
             MockRecord.return_value = instance
 
-            result = save_snapshot(
+            save_snapshot(
                 db=mock_session,
                 market="crypto_spot",
                 snapshot_time=now,
@@ -117,7 +116,7 @@ class TestSaveSnapshot:
     def test_serializes_symbols_to_jsonb(self):
         """Symbols are serialized as list of dicts with id, name, ccxt_symbol."""
         symbols = _make_symbols()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         with patch("poseidon.universe.snapshot.UniverseSnapshotRecord") as MockRecord:
             MockRecord.return_value = MagicMock()
@@ -175,7 +174,7 @@ class TestGetSnapshotAt:
         mock_query.order_by.return_value = mock_query
         mock_query.first.return_value = expected_record
 
-        target = datetime(2026, 1, 15, tzinfo=timezone.utc)
+        target = datetime(2026, 1, 15, tzinfo=UTC)
         result = get_snapshot_at(mock_session, "crypto_spot", target)
         assert result is expected_record
 
@@ -187,7 +186,7 @@ class TestGetSnapshotAt:
         mock_query.order_by.return_value = mock_query
         mock_query.first.return_value = None
 
-        target = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        target = datetime(2020, 1, 1, tzinfo=UTC)
         result = get_snapshot_at(mock_session, "crypto_spot", target)
         assert result is None
 

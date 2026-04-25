@@ -10,6 +10,7 @@ This module must only be imported inside qlib_tasks.py task body.
 
 from __future__ import annotations
 
+import contextlib
 import pickle
 import uuid
 from pathlib import Path
@@ -18,9 +19,7 @@ import numpy as np
 import pandas as pd
 
 
-def compute_shapley_values(
-    model, feature_matrix: pd.DataFrame, max_samples: int | None = 500
-) -> dict:
+def compute_shapley_values(model, feature_matrix: pd.DataFrame, max_samples: int | None = 500) -> dict:
     """Compute global mean absolute SHAP values for a tree model."""
     import shap
 
@@ -45,16 +44,14 @@ def compute_shapley_values(
     }
 
 
-def run_shapley_analysis(
-    model_version_id: str, max_samples: int | None = 500
-) -> dict:
+def run_shapley_analysis(model_version_id: str, max_samples: int | None = 500) -> dict:
     """Load a trained model and compute SHAP feature importances."""
     import qlib
     from qlib.config import REG_CN
     from qlib.data.dataset import DatasetH
 
     from poseidon.core.database import db_session
-    from poseidon.data.feature_engine import is_nonprice_spec, get_r2_specs
+    from poseidon.data.feature_engine import get_r2_specs, is_nonprice_spec
     from poseidon.ml.artifacts import get_predictions_path
     from poseidon.models.model_version import ModelVersion
     from poseidon.models.training_run import TrainingRun
@@ -62,11 +59,7 @@ def run_shapley_analysis(
     from poseidon.qlib.dataset_builder import DatasetBuilder
 
     with db_session() as session:
-        model_version = (
-            session.query(ModelVersion)
-            .filter(ModelVersion.id == uuid.UUID(model_version_id))
-            .one()
-        )
+        model_version = session.query(ModelVersion).filter(ModelVersion.id == uuid.UUID(model_version_id)).one()
         training_run = (
             session.query(TrainingRun)
             .filter(TrainingRun.model_version_id == model_version.id)
@@ -74,13 +67,9 @@ def run_shapley_analysis(
             .first()
         )
         if training_run is None:
-            raise ValueError(
-                f"No TrainingRun found for ModelVersion {model_version_id}"
-            )
+            raise ValueError(f"No TrainingRun found for ModelVersion {model_version_id}")
         if not model_version.artifact_path:
-            raise ValueError(
-                f"ModelVersion {model_version_id} has no artifact_path"
-            )
+            raise ValueError(f"ModelVersion {model_version_id} has no artifact_path")
 
         model_path = Path(model_version.artifact_path) / "model.pkl"
         if not model_path.exists():
@@ -88,10 +77,8 @@ def run_shapley_analysis(
         with model_path.open("rb") as fh:
             model = pickle.load(fh)
 
-        try:
+        with contextlib.suppress(Exception):
             qlib.init(provider_uri="~/.qlib/qlib_data/cn_data", region=REG_CN)
-        except Exception:
-            pass
 
         all_dates: list[str] = []
         for segment_name, segment_dates in training_run.segments.items():
@@ -107,9 +94,7 @@ def run_shapley_analysis(
                 training_run.symbols[0] if training_run.symbols else "",
                 training_run.market,
             )
-            feature_specs = [
-                (name, params) for name, params in all_r2 if is_nonprice_spec(name)
-            ]
+            feature_specs = [(name, params) for name, params in all_r2 if is_nonprice_spec(name)]
 
         dataset_builder = DatasetBuilder(
             session=session,
@@ -125,16 +110,11 @@ def run_shapley_analysis(
         )
         dataset = DatasetH(
             handler=handler.to_qlib_handler(),
-            segments={
-                name: (segment[0], segment[1])
-                for name, segment in training_run.segments.items()
-            },
+            segments={name: (segment[0], segment[1]) for name, segment in training_run.segments.items()},
         )
 
         available_segments = (
-            model_version.params.get("prediction_segments", ["test"])
-            if model_version.params
-            else ["test"]
+            model_version.params.get("prediction_segments", ["test"]) if model_version.params else ["test"]
         )
         feature_frames: list[pd.DataFrame] = []
         for segment in available_segments:
@@ -143,15 +123,11 @@ def run_shapley_analysis(
                 continue
             segment_features = dataset.prepare(segment, col_set="feature")
             if isinstance(segment_features.columns, pd.MultiIndex):
-                segment_features.columns = [
-                    str(column[-1]) for column in segment_features.columns.to_list()
-                ]
+                segment_features.columns = [str(column[-1]) for column in segment_features.columns.to_list()]
             feature_frames.append(segment_features)
 
         if not feature_frames:
-            raise ValueError(
-                f"No prepared feature data found for ModelVersion {model_version_id}"
-            )
+            raise ValueError(f"No prepared feature data found for ModelVersion {model_version_id}")
 
         feature_matrix = pd.concat(feature_frames)
         feature_matrix = feature_matrix[~feature_matrix.index.duplicated(keep="last")]

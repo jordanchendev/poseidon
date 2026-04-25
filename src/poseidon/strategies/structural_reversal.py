@@ -12,7 +12,7 @@ Designed for 4H crypto_perp (BTCUSDT/ETHUSDT) with pessimistic fill model.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -240,11 +240,7 @@ class StructuralReversalStrategy(BaseStrategy):
             return []
 
         row = features.iloc[-1]
-        signal_time = (
-            features.index[-1]
-            if isinstance(features.index[-1], datetime)
-            else datetime.now(timezone.utc)
-        )
+        signal_time = features.index[-1] if isinstance(features.index[-1], datetime) else datetime.now(UTC)
 
         # === IN POSITION: trailing stop update + time-based expiry ===
         if self._in_position:

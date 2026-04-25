@@ -17,9 +17,7 @@ class ADX(BaseFeature):
     name = "adx"
     description = "Average Directional Index (trend strength 0-100)"
 
-    def compute(
-        self, ohlcv: pd.DataFrame, period: int = 14, **kwargs
-    ) -> pd.Series:
+    def compute(self, ohlcv: pd.DataFrame, period: int = 14, **kwargs) -> pd.Series:
         col = f"adx_{period}"
         if not self._validate(ohlcv, min_rows=period * 2 + 1):
             return pd.Series(dtype=float, name=col)
@@ -43,16 +41,12 @@ class ADX(BaseFeature):
         high_low = high - low
         high_close_prev = (high - close.shift(1)).abs()
         low_close_prev = (low - close.shift(1)).abs()
-        tr = pd.concat(
-            [high_low, high_close_prev, low_close_prev], axis=1
-        ).max(axis=1)
+        tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
 
         # Smoothed with EMA (Wilder's smoothing = EMA with alpha=1/period)
         atr = tr.ewm(alpha=1 / period, adjust=False).mean()
         plus_di = 100 * plus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr
-        minus_di = (
-            100 * minus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr
-        )
+        minus_di = 100 * minus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr
 
         # DX and ADX
         di_sum = plus_di + minus_di
@@ -90,9 +84,7 @@ class TrendStrength(BaseFeature):
         high_low = ohlcv["high"] - ohlcv["low"]
         high_close_prev = (ohlcv["high"] - ohlcv["close"].shift(1)).abs()
         low_close_prev = (ohlcv["low"] - ohlcv["close"].shift(1)).abs()
-        tr = pd.concat(
-            [high_low, high_close_prev, low_close_prev], axis=1
-        ).max(axis=1)
+        tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
         atr = tr.rolling(window=atr_period).mean()
         result = (ohlcv["close"] - sma) / atr.replace(0, float("nan"))
         result.name = col

@@ -61,12 +61,7 @@ class VPIN(BaseFeature):
         volume = ohlcv["volume"].values
 
         # Adaptive bucket size: rolling median of bar volume (D-17)
-        median_vol = (
-            pd.Series(volume)
-            .rolling(window=lookback, min_periods=lookback)
-            .median()
-            .values
-        )
+        median_vol = pd.Series(volume).rolling(window=lookback, min_periods=lookback).median().values
 
         n = len(ohlcv)
         result = np.full(n, np.nan)
@@ -116,10 +111,7 @@ class VPIN(BaseFeature):
                 if bucket_remaining <= 1e-12:
                     # Bucket complete
                     bucket_total = bucket_buy + bucket_sell
-                    if bucket_total > 0:
-                        vpin_contrib = abs(bucket_buy - bucket_sell) / bucket_total
-                    else:
-                        vpin_contrib = 0.0
+                    vpin_contrib = abs(bucket_buy - bucket_sell) / bucket_total if bucket_total > 0 else 0.0
                     bucket_vpins.append(vpin_contrib)
 
                     # Start new bucket with current bar's adaptive bucket size

@@ -13,9 +13,7 @@ from poseidon.risk.stress.types import ScenarioConfig
 DEFAULT_SCENARIOS_DIR = "config/stress_scenarios"
 
 
-def load_scenario(
-    name: str, scenarios_dir: str = DEFAULT_SCENARIOS_DIR
-) -> ScenarioConfig:
+def load_scenario(name: str, scenarios_dir: str = DEFAULT_SCENARIOS_DIR) -> ScenarioConfig:
     """Load a single scenario by name from JSON file.
 
     Parameters

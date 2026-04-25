@@ -35,9 +35,11 @@ client = TestClient(_test_app)
 
 def _mock_db_session(mock_db):
     """Create a mock context manager that yields mock_db for db_session()."""
+
     @contextmanager
     def _fake_db_session():
         yield mock_db
+
     return _fake_db_session
 
 
@@ -274,9 +276,7 @@ def test_gpu_worker_unavailable(mock_db_session_fn, mock_get_redis, mock_celery)
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.core.redis.get_redis")
 @patch("poseidon.api.health.db_session")
-def test_health_data_freshness_null_when_no_data(
-    mock_db_session_fn, mock_get_redis, mock_celery
-):
+def test_health_data_freshness_null_when_no_data(mock_db_session_fn, mock_get_redis, mock_celery):
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None
     mock_db_session_fn.side_effect = _mock_db_session(mock_db)
@@ -304,9 +304,7 @@ def test_health_data_freshness_null_when_no_data(
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.core.redis.get_redis")
 @patch("poseidon.api.health.db_session")
-def test_health_includes_thalassa_ok(
-    mock_db_session_fn, mock_get_redis, mock_celery, mock_httpx
-):
+def test_health_includes_thalassa_ok(mock_db_session_fn, mock_get_redis, mock_celery, mock_httpx):
     """Thalassa component shows ok with latency when reachable."""
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None
@@ -338,9 +336,7 @@ def test_health_includes_thalassa_ok(
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.core.redis.get_redis")
 @patch("poseidon.api.health.db_session")
-def test_health_thalassa_unreachable_degrades(
-    mock_db_session_fn, mock_get_redis, mock_celery, mock_httpx
-):
+def test_health_thalassa_unreachable_degrades(mock_db_session_fn, mock_get_redis, mock_celery, mock_httpx):
     """Overall status degrades when Thalassa is unreachable."""
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None
@@ -366,9 +362,7 @@ def test_health_thalassa_unreachable_degrades(
 @patch("poseidon.api.health.celery_app")
 @patch("poseidon.core.redis.get_redis")
 @patch("poseidon.api.health.db_session")
-def test_health_thalassa_timeout_degrades(
-    mock_db_session_fn, mock_get_redis, mock_celery, mock_httpx
-):
+def test_health_thalassa_timeout_degrades(mock_db_session_fn, mock_get_redis, mock_celery, mock_httpx):
     """Overall status degrades when Thalassa times out."""
     mock_db = MagicMock()
     mock_db.execute.return_value.scalar.return_value = None

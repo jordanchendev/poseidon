@@ -58,14 +58,16 @@ def mock_components():
 @pytest.fixture()
 def sample_ohlcv():
     """Minimal OHLCV DataFrame for tests."""
-    return pd.DataFrame({
-        "time": pd.date_range("2024-01-01", periods=10, freq="D"),
-        "open": [100.0] * 10,
-        "high": [105.0] * 10,
-        "low": [95.0] * 10,
-        "close": [100.0 + i for i in range(10)],
-        "volume": [1000] * 10,
-    })
+    return pd.DataFrame(
+        {
+            "time": pd.date_range("2024-01-01", periods=10, freq="D"),
+            "open": [100.0] * 10,
+            "high": [105.0] * 10,
+            "low": [95.0] * 10,
+            "close": [100.0 + i for i in range(10)],
+            "volume": [1000] * 10,
+        }
+    )
 
 
 class TestOptimizationTrial:
@@ -211,9 +213,7 @@ class TestGridSearchOptimizer:
             mock_runner_instance.run.side_effect = mock_run
             MockRunner.return_value = mock_runner_instance
 
-            results = optimizer.optimize(
-                strategy_factory, sample_ohlcv, param_grid, metric="total_return"
-            )
+            results = optimizer.optimize(strategy_factory, sample_ohlcv, param_grid, metric="total_return")
 
         # Sorted by total_return descending
         assert results[0].metric_value == 0.3
@@ -236,9 +236,7 @@ class TestBayesianOptimizer:
             mock_runner_instance.run.return_value = _make_mock_result(1.0)
             MockRunner.return_value = mock_runner_instance
 
-            results = optimizer.optimize(
-                strategy_factory, sample_ohlcv, param_space, n_trials=5
-            )
+            results = optimizer.optimize(strategy_factory, sample_ohlcv, param_space, n_trials=5)
 
         assert len(results) == 5
         assert strategy_factory.call_count == 5
@@ -265,9 +263,7 @@ class TestBayesianOptimizer:
             mock_runner_instance.run.side_effect = mock_run
             MockRunner.return_value = mock_runner_instance
 
-            results = optimizer.optimize(
-                strategy_factory, sample_ohlcv, param_space, n_trials=5
-            )
+            results = optimizer.optimize(strategy_factory, sample_ohlcv, param_space, n_trials=5)
 
         # All results present
         assert len(results) == 5
@@ -300,18 +296,18 @@ class TestBayesianOptimizer:
                 mock_study.trials = [mock_trial]
                 mock_optuna.create_study.return_value = mock_study
 
-                results = optimizer.optimize(
-                    strategy_factory, sample_ohlcv, param_space, n_trials=1
-                )
+                optimizer.optimize(strategy_factory, sample_ohlcv, param_space, n_trials=1)
 
                 # Verify TPESampler was used
                 mock_optuna.samplers.TPESampler.assert_called_once()
                 # Verify create_study was called with maximize direction
                 mock_optuna.create_study.assert_called_once()
                 call_kwargs = mock_optuna.create_study.call_args
-                assert call_kwargs.kwargs.get("direction") == "maximize" or \
-                    (call_kwargs.args and call_kwargs.args[0] == "maximize") or \
-                    call_kwargs[1].get("direction") == "maximize"
+                assert (
+                    call_kwargs.kwargs.get("direction") == "maximize"
+                    or (call_kwargs.args and call_kwargs.args[0] == "maximize")
+                    or call_kwargs[1].get("direction") == "maximize"
+                )
 
     def test_bayesian_accepts_float_params(self, mock_components, sample_ohlcv):
         """BayesianOptimizer handles float parameter types."""
@@ -329,9 +325,7 @@ class TestBayesianOptimizer:
             mock_runner_instance.run.return_value = _make_mock_result(1.0)
             MockRunner.return_value = mock_runner_instance
 
-            results = optimizer.optimize(
-                strategy_factory, sample_ohlcv, param_space, n_trials=3
-            )
+            results = optimizer.optimize(strategy_factory, sample_ohlcv, param_space, n_trials=3)
 
         assert len(results) == 3
         # Each result should have both params
@@ -352,9 +346,7 @@ class TestBayesianOptimizer:
             mock_runner_instance.run.return_value = _make_mock_result(2.0)
             MockRunner.return_value = mock_runner_instance
 
-            results = optimizer.optimize(
-                strategy_factory, sample_ohlcv, param_space, n_trials=2
-            )
+            results = optimizer.optimize(strategy_factory, sample_ohlcv, param_space, n_trials=2)
 
         for r in results:
             assert isinstance(r.metrics, dict)
@@ -374,8 +366,11 @@ class TestBayesianOptimizer:
             MockRunner.return_value = mock_runner_instance
 
             results = optimizer.optimize(
-                strategy_factory, sample_ohlcv, param_space,
-                n_trials=3, metric="total_return",
+                strategy_factory,
+                sample_ohlcv,
+                param_space,
+                n_trials=3,
+                metric="total_return",
             )
 
         assert len(results) == 3
@@ -413,7 +408,10 @@ class TestBayesianOptimizerFillModel:
             MockRunner.return_value = mock_runner_instance
 
             optimizer.optimize(
-                strategy_factory, sample_ohlcv, param_space, n_trials=1,
+                strategy_factory,
+                sample_ohlcv,
+                param_space,
+                n_trials=1,
             )
 
             # Verify BacktestRunner was constructed with fill_model=PESSIMISTIC

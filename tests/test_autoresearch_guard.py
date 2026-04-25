@@ -13,12 +13,11 @@ import pandas as pd
 import pytest
 
 from poseidon.autoresearch.guard import (
-    ImmutabilityViolationError,
     _AUTORESEARCH_ACTIVE,
+    ImmutabilityViolationError,
     autoresearch_context,
     autoresearch_guard,
 )
-
 
 # ---------------------------------------------------------------------------
 # ContextVar basics
@@ -37,10 +36,9 @@ class TestContextVar:
 
     def test_context_manager_resets_on_exception(self):
         """Flag must reset even when body raises (try/finally)."""
-        with pytest.raises(ValueError, match="boom"):
-            with autoresearch_context():
-                assert _AUTORESEARCH_ACTIVE.get(False) is True
-                raise ValueError("boom")
+        with pytest.raises(ValueError, match="boom"), autoresearch_context():
+            assert _AUTORESEARCH_ACTIVE.get(False) is True
+            raise ValueError("boom")
         assert _AUTORESEARCH_ACTIVE.get(False) is False
 
 

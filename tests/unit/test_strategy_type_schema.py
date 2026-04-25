@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 STRATEGY_MODEL_PATH = ROOT / "src" / "poseidon" / "models" / "strategy.py"
 BACKTEST_MODEL_PATH = ROOT / "src" / "poseidon" / "models" / "backtest.py"
@@ -18,12 +17,12 @@ MIGRATION_031_PATH = ROOT / "alembic" / "versions" / "031_expand_strategy_type_c
 
 def test_strategy_record_allows_portfolio_strategy_width():
     content = STRATEGY_MODEL_PATH.read_text()
-    assert 'strategy_type: Mapped[str] = mapped_column(String(32), nullable=False)' in content
+    assert "strategy_type: Mapped[str] = mapped_column(String(32), nullable=False)" in content
 
 
 def test_backtest_record_allows_portfolio_strategy_width():
     content = BACKTEST_MODEL_PATH.read_text()
-    assert 'strategy_type: Mapped[str] = mapped_column(String(32), nullable=False)' in content
+    assert "strategy_type: Mapped[str] = mapped_column(String(32), nullable=False)" in content
 
 
 def test_migration_031_exists_and_expands_strategy_type_columns():

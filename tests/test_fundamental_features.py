@@ -5,18 +5,18 @@ import pandas as pd
 import pytest
 
 from poseidon.data.features.fundamentals import (
-    DebtRatio,
     EPS,
+    ROA,
+    ROE,
+    DebtRatio,
     GrossMargin,
     OperatingMargin,
     PBRatio,
     PERatio,
-    ROA,
-    ROAGrowth,
-    ROE,
-    ROEGrowth,
     RevenueMoM,
     RevenueYoY,
+    ROAGrowth,
+    ROEGrowth,
 )
 
 
@@ -61,14 +61,14 @@ def fundamental_data(ohlcv):
     roa_values = [0.08, 0.09, 0.07, 0.10]
 
     # Set quarterly values
-    for d, pe, pb, roe, roa in zip(quarterly_dates, pe_values, pb_values, roe_values, roa_values):
+    for d, pe, pb, roe, roa in zip(quarterly_dates, pe_values, pb_values, roe_values, roa_values, strict=False):
         df.loc[d, "pe_ratio"] = pe
         df.loc[d, "pb_ratio"] = pb
         df.loc[d, "roe"] = roe
         df.loc[d, "roa"] = roa
 
     # Set monthly values
-    for d, rev, prev in zip(monthly_dates, monthly_rev, prev_year_rev):
+    for d, rev, prev in zip(monthly_dates, monthly_rev, prev_year_rev, strict=False):
         df.loc[d, "monthly_rev"] = rev
         df.loc[d, "prev_year_rev"] = prev
 

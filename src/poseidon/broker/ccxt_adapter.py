@@ -7,7 +7,7 @@ CCXT is lazily imported so the module loads on machines without ccxt installed.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from poseidon.broker.base import BrokerAdapter
 from poseidon.orders.schemas import Fill, Order
@@ -104,7 +104,7 @@ class CCXTBrokerAdapter(BrokerAdapter):
                         order_id=order.id,
                         fill_price=float(fetched.get("average", fetched.get("price", 0))),
                         fill_quantity=float(fetched["filled"]),
-                        fill_time=datetime.now(timezone.utc),
+                        fill_time=datetime.now(UTC),
                         broker_fill_id=f"{broker_order_id}-fill",
                     )
                 )
@@ -175,9 +175,7 @@ class CCXTBrokerAdapter(BrokerAdapter):
             else:
                 raise
 
-    def query_funding_history(
-        self, symbol: str, since: int | None = None
-    ) -> list[dict]:
+    def query_funding_history(self, symbol: str, since: int | None = None) -> list[dict]:
         """Fetch funding rate payment history for a symbol."""
         return self._exchange.fetch_funding_history(symbol, since=since)
 

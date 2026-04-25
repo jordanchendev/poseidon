@@ -60,10 +60,7 @@ class OrderRiskChecker:
             current_exposure = sum(h.weight for h in holdings)
             projected = current_exposure + order.target_weight
             if projected > self.max_exposure:
-                reason = (
-                    f"max_exposure: projected {projected:.2%} "
-                    f"exceeds limit {self.max_exposure:.2%}"
-                )
+                reason = f"max_exposure: projected {projected:.2%} exceeds limit {self.max_exposure:.2%}"
                 logger.warning("Risk rejected: %s", reason)
                 return RiskCheckResult(passed=False, reason=reason)
 

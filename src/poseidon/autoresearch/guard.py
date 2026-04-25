@@ -16,16 +16,14 @@ from __future__ import annotations
 import contextvars
 from contextlib import contextmanager
 
-_AUTORESEARCH_ACTIVE: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "_AUTORESEARCH_ACTIVE", default=False
-)
+_AUTORESEARCH_ACTIVE: contextvars.ContextVar[bool] = contextvars.ContextVar("_AUTORESEARCH_ACTIVE", default=False)
 
 
 class ImmutabilityViolationError(RuntimeError):
     """Raised when autoresearch code attempts to mutate a protected object."""
 
 
-def autoresearch_guard(cls=None, *, mutable_attrs: frozenset[str] = frozenset()):  # noqa: ANN001, ANN201
+def autoresearch_guard(cls=None, *, mutable_attrs: frozenset[str] = frozenset()):
     """Class decorator that prevents __setattr__ while autoresearch is active.
 
     Allows initial construction (__init__) by tracking an ``_ar_initialized``
@@ -36,15 +34,16 @@ def autoresearch_guard(cls=None, *, mutable_attrs: frozenset[str] = frozenset())
         mutable_attrs: Attribute names that are allowed to mutate even during
             autoresearch (e.g. per-run runtime state that gets reset each trial).
     """
-    def _apply(cls):  # noqa: ANN001, ANN201
+
+    def _apply(cls):
         original_init = cls.__init__
 
-        def guarded_init(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        def guarded_init(self, *args, **kwargs):
             object.__setattr__(self, "_ar_initialized", False)
             original_init(self, *args, **kwargs)
             object.__setattr__(self, "_ar_initialized", True)
 
-        def guarded_setattr(self, name, value):  # noqa: ANN001, ANN201
+        def guarded_setattr(self, name, value):
             if (
                 getattr(self, "_ar_initialized", False)
                 and _AUTORESEARCH_ACTIVE.get(False)
@@ -59,12 +58,16 @@ def autoresearch_guard(cls=None, *, mutable_attrs: frozenset[str] = frozenset())
 
         # Create a NEW subclass instead of mutating the original.
         # This ensures `autoresearch_guard(Cls) is not Cls`.
-        guarded_cls = type(cls.__name__, (cls,), {
-            "__init__": guarded_init,
-            "__setattr__": guarded_setattr,
-            "__module__": cls.__module__,
-            "__qualname__": cls.__qualname__,
-        })
+        guarded_cls = type(
+            cls.__name__,
+            (cls,),
+            {
+                "__init__": guarded_init,
+                "__setattr__": guarded_setattr,
+                "__module__": cls.__module__,
+                "__qualname__": cls.__qualname__,
+            },
+        )
         return guarded_cls
 
     if cls is not None:

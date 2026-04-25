@@ -1,6 +1,6 @@
 """Tests for VaR types, VaRSnapshot model, and VaR/drawdown settings."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 class TestVaRMethod:
@@ -34,7 +34,7 @@ class TestVaRResult:
     def test_creation_with_required_fields(self):
         from poseidon.risk.var.types import VaRResult
 
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         result = VaRResult(
             method="parametric",
             var_95=0.05,
@@ -57,7 +57,7 @@ class TestVaRResult:
     def test_holding_period_default(self):
         from poseidon.risk.var.types import VaRResult
 
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         result = VaRResult(
             method="historical",
             var_95=0.03,
@@ -73,7 +73,7 @@ class TestVaRResult:
     def test_details_field(self):
         from poseidon.risk.var.types import VaRResult
 
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         details = {"skew": -0.5, "kurtosis": 4.2}
         result = VaRResult(
             method="cornish_fisher",
@@ -100,7 +100,17 @@ class TestVaRSnapshot:
     def test_has_expected_columns(self):
         from poseidon.models.var_snapshot import VaRSnapshot
 
-        expected = {"time", "method", "var_95", "var_99", "cvar_95", "cvar_99", "portfolio_value", "holding_period", "details"}
+        expected = {
+            "time",
+            "method",
+            "var_95",
+            "var_99",
+            "cvar_95",
+            "cvar_99",
+            "portfolio_value",
+            "holding_period",
+            "details",
+        }
         actual = {c.name for c in VaRSnapshot.__table__.columns}
         assert expected.issubset(actual), f"Missing columns: {expected - actual}"
 

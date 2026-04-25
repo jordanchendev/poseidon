@@ -30,7 +30,7 @@ class BacktestRepository:
     - backtest_equity: Per-bar equity curve points
     """
 
-    def __init__(self, db_session) -> None:  # noqa: ANN001
+    def __init__(self, db_session) -> None:
         self._db = db_session
 
     def save_result(
@@ -110,11 +110,7 @@ class BacktestRepository:
         Returns:
             BacktestRecord or None if not found.
         """
-        return (
-            self._db.query(BacktestRecord)
-            .filter(BacktestRecord.id == backtest_id)
-            .first()
-        )
+        return self._db.query(BacktestRecord).filter(BacktestRecord.id == backtest_id).first()
 
     def list_backtests(
         self,
@@ -162,11 +158,7 @@ class BacktestRepository:
                 continue
             latest_by_strategy[record.strategy_id] = record
 
-        return [
-            latest_by_strategy[strategy_id]
-            for strategy_id in strategy_ids
-            if strategy_id in latest_by_strategy
-        ]
+        return [latest_by_strategy[strategy_id] for strategy_id in strategy_ids if strategy_id in latest_by_strategy]
 
     def get_trades(self, backtest_id: uuid.UUID) -> list[BacktestTradeRecord]:
         """Retrieve all trades for a backtest.
@@ -177,15 +169,9 @@ class BacktestRepository:
         Returns:
             List of BacktestTradeRecord objects.
         """
-        return (
-            self._db.query(BacktestTradeRecord)
-            .filter(BacktestTradeRecord.backtest_id == backtest_id)
-            .all()
-        )
+        return self._db.query(BacktestTradeRecord).filter(BacktestTradeRecord.backtest_id == backtest_id).all()
 
-    def get_equity_curve(
-        self, backtest_id: uuid.UUID
-    ) -> list[BacktestEquityRecord]:
+    def get_equity_curve(self, backtest_id: uuid.UUID) -> list[BacktestEquityRecord]:
         """Retrieve the equity curve for a backtest.
 
         Args:

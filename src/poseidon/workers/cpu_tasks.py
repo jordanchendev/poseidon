@@ -4,9 +4,10 @@ Phase 61: All data-fetching / ingest / backfill tasks removed.
 Poseidon reads data exclusively via Thalassa RemoteDataRepository.
 """
 
+import contextlib
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 
@@ -17,10 +18,9 @@ from poseidon.backtest.repository import BacktestRepository
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.backtest.schemas import BacktestConfig
 from poseidon.core.config import settings
-from poseidon.core.database import db_session, SessionLocal
+from poseidon.core.database import SessionLocal, db_session
 from poseidon.core.redis import get_redis
 from poseidon.data.feature_engine import FeatureEngine
-from poseidon.data.symbols import load_symbols
 from poseidon.models.backtest import BacktestRecord
 from poseidon.models.strategy import StrategyRecord
 from poseidon.risk.engine import RiskEngine
@@ -31,7 +31,7 @@ from poseidon.workers.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
-def _build_portfolio_strategy(record, repo):  # noqa: ANN001
+def _build_portfolio_strategy(record, repo):
     """Build a PortfolioStrategy instance from StrategyRecord config."""
     from poseidon.strategies.portfolio.crypto_trend import CryptoTrendConfig
     from poseidon.strategies.portfolio.fundamental_selection import (
@@ -69,17 +69,15 @@ def _build_portfolio_strategy(record, repo):  # noqa: ANN001
         return strategy_cls(strategy_cfg)
 
 
-def _serialize_portfolio_trades(trades: list[dict]):  # noqa: ANN001
+def _serialize_portfolio_trades(trades: list[dict]):
     """Convert portfolio backtester trade dicts to repository TradeRecord objects."""
     from poseidon.backtest.portfolio import TradeRecord
 
     result: list[TradeRecord] = []
     for trade in trades:
-        trade_dt = datetime.fromisoformat(trade["date"]).replace(tzinfo=timezone.utc)
+        trade_dt = datetime.fromisoformat(trade["date"]).replace(tzinfo=UTC)
         metadata = {
-            key: value
-            for key, value in trade.items()
-            if key not in {"symbol", "action", "date", "price", "shares"}
+            key: value for key, value in trade.items() if key not in {"symbol", "action", "date", "price", "shares"}
         }
         result.append(
             TradeRecord(
@@ -95,20 +93,20 @@ def _serialize_portfolio_trades(trades: list[dict]):  # noqa: ANN001
     return result
 
 
-def _serialize_portfolio_equity_curve(equity_curve: list[tuple]):  # noqa: ANN001
+def _serialize_portfolio_equity_curve(equity_curve: list[tuple]):
     """Convert portfolio equity points to repository-compatible tuples."""
     result: list[tuple[datetime, float, float]] = []
     peak = 0.0
 
     for point_in_time, equity in equity_curve:
         if isinstance(point_in_time, datetime):
-            ts = point_in_time if point_in_time.tzinfo else point_in_time.replace(tzinfo=timezone.utc)
+            ts = point_in_time if point_in_time.tzinfo else point_in_time.replace(tzinfo=UTC)
         else:
             ts = datetime(
                 point_in_time.year,
                 point_in_time.month,
                 point_in_time.day,
-                tzinfo=timezone.utc,
+                tzinfo=UTC,
             )
 
         equity_value = float(equity)
@@ -192,6 +190,7 @@ def run_backtest_task(
     backtest_id = uuid.uuid4()
     with db_session() as session:
         from poseidon.data.remote_repository import RemoteDataRepository
+
         repo = RemoteDataRepository.from_settings()
         try:
             # Load strategy record from DB
@@ -210,9 +209,14 @@ def run_backtest_task(
             elif record.strategy_type == "model":
                 # Route to GPU worker which has model dependencies
                 from poseidon.workers.gpu_tasks import run_model_backtest
+
                 result = run_model_backtest.delay(
-                    strategy_id, start_date, end_date, initial_capital,
-                    sizing_mode, sizing_params,
+                    strategy_id,
+                    start_date,
+                    end_date,
+                    initial_capital,
+                    sizing_mode,
+                    sizing_params,
                 )
                 logger.info("Routed model backtest to GPU worker: %s", result.id)
                 return {"backtest_id": result.id, "status": "routed_to_gpu", "trade_count": 0}
@@ -225,10 +229,7 @@ def run_backtest_task(
 
                 strategy = _build_portfolio_strategy(record, repo)
                 symbols = list(
-                    dict.fromkeys(
-                        (record.config or {}).get("symbols")
-                        or ([record.symbol] if record.symbol else [])
-                    )
+                    dict.fromkeys((record.config or {}).get("symbols") or ([record.symbol] if record.symbol else []))
                 )
                 if not symbols:
                     raise ValueError("portfolio_strategy config must include at least one symbol")
@@ -249,15 +250,9 @@ def run_backtest_task(
                     raise ValueError(f"No OHLCV data for portfolio strategy {record.id}")
 
                 if parsed_start is None:
-                    parsed_start = min(
-                        pd.Timestamp(df.index.min()).to_pydatetime()
-                        for df in ohlcv_dict.values()
-                    )
+                    parsed_start = min(pd.Timestamp(df.index.min()).to_pydatetime() for df in ohlcv_dict.values())
                 if parsed_end is None:
-                    parsed_end = max(
-                        pd.Timestamp(df.index.max()).to_pydatetime()
-                        for df in ohlcv_dict.values()
-                    )
+                    parsed_end = max(pd.Timestamp(df.index.max()).to_pydatetime() for df in ohlcv_dict.values())
 
                 backtester = PortfolioBacktester(
                     cost_model=COST_MODELS[record.market],
@@ -271,9 +266,7 @@ def run_backtest_task(
                 )
 
                 trade_records = _serialize_portfolio_trades(portfolio_result.trades)
-                equity_curve = _serialize_portfolio_equity_curve(
-                    portfolio_result.equity_curve
-                )
+                equity_curve = _serialize_portfolio_equity_curve(portfolio_result.equity_curve)
                 bt_config = BacktestConfig(
                     strategy_type=record.strategy_type,
                     symbol=record.symbol,
@@ -303,7 +296,7 @@ def run_backtest_task(
                     trades=trade_records,
                     equity_curve=equity_curve,
                     strategy_id=sid,
-                    completed_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(UTC),
                 )
                 session.commit()
 
@@ -321,13 +314,14 @@ def run_backtest_task(
 
             # Load OHLCV data
             ohlcv_df = repo.read_ohlcv(
-                record.symbol, record.market, record.interval,
-                start=parsed_start, end=parsed_end,
+                record.symbol,
+                record.market,
+                record.interval,
+                start=parsed_start,
+                end=parsed_end,
             )
             if ohlcv_df.empty:
-                raise ValueError(
-                    f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}"
-                )
+                raise ValueError(f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}")
 
             # Build pipeline components
             feature_engine = FeatureEngine()
@@ -355,9 +349,7 @@ def run_backtest_task(
                     .all()
                 )
                 if rows:
-                    funding_df = pd.DataFrame(
-                        [{"datetime": r.time, "funding_rate": r.funding_rate} for r in rows]
-                    )
+                    funding_df = pd.DataFrame([{"datetime": r.time, "funding_rate": r.funding_rate} for r in rows])
                     funding_df.index = pd.to_datetime(funding_df["datetime"], utc=True)
                     funding_df = funding_df.drop(columns=["datetime"])
 
@@ -396,13 +388,15 @@ def run_backtest_task(
                 trades=runner.portfolio.trades if runner.portfolio else [],
                 equity_curve=runner.portfolio.equity_curve if runner.portfolio else [],
                 strategy_id=sid,
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
             )
             session.commit()
 
             logger.info(
                 "Backtest completed: %s (strategy=%s, trades=%d)",
-                backtest_id, strategy_id, result.trade_count,
+                backtest_id,
+                strategy_id,
+                result.trade_count,
             )
             return {
                 "backtest_id": str(backtest_id),
@@ -469,6 +463,7 @@ def run_dual_mode_task(
 
     with db_session() as session:
         from poseidon.data.remote_repository import RemoteDataRepository
+
         repo = RemoteDataRepository.from_settings()
         try:
             sid = uuid.UUID(strategy_id)
@@ -494,13 +489,14 @@ def run_dual_mode_task(
 
             # Load OHLCV data
             ohlcv_df = repo.read_ohlcv(
-                record.symbol, record.market, record.interval,
-                start=parsed_start, end=parsed_end,
+                record.symbol,
+                record.market,
+                record.interval,
+                start=parsed_start,
+                end=parsed_end,
             )
             if ohlcv_df.empty:
-                raise ValueError(
-                    f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}"
-                )
+                raise ValueError(f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}")
 
             # Build pipeline components
             feature_engine = FeatureEngine()
@@ -523,9 +519,7 @@ def run_dual_mode_task(
                     .all()
                 )
                 if rows:
-                    funding_df = pd.DataFrame(
-                        [{"datetime": r.time, "funding_rate": r.funding_rate} for r in rows]
-                    )
+                    funding_df = pd.DataFrame([{"datetime": r.time, "funding_rate": r.funding_rate} for r in rows])
                     funding_df.index = pd.to_datetime(funding_df["datetime"], utc=True)
                     funding_df = funding_df.drop(columns=["datetime"])
 
@@ -545,7 +539,8 @@ def run_dual_mode_task(
 
             logger.info(
                 "Dual-mode comparison completed: strategy=%s, is_viable=%s",
-                strategy_id, dual_result.is_viable,
+                strategy_id,
+                dual_result.is_viable,
             )
             return {
                 "optimistic_metrics": dual_result.optimistic_result.metrics,
@@ -595,6 +590,7 @@ def run_optimization_task(
     """
     with db_session() as session:
         from poseidon.data.remote_repository import RemoteDataRepository
+
         repo = RemoteDataRepository.from_settings()
         try:
             # Load strategy record from DB
@@ -604,9 +600,7 @@ def run_optimization_task(
                 raise ValueError(f"Strategy {strategy_id} not found")
 
             if record.strategy_type != "rule":
-                raise NotImplementedError(
-                    f"Optimization for strategy_type={record.strategy_type!r} not yet supported"
-                )
+                raise NotImplementedError(f"Optimization for strategy_type={record.strategy_type!r} not yet supported")
 
             # Parse date filters
             parsed_start = datetime.fromisoformat(start_date) if start_date else None
@@ -614,13 +608,14 @@ def run_optimization_task(
 
             # Load OHLCV data
             ohlcv_df = repo.read_ohlcv(
-                record.symbol, record.market, record.interval,
-                start=parsed_start, end=parsed_end,
+                record.symbol,
+                record.market,
+                record.interval,
+                start=parsed_start,
+                end=parsed_end,
             )
             if ohlcv_df.empty:
-                raise ValueError(
-                    f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}"
-                )
+                raise ValueError(f"No OHLCV data for {record.symbol}/{record.market}/{record.interval}")
 
             # Build pipeline components
             feature_engine = FeatureEngine()
@@ -668,10 +663,7 @@ def run_optimization_task(
                     if isinstance(spec, (list, tuple)) and len(spec) == 3:
                         param_space[key] = (spec[0], spec[1], spec[2])
                     else:
-                        raise ValueError(
-                            f"Bayesian param_grid[{key!r}] must be [low, high, type], "
-                            f"got {spec!r}"
-                        )
+                        raise ValueError(f"Bayesian param_grid[{key!r}] must be [low, high, type], got {spec!r}")
                 trials = optimizer.optimize(
                     strategy_factory=strategy_factory,
                     ohlcv=ohlcv_df,
@@ -705,14 +697,16 @@ def run_optimization_task(
                         "total_trials": len(trials),
                     },
                     status="completed",
-                    completed_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(UTC),
                 )
                 session.add(bt_record)
                 session.commit()
 
             logger.info(
                 "Optimization completed: strategy=%s method=%s trials=%d best_metric=%.4f",
-                strategy_id, method, len(trials),
+                strategy_id,
+                method,
+                len(trials),
                 best.metric_value if best else 0.0,
             )
             return {
@@ -721,7 +715,7 @@ def run_optimization_task(
                 "best_metric": best.metric_value if best else 0.0,
             }
 
-        except Exception as exc:
+        except Exception:
             logger.exception("Optimization task failed for strategy %s", strategy_id)
             raise
 
@@ -749,6 +743,7 @@ def compute_var_snapshot(method: str = "all") -> dict:
     redis_client = get_redis("cache")
     with db_session() as db:
         from poseidon.data.remote_repository import RemoteDataRepository
+
         repo = RemoteDataRepository.from_settings()
         # 1. Rebuild portfolio from DB
         portfolio = VirtualPortfolio()
@@ -759,7 +754,7 @@ def compute_var_snapshot(method: str = "all") -> dict:
 
         weights = portfolio.weights()
         symbols = portfolio.position_symbols()
-        as_of = datetime.now(timezone.utc)
+        as_of = datetime.now(UTC)
         portfolio_value = portfolio.total_exposure()
 
         calculator = VaRCalculator()
@@ -770,7 +765,7 @@ def compute_var_snapshot(method: str = "all") -> dict:
         if cached is None:
             logger.warning("No cached covariance matrix, skipping VaR computation")
             return {"status": "skipped", "reason": "no cached covariance matrix"}
-        cov_symbols, cov_matrix, cov_meta = cached
+        _cov_symbols, cov_matrix, _cov_meta = cached
 
         # 3. Load portfolio returns for historical/cornish-fisher methods
         # TODO: Load real aligned returns from OHLCV storage once portfolio
@@ -779,9 +774,9 @@ def compute_var_snapshot(method: str = "all") -> dict:
         try:
             return_series = {}
             for sym in symbols:
-                ohlcv_df = repo.read_ohlcv(sym, market="", interval="1d",
-                                           start=as_of - timedelta(days=settings.var_lookback_days),
-                                           end=as_of)
+                ohlcv_df = repo.read_ohlcv(
+                    sym, market="", interval="1d", start=as_of - timedelta(days=settings.var_lookback_days), end=as_of
+                )
                 if not ohlcv_df.empty and "close" in ohlcv_df.columns:
                     close = ohlcv_df["close"]
                     if hasattr(close, "index"):
@@ -807,9 +802,7 @@ def compute_var_snapshot(method: str = "all") -> dict:
                 result = calculator.parametric(weights, cov_matrix, portfolio_value, as_of)
             elif m == VaRMethod.HISTORICAL:
                 if len(portfolio_returns) >= settings.var_min_observations:
-                    result = calculator.historical_simulation(
-                        portfolio_returns, portfolio_value, as_of
-                    )
+                    result = calculator.historical_simulation(portfolio_returns, portfolio_value, as_of)
                 else:
                     logger.warning(
                         "Insufficient portfolio returns (%d) for historical VaR, skipping",
@@ -819,8 +812,11 @@ def compute_var_snapshot(method: str = "all") -> dict:
             elif m == VaRMethod.CORNISH_FISHER:
                 if len(portfolio_returns) >= settings.var_min_observations:
                     result = calculator.cornish_fisher(
-                        weights, cov_matrix, portfolio_returns,
-                        portfolio_value, as_of,
+                        weights,
+                        cov_matrix,
+                        portfolio_returns,
+                        portfolio_value,
+                        as_of,
                     )
                 else:
                     logger.warning(
@@ -854,17 +850,19 @@ def compute_var_snapshot(method: str = "all") -> dict:
             logger.info("Cached VaR snapshot at %s (var_95=%.6f)", redis_key, result.var_95)
 
             # 5. Store in TimescaleDB
-            db.add(VaRSnapshot(
-                time=result.as_of,
-                method=result.method,
-                var_95=result.var_95,
-                var_99=result.var_99,
-                cvar_95=result.cvar_95,
-                cvar_99=result.cvar_99,
-                portfolio_value=result.portfolio_value,
-                holding_period=result.holding_period,
-                details=result.details,
-            ))
+            db.add(
+                VaRSnapshot(
+                    time=result.as_of,
+                    method=result.method,
+                    var_95=result.var_95,
+                    var_99=result.var_99,
+                    cvar_95=result.cvar_95,
+                    cvar_99=result.cvar_99,
+                    portfolio_value=result.portfolio_value,
+                    holding_period=result.holding_period,
+                    details=result.details,
+                )
+            )
 
         db.commit()
         computed_methods = [r.method for r in results]
@@ -883,7 +881,6 @@ def compute_mc_var() -> dict:
         Dict with status and result summary.
     """
     import msgpack
-    import numpy as np
 
     from poseidon.models.var_snapshot import VaRSnapshot
     from poseidon.risk.portfolio import VirtualPortfolio
@@ -897,7 +894,7 @@ def compute_mc_var() -> dict:
         if cached is None:
             logger.warning("No cached covariance matrix, skipping MC VaR")
             return {"status": "skipped", "reason": "no cached covariance matrix"}
-        cov_symbols, cov_matrix, cov_meta = cached
+        _cov_symbols, cov_matrix, _cov_meta = cached
 
         # 2. Rebuild portfolio from DB
         portfolio = VirtualPortfolio()
@@ -908,7 +905,7 @@ def compute_mc_var() -> dict:
 
         weights = portfolio.weights()
         portfolio_value = portfolio.total_exposure()
-        as_of = datetime.now(timezone.utc)
+        as_of = datetime.now(UTC)
 
         # 3. Compute Monte Carlo VaR
         calculator = VaRCalculator()
@@ -940,17 +937,19 @@ def compute_mc_var() -> dict:
         logger.info("Cached MC VaR snapshot at %s (var_95=%.6f)", redis_key, result.var_95)
 
         # 5. Store in TimescaleDB
-        db.add(VaRSnapshot(
-            time=result.as_of,
-            method=result.method,
-            var_95=result.var_95,
-            var_99=result.var_99,
-            cvar_95=result.cvar_95,
-            cvar_99=result.cvar_99,
-            portfolio_value=result.portfolio_value,
-            holding_period=result.holding_period,
-            details=result.details,
-        ))
+        db.add(
+            VaRSnapshot(
+                time=result.as_of,
+                method=result.method,
+                var_95=result.var_95,
+                var_99=result.var_99,
+                cvar_95=result.cvar_95,
+                cvar_99=result.cvar_99,
+                portfolio_value=result.portfolio_value,
+                holding_period=result.holding_period,
+                details=result.details,
+            )
+        )
         db.commit()
 
         logger.info("MC VaR computation completed: var_95=%.6f var_99=%.6f", result.var_95, result.var_99)
@@ -972,7 +971,6 @@ def update_covariance_matrix() -> dict:
     Returns:
         Dict with status and symbol count.
     """
-    import numpy as np
 
     from poseidon.risk.portfolio import VirtualPortfolio
     from poseidon.risk.var.covariance import cache_covariance, compute_covariance
@@ -981,6 +979,7 @@ def update_covariance_matrix() -> dict:
     redis_client = get_redis("cache")
     with db_session() as db:
         from poseidon.data.remote_repository import RemoteDataRepository
+
         repo = RemoteDataRepository.from_settings()
         # 1. Get active portfolio symbols
         portfolio = VirtualPortfolio()
@@ -990,14 +989,13 @@ def update_covariance_matrix() -> dict:
             return {"status": "skipped", "reason": "no open positions"}
 
         symbols = portfolio.position_symbols()
-        as_of = datetime.now(timezone.utc)
+        as_of = datetime.now(UTC)
 
         # 2. Load OHLCV close prices and compute returns for each symbol
         return_series = {}
         for sym in symbols:
             start = as_of - timedelta(days=settings.var_lookback_days)
-            ohlcv_df = repo.read_ohlcv(sym, market="", interval="1d",
-                                       start=start, end=as_of)
+            ohlcv_df = repo.read_ohlcv(sym, market="", interval="1d", start=start, end=as_of)
             if ohlcv_df.empty:
                 logger.warning("No OHLCV data for %s, skipping in covariance", sym)
                 continue
@@ -1055,7 +1053,7 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
     from poseidon.backtest.param_search import SearchConfig as SearchConfigClass
     from poseidon.backtest.walk_forward import WalkForwardConfig
 
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     redis_client = get_redis("celery")
     task_id = self.request.id or "local"
 
@@ -1102,12 +1100,12 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
 
             # D-11: regime_router special path -- does NOT use AutoResearchRunner
             if strategy_type == "regime_router":
-                from poseidon.backtest.regime_search import RegimeSearchPipeline, RegimeSearchConfig
-                from poseidon.backtest.experiment_tracker import ExperimentTracker as ET
-                from poseidon.data.feature_engine import FeatureOrchestrator
-                from poseidon.risk.engine import RiskEngine
                 from poseidon.backtest.cost_model import COST_MODELS
+                from poseidon.backtest.experiment_tracker import ExperimentTracker as ET
+                from poseidon.backtest.regime_search import RegimeSearchConfig, RegimeSearchPipeline
+                from poseidon.data.feature_engine import FeatureOrchestrator
                 from poseidon.data.remote_repository import RemoteDataRepository
+                from poseidon.risk.engine import RiskEngine
 
                 regime_tracker = ET(db)
                 feature_engine = FeatureOrchestrator()
@@ -1125,10 +1123,16 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
                     cost_model = COST_MODELS.get(spec.market)
                     if cost_model is None:
                         from poseidon.backtest.cost_model import CostModel
-                        cost_model = CostModel(market=spec.market, buy_commission_rate=0.0,
-                                               sell_commission_rate=0.0, tax_rate=0.0,
-                                               slippage_pct=0.0, slippage_ticks=0.0,
-                                               description=f"Default for {spec.market}")
+
+                        cost_model = CostModel(
+                            market=spec.market,
+                            buy_commission_rate=0.0,
+                            sell_commission_rate=0.0,
+                            tax_rate=0.0,
+                            slippage_pct=0.0,
+                            slippage_ticks=0.0,
+                            description=f"Default for {spec.market}",
+                        )
 
                     repo = RemoteDataRepository.from_settings()
                     ohlcv = repo.read_ohlcv(spec.symbol, spec.market, spec.interval)
@@ -1137,6 +1141,7 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
 
                     # Load regime model
                     from poseidon.ml.manager import ModelManager
+
                     manager = ModelManager(db)
                     regime_models = manager.list_ready_models(spec.market)
                     regime_model = None
@@ -1159,13 +1164,17 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
                         seed=cfg.seed,
                     )
                     result = pipeline.run(
-                        ohlcv=ohlcv, base_config=base_config, regime_model=regime_model,
+                        ohlcv=ohlcv,
+                        base_config=base_config,
+                        regime_model=regime_model,
                         config=regime_cfg,
-                        market=spec.market, symbol=spec.symbol, interval=spec.interval,
+                        market=spec.market,
+                        symbol=spec.symbol,
+                        interval=spec.interval,
                     )
                     regime_results_all.append({"spec": spec_dict, "result": result})
 
-                completed_at = datetime.now(timezone.utc)
+                completed_at = datetime.now(UTC)
                 return {
                     "status": "stopped" if check_stop() else "completed",
                     "markets_processed": len(regime_results_all),
@@ -1178,8 +1187,8 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
             # model is initialised with available_models=None; AutoResearchRunner's per-market loop
             #   (runner.py:164-173, Phase 46 pattern) calls list_ready_models(market) and passes
             #   available_models into the pipeline, which reaches build_trial_factory() dynamically.
-            from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory
             from poseidon.backtest.model_strategy_factory import ModelStrategyFactory
+            from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory
 
             FACTORY_REGISTRY = {
                 "voting": lambda: None,
@@ -1207,13 +1216,9 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
             results = runner.run(market_specs)
 
             # Generate report (D-15, D-16)
-            completed_at = datetime.now(timezone.utc)
+            completed_at = datetime.now(UTC)
             tracker = ExperimentTracker(db)
-            study_names = [
-                r.search_result.study_name
-                for r in results
-                if r.search_result is not None
-            ]
+            study_names = [r.search_result.study_name for r in results if r.search_result is not None]
             report = generate_report(
                 tracker,
                 study_names,
@@ -1231,16 +1236,12 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
             }
         finally:
             # D-12: clean up stop flag
-            try:
+            with contextlib.suppress(Exception):
                 redis_client.delete(f"autoresearch:stop:{task_id}")
-            except Exception:
-                pass
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.run_stress_test")
-def run_stress_test(
-    scenario_name: str, custom_shocks: dict | None = None
-) -> dict:
+def run_stress_test(scenario_name: str, custom_shocks: dict | None = None) -> dict:
     """Run stress test scenario asynchronously (per D-12).
 
     Supports both named scenarios (from JSON config) and ad-hoc hypothetical
@@ -1270,6 +1271,7 @@ def run_stress_test(
     redis_client = get_redis("cache")
     with db_session() as db:
         from poseidon.data.remote_repository import RemoteDataRepository
+
         repo = RemoteDataRepository.from_settings()
         # 1. Rebuild portfolio from DB
         portfolio = VirtualPortfolio()
@@ -1279,14 +1281,14 @@ def run_stress_test(
 
         weights = portfolio.weights()
         symbols = portfolio.position_symbols()
-        as_of = datetime.now(timezone.utc)
+        as_of = datetime.now(UTC)
         portfolio_value = portfolio.total_exposure()
 
         # 2. Load cached covariance
         cached = load_cached_covariance(redis_client)
         if cached is None:
             return {"status": "skipped", "reason": "no cached covariance matrix"}
-        cov_symbols, cov_matrix, _cov_meta = cached
+        _cov_symbols, cov_matrix, _cov_meta = cached
         cov_matrix = np.array(cov_matrix)
 
         # 3. Load aligned returns for historical scenarios
@@ -1295,7 +1297,9 @@ def run_stress_test(
             return_series = {}
             for sym in symbols:
                 ohlcv_df = repo.read_ohlcv(
-                    sym, market="", interval="1d",
+                    sym,
+                    market="",
+                    interval="1d",
                     start=as_of - timedelta(days=settings.var_lookback_days),
                     end=as_of,
                 )
@@ -1310,11 +1314,7 @@ def run_stress_test(
 
         # 4. Create engine and run scenario
         calculator = VaRCalculator()
-        scenarios_dir = str(
-            __import__("pathlib").Path(__file__).resolve().parents[3]
-            / "config"
-            / "stress_scenarios"
-        )
+        scenarios_dir = str(__import__("pathlib").Path(__file__).resolve().parents[3] / "config" / "stress_scenarios")
         engine = StressTestEngine(calculator, scenarios_dir=scenarios_dir)
 
         if custom_shocks is not None:
@@ -1326,14 +1326,20 @@ def run_stress_test(
                 shocks=custom_shocks,
             )
             result = engine.run_config(
-                config, weights, symbols, cov_matrix,
+                config,
+                weights,
+                symbols,
+                cov_matrix,
                 aligned_returns=aligned_returns,
                 portfolio_value=portfolio_value,
             )
         else:
             # Named scenario from JSON config
             result = engine.run_scenario(
-                scenario_name, weights, symbols, cov_matrix,
+                scenario_name,
+                weights,
+                symbols,
+                cov_matrix,
                 aligned_returns=aligned_returns,
                 portfolio_value=portfolio_value,
             )
@@ -1358,9 +1364,7 @@ def run_stress_test(
                 else None
             ),
             "details": result.details,
-            "computed_at": (
-                result.computed_at.isoformat() if result.computed_at else None
-            ),
+            "computed_at": (result.computed_at.isoformat() if result.computed_at else None),
         }
 
 
@@ -1493,14 +1497,12 @@ def portfolio_stop_loss_monitor() -> dict:
     import yaml
 
     from poseidon.broker.config import BrokerConfig
-    from poseidon.broker.paper_adapter import PaperBrokerAdapter
-    from poseidon.models.portfolio_holding import PortfolioHoldingRecord
     from poseidon.models.trade_log import TradeLogRecord
-    from poseidon.orders.risk_checker import OrderRiskChecker
     from poseidon.orders.manager import OrderManager
+    from poseidon.orders.risk_checker import OrderRiskChecker
     from poseidon.strategies.portfolio.schemas import RebalanceOrder
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Skip weekends
     if now.weekday() >= 5:
@@ -1538,7 +1540,11 @@ def portfolio_stop_loss_monitor() -> dict:
         if current_price <= stop_price:
             logger.warning(
                 "Stop-loss breached: %s price=%.2f <= stop=%.2f (entry=%.2f, pct=%.2f%%)",
-                sym, current_price, stop_price, holding.entry_price, holding.stop_loss_pct * 100,
+                sym,
+                current_price,
+                stop_price,
+                holding.entry_price,
+                holding.stop_loss_pct * 100,
             )
             sell_orders.append(
                 RebalanceOrder(
@@ -1563,7 +1569,10 @@ def portfolio_stop_loss_monitor() -> dict:
         order_manager = OrderManager(broker, risk_checker, position_tracker, SessionLocal, broker_cfg)
 
         results = order_manager.execute_rebalance(
-            sell_orders, strategy_name="stop_loss", prices=prices, market="tw_stock",
+            sell_orders,
+            strategy_name="stop_loss",
+            prices=prices,
+            market="tw_stock",
         )
 
         # Create TradeLogRecords for stopped-out positions
@@ -1612,7 +1621,7 @@ def portfolio_nav_snapshot() -> dict:
     from poseidon.broker.config import BrokerConfig
     from poseidon.models.nav_snapshot import NavSnapshotRecord
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Skip weekends
     if now.weekday() >= 5:
@@ -1643,11 +1652,7 @@ def portfolio_nav_snapshot() -> dict:
     today = date_type.today()
     with db_session() as session:
         # Upsert: avoid duplicate if re-run on same day
-        existing = (
-            session.query(NavSnapshotRecord)
-            .filter(NavSnapshotRecord.snapshot_date == today)
-            .first()
-        )
+        existing = session.query(NavSnapshotRecord).filter(NavSnapshotRecord.snapshot_date == today).first()
         if existing:
             existing.total_nav = total_nav
             existing.holdings_value = holdings_value
@@ -1666,7 +1671,9 @@ def portfolio_nav_snapshot() -> dict:
 
     logger.info(
         "portfolio_nav_snapshot: date=%s total_nav=%.2f holdings=%d",
-        today, total_nav, len(holdings),
+        today,
+        total_nav,
+        len(holdings),
     )
     return {"date": str(today), "total_nav": total_nav, "holdings_count": len(holdings)}
 
@@ -1727,9 +1734,7 @@ def _build_perp_adapter_from_db():
             .all()
         )
         for h in perp_holdings:
-            leverage = adapter._leverage_per_symbol.get(
-                h.symbol, adapter._default_leverage
-            )
+            leverage = adapter._leverage_per_symbol.get(h.symbol, adapter._default_leverage)
             entry_price = h.entry_price or 0.0
             quantity = h.shares or 0.0
             side = h.side or "long"
@@ -1800,7 +1805,9 @@ def perp_liquidation_monitor() -> dict:
         if pos["marginRatio"] < MARGIN_THRESHOLD:
             logger.warning(
                 "Liquidation risk: %s marginRatio=%.4f < %.4f threshold",
-                pos["symbol"], pos["marginRatio"], MARGIN_THRESHOLD,
+                pos["symbol"],
+                pos["marginRatio"],
+                MARGIN_THRESHOLD,
             )
             breach_detected = True
 
@@ -1809,10 +1816,7 @@ def perp_liquidation_monitor() -> dict:
 
     # 4. Full close ALL perp positions (D-03: close all, not partial)
     position_tracker = _build_position_tracker()
-    perp_holdings = {
-        sym: h for sym, h in position_tracker.current_holdings().items()
-        if h.market == "crypto_perp"
-    }
+    perp_holdings = {sym: h for sym, h in position_tracker.current_holdings().items() if h.market == "crypto_perp"}
 
     close_orders = []
     for sym, holding in perp_holdings.items():
@@ -1845,6 +1849,7 @@ def perp_liquidation_monitor() -> dict:
         )
 
     from poseidon.broker.perp_paper_adapter import PerpPaperAdapter
+
     close_adapter = PerpPaperAdapter(SessionLocal)
     # Rebuild positions for the close adapter too
     close_adapter._positions = adapter._positions.copy()
@@ -1855,17 +1860,23 @@ def perp_liquidation_monitor() -> dict:
         stop_loss_pct=None,  # Not applicable for close
     )
     order_manager = OrderManager(
-        close_adapter, risk_checker, position_tracker, SessionLocal, broker_cfg,
+        close_adapter,
+        risk_checker,
+        position_tracker,
+        SessionLocal,
+        broker_cfg,
     )
 
     results = order_manager.execute_rebalance(
-        close_orders, strategy_name="liquidation_protection",
-        prices=mark_prices, market="crypto_perp",
+        close_orders,
+        strategy_name="liquidation_protection",
+        prices=mark_prices,
+        market="crypto_perp",
     )
 
     # 6. Create TradeLogRecords for liquidation-closed positions
     closed_symbols = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with db_session() as session:
         for result in results:
             if result.success:
@@ -1893,7 +1904,8 @@ def perp_liquidation_monitor() -> dict:
 
     logger.warning(
         "LIQUIDATION PROTECTION: closed %d perp positions: %s",
-        len(closed_symbols), closed_symbols,
+        len(closed_symbols),
+        closed_symbols,
     )
     return {"checked": len(positions), "closed": closed_symbols}
 
@@ -1918,7 +1930,7 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
     from poseidon.strategies.portfolio.crypto_trend import CryptoTrendConfig, CryptoTrendStrategy
     from poseidon.strategies.portfolio.rebalancer import PortfolioRebalancer
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # NO weekend skip -- crypto 24/7
 
     # Load strategy config
@@ -1966,7 +1978,11 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
         market="crypto_perp",
     )
     order_manager = OrderManager(
-        adapter, risk_checker, position_tracker, SessionLocal, broker_cfg,
+        adapter,
+        risk_checker,
+        position_tracker,
+        SessionLocal,
+        broker_cfg,
         leverage_limits=leverage_limits,
     )
     rebalancer = PortfolioRebalancer()
@@ -1986,16 +2002,14 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
             return {"skipped": "protection_locked", "reason": reason}
 
     # Run strategy (inject DataRepository with session for perp data access)
-    with db_session() as strategy_db:
+    with db_session():
         from poseidon.data.remote_repository import RemoteDataRepository
+
         strategy._repo = RemoteDataRepository.from_settings()
         targets = strategy.select_stocks(pd.DataFrame(), as_of=now.date())
 
     # Compute differential orders
-    current_holdings = {
-        sym: h for sym, h in position_tracker.current_holdings().items()
-        if h.market == "crypto_perp"
-    }
+    current_holdings = {sym: h for sym, h in position_tracker.current_holdings().items() if h.market == "crypto_perp"}
     rebalance_orders = rebalancer.rebalance(targets, current_holdings)
 
     if not rebalance_orders:
@@ -2009,7 +2023,9 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
             if protection_mgr.is_locked(ro.symbol, strategy_cfg.market, prot_db):
                 locks = protection_mgr.check_all(ro.symbol, strategy_cfg.market, prot_db)
                 active = [r for r in locks if r.locked]
-                logger.info("perp_rebalance: skipping %s — locked by %s", ro.symbol, [r.protection_type for r in active])
+                logger.info(
+                    "perp_rebalance: skipping %s — locked by %s", ro.symbol, [r.protection_type for r in active]
+                )
             else:
                 unlocked_orders.append(ro)
         rebalance_orders = unlocked_orders
@@ -2038,8 +2054,10 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
 
     # Execute rebalance (with leverage enforcement from Plan 01)
     results = order_manager.execute_rebalance(
-        rebalance_orders, strategy_name=strategy_cfg.name,
-        prices=prices, market=strategy_cfg.market,
+        rebalance_orders,
+        strategy_name=strategy_cfg.name,
+        prices=prices,
+        market=strategy_cfg.market,
     )
 
     # Create TradeLogRecords for filled sell orders
@@ -2074,7 +2092,8 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
 
     logger.info(
         "perp_rebalance: %d orders, %d trade logs",
-        len(results), trade_log_count,
+        len(results),
+        trade_log_count,
     )
     return {"rebalanced": True, "orders": len(results), "sells": trade_log_count}
 
@@ -2092,7 +2111,7 @@ def perp_funding_settlement() -> dict:
     from poseidon.funding.settlement import record_funding_settlement
     from poseidon.models.funding_rate import FundingRateRecord
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # NO weekend skip -- crypto 24/7
 
     # Load strategy config for strategy name
@@ -2150,7 +2169,9 @@ def perp_funding_settlement() -> dict:
                 settled_symbols.append(sym)
                 logger.info(
                     "Funding settled %s: rate=%.6f amount=%.4f",
-                    sym, funding_rate, funding_amount,
+                    sym,
+                    funding_rate,
+                    funding_amount,
                 )
 
     return {"settled": len(settled_symbols), "symbols": settled_symbols}
@@ -2170,16 +2191,13 @@ def perp_nav_snapshot() -> dict:
     from poseidon.broker.config import BrokerConfig
     from poseidon.models.nav_snapshot import NavSnapshotRecord
 
-    now = datetime.now(timezone.utc)
+    datetime.now(UTC)
     # NO weekend skip -- crypto 24/7
 
     # Get perp holdings only
     position_tracker = _build_position_tracker()
     all_holdings = position_tracker.current_holdings()
-    perp_holdings = {
-        sym: h for sym, h in all_holdings.items()
-        if h.market == "crypto_perp"
-    }
+    perp_holdings = {sym: h for sym, h in all_holdings.items() if h.market == "crypto_perp"}
 
     # Load perp broker config for initial NAV
     broker_yaml_path = "config/broker_perp.yaml"
@@ -2199,7 +2217,6 @@ def perp_nav_snapshot() -> dict:
             price = prices.get(sym, 0.0)
             shares = holding.shares or 0
             entry_price = holding.entry_price or 0.0
-            direction = 1 if holding.side == "long" else -1
             # For perps: value = margin + unrealized PnL
             holdings_value += shares * price  # mark-to-market value
             deployed_cost += shares * entry_price
@@ -2237,11 +2254,11 @@ def perp_nav_snapshot() -> dict:
 
     logger.info(
         "perp_nav_snapshot: date=%s total_nav=%.2f holdings=%d",
-        today, total_nav, len(perp_holdings),
+        today,
+        total_nav,
+        len(perp_holdings),
     )
     return {"date": str(today), "total_nav": total_nav, "holdings_count": len(perp_holdings)}
-
-
 
 
 # --- Factor Analysis Tasks (Phase 47, D-13, D-15) ---

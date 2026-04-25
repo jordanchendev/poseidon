@@ -25,6 +25,4 @@ class VaRSnapshot(Base):
     holding_period = Column(Integer, nullable=False, server_default="1")
     details = Column(JSONB, nullable=True)
 
-    __table_args__ = (
-        PrimaryKeyConstraint("time", "method", name="pk_var_snapshots"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("time", "method", name="pk_var_snapshots"),)

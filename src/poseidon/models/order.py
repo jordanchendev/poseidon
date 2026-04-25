@@ -13,33 +13,19 @@ from poseidon.models.base import Base
 class OrderRecord(Base):
     __tablename__ = "orders"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, server_default="gen_random_uuid()"
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default="gen_random_uuid()")
     strategy_name: Mapped[str] = mapped_column(String(64), nullable=False)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     market: Mapped[str] = mapped_column(String(32), nullable=False)
     action: Mapped[str] = mapped_column(String(16), nullable=False)  # buy / sell
-    order_type: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default="'market'"
-    )
+    order_type: Mapped[str] = mapped_column(String(16), nullable=False, server_default="'market'")
     target_weight: Mapped[float] = mapped_column(Float, nullable=False)
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
     price: Mapped[float | None] = mapped_column(Float, nullable=True)  # limit price
-    side: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default="'long'"
-    )
-    status: Mapped[str] = mapped_column(
-        String(32), nullable=False, server_default="'pending'"
-    )
+    side: Mapped[str] = mapped_column(String(16), nullable=False, server_default="'long'")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="'pending'")
     broker_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    broker_mode: Mapped[str] = mapped_column(
-        String(16), nullable=False
-    )  # paper / live
+    broker_mode: Mapped[str] = mapped_column(String(16), nullable=False)  # paper / live
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default="now()", nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default="now()", nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()", nullable=False)

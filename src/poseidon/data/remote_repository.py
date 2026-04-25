@@ -20,6 +20,7 @@ Design decisions:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import date, datetime
 
@@ -65,7 +66,7 @@ class RemoteDataRepository:
         )
 
     @classmethod
-    def from_settings(cls) -> "RemoteDataRepository":
+    def from_settings(cls) -> RemoteDataRepository:
         """Construct from Poseidon Settings -- preferred construction method."""
         from poseidon.core.config import settings
 
@@ -87,9 +88,7 @@ class RemoteDataRepository:
         Flow: CB check -> retry wrapper -> HTTP call -> CB record
         """
         if not self._cb.allow_request():
-            raise CircuitBreakerOpenError(
-                self._base_url, self._cb.time_to_recovery
-            )
+            raise CircuitBreakerOpenError(self._base_url, self._cb.time_to_recovery)
 
         try:
             resp = self._request_with_retry(method, path, **kwargs)
@@ -208,9 +207,7 @@ class RemoteDataRepository:
 
     def read_fundamentals(self, symbol: str, market: str):
         """Read fundamentals rows from Thalassa. Returns list of dicts."""
-        resp = self._request(
-            "GET", "/api/v1/fundamentals", params={"symbol": symbol, "market": market}
-        )
+        resp = self._request("GET", "/api/v1/fundamentals", params={"symbol": symbol, "market": market})
         return resp.json()["data"]
 
     def write_fundamentals(self, symbol: str, market: str, report_date: date, data: dict):
@@ -253,14 +250,10 @@ class RemoteDataRepository:
 
     def read_funding_rates(self, symbol: str, start: str = "2024-01-01") -> pd.DataFrame:
         """Read daily funding rates from Thalassa."""
-        resp = self._request(
-            "GET", "/api/v1/funding-rates", params={"symbol": symbol, "start": start}
-        )
+        resp = self._request("GET", "/api/v1/funding-rates", params={"symbol": symbol, "start": start})
         return self._parse_dataframe_response(resp.json())
 
-    def read_open_interest(
-        self, symbol: str, interval: str = "1h", start: str = "2024-01-01"
-    ) -> pd.DataFrame:
+    def read_open_interest(self, symbol: str, interval: str = "1h", start: str = "2024-01-01") -> pd.DataFrame:
         """Read open interest data from Thalassa."""
         resp = self._request(
             "GET",
@@ -276,122 +269,86 @@ class RemoteDataRepository:
 
     def read_institutional_flow(self, symbol: str) -> pd.DataFrame:
         """Read institutional investor flow data from Thalassa."""
-        resp = self._request(
-            "GET", "/api/v1/nonprice/institutional", params={"symbol": symbol}
-        )
+        resp = self._request("GET", "/api/v1/nonprice/institutional", params={"symbol": symbol})
         return self._parse_dataframe_response(resp.json())
 
     def read_margin_transactions(self, symbol: str) -> pd.DataFrame:
         """Read margin transaction data from Thalassa."""
-        resp = self._request(
-            "GET", "/api/v1/nonprice/margin", params={"symbol": symbol}
-        )
+        resp = self._request("GET", "/api/v1/nonprice/margin", params={"symbol": symbol})
         return self._parse_dataframe_response(resp.json())
 
     def read_fundamentals_df(self, symbol: str) -> pd.DataFrame:
         """Read fundamentals as DataFrame from Thalassa."""
-        resp = self._request(
-            "GET", "/api/v1/nonprice/fundamental", params={"symbol": symbol}
-        )
+        resp = self._request("GET", "/api/v1/nonprice/fundamental", params={"symbol": symbol})
         return self._parse_dataframe_response(resp.json())
 
     def read_trade_structure(self, symbol: str) -> pd.DataFrame:
         """Read trade structure data from Thalassa."""
-        resp = self._request(
-            "GET", "/api/v1/nonprice/trade-structure", params={"symbol": symbol}
-        )
+        resp = self._request("GET", "/api/v1/nonprice/trade-structure", params={"symbol": symbol})
         return self._parse_dataframe_response(resp.json())
 
     # ------------------------------------------------------------------
     # Phase 66: Extended nonprice endpoints (6 methods)
     # ------------------------------------------------------------------
 
-    def read_fundamentals_extended_df(
-        self, symbol: str, as_of_date: str | None = None
-    ) -> pd.DataFrame:
+    def read_fundamentals_extended_df(self, symbol: str, as_of_date: str | None = None) -> pd.DataFrame:
         """Read extended fundamentals (gross_margin, eps, etc.) from Thalassa."""
         params: dict = {"symbol": symbol}
         if as_of_date is not None:
             params["as_of_date"] = as_of_date
-        resp = self._request(
-            "GET", "/api/v1/nonprice/fundamentals-extended", params=params
-        )
+        resp = self._request("GET", "/api/v1/nonprice/fundamentals-extended", params=params)
         return self._parse_dataframe_response(resp.json())
 
-    def read_monthly_revenue(
-        self, symbol: str, as_of_date: str | None = None
-    ) -> pd.DataFrame:
+    def read_monthly_revenue(self, symbol: str, as_of_date: str | None = None) -> pd.DataFrame:
         """Read monthly revenue series from Thalassa."""
         params: dict = {"symbol": symbol}
         if as_of_date is not None:
             params["as_of_date"] = as_of_date
-        resp = self._request(
-            "GET", "/api/v1/nonprice/monthly-revenue", params=params
-        )
+        resp = self._request("GET", "/api/v1/nonprice/monthly-revenue", params=params)
         return self._parse_dataframe_response(resp.json())
 
-    def read_foreign_holding(
-        self, symbol: str, as_of_date: str | None = None
-    ) -> pd.DataFrame:
+    def read_foreign_holding(self, symbol: str, as_of_date: str | None = None) -> pd.DataFrame:
         """Read foreign holding ratio series from Thalassa."""
         params: dict = {"symbol": symbol}
         if as_of_date is not None:
             params["as_of_date"] = as_of_date
-        resp = self._request(
-            "GET", "/api/v1/nonprice/foreign-holding", params=params
-        )
+        resp = self._request("GET", "/api/v1/nonprice/foreign-holding", params=params)
         return self._parse_dataframe_response(resp.json())
 
-    def read_quality_factor(
-        self, symbol: str, as_of_date: str | None = None
-    ) -> pd.DataFrame:
+    def read_quality_factor(self, symbol: str, as_of_date: str | None = None) -> pd.DataFrame:
         """Read quality factor Z-scores from Thalassa."""
         params: dict = {"symbol": symbol}
         if as_of_date is not None:
             params["as_of_date"] = as_of_date
-        resp = self._request(
-            "GET", "/api/v1/nonprice/quality-factor", params=params
-        )
+        resp = self._request("GET", "/api/v1/nonprice/quality-factor", params=params)
         return self._parse_dataframe_response(resp.json())
 
-    def read_pe_pbr(
-        self, symbol: str, as_of_date: str | None = None
-    ) -> pd.DataFrame:
+    def read_pe_pbr(self, symbol: str, as_of_date: str | None = None) -> pd.DataFrame:
         """Read PE/PBR/dividend yield series from Thalassa."""
         params: dict = {"symbol": symbol}
         if as_of_date is not None:
             params["as_of_date"] = as_of_date
-        resp = self._request(
-            "GET", "/api/v1/nonprice/pe-pbr", params=params
-        )
+        resp = self._request("GET", "/api/v1/nonprice/pe-pbr", params=params)
         return self._parse_dataframe_response(resp.json())
 
-    def read_market_value(
-        self, symbol: str, as_of_date: str | None = None
-    ) -> pd.DataFrame:
+    def read_market_value(self, symbol: str, as_of_date: str | None = None) -> pd.DataFrame:
         """Read daily market value (float shares * price) from Thalassa (Phase 71 D-06)."""
         params: dict = {"symbol": symbol}
         if as_of_date is not None:
             params["as_of_date"] = as_of_date
-        resp = self._request(
-            "GET", "/api/v1/nonprice/market-value", params=params
-        )
+        resp = self._request("GET", "/api/v1/nonprice/market-value", params=params)
         return self._parse_dataframe_response(resp.json())
 
     def read_risk_filters_active(self, ref_date: str) -> list[str]:
         """Return list of symbols under any active risk flag on the given date."""
-        resp = self._request(
-            "GET", "/api/v1/risk-filters/active", params={"date": ref_date}
-        )
+        resp = self._request("GET", "/api/v1/risk-filters/active", params={"date": ref_date})
         return resp.json().get("excluded_symbols", [])
 
     # ------------------------------------------------------------------
     # Perpetual contract endpoints
     # ------------------------------------------------------------------
 
-    def read_perp_ohlcv(
-        self, symbol: str, interval: str = "4h", lookback_days: int = 30
-    ) -> pd.DataFrame:
+    def read_perp_ohlcv(self, symbol: str, interval: str = "4h", lookback_days: int = 30) -> pd.DataFrame:
         """Read perpetual contract OHLCV from Thalassa."""
         resp = self._request(
             "GET",
@@ -402,9 +359,7 @@ class RemoteDataRepository:
 
     def read_latest_funding_rate(self, symbol: str) -> float | None:
         """Return the most recent funding rate for a symbol."""
-        resp = self._request(
-            "GET", "/api/v1/perp/latest-funding-rate", params={"symbol": symbol}
-        )
+        resp = self._request("GET", "/api/v1/perp/latest-funding-rate", params={"symbol": symbol})
         return self._parse_scalar_response(resp.json())
 
     def read_latest_price(self, symbol: str, interval: str = "4h") -> float | None:
@@ -425,7 +380,5 @@ class RemoteDataRepository:
         self._client.close()
 
     def __del__(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.close()
-        except Exception:
-            pass

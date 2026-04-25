@@ -13,33 +13,21 @@ from poseidon.models.base import Base
 class TradeLogRecord(Base):
     __tablename__ = "trade_logs"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, server_default="gen_random_uuid()"
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default="gen_random_uuid()")
     strategy_name: Mapped[str] = mapped_column(String(64), nullable=False)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     market: Mapped[str] = mapped_column(String(32), nullable=False)
     entry_price: Mapped[float] = mapped_column(Float, nullable=False)
     exit_price: Mapped[float] = mapped_column(Float, nullable=False)
-    entry_date: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    exit_date: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    entry_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    exit_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     shares: Mapped[float] = mapped_column(Float, nullable=False)
-    entry_type: Mapped[str] = mapped_column(
-        String(16), server_default="trade", nullable=False
-    )
+    entry_type: Mapped[str] = mapped_column(String(16), server_default="trade", nullable=False)
     realized_pnl: Mapped[float] = mapped_column(Float, nullable=False)
     holding_days: Mapped[int] = mapped_column(Integer, nullable=False)
     signal_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("signals.id"), nullable=True, index=True
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default="now()", nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()", nullable=False)
 
-    __table_args__ = (
-        Index("ix_trade_logs_strategy_symbol", "strategy_name", "symbol"),
-    )
+    __table_args__ = (Index("ix_trade_logs_strategy_symbol", "strategy_name", "symbol"),)

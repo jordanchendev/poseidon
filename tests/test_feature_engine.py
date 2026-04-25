@@ -18,14 +18,16 @@ def sample_ohlcv() -> pd.DataFrame:
     low = close - np.abs(np.random.randn(n)) * 2
     open_ = close + np.random.randn(n) * 0.5
     volume = np.random.randint(1000, 10000, n).astype(float)
-    return pd.DataFrame({
-        "time": dates,
-        "open": open_,
-        "high": high,
-        "low": low,
-        "close": close,
-        "volume": volume,
-    })
+    return pd.DataFrame(
+        {
+            "time": dates,
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+        }
+    )
 
 
 @pytest.fixture
@@ -114,6 +116,7 @@ class TestGetR2Specs:
 
     def test_tw_stock_includes_fundamental_expansion(self):
         from poseidon.data.feature_engine import get_r2_specs
+
         specs = get_r2_specs("2330", "tw_stock")
         spec_names = [name for name, _ in specs]
         assert "roe" in spec_names, "ROE missing from tw_stock R2 specs"
@@ -123,6 +126,7 @@ class TestGetR2Specs:
 
     def test_crypto_spot_excludes_margin(self):
         from poseidon.data.feature_engine import get_r2_specs
+
         specs = get_r2_specs("BTCUSDT", "crypto_spot")
         spec_names = [name for name, _ in specs]
         assert "margin_buy_ratio" not in spec_names
@@ -132,6 +136,7 @@ class TestGetR2Specs:
 
     def test_nonprice_spec_detection(self):
         from poseidon.data.feature_engine import is_nonprice_spec, nonprice_data_key
+
         assert is_nonprice_spec("roe") is True
         assert is_nonprice_spec("roa") is True
         assert is_nonprice_spec("margin_buy_ratio") is True

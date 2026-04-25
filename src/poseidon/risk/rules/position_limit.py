@@ -37,8 +37,6 @@ class PositionLimitRule(BaseRule):
             return RuleResult(
                 passed=False,
                 rule_name=self.name,
-                reason=(
-                    f"Open positions ({count}) >= limit ({self.max_positions})"
-                ),
+                reason=(f"Open positions ({count}) >= limit ({self.max_positions})"),
             )
         return RuleResult(passed=True, rule_name=self.name)

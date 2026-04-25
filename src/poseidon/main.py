@@ -10,19 +10,19 @@ from poseidon.api import (
     backtests,
     capabilities,
     data,
+    factor_analysis,
     health,
     notifications,
     portfolio,
     protections,
+    research_api,
     risk,
     risk_metrics,
     sentiment,
     signals,
     strategies,
 )
-from poseidon.api import factor_analysis
 from poseidon.api import models as models_api
-from poseidon.api import research_api
 from poseidon.api.auth import verify_api_key
 from poseidon.api.errors import (
     general_exception_handler,
@@ -67,5 +67,7 @@ app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"]
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"], dependencies=secured)
 app.include_router(capabilities.router, prefix="/api/v1", tags=["capabilities"], dependencies=secured)
 app.include_router(protections.router, prefix="/api/v1/protections", tags=["protections"], dependencies=secured)
-app.include_router(factor_analysis.router, prefix="/api/v1/factor-analysis", tags=["factor-analysis"], dependencies=secured)
+app.include_router(
+    factor_analysis.router, prefix="/api/v1/factor-analysis", tags=["factor-analysis"], dependencies=secured
+)
 app.include_router(research_api.router, prefix="/api/v1/models", tags=["research"], dependencies=secured)

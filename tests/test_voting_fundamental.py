@@ -7,24 +7,16 @@ as voting sub-signals via the feature_above condition type in conditions.py.
 import json
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-import pytest
 
 from poseidon.strategies.dsl.conditions import eval_feature_above
 from poseidon.strategies.voting_strategy import VotingStrategy
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-_CONFIG_PATH = (
-    Path(__file__).parent.parent
-    / "config"
-    / "strategies"
-    / "voting_tw_stock_fundamental.json"
-)
+_CONFIG_PATH = Path(__file__).parent.parent / "config" / "strategies" / "voting_tw_stock_fundamental.json"
 
 
 def make_features_with_fundamental(
@@ -173,9 +165,7 @@ class TestFundamentalSubSignals:
         assert len(config["sub_signals"]) == 6
 
         # Last 2 sub_signals should be feature_above
-        feature_signals = [
-            s for s in config["sub_signals"] if s["type"] == "feature_above"
-        ]
+        feature_signals = [s for s in config["sub_signals"] if s["type"] == "feature_above"]
         assert len(feature_signals) == 2
 
         columns = {s["column"] for s in feature_signals}
@@ -227,9 +217,7 @@ class TestFundamentalSubSignals:
         # Verify the 2 fundamental signals contribute by removing them and comparing
         config_no_fundamental = _make_config_with_fundamental_signals()
         config_no_fundamental["sub_signals"] = [
-            s
-            for s in config_no_fundamental["sub_signals"]
-            if s["type"] != "feature_above"
+            s for s in config_no_fundamental["sub_signals"] if s["type"] != "feature_above"
         ]
         strategy_no_fundamental = VotingStrategy(config=config_no_fundamental)
         votes_no_fundamental = strategy_no_fundamental._count_votes(

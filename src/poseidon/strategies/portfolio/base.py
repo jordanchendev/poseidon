@@ -32,9 +32,7 @@ class PortfolioStrategy(ABC):
     stateful: bool = False
 
     @abstractmethod
-    def select_stocks(
-        self, universe_df: pd.DataFrame, as_of: date | None = None
-    ) -> list[TargetPosition]:
+    def select_stocks(self, universe_df: pd.DataFrame, as_of: date | None = None) -> list[TargetPosition]:
         """Select stocks from the full universe.
 
         Args:

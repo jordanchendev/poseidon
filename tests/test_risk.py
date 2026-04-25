@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 from uuid import uuid4
-
-import pytest
 
 from poseidon.risk.base import BaseRule, RuleResult
 from poseidon.risk.engine import RiskEngine
@@ -24,7 +22,6 @@ from poseidon.signals.schemas import (
     SignalStatus,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -40,7 +37,7 @@ def make_signal(**overrides) -> Signal:
         "action": SignalAction.LONG,
         "confidence": 0.8,
         "quantity_pct": 0.1,
-        "signal_time": datetime.now(timezone.utc),
+        "signal_time": datetime.now(UTC),
         "interval": "1d",
     }
     defaults.update(overrides)
@@ -145,9 +142,7 @@ class TestRiskRules:
         portfolio = VirtualPortfolio()
         # Add positions totalling 0.8 exposure
         for i in range(8):
-            portfolio.apply_signal(
-                make_signal(symbol=f"S{i}", quantity_pct=0.1)
-            )
+            portfolio.apply_signal(make_signal(symbol=f"S{i}", quantity_pct=0.1))
         # New signal adds 0.3 => total 1.1 > 1.0
         signal = make_signal(symbol="NEW", quantity_pct=0.3)
 
@@ -162,9 +157,7 @@ class TestRiskRules:
         rule.load_params({"max_total_exposure": 1.0})
         portfolio = VirtualPortfolio()
         for i in range(5):
-            portfolio.apply_signal(
-                make_signal(symbol=f"S{i}", quantity_pct=0.1)
-            )
+            portfolio.apply_signal(make_signal(symbol=f"S{i}", quantity_pct=0.1))
         signal = make_signal(symbol="NEW", quantity_pct=0.3)
 
         result = rule.check(signal, portfolio)
@@ -178,9 +171,7 @@ class TestRiskRules:
         portfolio = VirtualPortfolio()
         # Fill to exactly 1.0 exposure
         for i in range(10):
-            portfolio.apply_signal(
-                make_signal(symbol=f"S{i}", quantity_pct=0.1)
-            )
+            portfolio.apply_signal(make_signal(symbol=f"S{i}", quantity_pct=0.1))
         signal = make_signal(symbol="S0", action=SignalAction.CLOSE, quantity_pct=0.1)
 
         result = rule.check(signal, portfolio)
@@ -247,9 +238,7 @@ class _AlwaysRejectRule(BaseRule):
     name = "always_reject"
 
     def check(self, signal: Signal, portfolio: VirtualPortfolio) -> RuleResult:
-        return RuleResult(
-            passed=False, rule_name=self.name, reason="forced rejection"
-        )
+        return RuleResult(passed=False, rule_name=self.name, reason="forced rejection")
 
     def load_params(self, params: dict) -> None:
         pass
@@ -283,9 +272,7 @@ class TestRiskEngine:
         """Second rule should never be called if first rejects."""
         spy_rule = MagicMock(spec=BaseRule)
         spy_rule.enabled = True
-        spy_rule.check.return_value = RuleResult(
-            passed=True, rule_name="spy"
-        )
+        spy_rule.check.return_value = RuleResult(passed=True, rule_name="spy")
 
         engine = RiskEngine(rules=[_AlwaysRejectRule(), spy_rule])
         signal = make_signal()
@@ -327,9 +314,7 @@ class TestVirtualPortfolio:
 
     def test_apply_long_signal(self) -> None:
         portfolio = VirtualPortfolio()
-        signal = make_signal(
-            symbol="2330", market="tw_stock", action=SignalAction.LONG
-        )
+        signal = make_signal(symbol="2330", market="tw_stock", action=SignalAction.LONG)
 
         portfolio.apply_signal(signal)
 
@@ -340,9 +325,7 @@ class TestVirtualPortfolio:
 
     def test_apply_short_signal(self) -> None:
         portfolio = VirtualPortfolio()
-        signal = make_signal(
-            symbol="BTCUSDT", market="crypto_spot", action=SignalAction.SHORT
-        )
+        signal = make_signal(symbol="BTCUSDT", market="crypto_spot", action=SignalAction.SHORT)
 
         portfolio.apply_signal(signal)
 
@@ -353,15 +336,11 @@ class TestVirtualPortfolio:
     def test_apply_close_signal(self) -> None:
         portfolio = VirtualPortfolio()
         # Open a position
-        portfolio.apply_signal(
-            make_signal(symbol="2330", market="tw_stock", action=SignalAction.LONG)
-        )
+        portfolio.apply_signal(make_signal(symbol="2330", market="tw_stock", action=SignalAction.LONG))
         assert portfolio.open_position_count == 1
 
         # Close it
-        portfolio.apply_signal(
-            make_signal(symbol="2330", market="tw_stock", action=SignalAction.CLOSE)
-        )
+        portfolio.apply_signal(make_signal(symbol="2330", market="tw_stock", action=SignalAction.CLOSE))
 
         assert portfolio.open_position_count == 0
         assert portfolio.get_position("tw_stock", "2330") is None

@@ -78,17 +78,16 @@ class PoseidonDataHandler:
 
         # Fetch raw data via DatasetBuilder
         self._raw_data: pd.DataFrame = dataset_builder.build(
-            symbols=symbols, start=start, end=end, snapshot_date=snapshot_date,
+            symbols=symbols,
+            start=start,
+            end=end,
+            snapshot_date=snapshot_date,
             feature_specs=feature_specs,
         )
 
         # Processor configs (stored as tuples, not Qlib objects)
-        self._learn_processors = (
-            learn_processors if learn_processors is not None else list(_DEFAULT_PROCESSORS)
-        )
-        self._infer_processors = (
-            infer_processors if infer_processors is not None else list(self._learn_processors)
-        )
+        self._learn_processors = learn_processors if learn_processors is not None else list(_DEFAULT_PROCESSORS)
+        self._infer_processors = infer_processors if infer_processors is not None else list(self._learn_processors)
 
         logger.info(
             "PoseidonDataHandler initialized: %d rows, learn_processors=%d, infer_processors=%d",
@@ -151,12 +150,7 @@ class PoseidonDataHandler:
         # Label = Ref($close, -1) / $close - 1  (1-period forward return)
         df_work = self._raw_data.copy()
         if "$close" in df_work.columns:
-            df_work["label"] = (
-                df_work.groupby(level="instrument")["$close"]
-                .shift(-1)
-                .div(df_work["$close"])
-                .sub(1)
-            )
+            df_work["label"] = df_work.groupby(level="instrument")["$close"].shift(-1).div(df_work["$close"]).sub(1)
         else:
             logger.warning("No $close column found — label will be NaN")
             df_work["label"] = np.nan
@@ -169,9 +163,7 @@ class PoseidonDataHandler:
         df_qlib.columns = pd.MultiIndex.from_tuples(mi_tuples)
 
         # Resolve instruments and time bounds from the data itself
-        instruments = sorted(
-            df_qlib.index.get_level_values("instrument").unique().tolist()
-        )
+        instruments = sorted(df_qlib.index.get_level_values("instrument").unique().tolist())
         dt_index = df_qlib.index.get_level_values("datetime")
         start_time = pd.Timestamp(dt_index.min()).isoformat()
         end_time = pd.Timestamp(dt_index.max()).isoformat()
@@ -233,9 +225,7 @@ class PoseidonDataHandler:
                 logger.warning("Segment '%s' (%s to %s) has no data", seg_name, seg_start, seg_end)
 
             # Apply processors: learn_processors for train, infer_processors for others
-            processors = (
-                self._learn_processors if seg_name == "train" else self._infer_processors
-            )
+            processors = self._learn_processors if seg_name == "train" else self._infer_processors
             segment_df = self.apply_processors(segment_df, processors)
 
             result[seg_name] = segment_df

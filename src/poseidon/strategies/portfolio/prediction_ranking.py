@@ -48,26 +48,18 @@ class PredictionRankingStrategy(PortfolioStrategy):
             prediction_frame = config.prediction_frame
             if config.symbols:
                 if isinstance(prediction_frame.index, pd.MultiIndex):
-                    allowed = prediction_frame.index.get_level_values("instrument").isin(
-                        config.symbols
-                    )
+                    allowed = prediction_frame.index.get_level_values("instrument").isin(config.symbols)
                     prediction_frame = prediction_frame[allowed]
                 elif "instrument" in prediction_frame.columns:
-                    prediction_frame = prediction_frame[
-                        prediction_frame["instrument"].isin(config.symbols)
-                    ]
+                    prediction_frame = prediction_frame[prediction_frame["instrument"].isin(config.symbols)]
             self._monthly_selections = build_monthly_rank_targets(
                 prediction_frame,
                 top_n=config.top_n,
             )
         else:
-            raise ValueError(
-                "PredictionRankingConfig requires prediction_frame or monthly_selections"
-            )
+            raise ValueError("PredictionRankingConfig requires prediction_frame or monthly_selections")
 
-    def select_stocks(
-        self, universe_df: pd.DataFrame, as_of: date | None = None
-    ) -> list[TargetPosition]:
+    def select_stocks(self, universe_df: pd.DataFrame, as_of: date | None = None) -> list[TargetPosition]:
         if as_of is None:
             return []
 
@@ -83,9 +75,7 @@ class PredictionRankingStrategy(PortfolioStrategy):
         latest_rebalance = max(rebalance_dates)
         configured_symbols = set(self.config.symbols)
         selected_symbols = [
-            symbol
-            for symbol in self._monthly_selections[latest_rebalance]
-            if symbol in configured_symbols
+            symbol for symbol in self._monthly_selections[latest_rebalance] if symbol in configured_symbols
         ][: self.config.top_n]
 
         if not selected_symbols:

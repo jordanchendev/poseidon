@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from poseidon.protections.base import BaseProtection, ProtectionResult
@@ -76,26 +76,20 @@ class VolatilitySpikeProtection(BaseProtection):
                 self.create_lock(
                     symbol=symbol,
                     market=market,
-                    reason=(
-                        f"Volatility spike: {current_vol:.4f} >= "
-                        f"{self.vol_std_multiplier}x avg ({avg_vol:.4f})"
-                    ),
+                    reason=(f"Volatility spike: {current_vol:.4f} >= {self.vol_std_multiplier}x avg ({avg_vol:.4f})"),
                     expires_at=None,  # Condition-based release
                     db=db,
                 )
             return ProtectionResult(
                 locked=True,
-                reason=(
-                    f"Volatility spike for {symbol}: "
-                    f"{current_vol:.4f} >= {threshold:.4f}"
-                ),
+                reason=(f"Volatility spike for {symbol}: {current_vol:.4f} >= {threshold:.4f}"),
                 expires_at=None,
                 protection_type=self.name,
             )
         else:
             # Vol dropped below threshold — release lock if exists
             if lock is not None:
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 lock.active = False
                 lock.released_at = now
                 lock.released_by = "auto"
@@ -115,9 +109,7 @@ class VolatilitySpikeProtection(BaseProtection):
                 protection_type=self.name,
             )
 
-    def _get_volatility_data(
-        self, symbol: str, market: str, db: Session
-    ) -> tuple[float, float] | None:
+    def _get_volatility_data(self, symbol: str, market: str, db: Session) -> tuple[float, float] | None:
         """Calculate realized and average volatility for a symbol.
 
         Returns (current_vol, avg_vol) as annualized values,
@@ -129,7 +121,7 @@ class VolatilitySpikeProtection(BaseProtection):
             from poseidon.data.remote_repository import RemoteDataRepository
 
             repo = RemoteDataRepository.from_settings()
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             # Get OHLCV data for lookback period (use 2x for avg calculation)
             lookback_start = now - timedelta(days=self.lookback_days * 2)
 

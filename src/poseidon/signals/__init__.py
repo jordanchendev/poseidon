@@ -10,10 +10,10 @@ from poseidon.signals.schemas import (
 )
 
 __all__ = [
+    "InstrumentType",
     "Signal",
     "SignalAction",
-    "InstrumentType",
-    "SignalStatus",
     "SignalDeliveryService",
     "SignalRepository",
+    "SignalStatus",
 ]

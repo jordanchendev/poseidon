@@ -16,15 +16,18 @@ locally without Postgres.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 # --- SQLite compatibility shims for Postgres-only types (must run before
 # any Base.metadata.create_all call) ---
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
 @compiles(JSONB, "sqlite")
@@ -41,12 +44,7 @@ def _compile_uuid_sqlite(type_, compiler, **kw):  # pragma: no cover
 # Migration 025 file-level assertions
 # ---------------------------------------------------------------------------
 
-MIGRATION_025_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "alembic"
-    / "versions"
-    / "025_create_training_runs.py"
-)
+MIGRATION_025_PATH = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "025_create_training_runs.py"
 
 
 def test_migration_025_exists_with_correct_revision():
@@ -116,9 +114,6 @@ def test_migration_025_downgrade_drops_mlflow_schema():
 # model module after patching Base.
 # ---------------------------------------------------------------------------
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
-
 
 class _TestBase(DeclarativeBase):
     """Standalone base for in-memory SQLite ORM tests."""
@@ -137,7 +132,6 @@ def _make_training_run_class():
         CheckConstraint,
         Column,
         DateTime,
-        ForeignKey,
         String,
         Text,
         func,
@@ -165,9 +159,7 @@ def _make_training_run_class():
         requested_by = Column(String(16), nullable=False, default="api")
         started_at = Column(DateTime(timezone=True), nullable=True)
         finished_at = Column(DateTime(timezone=True), nullable=True)
-        created_at = Column(
-            DateTime(timezone=True), server_default=func.now(), nullable=False
-        )
+        created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
         updated_at = Column(
             DateTime(timezone=True),
             server_default=func.now(),
@@ -253,13 +245,7 @@ def test_training_run_all_d04_columns_exist():
 
 def test_training_run_all_d04_columns_in_source():
     """Cross-check: the actual TrainingRun source file must contain all D-04 columns."""
-    source_path = (
-        Path(__file__).resolve().parents[2]
-        / "src"
-        / "poseidon"
-        / "models"
-        / "training_run.py"
-    )
+    source_path = Path(__file__).resolve().parents[2] / "src" / "poseidon" / "models" / "training_run.py"
     content = source_path.read_text()
     for col in (
         "run_id",
@@ -302,7 +288,7 @@ def test_training_run_status_transitions(db_session: Session):
 
     # pending -> running
     run.status = "running"
-    run.started_at = datetime.now(timezone.utc)
+    run.started_at = datetime.now(UTC)
     db_session.commit()
     db_session.refresh(run)
     assert run.status == "running"
@@ -310,7 +296,7 @@ def test_training_run_status_transitions(db_session: Session):
 
     # running -> succeeded
     run.status = "succeeded"
-    run.finished_at = datetime.now(timezone.utc)
+    run.finished_at = datetime.now(UTC)
     run.metrics = {"ic": 0.05, "icir": 1.2}
     db_session.commit()
     db_session.refresh(run)
@@ -332,7 +318,7 @@ def test_training_run_failed_preserves_error(db_session: Session):
 
     run.status = "failed"
     run.error = "OOM: GPU ran out of memory during training"
-    run.finished_at = datetime.now(timezone.utc)
+    run.finished_at = datetime.now(UTC)
     db_session.commit()
     db_session.refresh(run)
 
@@ -422,7 +408,7 @@ def test_training_run_response_from_attributes():
         "model_class": "LGBModel",
         "market": "crypto_perp",
         "status": "pending",
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(UTC),
     }
     resp = TrainingRunResponse.model_validate(data)
     assert resp.handler_class == "Alpha158Handler"

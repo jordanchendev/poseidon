@@ -13,15 +13,10 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 
-def compute_forward_returns(
-    close_series: pd.Series, horizons: list[int] | None = None
-) -> dict[int, pd.Series]:
+def compute_forward_returns(close_series: pd.Series, horizons: list[int] | None = None) -> dict[int, pd.Series]:
     """Compute forward returns for each requested horizon."""
     horizon_list = [1, 5, 20] if horizons is None else horizons
-    return {
-        horizon: close_series.shift(-horizon).div(close_series).sub(1)
-        for horizon in horizon_list
-    }
+    return {horizon: close_series.shift(-horizon).div(close_series).sub(1) for horizon in horizon_list}
 
 
 def compute_rank_ic(
@@ -52,9 +47,7 @@ def compute_rank_ic(
     return results
 
 
-def _select_feature_columns(
-    computed: pd.DataFrame, requested_features: Sequence[str] | None
-) -> list[str]:
+def _select_feature_columns(computed: pd.DataFrame, requested_features: Sequence[str] | None) -> list[str]:
     if requested_features is not None:
         return [column for column in requested_features if column in computed.columns]
 

@@ -7,13 +7,13 @@ import pytest
 from poseidon.data.features import get_feature, list_features
 from poseidon.data.features.base import BaseFeature
 from poseidon.data.features.returns import CumulativeReturn, Returns
-from poseidon.data.features.technical import ATR, SMA, EMA, MACD, RSI, BollingerBands
+from poseidon.data.features.technical import ATR, EMA, MACD, RSI, SMA, BollingerBands
 from poseidon.data.features.volatility import (
     GarmanKlassVolatility,
     ParkinsonVolatility,
     StandardVolatility,
 )
-from poseidon.data.features.volume import OBV, VolumeSMA, VolumeRatio
+from poseidon.data.features.volume import OBV, VolumeRatio, VolumeSMA
 
 
 @pytest.fixture
@@ -27,14 +27,16 @@ def sample_ohlcv() -> pd.DataFrame:
     low = close - np.abs(np.random.randn(n)) * 2
     open_ = close + np.random.randn(n) * 0.5
     volume = np.random.randint(1000, 10000, n).astype(float)
-    return pd.DataFrame({
-        "time": dates,
-        "open": open_,
-        "high": high,
-        "low": low,
-        "close": close,
-        "volume": volume,
-    })
+    return pd.DataFrame(
+        {
+            "time": dates,
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+        }
+    )
 
 
 @pytest.fixture
@@ -51,17 +53,26 @@ def test_all_features_registered():
     names = list_features()
     # Core TA features (original 14)
     core_expected = {
-        "sma", "ema", "rsi", "macd", "bollinger", "atr",
-        "returns", "cum_return", "std_vol", "parkinson_vol", "garman_klass_vol",
-        "volume_sma", "volume_ratio", "obv",
+        "sma",
+        "ema",
+        "rsi",
+        "macd",
+        "bollinger",
+        "atr",
+        "returns",
+        "cum_return",
+        "std_vol",
+        "parkinson_vol",
+        "garman_klass_vol",
+        "volume_sma",
+        "volume_ratio",
+        "obv",
     }
     # Phase 76: micro-structure features
     phase76_expected = {"cvd", "ofi", "vpin", "cascade"}
     all_expected = core_expected | phase76_expected
     registered = set(names)
-    assert all_expected.issubset(registered), (
-        f"Missing features: {all_expected - registered}"
-    )
+    assert all_expected.issubset(registered), f"Missing features: {all_expected - registered}"
     # Sanity: at least 88 features registered (84 pre-Phase76 + 4 new)
     assert len(names) >= 88, f"Expected >= 88 features, got {len(names)}"
 
@@ -80,14 +91,16 @@ def test_get_unknown_feature_raises():
 
 
 def test_sma_basic():
-    df = pd.DataFrame({
-        "time": pd.date_range("2024-01-01", periods=5, freq="D"),
-        "open": [1, 2, 3, 4, 5],
-        "high": [1, 2, 3, 4, 5],
-        "low": [1, 2, 3, 4, 5],
-        "close": [1.0, 2.0, 3.0, 4.0, 5.0],
-        "volume": [100] * 5,
-    })
+    df = pd.DataFrame(
+        {
+            "time": pd.date_range("2024-01-01", periods=5, freq="D"),
+            "open": [1, 2, 3, 4, 5],
+            "high": [1, 2, 3, 4, 5],
+            "low": [1, 2, 3, 4, 5],
+            "close": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "volume": [100] * 5,
+        }
+    )
     result = SMA().compute(df, period=3)
     assert result.name == "sma_3"
     assert np.isnan(result.iloc[0])
@@ -223,14 +236,16 @@ def test_garman_klass_vol_positive(sample_ohlcv):
 
 
 def test_volume_sma_basic():
-    df = pd.DataFrame({
-        "time": pd.date_range("2024-01-01", periods=5, freq="D"),
-        "open": [1, 2, 3, 4, 5],
-        "high": [1, 2, 3, 4, 5],
-        "low": [1, 2, 3, 4, 5],
-        "close": [1.0, 2.0, 3.0, 4.0, 5.0],
-        "volume": [100.0, 200.0, 300.0, 400.0, 500.0],
-    })
+    df = pd.DataFrame(
+        {
+            "time": pd.date_range("2024-01-01", periods=5, freq="D"),
+            "open": [1, 2, 3, 4, 5],
+            "high": [1, 2, 3, 4, 5],
+            "low": [1, 2, 3, 4, 5],
+            "close": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "volume": [100.0, 200.0, 300.0, 400.0, 500.0],
+        }
+    )
     result = VolumeSMA().compute(df, period=3)
     assert result.name == "volume_sma_3"
     assert np.isnan(result.iloc[0])
@@ -250,14 +265,16 @@ def test_volume_sma_empty(empty_ohlcv):
 
 
 def test_volume_ratio_basic():
-    df = pd.DataFrame({
-        "time": pd.date_range("2024-01-01", periods=5, freq="D"),
-        "open": [1, 2, 3, 4, 5],
-        "high": [1, 2, 3, 4, 5],
-        "low": [1, 2, 3, 4, 5],
-        "close": [1.0, 2.0, 3.0, 4.0, 5.0],
-        "volume": [100.0, 100.0, 100.0, 100.0, 100.0],
-    })
+    df = pd.DataFrame(
+        {
+            "time": pd.date_range("2024-01-01", periods=5, freq="D"),
+            "open": [1, 2, 3, 4, 5],
+            "high": [1, 2, 3, 4, 5],
+            "low": [1, 2, 3, 4, 5],
+            "close": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "volume": [100.0, 100.0, 100.0, 100.0, 100.0],
+        }
+    )
     result = VolumeRatio().compute(df, period=3)
     assert result.name == "volume_ratio_3"
     # Constant volume => ratio should be 1.0 once window is full
@@ -275,14 +292,16 @@ def test_volume_ratio_empty(empty_ohlcv):
 
 
 def test_obv_basic():
-    df = pd.DataFrame({
-        "time": pd.date_range("2024-01-01", periods=5, freq="D"),
-        "open": [1, 2, 3, 4, 5],
-        "high": [1, 2, 3, 4, 5],
-        "low": [1, 2, 3, 4, 5],
-        "close": [10.0, 12.0, 11.0, 13.0, 14.0],
-        "volume": [100.0, 200.0, 150.0, 300.0, 250.0],
-    })
+    df = pd.DataFrame(
+        {
+            "time": pd.date_range("2024-01-01", periods=5, freq="D"),
+            "open": [1, 2, 3, 4, 5],
+            "high": [1, 2, 3, 4, 5],
+            "low": [1, 2, 3, 4, 5],
+            "close": [10.0, 12.0, 11.0, 13.0, 14.0],
+            "volume": [100.0, 200.0, 150.0, 300.0, 250.0],
+        }
+    )
     result = OBV().compute(df)
     assert result.name == "obv"
     # direction: NaN, +1, -1, +1, +1

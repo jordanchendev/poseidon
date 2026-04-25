@@ -1,16 +1,14 @@
 """Tests for universe filters: VolumeFilter, ListingAgeFilter, BlacklistFilter."""
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from poseidon.data.symbols import SymbolInfo
 from poseidon.universe.filters import BlacklistFilter, ListingAgeFilter, VolumeFilter
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_symbols() -> list[SymbolInfo]:
     """Create a deterministic set of test symbols."""
@@ -25,6 +23,7 @@ def _make_symbols() -> list[SymbolInfo]:
 # ---------------------------------------------------------------------------
 # BlacklistFilter
 # ---------------------------------------------------------------------------
+
 
 class TestBlacklistFilter:
     def test_removes_blacklisted_symbols(self):
@@ -51,6 +50,7 @@ class TestBlacklistFilter:
 # VolumeFilter
 # ---------------------------------------------------------------------------
 
+
 class TestVolumeFilter:
     def test_removes_symbols_below_min_volume(self):
         """VolumeFilter should remove symbols whose avg volume < min_volume."""
@@ -59,12 +59,16 @@ class TestVolumeFilter:
 
         # Mock _get_avg_volumes to return controlled data
         # AAPL: 1M (keep), GOOG: 200K (remove), MSFT: 600K (keep), TSLA: None (keep, conservative)
-        with patch.object(f, "_get_avg_volumes", return_value={
-            "AAPL": 1_000_000,
-            "GOOG": 200_000,
-            "MSFT": 600_000,
-            # TSLA missing -> no data -> keep (conservative)
-        }):
+        with patch.object(
+            f,
+            "_get_avg_volumes",
+            return_value={
+                "AAPL": 1_000_000,
+                "GOOG": 200_000,
+                "MSFT": 600_000,
+                # TSLA missing -> no data -> keep (conservative)
+            },
+        ):
             result = f.filter(symbols, "us_stock")
         ids = [s.id for s in result]
         assert "AAPL" in ids
@@ -85,6 +89,7 @@ class TestVolumeFilter:
 # ListingAgeFilter
 # ---------------------------------------------------------------------------
 
+
 class TestListingAgeFilter:
     def test_removes_recently_listed_symbols(self):
         """ListingAgeFilter should remove symbols with < min_days of data."""
@@ -92,12 +97,16 @@ class TestListingAgeFilter:
         f = ListingAgeFilter(min_days=90)
 
         # AAPL: 365 days (keep), GOOG: 30 days (remove), MSFT: 120 days (keep), TSLA: None (keep)
-        with patch.object(f, "_get_listing_ages", return_value={
-            "AAPL": 365,
-            "GOOG": 30,
-            "MSFT": 120,
-            # TSLA missing -> no data -> keep (conservative)
-        }):
+        with patch.object(
+            f,
+            "_get_listing_ages",
+            return_value={
+                "AAPL": 365,
+                "GOOG": 30,
+                "MSFT": 120,
+                # TSLA missing -> no data -> keep (conservative)
+            },
+        ):
             result = f.filter(symbols, "us_stock")
         ids = [s.id for s in result]
         assert "AAPL" in ids
@@ -117,6 +126,7 @@ class TestListingAgeFilter:
 # Filter chaining (determinism)
 # ---------------------------------------------------------------------------
 
+
 class TestFilterChaining:
     def test_chain_volume_and_blacklist_deterministic(self):
         """Chaining VolumeFilter + BlacklistFilter produces deterministic result."""
@@ -124,12 +134,16 @@ class TestFilterChaining:
         vol_filter = VolumeFilter(min_volume=500_000)
         bl_filter = BlacklistFilter(blacklist={"MSFT"})
 
-        with patch.object(vol_filter, "_get_avg_volumes", return_value={
-            "AAPL": 1_000_000,
-            "GOOG": 200_000,
-            "MSFT": 600_000,
-            "TSLA": 800_000,
-        }):
+        with patch.object(
+            vol_filter,
+            "_get_avg_volumes",
+            return_value={
+                "AAPL": 1_000_000,
+                "GOOG": 200_000,
+                "MSFT": 600_000,
+                "TSLA": 800_000,
+            },
+        ):
             after_vol = vol_filter.filter(symbols, "us_stock")
         after_bl = bl_filter.filter(after_vol, "us_stock")
 

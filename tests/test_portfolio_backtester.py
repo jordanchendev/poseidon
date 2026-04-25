@@ -7,17 +7,15 @@ All tests use synthetic OHLCV data and mock strategies.
 from __future__ import annotations
 
 from datetime import date
-from unittest.mock import MagicMock
 from types import SimpleNamespace
 
 import pandas as pd
 import pytest
 
 from poseidon.backtest.cost_model import get_cost_model
-from poseidon.backtest.portfolio_backtester import PortfolioBacktester, PortfolioBacktestResult
+from poseidon.backtest.portfolio_backtester import PortfolioBacktester
 from poseidon.strategies.portfolio.base import PortfolioStrategy
 from poseidon.strategies.portfolio.schemas import TargetPosition
-
 
 # --- Fixtures ---
 
@@ -130,7 +128,6 @@ class FailingStrategy(PortfolioStrategy):
 
 
 class TestPortfolioBacktester:
-
     def test_monthly_rebalance_calls_select_stocks(self, cost_model, ohlcv_dict):
         """select_stocks should be called approximately once per month."""
         targets = [
@@ -166,7 +163,7 @@ class TestPortfolioBacktester:
 
         # Count unique trading days in ohlcv_dict within range
         trading_days = set()
-        for sym, df in ohlcv_dict.items():
+        for _sym, df in ohlcv_dict.items():
             for idx in df.index:
                 d = idx.date() if hasattr(idx, "date") else idx
                 if date(2023, 1, 2) <= d <= date(2023, 6, 30):
@@ -287,16 +284,10 @@ class TestPortfolioBacktester:
         assert result.status == "completed"
         assert len(result.rebalance_log) >= 12  # ~13 weeks in 3 months
         # Most rebalance dates should be Fridays (weekday 4); some may snap backward to Thu
-        friday_count = sum(
-            1 for e in result.rebalance_log
-            if date.fromisoformat(e["date"]).weekday() == 4
-        )
+        friday_count = sum(1 for e in result.rebalance_log if date.fromisoformat(e["date"]).weekday() == 4)
         assert friday_count >= 10, f"Expected >=10 Fridays, got {friday_count}"
         # All rebalance dates must be weekdays
-        assert all(
-            date.fromisoformat(e["date"]).weekday() in {0, 1, 2, 3, 4}
-            for e in result.rebalance_log
-        )
+        assert all(date.fromisoformat(e["date"]).weekday() in {0, 1, 2, 3, 4} for e in result.rebalance_log)
 
     def test_monthly_rebalance_backward_compat(self, cost_model, ohlcv_dict):
         """Monthly rebalance with day_of_month=5 should produce identical dates as before refactor."""
@@ -497,10 +488,7 @@ class TestPortfolioBacktester:
 
         assert result.status == "completed"
         # 2330 should NOT be sold at second rebalance (retained via hold_until)
-        sell_2330_trades = [
-            t for t in result.trades
-            if t["symbol"] == "2330" and t["action"] == "sell"
-        ]
+        sell_2330_trades = [t for t in result.trades if t["symbol"] == "2330" and t["action"] == "sell"]
         assert len(sell_2330_trades) == 0, f"2330 should be retained but was sold: {sell_2330_trades}"
 
     def test_hold_until_expired_position_sold_on_rebalance(self, cost_model):
@@ -533,10 +521,7 @@ class TestPortfolioBacktester:
 
         assert result.status == "completed"
         # 2330 should be sold (either via hold_until_exit daily check or at rebalance)
-        sell_2330_trades = [
-            t for t in result.trades
-            if t["symbol"] == "2330" and t["action"] == "sell"
-        ]
+        sell_2330_trades = [t for t in result.trades if t["symbol"] == "2330" and t["action"] == "sell"]
         assert len(sell_2330_trades) >= 1, "2330 should have been sold when hold_until expired"
 
     def test_no_check_hold_until_backward_compat(self, cost_model):
@@ -593,8 +578,11 @@ class TestPortfolioBacktester:
         backtester = PortfolioBacktester(cost_model=cost_model, initial_capital=0.0)
         holdings = {
             "2330": Holding(
-                symbol="2330", market="tw_stock", weight=1.0,
-                shares=10.0, entry_price=400.0,
+                symbol="2330",
+                market="tw_stock",
+                weight=1.0,
+                shares=10.0,
+                entry_price=400.0,
             ),
         }
         # On 2023-01-04 (post-split): close=100, adj_close=400

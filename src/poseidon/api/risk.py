@@ -88,11 +88,7 @@ async def list_rule_types() -> list[str]:
 @router.get("", response_model=list[RiskRuleResponse])
 async def list_rules(db: Session = Depends(get_db)) -> list[RiskRuleResponse]:
     """List all risk rules ordered by priority."""
-    rules = (
-        db.query(RiskRuleRecord)
-        .order_by(RiskRuleRecord.priority)
-        .all()
-    )
+    rules = db.query(RiskRuleRecord).order_by(RiskRuleRecord.priority).all()
     return rules
 
 
@@ -109,15 +105,10 @@ async def create_rule(
     if body.rule_type not in RULE_REGISTRY:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown rule_type '{body.rule_type}'. "
-            f"Available: {sorted(RULE_REGISTRY.keys())}",
+            detail=f"Unknown rule_type '{body.rule_type}'. Available: {sorted(RULE_REGISTRY.keys())}",
         )
 
-    existing = (
-        db.query(RiskRuleRecord)
-        .filter(RiskRuleRecord.name == body.name)
-        .first()
-    )
+    existing = db.query(RiskRuleRecord).filter(RiskRuleRecord.name == body.name).first()
     if existing:
         raise HTTPException(
             status_code=409,

@@ -18,12 +18,13 @@ end-to-end on stormtrooper via the Phase 40 smoke runbook (plan 40-06).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # --- SQLite compatibility shims for Postgres-only types (must run before
 # any Base.metadata.create_all call) ---
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
 
 
@@ -41,12 +42,7 @@ def _compile_uuid_sqlite(type_, compiler, **kw):  # pragma: no cover
 # Task 1: migration 023 + DataGap ORM
 # ---------------------------------------------------------------------------
 
-MIGRATION_023_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "alembic"
-    / "versions"
-    / "023_create_data_gaps.py"
-)
+MIGRATION_023_PATH = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "023_create_data_gaps.py"
 
 
 def test_migration_023_creates_data_gaps_table():
@@ -56,7 +52,7 @@ def test_migration_023_creates_data_gaps_table():
 
     assert 'revision = "023"' in content
     assert 'down_revision = "022"' in content
-    assert 'op.create_table(' in content
+    assert "op.create_table(" in content
     assert '"data_gaps"' in content
     # Required columns (D-04 schema)
     for col in (
@@ -139,12 +135,7 @@ def test_data_gap_importable_from_models_package():
 # Task 2: migration 024 — ohlcv_1d_cagg
 # ---------------------------------------------------------------------------
 
-MIGRATION_024_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "alembic"
-    / "versions"
-    / "024_create_ohlcv_1d_cagg.py"
-)
+MIGRATION_024_PATH = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "024_create_ohlcv_1d_cagg.py"
 
 
 def test_migration_024_creates_continuous_aggregate():
@@ -252,10 +243,10 @@ def test_data_gap_response_schema_instantiates():
         market="crypto_perp",
         symbol="BTCUSDT",
         interval="4h",
-        gap_start=datetime(2024, 1, 1, tzinfo=timezone.utc),
-        gap_end=datetime(2024, 1, 2, tzinfo=timezone.utc),
+        gap_start=datetime(2024, 1, 1, tzinfo=UTC),
+        gap_end=datetime(2024, 1, 2, tzinfo=UTC),
         missing_bars=6,
-        detected_at=datetime(2024, 1, 3, tzinfo=timezone.utc),
+        detected_at=datetime(2024, 1, 3, tzinfo=UTC),
         healed_at=None,
     )
     assert resp.market == "crypto_perp"
@@ -271,7 +262,7 @@ def test_data_freshness_response_schema_instantiates():
     resp = DataFreshnessResponse(
         market="crypto_perp",
         interval="4h",
-        last_successful_ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        last_successful_ts=datetime(2024, 1, 1, tzinfo=UTC),
         expected_lag_seconds=18000,
         observed_lag_seconds=20000.5,
         status="violation",

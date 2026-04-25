@@ -8,7 +8,6 @@ Verifies:
 
 import pytest
 
-
 # ---------- COMP-01: Conservative defaults on all 5 base classes ----------
 
 
@@ -102,16 +101,17 @@ class TestStrategyRegistry:
     """Strategy registry must support register, get, list, and KeyError."""
 
     def test_register_and_list(self):
+        from poseidon.strategies.base import BaseStrategy
         from poseidon.strategies.registry import (
             _registry,
             list_strategies,
             register_strategy,
         )
-        from poseidon.strategies.base import BaseStrategy
 
         # Snapshot to avoid wiping module-level registrations
         snapshot = dict(_registry)
         try:
+
             @register_strategy
             class DummyStrategy(BaseStrategy):
                 name = "dummy_strat"
@@ -129,15 +129,16 @@ class TestStrategyRegistry:
             _registry.update(snapshot)
 
     def test_get_strategy_found(self):
+        from poseidon.strategies.base import BaseStrategy
         from poseidon.strategies.registry import (
             _registry,
             get_strategy,
             register_strategy,
         )
-        from poseidon.strategies.base import BaseStrategy
 
         snapshot = dict(_registry)
         try:
+
             @register_strategy
             class FindMe(BaseStrategy):
                 name = "find_me"
@@ -168,15 +169,16 @@ class TestPortfolioStrategyRegistry:
     """Portfolio strategy registry mirrors strategy registry pattern."""
 
     def test_register_and_list(self):
+        from poseidon.strategies.portfolio.base import PortfolioStrategy
         from poseidon.strategies.portfolio.registry import (
             _registry,
             list_portfolio_strategies,
             register_portfolio_strategy,
         )
-        from poseidon.strategies.portfolio.base import PortfolioStrategy
 
         snapshot = dict(_registry)
         try:
+
             @register_portfolio_strategy
             class DummyPortfolio(PortfolioStrategy):
                 name = "dummy_port"
@@ -301,11 +303,10 @@ class TestRegistryDiscovery:
 
     def test_list_strategies_has_expected_names(self):
         # Force imports to trigger registration
+        import poseidon.strategies.model_strategy
+        import poseidon.strategies.regime_router
+        import poseidon.strategies.rule_strategy
         import poseidon.strategies.voting_strategy  # noqa: F401
-        import poseidon.strategies.regime_router  # noqa: F401
-        import poseidon.strategies.model_strategy  # noqa: F401
-        import poseidon.strategies.rule_strategy  # noqa: F401
-
         from poseidon.strategies.registry import list_strategies
 
         names = list_strategies()
@@ -315,9 +316,8 @@ class TestRegistryDiscovery:
         assert "rule_strategy" in names
 
     def test_list_portfolio_strategies_has_expected_names(self):
+        import poseidon.strategies.portfolio.crypto_trend
         import poseidon.strategies.portfolio.revenue_breakout  # noqa: F401
-        import poseidon.strategies.portfolio.crypto_trend  # noqa: F401
-
         from poseidon.strategies.portfolio.registry import list_portfolio_strategies
 
         names = list_portfolio_strategies()

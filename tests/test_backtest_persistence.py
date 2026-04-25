@@ -1,16 +1,17 @@
 """Tests for backtest trade/equity persistence via BacktestRepository."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 # --- SQLite compatibility: register before any model import ---
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 @compiles(JSONB, "sqlite")
@@ -24,16 +25,15 @@ def _compile_uuid_sqlite(type_, compiler, **kw):
 
 
 # --- Now import models ---
-from poseidon.models.base import Base  # noqa: E402
+from poseidon.backtest.portfolio import TradeRecord  # noqa: E402
+from poseidon.backtest.repository import BacktestRepository  # noqa: E402
+from poseidon.backtest.schemas import BacktestConfig, BacktestResult  # noqa: E402
 from poseidon.models.backtest import (  # noqa: E402
     BacktestEquityRecord,
     BacktestRecord,
     BacktestTradeRecord,
 )
-from poseidon.backtest.portfolio import TradeRecord  # noqa: E402
-from poseidon.backtest.repository import BacktestRepository  # noqa: E402
-from poseidon.backtest.schemas import BacktestConfig, BacktestResult  # noqa: E402
-
+from poseidon.models.base import Base  # noqa: E402
 
 # --------------- Test DB setup ---------------
 
@@ -48,7 +48,8 @@ _engine = create_engine(
 def _register_sqlite_functions(dbapi_conn, connection_record):
     """Register gen_random_uuid() and now() for SQLite compatibility."""
     dbapi_conn.create_function("gen_random_uuid", 0, lambda: str(uuid.uuid4()))
-    dbapi_conn.create_function("now", 0, lambda: datetime.now(timezone.utc).isoformat())
+    dbapi_conn.create_function("now", 0, lambda: datetime.now(UTC).isoformat())
+
 
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
 
@@ -72,6 +73,7 @@ def db_session():
 
 # --------------- Helpers ---------------
 
+
 def _make_config() -> BacktestConfig:
     return BacktestConfig(
         strategy_type="rule",
@@ -94,7 +96,7 @@ def _make_result(backtest_id: uuid.UUID | None = None) -> BacktestResult:
 
 
 def _make_trades() -> list[TradeRecord]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return [
         TradeRecord(
             symbol="BTCUSDT",
@@ -124,11 +126,11 @@ def _make_trades() -> list[TradeRecord]:
 
 
 def _make_equity_curve() -> list[tuple[datetime, float, float]]:
-    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    base = datetime(2026, 1, 1, tzinfo=UTC)
     return [
         (base, 100000.0, 0.0),
-        (datetime(2026, 1, 2, tzinfo=timezone.utc), 100500.0, 0.0),
-        (datetime(2026, 1, 3, tzinfo=timezone.utc), 99800.0, -0.007),
+        (datetime(2026, 1, 2, tzinfo=UTC), 100500.0, 0.0),
+        (datetime(2026, 1, 3, tzinfo=UTC), 99800.0, -0.007),
     ]
 
 
@@ -197,10 +199,13 @@ def test_save_result_with_strategy_id_and_completed_at(db_session):
     config = _make_config()
     result = _make_result()
     strategy_id = uuid.uuid4()
-    completed = datetime.now(timezone.utc)
+    completed = datetime.now(UTC)
 
     bt_id = repo.save_result(
-        config, result, _make_trades(), _make_equity_curve(),
+        config,
+        result,
+        _make_trades(),
+        _make_equity_curve(),
         strategy_id=strategy_id,
         completed_at=completed,
     )

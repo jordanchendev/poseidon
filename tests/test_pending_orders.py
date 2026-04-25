@@ -5,17 +5,21 @@ Phase 50-01 Task 1: Unit tests for pending order management.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
 import pytest
 
+from poseidon.backtest.cost_model import get_cost_model
 from poseidon.backtest.pending_orders import (
     FillEvent,
     FillModel,
     PendingOrderBook,
-    PendingOrder,
 )
+from poseidon.backtest.portfolio import BacktestPortfolio, SizingConfig, SizingMode
+from poseidon.backtest.runner import BacktestRunner
+from poseidon.data.feature_engine import FeatureEngine
+from poseidon.risk.engine import RiskEngine
 from poseidon.signals.schemas import OrderType, Signal, SignalAction
 
 
@@ -57,7 +61,7 @@ def _make_bar(
             "close": close,
             "volume": volume,
         },
-        name=datetime(2025, 6, 1, tzinfo=timezone.utc),
+        name=datetime(2025, 6, 1, tzinfo=UTC),
     )
 
 
@@ -242,9 +246,6 @@ class TestFillEvent:
 # ---------------------------------------------------------------------------
 # Portfolio extension tests (Task 2)
 # ---------------------------------------------------------------------------
-
-from poseidon.backtest.cost_model import get_cost_model
-from poseidon.backtest.portfolio import BacktestPortfolio, TradeRecord
 
 
 def _make_portfolio(initial_capital: float = 100_000.0) -> BacktestPortfolio:
@@ -451,11 +452,6 @@ class TestPositionSlTpStorage:
 # FIXED_RISK sizing mode tests (Plan 02 Task 1)
 # ---------------------------------------------------------------------------
 
-from poseidon.backtest.portfolio import SizingConfig, SizingMode
-from poseidon.backtest.runner import BacktestRunner
-from poseidon.data.feature_engine import FeatureEngine
-from poseidon.risk.engine import RiskEngine
-
 
 def _make_runner_for_sizing(
     sizing_config: SizingConfig,
@@ -501,7 +497,7 @@ def _make_runner_for_sizing(
 
 def _make_features_slice(close: float = 50000.0, n_bars: int = 5) -> pd.DataFrame:
     """Create a synthetic features_slice with known close prices."""
-    times = pd.date_range("2025-06-01", periods=n_bars, freq="h", tz=timezone.utc)
+    times = pd.date_range("2025-06-01", periods=n_bars, freq="h", tz=UTC)
     return pd.DataFrame(
         {
             "open": [close] * n_bars,
@@ -567,7 +563,9 @@ class TestFixedRiskSizing:
     def test_fixed_risk_fallback_no_stop_loss(self):
         """FIXED_RISK falls back to notional_pct when stop_loss_price is None."""
         cfg = SizingConfig(
-            mode=SizingMode.FIXED_RISK, risk_pct=0.01, notional_pct=0.1,
+            mode=SizingMode.FIXED_RISK,
+            risk_pct=0.01,
+            notional_pct=0.1,
         )
         runner = _make_runner_for_sizing(cfg, initial_capital=1_000_000.0)
 
@@ -586,7 +584,9 @@ class TestFixedRiskSizing:
     def test_fixed_risk_fallback_zero_distance(self):
         """FIXED_RISK falls back when entry == SL (zero distance)."""
         cfg = SizingConfig(
-            mode=SizingMode.FIXED_RISK, risk_pct=0.01, notional_pct=0.1,
+            mode=SizingMode.FIXED_RISK,
+            risk_pct=0.01,
+            notional_pct=0.1,
         )
         runner = _make_runner_for_sizing(cfg, initial_capital=1_000_000.0)
 

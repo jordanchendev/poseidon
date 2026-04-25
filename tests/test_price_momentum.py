@@ -2,15 +2,14 @@
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from poseidon.data.features.price_momentum import (
-    PriceMomentum3M,
-    PriceMomentum6M,
-    PriceMomentum12M,
     _DAYS_3M,
     _DAYS_6M,
     _DAYS_12M,
+    PriceMomentum3M,
+    PriceMomentum6M,
+    PriceMomentum12M,
 )
 
 
@@ -18,14 +17,16 @@ def _make_ohlcv(n_rows: int = 300, base_price: float = 100.0, growth: float = 0.
     """Create a synthetic OHLCV DataFrame with trending close prices."""
     dates = pd.date_range("2020-01-01", periods=n_rows, freq="B")
     close = base_price * (1 + growth) ** np.arange(n_rows)
-    return pd.DataFrame({
-        "time": dates,
-        "open": close * 0.99,
-        "high": close * 1.01,
-        "low": close * 0.98,
-        "close": close,
-        "volume": np.random.randint(1000, 10000, n_rows),
-    }).set_index("time")
+    return pd.DataFrame(
+        {
+            "time": dates,
+            "open": close * 0.99,
+            "high": close * 1.01,
+            "low": close * 0.98,
+            "close": close,
+            "volume": np.random.randint(1000, 10000, n_rows),
+        }
+    ).set_index("time")
 
 
 class TestPriceMomentum:
@@ -87,6 +88,7 @@ class TestPriceMomentum:
     def test_momentum_is_not_nonprice_spec(self):
         """CRITICAL: momentum routes to OHLCV, not nonprice (Pitfall 1)."""
         from poseidon.data.feature_engine.specs import is_nonprice_spec
+
         assert is_nonprice_spec("momentum_3m") is False
         assert is_nonprice_spec("momentum_6m") is False
         assert is_nonprice_spec("momentum_12m") is False
@@ -104,15 +106,17 @@ class TestPriceMomentum:
         adj_close_vals = np.ones(n_rows) * 400.0  # adjusted: no discontinuity
         adj_close_vals = 400.0 * (1 + 0.001) ** np.arange(n_rows)  # smooth uptrend
 
-        ohlcv = pd.DataFrame({
-            "time": dates,
-            "open": close_vals * 0.99,
-            "high": close_vals * 1.01,
-            "low": close_vals * 0.98,
-            "close": close_vals,
-            "volume": np.random.randint(1000, 10000, n_rows),
-            "adj_close": adj_close_vals,
-        }).set_index("time")
+        ohlcv = pd.DataFrame(
+            {
+                "time": dates,
+                "open": close_vals * 0.99,
+                "high": close_vals * 1.01,
+                "low": close_vals * 0.98,
+                "close": close_vals,
+                "volume": np.random.randint(1000, 10000, n_rows),
+                "adj_close": adj_close_vals,
+            }
+        ).set_index("time")
 
         feat = PriceMomentum3M()
         result = feat.compute(ohlcv)

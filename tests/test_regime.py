@@ -4,16 +4,15 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from poseidon.backtest.regime_labels import generate_regime_labels
 from poseidon.strategies.base import BaseStrategy, StrategyType
 from poseidon.strategies.regime_router import DEFAULT_REGIME_CONFIGS, RegimeRouter
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_mock_regime_model(regime_label: str = "high_vol") -> MagicMock:
     """Create a mock XGBoostRegimeModel that returns a fixed regime prediction."""
@@ -45,6 +44,7 @@ def _minimal_voting_config() -> dict:
 # ---------------------------------------------------------------------------
 # Label generation tests
 # ---------------------------------------------------------------------------
+
 
 class TestGenerateRegimeLabels:
     """Tests for generate_regime_labels."""
@@ -88,6 +88,7 @@ class TestGenerateRegimeLabels:
 # ---------------------------------------------------------------------------
 # RegimeRouter tests
 # ---------------------------------------------------------------------------
+
 
 class TestRegimeRouter:
     """Tests for RegimeRouter."""

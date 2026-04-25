@@ -5,7 +5,7 @@ Uses synthetic data with known properties for deterministic validation.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pytest
@@ -24,7 +24,7 @@ COV_2X2 = np.array([[0.04, 0.01], [0.01, 0.09]])
 # Equal weights for two assets
 WEIGHTS_2 = np.array([0.5, 0.5])
 
-AS_OF = datetime(2026, 3, 1, tzinfo=timezone.utc)
+AS_OF = datetime(2026, 3, 1, tzinfo=UTC)
 PORTFOLIO_VALUE = 100_000.0
 
 
@@ -161,9 +161,7 @@ class TestParametricVaR:
 
 
 class TestHistoricalSimulationVaR:
-    def test_produces_var_result(
-        self, calc: VaRCalculator, rng_returns: np.ndarray
-    ) -> None:
+    def test_produces_var_result(self, calc: VaRCalculator, rng_returns: np.ndarray) -> None:
         result = calc.historical_simulation(
             portfolio_returns=rng_returns,
             portfolio_value=PORTFOLIO_VALUE,
@@ -172,9 +170,7 @@ class TestHistoricalSimulationVaR:
         assert isinstance(result, VaRResult)
         assert result.method == VaRMethod.HISTORICAL.value
 
-    def test_var_matches_percentile(
-        self, calc: VaRCalculator, rng_returns: np.ndarray
-    ) -> None:
+    def test_var_matches_percentile(self, calc: VaRCalculator, rng_returns: np.ndarray) -> None:
         """VaR should equal the negative of the corresponding percentile."""
         result = calc.historical_simulation(
             portfolio_returns=rng_returns,
@@ -184,9 +180,7 @@ class TestHistoricalSimulationVaR:
         expected_var95 = -np.percentile(rng_returns, 5)
         assert abs(result.var_95 - expected_var95) < 1e-10
 
-    def test_cvar_equals_mean_of_tail(
-        self, calc: VaRCalculator, rng_returns: np.ndarray
-    ) -> None:
+    def test_cvar_equals_mean_of_tail(self, calc: VaRCalculator, rng_returns: np.ndarray) -> None:
         """CVaR = mean of losses beyond VaR threshold."""
         result = calc.historical_simulation(
             portfolio_returns=rng_returns,
@@ -198,9 +192,7 @@ class TestHistoricalSimulationVaR:
         expected_cvar_95 = -np.mean(tail) if len(tail) > 0 else var_95
         assert abs(result.cvar_95 - expected_cvar_95) < 1e-10
 
-    def test_cvar_greater_than_var(
-        self, calc: VaRCalculator, rng_returns: np.ndarray
-    ) -> None:
+    def test_cvar_greater_than_var(self, calc: VaRCalculator, rng_returns: np.ndarray) -> None:
         result = calc.historical_simulation(
             portfolio_returns=rng_returns,
             portfolio_value=PORTFOLIO_VALUE,
@@ -229,9 +221,7 @@ class TestHistoricalSimulationVaR:
         assert result.var_95 == 0.0
         assert result.var_99 == 0.0
 
-    def test_as_of_stored(
-        self, calc: VaRCalculator, rng_returns: np.ndarray
-    ) -> None:
+    def test_as_of_stored(self, calc: VaRCalculator, rng_returns: np.ndarray) -> None:
         result = calc.historical_simulation(
             portfolio_returns=rng_returns,
             portfolio_value=PORTFOLIO_VALUE,
@@ -246,9 +236,7 @@ class TestHistoricalSimulationVaR:
 
 
 class TestCornishFisherVaR:
-    def test_produces_var_result(
-        self, calc: VaRCalculator, rng_returns: np.ndarray
-    ) -> None:
+    def test_produces_var_result(self, calc: VaRCalculator, rng_returns: np.ndarray) -> None:
         result = calc.cornish_fisher(
             weights=WEIGHTS_2,
             cov_matrix=COV_2X2,
@@ -259,9 +247,7 @@ class TestCornishFisherVaR:
         assert isinstance(result, VaRResult)
         assert result.method == VaRMethod.CORNISH_FISHER.value
 
-    def test_equals_parametric_for_normal_returns(
-        self, calc: VaRCalculator
-    ) -> None:
+    def test_equals_parametric_for_normal_returns(self, calc: VaRCalculator) -> None:
         """With zero skew and zero excess kurtosis, CF should equal parametric."""
         # Generate large sample from standard normal -> skew ~ 0, kurt ~ 0
         rng = np.random.RandomState(123)
@@ -284,9 +270,7 @@ class TestCornishFisherVaR:
         assert abs(result_cf.var_95 - result_param.var_95) / result_param.var_95 < 0.01
         assert abs(result_cf.var_99 - result_param.var_99) / result_param.var_99 < 0.01
 
-    def test_fat_tails_higher_var_than_parametric(
-        self, calc: VaRCalculator, fat_tail_returns: np.ndarray
-    ) -> None:
+    def test_fat_tails_higher_var_than_parametric(self, calc: VaRCalculator, fat_tail_returns: np.ndarray) -> None:
         """Positive excess kurtosis should produce higher VaR than parametric."""
         result_cf = calc.cornish_fisher(
             weights=WEIGHTS_2,
@@ -303,9 +287,7 @@ class TestCornishFisherVaR:
         )
         assert result_cf.var_99 > result_param.var_99
 
-    def test_negative_skew_increases_tail_risk(
-        self, calc: VaRCalculator, fat_tail_returns: np.ndarray
-    ) -> None:
+    def test_negative_skew_increases_tail_risk(self, calc: VaRCalculator, fat_tail_returns: np.ndarray) -> None:
         """Negative skew + excess kurtosis increases VaR at high confidence.
 
         The Cornish-Fisher expansion adjusts the normal quantile. With
@@ -334,9 +316,7 @@ class TestCornishFisherVaR:
         # At 99% confidence, kurtosis + skew combined produce higher VaR
         assert result_cf.var_99 > result_param.var_99
 
-    def test_details_contain_skew_and_kurtosis(
-        self, calc: VaRCalculator, rng_returns: np.ndarray
-    ) -> None:
+    def test_details_contain_skew_and_kurtosis(self, calc: VaRCalculator, rng_returns: np.ndarray) -> None:
         result = calc.cornish_fisher(
             weights=WEIGHTS_2,
             cov_matrix=COV_2X2,
@@ -369,9 +349,7 @@ class TestCornishFisherVaR:
         )
         assert result.var_95 == 0.0
 
-    def test_as_of_stored(
-        self, calc: VaRCalculator, rng_returns: np.ndarray
-    ) -> None:
+    def test_as_of_stored(self, calc: VaRCalculator, rng_returns: np.ndarray) -> None:
         result = calc.cornish_fisher(
             weights=WEIGHTS_2,
             cov_matrix=COV_2X2,
@@ -388,9 +366,7 @@ class TestCornishFisherVaR:
 
 
 class TestHoldingPeriodScaling:
-    def test_parametric_holding_period_10_greater_than_1(
-        self, calc: VaRCalculator
-    ) -> None:
+    def test_parametric_holding_period_10_greater_than_1(self, calc: VaRCalculator) -> None:
         result_1 = calc.parametric(
             weights=WEIGHTS_2,
             cov_matrix=COV_2X2,
@@ -410,9 +386,7 @@ class TestHoldingPeriodScaling:
         ratio = result_10.var_95 / result_1.var_95
         assert abs(ratio - np.sqrt(10)) < 1e-10
 
-    def test_historical_holding_period_scaling(
-        self, calc: VaRCalculator, rng_returns: np.ndarray
-    ) -> None:
+    def test_historical_holding_period_scaling(self, calc: VaRCalculator, rng_returns: np.ndarray) -> None:
         result_1 = calc.historical_simulation(
             portfolio_returns=rng_returns,
             portfolio_value=PORTFOLIO_VALUE,
@@ -427,9 +401,7 @@ class TestHoldingPeriodScaling:
         )
         assert result_10.var_95 > result_1.var_95
 
-    def test_cornish_fisher_holding_period_scaling(
-        self, calc: VaRCalculator, rng_returns: np.ndarray
-    ) -> None:
+    def test_cornish_fisher_holding_period_scaling(self, calc: VaRCalculator, rng_returns: np.ndarray) -> None:
         result_1 = calc.cornish_fisher(
             weights=WEIGHTS_2,
             cov_matrix=COV_2X2,

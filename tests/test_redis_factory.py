@@ -41,11 +41,13 @@ class TestGetRedis:
     def test_import_factory(self):
         """get_redis is importable from core.redis."""
         from poseidon.core.redis import get_redis
+
         assert callable(get_redis)
 
     def test_purpose_urls(self):
         """Each purpose returns a client whose URL contains the correct DB index."""
         from poseidon.core.redis import get_redis
+
         purposes_and_dbs = [
             ("celery", 0),
             ("cache", 1),
@@ -56,27 +58,29 @@ class TestGetRedis:
             client = get_redis(purpose)
             pool = client.connection_pool
             db = pool.connection_kwargs.get("db", None)
-            assert db == expected_db, (
-                f"get_redis({purpose!r}) should use DB {expected_db}, got {db}"
-            )
+            assert db == expected_db, f"get_redis({purpose!r}) should use DB {expected_db}, got {db}"
 
     def test_unknown_purpose_raises(self):
         """Unknown purpose raises ValueError with valid options listed."""
         from poseidon.core.redis import get_redis
+
         with pytest.raises(ValueError, match="Unknown Redis purpose"):
             get_redis("nonexistent")
 
     def test_decode_responses_false_by_default(self):
         """Default client returns bytes (decode_responses=False)."""
         from poseidon.core.redis import get_redis
+
         client = get_redis("cache")
         pool = client.connection_pool
-        assert pool.connection_kwargs.get("decode_responses") is False or \
-               "decode_responses" not in pool.connection_kwargs
+        assert (
+            pool.connection_kwargs.get("decode_responses") is False or "decode_responses" not in pool.connection_kwargs
+        )
 
     def test_decode_responses_true(self):
         """Stream client with decode_responses=True returns text-mode client."""
         from poseidon.core.redis import get_redis
+
         client = get_redis("stream", decode_responses=True)
         pool = client.connection_pool
         assert pool.connection_kwargs.get("decode_responses") is True

@@ -5,7 +5,6 @@ Covers wick, swing, trend, volatility extension, and funding rate extension feat
 
 import numpy as np
 import pandas as pd
-import pytest
 
 
 def make_ohlcv(n=50):
@@ -22,9 +21,7 @@ def make_ohlcv(n=50):
     high = bar_max + np.abs(np.random.randn(n)) * 2
     low = bar_min - np.abs(np.random.randn(n)) * 2
     volume = np.random.randint(1000, 10000, n).astype(float)
-    return pd.DataFrame(
-        {"open": open_, "high": high, "low": low, "close": close, "volume": volume}
-    )
+    return pd.DataFrame({"open": open_, "high": high, "low": low, "close": close, "volume": volume})
 
 
 class TestWickRatio:
@@ -192,9 +189,7 @@ class TestFundingRateExtreme:
             {"funding_rate_daily": np.random.randn(len(ohlcv)) * 0.001},
             index=ohlcv.index,
         )
-        result = FundingRateExtreme().compute(
-            ohlcv, funding_data=funding_data, period=20, threshold=2.0
-        )
+        result = FundingRateExtreme().compute(ohlcv, funding_data=funding_data, period=20, threshold=2.0)
         assert "funding_zscore" in result.columns
         assert "funding_extreme" in result.columns
         assert "funding_direction" in result.columns

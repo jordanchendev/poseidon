@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -26,7 +27,6 @@ from poseidon.backtest.voting_strategy_factory import PARAM_BOUNDS, get_param_bo
 from poseidon.ml.manager import ModelManager  # noqa: E402
 from poseidon.models.base import Base  # noqa: E402
 from poseidon.models.model_version import ModelVersion  # noqa: E402
-
 
 ENGINE = create_engine(
     "sqlite://",
@@ -69,7 +69,7 @@ def _seed_model(
 def test_list_ready_models_filters_status_market_and_orders_latest_first():
     session = SessionLocal()
     manager = ModelManager(session)
-    base_time = datetime(2026, 4, 11, tzinfo=timezone.utc)
+    base_time = datetime(2026, 4, 11, tzinfo=UTC)
 
     older = _seed_model(
         session,
@@ -115,7 +115,7 @@ def test_list_ready_models_returns_empty_when_no_matching_models():
         session,
         name="qlib_lgbm_us_stock",
         status="ready",
-        created_at=datetime(2026, 4, 11, tzinfo=timezone.utc),
+        created_at=datetime(2026, 4, 11, tzinfo=UTC),
     )
 
     assert manager.list_ready_models("tw_stock") == []
@@ -129,13 +129,13 @@ def test_list_ready_models_does_not_return_other_market_models():
         session,
         name="qlib_lgbm_tw_stock",
         status="active",
-        created_at=datetime(2026, 4, 11, tzinfo=timezone.utc),
+        created_at=datetime(2026, 4, 11, tzinfo=UTC),
     )
     crypto_model = _seed_model(
         session,
         name="qlib_catboost_crypto_spot",
         status="ready",
-        created_at=datetime(2026, 4, 11, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 4, 11, 1, tzinfo=UTC),
     )
 
     models = manager.list_ready_models("crypto_spot")

@@ -26,14 +26,16 @@ def sample_ohlcv() -> pd.DataFrame:
     low = close - np.abs(np.random.randn(n)) * 2
     open_ = close + np.random.randn(n) * 0.5
     volume = np.random.randint(1000, 10000, n).astype(float)
-    return pd.DataFrame({
-        "time": dates,
-        "open": open_,
-        "high": high,
-        "low": low,
-        "close": close,
-        "volume": volume,
-    })
+    return pd.DataFrame(
+        {
+            "time": dates,
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+        }
+    )
 
 
 class TestFeatureComputerPurity:
@@ -47,21 +49,28 @@ class TestFeatureComputerPurity:
         with open(source_file) as f:
             tree = ast.parse(f.read())
         forbidden = {
-            "storage", "requests", "ccxt", "yfinance", "finlab",
-            "sqlalchemy", "Session", "SessionLocal", "db_session",
-            "repository", "autoresearch",
+            "storage",
+            "requests",
+            "ccxt",
+            "yfinance",
+            "finlab",
+            "sqlalchemy",
+            "Session",
+            "SessionLocal",
+            "db_session",
+            "repository",
+            "autoresearch",
         }
         imports = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     imports.add(alias.name.split(".")[0])
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    parts = node.module.split(".")
-                    imports.update(parts)
-                    for alias in node.names:
-                        imports.add(alias.name)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                parts = node.module.split(".")
+                imports.update(parts)
+                for alias in node.names:
+                    imports.add(alias.name)
         violations = imports & forbidden
         assert not violations, f"FeatureComputer has forbidden imports: {violations}"
 
@@ -74,9 +83,7 @@ class TestFeatureComputerPurity:
             if fname.endswith(".py"):
                 with open(os.path.join(pkg_dir, fname)) as f:
                     content = f.read()
-                assert "autoresearch" not in content, (
-                    f"autoresearch found in feature_engine/{fname}"
-                )
+                assert "autoresearch" not in content, f"autoresearch found in feature_engine/{fname}"
 
     def test_computer_module_has_no_db_or_network_classes(self):
         """FeatureComputer module dir() should not contain DB/network objects."""

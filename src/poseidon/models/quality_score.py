@@ -19,6 +19,4 @@ class QualityScore(Base):
     anomaly_free = Column(Numeric, nullable=False)
     timeliness = Column(Numeric, nullable=False)
 
-    __table_args__ = (
-        PrimaryKeyConstraint("time", "symbol", "interval", name="pk_quality_scores"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("time", "symbol", "interval", name="pk_quality_scores"),)

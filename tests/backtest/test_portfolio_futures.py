@@ -9,20 +9,20 @@ Tests cover:
 - CostModel registry entries for tw_futures and tw_futures_mtx
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pandas as pd
 import pytest
 
-from poseidon.backtest.cost_model import COST_MODELS, CostModel
-from poseidon.backtest.portfolio import BacktestPortfolio, SizingConfig, SizingMode
+from poseidon.backtest.cost_model import COST_MODELS
+from poseidon.backtest.portfolio import BacktestPortfolio
 from poseidon.signals.schemas import InstrumentType, Signal, SignalAction
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def tw_futures_cost():
@@ -60,13 +60,13 @@ def make_futures_signal(
         action=action,
         confidence=0.8,
         quantity_pct=quantity_pct,
-        signal_time=signal_time or datetime(2024, 1, 1, tzinfo=timezone.utc),
+        signal_time=signal_time or datetime(2024, 1, 1, tzinfo=UTC),
     )
 
 
 def make_bar(close: float, time: datetime | None = None) -> pd.Series:
     """Factory for creating a mock OHLCV bar."""
-    t = time or datetime(2024, 1, 1, tzinfo=timezone.utc)
+    t = time or datetime(2024, 1, 1, tzinfo=UTC)
     return pd.Series(
         {
             "open": close * 0.999,
@@ -82,6 +82,7 @@ def make_bar(close: float, time: datetime | None = None) -> pd.Series:
 # ---------------------------------------------------------------------------
 # Test: CostModel registry entries
 # ---------------------------------------------------------------------------
+
 
 class TestCostModelRegistry:
     """Tests for CostModel registry entries."""
@@ -105,6 +106,7 @@ class TestCostModelRegistry:
 # Test: Futures PnL
 # ---------------------------------------------------------------------------
 
+
 class TestFuturesPnL:
     """Tests for futures PnL calculation with point_value multiplier."""
 
@@ -122,9 +124,9 @@ class TestFuturesPnL:
         # Close long with +100 points
         sig_close = make_futures_signal(
             SignalAction.CLOSE,
-            signal_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            signal_time=datetime(2024, 1, 2, tzinfo=UTC),
         )
-        bar_close = make_bar(22100.0, datetime(2024, 1, 2, tzinfo=timezone.utc))
+        bar_close = make_bar(22100.0, datetime(2024, 1, 2, tzinfo=UTC))
         t_close = p.execute_fill(sig_close, bar_close)
 
         assert t_close is not None
@@ -145,9 +147,9 @@ class TestFuturesPnL:
         # Close short with -100 points (profit for short)
         sig_close = make_futures_signal(
             SignalAction.CLOSE,
-            signal_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            signal_time=datetime(2024, 1, 2, tzinfo=UTC),
         )
-        bar_close = make_bar(21900.0, datetime(2024, 1, 2, tzinfo=timezone.utc))
+        bar_close = make_bar(21900.0, datetime(2024, 1, 2, tzinfo=UTC))
         t_close = p.execute_fill(sig_close, bar_close)
 
         assert t_close is not None
@@ -167,9 +169,9 @@ class TestFuturesPnL:
         # Close long with -100 points (loss)
         sig_close = make_futures_signal(
             SignalAction.CLOSE,
-            signal_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            signal_time=datetime(2024, 1, 2, tzinfo=UTC),
         )
-        bar_close = make_bar(21900.0, datetime(2024, 1, 2, tzinfo=timezone.utc))
+        bar_close = make_bar(21900.0, datetime(2024, 1, 2, tzinfo=UTC))
         t_close = p.execute_fill(sig_close, bar_close)
 
         assert t_close is not None
@@ -180,6 +182,7 @@ class TestFuturesPnL:
 # ---------------------------------------------------------------------------
 # Test: Slippage with tick_size
 # ---------------------------------------------------------------------------
+
 
 class TestFuturesSlippage:
     """Tests for tick-based slippage using explicit tick_size."""
@@ -211,6 +214,7 @@ class TestFuturesSlippage:
 # Test: Equity mark-to-market
 # ---------------------------------------------------------------------------
 
+
 class TestFuturesEquity:
     """Tests for mark-to-market equity calculation with point_value."""
 
@@ -228,7 +232,7 @@ class TestFuturesEquity:
         entry_price = t_open.entry_price
 
         # Record equity at +100 points
-        t1 = datetime(2024, 1, 2, tzinfo=timezone.utc)
+        t1 = datetime(2024, 1, 2, tzinfo=UTC)
         p.record_equity_point(t1, 22100.0)
 
         assert len(p.equity_curve) == 1
@@ -254,6 +258,7 @@ class TestFuturesEquity:
 # Test: SL exit with point_value
 # ---------------------------------------------------------------------------
 
+
 class TestFuturesSLExit:
     """Tests for SL/TP exit PnL with point_value."""
 
@@ -266,11 +271,10 @@ class TestFuturesSLExit:
         bar_open = make_bar(22000.0)
         t_open = p.execute_fill(sig_open, bar_open)
         assert t_open is not None
-        entry_price = t_open.entry_price
 
         # SL exit at 21900 (100 points below entry + slippage)
         sl_price = 21900.0
-        bar_sl = make_bar(21900.0, datetime(2024, 1, 2, tzinfo=timezone.utc))
+        bar_sl = make_bar(21900.0, datetime(2024, 1, 2, tzinfo=UTC))
         key = "tw_futures:TX"
         t_sl = p.execute_sl_tp_exit(key, sl_price, "sl", bar_sl)
 
@@ -285,6 +289,7 @@ class TestFuturesSLExit:
 # ---------------------------------------------------------------------------
 # Test: Backward compatibility
 # ---------------------------------------------------------------------------
+
 
 class TestBackwardCompat:
     """Tests for backward compatibility with stock and crypto markets."""
@@ -301,7 +306,7 @@ class TestBackwardCompat:
             action=SignalAction.LONG,
             confidence=0.8,
             quantity_pct=0.1,
-            signal_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            signal_time=datetime(2024, 1, 1, tzinfo=UTC),
         )
         bar_open = make_bar(600.0)
         t_open = p.execute_fill(sig_open, bar_open)
@@ -317,9 +322,9 @@ class TestBackwardCompat:
             action=SignalAction.CLOSE,
             confidence=0.8,
             quantity_pct=1.0,
-            signal_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            signal_time=datetime(2024, 1, 2, tzinfo=UTC),
         )
-        bar_close = make_bar(610.0, datetime(2024, 1, 2, tzinfo=timezone.utc))
+        bar_close = make_bar(610.0, datetime(2024, 1, 2, tzinfo=UTC))
         t_close = p.execute_fill(sig_close, bar_close)
 
         assert t_close is not None
@@ -344,7 +349,7 @@ class TestBackwardCompat:
             action=SignalAction.LONG,
             confidence=0.8,
             quantity_pct=0.1,
-            signal_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            signal_time=datetime(2024, 1, 1, tzinfo=UTC),
         )
         bar_open = make_bar(40000.0)
         t_open = p.execute_fill(sig_open, bar_open)
@@ -358,9 +363,9 @@ class TestBackwardCompat:
             action=SignalAction.CLOSE,
             confidence=0.8,
             quantity_pct=1.0,
-            signal_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            signal_time=datetime(2024, 1, 2, tzinfo=UTC),
         )
-        bar_close = make_bar(41000.0, datetime(2024, 1, 2, tzinfo=timezone.utc))
+        bar_close = make_bar(41000.0, datetime(2024, 1, 2, tzinfo=UTC))
         t_close = p.execute_fill(sig_close, bar_close)
 
         assert t_close is not None
@@ -371,6 +376,7 @@ class TestBackwardCompat:
 # ---------------------------------------------------------------------------
 # Test: MTX point_value
 # ---------------------------------------------------------------------------
+
 
 class TestMTXPointValue:
     """Tests for MTX (Mini TAIEX) futures with point_value=50."""
@@ -389,16 +395,15 @@ class TestMTXPointValue:
         bar_open = make_bar(22000.0)
         t_open = p.execute_fill(sig_open, bar_open)
         assert t_open is not None
-        entry_price = t_open.entry_price
 
         # Close at +100 points
         sig_close = make_futures_signal(
             SignalAction.CLOSE,
             symbol="MTX",
             market="tw_futures_mtx",
-            signal_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            signal_time=datetime(2024, 1, 2, tzinfo=UTC),
         )
-        bar_close = make_bar(22100.0, datetime(2024, 1, 2, tzinfo=timezone.utc))
+        bar_close = make_bar(22100.0, datetime(2024, 1, 2, tzinfo=UTC))
         t_close = p.execute_fill(sig_close, bar_close)
 
         assert t_close is not None

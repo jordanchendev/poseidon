@@ -2,7 +2,7 @@
 
 import pytest
 
-from poseidon.data.symbols import SymbolInfo, load_symbols
+from poseidon.data.symbols import load_symbols
 from poseidon.universe.registry import _source_registry, get_source
 
 
@@ -32,7 +32,7 @@ class TestYamlSource:
         expected = load_symbols().markets["tw_stock"].symbols
 
         assert len(result) == len(expected)
-        for r, e in zip(result, expected):
+        for r, e in zip(result, expected, strict=False):
             assert r.id == e.id
             assert r.name == e.name
 
@@ -45,7 +45,7 @@ class TestYamlSource:
         expected = load_symbols().markets["crypto_spot"].symbols
 
         assert len(result) == len(expected)
-        for r, e in zip(result, expected):
+        for r, e in zip(result, expected, strict=False):
             assert r.id == e.id
             assert r.name == e.name
             assert r.ccxt_symbol == e.ccxt_symbol

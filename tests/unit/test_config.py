@@ -2,6 +2,7 @@
 
 Implemented in plan 38-02.
 """
+
 import importlib
 
 import pytest
@@ -13,6 +14,7 @@ pytestmark = pytest.mark.phase38
 def _fresh_settings():
     """Rebuild Settings so env changes are picked up."""
     import poseidon.core.config as cfg
+
     importlib.reload(cfg)
     return cfg.Settings()
 

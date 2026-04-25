@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -11,7 +11,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -84,11 +85,11 @@ def _seed_holding(
             shares=shares,
             entry_price=entry_price,
             side=side,
-            entry_date=datetime(2026, 4, 1, tzinfo=timezone.utc),
+            entry_date=datetime(2026, 4, 1, tzinfo=UTC),
             closed=False,
             stop_loss_pct=0.1,
-            created_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            updated_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 4, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 4, 1, tzinfo=UTC),
         )
     )
     db.commit()
@@ -128,14 +129,14 @@ def test_get_perp_holdings_uses_remote_latest_price(mock_from_settings):
             market="crypto_perp",
             entry_price=30000.0,
             exit_price=30010.0,
-            entry_date=datetime(2026, 4, 10, tzinfo=timezone.utc),
-            exit_date=datetime(2026, 4, 10, tzinfo=timezone.utc),
+            entry_date=datetime(2026, 4, 10, tzinfo=UTC),
+            exit_date=datetime(2026, 4, 10, tzinfo=UTC),
             shares=0.5,
             entry_type="funding",
             realized_pnl=-12.5,
             holding_days=0,
             signal_id=None,
-            created_at=datetime(2026, 4, 10, tzinfo=timezone.utc),
+            created_at=datetime(2026, 4, 10, tzinfo=UTC),
         )
     )
     db.commit()

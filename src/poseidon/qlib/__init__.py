@@ -33,9 +33,7 @@ def check_qlib_available() -> bool:
 def require_qlib() -> None:
     """Raise ImportError if pyqlib is not available."""
     if not check_qlib_available():
-        raise ImportError(
-            "Qlib is not installed. Install with: uv add --group qlib pyqlib"
-        )
+        raise ImportError("Qlib is not installed. Install with: uv add --group qlib pyqlib")
 
 
 def __getattr__(name: str):

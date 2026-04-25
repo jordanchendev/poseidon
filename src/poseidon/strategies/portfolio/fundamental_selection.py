@@ -14,6 +14,7 @@ Risk-filtered symbols (disposition, full_cash_delivery, attention) are excluded 
 All data reads use as_of_date for look-ahead bias prevention (D-03).
 """
 
+import contextlib
 import logging
 from datetime import date, datetime, time, timedelta
 
@@ -192,9 +193,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
         self.config = config
         self._repo = repo
 
-    def select_stocks(
-        self, universe_df: pd.DataFrame, as_of: date | None = None
-    ) -> list[TargetPosition]:
+    def select_stocks(self, universe_df: pd.DataFrame, as_of: date | None = None) -> list[TargetPosition]:
         """Select top N stocks by composite score from quality+growth+flow dimensions.
 
         Args:
@@ -211,11 +210,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
 
         cfg = self.config
         as_of_str = as_of.isoformat() if as_of else None
-        lagged_as_of_str = (
-            (as_of - timedelta(days=cfg.publication_lag_days)).isoformat()
-            if as_of
-            else None
-        )
+        lagged_as_of_str = (as_of - timedelta(days=cfg.publication_lag_days)).isoformat() if as_of else None
 
         # Step 1: Risk filter (D-08, D-09 -- STRAT-02)
         excluded: set[str] = set()
@@ -269,9 +264,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                     if pd.notna(val):
                         rev_yoy_raw[symbol] = float(val)
 
-            fund = self._repo.read_fundamentals_extended_df(
-                symbol, as_of_date=lagged_as_of_str
-            )
+            fund = self._repo.read_fundamentals_extended_df(symbol, as_of_date=lagged_as_of_str)
             if not fund.empty and "eps" in fund.columns:
                 val = fund.iloc[-1].get("eps")
                 if pd.notna(val):
@@ -284,11 +277,9 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                 inst = self._repo.read_institutional_flow(symbol)
                 if not inst.empty and "foreign" in inst.columns:
                     # Apply as_of filter for look-ahead bias prevention
-                    if as_of is not None and hasattr(inst.index, 'date'):
-                        try:
+                    if as_of is not None and hasattr(inst.index, "date"):
+                        with contextlib.suppress(Exception):
                             inst = inst[inst.index <= pd.Timestamp(as_of)]
-                        except Exception:
-                            pass
                     if not inst.empty:
                         val = inst.iloc[-1].get("foreign")
                         if pd.notna(val):
@@ -357,9 +348,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
             # Growth: average of revenue_yoy rank + eps rank (D-02)
             rev_r = rev_rank.get(symbol)
             eps_r = eps_rank.get(symbol)
-            growth_parts = [
-                v for v in [rev_r, eps_r] if v is not None and not pd.isna(v)
-            ]
+            growth_parts = [v for v in [rev_r, eps_r] if v is not None and not pd.isna(v)]
             if not growth_parts:
                 continue
             growth_score = sum(growth_parts) / len(growth_parts)
@@ -367,9 +356,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
             # Flow: average of foreign_net_buy_ratio rank + foreign_holding_change rank (D-02)
             nb_r = net_buy_rank.get(symbol)
             fhc_r = fh_change_rank.get(symbol)
-            flow_parts = [
-                v for v in [nb_r, fhc_r] if v is not None and not pd.isna(v)
-            ]
+            flow_parts = [v for v in [nb_r, fhc_r] if v is not None and not pd.isna(v)]
             if not flow_parts:
                 continue
             flow_score = sum(flow_parts) / len(flow_parts)
@@ -417,9 +404,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                             market_values[sym] = float(val)
                 except Exception:
                     pass  # fallback to equal_weight for this symbol (D-08)
-            allocator = MarketCapWeightedAllocator(
-                position_limit_pct=cfg.position_limit_pct
-            )
+            allocator = MarketCapWeightedAllocator(position_limit_pct=cfg.position_limit_pct)
             weight_map = allocator.allocate(selected_symbols, market_values)
             targets = [
                 TargetPosition(
@@ -444,8 +429,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
             ]
 
         logger.info(
-            "FundamentalSelectionStrategy selected %d positions from %d candidates "
-            "(excluded %d by risk filter)",
+            "FundamentalSelectionStrategy selected %d positions from %d candidates (excluded %d by risk filter)",
             len(targets),
             len(universe_symbols),
             len(excluded),
@@ -486,11 +470,12 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                     return False
             elif condition.type == "score_above_threshold":
                 pass  # reserved for future (RESEARCH.md open question #2)
-            elif condition.type == "max_holding_days":
-                if condition.value is not None and holding.entry_date is not None:
-                    days_held = (as_of - holding.entry_date.date()).days
-                    if days_held > int(condition.value):
-                        return False
+            elif (
+                condition.type == "max_holding_days" and condition.value is not None and holding.entry_date is not None
+            ):
+                days_held = (as_of - holding.entry_date.date()).days
+                if days_held > int(condition.value):
+                    return False
 
         return True  # all conditions met
 

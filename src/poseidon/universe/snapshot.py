@@ -43,10 +43,7 @@ def save_snapshot(
     record = UniverseSnapshotRecord(
         market=market,
         snapshot_time=snapshot_time,
-        symbols=[
-            {"id": s.id, "name": s.name, "ccxt_symbol": s.ccxt_symbol}
-            for s in symbols
-        ],
+        symbols=[{"id": s.id, "name": s.name, "ccxt_symbol": s.ccxt_symbol} for s in symbols],
         source_type=source_type,
         filter_config=filter_config,
     )
@@ -62,9 +59,7 @@ def save_snapshot(
     return record
 
 
-def get_latest_snapshot(
-    db: Session, market: str
-) -> UniverseSnapshotRecord | None:
+def get_latest_snapshot(db: Session, market: str) -> UniverseSnapshotRecord | None:
     """Get the most recent snapshot for a market."""
     return (
         db.query(UniverseSnapshotRecord)
@@ -74,9 +69,7 @@ def get_latest_snapshot(
     )
 
 
-def get_snapshot_at(
-    db: Session, market: str, target_date: datetime
-) -> UniverseSnapshotRecord | None:
+def get_snapshot_at(db: Session, market: str, target_date: datetime) -> UniverseSnapshotRecord | None:
     """Get latest snapshot at or before target_date for backtest reproducibility (D-11).
 
     Args:

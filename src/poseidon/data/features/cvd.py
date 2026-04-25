@@ -27,9 +27,7 @@ class CVD(BaseFeature):
     name = "cvd"
     description = "Cumulative Volume Delta change over N bars"
 
-    def compute(
-        self, ohlcv: pd.DataFrame, period: int = 20, **kwargs
-    ) -> pd.Series:
+    def compute(self, ohlcv: pd.DataFrame, period: int = 20, **kwargs) -> pd.Series:
         col = f"cvd_change_{period}"
         if not self._validate(ohlcv, min_rows=period + 1):
             return pd.Series(dtype=float, name=col)

@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from poseidon.ml import artifacts
-from poseidon.ml.lifecycle import InvalidTransitionError, validate_transition
+from poseidon.ml.lifecycle import validate_transition
 from poseidon.models.model_version import ModelVersion
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,9 @@ class ModelManager:
         logger.info("Created model version: %s v%d (id=%s)", name, next_version, mv.id)
         return mv
 
-    def transition(self, version_id: UUID, target_status: str, metrics: dict | None = None, error_message: str | None = None) -> ModelVersion:
+    def transition(
+        self, version_id: UUID, target_status: str, metrics: dict | None = None, error_message: str | None = None
+    ) -> ModelVersion:
         """Transition a model version to a new lifecycle state.
 
         Raises:
@@ -93,18 +95,14 @@ class ModelManager:
     def get_active(self, name: str) -> ModelVersion | None:
         """Get the active version of a model by name."""
         return self.session.execute(
-            select(ModelVersion).where(
-                ModelVersion.name == name, ModelVersion.status == "active"
-            )
+            select(ModelVersion).where(ModelVersion.name == name, ModelVersion.status == "active")
         ).scalar_one_or_none()
 
     def list_versions(self, name: str) -> list[ModelVersion]:
         """List all versions of a model, ordered by version number."""
         return list(
             self.session.execute(
-                select(ModelVersion)
-                .where(ModelVersion.name == name)
-                .order_by(ModelVersion.version)
+                select(ModelVersion).where(ModelVersion.name == name).order_by(ModelVersion.version)
             ).scalars()
         )
 
@@ -123,13 +121,17 @@ class ModelManager:
 
     def _retire_active(self, name: str, exclude_id: UUID) -> None:
         """Retire any currently active version (except exclude_id)."""
-        active = self.session.execute(
-            select(ModelVersion).where(
-                ModelVersion.name == name,
-                ModelVersion.status == "active",
-                ModelVersion.id != exclude_id,
+        active = (
+            self.session.execute(
+                select(ModelVersion).where(
+                    ModelVersion.name == name,
+                    ModelVersion.status == "active",
+                    ModelVersion.id != exclude_id,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for mv in active:
             mv.status = "retired"
             logger.info("Auto-retired %s v%d", mv.name, mv.version)

@@ -11,7 +11,7 @@ BacktestRunner reads HOLD signal metadata to update portfolio stop-loss price.
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -109,17 +109,11 @@ class VolatilityBreakoutStrategy(BaseStrategy):
             # Check for new entry in opposite direction
             if close < low_n and atr_expanding:
                 # CLOSE long + SHORT entry
-                signals.append(
-                    self._make_signal(SignalAction.CLOSE, close, signal_time)
-                )
+                signals.append(self._make_signal(SignalAction.CLOSE, close, signal_time))
                 self._reset_state()
 
                 stop_loss = close + self.config.trail_r * atr
-                signals.append(
-                    self._make_signal(
-                        SignalAction.SHORT, close, signal_time, stop_loss_price=stop_loss
-                    )
-                )
+                signals.append(self._make_signal(SignalAction.SHORT, close, signal_time, stop_loss_price=stop_loss))
                 self._position_side = "short"
                 self._trailing_stop = stop_loss
                 return signals
@@ -143,17 +137,11 @@ class VolatilityBreakoutStrategy(BaseStrategy):
             # Check for new entry in opposite direction
             if close > high_n and atr_expanding:
                 # CLOSE short + LONG entry
-                signals.append(
-                    self._make_signal(SignalAction.CLOSE, close, signal_time)
-                )
+                signals.append(self._make_signal(SignalAction.CLOSE, close, signal_time))
                 self._reset_state()
 
                 stop_loss = close - self.config.trail_r * atr
-                signals.append(
-                    self._make_signal(
-                        SignalAction.LONG, close, signal_time, stop_loss_price=stop_loss
-                    )
-                )
+                signals.append(self._make_signal(SignalAction.LONG, close, signal_time, stop_loss_price=stop_loss))
                 self._position_side = "long"
                 self._trailing_stop = stop_loss
                 return signals
@@ -172,21 +160,13 @@ class VolatilityBreakoutStrategy(BaseStrategy):
         # --- Entry logic: N-bar breakout + ATR expansion (D-11) ---
         if close > high_n and atr_expanding and self._position_side != "long":
             stop_loss = close - self.config.trail_r * atr
-            signals.append(
-                self._make_signal(
-                    SignalAction.LONG, close, signal_time, stop_loss_price=stop_loss
-                )
-            )
+            signals.append(self._make_signal(SignalAction.LONG, close, signal_time, stop_loss_price=stop_loss))
             self._position_side = "long"
             self._trailing_stop = stop_loss
 
         elif close < low_n and atr_expanding and self._position_side != "short":
             stop_loss = close + self.config.trail_r * atr
-            signals.append(
-                self._make_signal(
-                    SignalAction.SHORT, close, signal_time, stop_loss_price=stop_loss
-                )
-            )
+            signals.append(self._make_signal(SignalAction.SHORT, close, signal_time, stop_loss_price=stop_loss))
             self._position_side = "short"
             self._trailing_stop = stop_loss
 
@@ -252,4 +232,4 @@ class VolatilityBreakoutStrategy(BaseStrategy):
             return ts
         if isinstance(ts, pd.Timestamp):
             return ts.to_pydatetime()
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)

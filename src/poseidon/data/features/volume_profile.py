@@ -37,9 +37,7 @@ class VolumeAtPricePercentile(BaseFeature):
     name = "vap_pctile"
     description = "Volume-at-price percentile of current close"
 
-    def compute(
-        self, ohlcv: pd.DataFrame, period: int = 20, n_bins: int = 10, **kwargs
-    ) -> pd.Series:
+    def compute(self, ohlcv: pd.DataFrame, period: int = 20, n_bins: int = 10, **kwargs) -> pd.Series:
         col_name = f"vap_pctile_{period}"
         if not self._validate(ohlcv, min_rows=period):
             return pd.Series(dtype=float, name=col_name)
@@ -70,9 +68,7 @@ class VolumeAtPricePercentile(BaseFeature):
                 result[i] = 0.0
                 continue
 
-            current_bin = np.clip(
-                np.digitize([close[i]], bin_edges[1:-1])[0], 0, n_bins - 1
-            )
+            current_bin = np.clip(np.digitize([close[i]], bin_edges[1:-1])[0], 0, n_bins - 1)
             result[i] = vol_per_bin[current_bin] / total_vol
 
         series = pd.Series(result, index=ohlcv.index, name=col_name)

@@ -20,8 +20,8 @@ class CostModel:
     slippage_pct: float
     slippage_ticks: float
     description: str = ""
-    point_value: float = 1.0    # 1 index point = N currency units (default 1.0 = stock/crypto mode)
-    tick_size: float = 0.0       # minimum price increment (0.0 = use price*0.001 approximation)
+    point_value: float = 1.0  # 1 index point = N currency units (default 1.0 = stock/crypto mode)
+    tick_size: float = 0.0  # minimum price increment (0.0 = use price*0.001 approximation)
 
 
 COST_MODELS: dict[str, CostModel] = {
@@ -60,8 +60,8 @@ COST_MODELS: dict[str, CostModel] = {
         slippage_pct=0.0,
         slippage_ticks=1.0,
         description="TW futures: ~$50/contract round trip + 1 point slippage",
-        point_value=200.0,   # TX: 1 index point = 200 TWD
-        tick_size=1.0,       # TX: minimum price increment = 1 index point
+        point_value=200.0,  # TX: 1 index point = 200 TWD
+        tick_size=1.0,  # TX: minimum price increment = 1 index point
     ),
     "tw_futures_mtx": CostModel(
         market="tw_futures_mtx",
@@ -71,7 +71,7 @@ COST_MODELS: dict[str, CostModel] = {
         slippage_pct=0.0,
         slippage_ticks=1.0,
         description="Mini TAIEX futures MTX: ~$15/contract round trip + 1 point slippage",
-        point_value=50.0,    # MTX: 1 index point = 50 TWD
+        point_value=50.0,  # MTX: 1 index point = 50 TWD
         tick_size=1.0,
     ),
     "us_stock": CostModel(

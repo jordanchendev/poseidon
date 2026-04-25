@@ -10,13 +10,12 @@ import pandas as pd
 import pytest
 
 from poseidon.ml.base import BaseModel
-from poseidon.ml.registry import get_model, list_models
 from poseidon.ml.implementations.transformer_model import (
-    TransformerModel,
-    LABEL_MAP,
-    DEFAULT_FEATURES,
     _HAS_TORCH,
+    DEFAULT_FEATURES,
+    TransformerModel,
 )
+from poseidon.ml.registry import get_model, list_models
 
 # Conditionally import torch-only symbols
 if _HAS_TORCH:
@@ -84,9 +83,7 @@ def trained_model(sample_features, sample_targets, small_params):
 class TestPatchTST:
     def test_forward_shape(self):
         """PatchTST forward with [2, 60, 20] input produces [2, 3] output."""
-        model = PatchTST(
-            n_features=20, lookback_window=60, patch_length=16, stride=8
-        )
+        model = PatchTST(n_features=20, lookback_window=60, patch_length=16, stride=8)
         x = torch.randn(2, 60, 20)
         out = model(x)
         assert out.shape == (2, 3)
@@ -110,8 +107,14 @@ class TestPatchTST:
     def test_output_is_logits(self):
         """Output should be raw logits (not softmaxed) -- some values < 0 or > 1."""
         model = PatchTST(
-            n_features=10, lookback_window=30, patch_length=8, stride=4,
-            d_model=16, nhead=2, num_layers=1, dim_feedforward=32,
+            n_features=10,
+            lookback_window=30,
+            patch_length=8,
+            stride=4,
+            d_model=16,
+            nhead=2,
+            num_layers=1,
+            dim_feedforward=32,
         )
         torch.manual_seed(0)
         x = torch.randn(8, 30, 10)
@@ -122,8 +125,14 @@ class TestPatchTST:
     def test_num_parameters(self):
         """Model should have trainable parameters."""
         model = PatchTST(
-            n_features=10, lookback_window=30, patch_length=8, stride=4,
-            d_model=16, nhead=2, num_layers=1, dim_feedforward=32,
+            n_features=10,
+            lookback_window=30,
+            patch_length=8,
+            stride=4,
+            d_model=16,
+            nhead=2,
+            num_layers=1,
+            dim_feedforward=32,
         )
         n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         assert n_params > 0
@@ -194,9 +203,7 @@ class TestTransformerModelContract:
         assert metrics["n_samples"] > 0
         assert metrics["epochs_trained"] > 0
 
-    def test_predict_returns_dataframe(
-        self, trained_model, sample_features
-    ):
+    def test_predict_returns_dataframe(self, trained_model, sample_features):
         result = trained_model.predict(sample_features)
         assert isinstance(result, pd.DataFrame)
         assert "prediction" in result.columns
@@ -215,26 +222,20 @@ class TestTransformerModelContract:
         with pytest.raises(RuntimeError, match="not trained"):
             model.predict(pd.DataFrame({"sma_5": [1.0, 2.0]}))
 
-    def test_validate_returns_metrics(
-        self, trained_model, sample_features, sample_targets
-    ):
+    def test_validate_returns_metrics(self, trained_model, sample_features, sample_targets):
         metrics = trained_model.validate(sample_features, sample_targets)
         assert isinstance(metrics, dict)
         assert "accuracy" in metrics
         assert "n_samples" in metrics
 
-    def test_save_creates_artifacts(
-        self, tmp_path, trained_model
-    ):
+    def test_save_creates_artifacts(self, tmp_path, trained_model):
         trained_model.save(tmp_path / "model")
         model_dir = tmp_path / "model"
         assert (model_dir / "model.pt").exists()
         assert (model_dir / "features.json").exists()
         assert (model_dir / "metadata.json").exists()
 
-    def test_save_load_roundtrip(
-        self, tmp_path, trained_model, sample_features
-    ):
+    def test_save_load_roundtrip(self, tmp_path, trained_model, sample_features):
         trained_model.save(tmp_path / "model")
         loaded = TransformerModel.load(tmp_path / "model")
         result = loaded.predict(sample_features)

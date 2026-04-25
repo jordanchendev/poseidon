@@ -65,8 +65,11 @@ def evaluate_condition(
             1
             for c in sub_conditions
             if evaluate_condition(
-                c, features, row_idx,
-                max_depth=max_depth, _current_depth=next_depth,
+                c,
+                features,
+                row_idx,
+                max_depth=max_depth,
+                _current_depth=next_depth,
             )
         )
         return vote_count >= min_votes
@@ -74,8 +77,5 @@ def evaluate_condition(
     # Leaf node — dispatch to registered condition evaluator
     cond_type = condition.get("type")
     if cond_type not in CONDITION_REGISTRY:
-        raise ValueError(
-            f"Unknown condition type: '{cond_type}'. "
-            f"Available: {list(CONDITION_REGISTRY.keys())}"
-        )
+        raise ValueError(f"Unknown condition type: '{cond_type}'. Available: {list(CONDITION_REGISTRY.keys())}")
     return CONDITION_REGISTRY[cond_type](condition, features, row_idx)

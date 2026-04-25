@@ -1,17 +1,13 @@
 """Tests for ModelStrategy and RuleStrategy."""
 
-from pathlib import Path
-
-import numpy as np
 import pandas as pd
 import pytest
 
 from poseidon.ml.base import BaseModel as MLBaseModel
-from poseidon.signals.schemas import Signal, SignalAction, SignalStatus
+from poseidon.signals.schemas import SignalAction
 from poseidon.strategies.base import BaseStrategy, StrategyType
 from poseidon.strategies.model_strategy import ModelStrategy
 from poseidon.strategies.rule_strategy import RuleStrategy
-
 
 # ---------------------------------------------------------------------------
 # DummyModel stub
@@ -147,19 +143,21 @@ class TestModelStrategy:
 @pytest.fixture
 def rule_features():
     """5-row DataFrame with feature columns for DSL testing."""
-    return pd.DataFrame({
-        "close": [100.0, 102.0, 98.0, 105.0, 103.0],
-        "open": [99.0, 100.0, 102.0, 98.0, 105.0],
-        "high": [101.0, 103.0, 102.5, 106.0, 104.0],
-        "low": [98.5, 99.5, 97.0, 97.5, 102.0],
-        "volume": [1000, 1200, 800, 3000, 1100],
-        "sma_5": [100.0, 100.5, 100.2, 101.0, 101.6],
-        "sma_20": [99.0, 99.2, 99.5, 99.8, 100.0],
-        "sma_60": [97.0, 97.5, 97.8, 98.0, 98.5],
-        "rsi_14": [55.0, 60.0, 25.0, 72.0, 50.0],
-        "return_1d": [0.01, 0.02, -0.04, 0.07, -0.02],
-        "atr_14": [2.0, 2.1, 2.5, 2.3, 2.2],
-    })
+    return pd.DataFrame(
+        {
+            "close": [100.0, 102.0, 98.0, 105.0, 103.0],
+            "open": [99.0, 100.0, 102.0, 98.0, 105.0],
+            "high": [101.0, 103.0, 102.5, 106.0, 104.0],
+            "low": [98.5, 99.5, 97.0, 97.5, 102.0],
+            "volume": [1000, 1200, 800, 3000, 1100],
+            "sma_5": [100.0, 100.5, 100.2, 101.0, 101.6],
+            "sma_20": [99.0, 99.2, 99.5, 99.8, 100.0],
+            "sma_60": [97.0, 97.5, 97.8, 98.0, 98.5],
+            "rsi_14": [55.0, 60.0, 25.0, 72.0, 50.0],
+            "return_1d": [0.01, 0.02, -0.04, 0.07, -0.02],
+            "atr_14": [2.0, 2.1, 2.5, 2.3, 2.2],
+        }
+    )
 
 
 def _make_rule_config(rules, **kwargs):
@@ -175,12 +173,21 @@ class TestRuleStrategy:
         But we only check last row, so this should NOT trigger."""
         # Use a 1-row DataFrame where rsi_14 < 30
         features = rule_features.iloc[2:3].reset_index(drop=True)
-        config = _make_rule_config([{
-            "condition": {"type": "indicator_below", "indicator": "rsi", "params": {"period": 14}, "threshold": 30},
-            "action": "long",
-            "quantity_pct": 0.1,
-            "confidence": 0.9,
-        }])
+        config = _make_rule_config(
+            [
+                {
+                    "condition": {
+                        "type": "indicator_below",
+                        "indicator": "rsi",
+                        "params": {"period": 14},
+                        "threshold": 30,
+                    },
+                    "action": "long",
+                    "quantity_pct": 0.1,
+                    "confidence": 0.9,
+                }
+            ]
+        )
         rs = RuleStrategy(config=config)
         signals = rs.evaluate(features)
         assert len(signals) == 1
@@ -188,10 +195,19 @@ class TestRuleStrategy:
 
     def test_rule_strategy_evaluate_no_trigger(self, rule_features):
         """Last row rsi_14=50, not below 30."""
-        config = _make_rule_config([{
-            "condition": {"type": "indicator_below", "indicator": "rsi", "params": {"period": 14}, "threshold": 30},
-            "action": "long",
-        }])
+        config = _make_rule_config(
+            [
+                {
+                    "condition": {
+                        "type": "indicator_below",
+                        "indicator": "rsi",
+                        "params": {"period": 14},
+                        "threshold": 30,
+                    },
+                    "action": "long",
+                }
+            ]
+        )
         rs = RuleStrategy(config=config)
         signals = rs.evaluate(rule_features)
         assert len(signals) == 0
@@ -199,32 +215,55 @@ class TestRuleStrategy:
     def test_rule_strategy_evaluate_nested_condition(self, rule_features):
         """Two-level nesting: all -> [leaf, any -> [leaf, leaf]]."""
         features = rule_features.iloc[2:3].reset_index(drop=True)  # rsi=25
-        config = _make_rule_config([{
-            "condition": {
-                "all": [
-                    {"type": "indicator_below", "indicator": "rsi", "params": {"period": 14}, "threshold": 30},
-                    {
-                        "any": [
-                            {"type": "indicator_above", "indicator": "rsi", "params": {"period": 14}, "threshold": 70},
+        config = _make_rule_config(
+            [
+                {
+                    "condition": {
+                        "all": [
                             {"type": "indicator_below", "indicator": "rsi", "params": {"period": 14}, "threshold": 30},
+                            {
+                                "any": [
+                                    {
+                                        "type": "indicator_above",
+                                        "indicator": "rsi",
+                                        "params": {"period": 14},
+                                        "threshold": 70,
+                                    },
+                                    {
+                                        "type": "indicator_below",
+                                        "indicator": "rsi",
+                                        "params": {"period": 14},
+                                        "threshold": 30,
+                                    },
+                                ]
+                            },
                         ]
-                    }
-                ]
-            },
-            "action": "long",
-        }])
+                    },
+                    "action": "long",
+                }
+            ]
+        )
         rs = RuleStrategy(config=config)
         signals = rs.evaluate(features)
         assert len(signals) == 1
 
     def test_rule_strategy_signal_fields(self, rule_features):
         features = rule_features.iloc[2:3].reset_index(drop=True)
-        config = _make_rule_config([{
-            "condition": {"type": "indicator_below", "indicator": "rsi", "params": {"period": 14}, "threshold": 30},
-            "action": "long",
-            "quantity_pct": 0.1,
-            "confidence": 0.9,
-        }])
+        config = _make_rule_config(
+            [
+                {
+                    "condition": {
+                        "type": "indicator_below",
+                        "indicator": "rsi",
+                        "params": {"period": 14},
+                        "threshold": 30,
+                    },
+                    "action": "long",
+                    "quantity_pct": 0.1,
+                    "confidence": 0.9,
+                }
+            ]
+        )
         rs = RuleStrategy(config=config)
         signals = rs.evaluate(features)
         s = signals[0]
@@ -238,16 +277,28 @@ class TestRuleStrategy:
     def test_rule_strategy_multiple_rules(self, rule_features):
         """Two rules that both trigger."""
         features = rule_features.iloc[2:3].reset_index(drop=True)  # rsi=25
-        config = _make_rule_config([
-            {
-                "condition": {"type": "indicator_below", "indicator": "rsi", "params": {"period": 14}, "threshold": 30},
-                "action": "long",
-            },
-            {
-                "condition": {"type": "indicator_below", "indicator": "rsi", "params": {"period": 14}, "threshold": 50},
-                "action": "short",
-            },
-        ])
+        config = _make_rule_config(
+            [
+                {
+                    "condition": {
+                        "type": "indicator_below",
+                        "indicator": "rsi",
+                        "params": {"period": 14},
+                        "threshold": 30,
+                    },
+                    "action": "long",
+                },
+                {
+                    "condition": {
+                        "type": "indicator_below",
+                        "indicator": "rsi",
+                        "params": {"period": 14},
+                        "threshold": 50,
+                    },
+                    "action": "short",
+                },
+            ]
+        )
         rs = RuleStrategy(config=config)
         signals = rs.evaluate(features)
         assert len(signals) == 2
@@ -255,25 +306,44 @@ class TestRuleStrategy:
         assert signals[1].action == SignalAction.SHORT
 
     def test_rule_strategy_validate_config_valid(self):
-        config = _make_rule_config([{
-            "condition": {"type": "indicator_below", "indicator": "rsi", "params": {"period": 14}, "threshold": 30},
-            "action": "long",
-        }])
+        config = _make_rule_config(
+            [
+                {
+                    "condition": {
+                        "type": "indicator_below",
+                        "indicator": "rsi",
+                        "params": {"period": 14},
+                        "threshold": 30,
+                    },
+                    "action": "long",
+                }
+            ]
+        )
         rs = RuleStrategy(config=config)
         assert rs.validate_config() is True
 
     def test_rule_strategy_validate_config_no_rules(self):
         """Cannot create RuleConfig with empty rules (Pydantic validation)."""
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             _make_rule_config_obj = {"name": "test", "symbol": "2330", "market": "tw_stock", "rules": []}
             RuleStrategy(config=_make_rule_config_obj)
 
     def test_rule_strategy_is_base_strategy(self):
         assert issubclass(RuleStrategy, BaseStrategy)
-        config = _make_rule_config([{
-            "condition": {"type": "indicator_below", "indicator": "rsi", "params": {"period": 14}, "threshold": 30},
-            "action": "long",
-        }])
+        config = _make_rule_config(
+            [
+                {
+                    "condition": {
+                        "type": "indicator_below",
+                        "indicator": "rsi",
+                        "params": {"period": 14},
+                        "threshold": 30,
+                    },
+                    "action": "long",
+                }
+            ]
+        )
         rs = RuleStrategy(config=config)
         assert rs.strategy_type == StrategyType.RULE

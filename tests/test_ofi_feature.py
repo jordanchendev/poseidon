@@ -10,7 +10,6 @@ import pytest
 
 from poseidon.data.features.ofi import OFI
 
-
 # -- Fixtures ----------------------------------------------------------------
 
 
@@ -43,9 +42,7 @@ def increasing_buy_pressure_ohlcv() -> pd.DataFrame:
     # Close rises from 95 to 109 (within the 90-110 range)
     closes = np.linspace(95, 109, n)
     volumes = np.full(n, 1000.0)
-    return pd.DataFrame(
-        {"open": opens, "high": highs, "low": lows, "close": closes, "volume": volumes}
-    )
+    return pd.DataFrame({"open": opens, "high": highs, "low": lows, "close": closes, "volume": volumes})
 
 
 @pytest.fixture

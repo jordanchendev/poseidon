@@ -7,7 +7,7 @@ Reads cached VaR snapshot from Redis -- never computes inline (per D-01).
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import msgpack
@@ -48,6 +48,7 @@ class VaRLimitRule(BaseRule):
     def _get_redis(self) -> redis.Redis:
         if self._redis is None:
             from poseidon.core.redis import get_redis
+
             self._redis = get_redis("cache")
         return self._redis
 
@@ -80,12 +81,10 @@ class VaRLimitRule(BaseRule):
             try:
                 computed_at = datetime.fromisoformat(computed_at_str)
                 if computed_at.tzinfo is None:
-                    computed_at = computed_at.replace(tzinfo=timezone.utc)
-                age = datetime.now(timezone.utc) - computed_at
+                    computed_at = computed_at.replace(tzinfo=UTC)
+                age = datetime.now(UTC) - computed_at
                 if age > _STALE_THRESHOLD:
-                    logger.warning(
-                        "VaR snapshot at %s is stale (age=%s)", key, age
-                    )
+                    logger.warning("VaR snapshot at %s is stale (age=%s)", key, age)
             except (ValueError, TypeError):
                 logger.warning("Could not parse computed_at from snapshot")
 

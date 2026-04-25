@@ -13,13 +13,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from poseidon.capabilities.registry import ComponentCapability, get_all_capabilities
 from poseidon.capabilities.validation import (
     validate_backtest_components,
     validate_live_components,
     warn_bias_risks,
 )
-from poseidon.capabilities.registry import ComponentCapability, get_all_capabilities
-
 
 # --------------- Stub components for testing ---------------
 
@@ -174,26 +173,38 @@ class TestGetAllCapabilities:
     def test_returns_list_of_component_capabilities(self):
         """get_all_capabilities returns structured data with required fields."""
         # Patch all registries with minimal test data
-        mock_feature_cls = type("MockFeature", (), {
-            "name": "test_feat",
-            "supports_backtest": True,
-            "supports_live": False,
-            "bias_risk": [],
-            "stateful": False,
-        })
-        mock_strategy_cls = type("MockStrategy", (), {
-            "name": "test_strat",
-            "supports_backtest": True,
-            "supports_live": True,
-            "bias_risk": ["lookahead"],
-            "stateful": False,
-        })
+        mock_feature_cls = type(
+            "MockFeature",
+            (),
+            {
+                "name": "test_feat",
+                "supports_backtest": True,
+                "supports_live": False,
+                "bias_risk": [],
+                "stateful": False,
+            },
+        )
+        mock_strategy_cls = type(
+            "MockStrategy",
+            (),
+            {
+                "name": "test_strat",
+                "supports_backtest": True,
+                "supports_live": True,
+                "bias_risk": ["lookahead"],
+                "stateful": False,
+            },
+        )
 
-        with patch("poseidon.capabilities.registry._get_feature_registry", return_value={"test_feat": mock_feature_cls}), \
-             patch("poseidon.capabilities.registry._get_strategy_registry", return_value={"test_strat": mock_strategy_cls}), \
-             patch("poseidon.capabilities.registry._get_model_registry", return_value={}), \
-             patch("poseidon.capabilities.registry._get_rule_registry", return_value={}), \
-             patch("poseidon.capabilities.registry._get_portfolio_registry", return_value={}):
+        with (
+            patch("poseidon.capabilities.registry._get_feature_registry", return_value={"test_feat": mock_feature_cls}),
+            patch(
+                "poseidon.capabilities.registry._get_strategy_registry", return_value={"test_strat": mock_strategy_cls}
+            ),
+            patch("poseidon.capabilities.registry._get_model_registry", return_value={}),
+            patch("poseidon.capabilities.registry._get_rule_registry", return_value={}),
+            patch("poseidon.capabilities.registry._get_portfolio_registry", return_value={}),
+        ):
             caps = get_all_capabilities()
 
         assert len(caps) == 2
@@ -226,9 +237,7 @@ class TestGetAllCapabilities:
                 sys.modules.pop(name, None)
 
         caps = get_all_capabilities()
-        portfolio_names = {
-            cap.name for cap in caps if cap.component_type == "portfolio_strategy"
-        }
+        portfolio_names = {cap.name for cap in caps if cap.component_type == "portfolio_strategy"}
 
         assert "fundamental_selection" in portfolio_names
         assert "crypto_trend" in portfolio_names

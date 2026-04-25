@@ -6,8 +6,8 @@ Covers D-15 (report from ExperimentTracker), D-16 (ranking by composite_score).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -116,7 +116,7 @@ class TestGenerateReport:
         mock_query_obj.filter.return_value = mock_query_obj
         mock_query_obj.all.return_value = []
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         report = generate_report(
             mock_tracker,
             ["study1"],
@@ -150,7 +150,7 @@ class TestGenerateReport:
         mock_query_obj.filter.return_value = mock_query_obj
         mock_query_obj.all.return_value = [MagicMock()] * 5  # 5 total trials
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         report = generate_report(
             mock_tracker,
             ["crypto_spot_BTCUSDT_1h"],
@@ -177,7 +177,7 @@ class TestGenerateReport:
         mock_query_obj.filter.return_value = mock_query_obj
         mock_query_obj.all.return_value = [MagicMock()] * 3
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         report = generate_report(
             mock_tracker,
             ["empty_study"],
@@ -220,7 +220,7 @@ class TestGenerateReport:
         mock_query_obj.filter.return_value = mock_query_obj
         mock_query_obj.all.return_value = [MagicMock()] * 10
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         report = generate_report(
             mock_tracker,
             ["crypto_spot_BTCUSDT_1h", "crypto_spot_ETHUSDT_1h"],
@@ -369,7 +369,7 @@ class TestAbComparison:
         mock_query_obj.filter.return_value = mock_query_obj
         mock_query_obj.all.return_value = [MagicMock()] * 4
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         report = generate_report(
             mock_tracker,
             ["crypto_spot_BTCUSDT_1h"],

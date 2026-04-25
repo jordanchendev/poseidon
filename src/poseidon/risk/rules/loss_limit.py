@@ -46,8 +46,7 @@ class LossLimitRule(BaseRule):
     def check(self, signal: Signal, portfolio: VirtualPortfolio) -> RuleResult:
         # Placeholder: DB access required to query recent signal history.
         logger.warning(
-            "LossLimitRule is a placeholder — always passes. "
-            "Inject DB session to enable loss limiting for %s.",
+            "LossLimitRule is a placeholder — always passes. Inject DB session to enable loss limiting for %s.",
             signal.symbol,
         )
         return RuleResult(passed=True, rule_name=self.name)

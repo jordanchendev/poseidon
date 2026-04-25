@@ -7,7 +7,7 @@ Data flow:
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -15,8 +15,8 @@ import pandas as pd
 from poseidon.signals.schemas import InstrumentType, Signal, SignalAction
 from poseidon.strategies.base import BaseStrategy, StrategyType
 from poseidon.strategies.dsl.executor import evaluate_condition
-from poseidon.strategies.registry import register_strategy
 from poseidon.strategies.dsl.schema import RuleConfig
+from poseidon.strategies.registry import register_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +63,7 @@ class RuleStrategy(BaseStrategy):
 
             if triggered:
                 signal_time = (
-                    features.index[row_idx]
-                    if isinstance(features.index[row_idx], datetime)
-                    else datetime.now(timezone.utc)
+                    features.index[row_idx] if isinstance(features.index[row_idx], datetime) else datetime.now(UTC)
                 )
                 signals.append(
                     Signal(
@@ -83,7 +81,9 @@ class RuleStrategy(BaseStrategy):
 
         logger.info(
             "RuleStrategy '%s' evaluated %d rules -> %d signals",
-            self.name, len(self.config.rules), len(signals),
+            self.name,
+            len(self.config.rules),
+            len(signals),
         )
         return signals
 

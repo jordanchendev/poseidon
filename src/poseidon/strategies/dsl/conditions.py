@@ -193,7 +193,7 @@ def eval_bollinger_width_percentile(condition: dict, features: pd.DataFrame, row
 
     # Compute width series up to current row (no look-ahead)
     start = max(0, row_idx - lookback + 1)
-    widths = features[upper_col].iloc[start:row_idx + 1] - features[lower_col].iloc[start:row_idx + 1]
+    widths = features[upper_col].iloc[start : row_idx + 1] - features[lower_col].iloc[start : row_idx + 1]
 
     if len(widths) < 2:
         return False

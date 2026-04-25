@@ -8,7 +8,7 @@ Supports loading rules from DB on each evaluation cycle (RISK-03).
 from __future__ import annotations
 
 from poseidon.autoresearch.guard import autoresearch_guard
-from poseidon.risk.base import BaseRule, RuleResult
+from poseidon.risk.base import BaseRule
 from poseidon.risk.portfolio import VirtualPortfolio
 from poseidon.risk.rules import RULE_REGISTRY
 from poseidon.signals.schemas import Signal, SignalStatus
@@ -25,7 +25,7 @@ class RiskEngine:
     def __init__(self, rules: list[BaseRule] | None = None) -> None:
         self._rules: list[BaseRule] = rules or []
 
-    def load_rules_from_db(self, db_session) -> None:  # noqa: ANN001
+    def load_rules_from_db(self, db_session) -> None:
         """Reload rule configs from DB.
 
         Called on every evaluation cycle to support RISK-03 hot-reload.

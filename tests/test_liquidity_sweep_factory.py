@@ -13,9 +13,6 @@ Covers SWEEP-05 factory requirements:
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
-
-import pytest
 
 from poseidon.backtest.liquidity_sweep_factory import (
     PARAM_BOUNDS,
@@ -23,7 +20,6 @@ from poseidon.backtest.liquidity_sweep_factory import (
     _build_config_from_params,
 )
 from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -101,7 +97,10 @@ def test_from_config_returns_valid_strategy():
     """from_config(config_dict) returns a valid LiquiditySweepStrategy instance."""
     params = _make_sample_params()
     config = _build_config_from_params(
-        params, symbol="BTCUSDT", market="crypto_perp", interval="1h",
+        params,
+        symbol="BTCUSDT",
+        market="crypto_perp",
+        interval="1h",
     )
     strategy = LiquiditySweepStrategyFactory.from_config(config)
     assert isinstance(strategy, LiquiditySweepStrategy)
@@ -119,7 +118,10 @@ def test_build_from_trial_suggests_parameters():
     """build_from_trial(trial) suggests all params from PARAM_BOUNDS and returns valid strategy."""
     trial = MockTrial()
     strategy = LiquiditySweepStrategyFactory.build_from_trial(
-        trial, symbol="ETHUSDT", market="crypto_perp", interval="1h",
+        trial,
+        symbol="ETHUSDT",
+        market="crypto_perp",
+        interval="1h",
     )
     assert isinstance(strategy, LiquiditySweepStrategy)
     # All PARAM_BOUNDS keys should have been suggested
@@ -136,7 +138,10 @@ def test_to_config_dict_round_trips():
     """to_config_dict(strategy) returns dict that can round-trip through from_config()."""
     params = _make_sample_params()
     config = _build_config_from_params(
-        params, symbol="BTCUSDT", market="crypto_perp", interval="1h",
+        params,
+        symbol="BTCUSDT",
+        market="crypto_perp",
+        interval="1h",
     )
     strategy1 = LiquiditySweepStrategyFactory.from_config(config)
     config_out = LiquiditySweepStrategyFactory.to_config_dict(strategy1)
@@ -165,7 +170,10 @@ def test_flat_params_map_to_nested_config():
     """Flat PARAM_BOUNDS names correctly map to nested config structure (detection.*, entry.*, exit.*, trailing.*)."""
     params = _make_sample_params()
     config = _build_config_from_params(
-        params, symbol="BTCUSDT", market="crypto_perp", interval="1h",
+        params,
+        symbol="BTCUSDT",
+        market="crypto_perp",
+        interval="1h",
     )
 
     # Detection section
@@ -222,7 +230,9 @@ def test_param_bounds_values_are_valid():
 def test_build_trial_factory_returns_callable_and_bounds():
     """build_trial_factory(symbol, market, interval) returns (callable, param_bounds)."""
     factory_fn, bounds = LiquiditySweepStrategyFactory.build_trial_factory(
-        symbol="BTCUSDT", market="crypto_perp", interval="1h",
+        symbol="BTCUSDT",
+        market="crypto_perp",
+        interval="1h",
     )
     assert callable(factory_fn)
     assert isinstance(bounds, dict)
@@ -231,8 +241,10 @@ def test_build_trial_factory_returns_callable_and_bounds():
 
 def test_build_trial_factory_callable_produces_strategy():
     """build_trial_factory callable accepts params dict and returns a LiquiditySweepStrategy."""
-    factory_fn, bounds = LiquiditySweepStrategyFactory.build_trial_factory(
-        symbol="SOLUSDT", market="crypto_perp", interval="1h",
+    factory_fn, _bounds = LiquiditySweepStrategyFactory.build_trial_factory(
+        symbol="SOLUSDT",
+        market="crypto_perp",
+        interval="1h",
     )
     params = _make_sample_params()
     strategy = factory_fn(params)
@@ -249,7 +261,9 @@ def test_build_trial_factory_callable_produces_strategy():
 def test_build_trial_factory_exposes_param_bounds():
     """build_trial_factory returns PARAM_BOUNDS dict as second element."""
     _, bounds = LiquiditySweepStrategyFactory.build_trial_factory(
-        symbol="BTCUSDT", market="crypto_perp", interval="1h",
+        symbol="BTCUSDT",
+        market="crypto_perp",
+        interval="1h",
     )
     # Must match module-level PARAM_BOUNDS
     for key in PARAM_BOUNDS:

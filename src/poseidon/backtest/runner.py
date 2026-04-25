@@ -12,8 +12,7 @@ The only backtest-specific logic is:
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -59,12 +58,14 @@ class _PortfolioAdapter:
         return len(self._portfolio.positions)
 
     def total_exposure(self) -> float:
-        return sum(
-            pos["quantity"] * pos["entry_price"]
-            for pos in self._portfolio.positions.values()
-        ) / self._portfolio.initial_capital if self._portfolio.positions else 0.0
+        return (
+            sum(pos["quantity"] * pos["entry_price"] for pos in self._portfolio.positions.values())
+            / self._portfolio.initial_capital
+            if self._portfolio.positions
+            else 0.0
+        )
 
-    def get_position(self, market: str, symbol: str):  # noqa: ANN201
+    def get_position(self, market: str, symbol: str):
         key = f"{market}:{symbol}"
         pos = self._portfolio.positions.get(key)
         if pos is None:
@@ -83,8 +84,7 @@ class _PortfolioAdapter:
 class _FakePositionEntry:
     """Duck-typed PositionEntry for the adapter."""
 
-    def __init__(self, symbol: str, market: str, instrument: str,
-                 side: str, quantity_pct: float, entry_time) -> None:  # noqa: ANN001
+    def __init__(self, symbol: str, market: str, instrument: str, side: str, quantity_pct: float, entry_time) -> None:
         self.symbol = symbol
         self.market = market
         self.instrument = instrument
@@ -93,11 +93,15 @@ class _FakePositionEntry:
         self.entry_time = entry_time
 
 
-@autoresearch_guard(mutable_attrs=frozenset({
-    "_funding_costs_total",
-    "_funding_costs_by_trade",
-    "_last_funding_settlement",
-}))
+@autoresearch_guard(
+    mutable_attrs=frozenset(
+        {
+            "_funding_costs_total",
+            "_funding_costs_by_trade",
+            "_last_funding_settlement",
+        }
+    )
+)
 class BacktestRunner:
     """Bar-by-bar backtest engine that reuses the live prediction pipeline.
 
@@ -172,30 +176,24 @@ class BacktestRunner:
             return None, None
 
         if db_session is None:
-            raise ValueError(
-                "db_session is required when model_version_id is specified"
-            )
+            raise ValueError("db_session is required when model_version_id is specified")
 
         from poseidon.models.model_version import ModelVersion
 
-        mv = db_session.query(ModelVersion).filter(
-            ModelVersion.id == model_version_id
-        ).first()
+        mv = db_session.query(ModelVersion).filter(ModelVersion.id == model_version_id).first()
         if mv is None:
-            raise ValueError(
-                f"ModelVersion {model_version_id} not found"
-            )
+            raise ValueError(f"ModelVersion {model_version_id} not found")
 
-        active_model_timestamp = datetime.now(timezone.utc)
+        active_model_timestamp = datetime.now(UTC)
 
         if mv.train_end is not None and backtest_start is not None:
             # Normalize both to aware datetimes for comparison
             train_end = mv.train_end
             bt_start = backtest_start
             if train_end.tzinfo is not None and (bt_start.tzinfo is None):
-                bt_start = bt_start.replace(tzinfo=timezone.utc)
+                bt_start = bt_start.replace(tzinfo=UTC)
             elif (train_end.tzinfo is None) and bt_start.tzinfo is not None:
-                train_end = train_end.replace(tzinfo=timezone.utc)
+                train_end = train_end.replace(tzinfo=UTC)
 
             if train_end >= bt_start:
                 raise ValueError(
@@ -206,7 +204,9 @@ class BacktestRunner:
 
         logger.info(
             "Model bias check passed: model_version_id=%s, train_end=%s, backtest_start=%s",
-            model_version_id, mv.train_end, backtest_start,
+            model_version_id,
+            mv.train_end,
+            backtest_start,
         )
 
         return active_model_timestamp, model_version_id
@@ -237,19 +237,16 @@ class BacktestRunner:
         from poseidon.ml.artifacts import get_predictions_path
         from poseidon.models.model_version import ModelVersion
 
-        mv = db_session.query(ModelVersion).filter(
-            ModelVersion.id == model_version_id
-        ).first()
+        mv = db_session.query(ModelVersion).filter(ModelVersion.id == model_version_id).first()
         if mv is None or mv.artifact_path is None:
             logger.warning(
-                "ModelVersion %s not found or has no artifact_path", model_version_id,
+                "ModelVersion %s not found or has no artifact_path",
+                model_version_id,
             )
             return None
 
         # Try segments in order: test first (standard backtest), then valid, then train
-        segments_to_try = (
-            mv.params.get("prediction_segments", ["test"]) if mv.params else ["test"]
-        )
+        segments_to_try = mv.params.get("prediction_segments", ["test"]) if mv.params else ["test"]
         # Prefer test segment for backtesting
         ordered: list[str] = []
         for pref in ("test", "valid", "train"):
@@ -267,7 +264,9 @@ class BacktestRunner:
                     all_dfs.append(seg_df)
                     logger.info(
                         "Loaded %s predictions from %s (%d rows)",
-                        segment, pred_path, len(seg_df),
+                        segment,
+                        pred_path,
+                        len(seg_df),
                     )
                 except Exception as exc:
                     logger.warning("Failed to read predictions %s: %s", pred_path, exc)
@@ -299,7 +298,8 @@ class BacktestRunner:
             if matched_instrument is None:
                 logger.warning(
                     "Symbol %s not found in prediction instruments: %s",
-                    symbol, list(instruments)[:10],
+                    symbol,
+                    list(instruments)[:10],
                 )
                 return None
 
@@ -354,7 +354,10 @@ class BacktestRunner:
         return getattr(self, "_ar_last_portfolio", None)
 
     def _evaluate_sl_tp(
-        self, portfolio: BacktestPortfolio, bar: pd.Series, bar_index: int,
+        self,
+        portfolio: BacktestPortfolio,
+        bar: pd.Series,
+        bar_index: int,
     ) -> None:
         """Evaluate intra-bar SL/TP exits on open positions (Phase A of bar loop).
 
@@ -491,7 +494,11 @@ class BacktestRunner:
         """
         try:
             return self._run_loop(
-                ohlcv, feature_specs, model_version_id, backtest_start, db_session,
+                ohlcv,
+                feature_specs,
+                model_version_id,
+                backtest_start,
+                db_session,
             )
         except Exception as exc:
             logger.exception("Backtest failed: %s", exc)
@@ -532,7 +539,9 @@ class BacktestRunner:
 
         # Step 0b: Look-ahead bias validation (per D-07, PRED-04)
         active_model_timestamp, validated_mv_id = self.validate_model_bias(
-            resolved_mv_id, backtest_start, db_session,
+            resolved_mv_id,
+            backtest_start,
+            db_session,
         )
 
         # Step 1: Compute features ONCE -- same code path as live prediction (BT-01)
@@ -544,24 +553,23 @@ class BacktestRunner:
         extra_nonprice_data = None
         if resolved_mv_id is not None and feature_specs is not None:
             # Check if any spec references qlib_prediction
-            has_prediction_spec = any(
-                name == "qlib_prediction" for name, _ in feature_specs
-            )
+            has_prediction_spec = any(name == "qlib_prediction" for name, _ in feature_specs)
             if has_prediction_spec:
                 pred_df = self._load_prediction_data(
-                    resolved_mv_id, self.strategy.symbol, db_session,
+                    resolved_mv_id,
+                    self.strategy.symbol,
+                    db_session,
                 )
                 if pred_df is not None:
                     extra_nonprice_data = {"prediction_data": pred_df}
                     logger.info(
                         "Injecting prediction_data (%d rows) for model_version_id=%s",
-                        len(pred_df), resolved_mv_id,
+                        len(pred_df),
+                        resolved_mv_id,
                     )
 
         # Use compute_with_companions when non-price features are present
-        has_nonprice = feature_specs is not None and any(
-            is_nonprice_spec(name) for name, _ in feature_specs
-        )
+        has_nonprice = feature_specs is not None and any(is_nonprice_spec(name) for name, _ in feature_specs)
         if has_nonprice:
             features = self.feature_engine.compute_with_companions(
                 ohlcv,
@@ -584,7 +592,9 @@ class BacktestRunner:
 
         # Step 3: Create portfolio
         portfolio = BacktestPortfolio(
-            self.initial_capital, self.cost_model, self.sizing_config,
+            self.initial_capital,
+            self.cost_model,
+            self.sizing_config,
         )
         # The autoresearch guard explicitly allows internal `_ar_*` state.
         self._ar_last_portfolio = portfolio
@@ -603,7 +613,9 @@ class BacktestRunner:
         n_bars = len(features)
         logger.info(
             "Backtest: %d bars, warmup=%d, tradeable=%d",
-            n_bars, warmup_end, n_bars - warmup_end,
+            n_bars,
+            warmup_end,
+            n_bars - warmup_end,
         )
 
         # Create PendingOrderBook for this run
@@ -626,7 +638,7 @@ class BacktestRunner:
                 portfolio.execute_limit_fill(fe, bar)
 
             # Phase C: Strategy evaluate + signal routing (D-03)
-            features_slice = features.iloc[:i + 1]
+            features_slice = features.iloc[: i + 1]
             signals = self.strategy.evaluate(features_slice)
 
             for signal in signals:
@@ -642,7 +654,8 @@ class BacktestRunner:
 
                 # Compute position size based on SizingConfig (before risk check)
                 signal.quantity_pct = self._compute_sizing(
-                    signal, features_slice,
+                    signal,
+                    features_slice,
                 )
 
                 # Same risk engine code path as live (BT-01)
@@ -735,7 +748,7 @@ class BacktestRunner:
 
     def _compute_sizing(
         self,
-        signal,  # noqa: ANN001
+        signal,
         features_slice: pd.DataFrame,
     ) -> float:
         """Compute position size as quantity_pct based on SizingConfig.
@@ -775,16 +788,12 @@ class BacktestRunner:
         if cfg.mode == SizingMode.FIXED_RISK:
             # D-18: entry price = order_price for limit, bar close for market
             entry_price = (
-                signal.order_price
-                if signal.order_price is not None
-                else float(features_slice.iloc[-1]["close"])
+                signal.order_price if signal.order_price is not None else float(features_slice.iloc[-1]["close"])
             )
             sl_price = signal.stop_loss_price
 
             if sl_price is None:
-                logger.warning(
-                    "FIXED_RISK without stop_loss_price, falling back to FIXED_NOTIONAL"
-                )
+                logger.warning("FIXED_RISK without stop_loss_price, falling back to FIXED_NOTIONAL")
                 return cfg.notional_pct
 
             distance = abs(entry_price - sl_price)

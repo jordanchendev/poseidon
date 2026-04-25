@@ -4,36 +4,37 @@ Register new features by creating a class that extends BaseFeature
 and decorating it with @register_feature.
 """
 
+# Import all feature modules to trigger registration
+from poseidon.data.features import (
+    cascade,  # noqa: F401
+    cross_asset,  # noqa: F401
+    cvd,  # noqa: F401
+    fundamentals,  # noqa: F401
+    funding_rate,  # noqa: F401
+    hmm_regime,  # noqa: F401
+    institutional,  # noqa: F401
+    intermarket,  # noqa: F401
+    macro,  # noqa: F401
+    margin,  # noqa: F401
+    model_prediction,  # noqa: F401
+    monthly_revenue,  # noqa: F401
+    ofi,  # noqa: F401
+    open_interest,  # noqa: F401
+    price_momentum,  # noqa: F401
+    quality_factor,  # noqa: F401
+    regime,  # noqa: F401
+    returns,  # noqa: F401
+    swing,  # noqa: F401
+    technical,  # noqa: F401
+    trade_structure,  # noqa: F401
+    trend,  # noqa: F401
+    valuation,  # noqa: F401
+    volatility,  # noqa: F401
+    volume,  # noqa: F401
+    volume_profile,  # noqa: F401
+    vpin,  # noqa: F401
+    wick,  # noqa: F401
+)
 from poseidon.data.features.base import BaseFeature, get_feature, list_features, register_feature
 
-# Import all feature modules to trigger registration
-from poseidon.data.features import cascade  # noqa: F401
-from poseidon.data.features import cross_asset  # noqa: F401
-from poseidon.data.features import cvd  # noqa: F401
-from poseidon.data.features import fundamentals  # noqa: F401
-from poseidon.data.features import funding_rate  # noqa: F401
-from poseidon.data.features import hmm_regime  # noqa: F401
-from poseidon.data.features import institutional  # noqa: F401
-from poseidon.data.features import intermarket  # noqa: F401
-from poseidon.data.features import macro  # noqa: F401
-from poseidon.data.features import margin  # noqa: F401
-from poseidon.data.features import model_prediction  # noqa: F401
-from poseidon.data.features import monthly_revenue  # noqa: F401
-from poseidon.data.features import ofi  # noqa: F401
-from poseidon.data.features import open_interest  # noqa: F401
-from poseidon.data.features import price_momentum  # noqa: F401
-from poseidon.data.features import quality_factor  # noqa: F401
-from poseidon.data.features import regime  # noqa: F401
-from poseidon.data.features import returns  # noqa: F401
-from poseidon.data.features import swing  # noqa: F401
-from poseidon.data.features import technical  # noqa: F401
-from poseidon.data.features import trade_structure  # noqa: F401
-from poseidon.data.features import trend  # noqa: F401
-from poseidon.data.features import valuation  # noqa: F401
-from poseidon.data.features import volatility  # noqa: F401
-from poseidon.data.features import volume  # noqa: F401
-from poseidon.data.features import volume_profile  # noqa: F401
-from poseidon.data.features import vpin  # noqa: F401
-from poseidon.data.features import wick  # noqa: F401
-
-__all__ = ["BaseFeature", "register_feature", "get_feature", "list_features"]
+__all__ = ["BaseFeature", "get_feature", "list_features", "register_feature"]

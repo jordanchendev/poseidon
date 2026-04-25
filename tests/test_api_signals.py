@@ -1,16 +1,17 @@
 """Tests for signal list/detail API endpoints."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 # --- SQLite compatibility: register before any model import ---
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 @compiles(JSONB, "sqlite")
@@ -24,12 +25,12 @@ def _compile_uuid_sqlite(type_, compiler, **kw):
 
 
 # --- Now import models (registers them with Base.metadata) ---
-from poseidon.models.base import Base, get_db  # noqa: E402
-from poseidon.models.signal import SignalRecord  # noqa: E402
-
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+
 from poseidon.api.signals import router as signals_router  # noqa: E402
+from poseidon.models.base import Base, get_db  # noqa: E402
+from poseidon.models.signal import SignalRecord  # noqa: E402
 
 # --------------- Test DB setup (SQLite in-memory, shared connection) ---------------
 
@@ -83,7 +84,7 @@ def _insert_signal(
     """Insert a signal record directly into the DB and return its ID."""
     db = TestingSessionLocal()
     signal_id = uuid.uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     record = SignalRecord(
         id=signal_id,
         strategy_id=kwargs.get("strategy_id"),

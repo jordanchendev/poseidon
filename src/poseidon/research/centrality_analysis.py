@@ -11,12 +11,9 @@ import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import squareform
-from scipy.stats import spearmanr
 
 
-def replay_sub_signal_votes(
-    sub_signals: list[dict], features: pd.DataFrame
-) -> pd.DataFrame:
+def replay_sub_signal_votes(sub_signals: list[dict], features: pd.DataFrame) -> pd.DataFrame:
     """Replay each sub-signal over the feature DataFrame to produce vote series."""
     from poseidon.strategies.dsl.executor import evaluate_condition
 
@@ -35,9 +32,7 @@ def replay_sub_signal_votes(
     return pd.DataFrame(series_map, index=features.index)
 
 
-def compute_centrality(
-    vote_matrix: pd.DataFrame, distance_threshold: float = 0.7
-) -> dict:
+def compute_centrality(vote_matrix: pd.DataFrame, distance_threshold: float = 0.7) -> dict:
     """Compute Spearman correlation matrix and hierarchical clusters."""
     if vote_matrix.empty:
         return {

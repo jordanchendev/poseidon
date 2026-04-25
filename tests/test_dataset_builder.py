@@ -1,9 +1,10 @@
 """Tests for DatasetBuilder feature_specs integration."""
 
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pandas as pd
 import pytest
-from unittest.mock import MagicMock, patch
 
 from poseidon.qlib.dataset_builder import DatasetBuilder
 
@@ -61,8 +62,10 @@ class TestBuildWithFeatureSpecs:
         mock_feature_df["roe"] = 0.15
         mock_feature_df["roa"] = 0.08
 
-        with patch("poseidon.qlib.dataset_builder.read_ohlcv", return_value=sample_ohlcv), \
-             patch("poseidon.qlib.dataset_builder.FeatureEngine") as MockEngine:
+        with (
+            patch("poseidon.qlib.dataset_builder.read_ohlcv", return_value=sample_ohlcv),
+            patch("poseidon.qlib.dataset_builder.FeatureEngine") as MockEngine,
+        ):
             mock_engine_instance = MockEngine.return_value
             mock_engine_instance.compute_with_companions.return_value = mock_feature_df
             result = builder.build(
@@ -81,8 +84,10 @@ class TestBuildWithFeatureSpecs:
         mock_feature_df = sample_ohlcv.copy()
         mock_feature_df["roe"] = 0.15
 
-        with patch("poseidon.qlib.dataset_builder.read_ohlcv", return_value=sample_ohlcv), \
-             patch("poseidon.qlib.dataset_builder.FeatureEngine") as MockEngine:
+        with (
+            patch("poseidon.qlib.dataset_builder.read_ohlcv", return_value=sample_ohlcv),
+            patch("poseidon.qlib.dataset_builder.FeatureEngine") as MockEngine,
+        ):
             mock_engine_instance = MockEngine.return_value
             mock_engine_instance.compute_with_companions.return_value = mock_feature_df
             builder.build(
@@ -97,14 +102,26 @@ class TestBuildWithFeatureSpecs:
         builder = DatasetBuilder(session=mock_session, market="tw_stock", interval="1d")
 
         dates = pd.date_range("2024-01-01", periods=10, freq="D", tz="UTC")
-        ohlcv_a = pd.DataFrame({
-            "open": 100.0, "high": 101.0, "low": 99.0,
-            "close": 100.0, "volume": 1000.0,
-        }, index=dates)
-        ohlcv_b = pd.DataFrame({
-            "open": 200.0, "high": 201.0, "low": 199.0,
-            "close": 200.0, "volume": 2000.0,
-        }, index=dates)
+        ohlcv_a = pd.DataFrame(
+            {
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.0,
+                "volume": 1000.0,
+            },
+            index=dates,
+        )
+        ohlcv_b = pd.DataFrame(
+            {
+                "open": 200.0,
+                "high": 201.0,
+                "low": 199.0,
+                "close": 200.0,
+                "volume": 2000.0,
+            },
+            index=dates,
+        )
 
         feat_a = ohlcv_a.copy()
         feat_a["roe"] = 0.10
@@ -117,8 +134,10 @@ class TestBuildWithFeatureSpecs:
         def mock_compute(ohlcv, symbol, *args, **kwargs):
             return feat_a if symbol == "A" else feat_b
 
-        with patch("poseidon.qlib.dataset_builder.read_ohlcv", side_effect=mock_read_ohlcv), \
-             patch("poseidon.qlib.dataset_builder.FeatureEngine") as MockEngine:
+        with (
+            patch("poseidon.qlib.dataset_builder.read_ohlcv", side_effect=mock_read_ohlcv),
+            patch("poseidon.qlib.dataset_builder.FeatureEngine") as MockEngine,
+        ):
             mock_engine_instance = MockEngine.return_value
             mock_engine_instance.compute_with_companions.side_effect = mock_compute
             result = builder.build(
@@ -138,8 +157,10 @@ class TestBuildBackwardCompatible:
 
     def test_no_feature_specs_no_feature_engine(self, mock_session, sample_ohlcv):
         builder = DatasetBuilder(session=mock_session, market="tw_stock", interval="1d")
-        with patch("poseidon.qlib.dataset_builder.read_ohlcv", return_value=sample_ohlcv), \
-             patch("poseidon.qlib.dataset_builder.FeatureEngine") as MockEngine:
+        with (
+            patch("poseidon.qlib.dataset_builder.read_ohlcv", return_value=sample_ohlcv),
+            patch("poseidon.qlib.dataset_builder.FeatureEngine") as MockEngine,
+        ):
             builder.build(symbols=["2330"])
             # FeatureEngine should NOT be instantiated when feature_specs is None
             MockEngine.assert_not_called()

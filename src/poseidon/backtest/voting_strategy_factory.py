@@ -34,14 +34,14 @@ PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "momentum_short": (3, 10, "int"),
     "momentum_long": (8, 20, "int"),
     "min_votes": (3, 6, "int"),
-    "atr_multiplier": (3.0, 8.0, "float"),             # D-06: was (1.5, 3.0)
+    "atr_multiplier": (3.0, 8.0, "float"),  # D-06: was (1.5, 3.0)
     "position_pct": (0.05, 0.15, "float"),
-    "bear_min_votes": (3, 6, "int"),                    # D-22: new
-    "bear_position_pct": (0.03, 0.12, "float"),         # D-22: new
-    "cooldown_bars": (8, 48, "int"),                     # global cooldown after any exit
-    "conviction_gap": (2, 4, "int"),                     # min net votes spread for entry
-    "qlib_prediction_threshold": (0.3, 0.8, "float"),   # D-08: ML prediction threshold, market-agnostic
-    "qlib_model_enabled": (0, 1, "int"),                # Phase 46: binary ML on/off search
+    "bear_min_votes": (3, 6, "int"),  # D-22: new
+    "bear_position_pct": (0.03, 0.12, "float"),  # D-22: new
+    "cooldown_bars": (8, 48, "int"),  # global cooldown after any exit
+    "conviction_gap": (2, 4, "int"),  # min net votes spread for entry
+    "qlib_prediction_threshold": (0.3, 0.8, "float"),  # D-08: ML prediction threshold, market-agnostic
+    "qlib_model_enabled": (0, 1, "int"),  # Phase 46: binary ML on/off search
 }
 
 # R2 parameter bounds -- market-conditional, keyed by category
@@ -108,9 +108,7 @@ _MACRO_FEATURES = [
 ]
 
 
-def _build_r2_sub_signals(
-    params: dict, *, market: str
-) -> tuple[list[dict], list[dict]]:
+def _build_r2_sub_signals(params: dict, *, market: str) -> tuple[list[dict], list[dict]]:
     """Build R2 sub_signals for both bull and bear sides based on market.
 
     Returns (bull_sub_signals, bear_sub_signals).
@@ -287,19 +285,23 @@ def _build_config_from_params(
     # Append ML prediction sub-signals when model_version_id is available (D-09, D-10)
     if model_version_id is not None:
         ml_threshold = params.get("qlib_prediction_threshold", 0.5)
-        sub_signals.append({
-            "type": "ml_prediction",
-            "model_version_id": model_version_id,
-            "threshold": ml_threshold,
-            "direction": "long",
-        })
-        if strategy_mode != "long_only":
-            bear_sub_signals.append({
+        sub_signals.append(
+            {
                 "type": "ml_prediction",
                 "model_version_id": model_version_id,
                 "threshold": ml_threshold,
-                "direction": "short",
-            })
+                "direction": "long",
+            }
+        )
+        if strategy_mode != "long_only":
+            bear_sub_signals.append(
+                {
+                    "type": "ml_prediction",
+                    "model_version_id": model_version_id,
+                    "threshold": ml_threshold,
+                    "direction": "short",
+                }
+            )
 
     config = {
         "name": f"optuna_{symbol}_{interval}",
@@ -365,7 +367,10 @@ class VotingStrategyFactory:
                 params[name] = trial.suggest_float(name, float(low), float(high))
 
         config = _build_config_from_params(
-            params, symbol=symbol, market=market, interval=interval,
+            params,
+            symbol=symbol,
+            market=market,
+            interval=interval,
             model_version_id=model_version_id,
         )
         return VotingStrategy(

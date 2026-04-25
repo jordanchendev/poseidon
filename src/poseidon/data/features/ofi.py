@@ -26,9 +26,7 @@ class OFI(BaseFeature):
     name = "ofi"
     description = "Order Flow Imbalance (rolling N-bar sum)"
 
-    def compute(
-        self, ohlcv: pd.DataFrame, period: int = 5, **kwargs
-    ) -> pd.Series:
+    def compute(self, ohlcv: pd.DataFrame, period: int = 5, **kwargs) -> pd.Series:
         col = f"ofi_{period}"
         if not self._validate(ohlcv, min_rows=period + 2):
             return pd.Series(dtype=float, name=col)

@@ -33,8 +33,7 @@ def _validate_strategy_payload(strategy_type: str, config: dict | None) -> None:
     if strategy_type not in _VALID_STRATEGY_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid strategy_type '{strategy_type}'. "
-            f"Must be one of: {sorted(_VALID_STRATEGY_TYPES)}",
+            detail=f"Invalid strategy_type '{strategy_type}'. Must be one of: {sorted(_VALID_STRATEGY_TYPES)}",
         )
 
     if strategy_type == "portfolio_strategy":
@@ -102,11 +101,7 @@ async def list_strategies(
     db: Session = Depends(get_db),
 ) -> list[StrategyResponse]:
     """List all strategies ordered by creation time."""
-    strategies = (
-        db.query(StrategyRecord)
-        .order_by(StrategyRecord.created_at)
-        .all()
-    )
+    strategies = db.query(StrategyRecord).order_by(StrategyRecord.created_at).all()
     return strategies
 
 
@@ -122,11 +117,7 @@ async def create_strategy(
     """
     _validate_strategy_payload(body.strategy_type, body.config)
 
-    existing = (
-        db.query(StrategyRecord)
-        .filter(StrategyRecord.name == body.name)
-        .first()
-    )
+    existing = db.query(StrategyRecord).filter(StrategyRecord.name == body.name).first()
     if existing:
         raise HTTPException(
             status_code=409,
@@ -175,26 +166,16 @@ async def update_strategy(
     if body.name is not None:
         # Check uniqueness if name is changing
         if body.name != record.name:
-            dup = (
-                db.query(StrategyRecord)
-                .filter(StrategyRecord.name == body.name)
-                .first()
-            )
+            dup = db.query(StrategyRecord).filter(StrategyRecord.name == body.name).first()
             if dup:
                 raise HTTPException(
                     status_code=409,
                     detail=f"Strategy with name '{body.name}' already exists",
                 )
         record.name = body.name
-    if body.strategy_type is not None:
-        next_strategy_type = body.strategy_type
-    else:
-        next_strategy_type = record.strategy_type
+    next_strategy_type = body.strategy_type if body.strategy_type is not None else record.strategy_type
 
-    if body.config is not None:
-        next_config = body.config
-    else:
-        next_config = record.config
+    next_config = body.config if body.config is not None else record.config
 
     _validate_strategy_payload(next_strategy_type, next_config)
 

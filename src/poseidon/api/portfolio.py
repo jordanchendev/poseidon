@@ -307,9 +307,7 @@ def get_perp_holdings(db: Session = Depends(get_db)):
     # Reconstruct adapter positions from DB holdings
     for h in perp_holdings:
         leverage = 3  # default, will be overridden by adapter config
-        liq_price = calc_liquidation_price(
-            h.entry_price or 0.0, leverage, h.side or "long"
-        )
+        liq_price = calc_liquidation_price(h.entry_price or 0.0, leverage, h.side or "long")
         adapter._positions[h.symbol] = PerpPosition(
             symbol=h.symbol,
             side=h.side or "long",
@@ -335,9 +333,7 @@ def get_perp_holdings(db: Session = Depends(get_db)):
     funding_sums = (
         db.query(
             TradeLogRecord.symbol,
-            func.coalesce(func.sum(TradeLogRecord.realized_pnl), 0.0).label(
-                "total_funding"
-            ),
+            func.coalesce(func.sum(TradeLogRecord.realized_pnl), 0.0).label("total_funding"),
         )
         .filter(
             TradeLogRecord.market == "crypto_perp",

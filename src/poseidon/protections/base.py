@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -107,7 +107,7 @@ class BaseProtection(ABC):
         """
         from poseidon.models.protection_lock import ProtectionLockRecord
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         query = db.query(ProtectionLockRecord).filter(
             ProtectionLockRecord.protection_type == self.name,
             ProtectionLockRecord.market == market,
@@ -147,7 +147,7 @@ class BaseProtection(ABC):
         """
         from poseidon.models.protection_lock import ProtectionLockRecord
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         stale = (
             db.query(ProtectionLockRecord)
             .filter(

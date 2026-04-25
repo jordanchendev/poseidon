@@ -9,7 +9,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel as PydanticBaseModel
@@ -111,12 +111,7 @@ def get_lock_history(
         query = query.filter(ProtectionLockRecord.protection_type == type)
 
     total = query.count()
-    locks = (
-        query.order_by(ProtectionLockRecord.released_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
+    locks = query.order_by(ProtectionLockRecord.released_at.desc()).offset(offset).limit(limit).all()
 
     return ProtectionLocksListResponse(
         locks=[ProtectionLockResponse.model_validate(lock) for lock in locks],
@@ -130,9 +125,13 @@ def override_lock(
     db: Session = Depends(get_db),
 ) -> ProtectionOverrideResponse:
     """Manually release an active protection lock (D-20)."""
-    lock = db.query(ProtectionLockRecord).filter(
-        ProtectionLockRecord.id == lock_id,
-    ).first()
+    lock = (
+        db.query(ProtectionLockRecord)
+        .filter(
+            ProtectionLockRecord.id == lock_id,
+        )
+        .first()
+    )
 
     if lock is None:
         raise HTTPException(status_code=404, detail="Lock not found")
@@ -141,7 +140,7 @@ def override_lock(
         raise HTTPException(status_code=409, detail="Lock already released")
 
     lock.active = False
-    lock.released_at = datetime.now(timezone.utc)
+    lock.released_at = datetime.now(UTC)
     lock.released_by = "manual"
     db.commit()
 

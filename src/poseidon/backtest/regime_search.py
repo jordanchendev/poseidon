@@ -41,7 +41,7 @@ class RegimeSearchConfig:
     n_trials_per_regime: int = 30  # 30 trials * 3 regimes = 90 total
     min_votes_range: tuple[int, int] = (2, 6)
     position_pct_range: tuple[float, float] = (0.03, 0.15)
-    bear_min_votes_range: tuple[int, int] = (2, 6)           # D-21: new
+    bear_min_votes_range: tuple[int, int] = (2, 6)  # D-21: new
     bear_position_pct_range: tuple[float, float] = (0.03, 0.12)  # D-21: new
     holdout: HoldoutConfig = field(default_factory=HoldoutConfig)
     seed: int = 42
@@ -173,16 +173,20 @@ class RegimeSearchPipeline:
 
         def objective(trial: optuna.Trial) -> float:
             min_votes = trial.suggest_int(
-                "min_votes", *config.min_votes_range,
+                "min_votes",
+                *config.min_votes_range,
             )
             position_pct = trial.suggest_float(
-                "position_pct", *config.position_pct_range,
+                "position_pct",
+                *config.position_pct_range,
             )
             bear_min_votes = trial.suggest_int(
-                "bear_min_votes", *config.bear_min_votes_range,
+                "bear_min_votes",
+                *config.bear_min_votes_range,
             )
             bear_position_pct = trial.suggest_float(
-                "bear_position_pct", *config.bear_position_pct_range,
+                "bear_position_pct",
+                *config.bear_position_pct_range,
             )
 
             # Deep copy base config and override the 4 params

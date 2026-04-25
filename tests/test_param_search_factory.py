@@ -13,20 +13,14 @@ Plus Task 3 AutoResearchRunner injection:
 
 from __future__ import annotations
 
-import ast
-import inspect
 import os
-from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from poseidon.backtest.liquidity_sweep_factory import (
-    LiquiditySweepStrategyFactory,
     PARAM_BOUNDS,
+    LiquiditySweepStrategyFactory,
 )
 from poseidon.backtest.param_search import ParameterSearchPipeline, SearchConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -51,7 +45,10 @@ def test_pipeline_no_factory_defaults_to_none():
     """ParameterSearchPipeline with no strategy_factory stores None (VotingStrategy path)."""
     fe, re, cm, tr = _make_mock_components()
     pipeline = ParameterSearchPipeline(
-        feature_engine=fe, risk_engine=re, cost_model=cm, tracker=tr,
+        feature_engine=fe,
+        risk_engine=re,
+        cost_model=cm,
+        tracker=tr,
     )
     assert pipeline.strategy_factory is None
 
@@ -65,7 +62,10 @@ def test_pipeline_with_factory_stores_it():
     """ParameterSearchPipeline with strategy_factory=LiquiditySweepStrategyFactory stores factory."""
     fe, re, cm, tr = _make_mock_components()
     pipeline = ParameterSearchPipeline(
-        feature_engine=fe, risk_engine=re, cost_model=cm, tracker=tr,
+        feature_engine=fe,
+        risk_engine=re,
+        cost_model=cm,
+        tracker=tr,
         strategy_factory=LiquiditySweepStrategyFactory,
     )
     assert pipeline.strategy_factory is LiquiditySweepStrategyFactory
@@ -89,25 +89,29 @@ def test_pipeline_run_uses_injected_factory_build_trial_factory():
     mock_factory.build_trial_factory.return_value = (mock_trial_fn, mock_bounds)
 
     pipeline = ParameterSearchPipeline(
-        feature_engine=fe, risk_engine=re, cost_model=cm, tracker=tr,
+        feature_engine=fe,
+        risk_engine=re,
+        cost_model=cm,
+        tracker=tr,
         strategy_factory=mock_factory,
     )
 
     # We need to mock the holdout and optimizer to avoid running a real search
     import pandas as pd
+
     ohlcv = pd.DataFrame(
-        {"open": [1.0] * 100, "high": [1.1] * 100, "low": [0.9] * 100,
-         "close": [1.0] * 100, "volume": [100.0] * 100},
+        {"open": [1.0] * 100, "high": [1.1] * 100, "low": [0.9] * 100, "close": [1.0] * 100, "volume": [100.0] * 100},
         index=pd.date_range("2024-01-01", periods=100, freq="1h"),
     )
 
     cfg = SearchConfig(n_trials=1)
 
     # Mock holdout to return a valid boundary
-    with patch.object(cfg.holdout, "compute_boundary", return_value=ohlcv.index[-20]), \
-         patch.object(cfg.holdout, "validate_data_range"), \
-         patch("poseidon.backtest.param_search.BayesianOptimizer") as mock_opt_cls:
-
+    with (
+        patch.object(cfg.holdout, "compute_boundary", return_value=ohlcv.index[-20]),
+        patch.object(cfg.holdout, "validate_data_range"),
+        patch("poseidon.backtest.param_search.BayesianOptimizer") as mock_opt_cls,
+    ):
         mock_opt = MagicMock()
         mock_opt.optimize.return_value = []  # no trials
         mock_opt_cls.return_value = mock_opt
@@ -116,7 +120,9 @@ def test_pipeline_run_uses_injected_factory_build_trial_factory():
 
     # Verify build_trial_factory was called
     mock_factory.build_trial_factory.assert_called_once_with(
-        symbol="BTCUSDT", market="crypto_perp", interval="1h",
+        symbol="BTCUSDT",
+        market="crypto_perp",
+        interval="1h",
     )
 
 
@@ -129,7 +135,11 @@ def test_no_liquidity_sweep_imports_in_param_search():
     """param_search.py does NOT contain any LiquiditySweep-specific imports (per D-02)."""
     param_search_path = os.path.join(
         os.path.dirname(__file__),
-        "..", "src", "poseidon", "backtest", "param_search.py",
+        "..",
+        "src",
+        "poseidon",
+        "backtest",
+        "param_search.py",
     )
     param_search_path = os.path.normpath(param_search_path)
     with open(param_search_path) as f:
@@ -155,15 +165,17 @@ def test_wfe_gate_rejects_low_wfe_liquidity_sweep_trial():
 
     # Create pipeline with LiquiditySweepStrategyFactory
     pipeline = ParameterSearchPipeline(
-        feature_engine=fe, risk_engine=re, cost_model=cm, tracker=tr,
+        feature_engine=fe,
+        risk_engine=re,
+        cost_model=cm,
+        tracker=tr,
         strategy_factory=LiquiditySweepStrategyFactory,
     )
 
     import pandas as pd
 
     ohlcv = pd.DataFrame(
-        {"open": [1.0] * 200, "high": [1.1] * 200, "low": [0.9] * 200,
-         "close": [1.0] * 200, "volume": [100.0] * 200},
+        {"open": [1.0] * 200, "high": [1.1] * 200, "low": [0.9] * 200, "close": [1.0] * 200, "volume": [100.0] * 200},
         index=pd.date_range("2024-01-01", periods=200, freq="1h"),
     )
 
@@ -171,15 +183,18 @@ def test_wfe_gate_rejects_low_wfe_liquidity_sweep_trial():
 
     # Mock to return a single trial with low WFE
     mock_trial = MagicMock()
-    mock_trial.params = {k: (low + high) / 2 if t == "float" else (int(low) + int(high)) // 2
-                          for k, (low, high, t) in PARAM_BOUNDS.items()}
+    mock_trial.params = {
+        k: (low + high) / 2 if t == "float" else (int(low) + int(high)) // 2
+        for k, (low, high, t) in PARAM_BOUNDS.items()
+    }
     mock_trial.metrics = {"sharpe_ratio": 0.5, "max_drawdown": -0.1, "win_rate": 0.55}
 
-    with patch.object(cfg.holdout, "compute_boundary", return_value=ohlcv.index[-40]), \
-         patch.object(cfg.holdout, "validate_data_range"), \
-         patch("poseidon.backtest.param_search.BayesianOptimizer") as mock_opt_cls, \
-         patch("poseidon.backtest.param_search.WalkForwardAnalyzer") as mock_wfa_cls:
-
+    with (
+        patch.object(cfg.holdout, "compute_boundary", return_value=ohlcv.index[-40]),
+        patch.object(cfg.holdout, "validate_data_range"),
+        patch("poseidon.backtest.param_search.BayesianOptimizer") as mock_opt_cls,
+        patch("poseidon.backtest.param_search.WalkForwardAnalyzer") as mock_wfa_cls,
+    ):
         mock_opt = MagicMock()
         mock_opt.optimize.return_value = [mock_trial]
         mock_opt_cls.return_value = mock_opt
@@ -202,9 +217,7 @@ def test_wfe_gate_rejects_low_wfe_liquidity_sweep_trial():
     # Tracker should have saved with "rejected" status
     tr.save.assert_called_once()
     call_kwargs = tr.save.call_args
-    assert call_kwargs[1]["status"] == "rejected" or (
-        len(call_kwargs[0]) > 0 and "rejected" in str(call_kwargs)
-    )
+    assert call_kwargs[1]["status"] == "rejected" or (len(call_kwargs[0]) > 0 and "rejected" in str(call_kwargs))
 
 
 # ---------------------------------------------------------------------------
@@ -254,19 +267,26 @@ def test_autoresearch_runner_passes_factory_to_pipeline():
         strategy_factory=LiquiditySweepStrategyFactory,
     )
 
-    with patch("poseidon.autoresearch.runner.autoresearch_context"), \
-         patch("poseidon.autoresearch.runner.FeatureEngine"), \
-         patch("poseidon.autoresearch.runner.RiskEngine"), \
-         patch("poseidon.autoresearch.runner.ExperimentTracker"), \
-         patch("poseidon.autoresearch.runner.read_ohlcv") as mock_read, \
-         patch("poseidon.autoresearch.runner.COST_MODELS", {"crypto_perp": MagicMock()}), \
-         patch("poseidon.autoresearch.runner.ParameterSearchPipeline") as mock_pipeline_cls, \
-         patch("poseidon.autoresearch.runner.ModelManager"):
-
+    with (
+        patch("poseidon.autoresearch.runner.autoresearch_context"),
+        patch("poseidon.autoresearch.runner.FeatureEngine"),
+        patch("poseidon.autoresearch.runner.RiskEngine"),
+        patch("poseidon.autoresearch.runner.ExperimentTracker"),
+        patch("poseidon.autoresearch.runner.read_ohlcv") as mock_read,
+        patch("poseidon.autoresearch.runner.COST_MODELS", {"crypto_perp": MagicMock()}),
+        patch("poseidon.autoresearch.runner.ParameterSearchPipeline") as mock_pipeline_cls,
+        patch("poseidon.autoresearch.runner.ModelManager"),
+    ):
         import pandas as pd
+
         mock_read.return_value = pd.DataFrame(
-            {"open": [1.0] * 100, "high": [1.1] * 100, "low": [0.9] * 100,
-             "close": [1.0] * 100, "volume": [100.0] * 100},
+            {
+                "open": [1.0] * 100,
+                "high": [1.1] * 100,
+                "low": [0.9] * 100,
+                "close": [1.0] * 100,
+                "volume": [100.0] * 100,
+            },
             index=pd.date_range("2024-01-01", periods=100, freq="1h"),
         )
 
@@ -279,5 +299,6 @@ def test_autoresearch_runner_passes_factory_to_pipeline():
     # Verify ParameterSearchPipeline was created with strategy_factory
     mock_pipeline_cls.assert_called_once()
     call_kwargs = mock_pipeline_cls.call_args
-    assert call_kwargs[1].get("strategy_factory") is LiquiditySweepStrategyFactory or \
-           (len(call_kwargs[0]) > 7 and call_kwargs[0][7] is LiquiditySweepStrategyFactory)
+    assert call_kwargs[1].get("strategy_factory") is LiquiditySweepStrategyFactory or (
+        len(call_kwargs[0]) > 7 and call_kwargs[0][7] is LiquiditySweepStrategyFactory
+    )

@@ -79,11 +79,13 @@ class MACD(BaseFeature):
         macd_line = ema_fast - ema_slow
         macd_signal = macd_line.ewm(span=signal_period, adjust=False).mean()
         macd_histogram = macd_line - macd_signal
-        return pd.DataFrame({
-            "macd_line": macd_line,
-            "macd_signal": macd_signal,
-            "macd_histogram": macd_histogram,
-        })
+        return pd.DataFrame(
+            {
+                "macd_line": macd_line,
+                "macd_signal": macd_signal,
+                "macd_histogram": macd_histogram,
+            }
+        )
 
 
 @register_feature
@@ -96,20 +98,20 @@ class BollingerBands(BaseFeature):
     name = "bollinger"
     description = "Bollinger Bands (upper, middle, lower)"
 
-    def compute(
-        self, ohlcv: pd.DataFrame, period: int = 20, num_std: float = 2.0, **kwargs
-    ) -> pd.DataFrame:
+    def compute(self, ohlcv: pd.DataFrame, period: int = 20, num_std: float = 2.0, **kwargs) -> pd.DataFrame:
         if not self._validate(ohlcv):
             return pd.DataFrame(columns=[f"bb_upper_{period}", f"bb_middle_{period}", f"bb_lower_{period}"])
         middle = ohlcv["close"].rolling(window=period).mean()
         std = ohlcv["close"].rolling(window=period).std()
         upper = middle + (num_std * std)
         lower = middle - (num_std * std)
-        return pd.DataFrame({
-            f"bb_upper_{period}": upper,
-            f"bb_middle_{period}": middle,
-            f"bb_lower_{period}": lower,
-        })
+        return pd.DataFrame(
+            {
+                f"bb_upper_{period}": upper,
+                f"bb_middle_{period}": middle,
+                f"bb_lower_{period}": lower,
+            }
+        )
 
 
 @register_feature

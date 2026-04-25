@@ -1,18 +1,19 @@
 """Unit tests for backtest engine: cost model, portfolio, metrics, ORM models, runner, schemas, repository."""
 
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import numpy as np
 import pandas as pd
 import pytest
+from pydantic import ValidationError
 
-from poseidon.backtest.cost_model import COST_MODELS, CostModel, get_cost_model
+from poseidon.backtest.cost_model import COST_MODELS, get_cost_model
 from poseidon.backtest.metrics import compute_metrics
 from poseidon.backtest.portfolio import BacktestPortfolio, TradeRecord
-from poseidon.backtest.runner import BacktestRunner
 from poseidon.backtest.repository import BacktestRepository
+from poseidon.backtest.runner import BacktestRunner
 from poseidon.backtest.schemas import BacktestConfig, BacktestResult
 from poseidon.data.feature_engine import FeatureEngine
 from poseidon.models.backtest import (
@@ -21,9 +22,8 @@ from poseidon.models.backtest import (
     BacktestTradeRecord,
 )
 from poseidon.risk.engine import RiskEngine
-from poseidon.signals.schemas import InstrumentType, Signal, SignalAction, SignalStatus
+from poseidon.signals.schemas import InstrumentType, Signal, SignalAction
 from poseidon.strategies.base import BaseStrategy, StrategyType
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -59,7 +59,7 @@ def make_signal():
             action=action,
             confidence=confidence,
             quantity_pct=quantity_pct,
-            signal_time=datetime(2025, 1, 15, 9, 0, tzinfo=timezone.utc),
+            signal_time=datetime(2025, 1, 15, 9, 0, tzinfo=UTC),
         )
 
     return _make
@@ -70,7 +70,7 @@ def make_bar():
     """Factory for creating a mock OHLCV bar (pd.Series)."""
 
     def _make(close: float = 100.0, time: datetime | None = None) -> pd.Series:
-        t = time or datetime(2025, 1, 15, tzinfo=timezone.utc)
+        t = time or datetime(2025, 1, 15, tzinfo=UTC)
         return pd.Series(
             {
                 "time": t,
@@ -207,7 +207,7 @@ class TestBacktestPortfolio:
     def test_record_equity_point(self, crypto_spot_cost, make_signal, make_bar):
         """record_equity_point stores (timestamp, equity, drawdown) tuples."""
         portfolio = BacktestPortfolio(initial_capital=1_000_000, cost_model=crypto_spot_cost)
-        t = datetime(2025, 1, 15, tzinfo=timezone.utc)
+        t = datetime(2025, 1, 15, tzinfo=UTC)
         portfolio.record_equity_point(t, 100.0)
 
         assert len(portfolio.equity_curve) == 1
@@ -226,11 +226,11 @@ class TestBacktestPortfolio:
         portfolio.execute_fill(signal, bar)
 
         # Record equity at peak
-        t1 = datetime(2025, 1, 16, tzinfo=timezone.utc)
+        t1 = datetime(2025, 1, 16, tzinfo=UTC)
         portfolio.record_equity_point(t1, 120.0)  # price went up
 
         # Record equity at lower price (drawdown)
-        t2 = datetime(2025, 1, 17, tzinfo=timezone.utc)
+        t2 = datetime(2025, 1, 17, tzinfo=UTC)
         portfolio.record_equity_point(t2, 90.0)  # price dropped
 
         assert len(portfolio.equity_curve) == 2
@@ -270,16 +270,31 @@ class TestMetrics:
         """compute_metrics with trades returns correct win_rate and profit_factor."""
         trades = [
             TradeRecord(
-                symbol="A", action="long", entry_time=datetime.now(timezone.utc),
-                entry_price=100, quantity=10, fees=1, pnl=50,
+                symbol="A",
+                action="long",
+                entry_time=datetime.now(UTC),
+                entry_price=100,
+                quantity=10,
+                fees=1,
+                pnl=50,
             ),
             TradeRecord(
-                symbol="B", action="long", entry_time=datetime.now(timezone.utc),
-                entry_price=100, quantity=10, fees=1, pnl=-20,
+                symbol="B",
+                action="long",
+                entry_time=datetime.now(UTC),
+                entry_price=100,
+                quantity=10,
+                fees=1,
+                pnl=-20,
             ),
             TradeRecord(
-                symbol="C", action="long", entry_time=datetime.now(timezone.utc),
-                entry_price=100, quantity=10, fees=1, pnl=30,
+                symbol="C",
+                action="long",
+                entry_time=datetime.now(UTC),
+                entry_price=100,
+                quantity=10,
+                fees=1,
+                pnl=30,
             ),
         ]
         equity = pd.Series([100.0, 110.0, 105.0, 120.0])
@@ -359,9 +374,19 @@ class TestBacktestModels:
         table = BacktestRecord.__table__
         col_names = {c.name for c in table.columns}
         required = {
-            "id", "strategy_id", "strategy_type", "symbol", "market",
-            "interval", "config", "metrics", "walk_forward", "status",
-            "error_message", "created_at", "completed_at",
+            "id",
+            "strategy_id",
+            "strategy_type",
+            "symbol",
+            "market",
+            "interval",
+            "config",
+            "metrics",
+            "walk_forward",
+            "status",
+            "error_message",
+            "created_at",
+            "completed_at",
         }
         assert required.issubset(col_names)
 
@@ -380,7 +405,7 @@ SHORT_FEATURES: list[tuple[str, dict]] = [
 
 def _make_ohlcv(n_bars: int = 20, base_price: float = 100.0) -> pd.DataFrame:
     """Create synthetic OHLCV DataFrame with `n_bars` rows."""
-    times = pd.date_range("2025-01-01", periods=n_bars, freq="B", tz=timezone.utc)
+    times = pd.date_range("2025-01-01", periods=n_bars, freq="B", tz=UTC)
     np.random.seed(42)
     closes = base_price + np.cumsum(np.random.randn(n_bars) * 2)
     return pd.DataFrame(
@@ -664,7 +689,7 @@ class TestBacktestSchemas:
 
     def test_config_missing_required_raises(self):
         """BacktestConfig raises ValidationError when required fields are missing."""
-        with pytest.raises(Exception):  # pydantic.ValidationError
+        with pytest.raises(ValidationError):
             BacktestConfig()  # type: ignore[call-arg]
 
     def test_config_with_dates(self):
@@ -673,8 +698,8 @@ class TestBacktestSchemas:
             strategy_type="model",
             symbol="AAPL",
             market="us_stock",
-            start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            end_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            start_date=datetime(2024, 1, 1, tzinfo=UTC),
+            end_date=datetime(2025, 1, 1, tzinfo=UTC),
         )
         assert config.start_date is not None
         assert config.end_date is not None
@@ -731,7 +756,7 @@ class TestBacktestRepository:
             TradeRecord(
                 symbol="2330",
                 action="long",
-                entry_time=datetime(2025, 1, 5, tzinfo=timezone.utc),
+                entry_time=datetime(2025, 1, 5, tzinfo=UTC),
                 entry_price=100.0,
                 quantity=10,
                 fees=0.14,
@@ -739,8 +764,8 @@ class TestBacktestRepository:
             TradeRecord(
                 symbol="2330",
                 action="close",
-                entry_time=datetime(2025, 1, 5, tzinfo=timezone.utc),
-                exit_time=datetime(2025, 1, 10, tzinfo=timezone.utc),
+                entry_time=datetime(2025, 1, 5, tzinfo=UTC),
+                exit_time=datetime(2025, 1, 10, tzinfo=UTC),
                 entry_price=100.0,
                 exit_price=110.0,
                 quantity=10,
@@ -750,9 +775,9 @@ class TestBacktestRepository:
         ]
 
         equity_curve = [
-            (datetime(2025, 1, 5, tzinfo=timezone.utc), 1_000_000.0, 0.0),
-            (datetime(2025, 1, 6, tzinfo=timezone.utc), 1_001_000.0, 0.0),
-            (datetime(2025, 1, 7, tzinfo=timezone.utc), 999_000.0, 0.002),
+            (datetime(2025, 1, 5, tzinfo=UTC), 1_000_000.0, 0.0),
+            (datetime(2025, 1, 6, tzinfo=UTC), 1_001_000.0, 0.0),
+            (datetime(2025, 1, 7, tzinfo=UTC), 999_000.0, 0.002),
         ]
 
         backtest_id = repo.save_result(

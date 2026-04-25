@@ -5,7 +5,7 @@ Bridges WalkForwardAnalyzer and GridSearchOptimizer with StructuralReversalStrat
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from poseidon.strategies.structural_reversal import (
     StructuralReversalConfig,
@@ -40,9 +40,7 @@ class StructuralStrategyFactory:
         }
 
     @staticmethod
-    def make_factory(
-        base_params: dict, symbol: str
-    ) -> Callable[[dict], StructuralReversalStrategy]:
+    def make_factory(base_params: dict, symbol: str) -> Callable[[dict], StructuralReversalStrategy]:
         """Create a strategy factory callable for GridSearchOptimizer.
 
         Args:

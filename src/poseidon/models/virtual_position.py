@@ -12,9 +12,7 @@ from poseidon.models.base import Base
 class VirtualPositionRecord(Base):
     __tablename__ = "virtual_positions"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, server_default="gen_random_uuid()"
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default="gen_random_uuid()")
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     market: Mapped[str] = mapped_column(String(32), nullable=False)
     instrument: Mapped[str] = mapped_column(String(32), nullable=False)

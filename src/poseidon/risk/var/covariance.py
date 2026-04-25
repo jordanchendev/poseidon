@@ -8,7 +8,7 @@ msgpack serialization (per D-05).
 from __future__ import annotations
 
 import random
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import msgpack
 import numpy as np
@@ -51,9 +51,7 @@ def compute_covariance(
     """
     n_rows = len(aligned_returns)
     if n_rows < min_observations:
-        raise ValueError(
-            f"Insufficient observations: {n_rows} < {min_observations}"
-        )
+        raise ValueError(f"Insufficient observations: {n_rows} < {min_observations}")
 
     cov_matrix: np.ndarray = aligned_returns.cov().values.copy()
     # Regularize: add epsilon to diagonal for numerical stability
@@ -88,7 +86,7 @@ def cache_covariance(
         "symbols": symbols,
         "matrix": cov_matrix.tolist(),
         "as_of": as_of.isoformat(),
-        "computed_at": datetime.now(timezone.utc).isoformat(),
+        "computed_at": datetime.now(UTC).isoformat(),
     }
     data = msgpack.packb(payload, use_bin_type=True)
     # Jitter per Phase 15 cache pattern to avoid stampede

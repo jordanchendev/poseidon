@@ -6,19 +6,18 @@ on locked symbols/markets.
 """
 
 from poseidon.protections.base import BaseProtection, ProtectionResult
+
+# Import concrete protections to trigger registration
+from poseidon.protections.cooldown import CooldownProtection
+from poseidon.protections.daily_loss import DailyLossProtection
+from poseidon.protections.manager import ProtectionManager
+from poseidon.protections.max_drawdown import MaxDrawdownProtection
 from poseidon.protections.registry import (
     get_protection,
     list_protections,
     register_protection,
 )
-
-# Import concrete protections to trigger registration
-from poseidon.protections.cooldown import CooldownProtection  # noqa: F401
-from poseidon.protections.max_drawdown import MaxDrawdownProtection  # noqa: F401
-from poseidon.protections.daily_loss import DailyLossProtection  # noqa: F401
-from poseidon.protections.volatility_spike import VolatilitySpikeProtection  # noqa: F401
-
-from poseidon.protections.manager import ProtectionManager  # noqa: F401
+from poseidon.protections.volatility_spike import VolatilitySpikeProtection
 
 __all__ = [
     "BaseProtection",

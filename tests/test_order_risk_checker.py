@@ -7,11 +7,8 @@ Tests per ORDER-02 requirements:
 4. Per-order isolation (one reject does not block others)
 """
 
-import pytest
-
 from poseidon.orders.risk_checker import OrderRiskChecker
-from poseidon.orders.schemas import Order, RiskCheckResult
-from poseidon.orders.state_machine import OrderStatus
+from poseidon.orders.schemas import Order
 from poseidon.strategies.portfolio.schemas import Holding
 
 
@@ -36,10 +33,7 @@ def _make_order(
 
 def _make_holdings(weights: dict[str, float]) -> dict[str, Holding]:
     """Helper to create holdings dict from symbol->weight mapping."""
-    return {
-        sym: Holding(symbol=sym, market="tw_stock", weight=w)
-        for sym, w in weights.items()
-    }
+    return {sym: Holding(symbol=sym, market="tw_stock", weight=w) for sym, w in weights.items()}
 
 
 class TestPositionLimitCheck:

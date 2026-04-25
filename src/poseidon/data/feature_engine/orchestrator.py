@@ -11,20 +11,18 @@ from datetime import datetime
 
 import pandas as pd
 
-from poseidon.core.database import SessionLocal, db_session
 from poseidon.data.feature_engine.computer import FeatureComputer
 from poseidon.data.feature_engine.specs import (
     DEFAULT_FEATURES,
     FOREIGN_HOLDING_NAMES,
     FUNDAMENTAL_EXTENDED_NAMES,
-    FUNDING_NAMES,
     FUNDAMENTAL_NAMES,
+    FUNDING_NAMES,
     INSTITUTIONAL_PREFIXES,
     MACRO_PREFIX,
     MARGIN_NAMES,
     MONTHLY_REVENUE_NAMES,
     OI_NAMES,
-    PREDICTION_NAMES,
     QUALITY_FACTOR_NAMES,
     TRADE_STRUCTURE_NAMES,
     VALUATION_NAMES,
@@ -171,7 +169,9 @@ class FeatureOrchestrator:
 
                 if cache_key not in companion_cache:
                     companion_cache[cache_key] = repo.read_ohlcv(
-                        comp_symbol, comp_market, interval,
+                        comp_symbol,
+                        comp_market,
+                        interval,
                     )
 
                 companion_df = companion_cache[cache_key]
@@ -192,7 +192,9 @@ class FeatureOrchestrator:
             # --- Non-price data features ---
             if nonprice_specs:
                 nonprice_data = self._load_nonprice_data(
-                    nonprice_specs, symbol, repo,
+                    nonprice_specs,
+                    symbol,
+                    repo,
                 )
                 # Merge externally-injected non-price data (e.g., prediction_data
                 # from BacktestRunner). External data takes precedence over loader.
@@ -246,8 +248,7 @@ class FeatureOrchestrator:
             nonprice_data: dict[str, pd.DataFrame] = {}
 
             needs_institutional = any(
-                n.startswith(INSTITUTIONAL_PREFIXES) or n == "net_buy_consecutive_days"
-                for n, _ in nonprice_specs
+                n.startswith(INSTITUTIONAL_PREFIXES) or n == "net_buy_consecutive_days" for n, _ in nonprice_specs
             )
             needs_fundamental = any(n in FUNDAMENTAL_NAMES for n, _ in nonprice_specs)
             needs_trade_structure = any(n in TRADE_STRUCTURE_NAMES for n, _ in nonprice_specs)
@@ -275,9 +276,7 @@ class FeatureOrchestrator:
                 nonprice_data["macro_data"] = repo.read_macro()
 
             # Phase 66: Extended nonprice data categories
-            needs_fundamental_extended = any(
-                n in FUNDAMENTAL_EXTENDED_NAMES for n, _ in nonprice_specs
-            )
+            needs_fundamental_extended = any(n in FUNDAMENTAL_EXTENDED_NAMES for n, _ in nonprice_specs)
             needs_quality = any(n in QUALITY_FACTOR_NAMES for n, _ in nonprice_specs)
             needs_monthly_revenue = any(n in MONTHLY_REVENUE_NAMES for n, _ in nonprice_specs)
             needs_pe_pbr = any(n in VALUATION_NAMES for n, _ in nonprice_specs)

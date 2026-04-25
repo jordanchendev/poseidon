@@ -41,13 +41,32 @@ def _mock_response(json_data: dict, status_code: int = 200) -> MagicMock:
 
 class TestReadOHLCV:
     def test_read_ohlcv_returns_dataframe(self, repo):
-        mock_resp = _mock_response({
-            "data": [
-                {"time": "2024-01-01T00:00:00", "open": 100.0, "high": 110.0, "low": 90.0, "close": 105.0, "volume": 1000.0},
-                {"time": "2024-01-02T00:00:00", "open": 105.0, "high": 115.0, "low": 95.0, "close": 110.0, "volume": 1200.0},
-            ],
-            "symbol": "BTCUSDT", "market": "crypto_perp", "interval": "1d", "count": 2,
-        })
+        mock_resp = _mock_response(
+            {
+                "data": [
+                    {
+                        "time": "2024-01-01T00:00:00",
+                        "open": 100.0,
+                        "high": 110.0,
+                        "low": 90.0,
+                        "close": 105.0,
+                        "volume": 1000.0,
+                    },
+                    {
+                        "time": "2024-01-02T00:00:00",
+                        "open": 105.0,
+                        "high": 115.0,
+                        "low": 95.0,
+                        "close": 110.0,
+                        "volume": 1200.0,
+                    },
+                ],
+                "symbol": "BTCUSDT",
+                "market": "crypto_perp",
+                "interval": "1d",
+                "count": 2,
+            }
+        )
         with patch.object(repo._client, "request", return_value=mock_resp):
             df = repo.read_ohlcv("BTCUSDT", "crypto_perp", "1d")
             assert isinstance(df, pd.DataFrame)
@@ -55,18 +74,30 @@ class TestReadOHLCV:
             assert list(df.columns) == ["open", "high", "low", "close", "volume"]
 
     def test_read_ohlcv_empty_data(self, repo):
-        mock_resp = _mock_response({
-            "data": [], "symbol": "BTCUSDT", "market": "crypto_perp", "interval": "1d", "count": 0,
-        })
+        mock_resp = _mock_response(
+            {
+                "data": [],
+                "symbol": "BTCUSDT",
+                "market": "crypto_perp",
+                "interval": "1d",
+                "count": 0,
+            }
+        )
         with patch.object(repo._client, "request", return_value=mock_resp):
             df = repo.read_ohlcv("BTCUSDT", "crypto_perp", "1d")
             assert isinstance(df, pd.DataFrame)
             assert len(df) == 0
 
     def test_read_ohlcv_passes_start_end(self, repo):
-        mock_resp = _mock_response({
-            "data": [], "symbol": "BTCUSDT", "market": "crypto_perp", "interval": "1d", "count": 0,
-        })
+        mock_resp = _mock_response(
+            {
+                "data": [],
+                "symbol": "BTCUSDT",
+                "market": "crypto_perp",
+                "interval": "1d",
+                "count": 0,
+            }
+        )
         start = datetime(2024, 1, 1)
         end = datetime(2024, 6, 1)
         with patch.object(repo._client, "request", return_value=mock_resp) as mock_req:
@@ -80,14 +111,16 @@ class TestReadOHLCV:
 class TestUpsertOHLCV:
     def test_upsert_ohlcv_returns_count(self, repo):
         mock_resp = _mock_response({"upserted": 5})
-        df = pd.DataFrame({
-            "time": pd.to_datetime(["2024-01-01", "2024-01-02"]),
-            "open": [100.0, 105.0],
-            "high": [110.0, 115.0],
-            "low": [90.0, 95.0],
-            "close": [105.0, 110.0],
-            "volume": [1000.0, 1200.0],
-        })
+        df = pd.DataFrame(
+            {
+                "time": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+                "open": [100.0, 105.0],
+                "high": [110.0, 115.0],
+                "low": [90.0, 95.0],
+                "close": [105.0, 110.0],
+                "volume": [1000.0, 1200.0],
+            }
+        )
         with patch.object(repo._client, "request", return_value=mock_resp):
             count = repo.upsert_ohlcv(df, "BTCUSDT", "crypto_perp", "perp", "1d")
             assert count == 5
@@ -95,11 +128,13 @@ class TestUpsertOHLCV:
 
 class TestFundamentals:
     def test_read_fundamentals_returns_list(self, repo):
-        mock_resp = _mock_response({
-            "data": [
-                {"id": "1", "symbol": "2330", "market": "tw_stock", "date": "2024-01-01", "data": {"pe": 15.0}},
-            ],
-        })
+        mock_resp = _mock_response(
+            {
+                "data": [
+                    {"id": "1", "symbol": "2330", "market": "tw_stock", "date": "2024-01-01", "data": {"pe": 15.0}},
+                ],
+            }
+        )
         with patch.object(repo._client, "request", return_value=mock_resp):
             result = repo.read_fundamentals("2330", "tw_stock")
             assert isinstance(result, list)
@@ -109,27 +144,31 @@ class TestFundamentals:
 
 class TestDataFrameEndpoints:
     def test_read_funding_rates_returns_dataframe_with_date_index(self, repo):
-        mock_resp = _mock_response({
-            "data": [
-                {"date": "2024-01-01", "funding_rate": 0.001},
-                {"date": "2024-01-02", "funding_rate": 0.002},
-            ],
-            "columns": ["date", "funding_rate"],
-            "count": 2,
-        })
+        mock_resp = _mock_response(
+            {
+                "data": [
+                    {"date": "2024-01-01", "funding_rate": 0.001},
+                    {"date": "2024-01-02", "funding_rate": 0.002},
+                ],
+                "columns": ["date", "funding_rate"],
+                "count": 2,
+            }
+        )
         with patch.object(repo._client, "request", return_value=mock_resp):
             df = repo.read_funding_rates("BTCUSDT")
             assert isinstance(df, pd.DataFrame)
             assert len(df) == 2
 
     def test_read_macro_returns_dataframe(self, repo):
-        mock_resp = _mock_response({
-            "data": [
-                {"date": "2024-01-01", "cpi": 3.0, "gdp": 2.5},
-            ],
-            "columns": ["date", "cpi", "gdp"],
-            "count": 1,
-        })
+        mock_resp = _mock_response(
+            {
+                "data": [
+                    {"date": "2024-01-01", "cpi": 3.0, "gdp": 2.5},
+                ],
+                "columns": ["date", "cpi", "gdp"],
+                "count": 1,
+            }
+        )
         with patch.object(repo._client, "request", return_value=mock_resp):
             df = repo.read_macro()
             assert isinstance(df, pd.DataFrame)
@@ -138,12 +177,24 @@ class TestDataFrameEndpoints:
 
 class TestPerpEndpoints:
     def test_read_perp_ohlcv_returns_dataframe(self, repo):
-        mock_resp = _mock_response({
-            "data": [
-                {"time": "2024-01-01T00:00:00", "open": 100.0, "high": 110.0, "low": 90.0, "close": 105.0, "volume": 1000.0},
-            ],
-            "symbol": "BTCUSDT", "market": "crypto_perp", "interval": "4h", "count": 1,
-        })
+        mock_resp = _mock_response(
+            {
+                "data": [
+                    {
+                        "time": "2024-01-01T00:00:00",
+                        "open": 100.0,
+                        "high": 110.0,
+                        "low": 90.0,
+                        "close": 105.0,
+                        "volume": 1000.0,
+                    },
+                ],
+                "symbol": "BTCUSDT",
+                "market": "crypto_perp",
+                "interval": "4h",
+                "count": 1,
+            }
+        )
         with patch.object(repo._client, "request", return_value=mock_resp):
             df = repo.read_perp_ohlcv("BTCUSDT")
             assert isinstance(df, pd.DataFrame)
@@ -194,13 +245,14 @@ class TestRetryAndCircuitBreaker:
         mock_resp = MagicMock(spec=httpx.Response)
         mock_resp.status_code = 500
         mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "Server Error", request=MagicMock(), response=mock_resp,
+            "Server Error",
+            request=MagicMock(),
+            response=mock_resp,
         )
         mock_resp.json.return_value = {}
 
-        with patch.object(repo._client, "request", return_value=mock_resp):
-            with pytest.raises(httpx.HTTPStatusError):
-                repo.read_latest_funding_rate("BTCUSDT")
+        with patch.object(repo._client, "request", return_value=mock_resp), pytest.raises(httpx.HTTPStatusError):
+            repo.read_latest_funding_rate("BTCUSDT")
 
         assert repo._cb._failure_count == 1
 
@@ -209,14 +261,21 @@ class TestNonpriceExtendedEndpoints:
     """Tests for Phase 66 nonprice reader methods."""
 
     def test_read_fundamentals_extended_df_returns_dataframe(self, repo):
-        mock_resp = _mock_response({
-            "data": [
-                {"date": "2025-03-31", "gross_margin": 0.35, "operating_margin": 0.20,
-                 "debt_ratio": 0.40, "eps": 5.0},
-            ],
-            "columns": ["date", "gross_margin", "operating_margin", "debt_ratio", "eps"],
-            "count": 1,
-        })
+        mock_resp = _mock_response(
+            {
+                "data": [
+                    {
+                        "date": "2025-03-31",
+                        "gross_margin": 0.35,
+                        "operating_margin": 0.20,
+                        "debt_ratio": 0.40,
+                        "eps": 5.0,
+                    },
+                ],
+                "columns": ["date", "gross_margin", "operating_margin", "debt_ratio", "eps"],
+                "count": 1,
+            }
+        )
         with patch.object(repo._client, "request", return_value=mock_resp):
             df = repo.read_fundamentals_extended_df("2330")
             assert isinstance(df, pd.DataFrame)
@@ -231,14 +290,21 @@ class TestNonpriceExtendedEndpoints:
             assert params.get("as_of_date") == "2025-06-01"
 
     def test_read_monthly_revenue_returns_dataframe(self, repo):
-        mock_resp = _mock_response({
-            "data": [
-                {"date": "2025-01-31", "monthly_rev": 5000.0, "monthly_rev_yoy": 0.12,
-                 "cum_rev": 5000.0, "cum_rev_yoy": 0.12},
-            ],
-            "columns": ["date", "monthly_rev", "monthly_rev_yoy", "cum_rev", "cum_rev_yoy"],
-            "count": 1,
-        })
+        mock_resp = _mock_response(
+            {
+                "data": [
+                    {
+                        "date": "2025-01-31",
+                        "monthly_rev": 5000.0,
+                        "monthly_rev_yoy": 0.12,
+                        "cum_rev": 5000.0,
+                        "cum_rev_yoy": 0.12,
+                    },
+                ],
+                "columns": ["date", "monthly_rev", "monthly_rev_yoy", "cum_rev", "cum_rev_yoy"],
+                "count": 1,
+            }
+        )
         with patch.object(repo._client, "request", return_value=mock_resp):
             df = repo.read_monthly_revenue("2330")
             assert isinstance(df, pd.DataFrame)
@@ -253,39 +319,45 @@ class TestNonpriceExtendedEndpoints:
             assert params.get("as_of_date") == "2025-03-01"
 
     def test_read_foreign_holding_returns_dataframe(self, repo):
-        mock_resp = _mock_response({
-            "data": [
-                {"date": "2025-01-15", "foreign_holding_ratio": 0.75},
-            ],
-            "columns": ["date", "foreign_holding_ratio"],
-            "count": 1,
-        })
+        mock_resp = _mock_response(
+            {
+                "data": [
+                    {"date": "2025-01-15", "foreign_holding_ratio": 0.75},
+                ],
+                "columns": ["date", "foreign_holding_ratio"],
+                "count": 1,
+            }
+        )
         with patch.object(repo._client, "request", return_value=mock_resp):
             df = repo.read_foreign_holding("2330")
             assert isinstance(df, pd.DataFrame)
             assert "foreign_holding_ratio" in df.columns
 
     def test_read_quality_factor_returns_dataframe(self, repo):
-        mock_resp = _mock_response({
-            "data": [
-                {"date": "2025-03-31", "profitability_z": 0.5, "growth_z": 0.3, "safety_z": -0.1},
-            ],
-            "columns": ["date", "profitability_z", "growth_z", "safety_z"],
-            "count": 1,
-        })
+        mock_resp = _mock_response(
+            {
+                "data": [
+                    {"date": "2025-03-31", "profitability_z": 0.5, "growth_z": 0.3, "safety_z": -0.1},
+                ],
+                "columns": ["date", "profitability_z", "growth_z", "safety_z"],
+                "count": 1,
+            }
+        )
         with patch.object(repo._client, "request", return_value=mock_resp):
             df = repo.read_quality_factor("2330")
             assert isinstance(df, pd.DataFrame)
             assert "profitability_z" in df.columns
 
     def test_read_pe_pbr_returns_dataframe(self, repo):
-        mock_resp = _mock_response({
-            "data": [
-                {"date": "2025-01-15", "pe_ratio": 15.0, "pb_ratio": 2.0, "dividend_yield": 0.03},
-            ],
-            "columns": ["date", "pe_ratio", "pb_ratio", "dividend_yield"],
-            "count": 1,
-        })
+        mock_resp = _mock_response(
+            {
+                "data": [
+                    {"date": "2025-01-15", "pe_ratio": 15.0, "pb_ratio": 2.0, "dividend_yield": 0.03},
+                ],
+                "columns": ["date", "pe_ratio", "pb_ratio", "dividend_yield"],
+                "count": 1,
+            }
+        )
         with patch.object(repo._client, "request", return_value=mock_resp):
             df = repo.read_pe_pbr("2330")
             assert isinstance(df, pd.DataFrame)

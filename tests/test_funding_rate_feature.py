@@ -49,17 +49,13 @@ class TestFundingRateDaily:
         # Dates that exist in both OHLCV and funding should match exactly
         overlap = ohlcv_30d.index.intersection(funding_data_20d.index)
         for dt in overlap:
-            assert result.loc[dt] == pytest.approx(
-                funding_data_20d.loc[dt, "funding_rate_daily"]
-            )
+            assert result.loc[dt] == pytest.approx(funding_data_20d.loc[dt, "funding_rate_daily"])
 
     def test_forward_fill_gaps(self, ohlcv_30d):
         """Gaps in funding data are forward-filled."""
         # Funding data with gaps: only every 3rd day
         dates = pd.date_range("2024-06-01", periods=10, freq="3D")
-        funding = pd.DataFrame(
-            {"funding_rate_daily": np.arange(10, dtype=float) * 0.001}, index=dates
-        )
+        funding = pd.DataFrame({"funding_rate_daily": np.arange(10, dtype=float) * 0.001}, index=dates)
         feat = FundingRateDaily()
         result = feat.compute(ohlcv_30d, funding_data=funding)
 

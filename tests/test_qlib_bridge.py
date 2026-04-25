@@ -6,7 +6,7 @@ All tests use synthetic DataFrames and mocks — pyqlib is NOT required.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -23,7 +23,6 @@ from poseidon.qlib.column_adapter import (
 from poseidon.qlib.data_handler import PoseidonDataHandler
 from poseidon.qlib.dataset_builder import DatasetBuilder
 from poseidon.qlib.model_exporter import QlibModelExporter
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -118,9 +117,7 @@ class TestColumnAdapter:
             assert (restored[col].values == df[col].values).all()
 
     def test_restore_columns_missing_qlib_column_raises(self):
-        df = pd.DataFrame(
-            {"$open": [1], "$high": [2], "$low": [0], "$close": [1.5]}
-        )  # missing $volume
+        df = pd.DataFrame({"$open": [1], "$high": [2], "$low": [0], "$close": [1.5]})  # missing $volume
         with pytest.raises(ValueError, match=r"\$volume"):
             restore_columns(df)
 
@@ -219,17 +216,20 @@ class TestDatasetBuilder:
         fake_snapshot = MagicMock()
         fake_snapshot.symbols = [{"id": "BTC"}, {"id": "ETH"}]
 
-        with patch(
-            "poseidon.qlib.dataset_builder.get_snapshot_at",
-            return_value=fake_snapshot,
-        ), patch("poseidon.qlib.dataset_builder.read_ohlcv") as mock_read:
+        with (
+            patch(
+                "poseidon.qlib.dataset_builder.get_snapshot_at",
+                return_value=fake_snapshot,
+            ),
+            patch("poseidon.qlib.dataset_builder.read_ohlcv") as mock_read,
+        ):
             mock_read.return_value = _ohlcv_frame(rows=2)
             b = DatasetBuilder(session, market="crypto_perp", interval="1d")
             result = b.build(
                 symbols=None,
                 start=None,
                 end=None,
-                snapshot_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                snapshot_date=datetime(2026, 1, 1, tzinfo=UTC),
             )
 
         instruments = sorted(result.index.get_level_values("instrument").unique())
@@ -357,6 +357,7 @@ class TestPoseidonDataHandler:
 
         # Force the qlib imports to fail by patching __import__
         import builtins as _builtins
+
         real_import = _builtins.__import__
 
         def _fake_import(name, *args, **kwargs):
@@ -364,9 +365,11 @@ class TestPoseidonDataHandler:
                 raise ImportError(f"simulated missing module: {name}")
             return real_import(name, *args, **kwargs)
 
-        with patch.object(_builtins, "__import__", side_effect=_fake_import):
-            with pytest.raises(ImportError, match="pyqlib is not installed"):
-                handler.to_qlib_handler()
+        with (
+            patch.object(_builtins, "__import__", side_effect=_fake_import),
+            pytest.raises(ImportError, match="pyqlib is not installed"),
+        ):
+            handler.to_qlib_handler()
 
     def test_to_qlib_handler_builds_handler_with_multiindex_columns(self):
         df = _multi_index_frame(symbols=("BTC", "ETH"), rows=5)
@@ -511,9 +514,10 @@ class TestQlibModelExporter:
             mock_mgr.create_version.return_value = fake_version
             mock_mgr.transition.return_value = fake_version
 
-            with patch("poseidon.ml.artifacts.ensure_version_dir") as mock_ensure, patch(
-                "poseidon.ml.artifacts.save_metadata"
-            ) as mock_save_meta:
+            with (
+                patch("poseidon.ml.artifacts.ensure_version_dir") as mock_ensure,
+                patch("poseidon.ml.artifacts.save_metadata") as mock_save_meta,
+            ):
                 mock_ensure.return_value = tmp_path
 
                 exporter = QlibModelExporter(session)
@@ -524,8 +528,8 @@ class TestQlibModelExporter:
                     model_class="LGBModel",
                     model_params={"num_leaves": 31},
                     feature_list=["$close", "$volume"],
-                    train_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                    train_end=datetime(2026, 6, 30, tzinfo=timezone.utc),
+                    train_start=datetime(2026, 1, 1, tzinfo=UTC),
+                    train_end=datetime(2026, 6, 30, tzinfo=UTC),
                 )
 
         # ModelVersion should have been created with Qlib metadata
@@ -575,9 +579,10 @@ class TestQlibModelExporter:
             mock_mgr.create_version.return_value = fake_version
             mock_mgr.transition.return_value = fake_version
 
-            with patch(
-                "poseidon.ml.artifacts.ensure_version_dir", return_value=tmp_path
-            ), patch("poseidon.ml.artifacts.save_metadata"):
+            with (
+                patch("poseidon.ml.artifacts.ensure_version_dir", return_value=tmp_path),
+                patch("poseidon.ml.artifacts.save_metadata"),
+            ):
                 exporter = QlibModelExporter(session)
                 exporter.export(
                     model={},
@@ -585,12 +590,12 @@ class TestQlibModelExporter:
                     model_class="LGBModel",
                     model_params={},
                     feature_list=[],
-                    train_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                    train_end=datetime(2026, 6, 30, tzinfo=timezone.utc),
-                    valid_start=datetime(2026, 7, 1, tzinfo=timezone.utc),
-                    valid_end=datetime(2026, 9, 30, tzinfo=timezone.utc),
-                    test_start=datetime(2026, 10, 1, tzinfo=timezone.utc),
-                    test_end=datetime(2026, 12, 31, tzinfo=timezone.utc),
+                    train_start=datetime(2026, 1, 1, tzinfo=UTC),
+                    train_end=datetime(2026, 6, 30, tzinfo=UTC),
+                    valid_start=datetime(2026, 7, 1, tzinfo=UTC),
+                    valid_end=datetime(2026, 9, 30, tzinfo=UTC),
+                    test_start=datetime(2026, 10, 1, tzinfo=UTC),
+                    test_end=datetime(2026, 12, 31, tzinfo=UTC),
                     metrics={"ic": 0.05, "sharpe": 1.2},
                 )
 

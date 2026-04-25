@@ -1,20 +1,19 @@
 """Tests for UniversePipeline with filter chaining and position-aware retention."""
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from poseidon.data.symbols import SymbolInfo
 from poseidon.universe.base import UniverseFilter, UniverseSource
 from poseidon.universe.pipeline import UniversePipeline
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class FakeSource(UniverseSource):
     """A fake source returning a fixed list of symbols."""
+
     name = "fake"
 
     def __init__(self, symbols: list[SymbolInfo]):
@@ -26,6 +25,7 @@ class FakeSource(UniverseSource):
 
 class RemoveFilter(UniverseFilter):
     """A filter that removes symbols by id."""
+
     name = "remove"
 
     def __init__(self, remove_ids: set[str]):
@@ -47,6 +47,7 @@ def _symbols() -> list[SymbolInfo]:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestUniversePipeline:
     def test_run_calls_source_and_applies_filters(self):

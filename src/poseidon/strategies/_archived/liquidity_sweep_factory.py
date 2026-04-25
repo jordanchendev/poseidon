@@ -8,10 +8,10 @@ IMPORTANT: Method is named build_from_trial() per D-01 (not from_trial()).
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from poseidon.strategies._archived.liquidity_sweep import LiquiditySweepStrategy
-
 
 PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     # Detection parameters
@@ -25,10 +25,10 @@ PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "w_funding": (0.1, 0.5, "float"),
     # Entry parameters
     "fib_level": (0.382, 0.786, "float"),
-    "atr_mult_regime_0": (0.3, 1.0, "float"),   # Low vol
-    "atr_mult_regime_1": (0.5, 1.5, "float"),   # Normal vol
-    "atr_mult_regime_2": (1.0, 2.5, "float"),   # High vol
-    "atr_mult_regime_3": (1.5, 3.0, "float"),   # Extreme vol
+    "atr_mult_regime_0": (0.3, 1.0, "float"),  # Low vol
+    "atr_mult_regime_1": (0.5, 1.5, "float"),  # Normal vol
+    "atr_mult_regime_2": (1.0, 2.5, "float"),  # High vol
+    "atr_mult_regime_3": (1.5, 3.0, "float"),  # Extreme vol
     # Exit parameters
     "cooldown_bars": (2, 12, "int"),
     # Trailing stop parameters (D-09)
@@ -183,6 +183,7 @@ class LiquiditySweepStrategyFactory:
         calls self.strategy_factory.build_trial_factory() instead of importing
         LiquiditySweep internals. No strategy-specific code leaks into param_search.py.
         """
+
         def trial_strategy_factory(params: dict) -> LiquiditySweepStrategy:
             config_dict = _build_config_from_params(
                 params,

@@ -5,11 +5,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # --- Sentiment ---
+
 
 class SentimentCreate(BaseModel):
     """Request body for creating a sentiment score."""
+
     symbol: str = Field(..., min_length=1, max_length=32, examples=["2330"])
     market: str = Field(..., min_length=1, max_length=32, examples=["tw_stock"])
     source_type: str = Field(..., min_length=1, max_length=32, examples=["news"])
@@ -18,6 +19,7 @@ class SentimentCreate(BaseModel):
 
 class SentimentResponse(BaseModel):
     """Response body for a sentiment score."""
+
     id: UUID
     symbol: str
     market: str
@@ -30,8 +32,10 @@ class SentimentResponse(BaseModel):
 
 # --- Data Fetch ---
 
+
 class FetchRequest(BaseModel):
     """Request body for triggering a data fetch."""
+
     market: str = Field(..., examples=["crypto_spot"])
     symbol: str | None = Field(None, examples=["BTCUSDT"])
     interval: str = Field("1d", examples=["1d", "1h"])
@@ -168,15 +172,19 @@ class DataFreshnessResponse(BaseModel):
 
 # --- Health ---
 
+
 class HealthResponse(BaseModel):
     """Response body for health check."""
+
     status: str
 
 
 # --- Generic ---
 
+
 class MessageResponse(BaseModel):
     """Generic message response."""
+
     message: str
     task_id: str | None = None
 
@@ -190,9 +198,7 @@ class TrainRequest(BaseModel):
     handler_class: str = Field(..., examples=["Alpha158Handler"])
     handler_params: dict = Field(default_factory=dict, examples=[{}])
     model_class: str = Field(..., examples=["LGBModel"])
-    model_params: dict = Field(
-        default_factory=dict, examples=[{"num_leaves": 128}]
-    )
+    model_params: dict = Field(default_factory=dict, examples=[{"num_leaves": 128}])
     market: str = Field(..., examples=["crypto_perp"])
     symbols: list[str] = Field(..., min_length=1, examples=[["BTCUSDT"]])
     interval: str = Field(..., examples=["4h"])
@@ -310,31 +316,21 @@ class ICAnalysisRequest(BaseModel):
     """Request body for triggering IC analysis (D-20)."""
 
     market: str = Field(..., min_length=1, max_length=32, examples=["tw_stock"])
-    symbols: list[str] | None = Field(
-        None, description="Optional symbol subset; None = all symbols in market"
-    )
-    start_date: str = Field(
-        ..., examples=["2025-01-01"], description="Start date YYYY-MM-DD"
-    )
-    end_date: str = Field(
-        ..., examples=["2025-12-31"], description="End date YYYY-MM-DD"
-    )
+    symbols: list[str] | None = Field(None, description="Optional symbol subset; None = all symbols in market")
+    start_date: str = Field(..., examples=["2025-01-01"], description="Start date YYYY-MM-DD")
+    end_date: str = Field(..., examples=["2025-12-31"], description="End date YYYY-MM-DD")
     horizons: list[int] = Field(
         default_factory=lambda: [1, 5, 20],
         description="Forward return horizons in days (D-02)",
     )
-    features: list[str] | None = Field(
-        None, description="Feature subset; None = all DEFAULT_FEATURES"
-    )
+    features: list[str] | None = Field(None, description="Feature subset; None = all DEFAULT_FEATURES")
     interval: str = Field(default="1d", max_length=8)
 
 
 class ShapleyAnalysisRequest(BaseModel):
     """Request body for triggering Shapley analysis (D-21)."""
 
-    model_version_id: str = Field(
-        ..., description="UUID of trained ModelVersion (D-07)"
-    )
+    model_version_id: str = Field(..., description="UUID of trained ModelVersion (D-07)")
     max_samples: int | None = Field(
         None,
         ge=100,
@@ -353,9 +349,7 @@ class CentralityAnalysisRequest(BaseModel):
     """Request body for triggering centrality analysis (D-22)."""
 
     market: str = Field(..., min_length=1, max_length=32, examples=["tw_stock"])
-    sub_signals: list[dict] = Field(
-        ..., description="VotingStrategy sub-signal configs to evaluate (D-11)"
-    )
+    sub_signals: list[dict] = Field(..., description="VotingStrategy sub-signal configs to evaluate (D-11)")
     symbols: list[str] | None = Field(None, description="Optional symbol subset")
     start_date: str = Field(..., examples=["2025-01-01"])
     end_date: str = Field(..., examples=["2025-12-31"])

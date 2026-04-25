@@ -37,10 +37,8 @@ class ParkinsonVolatility(BaseFeature):
         if not self._validate(ohlcv):
             return pd.Series(dtype=float, name=f"parkinson_vol_{period}")
         hl_ratio = np.log(ohlcv["high"] / ohlcv["low"])
-        squared_log_hl = hl_ratio ** 2
-        result = np.sqrt(
-            squared_log_hl.rolling(window=period).sum() / (4 * period * np.log(2))
-        )
+        squared_log_hl = hl_ratio**2
+        result = np.sqrt(squared_log_hl.rolling(window=period).sum() / (4 * period * np.log(2)))
         result.name = f"parkinson_vol_{period}"
         return result
 
@@ -91,9 +89,7 @@ class ATRPercentile(BaseFeature):
         high_low = ohlcv["high"] - ohlcv["low"]
         high_close_prev = (ohlcv["high"] - ohlcv["close"].shift(1)).abs()
         low_close_prev = (ohlcv["low"] - ohlcv["close"].shift(1)).abs()
-        tr = pd.concat(
-            [high_low, high_close_prev, low_close_prev], axis=1
-        ).max(axis=1)
+        tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
         atr = tr.rolling(window=period).mean()
         result = atr.rolling(window=lookback).rank(pct=True)
         result.name = col

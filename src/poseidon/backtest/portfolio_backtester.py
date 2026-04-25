@@ -14,8 +14,8 @@ Pipeline:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from dataclasses import dataclass
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -116,17 +116,18 @@ class PortfolioBacktester:
         day_of_week = self._resolve_rebalance_day_of_week(strategy)
         strategy_stop_loss_pct = self._resolve_stop_loss_pct(strategy)
         rebalance_dates = self._generate_rebalance_dates(
-            start_date, end_date, frequency=frequency,
-            day_of_month=day_of_month, day_of_week=day_of_week,
+            start_date,
+            end_date,
+            frequency=frequency,
+            day_of_month=day_of_month,
+            day_of_week=day_of_week,
         )
 
         # Step 2: Collect all unique trading dates from ohlcv_dict
         all_dates_set: set[date] = set()
-        for sym, df in ohlcv_dict.items():
+        for _sym, df in ohlcv_dict.items():
             for idx in df.index:
-                if isinstance(idx, pd.Timestamp):
-                    d = idx.date()
-                elif isinstance(idx, datetime):
+                if isinstance(idx, (pd.Timestamp, datetime)):
                     d = idx.date()
                 elif isinstance(idx, date):
                     d = idx
@@ -148,23 +149,17 @@ class PortfolioBacktester:
             )
 
         # Snap rebalance dates to nearest trading day
-        backward_snap = (frequency == "weekly")  # D-05: weekly snaps to prior trading day
+        backward_snap = frequency == "weekly"  # D-05: weekly snaps to prior trading day
         rebalance_date_set = set()
         for rd in rebalance_dates:
             if backward_snap:
                 # D-05: snap to nearest prior trading day
                 candidates = [td for td in all_dates if td <= rd]
-                if candidates:
-                    snap_date = candidates[-1]  # last trading day <= rd
-                else:
-                    snap_date = all_dates[0]  # edge case: use earliest
+                snap_date = candidates[-1] if candidates else all_dates[0]
             else:
                 # Existing forward snap for monthly (unchanged)
                 candidates = [td for td in all_dates if td >= rd]
-                if candidates:
-                    snap_date = candidates[0]
-                else:
-                    snap_date = all_dates[-1]
+                snap_date = candidates[0] if candidates else all_dates[-1]
             rebalance_date_set.add(snap_date)
 
         # Step 3: Initialize state
@@ -178,13 +173,20 @@ class PortfolioBacktester:
         for d in all_dates:
             # Step 4a: Stop-loss exits (existing)
             cash, current_holdings, stop_loss_trades = self._apply_stop_losses(
-                cash, current_holdings, d, ohlcv_dict,
+                cash,
+                current_holdings,
+                d,
+                ohlcv_dict,
             )
             trades.extend(stop_loss_trades)
 
             # Step 4b: Hold_until exits (Phase 72 D-11: after stop_loss, before rebalance)
             cash, current_holdings, hold_until_trades = self._apply_hold_until_exits(
-                cash, current_holdings, d, ohlcv_dict, strategy,
+                cash,
+                current_holdings,
+                d,
+                ohlcv_dict,
+                strategy,
             )
             trades.extend(hold_until_trades)
 
@@ -198,12 +200,14 @@ class PortfolioBacktester:
                     for sym, h in list(current_holdings.items()):
                         if sym not in target_symbols and strategy.check_hold_until(sym, d, h):
                             # Retain position with current weight (avoid unnecessary adjust trades)
-                            targets.append(TargetPosition(
-                                symbol=sym,
-                                weight=h.weight,
-                                reason="hold_until_retained",
-                                side=h.side,
-                            ))
+                            targets.append(
+                                TargetPosition(
+                                    symbol=sym,
+                                    weight=h.weight,
+                                    reason="hold_until_retained",
+                                    side=h.side,
+                                )
+                            )
 
                 orders = self.rebalancer.rebalance(targets, current_holdings)
 
@@ -221,12 +225,14 @@ class PortfolioBacktester:
                 )
                 trades.extend(new_trades)
 
-                rebalance_log.append({
-                    "date": d.isoformat(),
-                    "selected": [t.symbol for t in targets],
-                    "n_excluded": 0,
-                    "orders": len(orders),
-                })
+                rebalance_log.append(
+                    {
+                        "date": d.isoformat(),
+                        "selected": [t.symbol for t in targets],
+                        "n_excluded": 0,
+                        "orders": len(orders),
+                    }
+                )
 
             # Daily mark-to-market
             nav = self._compute_nav(cash, current_holdings, d, ohlcv_dict)
@@ -355,26 +361,23 @@ class PortfolioBacktester:
                 continue
 
             # Sell proceeds minus commission and tax
-            proceeds = h.shares * price * (
-                1 - self.cost_model.sell_commission_rate - self.cost_model.tax_rate
-            )
+            proceeds = h.shares * price * (1 - self.cost_model.sell_commission_rate - self.cost_model.tax_rate)
             cash += proceeds
-            trade_records.append({
-                "symbol": order.symbol,
-                "action": "sell",
-                "date": d.isoformat(),
-                "price": price,
-                "shares": h.shares,
-                "proceeds": proceeds,
-            })
+            trade_records.append(
+                {
+                    "symbol": order.symbol,
+                    "action": "sell",
+                    "date": d.isoformat(),
+                    "price": price,
+                    "shares": h.shares,
+                    "proceeds": proceeds,
+                }
+            )
             del holdings[order.symbol]
 
         # Execute buys
         for order in buy_orders:
-            if order.symbol in ohlcv_dict:
-                price = self._get_adj_close_price(ohlcv_dict[order.symbol], d)
-            else:
-                price = None
+            price = self._get_adj_close_price(ohlcv_dict[order.symbol], d) if order.symbol in ohlcv_dict else None
 
             if price is None or price <= 0:
                 continue
@@ -403,14 +406,16 @@ class PortfolioBacktester:
                 entry_date=datetime(d.year, d.month, d.day),
                 stop_loss_pct=stop_loss_pct,
             )
-            trade_records.append({
-                "symbol": order.symbol,
-                "action": "buy",
-                "date": d.isoformat(),
-                "price": price,
-                "shares": shares,
-                "cost": total_cost,
-            })
+            trade_records.append(
+                {
+                    "symbol": order.symbol,
+                    "action": "buy",
+                    "date": d.isoformat(),
+                    "price": price,
+                    "shares": shares,
+                    "cost": total_cost,
+                }
+            )
 
         # Execute adjustments (sell delta or buy additional)
         for order in adjust_orders:
@@ -447,38 +452,38 @@ class PortfolioBacktester:
                             stop_loss_pct=stop_loss_pct,
                         )
                     holdings[order.symbol].weight = order.target_weight
-                    trade_records.append({
-                        "symbol": order.symbol,
-                        "action": "adjust_buy",
-                        "date": d.isoformat(),
-                        "price": price,
-                        "shares": additional_shares,
-                        "cost": total_cost,
-                    })
+                    trade_records.append(
+                        {
+                            "symbol": order.symbol,
+                            "action": "adjust_buy",
+                            "date": d.isoformat(),
+                            "price": price,
+                            "shares": additional_shares,
+                            "cost": total_cost,
+                        }
+                    )
             else:
                 # Sell excess
                 if order.symbol not in holdings or holdings[order.symbol].shares is None:
                     continue
                 h = holdings[order.symbol]
-                sell_ratio = abs(order.delta_weight) / (
-                    order.current_weight if order.current_weight > 0 else 1.0
-                )
+                sell_ratio = abs(order.delta_weight) / (order.current_weight if order.current_weight > 0 else 1.0)
                 sell_shares = h.shares * min(sell_ratio, 1.0)
 
-                proceeds = sell_shares * price * (
-                    1 - self.cost_model.sell_commission_rate - self.cost_model.tax_rate
-                )
+                proceeds = sell_shares * price * (1 - self.cost_model.sell_commission_rate - self.cost_model.tax_rate)
                 cash += proceeds
                 h.shares -= sell_shares
                 h.weight = order.target_weight
-                trade_records.append({
-                    "symbol": order.symbol,
-                    "action": "adjust_sell",
-                    "date": d.isoformat(),
-                    "price": price,
-                    "shares": sell_shares,
-                    "proceeds": proceeds,
-                })
+                trade_records.append(
+                    {
+                        "symbol": order.symbol,
+                        "action": "adjust_sell",
+                        "date": d.isoformat(),
+                        "price": price,
+                        "shares": sell_shares,
+                        "proceeds": proceeds,
+                    }
+                )
                 if h.shares <= 0:
                     del holdings[order.symbol]
 
@@ -557,19 +562,19 @@ class PortfolioBacktester:
             if price > stop_price:
                 continue
 
-            proceeds = holding.shares * price * (
-                1 - self.cost_model.sell_commission_rate - self.cost_model.tax_rate
-            )
+            proceeds = holding.shares * price * (1 - self.cost_model.sell_commission_rate - self.cost_model.tax_rate)
             cash += proceeds
-            trade_records.append({
-                "symbol": symbol,
-                "action": "sell",
-                "date": d.isoformat(),
-                "price": price,
-                "shares": holding.shares,
-                "proceeds": proceeds,
-                "reason": "stop_loss",
-            })
+            trade_records.append(
+                {
+                    "symbol": symbol,
+                    "action": "sell",
+                    "date": d.isoformat(),
+                    "price": price,
+                    "shares": holding.shares,
+                    "proceeds": proceeds,
+                    "reason": "stop_loss",
+                }
+            )
             del holdings[symbol]
 
         return cash, holdings, trade_records
@@ -602,19 +607,19 @@ class PortfolioBacktester:
             if price is None:
                 continue
 
-            proceeds = holding.shares * price * (
-                1 - self.cost_model.sell_commission_rate - self.cost_model.tax_rate
-            )
+            proceeds = holding.shares * price * (1 - self.cost_model.sell_commission_rate - self.cost_model.tax_rate)
             cash += proceeds
-            trade_records.append({
-                "symbol": symbol,
-                "action": "sell",
-                "date": d.isoformat(),
-                "price": price,
-                "shares": holding.shares,
-                "proceeds": proceeds,
-                "reason": "hold_until_exit",
-            })
+            trade_records.append(
+                {
+                    "symbol": symbol,
+                    "action": "sell",
+                    "date": d.isoformat(),
+                    "price": price,
+                    "shares": holding.shares,
+                    "proceeds": proceeds,
+                    "reason": "hold_until_exit",
+                }
+            )
             del holdings[symbol]
 
         return cash, holdings, trade_records

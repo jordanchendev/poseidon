@@ -5,9 +5,6 @@ STRAT-07 (net Sharpe/funding formula), STRAT-08 (20% MaxDD enforcement),
 trailing stop mechanics, time expiry, and WFE reset isolation.
 """
 
-from datetime import datetime, timezone
-
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -16,7 +13,6 @@ from poseidon.strategies.structural_reversal import (
     StructuralReversalConfig,
     StructuralReversalStrategy,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -80,9 +76,7 @@ class TestEntryConditions:
     def test_short_entry_oiwap_cascade_triggers(self):
         """D-07 + D-08: positive oiwap_distance + negative cascade -> SHORT LIMIT."""
         strategy = _make_strategy()
-        features = make_structural_features(
-            oiwap_distance_168=4.0, cascade_direction=-1.0
-        )
+        features = make_structural_features(oiwap_distance_168=4.0, cascade_direction=-1.0)
         signals = strategy.evaluate(features)
         assert len(signals) == 1
         sig = signals[0]
@@ -163,9 +157,7 @@ class TestLimitPriceDerivation:
     def test_short_limit_price_above_oiwap(self):
         """D-12: Short limit price = OIWAP + (atr_mult * ATR)."""
         strategy = _make_strategy(atr_multiplier=1.0)
-        features = make_structural_features(
-            oiwap_distance_168=4.0, cascade_direction=-1.0
-        )
+        features = make_structural_features(oiwap_distance_168=4.0, cascade_direction=-1.0)
         # Expected: 50000.0 + (1.0 * 500.0) = 50500.0
         signals = strategy.evaluate(features)
         assert len(signals) == 1
@@ -193,9 +185,7 @@ class TestLimitPriceDerivation:
     def test_short_stop_loss_set_on_entry_signal(self):
         """Short stop loss is above limit price."""
         strategy = _make_strategy(atr_multiplier=1.0, stop_atr_multiplier=3.0)
-        features = make_structural_features(
-            oiwap_distance_168=4.0, cascade_direction=-1.0
-        )
+        features = make_structural_features(oiwap_distance_168=4.0, cascade_direction=-1.0)
         signals = strategy.evaluate(features)
         assert len(signals) == 1
         sig = signals[0]

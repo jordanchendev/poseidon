@@ -60,9 +60,7 @@ def test_get_ohlcv_returns_data(mock_from_settings, client):
 def test_get_ohlcv_empty(mock_from_settings, client):
     """Non-existent symbol returns 200 with empty data and count=0."""
     mock_repo = MagicMock()
-    mock_repo.read_ohlcv.return_value = pd.DataFrame(
-        columns=["open", "high", "low", "close", "volume"]
-    )
+    mock_repo.read_ohlcv.return_value = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
     mock_from_settings.return_value = mock_repo
 
     resp = client.get("/api/data/ohlcv", params={"symbol": "NONEXIST", "market": "crypto"})

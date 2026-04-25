@@ -61,7 +61,9 @@ class RevenueBreakoutStrategy(PortfolioStrategy):
         self._repo = repo
 
     def select_stocks(
-        self, universe_df: pd.DataFrame, as_of: date | None = None,
+        self,
+        universe_df: pd.DataFrame,
+        as_of: date | None = None,
     ) -> list[TargetPosition]:
         """Select stocks based on 250-day new high + revenue filters.
 
@@ -97,7 +99,9 @@ class RevenueBreakoutStrategy(PortfolioStrategy):
                     candidates.append((symbol, score))
             except Exception as exc:
                 logger.warning(
-                    "Error evaluating symbol %s: %s", symbol, exc,
+                    "Error evaluating symbol %s: %s",
+                    symbol,
+                    exc,
                 )
                 continue
 
@@ -129,7 +133,9 @@ class RevenueBreakoutStrategy(PortfolioStrategy):
 
         logger.info(
             "RevenueBreakoutStrategy selected %d/%d symbols (as_of=%s)",
-            len(targets), len(symbols), as_of.isoformat(),
+            len(targets),
+            len(symbols),
+            as_of.isoformat(),
         )
         return targets
 
@@ -160,7 +166,9 @@ class RevenueBreakoutStrategy(PortfolioStrategy):
         if ohlcv.empty or len(ohlcv) < cfg.selection.new_high_days:
             logger.debug(
                 "Insufficient OHLCV for %s: %d rows (need >= %d)",
-                symbol, len(ohlcv), cfg.selection.new_high_days,
+                symbol,
+                len(ohlcv),
+                cfg.selection.new_high_days,
             )
             return None
 
@@ -214,7 +222,4 @@ class RevenueBreakoutStrategy(PortfolioStrategy):
 
     def validate_config(self) -> bool:
         """Validate strategy configuration is complete."""
-        return (
-            self.config.selection.max_stocks > 0
-            and self.config.selection.new_high_days > 0
-        )
+        return self.config.selection.max_stocks > 0 and self.config.selection.new_high_days > 0

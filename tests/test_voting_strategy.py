@@ -1,7 +1,6 @@
 """Tests for VotingStrategy — vote counting, ATR trailing stop, position sizing."""
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -10,25 +9,27 @@ import pytest
 from poseidon.signals.schemas import SignalAction
 from poseidon.strategies.voting_strategy import VotingStrategy
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def make_features(n_rows=200, **overrides):
     """Create synthetic feature DataFrame with overridable column values at last row."""
-    df = pd.DataFrame({
-        "close": [100.0] * n_rows,
-        "ema_7": [100.0] * n_rows,
-        "ema_26": [99.0] * n_rows,
-        "rsi_8": [55.0] * n_rows,
-        "macd_histogram": [0.5] * n_rows,
-        "bb_upper_20": [105.0] * n_rows,
-        "bb_lower_20": [95.0] * n_rows,
-        "atr_14": [2.0] * n_rows,
-        "cum_return_6d": [0.01] * n_rows,
-        "cum_return_12d": [0.02] * n_rows,
-    })
+    df = pd.DataFrame(
+        {
+            "close": [100.0] * n_rows,
+            "ema_7": [100.0] * n_rows,
+            "ema_26": [99.0] * n_rows,
+            "rsi_8": [55.0] * n_rows,
+            "macd_histogram": [0.5] * n_rows,
+            "bb_upper_20": [105.0] * n_rows,
+            "bb_lower_20": [95.0] * n_rows,
+            "atr_14": [2.0] * n_rows,
+            "cum_return_6d": [0.01] * n_rows,
+            "cum_return_12d": [0.02] * n_rows,
+        }
+    )
     for col, val in overrides.items():
         df.loc[df.index[-1], col] = val
     return df
@@ -48,8 +49,13 @@ def _make_all_true_config(min_votes: int = 4) -> dict:
         "sub_signals": [
             {"type": "indicator_above", "indicator": "cum_return", "params": {"period": 6}, "threshold": 0},
             {"type": "indicator_above", "indicator": "cum_return", "params": {"period": 12}, "threshold": 0},
-            {"type": "indicator_comparison", "indicator_a": "ema", "indicator_b": "ema",
-             "params": {"period_a": 7, "period_b": 26}, "direction": "above"},
+            {
+                "type": "indicator_comparison",
+                "indicator_a": "ema",
+                "indicator_b": "ema",
+                "params": {"period_a": 7, "period_b": 26},
+                "direction": "above",
+            },
             {"type": "indicator_above", "indicator": "rsi", "params": {"period": 8}, "threshold": 50},
             {"type": "indicator_above", "indicator": "macd_histogram", "params": {}, "threshold": 0},
             {"type": "bollinger_width_percentile", "params": {"period": 20, "lookback": 168}, "threshold": 0.2},
@@ -60,6 +66,7 @@ def _make_all_true_config(min_votes: int = 4) -> dict:
 # ---------------------------------------------------------------------------
 # TestVotingStrategy — core vote counting
 # ---------------------------------------------------------------------------
+
 
 class TestVotingStrategy:
     """Core VotingStrategy tests — vote counting, signal emission."""
@@ -147,6 +154,7 @@ class TestVotingStrategy:
 # ---------------------------------------------------------------------------
 # TestATRTrailingStop
 # ---------------------------------------------------------------------------
+
 
 class TestATRTrailingStop:
     """ATR trailing stop exit tests."""
@@ -249,6 +257,7 @@ class TestATRTrailingStop:
 # TestPositionSizing
 # ---------------------------------------------------------------------------
 
+
 class TestPositionSizing:
     """Position sizing tests."""
 
@@ -329,18 +338,20 @@ class TestNunchiSignals:
 
         # Build features where all 6 conditions are true
         n_rows = 200
-        df = pd.DataFrame({
-            "close": [100.0] * n_rows,
-            "ema_7": [105.0] * n_rows,
-            "ema_26": [100.0] * n_rows,
-            "rsi_8": [55.0] * n_rows,
-            "macd_histogram": [0.5] * n_rows,
-            "bb_upper_20": [110.0] * n_rows,
-            "bb_lower_20": [90.0] * n_rows,
-            "atr_14": [2.0] * n_rows,
-            "cum_return_6d": [0.01] * n_rows,
-            "cum_return_12d": [0.02] * n_rows,
-        })
+        df = pd.DataFrame(
+            {
+                "close": [100.0] * n_rows,
+                "ema_7": [105.0] * n_rows,
+                "ema_26": [100.0] * n_rows,
+                "rsi_8": [55.0] * n_rows,
+                "macd_histogram": [0.5] * n_rows,
+                "bb_upper_20": [110.0] * n_rows,
+                "bb_lower_20": [90.0] * n_rows,
+                "atr_14": [2.0] * n_rows,
+                "cum_return_6d": [0.01] * n_rows,
+                "cum_return_12d": [0.02] * n_rows,
+            }
+        )
         # Last row: narrow BB (squeeze) for signal 6
         df.loc[df.index[-1], "bb_upper_20"] = 101.0
         df.loc[df.index[-1], "bb_lower_20"] = 99.0
@@ -355,18 +366,20 @@ class TestNunchiSignals:
         strategy = VotingStrategy(config=config)
 
         n_rows = 200
-        df = pd.DataFrame({
-            "close": [100.0] * n_rows,
-            "ema_7": [95.0] * n_rows,       # ema_7 < ema_26 -> signal 3 false
-            "ema_26": [100.0] * n_rows,
-            "rsi_8": [45.0] * n_rows,        # < 50 -> signal 4 false
-            "macd_histogram": [0.5] * n_rows, # > 0 -> signal 5 true
-            "bb_upper_20": [110.0] * n_rows,
-            "bb_lower_20": [90.0] * n_rows,
-            "atr_14": [2.0] * n_rows,
-            "cum_return_6d": [-0.01] * n_rows,  # < 0 -> signal 1 false
-            "cum_return_12d": [-0.02] * n_rows,  # < 0 -> signal 2 false
-        })
+        df = pd.DataFrame(
+            {
+                "close": [100.0] * n_rows,
+                "ema_7": [95.0] * n_rows,  # ema_7 < ema_26 -> signal 3 false
+                "ema_26": [100.0] * n_rows,
+                "rsi_8": [45.0] * n_rows,  # < 50 -> signal 4 false
+                "macd_histogram": [0.5] * n_rows,  # > 0 -> signal 5 true
+                "bb_upper_20": [110.0] * n_rows,
+                "bb_lower_20": [90.0] * n_rows,
+                "atr_14": [2.0] * n_rows,
+                "cum_return_6d": [-0.01] * n_rows,  # < 0 -> signal 1 false
+                "cum_return_12d": [-0.02] * n_rows,  # < 0 -> signal 2 false
+            }
+        )
         # Last row: narrow BB (squeeze) for signal 6 -> true
         df.loc[df.index[-1], "bb_upper_20"] = 101.0
         df.loc[df.index[-1], "bb_lower_20"] = 99.0
@@ -378,6 +391,7 @@ class TestNunchiSignals:
 # ---------------------------------------------------------------------------
 # Bear sub_signals config helper
 # ---------------------------------------------------------------------------
+
 
 def _make_bear_config() -> dict:
     """Config with both bull and bear sub_signals."""
@@ -391,8 +405,13 @@ def _make_bear_config() -> dict:
         "sub_signals": [
             {"type": "indicator_above", "indicator": "cum_return", "params": {"period": 6}, "threshold": 0},
             {"type": "indicator_above", "indicator": "cum_return", "params": {"period": 12}, "threshold": 0},
-            {"type": "indicator_comparison", "indicator_a": "ema", "indicator_b": "ema",
-             "params": {"period_a": 7, "period_b": 26}, "direction": "above"},
+            {
+                "type": "indicator_comparison",
+                "indicator_a": "ema",
+                "indicator_b": "ema",
+                "params": {"period_a": 7, "period_b": 26},
+                "direction": "above",
+            },
             {"type": "indicator_above", "indicator": "rsi", "params": {"period": 8}, "threshold": 50},
             {"type": "indicator_above", "indicator": "macd_histogram", "params": {}, "threshold": 0},
             {"type": "bollinger_width_percentile", "params": {"period": 20, "lookback": 168}, "threshold": 0.2},
@@ -400,8 +419,13 @@ def _make_bear_config() -> dict:
         "bear_sub_signals": [
             {"type": "indicator_below", "indicator": "cum_return", "params": {"period": 6}, "threshold": 0},
             {"type": "indicator_below", "indicator": "cum_return", "params": {"period": 12}, "threshold": 0},
-            {"type": "indicator_comparison", "indicator_a": "ema", "indicator_b": "ema",
-             "params": {"period_a": 7, "period_b": 26}, "direction": "below"},
+            {
+                "type": "indicator_comparison",
+                "indicator_a": "ema",
+                "indicator_b": "ema",
+                "params": {"period_a": 7, "period_b": 26},
+                "direction": "below",
+            },
             {"type": "indicator_below", "indicator": "rsi", "params": {"period": 8}, "threshold": 50},
             {"type": "indicator_below", "indicator": "macd_histogram", "params": {}, "threshold": 0},
             {"type": "bollinger_width_percentile", "params": {"period": 20, "lookback": 168}, "threshold": 0.2},
@@ -416,18 +440,20 @@ def _make_bear_config() -> dict:
 def _make_bear_features(**overrides):
     """Features where bear conditions are true (bearish market)."""
     n_rows = 200
-    df = pd.DataFrame({
-        "close": [100.0] * n_rows,
-        "ema_7": [95.0] * n_rows,       # ema_7 < ema_26 -> bearish
-        "ema_26": [100.0] * n_rows,
-        "rsi_8": [35.0] * n_rows,        # < 50 -> bearish
-        "macd_histogram": [-0.5] * n_rows, # < 0 -> bearish
-        "bb_upper_20": [110.0] * n_rows,
-        "bb_lower_20": [90.0] * n_rows,
-        "atr_14": [2.0] * n_rows,
-        "cum_return_6d": [-0.02] * n_rows,   # < 0 -> bearish
-        "cum_return_12d": [-0.03] * n_rows,  # < 0 -> bearish
-    })
+    df = pd.DataFrame(
+        {
+            "close": [100.0] * n_rows,
+            "ema_7": [95.0] * n_rows,  # ema_7 < ema_26 -> bearish
+            "ema_26": [100.0] * n_rows,
+            "rsi_8": [35.0] * n_rows,  # < 50 -> bearish
+            "macd_histogram": [-0.5] * n_rows,  # < 0 -> bearish
+            "bb_upper_20": [110.0] * n_rows,
+            "bb_lower_20": [90.0] * n_rows,
+            "atr_14": [2.0] * n_rows,
+            "cum_return_6d": [-0.02] * n_rows,  # < 0 -> bearish
+            "cum_return_12d": [-0.03] * n_rows,  # < 0 -> bearish
+        }
+    )
     # Last row: narrow BB (squeeze) for signal 6 -> true
     df.loc[df.index[-1], "bb_upper_20"] = 101.0
     df.loc[df.index[-1], "bb_lower_20"] = 99.0
@@ -439,6 +465,7 @@ def _make_bear_features(**overrides):
 # ---------------------------------------------------------------------------
 # TestBearShortSignals — SHORT signal emission
 # ---------------------------------------------------------------------------
+
 
 class TestBearShortSignals:
     """Bear sub_signals and SHORT signal emission tests."""
@@ -514,6 +541,7 @@ class TestBearShortSignals:
 # TestDefaultATRMultiplier
 # ---------------------------------------------------------------------------
 
+
 class TestDefaultATRMultiplier:
     """Default atr_multiplier should be 5.5 per D-05."""
 
@@ -527,6 +555,7 @@ class TestDefaultATRMultiplier:
 # ---------------------------------------------------------------------------
 # TestRSIExit — RSI mean-reversion exits
 # ---------------------------------------------------------------------------
+
 
 class TestRSIExit:
     """RSI exit tests -- long exits at RSI > 69, short exits at RSI < 31."""
@@ -578,6 +607,7 @@ class TestRSIExit:
 # TestSignalFlip — signal flip exits
 # ---------------------------------------------------------------------------
 
+
 class TestSignalFlip:
     """Signal flip exit tests -- opposing ensemble fires while in position."""
 
@@ -615,6 +645,7 @@ class TestSignalFlip:
 # ---------------------------------------------------------------------------
 # TestCooldown — global cooldown mechanism
 # ---------------------------------------------------------------------------
+
 
 class TestCooldown:
     """Global cooldown blocks ALL entries after ANY exit for cooldown_bars."""
@@ -667,6 +698,7 @@ class TestCooldown:
 # TestShortTrailingStop — short-side trailing stop
 # ---------------------------------------------------------------------------
 
+
 class TestShortTrailingStop:
     """Short trailing stop tracks low watermark."""
 
@@ -716,6 +748,7 @@ class TestShortTrailingStop:
 # TestExitPriority — ATR > RSI > signal flip
 # ---------------------------------------------------------------------------
 
+
 class TestExitPriority:
     """Exit priority: ATR trailing stop > RSI exit > signal flip."""
 
@@ -752,6 +785,7 @@ class TestExitPriority:
 # TestR2FeatureSpecs — get_feature_specs() with R2 feature conditions
 # ---------------------------------------------------------------------------
 
+
 class TestR2FeatureSpecs:
     """Test get_feature_specs() handles feature_above/below conditions."""
 
@@ -759,10 +793,12 @@ class TestR2FeatureSpecs:
         """feature_above/below columns appear in get_feature_specs() output."""
         config = _make_all_true_config(min_votes=4)
         # Add R2 sub_signals
-        config["sub_signals"].extend([
-            {"type": "feature_above", "column": "foreign_net_buy_ratio", "threshold": 0.01},
-            {"type": "feature_below", "column": "pe_ratio", "threshold": 20.0},
-        ])
+        config["sub_signals"].extend(
+            [
+                {"type": "feature_above", "column": "foreign_net_buy_ratio", "threshold": 0.01},
+                {"type": "feature_below", "column": "pe_ratio", "threshold": 20.0},
+            ]
+        )
         config["min_votes"] = 4  # keep at 4
         strategy = VotingStrategy(config=config)
         specs = strategy.get_feature_specs()

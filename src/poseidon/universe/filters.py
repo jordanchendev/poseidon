@@ -7,7 +7,7 @@ screening symbols in the dynamic universe pipeline.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from poseidon.data.remote_repository import RemoteDataRepository
 from poseidon.data.symbols import SymbolInfo
@@ -44,9 +44,7 @@ class VolumeFilter(UniverseFilter):
                 result.append(s)
         return result
 
-    def _get_avg_volumes(
-        self, symbols: list[SymbolInfo], market: str
-    ) -> dict[str, float]:
+    def _get_avg_volumes(self, symbols: list[SymbolInfo], market: str) -> dict[str, float]:
         """Query average daily volume for each symbol over lookback window.
 
         Returns mapping of symbol_id -> avg_volume.
@@ -59,10 +57,10 @@ class VolumeFilter(UniverseFilter):
         # crypto has 4h / 1h data; stocks are 1d.
         interval = "4h" if market in {"crypto_spot", "crypto_perp"} else "1d"
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         start = now - timedelta(days=self.lookback_days)
         volumes: dict[str, float] = {}
-        with db_session() as db:
+        with db_session():
             repo = RemoteDataRepository.from_settings()
             for s in symbols:
                 try:
@@ -70,9 +68,7 @@ class VolumeFilter(UniverseFilter):
                     if df is not None and not df.empty and "volume" in df.columns:
                         volumes[s.id] = float(df["volume"].mean())
                 except Exception:
-                    logger.debug(
-                        "No volume data for %s/%s", s.id, market, exc_info=True
-                    )
+                    logger.debug("No volume data for %s/%s", s.id, market, exc_info=True)
         return volumes
 
 
@@ -101,9 +97,7 @@ class ListingAgeFilter(UniverseFilter):
                 result.append(s)
         return result
 
-    def _get_listing_ages(
-        self, symbols: list[SymbolInfo], market: str
-    ) -> dict[str, int]:
+    def _get_listing_ages(self, symbols: list[SymbolInfo], market: str) -> dict[str, int]:
         """Query listing age (days since earliest OHLCV record) per symbol.
 
         Returns mapping of symbol_id -> days_since_first_record.
@@ -112,9 +106,9 @@ class ListingAgeFilter(UniverseFilter):
 
         interval = "4h" if market in {"crypto_spot", "crypto_perp"} else "1d"
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ages: dict[str, int] = {}
-        with db_session() as db:
+        with db_session():
             repo = RemoteDataRepository.from_settings()
             for s in symbols:
                 try:
@@ -125,12 +119,10 @@ class ListingAgeFilter(UniverseFilter):
                         if hasattr(first_date, "to_pydatetime"):
                             first_date = first_date.to_pydatetime()
                         if first_date.tzinfo is None:
-                            first_date = first_date.replace(tzinfo=timezone.utc)
+                            first_date = first_date.replace(tzinfo=UTC)
                         ages[s.id] = (now - first_date).days
                 except Exception:
-                    logger.debug(
-                        "No listing data for %s/%s", s.id, market, exc_info=True
-                    )
+                    logger.debug("No listing data for %s/%s", s.id, market, exc_info=True)
         return ages
 
 

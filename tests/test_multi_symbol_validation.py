@@ -10,12 +10,7 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
-import pytest
-
 from poseidon.backtest.comparison import validate_cross_symbol
-
 
 # ---------------------------------------------------------------------------
 # Test 1: Multi-symbol run produces per-symbol results
@@ -29,7 +24,7 @@ def test_cross_symbol_gate_report_structure():
         {"symbol": "ETHUSDT", "pessimistic_sharpe": 0.3, "wfe": 0.55},
         {"symbol": "SOLUSDT", "pessimistic_sharpe": 0.2, "wfe": 0.52},
     ]
-    all_passed, report = validate_cross_symbol(results)
+    _all_passed, report = validate_cross_symbol(results)
 
     assert isinstance(report, dict)
     assert len(report) == 3
@@ -102,13 +97,12 @@ def test_cross_symbol_gate_fails_when_any_symbol_fails_wfe():
 
 def test_per_symbol_optuna_study_names():
     """Each symbol gets its own Optuna study name (e.g., 'crypto_perp_BTCUSDT_1h') (D-03)."""
-    from poseidon.backtest.param_search import ParameterSearchPipeline, SearchConfig
 
     symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     expected_names = [f"crypto_perp_{s}_1h" for s in symbols]
 
     # Verify the study name pattern by checking what ParameterSearchPipeline.run would compute
-    for symbol, expected_name in zip(symbols, expected_names):
+    for symbol, expected_name in zip(symbols, expected_names, strict=False):
         # The study name is computed as: f"{market}_{symbol}_{interval}"
         study_name = f"crypto_perp_{symbol}_1h"
         assert study_name == expected_name

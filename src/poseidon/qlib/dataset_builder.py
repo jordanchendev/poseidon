@@ -102,9 +102,7 @@ class DatasetBuilder:
         repo = RemoteDataRepository.from_settings()
 
         for symbol in resolved_symbols:
-            df = repo.read_ohlcv(
-                symbol, self.market, self.interval, start, end
-            )
+            df = repo.read_ohlcv(symbol, self.market, self.interval, start, end)
             if df.empty:
                 logger.warning(
                     "No data for symbol %s in range %s to %s, skipping",
@@ -152,9 +150,7 @@ class DatasetBuilder:
         # isn't in our OHLCV schema, but Alpha158/360 expressions that
         # reference $vwap (e.g. VWAP0, VWAP59) need _some_ series. The
         # HLC/3 convention is Qlib's own fallback when .bin data lacks VWAP.
-        result["$vwap"] = (
-            result["$high"] + result["$low"] + result["$close"]
-        ) / 3.0
+        result["$vwap"] = (result["$high"] + result["$low"] + result["$close"]) / 3.0
 
         # Prefix non-OHLCV feature columns with $ for Qlib compatibility
         known_qlib = {"$open", "$high", "$low", "$close", "$volume", "$vwap"}
@@ -203,9 +199,7 @@ class DatasetBuilder:
             return symbols
 
         if snapshot_date is None:
-            raise ValueError(
-                "Either symbols or snapshot_date must be provided"
-            )
+            raise ValueError("Either symbols or snapshot_date must be provided")
 
         snapshot = get_snapshot_at(self.session, self.market, snapshot_date)
         if snapshot is None:

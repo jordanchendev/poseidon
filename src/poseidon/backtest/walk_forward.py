@@ -34,7 +34,6 @@ from poseidon.strategies.base import BaseStrategy
 logger = logging.getLogger(__name__)
 
 
-
 @dataclass
 class WalkForwardConfig:
     """Configuration for walk-forward analysis rolling windows.
@@ -216,8 +215,12 @@ class WalkForwardAnalyzer:
 
         if not windows:
             return WalkForwardResult(
-                wfe=0.0, passed=False, flags=["no_windows"],
-                per_window=[], aggregate_oos_metrics={}, config=config,
+                wfe=0.0,
+                passed=False,
+                flags=["no_windows"],
+                per_window=[],
+                aggregate_oos_metrics={},
+                config=config,
             )
 
         # Extract strategy config for per-window reconstruction (polymorphic)
@@ -225,6 +228,7 @@ class WalkForwardAnalyzer:
             factory = self._strategy_factory
         else:
             from poseidon.backtest.voting_strategy_factory import VotingStrategyFactory
+
             factory = VotingStrategyFactory
 
         strategy_config = factory.to_config_dict(strategy)
@@ -268,17 +272,18 @@ class WalkForwardAnalyzer:
             is_metrics = is_result.metrics
             oos_metrics = oos_result.metrics
 
-            per_window.append(WindowResult(
-                window_index=i,
-                is_metrics=is_metrics,
-                oos_metrics=oos_metrics,
-                is_trade_count=is_metrics.get("trade_count", 0),
-                oos_trade_count=oos_metrics.get("trade_count", 0),
-            ))
+            per_window.append(
+                WindowResult(
+                    window_index=i,
+                    is_metrics=is_metrics,
+                    oos_metrics=oos_metrics,
+                    is_trade_count=is_metrics.get("trade_count", 0),
+                    oos_trade_count=oos_metrics.get("trade_count", 0),
+                )
+            )
 
             logger.info(
-                "Window %d: IS ann_return=%.4f, OOS ann_return=%.4f, "
-                "IS trades=%d, OOS trades=%d",
+                "Window %d: IS ann_return=%.4f, OOS ann_return=%.4f, IS trades=%d, OOS trades=%d",
                 i,
                 is_metrics.get("annualized_return", 0.0),
                 oos_metrics.get("annualized_return", 0.0),
@@ -292,8 +297,7 @@ class WalkForwardAnalyzer:
         # Log per-window results
         for w in per_window:
             logger.info(
-                "Window %d: IS ann_return=%.4f, OOS ann_return=%.4f, "
-                "IS trades=%d, OOS trades=%d",
+                "Window %d: IS ann_return=%.4f, OOS ann_return=%.4f, IS trades=%d, OOS trades=%d",
                 w.window_index,
                 w.is_metrics.get("annualized_return", 0.0),
                 w.oos_metrics.get("annualized_return", 0.0),

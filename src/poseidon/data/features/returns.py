@@ -21,10 +21,12 @@ class Returns(BaseFeature):
             return pd.DataFrame(columns=["return_1d", "log_return_1d"])
         daily_return = ohlcv["close"].pct_change()
         log_return = np.log(ohlcv["close"] / ohlcv["close"].shift(1))
-        return pd.DataFrame({
-            "return_1d": daily_return,
-            "log_return_1d": log_return,
-        })
+        return pd.DataFrame(
+            {
+                "return_1d": daily_return,
+                "log_return_1d": log_return,
+            }
+        )
 
 
 @register_feature

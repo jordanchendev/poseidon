@@ -86,14 +86,20 @@ class TestFromTrial:
 
     def test_from_trial_creates_valid_strategy(self, fixed_trial: optuna.trial.FixedTrial) -> None:
         strategy = VotingStrategyFactory.from_trial(
-            fixed_trial, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+            fixed_trial,
+            symbol="BTCUSDT",
+            market="crypto_spot",
+            interval="1h",
         )
         assert isinstance(strategy, VotingStrategy)
         assert strategy.validate_config() is True
 
     def test_from_trial_uses_suggested_params(self, fixed_trial: optuna.trial.FixedTrial) -> None:
         strategy = VotingStrategyFactory.from_trial(
-            fixed_trial, symbol="ETHUSDT", market="crypto_spot", interval="1h",
+            fixed_trial,
+            symbol="ETHUSDT",
+            market="crypto_spot",
+            interval="1h",
         )
         assert strategy.symbol == "ETHUSDT"
         assert strategy._min_votes == 4
@@ -102,7 +108,10 @@ class TestFromTrial:
 
     def test_from_trial_builds_six_sub_signals(self, fixed_trial: optuna.trial.FixedTrial) -> None:
         strategy = VotingStrategyFactory.from_trial(
-            fixed_trial, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+            fixed_trial,
+            symbol="BTCUSDT",
+            market="crypto_spot",
+            interval="1h",
         )
         assert len(strategy._sub_signals) == 6
 
@@ -111,7 +120,7 @@ class TestFromTrial:
         market = "crypto_spot"
         bounds = get_param_bounds(market)
         params = {}
-        for name, (low, high, ptype) in bounds.items():
+        for name, (low, _high, ptype) in bounds.items():
             if ptype == "int":
                 params[name] = int(low)
             else:
@@ -119,7 +128,10 @@ class TestFromTrial:
         trial = optuna.trial.FixedTrial(params)
         # Should not raise -- all params consumed
         strategy = VotingStrategyFactory.from_trial(
-            trial, symbol="BTCUSDT", market=market, interval="1h",
+            trial,
+            symbol="BTCUSDT",
+            market=market,
+            interval="1h",
         )
         assert strategy.validate_config() is True
 
@@ -195,7 +207,10 @@ class TestBearSignalGeneration:
         """Config output must contain bear_sub_signals key."""
         params = self._default_params()
         config = _build_config_from_params(
-            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+            params,
+            symbol="BTCUSDT",
+            market="crypto_spot",
+            interval="1h",
         )
         assert "bear_sub_signals" in config
         assert len(config["bear_sub_signals"]) == 6
@@ -204,7 +219,10 @@ class TestBearSignalGeneration:
         """Bear RSI signal (index 3) should use indicator_below with threshold=50."""
         params = self._default_params()
         config = _build_config_from_params(
-            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+            params,
+            symbol="BTCUSDT",
+            market="crypto_spot",
+            interval="1h",
         )
         bear_rsi = config["bear_sub_signals"][3]
         assert bear_rsi["type"] == "indicator_below"
@@ -215,7 +233,10 @@ class TestBearSignalGeneration:
         """Bear MACD signal (index 4) should use indicator_below with threshold=0."""
         params = self._default_params()
         config = _build_config_from_params(
-            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+            params,
+            symbol="BTCUSDT",
+            market="crypto_spot",
+            interval="1h",
         )
         bear_macd = config["bear_sub_signals"][4]
         assert bear_macd["type"] == "indicator_below"
@@ -226,7 +247,10 @@ class TestBearSignalGeneration:
         """Bull BB squeeze threshold should be 0.85 (not 0.2) per D-14."""
         params = self._default_params()
         config = _build_config_from_params(
-            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+            params,
+            symbol="BTCUSDT",
+            market="crypto_spot",
+            interval="1h",
         )
         bull_bb = config["sub_signals"][5]
         assert bull_bb["type"] == "bollinger_width_percentile"
@@ -236,7 +260,10 @@ class TestBearSignalGeneration:
         """Config output includes bear_min_votes and bear_position_pct."""
         params = self._default_params()
         config = _build_config_from_params(
-            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+            params,
+            symbol="BTCUSDT",
+            market="crypto_spot",
+            interval="1h",
         )
         assert config["bear_min_votes"] == 4
         assert config["bear_position_pct"] == 0.06
@@ -245,7 +272,10 @@ class TestBearSignalGeneration:
         """Bear EMA crossover (index 2) should have direction='below'."""
         params = self._default_params()
         config = _build_config_from_params(
-            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+            params,
+            symbol="BTCUSDT",
+            market="crypto_spot",
+            interval="1h",
         )
         bear_ema = config["bear_sub_signals"][2]
         assert bear_ema["type"] == "indicator_comparison"
@@ -342,7 +372,10 @@ class TestFromTrialBear:
         }
         trial = optuna.trial.FixedTrial(params)
         strategy = VotingStrategyFactory.from_trial(
-            trial, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+            trial,
+            symbol="BTCUSDT",
+            market="crypto_spot",
+            interval="1h",
         )
         assert strategy._bear_min_votes == 4
         assert strategy._bear_position_pct == 0.06
@@ -436,7 +469,7 @@ class TestBuildR2SubSignals:
 
     def test_zero_count_returns_empty(self) -> None:
         params = {"r2_n_institutional": 0, "r2_institutional_threshold": 0.01}
-        bull, bear = _build_r2_sub_signals(params, market="tw_stock")
+        bull, _bear = _build_r2_sub_signals(params, market="tw_stock")
         # No institutional signals when count=0
         inst_bull = [s for s in bull if s.get("column", "").startswith("foreign")]
         assert len(inst_bull) == 0
@@ -475,18 +508,23 @@ class TestMixedConfig:
 
     def test_mixed_ta_r2_tw_stock(self) -> None:
         params = self._default_params()
-        params.update({
-            "r2_n_institutional": 1,
-            "r2_institutional_threshold": 0.01,
-            "r2_n_fundamental": 1,
-            "r2_pe_max": 20.0,
-            "r2_pb_max": 3.0,
-            "r2_n_funding": 0,
-            "r2_n_macro": 1,
-            "r2_macro_vix_threshold": 20.0,
-        })
+        params.update(
+            {
+                "r2_n_institutional": 1,
+                "r2_institutional_threshold": 0.01,
+                "r2_n_fundamental": 1,
+                "r2_pe_max": 20.0,
+                "r2_pb_max": 3.0,
+                "r2_n_funding": 0,
+                "r2_n_macro": 1,
+                "r2_macro_vix_threshold": 20.0,
+            }
+        )
         config = _build_config_from_params(
-            params, symbol="2330", market="tw_stock", interval="1d",
+            params,
+            symbol="2330",
+            market="tw_stock",
+            interval="1d",
         )
         # 6 TA + 1 institutional + 1 fundamental + 1 macro = 9
         assert len(config["sub_signals"]) == 9
@@ -501,13 +539,18 @@ class TestMixedConfig:
 
     def test_mixed_ta_r2_crypto(self) -> None:
         params = self._default_params()
-        params.update({
-            "r2_n_funding": 1,
-            "r2_funding_rate_threshold": 0.0005,
-            "r2_n_macro": 0,
-        })
+        params.update(
+            {
+                "r2_n_funding": 1,
+                "r2_funding_rate_threshold": 0.0005,
+                "r2_n_macro": 0,
+            }
+        )
         config = _build_config_from_params(
-            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+            params,
+            symbol="BTCUSDT",
+            market="crypto_spot",
+            interval="1h",
         )
         # 6 TA + 1 funding = 7
         assert len(config["sub_signals"]) == 7
@@ -516,14 +559,19 @@ class TestMixedConfig:
 
     def test_no_r2_signals(self) -> None:
         params = self._default_params()
-        params.update({
-            "r2_n_institutional": 0,
-            "r2_n_fundamental": 0,
-            "r2_n_funding": 0,
-            "r2_n_macro": 0,
-        })
+        params.update(
+            {
+                "r2_n_institutional": 0,
+                "r2_n_fundamental": 0,
+                "r2_n_funding": 0,
+                "r2_n_macro": 0,
+            }
+        )
         config = _build_config_from_params(
-            params, symbol="BTCUSDT", market="crypto_spot", interval="1h",
+            params,
+            symbol="BTCUSDT",
+            market="crypto_spot",
+            interval="1h",
         )
         # Only 6 TA signals, no R2
         assert len(config["sub_signals"]) == 6
@@ -531,16 +579,21 @@ class TestMixedConfig:
 
     def test_validate_config_with_r2(self) -> None:
         params = self._default_params()
-        params.update({
-            "r2_n_institutional": 1,
-            "r2_institutional_threshold": 0.01,
-            "r2_n_fundamental": 0,
-            "r2_n_funding": 0,
-            "r2_n_macro": 1,
-            "r2_macro_vix_threshold": 20.0,
-        })
+        params.update(
+            {
+                "r2_n_institutional": 1,
+                "r2_institutional_threshold": 0.01,
+                "r2_n_fundamental": 0,
+                "r2_n_funding": 0,
+                "r2_n_macro": 1,
+                "r2_macro_vix_threshold": 20.0,
+            }
+        )
         config = _build_config_from_params(
-            params, symbol="2330", market="tw_stock", interval="1d",
+            params,
+            symbol="2330",
+            market="tw_stock",
+            interval="1d",
         )
         strategy = VotingStrategy(config=config, atr_multiplier=5.5)
         # Should not raise

@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import traceback
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from poseidon.core.database import db_session
 from poseidon.workers.celery_app import celery_app
@@ -63,7 +63,7 @@ def qlib_train(self, run_id: str) -> dict:
 
             # 2. Transition to running
             run.status = "running"
-            run.started_at = datetime.now(timezone.utc)
+            run.started_at = datetime.now(UTC)
             session.commit()
 
             # 3. Import Qlib inside task body (Research Pitfall 2)
@@ -74,11 +74,12 @@ def qlib_train(self, run_id: str) -> dict:
             import qlib
             from qlib.config import REG_CN
             from qlib.data.dataset import DatasetH
+
+            from poseidon.ml.artifacts import get_predictions_path
             from poseidon.qlib.allowlist import resolve_model
             from poseidon.qlib.data_handler import PoseidonDataHandler
             from poseidon.qlib.dataset_builder import DatasetBuilder
             from poseidon.qlib.model_exporter import QlibModelExporter
-            from poseidon.ml.artifacts import get_predictions_path
 
             # 4. Initialize Qlib (Research Pitfall 5) — guard for solo pool reuse
             try:
@@ -125,16 +126,13 @@ def qlib_train(self, run_id: str) -> dict:
             qlib_handler = handler.to_qlib_handler()
 
             # Step 6e: Build Qlib DatasetH with time-based segments
-            qlib_segments = {
-                seg_name: (seg_dates[0], seg_dates[1])
-                for seg_name, seg_dates in segments.items()
-            }
+            qlib_segments = {seg_name: (seg_dates[0], seg_dates[1]) for seg_name, seg_dates in segments.items()}
             dataset = DatasetH(handler=qlib_handler, segments=qlib_segments)
 
             # CHECK CANCEL after dataset build
             if _run_cancelled(session, run_id):
                 run = session.query(TrainingRun).filter_by(run_id=uuid.UUID(run_id)).one()
-                run.finished_at = datetime.now(timezone.utc)
+                run.finished_at = datetime.now(UTC)
                 session.commit()
                 return {"run_id": run_id, "status": "cancelled"}
 
@@ -150,13 +148,13 @@ def qlib_train(self, run_id: str) -> dict:
             # CHECK CANCEL after training
             if _run_cancelled(session, run_id):
                 run = session.query(TrainingRun).filter_by(run_id=uuid.UUID(run_id)).one()
-                run.finished_at = datetime.now(timezone.utc)
+                run.finished_at = datetime.now(UTC)
                 session.commit()
                 return {"run_id": run_id, "status": "cancelled"}
 
             # 8. Generate predictions on ALL segments (per Phase 43 D-01: train, valid, test)
             all_predictions: dict[str, pd.DataFrame | pd.Series | None] = {}
-            for seg_name in segments.keys():
+            for seg_name in segments:
                 try:
                     seg_pred = trained_model.predict(dataset, segment=seg_name)
                     all_predictions[seg_name] = seg_pred
@@ -172,7 +170,7 @@ def qlib_train(self, run_id: str) -> dict:
                 # CHECK CANCEL between segment predictions (per _run_cancelled pattern)
                 if _run_cancelled(session, run_id):
                     run = session.query(TrainingRun).filter_by(run_id=uuid.UUID(run_id)).one()
-                    run.finished_at = datetime.now(timezone.utc)
+                    run.finished_at = datetime.now(UTC)
                     session.commit()
                     return {"run_id": run_id, "status": "cancelled"}
 
@@ -185,7 +183,9 @@ def qlib_train(self, run_id: str) -> dict:
             computed_metrics: dict = {}
             if test_predictions is not None:
                 try:
-                    pred_series = test_predictions if isinstance(test_predictions, pd.Series) else test_predictions.iloc[:, 0]
+                    pred_series = (
+                        test_predictions if isinstance(test_predictions, pd.Series) else test_predictions.iloc[:, 0]
+                    )
                     label_series = dataset.prepare("test", col_set="label").iloc[:, 0]
                     common_idx = pred_series.index.intersection(label_series.index)
                     if len(common_idx) > 0:
@@ -196,7 +196,9 @@ def qlib_train(self, run_id: str) -> dict:
                         daily_ic = p.groupby(level="datetime").apply(
                             lambda x: x.corr(la.loc[x.index]) if len(x) > 1 else 0.0
                         )
-                        icir = float(daily_ic.mean() / daily_ic.std()) if len(daily_ic) > 1 and daily_ic.std() > 0 else 0.0
+                        icir = (
+                            float(daily_ic.mean() / daily_ic.std()) if len(daily_ic) > 1 and daily_ic.std() > 0 else 0.0
+                        )
                         computed_metrics = {"IC": ic, "ICIR": icir}
                 except Exception as metric_exc:
                     logger.warning("Failed to compute IC/ICIR: %s", metric_exc)
@@ -233,10 +235,7 @@ def qlib_train(self, run_id: str) -> dict:
                     if seg_pred is None:
                         continue
                     # Normalize to DataFrame with "prediction" column
-                    if isinstance(seg_pred, pd.Series):
-                        seg_df = seg_pred.to_frame(name="prediction")
-                    else:
-                        seg_df = seg_pred
+                    seg_df = seg_pred.to_frame(name="prediction") if isinstance(seg_pred, pd.Series) else seg_pred
                     pred_path = get_predictions_path(model_version.artifact_path, seg_name)
                     seg_df.to_parquet(str(pred_path))
                     saved_segments.append(seg_name)
@@ -259,7 +258,7 @@ def qlib_train(self, run_id: str) -> dict:
 
             # 14. Mark succeeded
             run.status = "succeeded"
-            run.finished_at = datetime.now(timezone.utc)
+            run.finished_at = datetime.now(UTC)
             session.commit()
 
             logger.info(
@@ -282,7 +281,7 @@ def qlib_train(self, run_id: str) -> dict:
             if run is not None:
                 run.status = "failed"
                 run.error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-2000:]}"
-                run.finished_at = datetime.now(timezone.utc)
+                run.finished_at = datetime.now(UTC)
                 session.commit()
             # Do NOT re-raise -- per Research Pitfall 6, solo pool crash on unhandled exception
             return {"run_id": run_id, "status": "failed", "error": str(exc)}

@@ -6,12 +6,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 # --- SQLite compatibility: register before any model import ---
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 @compiles(JSONB, "sqlite")
@@ -25,16 +26,16 @@ def _compile_uuid_sqlite(type_, compiler, **kw):
 
 
 # --- Now import models (registers them with Base.metadata) ---
-from poseidon.models.base import Base, get_db  # noqa: E402
-from poseidon.models.backtest import (  # noqa: E402,F401
+from fastapi import FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+from poseidon.api.backtests import router as backtests_router  # noqa: E402
+from poseidon.models.backtest import (  # noqa: E402
     BacktestEquityRecord,
     BacktestRecord,
     BacktestTradeRecord,
 )
-
-from fastapi import FastAPI  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-from poseidon.api.backtests import router as backtests_router  # noqa: E402
+from poseidon.models.base import Base, get_db  # noqa: E402
 
 # --------------- Test DB setup (SQLite in-memory, shared connection) ---------------
 
@@ -300,45 +301,51 @@ def test_get_backtest_trades_returns_list():
     """GET /backtest/{id}/trades returns trade list for a completed backtest."""
     bt_id = uuid.uuid4()
     db = TestingSessionLocal()
-    db.add(BacktestRecord(
-        id=bt_id,
-        strategy_type="voting",
-        symbol="BTCUSDT",
-        market="crypto",
-        interval="1d",
-        config={},
-        status="completed",
-    ))
+    db.add(
+        BacktestRecord(
+            id=bt_id,
+            strategy_type="voting",
+            symbol="BTCUSDT",
+            market="crypto",
+            interval="1d",
+            config={},
+            status="completed",
+        )
+    )
     from datetime import datetime as dt
 
-    db.add(BacktestTradeRecord(
-        id=uuid.uuid4(),
-        backtest_id=bt_id,
-        symbol="BTCUSDT",
-        action="buy",
-        entry_time=dt(2025, 1, 1),
-        exit_time=dt(2025, 1, 5),
-        entry_price=40000.0,
-        exit_price=42000.0,
-        quantity=0.1,
-        pnl=200.0,
-        fees=10.0,
-        metadata_={},
-    ))
-    db.add(BacktestTradeRecord(
-        id=uuid.uuid4(),
-        backtest_id=bt_id,
-        symbol="BTCUSDT",
-        action="sell",
-        entry_time=dt(2025, 1, 10),
-        exit_time=dt(2025, 1, 15),
-        entry_price=43000.0,
-        exit_price=41000.0,
-        quantity=0.1,
-        pnl=-200.0,
-        fees=10.0,
-        metadata_={},
-    ))
+    db.add(
+        BacktestTradeRecord(
+            id=uuid.uuid4(),
+            backtest_id=bt_id,
+            symbol="BTCUSDT",
+            action="buy",
+            entry_time=dt(2025, 1, 1),
+            exit_time=dt(2025, 1, 5),
+            entry_price=40000.0,
+            exit_price=42000.0,
+            quantity=0.1,
+            pnl=200.0,
+            fees=10.0,
+            metadata_={},
+        )
+    )
+    db.add(
+        BacktestTradeRecord(
+            id=uuid.uuid4(),
+            backtest_id=bt_id,
+            symbol="BTCUSDT",
+            action="sell",
+            entry_time=dt(2025, 1, 10),
+            exit_time=dt(2025, 1, 15),
+            entry_price=43000.0,
+            exit_price=41000.0,
+            quantity=0.1,
+            pnl=-200.0,
+            fees=10.0,
+            metadata_={},
+        )
+    )
     db.commit()
     db.close()
 
@@ -364,24 +371,28 @@ def test_get_backtest_equity_curve_returns_data():
     """GET /backtest/{id}/equity-curve returns equity time-series."""
     bt_id = uuid.uuid4()
     db = TestingSessionLocal()
-    db.add(BacktestRecord(
-        id=bt_id,
-        strategy_type="voting",
-        symbol="ETHUSDT",
-        market="crypto",
-        interval="1d",
-        config={},
-        status="completed",
-    ))
+    db.add(
+        BacktestRecord(
+            id=bt_id,
+            strategy_type="voting",
+            symbol="ETHUSDT",
+            market="crypto",
+            interval="1d",
+            config={},
+            status="completed",
+        )
+    )
     from datetime import datetime as dt
 
     for i in range(3):
-        db.add(BacktestEquityRecord(
-            backtest_id=bt_id,
-            time=dt(2025, 1, 1 + i),
-            equity=100000.0 + i * 1000,
-            drawdown=0.01 * i,
-        ))
+        db.add(
+            BacktestEquityRecord(
+                backtest_id=bt_id,
+                time=dt(2025, 1, 1 + i),
+                equity=100000.0 + i * 1000,
+                drawdown=0.01 * i,
+            )
+        )
     db.commit()
     db.close()
 
