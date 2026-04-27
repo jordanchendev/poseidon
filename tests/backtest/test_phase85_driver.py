@@ -253,3 +253,291 @@ class TestPerWindowShape:
                 fh.write(f"has_is_period: {has_is_period}\n")
         except OSError:  # pragma: no cover — read-only FS in some CI sandboxes
             pass
+
+
+# ---------------------------------------------------------------------------
+# Plan 85-02 — phase85_metrics pure helpers
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402  (deliberately keep plan-01 tests above untouched)
+import math  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+
+
+@dataclass
+class _T:
+    """Local trade stub matching the (exit_time, pnl) duck type."""
+
+    exit_time: object
+    pnl: float | None
+
+
+class TestMaxConsecutiveLosses:
+    """D-19: longest streak of consecutive negative-PnL closed trades."""
+
+    def test_basic_streak(self):
+        from poseidon.backtest.phase85_metrics import compute_max_consecutive_losses
+
+        ts = pd.Timestamp("2026-01-01")
+        trades = [
+            _T(ts, 1.0),
+            _T(ts, -1.0),
+            _T(ts, -1.0),
+            _T(ts, -1.0),
+            _T(ts, 2.0),
+            _T(ts, -1.0),
+            _T(ts, -1.0),
+        ]
+        assert compute_max_consecutive_losses(trades) == 3
+
+    def test_all_wins(self):
+        from poseidon.backtest.phase85_metrics import compute_max_consecutive_losses
+
+        ts = pd.Timestamp("2026-01-01")
+        trades = [_T(ts, 1.0), _T(ts, 2.0), _T(ts, 3.0)]
+        assert compute_max_consecutive_losses(trades) == 0
+
+    def test_all_losses(self):
+        from poseidon.backtest.phase85_metrics import compute_max_consecutive_losses
+
+        ts = pd.Timestamp("2026-01-01")
+        trades = [_T(ts, -1.0)] * 4
+        assert compute_max_consecutive_losses(trades) == 4
+
+    def test_open_position_skipped(self):
+        """D-19: open position (exit_time=None) does NOT extend or break the streak."""
+        from poseidon.backtest.phase85_metrics import compute_max_consecutive_losses
+
+        ts = pd.Timestamp("2026-01-01")
+        # Closed loss → open trade → closed loss → closed loss
+        # Open trade is skipped: streak runs across it → 3 consecutive closed losses.
+        trades = [_T(ts, -1.0), _T(None, -99.0), _T(ts, -1.0), _T(ts, -1.0)]
+        assert compute_max_consecutive_losses(trades) == 3
+
+    def test_empty_returns_zero(self):
+        from poseidon.backtest.phase85_metrics import compute_max_consecutive_losses
+
+        assert compute_max_consecutive_losses([]) == 0
+
+    def test_zero_pnl_breaks_streak(self):
+        """Zero PnL is "not a loss" — must break the streak."""
+        from poseidon.backtest.phase85_metrics import compute_max_consecutive_losses
+
+        ts = pd.Timestamp("2026-01-01")
+        trades = [_T(ts, -1.0), _T(ts, -1.0), _T(ts, 0.0), _T(ts, -1.0)]
+        assert compute_max_consecutive_losses(trades) == 2
+
+    def test_dict_trade_records(self):
+        """Helper accepts dict trades — driver can pass either rep."""
+        from poseidon.backtest.phase85_metrics import compute_max_consecutive_losses
+
+        ts = pd.Timestamp("2026-01-01")
+        trades = [
+            {"exit_time": ts, "pnl": -1.0},
+            {"exit_time": ts, "pnl": -2.0},
+            {"exit_time": ts, "pnl": 1.0},
+        ]
+        assert compute_max_consecutive_losses(trades) == 2
+
+
+class TestWFEDegradationExcludesISNegative:
+    """D-16: mean(oos_sharpe / is_sharpe) over windows with IS > 0."""
+
+    @staticmethod
+    def _w(is_sh, oos_sh):
+        return SimpleNamespace(
+            is_metrics={"sharpe_ratio": is_sh},
+            oos_metrics={"sharpe_ratio": oos_sh, "trades": 30},
+        )
+
+    def test_basic(self):
+        from poseidon.backtest.phase85_metrics import (
+            wfe_degradation_excluding_is_negative,
+        )
+
+        windows = [
+            self._w(2.0, 1.0),    # ratio 0.5  (included)
+            self._w(-0.5, 0.3),   # IS<0 → excluded
+            self._w(1.0, 0.5),    # ratio 0.5  (included)
+        ]
+        assert wfe_degradation_excluding_is_negative(windows) == pytest.approx(0.5)
+
+    def test_all_is_negative_returns_none(self):
+        """All IS Sharpe ≤ 0 → undefined → returns None (not 0.0)."""
+        from poseidon.backtest.phase85_metrics import (
+            wfe_degradation_excluding_is_negative,
+        )
+
+        windows = [self._w(-1.0, 0.0), self._w(-0.1, 0.5), self._w(0.0, 0.5)]
+        assert wfe_degradation_excluding_is_negative(windows) is None
+
+    def test_compares_against_compute_wfe_when_all_positive(self):
+        """When all IS > 0, mean ratio matches `compute_wfe` direction (regression)."""
+        from poseidon.backtest.phase85_metrics import (
+            wfe_degradation_excluding_is_negative,
+        )
+
+        windows = [self._w(2.0, 1.5), self._w(2.0, 1.0)]
+        d16 = wfe_degradation_excluding_is_negative(windows)
+        assert d16 is not None
+        # OOS lower than IS in both windows → ratio strictly between 0 and 1.
+        assert 0.0 < d16 < 1.0
+
+    def test_dict_shaped_per_window(self):
+        from poseidon.backtest.phase85_metrics import (
+            wfe_degradation_excluding_is_negative,
+        )
+
+        windows = [
+            {"is_metrics": {"sharpe_ratio": 1.0}, "oos_metrics": {"sharpe_ratio": 0.6}},
+            {"is_metrics": {"sharpe_ratio": 2.0}, "oos_metrics": {"sharpe_ratio": 1.0}},
+        ]
+        # ratios = [0.6, 0.5] → mean 0.55
+        assert wfe_degradation_excluding_is_negative(windows) == pytest.approx(0.55)
+
+
+class TestOOSAggregateSharpeZeroTrades:
+    """D-17: trade-count-weighted aggregate Sharpe."""
+
+    @staticmethod
+    def _w(sh, trades):
+        return SimpleNamespace(
+            is_metrics={"sharpe_ratio": 1.0},
+            oos_metrics={"sharpe_ratio": sh, "trades": trades},
+        )
+
+    def test_zero_trades_returns_zero(self):
+        """Total trades == 0 → 0.0 (no ZeroDivisionError)."""
+        from poseidon.backtest.phase85_metrics import (
+            oos_aggregate_sharpe_trade_weighted,
+        )
+
+        windows = [self._w(0.0, 0), self._w(0.0, 0)]
+        assert oos_aggregate_sharpe_trade_weighted(windows) == 0.0
+
+    def test_weighted_mean_correctness(self):
+        from poseidon.backtest.phase85_metrics import (
+            oos_aggregate_sharpe_trade_weighted,
+        )
+
+        windows = [self._w(2.0, 100), self._w(0.5, 25)]
+        # (2.0*100 + 0.5*25) / 125 = 212.5 / 125 = 1.7
+        assert oos_aggregate_sharpe_trade_weighted(windows) == pytest.approx(1.7)
+
+    def test_skips_zero_trade_windows(self):
+        """A zero-trade window must NOT inflate the aggregate."""
+        from poseidon.backtest.phase85_metrics import (
+            oos_aggregate_sharpe_trade_weighted,
+        )
+
+        # Sharpe=99 on a zero-trade window must be ignored entirely.
+        windows = [self._w(2.0, 100), self._w(99.0, 0), self._w(0.5, 25)]
+        assert oos_aggregate_sharpe_trade_weighted(windows) == pytest.approx(1.7)
+
+    def test_accepts_trade_count_alias(self):
+        """Poseidon's compute_metrics emits ``trade_count``; helper must accept it."""
+        from poseidon.backtest.phase85_metrics import (
+            oos_aggregate_sharpe_trade_weighted,
+        )
+
+        windows = [
+            SimpleNamespace(
+                is_metrics={"sharpe_ratio": 1.0},
+                oos_metrics={"sharpe_ratio": 2.0, "trade_count": 100},
+            ),
+            SimpleNamespace(
+                is_metrics={"sharpe_ratio": 1.0},
+                oos_metrics={"sharpe_ratio": 0.5, "trade_count": 25},
+            ),
+        ]
+        assert oos_aggregate_sharpe_trade_weighted(windows) == pytest.approx(1.7)
+
+
+class TestSharpe1mAnnualization:
+    """Pitfall 6: Phase 85 driver must pass bars_per_year=525_600 for 1m data."""
+
+    def test_525600_vs_252(self):
+        from poseidon.backtest.metrics import compute_metrics
+        from poseidon.backtest.phase85_metrics import BARS_PER_YEAR_1M
+
+        # Build a tiny equity curve with mild drift + noise (seeded for determinism).
+        rng = np.random.default_rng(85)
+        returns = rng.normal(loc=1e-5, scale=1e-3, size=2000)
+        equity = pd.Series((1 + pd.Series(returns)).cumprod().values)
+
+        # compute_metrics signature is (equity_series, trades, bars_per_year=...);
+        # an empty trade list is sufficient — only Sharpe is exercised here.
+        sharpe_252 = compute_metrics(equity, [], bars_per_year=252)["sharpe_ratio"]
+        sharpe_1m = compute_metrics(
+            equity, [], bars_per_year=BARS_PER_YEAR_1M
+        )["sharpe_ratio"]
+
+        # Sharpe scales linearly with sqrt(bars_per_year): expect ≈ 45.6986x
+        # (sqrt(525_600 / 252)).
+        expected_factor = math.sqrt(BARS_PER_YEAR_1M / 252)
+        assert sharpe_252 != 0.0, (
+            "Synthetic series produced zero IS sharpe — fixture broken"
+        )
+        ratio = sharpe_1m / sharpe_252
+        assert ratio == pytest.approx(expected_factor, rel=0.01), (
+            f"1m annualization broken: ratio={ratio:.4f} "
+            f"vs expected {expected_factor:.4f}"
+        )
+
+    def test_bars_per_year_constant_value(self):
+        """Lock the constant — 525_600 is a hard contract for the driver."""
+        from poseidon.backtest.phase85_metrics import BARS_PER_YEAR_1M
+
+        # 525_600 = 60 minutes × 24 hours × 365 days
+        assert BARS_PER_YEAR_1M == 525_600
+        assert BARS_PER_YEAR_1M == 60 * 24 * 365
+
+
+class TestToJsonable:
+    """Pitfall 9: JSON serialization for numpy / pandas / Timestamp / NaN."""
+
+    def test_numpy_pandas_timestamp(self):
+        from poseidon.backtest.phase85_metrics import to_jsonable
+
+        payload = {
+            "np_int": np.int64(7),
+            "np_float": np.float64(1.5),
+            "np_arr": np.array([1, 2, 3]),
+            "ts": pd.Timestamp("2026-01-01T12:00:00"),
+            "td": pd.Timedelta(seconds=42),
+        }
+        text = json.dumps(payload, default=to_jsonable)
+        decoded = json.loads(text)
+        assert decoded["np_int"] == 7
+        assert decoded["np_float"] == 1.5
+        assert decoded["np_arr"] == [1, 2, 3]
+        assert decoded["ts"].startswith("2026-01-01")
+        assert decoded["td"] == 42.0
+
+    def test_nan_becomes_null(self):
+        """NaN floats must become JSON null (JSON has no NaN literal)."""
+        from poseidon.backtest.phase85_metrics import to_jsonable
+
+        text = json.dumps({"v": np.float64("nan")}, default=to_jsonable)
+        assert json.loads(text)["v"] is None
+
+    def test_inf_becomes_null(self):
+        """Inf floats must also become JSON null (Phase 86 verdict safety)."""
+        from poseidon.backtest.phase85_metrics import to_jsonable
+
+        text = json.dumps({"v": np.float64("inf")}, default=to_jsonable)
+        assert json.loads(text)["v"] is None
+
+    def test_unsupported_raises_type_error(self):
+        """Defensive: unsupported types raise TypeError (caller must extend)."""
+        from poseidon.backtest.phase85_metrics import to_jsonable
+
+        class Opaque:
+            pass
+
+        with pytest.raises(TypeError, match="phase85_metrics.to_jsonable"):
+            json.dumps({"v": Opaque()}, default=to_jsonable)
