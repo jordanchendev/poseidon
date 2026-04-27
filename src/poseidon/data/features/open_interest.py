@@ -4,6 +4,22 @@ OIChange: rate of change + z-score of OI (H-A sweep detection).
 OIBuildup: cumulative OI accumulation vs price movement (H-B buildup detection).
 
 Data is injected via the ``oi_data`` kwarg by FeatureEngine.compute_with_companions().
+
+Phase 84 STRAT-03 / D-09 note:
+    ``_align_oi_to_index`` accepts ``staleness_limit_bars`` (default ``None``).
+    On the 1-minute timeline, the strategy pipeline must pass
+    ``staleness_limit_bars=15`` so that bars more than 15 minutes after the
+    last OI snapshot become ``NaN`` (3× the ~5min Thalassa snapshot cycle).
+    The default ``None`` preserves the legacy unbounded ffill semantics for
+    all current 4H/non-1m callers — this is intentional.
+
+    TODO(phase-84-05): the OIChange / OIBuildup / OICostBasis ``compute``
+    methods do not currently see a ``bar_interval`` kwarg, so they cannot
+    auto-detect 1m vs 4H.  When the 1m strategy pipeline lands, it should
+    either thread ``bar_interval`` into ``BaseFeature.compute`` or pass
+    a precomputed ``staleness_limit_bars`` through ``**kwargs``.  For now
+    the kwarg is exposed on the helper itself and validated by
+    ``poseidon/tests/test_oi_staleness_cap.py``.
 """
 
 import numpy as np
@@ -12,7 +28,13 @@ import pandas as pd
 from poseidon.data.features.base import BaseFeature, register_feature
 
 
-def _align_oi_to_index(oi_series: pd.Series, target_index: pd.Index, method: str = "ffill") -> pd.Series:
+def _align_oi_to_index(
+    oi_series: pd.Series,
+    target_index: pd.Index,
+    method: str = "ffill",
+    *,
+    staleness_limit_bars: int | None = None,
+) -> pd.Series:
     """Align OI series to OHLCV index via forward-fill.
 
     Binance ``fetchOpenInterestHistory`` returns timestamps representing
@@ -35,6 +57,22 @@ def _align_oi_to_index(oi_series: pd.Series, target_index: pd.Index, method: str
 
     Handles timezone mismatch: OI may have different tz-awareness than
     OHLCV.  Normalises before reindex to prevent silent all-NaN results.
+
+    Args:
+        oi_series: Raw OI snapshots (typically ~5-minute cadence from Thalassa).
+        target_index: Target bar timeline (e.g. 1-minute DatetimeIndex).
+        method: Reindex method (default ``"ffill"``).
+        staleness_limit_bars: Phase 84 D-09 — when on a 1m timeline, pass
+            ``15`` to cap forward-fill at 15 bars (= 15 minutes = 3 OI
+            snapshot cycles).  After the cap, bars become ``NaN`` and the
+            strategy must skip zone identification on stale OI (handled in
+            ``liquidity_sweep.evaluate``).  ``None`` (default) preserves
+            the legacy unbounded behavior for 4H+ callers — this keeps all
+            existing call sites unchanged.
+
+    Returns:
+        OI series aligned to ``target_index``.  Bars past the staleness
+        cap (when set) are NaN.
     """
     if isinstance(oi_series.index, pd.DatetimeIndex) and isinstance(target_index, pd.DatetimeIndex):
         if oi_series.index.tz is None and target_index.tz is not None:
@@ -43,6 +81,10 @@ def _align_oi_to_index(oi_series: pd.Series, target_index: pd.Index, method: str
         elif oi_series.index.tz is not None and target_index.tz is None:
             oi_series = oi_series.copy()
             oi_series.index = oi_series.index.tz_localize(None)
+    if method == "ffill":
+        # pandas.reindex(method='ffill', limit=None) is unbounded — backward-compatible default.
+        return oi_series.reindex(target_index, method="ffill", limit=staleness_limit_bars)
+    # Non-ffill methods retain pre-Phase-84 behavior (no limit support).
     return oi_series.reindex(target_index, method=method)
 
 
