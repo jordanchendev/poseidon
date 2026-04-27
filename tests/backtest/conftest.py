@@ -12,6 +12,7 @@ Reference:
   .planning/phases/85-optuna-wfe-validation/85-PATTERNS.md  §5
   .planning/phases/85-optuna-wfe-validation/85-VALIDATION.md  Wave 0
 """
+
 from __future__ import annotations
 
 import os
@@ -19,7 +20,6 @@ import os
 import numpy as np
 import pandas as pd
 import pytest
-
 
 # 270 calendar days × 1440 bars/day = 388_800 bars
 PHASE85_270D_BARS: int = 270 * 1440  # 388_800
@@ -90,3 +90,27 @@ def fixture_postgres_url() -> str:
         "POSEIDON_REAL_DATABASE_URL",
         "postgresql://poseidon:poseidon@localhost:5433/poseidon",
     )
+
+
+@pytest.fixture
+def fixture_feature_engine():
+    """Default ``FeatureOrchestrator`` (alias ``FeatureEngine``) with no DB repo.
+
+    Phase 85 driver tests run on synthetic in-memory OHLCV — no remote loads
+    required. ``compute_from_df`` is the only path the driver hits.
+    """
+    from poseidon.data.feature_engine import FeatureEngine
+
+    return FeatureEngine()  # repo=None — synthetic-only
+
+
+@pytest.fixture
+def fixture_risk_engine():
+    """Empty-rules ``RiskEngine`` — every signal passes through.
+
+    Driver tests are signal/orchestration agnostic; constraining trades via
+    risk rules would couple driver tests to risk-rule semantics.
+    """
+    from poseidon.risk.engine import RiskEngine
+
+    return RiskEngine(rules=[])
