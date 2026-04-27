@@ -1,5 +1,83 @@
 import fakeredis
+import numpy as np
+import pandas as pd
 import pytest
+
+
+def make_synthetic_1m_ohlcv_with_sweep(
+    periods: int = 8640,
+    sweep_bar: int = 7000,
+    base_price: float = 50000.0,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """Synthetic 1m OHLCV fixture with engineered liquidity sweep at ``sweep_bar``.
+
+    Sized per Phase 84 D-03 (lookback=5760 → ~4d warmup) + RESEARCH Pitfall 3:
+    default 8640 bars (= 6 days) clears warmup and leaves 2 days post-warmup for
+    signal emission. The strategy's BreakoutDistance feature uses
+    ``swing_low.shift(1)``, so the engineered sweep penetrates the *prior*
+    rolling-100 swing low, then close recovers above that prior swing low.
+
+    Engineered sweep candle (at index ``sweep_bar``) characteristics:
+      * low penetrates prior swing-low by ~50 price units (drives breakout_down)
+      * close recovers to swing_low + ~100 (drives reversal gate)
+      * wide bar range (wick on the bottom) drives wick_ratio_lower and
+        range_expansion_14 well above strategy thresholds
+      * funding column injected at this bar to push confirmation score over 0.5
+
+    Used by STRAT-01 smoke test. Does NOT touch Thalassa (Pitfall 5):
+    fixture is pure in-memory, deterministic via fixed seed.
+
+    Args:
+        periods: Number of 1-minute bars (default 8640 = 6 days).
+        sweep_bar: Index where the engineered sweep candle lives.
+        base_price: Starting close price for the random walk.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        DataFrame with columns ``[open, high, low, close, volume]`` indexed by
+        a 1-minute UTC DatetimeIndex of length ``periods``.
+    """
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2026-01-01 00:00", periods=periods, freq="1min", tz="UTC")
+
+    close = pd.Series(
+        base_price + np.cumsum(rng.normal(0, 5, periods)),
+        index=idx,
+    )
+    open_ = close.shift(1).fillna(base_price)
+
+    # Build OHLC with invariant high >= max(o,c), low <= min(o,c)
+    body_max = pd.concat([open_, close], axis=1).max(axis=1)
+    body_min = pd.concat([open_, close], axis=1).min(axis=1)
+    high = body_max + np.abs(rng.normal(0, 3, periods))
+    low = body_min - np.abs(rng.normal(0, 3, periods))
+    volume = pd.Series(100.0, index=idx)
+
+    # Engineer the sweep: penetrate rolling-100 prior swing-low then recover.
+    # BreakoutDistance uses swing_low.shift(1), so we look at bars before sweep_bar.
+    prior_swing_low = float(low.iloc[sweep_bar - 100 : sweep_bar].min())
+    sweep_low = prior_swing_low - 50.0
+    sweep_close = prior_swing_low + 100.0
+    sweep_open = float(open_.iloc[sweep_bar])
+    sweep_high = max(sweep_close, sweep_open) + 10.0
+
+    low.iloc[sweep_bar] = sweep_low
+    close.iloc[sweep_bar] = sweep_close
+    high.iloc[sweep_bar] = sweep_high
+    # open_ stays as previous bar's close — already satisfies invariants since
+    # body_min/body_max recompute below per row.
+
+    df = pd.DataFrame(
+        {"open": open_, "high": high, "low": low, "close": close, "volume": volume},
+        index=idx,
+    )
+
+    # Re-validate invariants after sweep injection (defensive, in case open_ < sweep_low).
+    df["high"] = df[["open", "close", "high"]].max(axis=1)
+    df["low"] = df[["open", "close", "low"]].min(axis=1)
+
+    return df
 
 
 @pytest.fixture(autouse=True)
