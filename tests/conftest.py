@@ -14,16 +14,21 @@ def make_synthetic_1m_ohlcv_with_sweep(
 
     Sized per Phase 84 D-03 (lookback=5760 → ~4d warmup) + RESEARCH Pitfall 3:
     default 8640 bars (= 6 days) clears warmup and leaves 2 days post-warmup for
-    signal emission. The strategy's BreakoutDistance feature uses
-    ``swing_low.shift(1)``, so the engineered sweep penetrates the *prior*
-    rolling-100 swing low, then close recovers above that prior swing low.
+    signal emission.
+
+    The strategy's BreakoutDistance feature uses ``swing_low.shift(1)`` of the
+    full 5760-bar rolling window, so the engineered sweep candle's low must
+    penetrate the *prior* 5760-bar minimum (not just the local prior 100 bars,
+    which was too weak under random-walk variance). To guarantee penetration
+    we anchor the sweep low to ``prior_5760_min - 5 * ATR`` (ATR estimated from
+    the random walk standard deviation).
 
     Engineered sweep candle (at index ``sweep_bar``) characteristics:
-      * low penetrates prior swing-low by ~50 price units (drives breakout_down)
-      * close recovers to swing_low + ~100 (drives reversal gate)
-      * wide bar range (wick on the bottom) drives wick_ratio_lower and
-        range_expansion_14 well above strategy thresholds
-      * funding column injected at this bar to push confirmation score over 0.5
+      * low pierces the prior 5760-bar swing low by ~5 ATR (drives
+        breakout_down_5760 well above the 0.1 strategy threshold)
+      * close recovers above the prior swing low (drives reversal gate)
+      * wide bar range (long lower wick) drives wick_ratio_lower and
+        range_expansion_14 above their respective thresholds
 
     Used by STRAT-01 smoke test. Does NOT touch Thalassa (Pitfall 5):
     fixture is pure in-memory, deterministic via fixed seed.
@@ -54,26 +59,33 @@ def make_synthetic_1m_ohlcv_with_sweep(
     low = body_min - np.abs(rng.normal(0, 3, periods))
     volume = pd.Series(100.0, index=idx)
 
-    # Engineer the sweep: penetrate rolling-100 prior swing-low then recover.
-    # BreakoutDistance uses swing_low.shift(1), so we look at bars before sweep_bar.
-    prior_swing_low = float(low.iloc[sweep_bar - 100 : sweep_bar].min())
-    sweep_low = prior_swing_low - 50.0
-    sweep_close = prior_swing_low + 100.0
+    # Engineer the sweep: penetrate the rolling-5760 prior swing low then
+    # recover. Strategy's breakout_down feature uses swing_low.shift(1) over
+    # the full 5760-bar window — penetrating only the local 100-bar window is
+    # not sufficient under random-walk variance (rolling-5760 min drifts much
+    # lower than rolling-100 min after ~7000 bars of cumulative noise).
+    prior_5760_min = float(low.iloc[max(0, sweep_bar - 5760) : sweep_bar].min())
+    # Crude ATR proxy from the random-walk noise scale (σ_close=5, σ_wick=3
+    # → typical bar range ~10). Use 20 as a safety multiplier so penetration
+    # is unambiguous: ≥5 ATR past the prior swing low.
+    pen_atr_mult = 20.0
+    sweep_low = prior_5760_min - 5.0 * pen_atr_mult
+    sweep_close = prior_5760_min + 100.0  # close above prior swing low (reversal)
     sweep_open = float(open_.iloc[sweep_bar])
     sweep_high = max(sweep_close, sweep_open) + 10.0
 
     low.iloc[sweep_bar] = sweep_low
     close.iloc[sweep_bar] = sweep_close
     high.iloc[sweep_bar] = sweep_high
-    # open_ stays as previous bar's close — already satisfies invariants since
-    # body_min/body_max recompute below per row.
 
     df = pd.DataFrame(
         {"open": open_, "high": high, "low": low, "close": close, "volume": volume},
         index=idx,
     )
 
-    # Re-validate invariants after sweep injection (defensive, in case open_ < sweep_low).
+    # Re-validate OHLC invariants after sweep injection (defensive: open_ may
+    # exceed sweep_low; in that case the sweep candle is a wide-range pin bar
+    # whose body sits at the top of the range).
     df["high"] = df[["open", "close", "high"]].max(axis=1)
     df["low"] = df[["open", "close", "low"]].min(axis=1)
 
