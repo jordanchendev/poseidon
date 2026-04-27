@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 import pandas as pd
 
 from poseidon.backtest.cost_model import COST_MODELS
+from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
 from poseidon.backtest.optimizer import BayesianOptimizer, GridSearchOptimizer
 from poseidon.backtest.portfolio import SizingConfig, SizingMode
 from poseidon.backtest.repository import BacktestRepository
@@ -201,7 +202,7 @@ def run_backtest_task(
 
             # Reconstruct strategy object
             if record.strategy_type == "liquidity_sweep":
-                raise ValueError("liquidity_sweep strategy archived in v15.0 -- see _archived/")
+                strategy = LiquiditySweepStrategyFactory.from_config(record.config, strategy_id=record.id)
             elif record.strategy_type == "rule":
                 strategy = RuleStrategy(config=record.config, strategy_id=record.id)
             elif record.strategy_type == "voting":
@@ -475,7 +476,9 @@ def run_dual_mode_task(
             if record.strategy_type == "voting":
                 strategy_factory = lambda: VotingStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
             elif record.strategy_type == "liquidity_sweep":
-                raise ValueError("liquidity_sweep strategy archived in v15.0 -- see _archived/")
+                strategy_factory = lambda: LiquiditySweepStrategyFactory.from_config(  # noqa: E731
+                    record.config, strategy_id=record.id
+                )
             elif record.strategy_type == "rule":
                 strategy_factory = lambda: RuleStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
             elif record.strategy_type == "model":

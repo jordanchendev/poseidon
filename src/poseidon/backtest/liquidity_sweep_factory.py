@@ -99,9 +99,16 @@ class LiquiditySweepStrategyFactory:
     """
 
     @staticmethod
-    def from_config(config: dict) -> LiquiditySweepStrategy:
-        """Build strategy from a config dict."""
-        return LiquiditySweepStrategy(config=config)
+    def from_config(config: dict, *, strategy_id: Any = None) -> LiquiditySweepStrategy:
+        """Build strategy from a config dict.
+
+        Optional ``strategy_id`` mirrors the StrategyRecord-driven dispatch
+        pattern used by ``cpu_tasks.py`` (matches RuleStrategy/VotingStrategy
+        instantiation in the same dispatch table).
+        """
+        if strategy_id is None:
+            return LiquiditySweepStrategy(config=config)
+        return LiquiditySweepStrategy(config=config, strategy_id=strategy_id)
 
     @staticmethod
     def build_from_trial(
