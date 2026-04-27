@@ -187,3 +187,93 @@ class TestPessimisticFill1m:
         assert fill.fill_bar_index == 1
         assert fill.is_maker is True
         assert book.pending_count == 0
+
+    # ---------- D-08 cases 5-7: multi-bar / TTL / long+short independence ----------
+
+    def test_pending_across_multiple_1m_bars_fills_on_bar_n(self):
+        """Case 5: pending order across 3 consecutive 1m bars.
+
+        Bars 1 and 2 do not pierce (low=100 == limit=99 fails strict <);
+        bar 3 pierces (low=98 < 99) -> single fill on bar 3 only.
+        Verifies the order survives non-piercing 1m bars and timestamps
+        the fill at the bar that actually pierces.
+        """
+        book = PendingOrderBook(fill_model=FillModel.PESSIMISTIC)
+        book.submit(_buy_signal(limit=99.0), bar_index=0)
+
+        # Bar 1 (T0)        -> low=100, no pierce
+        bar1 = _bar(T0, o=105, h=110, low=100, c=108)
+        assert book.check_fills(bar1, current_bar_index=1) == []
+        assert book.pending_count == 1
+
+        # Bar 2 (T0+1m)    -> low=100, still no pierce
+        bar2 = _bar(T0 + ONE_MIN, o=108, h=110, low=100, c=105)
+        assert book.check_fills(bar2, current_bar_index=2) == []
+        assert book.pending_count == 1
+
+        # Bar 3 (T0+2m)    -> low=98 < 99 -> fill at limit 99.0
+        bar3 = _bar(T0 + 2 * ONE_MIN, o=105, h=106, low=98, c=102)
+        fills = book.check_fills(bar3, current_bar_index=3)
+        assert len(fills) == 1
+        assert fills[0].fill_price == pytest.approx(99.0)
+        assert fills[0].fill_bar_index == 3  # fill timestamp = bar 3, NOT bar 1 or 2
+        assert book.pending_count == 0
+
+    def test_order_expiration_crosses_1m_bars(self):
+        """Case 6: TTL=2 bars; order expires before piercing bar arrives -> NO fill.
+
+        Submit at bar 0 with max_bars=2 TTL. Bars 1 and 2 do not pierce.
+        Calling expire_orders at bar_index=2 evicts the order (2-0 >= 2).
+        Bar 3 would have pierced (low=98 < 99) but the book is empty -> no fill.
+        Mirrors live-trading semantics where stale limits are cancelled across
+        the 1m boundary even if a later bar would have triggered them.
+        """
+        book = PendingOrderBook(fill_model=FillModel.PESSIMISTIC)
+        book.submit(_buy_signal(limit=99.0), bar_index=0)
+
+        # Bar 1 -> no pierce
+        book.check_fills(_bar(T0, o=105, h=110, low=100, c=108), current_bar_index=1)
+        # Bar 2 -> no pierce
+        book.check_fills(
+            _bar(T0 + ONE_MIN, o=108, h=110, low=100, c=105),
+            current_bar_index=2,
+        )
+        assert book.pending_count == 1  # not yet expired
+
+        # TTL expiry crossing 1m boundary: bar_index=2, max_bars=2 -> 2 - 0 >= 2 -> evict
+        expired = book.expire_orders(current_bar_index=2, max_bars=2)
+        assert len(expired) == 1
+        assert book.pending_count == 0
+
+        # Bar 3 would have pierced (low=98 < 99) but order is gone -> no fill.
+        bar3 = _bar(T0 + 2 * ONE_MIN, o=105, h=106, low=98, c=102)
+        fills = book.check_fills(bar3, current_bar_index=3)
+        assert fills == []
+
+    def test_long_and_short_orders_independent(self):
+        """Case 7: long buy and short sell on the same book don't cross-contaminate.
+
+        Bar A pierces only the long limit (low<99). Sell at limit=111 untouched.
+        Bar B pierces only the short limit (high>111). Buy was already filled.
+        Verifies side-correct dispatch in `_is_filled` for mixed-side books.
+        """
+        book = PendingOrderBook(fill_model=FillModel.PESSIMISTIC)
+        book.submit(_buy_signal(limit=99.0), bar_index=0)
+        book.submit(_sell_signal(limit=111.0), bar_index=0)
+        assert book.pending_count == 2
+
+        # Bar A: low=98 < 99 -> long fills; high=110 not > 111 -> short remains.
+        bar_a = _bar(T0, o=105, h=110, low=98, c=102)
+        fills_a = book.check_fills(bar_a, current_bar_index=1)
+        assert len(fills_a) == 1
+        assert fills_a[0].signal.action == SignalAction.LONG
+        assert fills_a[0].fill_price == pytest.approx(99.0)
+        assert book.pending_count == 1  # only short remains
+
+        # Bar B: high=112 > 111 -> short fills; long was already filled (no double).
+        bar_b = _bar(T0 + ONE_MIN, o=110, h=112, low=109, c=110)
+        fills_b = book.check_fills(bar_b, current_bar_index=2)
+        assert len(fills_b) == 1
+        assert fills_b[0].signal.action == SignalAction.SHORT
+        assert fills_b[0].fill_price == pytest.approx(111.0)
+        assert book.pending_count == 0
