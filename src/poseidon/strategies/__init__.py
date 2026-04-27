@@ -8,6 +8,7 @@ Strategy types sharing a common interface:
 """
 
 from poseidon.strategies.base import BaseStrategy, StrategyType
+from poseidon.strategies.liquidity_sweep import LiquiditySweepStrategy
 from poseidon.strategies.model_strategy import ModelStrategy
 from poseidon.strategies.regime_router import RegimeRouter
 from poseidon.strategies.rule_strategy import RuleStrategy
@@ -19,6 +20,7 @@ from poseidon.strategies.voting_strategy import VotingStrategy
 
 __all__ = [
     "BaseStrategy",
+    "LiquiditySweepStrategy",
     "MeanReversionStrategy",
     "ModelStrategy",
     "RegimeRouter",
