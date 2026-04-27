@@ -702,6 +702,14 @@ class BacktestRunner:
 
         metrics = compute_metrics(equity_series, portfolio.trades)
 
+        # Phase 85 (85-03): expose equity_series + raw TradeRecord list so
+        # Phase85BayesianOptimizer can re-derive metrics with bars_per_year=525_600
+        # (Pitfall 6). The dict trade list on BacktestResult.trades is for
+        # serialization; re-computing metrics needs the dataclass form which
+        # carries datetime objects for avg_holding_period.
+        self._equity_series_cached = equity_series
+        self._trade_records_cached = list(portfolio.trades)
+
         # Step 6: Build result
         config = BacktestConfig(
             strategy_type=self.strategy.strategy_type.value,
