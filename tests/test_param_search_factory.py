@@ -267,28 +267,34 @@ def test_autoresearch_runner_passes_factory_to_pipeline():
         strategy_factory=LiquiditySweepStrategyFactory,
     )
 
+    import pandas as pd
+
+    mock_ohlcv = pd.DataFrame(
+        {
+            "open": [1.0] * 100,
+            "high": [1.1] * 100,
+            "low": [0.9] * 100,
+            "close": [1.0] * 100,
+            "volume": [100.0] * 100,
+        },
+        index=pd.date_range("2024-01-01", periods=100, freq="1h"),
+    )
+    mock_repo = MagicMock()
+    mock_repo.read_ohlcv.return_value = mock_ohlcv
+
     with (
         patch("poseidon.autoresearch.runner.autoresearch_context"),
-        patch("poseidon.autoresearch.runner.FeatureEngine"),
+        patch("poseidon.autoresearch.runner.autoresearch_guard", side_effect=lambda c: c),
+        patch("poseidon.autoresearch.runner.FeatureOrchestrator"),
         patch("poseidon.autoresearch.runner.RiskEngine"),
         patch("poseidon.autoresearch.runner.ExperimentTracker"),
-        patch("poseidon.autoresearch.runner.read_ohlcv") as mock_read,
+        patch("poseidon.autoresearch.runner.RemoteDataRepository") as mock_repo_cls,
         patch("poseidon.autoresearch.runner.COST_MODELS", {"crypto_perp": MagicMock()}),
         patch("poseidon.autoresearch.runner.ParameterSearchPipeline") as mock_pipeline_cls,
         patch("poseidon.autoresearch.runner.ModelManager"),
     ):
-        import pandas as pd
-
-        mock_read.return_value = pd.DataFrame(
-            {
-                "open": [1.0] * 100,
-                "high": [1.1] * 100,
-                "low": [0.9] * 100,
-                "close": [1.0] * 100,
-                "volume": [100.0] * 100,
-            },
-            index=pd.date_range("2024-01-01", periods=100, freq="1h"),
-        )
+        mock_repo_cls.from_settings.return_value = mock_repo
+        mock_repo_cls.return_value = mock_repo
 
         mock_pipeline = MagicMock()
         mock_pipeline.run.return_value = MagicMock()
