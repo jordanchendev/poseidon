@@ -1427,6 +1427,14 @@ def evaluate_active_strategies(
                         "interval": record.interval,
                     }
                     strategy = VotingStrategy(config=config, strategy_id=record.id)
+                elif record.strategy_type == "liquidity_sweep":
+                    # supports_live = False -> deferred to backtest/research path only.
+                    logger.debug(
+                        "Skipping live signal eval for liquidity_sweep strategy %s "
+                        "(supports_live=False; use run_backtest path instead)",
+                        record.name,
+                    )
+                    continue
                 else:
                     # model strategies use GPU predict path
                     continue
