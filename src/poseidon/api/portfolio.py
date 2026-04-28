@@ -34,8 +34,8 @@ class NavPointResponse(PydanticBase):
 
 class PerformanceSummaryResponse(PydanticBase):
     nav_curve: list[NavPointResponse]
-    total_return_pct: float
-    max_drawdown_pct: float
+    total_return_pct: float  # ratio (0.05 = 5%)
+    max_drawdown_pct: float  # ratio (0.05 = 5%)
     sharpe_ratio: float | None
     total_trades: int
     total_realized_pnl: float
@@ -112,8 +112,14 @@ def get_performance(
     from poseidon.models.nav_snapshot import NavSnapshotRecord
     from poseidon.models.trade_log import TradeLogRecord
 
-    # Query NAV snapshots ordered by date, optionally filtered by market
-    query = db.query(NavSnapshotRecord).order_by(NavSnapshotRecord.snapshot_date.asc())
+    # Query NAV snapshots ordered by date, optionally filtered by market.
+    # Always exclude legacy NULL-market snapshots to prevent scale mixing
+    # (e.g., TWD ~10M vs USD ~100K rows polluting return/drawdown calc).
+    query = (
+        db.query(NavSnapshotRecord)
+        .filter(NavSnapshotRecord.market.isnot(None))
+        .order_by(NavSnapshotRecord.snapshot_date.asc())
+    )
     if market is not None:
         query = query.filter(NavSnapshotRecord.market == market)
     snapshots = query.all()
@@ -130,17 +136,17 @@ def get_performance(
         for s in snapshots
     ]
 
-    # Compute total return
+    # Compute total return as ratio (0.05 = 5%); UI applies its own % formatter.
     if len(snapshots) >= 2:
         first_nav = snapshots[0].total_nav
         last_nav = snapshots[-1].total_nav
-        total_return_pct = ((last_nav / first_nav) - 1) * 100 if first_nav != 0 else 0.0
+        total_return_pct = ((last_nav / first_nav) - 1) if first_nav != 0 else 0.0
     elif len(snapshots) == 1:
         total_return_pct = 0.0
     else:
         total_return_pct = 0.0
 
-    # Compute max drawdown (peak-to-trough)
+    # Compute max drawdown (peak-to-trough) as ratio.
     max_drawdown_pct = 0.0
     peak = 0.0
     for s in snapshots:
@@ -148,7 +154,7 @@ def get_performance(
         if nav > peak:
             peak = nav
         if peak > 0:
-            drawdown = (peak - nav) / peak * 100
+            drawdown = (peak - nav) / peak
             if drawdown > max_drawdown_pct:
                 max_drawdown_pct = drawdown
 
@@ -209,12 +215,20 @@ def get_holdings(db: Session = Depends(get_db)):
         current_price: float | None = None
         unrealized_pnl: float | None = None
 
-        latest = repo.read_ohlcv(h.symbol, h.market, "1d")
-        if not latest.empty:
-            current_price = float(latest["close"].iloc[-1])
-            if h.entry_price is not None and h.shares is not None:
-                direction = 1 if h.side == "long" else -1
-                unrealized_pnl = round((current_price - h.entry_price) * h.shares * direction, 2)
+        # crypto_perp uses live mark price (consistent with /perp-holdings);
+        # spot/equity falls back to daily OHLCV close.
+        if h.market == "crypto_perp":
+            mark = repo.read_latest_price(h.symbol)
+            if mark is not None:
+                current_price = float(mark)
+        else:
+            latest = repo.read_ohlcv(h.symbol, h.market, "1d")
+            if not latest.empty:
+                current_price = float(latest["close"].iloc[-1])
+
+        if current_price is not None and h.entry_price is not None and h.shares is not None:
+            direction = 1 if h.side == "long" else -1
+            unrealized_pnl = round((current_price - h.entry_price) * h.shares * direction, 2)
 
         result.append(
             HoldingResponse(
