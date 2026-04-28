@@ -268,11 +268,21 @@ def build_wfe_payload(
     Phase 85 emits raw values; Phase 86 reads GATE.yaml and compares.
     """
     per_window = result.wfe_per_window or []
-    # Sum trades from oos_metrics across windows for gate_03 input.
+    # Sum trades across windows for gate_03 input.
+    # Canonical key is "trade_count" (see metrics.py:99, walk_forward.py:286).
+    # Each window also carries flattened "oos_trade_count" — prefer that to avoid
+    # nested-dict access. Falls back to oos_metrics["trade_count"] for safety.
     oos_total_trades = 0
     for w in per_window:
-        oos_m = w.get("oos_metrics", {}) if isinstance(w, dict) else getattr(w, "oos_metrics", {})
-        oos_total_trades += int(oos_m.get("trades", 0))
+        if isinstance(w, dict):
+            tc = w.get("oos_trade_count")
+            if tc is None:
+                tc = w.get("oos_metrics", {}).get("trade_count", 0)
+        else:
+            tc = getattr(w, "oos_trade_count", None)
+            if tc is None:
+                tc = getattr(w, "oos_metrics", {}).get("trade_count", 0)
+        oos_total_trades += int(tc or 0)
 
     wfe_deg = wfe_degradation_excluding_is_negative(per_window)  # may be None
     oos_agg_sharpe = oos_aggregate_sharpe_trade_weighted(per_window)
