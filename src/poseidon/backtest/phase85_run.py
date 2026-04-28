@@ -86,33 +86,29 @@ def _resolve_artifacts_dir() -> Path:
 
 
 def _fetch_ohlcv(symbol: str, start: str, end: str, interval: str = "1m"):
-    """Fetch 1m OHLCV from the Thalassa REST API.
+    """Fetch 1m OHLCV via the existing ``RemoteDataRepository`` Thalassa client.
 
-    Uses ``$POSEIDON_THALASSA_URL`` (default: ``http://192.168.31.241:8001``).
-    Production path runs inside the cpu-worker container, which has network
-    access to Thalassa over the LAN. Dev-Mac runs without VPN cannot reach
-    Thalassa; tests stub this function.
+    Uses the project's standard repo (auto-loads base_url + api_key from
+    ``POSEIDON_THALASSA_BASE_URL`` + ``POSEIDON_THALASSA_API_KEY`` settings),
+    so the request signature, retry policy, and circuit breaker match the
+    rest of the codebase. Crypto queries pass ``market="crypto_spot"`` to
+    align with the Thalassa schema (verified against
+    ``SELECT DISTINCT market FROM ohlcv WHERE symbol IN ('BTCUSDT','ETHUSDT')``).
+
+    Returns a DataFrame indexed by tz-aware timestamp with columns
+    ``open, high, low, close, volume`` (drops ``adj_close`` which is for
+    equities).
     """
-    import pandas as pd
-    import requests
+    from datetime import datetime as _dt
 
-    base = os.environ.get("POSEIDON_THALASSA_URL", "http://192.168.31.241:8001")
-    url = f"{base}/api/v1/ohlcv"
-    params = {
-        "symbol": symbol,
-        "interval": interval,
-        "stream": "crypto_spot",
-        "start": start,
-        "end": end,
-    }
-    resp = requests.get(url, params=params, timeout=120)
-    resp.raise_for_status()
-    rows = resp.json()
-    df = pd.DataFrame(rows)
+    from poseidon.data.remote_repository import RemoteDataRepository
+
+    repo = RemoteDataRepository.from_settings()
+    start_dt = _dt.fromisoformat(start.replace("Z", "+00:00"))
+    end_dt = _dt.fromisoformat(end.replace("Z", "+00:00"))
+    df = repo.read_ohlcv(symbol, market="crypto_spot", interval=interval, start=start_dt, end=end_dt)
     if df.empty:
         raise RuntimeError(f"phase85_run: Thalassa returned 0 rows for {symbol} [{start}..{end}]")
-    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-    df = df.set_index("timestamp").sort_index()
     return df[["open", "high", "low", "close", "volume"]]
 
 
