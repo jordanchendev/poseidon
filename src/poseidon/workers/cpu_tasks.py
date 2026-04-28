@@ -1685,6 +1685,9 @@ def portfolio_nav_snapshot() -> dict:
                 holdings_value=holdings_value,
                 cash=cash,
                 holdings_count=len(holdings),
+                # TRUTH-04 (D-08): EOD writer defaults cash_flow=0; deposits/withdrawals
+                # are seeded post-hoc via admin scripts/migrations on the snapshot row.
+                cash_flow=0,
             )
             session.add(record)
         session.commit()
@@ -2278,6 +2281,9 @@ def perp_nav_snapshot() -> dict:
                 cash=cash,
                 holdings_count=len(perp_holdings),
                 market="crypto_perp",
+                # TRUTH-04 (D-08): EOD writer defaults cash_flow=0; deposits/withdrawals
+                # are seeded post-hoc via admin scripts/migrations on the snapshot row.
+                cash_flow=0,
             )
             session.add(record)
         session.commit()

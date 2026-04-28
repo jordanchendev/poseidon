@@ -14,6 +14,7 @@ from poseidon.models.order_fill import OrderFillRecord
 from poseidon.orders.risk_checker import OrderRiskChecker
 from poseidon.orders.schemas import Fill, Order, OrderResult
 from poseidon.orders.state_machine import OrderStatus, transition_order
+from poseidon.risk.reject_reason import build_reject_reason
 from poseidon.strategies.portfolio.schemas import RebalanceOrder
 
 logger = logging.getLogger(__name__)
@@ -131,7 +132,12 @@ class OrderManager:
             check = self._risk_checker.check(order, current_holdings, self._config.paper_initial_nav)
             if not check.passed:
                 order.status = OrderStatus.REJECTED
-                order.reject_reason = check.reason
+                # TRUTH-03 (D-13/D-14): structured 4-key reject_reason via factory.
+                order.reject_reason = build_reject_reason(
+                    check_name=check.check_name or "unknown",
+                    rule=check.reason,
+                    shortfall=check.shortfall,
+                )
                 self._persist_order(order)
                 processed_rorders.append(rorder)
                 results.append(OrderResult(order=order, fills=[], success=False))
@@ -149,13 +155,21 @@ class OrderManager:
                     )
                     if actual_leverage > max_lev:
                         order.status = OrderStatus.REJECTED
-                        order.reject_reason = (
-                            f"leverage_limit: {order.symbol} leverage {actual_leverage}x exceeds max {max_lev}x"
+                        rule_text = f"leverage_limit: {order.symbol} leverage {actual_leverage}x exceeds max {max_lev}x"
+                        # TRUTH-03 (D-13/D-14): structured payload with leverage shortfall.
+                        order.reject_reason = build_reject_reason(
+                            check_name="leverage_limit",
+                            rule=rule_text,
+                            shortfall={
+                                "symbol": order.symbol,
+                                "actual_leverage": actual_leverage,
+                                "max_leverage": max_lev,
+                            },
                         )
                         self._persist_order(order)
                         processed_rorders.append(rorder)
                         results.append(OrderResult(order=order, fills=[], success=False))
-                        logger.warning("Order rejected: %s", order.reject_reason)
+                        logger.warning("Order rejected: %s", rule_text)
                         continue
 
             # Dispatch to broker
@@ -170,7 +184,12 @@ class OrderManager:
                     order.status = transition_order(order.status, OrderStatus.FILLED)
             except Exception as e:
                 order.status = OrderStatus.REJECTED
-                order.reject_reason = str(e)
+                # TRUTH-03 (D-13/D-14): wrap broker exceptions in structured payload.
+                order.reject_reason = build_reject_reason(
+                    check_name="broker_error",
+                    rule=f"broker_error: {type(e).__name__}",
+                    details=str(e),
+                )
                 fills = []
                 logger.error("Broker error for %s %s: %s", action, rorder.symbol, e)
 

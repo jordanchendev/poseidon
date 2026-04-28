@@ -1,12 +1,20 @@
 """Portfolio API endpoints for performance tracking, holdings, and orders.
 
 Mounted at /api/portfolio in main.py.
+
+Phase 87 (TRUTH-01..04) changes:
+- get_performance now uses Modified Dietz TWR (services.portfolio_metrics);
+  isolates cash_flow from return/Sharpe so the 2026-04-28 $9.87M deposit
+  no longer inflates total_return_pct.
+- get_holdings restricts to allowlist {tw_stock, us_stock} (D-09).
+- OrderResponse.reject_reason is dict|None (structured 4-key payload, D-17).
 """
 
 from __future__ import annotations
 
 import logging
-import math
+from itertools import pairwise
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel as PydanticBase
@@ -15,8 +23,17 @@ from sqlalchemy.orm import Session
 
 from poseidon.core.database import get_db
 from poseidon.data.remote_repository import RemoteDataRepository
+from poseidon.services.portfolio_metrics import (
+    cumulative_twr,
+    max_drawdown_pct,
+    modified_dietz_daily_return,
+    sharpe_from_returns,
+)
 
 logger = logging.getLogger(__name__)
+
+# TRUTH-02 (D-09): explicit allowlist for /holdings; NULL/legacy market excluded.
+HOLDINGS_MARKET_ALLOWLIST = ("tw_stock", "us_stock")
 
 router = APIRouter()
 
@@ -30,11 +47,12 @@ class NavPointResponse(PydanticBase):
     holdings_value: float
     cash: float
     holdings_count: int
+    cash_flow: float = 0.0  # TRUTH-04 (D-05): exposed for audit/reconstruction
 
 
 class PerformanceSummaryResponse(PydanticBase):
     nav_curve: list[NavPointResponse]
-    total_return_pct: float  # ratio (0.05 = 5%)
+    total_return_pct: float  # TWR ratio (0.05 = 5%); cash flows excluded (D-01..D-03)
     max_drawdown_pct: float  # ratio (0.05 = 5%)
     sharpe_ratio: float | None
     total_trades: int
@@ -68,7 +86,9 @@ class OrderResponse(PydanticBase):
     status: str
     price: float | None
     broker_mode: str
-    reject_reason: str | None
+    # TRUTH-03 (D-17): structured 4-key payload {check_name, rule, shortfall, details}
+    # or None when the order is not rejected.
+    reject_reason: dict[str, Any] | None
     created_at: str
     side: str = "long"
 
@@ -124,7 +144,7 @@ def get_performance(
         query = query.filter(NavSnapshotRecord.market == market)
     snapshots = query.all()
 
-    # Build NAV curve
+    # Build NAV curve (TRUTH-04: expose cash_flow for audit reconstruction).
     nav_curve = [
         NavPointResponse(
             date=str(s.snapshot_date),
@@ -132,46 +152,34 @@ def get_performance(
             holdings_value=s.holdings_value,
             cash=s.cash,
             holdings_count=s.holdings_count,
+            cash_flow=float(s.cash_flow) if s.cash_flow is not None else 0.0,
         )
         for s in snapshots
     ]
 
-    # Compute total return as ratio (0.05 = 5%); UI applies its own % formatter.
-    if len(snapshots) >= 2:
-        first_nav = snapshots[0].total_nav
-        last_nav = snapshots[-1].total_nav
-        total_return_pct = ((last_nav / first_nav) - 1) if first_nav != 0 else 0.0
-    elif len(snapshots) == 1:
-        total_return_pct = 0.0
-    else:
-        total_return_pct = 0.0
+    # TRUTH-01: Modified Dietz daily returns chained into cumulative TWR (D-01..D-04).
+    # Cash flow is isolated via the formula's CF term, so a $9.87M deposit no
+    # longer inflates total_return_pct. Inception = first snapshot in range (D-04).
+    daily_returns: list[float] = []
+    for prev, curr in pairwise(snapshots):
+        cf = float(curr.cash_flow) if curr.cash_flow is not None else 0.0
+        daily_returns.append(
+            modified_dietz_daily_return(
+                v_begin=float(prev.total_nav),
+                v_end=float(curr.total_nav),
+                cash_flow=cf,
+            )
+        )
+    total_return_pct = cumulative_twr(daily_returns)
 
-    # Compute max drawdown (peak-to-trough) as ratio.
-    max_drawdown_pct = 0.0
-    peak = 0.0
-    for s in snapshots:
-        nav = s.total_nav
-        if nav > peak:
-            peak = nav
-        if peak > 0:
-            drawdown = (peak - nav) / peak
-            if drawdown > max_drawdown_pct:
-                max_drawdown_pct = drawdown
+    # Max drawdown remains a peak-to-trough metric on the raw NAV curve.
+    # Cash flow contamination of drawdown is acceptable for now (deferred).
+    nav_curve_values = [float(s.total_nav) for s in snapshots]
+    max_dd = max_drawdown_pct(nav_curve_values)
 
-    # Compute Sharpe ratio (annualized from daily returns)
-    sharpe_ratio: float | None = None
-    if len(snapshots) >= 2:
-        navs = [s.total_nav for s in snapshots]
-        daily_returns = []
-        for i in range(1, len(navs)):
-            if navs[i - 1] != 0:
-                daily_returns.append(navs[i] / navs[i - 1] - 1)
-        if len(daily_returns) >= 1:
-            mean_ret = sum(daily_returns) / len(daily_returns)
-            variance = sum((r - mean_ret) ** 2 for r in daily_returns) / len(daily_returns)
-            std_ret = math.sqrt(variance)
-            if std_ret > 0:
-                sharpe_ratio = round((mean_ret / std_ret) * math.sqrt(252), 4)
+    # TRUTH-01 (D-02): Sharpe from TWR daily returns, annualized via sqrt(252).
+    sharpe_ratio = sharpe_from_returns(daily_returns)
+    sharpe_ratio = round(sharpe_ratio, 4) if sharpe_ratio is not None else None
 
     # Query trade stats, optionally filtered by market
     trade_query = db.query(
@@ -188,7 +196,7 @@ def get_performance(
     return PerformanceSummaryResponse(
         nav_curve=nav_curve,
         total_return_pct=round(total_return_pct, 4),
-        max_drawdown_pct=round(max_drawdown_pct, 4),
+        max_drawdown_pct=round(max_dd, 4),
         sharpe_ratio=sharpe_ratio,
         total_trades=total_trades,
         total_realized_pnl=total_realized_pnl,
@@ -200,12 +208,21 @@ def get_performance(
 
 @router.get("/holdings", response_model=HoldingsResponse)
 def get_holdings(db: Session = Depends(get_db)):
-    """Return current open holdings with unrealized PnL from remote market data."""
+    """Return current open holdings with unrealized PnL from remote market data.
+
+    TRUTH-02 (D-09/D-11): strictly filtered to {tw_stock, us_stock}. NULL
+    market and crypto_perp positions are excluded so ETHUSDT no longer
+    leaks into the equity holdings view; perp positions remain available
+    via /perp-holdings.
+    """
     from poseidon.models.portfolio_holding import PortfolioHoldingRecord
 
     holdings = (
         db.query(PortfolioHoldingRecord)
-        .filter(PortfolioHoldingRecord.closed == False)  # noqa: E712
+        .filter(
+            PortfolioHoldingRecord.closed == False,  # noqa: E712
+            PortfolioHoldingRecord.market.in_(HOLDINGS_MARKET_ALLOWLIST),
+        )
         .all()
     )
 
