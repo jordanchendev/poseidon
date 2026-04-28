@@ -99,3 +99,52 @@ def evaluate_symbol_gates(criteria_block: dict, verdict_inputs: dict) -> dict[st
             "reason": reason,
         }
     return gates
+
+
+def aggregate_milestone_verdict(
+    per_symbol_results: dict[str, dict],
+    min_pass: int,
+) -> tuple[str, str]:
+    """Aggregate per-symbol gate results into a milestone-level verdict (D-05).
+
+    Args:
+        per_symbol_results: ``{symbol: {"gates": {...}, "passed_count": int, ...}, ...}``.
+            Caller controls iteration order; tests pass BTCUSDT before ETHUSDT
+            so the rationale string lists symbols in that order.
+        min_pass: ``gate_yaml["min_pass"]`` (top-level, NOT inside ``criteria``).
+            Currently 3 in v17.0 frozen GATE.yaml.
+
+    Returns:
+        ``(verdict, rationale)`` where ``verdict ∈ {"PASS", "FAIL"}``.
+
+    Behavior (D-05 both-must-pass):
+        - PASS iff EVERY symbol has ``passed_count >= min_pass``. Rationale
+          lists every symbol's pass-side fragment, e.g.
+          ``"BTCUSDT 4/4 >= 3; ETHUSDT 4/4 >= 3"``.
+        - FAIL iff ANY symbol has ``passed_count < min_pass``. Rationale lists
+          ONLY the failing symbols' fail-side fragments (Pitfall 5: do not mix
+          PASS-side fragments into a FAIL rationale — D-13 example shape is
+          ``"BTCUSDT 2/4 < 3; ETHUSDT 1/4 < 3"``).
+
+    Determinism: rationale fragments are joined in the caller's iteration order
+    of ``per_symbol_results`` (Python 3.7+ dict insertion-order guarantee).
+    """
+    pass_fragments: list[str] = []
+    fail_fragments: list[str] = []
+    for symbol, result in per_symbol_results.items():
+        passed_count = result["passed_count"]
+        # `gates` may not be present in synthetic test fixtures that only carry
+        # passed_count/verdict; fall back to len-from-passed_count semantics
+        # would be wrong, so derive a safe total from gates when available and
+        # default to 4 (current GATE.yaml has exactly 4 gates) otherwise.
+        gates = result.get("gates")
+        total = len(gates) if gates is not None else 4
+        if passed_count >= min_pass:
+            pass_fragments.append(f"{symbol} {passed_count}/{total} >= {min_pass}")
+        else:
+            fail_fragments.append(f"{symbol} {passed_count}/{total} < {min_pass}")
+
+    all_passed = not fail_fragments
+    if all_passed:
+        return ("PASS", "; ".join(pass_fragments))
+    return ("FAIL", "; ".join(fail_fragments))
