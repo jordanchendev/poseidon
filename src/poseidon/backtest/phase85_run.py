@@ -8,6 +8,22 @@ Examples:
     python -m poseidon.backtest.phase85_run --symbol BTCUSDT --n-trials 100
     python -m poseidon.backtest.phase85_run --symbol ETHUSDT --n-trials 100
 
+    # Recover artifacts from an existing completed Optuna study without
+    # re-running optimization (operator escape hatch -- see Phase 85 SUMMARY
+    # for the original need: cpu-worker /tmp ephemerality + container restart):
+    python -m poseidon.backtest.phase85_run --symbol BTCUSDT --resume-only
+
+IMPORTANT artifact-dir guidance for stormtrooper cpu-worker:
+    /tmp inside the cpu-worker container is EPHEMERAL -- a container
+    restart wipes it. Always pass
+
+        PHASE85_ARTIFACTS_DIR=/data/models/phase85_artifacts
+
+    so artifacts land on the persistent ``model-artifacts`` Docker volume
+    that the cpu-worker bind-mounts at /data/models. Operators then
+    ``docker cp poseidon-cpu-worker-1:/data/models/phase85_artifacts/. <host>``
+    + ``scp`` back to the local aquarium tree before committing.
+
 Outputs always land at the aquarium-rooted artifacts dir, resolved as:
 
     1. ``$PHASE85_ARTIFACTS_DIR`` env override -- preferred.
@@ -163,6 +179,19 @@ def main(argv: list[str] | None = None) -> int:
         help="Slice fixture to --days; loosens WFE thresholds for smoke tests.",
     )
     parser.add_argument(
+        "--resume-only",
+        action="store_true",
+        help=(
+            "Skip Optuna optimize() (load existing completed study from "
+            "$OPTUNA_STORAGE_URL) and re-run only WFE + per-window OOS "
+            "trade-ledger re-backtest + artifact write. Operator escape "
+            "hatch for recovering artifacts when an earlier run lost "
+            "/tmp before the artifact dir was switched to a persistent "
+            "volume. Forces n-trials=0 internally; the existing study's "
+            "completed/failed counts and best_params are reused verbatim."
+        ),
+    )
+    parser.add_argument(
         "--days",
         type=int,
         default=270,
@@ -191,13 +220,38 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    if args.resume_only and args.dry:
+        print(
+            "ERROR: --resume-only is incompatible with --dry; resume reads the "
+            "existing 270-day production study, not a 30-day fixture.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # In --resume-only mode, ``args.n_trials`` is the historic target the
+    # underlying study was originally meant to fulfill (we keep it so the
+    # artifact's ``n_trials_target`` reports the right number). The driver
+    # is invoked with ``n_trials_to_run=0`` so Optuna's optimize() is a clean
+    # no-op and only the existing completed trials surface as
+    # ``OptimizationTrial`` objects for best_params/best_value extraction.
+    n_trials_to_run = 0 if args.resume_only else args.n_trials
+    if args.resume_only:
+        log.warning(
+            "--resume-only: skipping optimize() (n_trials_to_run=0); reusing "
+            "existing study %s in storage. n_trials_target=%d preserved for artifact.",
+            f"phase85_{args.symbol.lower()}_seed{args.seed}",
+            args.n_trials,
+        )
+
     out_dir = Path(args.out_dir) if args.out_dir else _resolve_artifacts_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     log.info(
-        "Phase 85 run: symbol=%s n_trials=%d dry=%s out_dir=%s",
+        "Phase 85 run: symbol=%s n_trials_target=%d n_trials_to_run=%d dry=%s resume_only=%s out_dir=%s",
         args.symbol,
         args.n_trials,
+        n_trials_to_run,
         args.dry,
+        args.resume_only,
         out_dir,
     )
 
@@ -228,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         df,
         feature_engine=feature_engine,
         risk_engine=risk_engine,
-        n_trials=args.n_trials,
+        n_trials=n_trials_to_run,
         seed=args.seed,
         storage_url=args.storage_url,
         wf_config=wf_config,
