@@ -41,7 +41,12 @@ class OrderRiskChecker:
         current_holdings: dict[str, Holding],
         total_nav: float,
     ) -> RiskCheckResult:
-        """Check a single order against risk limits. Returns pass/reject."""
+        """Check a single order against risk limits. Returns pass/reject.
+
+        Per TRUTH-03 (D-13/D-14, RES-Q2): on rejection, RiskCheckResult is
+        populated with `check_name` (stable id) and `shortfall` (numeric
+        context) in addition to the human-readable `reason`.
+        """
 
         # Check 1: Single stock position limit
         if order.target_weight > self.position_limit_pct:
@@ -50,7 +55,16 @@ class OrderRiskChecker:
                 f"exceeds limit {self.position_limit_pct:.2%}"
             )
             logger.warning("Risk rejected: %s", reason)
-            return RiskCheckResult(passed=False, reason=reason)
+            return RiskCheckResult(
+                passed=False,
+                reason=reason,
+                check_name="position_limit",
+                shortfall={
+                    "symbol": order.symbol,
+                    "weight": order.target_weight,
+                    "limit": self.position_limit_pct,
+                },
+            )
 
         # Check 2: Total exposure limit (only for buy orders)
         if order.action == "buy":
@@ -62,12 +76,27 @@ class OrderRiskChecker:
             if projected > self.max_exposure:
                 reason = f"max_exposure: projected {projected:.2%} exceeds limit {self.max_exposure:.2%}"
                 logger.warning("Risk rejected: %s", reason)
-                return RiskCheckResult(passed=False, reason=reason)
+                return RiskCheckResult(
+                    passed=False,
+                    reason=reason,
+                    check_name="max_exposure",
+                    shortfall={
+                        "projected": projected,
+                        "limit": self.max_exposure,
+                        "current_exposure": current_exposure,
+                        "order_weight": order.target_weight,
+                    },
+                )
 
         # Check 3: Stop-loss configured for buy orders
         if order.action == "buy" and self.stop_loss_pct is None:
             reason = "stop_loss: no stop-loss configured for buy orders"
             logger.warning("Risk rejected: %s", reason)
-            return RiskCheckResult(passed=False, reason=reason)
+            return RiskCheckResult(
+                passed=False,
+                reason=reason,
+                check_name="stop_loss",
+                shortfall=None,
+            )
 
         return RiskCheckResult(passed=True)

@@ -3,6 +3,7 @@
 import uuid as _uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from poseidon.orders.state_machine import OrderStatus
 
@@ -23,7 +24,8 @@ class Order:
     price: float | None = None  # limit price, None for market
     status: OrderStatus = OrderStatus.PENDING
     broker_order_id: str | None = None
-    reject_reason: str | None = None
+    # TRUTH-03 (D-13/D-17): structured 4-key dict, not free text.
+    reject_reason: dict[str, Any] | None = None
     id: str = field(default_factory=lambda: _uuid.uuid4().hex)
 
 
@@ -49,7 +51,14 @@ class OrderResult:
 
 @dataclass
 class RiskCheckResult:
-    """Result of a pre-order risk check."""
+    """Result of a pre-order risk check.
+
+    TRUTH-03 (D-13/D-14, RES-Q2): extended with check_name and shortfall so
+    the OrderManager can build a structured reject_reason without inspecting
+    the human-readable `reason` string.
+    """
 
     passed: bool
     reason: str = ""
+    check_name: str | None = None
+    shortfall: dict[str, Any] | None = None
