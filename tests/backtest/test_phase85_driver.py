@@ -1246,3 +1246,42 @@ class TestVerdictInputsRegression:
         """Empty per_window list → ValueError (Phase 86 cannot proceed)."""
         with pytest.raises(ValueError, match="per_window is empty"):
             _flatten_oos_trades([])
+
+    def test_build_wfe_payload_zero_oos_trades_surfaces_flag(self):
+        """Legitimate zero-trade study (every window has empty oos_trades) →
+        artifact emitted with wfe_flag 'zero_oos_trades' AND
+        max_consecutive_losses=None (NOT silent 0).
+
+        Phase 86 reads max_consecutive_losses=None as a signal that gate_04
+        cannot be evaluated for this run — surfaces the truth instead of
+        spuriously passing the gate (which '<= 8' would do for 0).
+        """
+        per_window_zero = [
+            {
+                "window_index": i,
+                "is_metrics": {
+                    "sharpe_ratio": 0.0,
+                    "trade_count": 0,
+                    "annualized_return": 0.0,
+                },
+                "oos_metrics": {
+                    "sharpe_ratio": 0.0,
+                    "trade_count": 0,
+                    "annualized_return": 0.0,
+                },
+                "is_trade_count": 0,
+                "oos_trade_count": 0,
+                "oos_trades": [],
+                "oos_ann_return": 0.0,
+                "is_ann_return": 0.0,
+            }
+            for i in range(3)
+        ]
+        r = _synthetic_result()
+        r.wfe_per_window = per_window_zero
+        r.wfe_flags = []
+        payload = build_wfe_payload(r, wf_config_dict=_WF_CFG)
+        assert "zero_oos_trades" in payload["flags"]
+        assert payload["verdict_inputs"]["max_consecutive_losses"] is None
+        assert payload["verdict_inputs"]["oos_total_trades"] == 0
+        assert payload["verdict_inputs"]["n_oos_windows"] == 3

@@ -288,8 +288,21 @@ def build_wfe_payload(
     oos_agg_sharpe = oos_aggregate_sharpe_trade_weighted(per_window)
     # B-1 fix: _flatten_oos_trades raises ValueError when zero windows have
     # non-empty oos_trades — silent [] fallback would corrupt gate_04.
-    all_trades = _flatten_oos_trades(per_window)
-    max_loss_streak = compute_max_consecutive_losses(all_trades)
+    # Rule 1+2: legitimate zero-trade studies surface via wfe_flags +
+    # max_consecutive_losses=None so Phase 86 sees the truth (NOT spurious 0).
+    flags = list(result.wfe_flags)
+    try:
+        all_trades = _flatten_oos_trades(per_window)
+        max_loss_streak: int | None = int(compute_max_consecutive_losses(all_trades))
+    except ValueError as exc:
+        if "every per_window has empty oos_trades" in str(exc):
+            # Legitimate zero-trade study — surface via wfe_flags as guard suggests.
+            if "zero_oos_trades" not in flags:
+                flags.append("zero_oos_trades")
+            max_loss_streak = None
+        else:
+            # Other guards (zero windows, missing 'oos_trades' key) remain fatal.
+            raise
 
     payload = {
         "schema_version": ARTIFACT_SCHEMA_VERSION,
@@ -301,14 +314,14 @@ def build_wfe_payload(
         "wf_config": dict(wf_config_dict),
         "per_window": [dict(w) if not isinstance(w, dict) else w for w in per_window],
         "aggregate_oos_metrics": dict(result.wfe_aggregate),
-        "flags": list(result.wfe_flags),
+        "flags": flags,
         "budget_summary": dict(result.budget_summary),
         "frozen_gate_anchor": FROZEN_GATE_ANCHOR,
         "verdict_inputs": {
             "oos_total_trades": int(oos_total_trades),
             "oos_aggregate_sharpe": float(oos_agg_sharpe),
             "wfe_degradation": (None if wfe_deg is None else float(wfe_deg)),
-            "max_consecutive_losses": int(max_loss_streak),
+            "max_consecutive_losses": (None if max_loss_streak is None else int(max_loss_streak)),
             "n_oos_windows": len(per_window),
         },
         "generated_at": _now_iso_utc(),
