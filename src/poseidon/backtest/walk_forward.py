@@ -238,8 +238,13 @@ class WalkForwardAnalyzer:
         logger.info("Walk-forward: %d windows, sequential execution", len(windows))
 
         for i, ((train_start, train_end), (test_start, test_end)) in enumerate(windows):
-            is_ohlcv = ohlcv.iloc[train_start:train_end].reset_index(drop=True)
-            oos_ohlcv = ohlcv.iloc[test_start:test_end].reset_index(drop=True)
+            # Preserve tz-aware datetime index (Rule 3 fix for Phase 85): companion
+            # features (open_interest, funding_rates) align via _align_*_to_index
+            # against ohlcv.index using datetime-based reindex. .reset_index(drop=True)
+            # converts the index to int64 and breaks companion feature alignment with
+            # "Cannot compare dtypes datetime64[ns, UTC] and int64".
+            is_ohlcv = ohlcv.iloc[train_start:train_end]
+            oos_ohlcv = ohlcv.iloc[test_start:test_end]
 
             # Fresh strategy per window to avoid state leakage
             window_strategy = factory.from_config(strategy_config)
