@@ -1628,9 +1628,11 @@ def portfolio_nav_snapshot() -> dict:
     from datetime import date as date_type
 
     import yaml
+    from sqlalchemy import func
 
     from poseidon.broker.config import BrokerConfig
     from poseidon.models.nav_snapshot import NavSnapshotRecord
+    from poseidon.models.trade_log import TradeLogRecord
 
     now = datetime.now(UTC)
 
@@ -1656,8 +1658,15 @@ def portfolio_nav_snapshot() -> dict:
             holdings_value += shares * price
             deployed_cost += shares * entry_price
 
-    # Cash = initial NAV minus total cost of open positions
-    cash = initial_nav - deployed_cost
+    # Realized P&L from closed trades (non-perp). Without this, cash stays
+    # at initial_nav whenever positions are flat, masking actual losses/gains.
+    with db_session() as pnl_session:
+        realized_pnl = (
+            pnl_session.query(func.coalesce(func.sum(TradeLogRecord.realized_pnl), 0.0))
+            .filter(TradeLogRecord.market != "crypto_perp")
+            .scalar()
+        ) or 0.0
+    cash = initial_nav - deployed_cost + float(realized_pnl)
     total_nav = holdings_value + cash
 
     today = date_type.today()
@@ -2198,9 +2207,11 @@ def perp_nav_snapshot() -> dict:
     from datetime import date as date_type
 
     import yaml
+    from sqlalchemy import func
 
     from poseidon.broker.config import BrokerConfig
     from poseidon.models.nav_snapshot import NavSnapshotRecord
+    from poseidon.models.trade_log import TradeLogRecord
 
     datetime.now(UTC)
     # NO weekend skip -- crypto 24/7
@@ -2232,7 +2243,15 @@ def perp_nav_snapshot() -> dict:
             holdings_value += shares * price  # mark-to-market value
             deployed_cost += shares * entry_price
 
-    cash = initial_nav - deployed_cost
+    # Realized P&L from closed perp trades. Without this, cash recovers to
+    # initial_nav whenever flat, masking realized losses/gains.
+    with db_session() as pnl_session:
+        realized_pnl = (
+            pnl_session.query(func.coalesce(func.sum(TradeLogRecord.realized_pnl), 0.0))
+            .filter(TradeLogRecord.market == "crypto_perp")
+            .scalar()
+        ) or 0.0
+    cash = initial_nav - deployed_cost + float(realized_pnl)
     total_nav = holdings_value + cash
 
     today = date_type.today()
