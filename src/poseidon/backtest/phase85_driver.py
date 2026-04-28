@@ -297,7 +297,11 @@ def _slice_window_oos_trades(
     we MUST re-run the OOS slice with the same factory + best_params and
     pull ``result.trades`` ourselves.
     """
-    oos_ohlcv = ohlcv.iloc[test_start:test_end].reset_index(drop=True)
+    # Preserve tz-aware datetime index (Rule 1 fix): companion features like
+    # open_interest call ``_align_oi_to_index(ohlcv.index)`` which requires a
+    # datetime index to reindex against. Calling .reset_index(drop=True) here
+    # converts the index to int64 and breaks the OI/funding companion alignment.
+    oos_ohlcv = ohlcv.iloc[test_start:test_end]
     factory = make_phase85_strategy_factory(symbol)
     strategy = factory(best_params)
     runner = BacktestRunner(
