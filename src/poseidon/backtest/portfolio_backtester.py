@@ -244,7 +244,7 @@ class PortfolioBacktester:
                 [nav for _, nav in equity_curve],
                 index=pd.DatetimeIndex([pd.Timestamp(d) for d, _ in equity_curve]),
             )
-            metrics = compute_metrics(equity_series, trades=[], bars_per_year=252)
+            metrics = compute_metrics(equity_series, trades=trades, bars_per_year=252)
         else:
             metrics = {}
 
