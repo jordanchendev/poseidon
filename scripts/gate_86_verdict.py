@@ -1,0 +1,101 @@
+"""Phase 86: Decision-gate evaluation script for v17.0 milestone verdict.
+
+Reads:
+  - .planning/phases/84-strategy-1m-adaptation-frozen-gate/GATE.yaml (frozen at 5a1ecc9)
+  - .planning/phases/85-optuna-wfe-validation/artifacts/{btc,eth}usdt_{wfe,optuna}.json
+
+Computes per-symbol gate evaluation against the 4 frozen `criteria` entries,
+aggregates with both-must-pass rule (D-05), then emits VERDICT.md +
+gate_86_results.json. Exit 0 on PASS, 1 on FAIL (D-10 — wired in Plan 03).
+
+Design constraints (D-03):
+  - Pure: no DB, no Redis, no network, no subprocess, no git.
+  - Idempotent: same inputs ⇒ same outputs.
+  - CWD-agnostic: default paths anchored on `Path(__file__).resolve().parents[2]`
+    (= aquarium root) so the script runs the same from any working directory.
+
+Plan 02 (Wave 1) scope: three pure functions — `evaluate_symbol_gates`,
+`aggregate_milestone_verdict`, `assert_frozen_anchor` — plus module-level
+constants. CLI / `main()` / output writers land in Plan 03 (Wave 2).
+"""
+
+from __future__ import annotations
+
+import operator as op
+from pathlib import Path
+
+# Anchor: this file lives at poseidon/scripts/gate_86_verdict.py.
+# parents[0] = poseidon/scripts, parents[1] = poseidon, parents[2] = aquarium root.
+# Pitfall 4 fix: never rely on CWD-relative paths (D-03 / D-02).
+AQUARIUM_ROOT = Path(__file__).resolve().parents[2]
+
+DEFAULT_GATE_YAML = AQUARIUM_ROOT / ".planning/phases/84-strategy-1m-adaptation-frozen-gate/GATE.yaml"
+DEFAULT_BTC_WFE = AQUARIUM_ROOT / ".planning/phases/85-optuna-wfe-validation/artifacts/btcusdt_wfe.json"
+DEFAULT_ETH_WFE = AQUARIUM_ROOT / ".planning/phases/85-optuna-wfe-validation/artifacts/ethusdt_wfe.json"
+DEFAULT_BTC_OPTUNA = AQUARIUM_ROOT / ".planning/phases/85-optuna-wfe-validation/artifacts/btcusdt_optuna.json"
+DEFAULT_ETH_OPTUNA = AQUARIUM_ROOT / ".planning/phases/85-optuna-wfe-validation/artifacts/ethusdt_optuna.json"
+DEFAULT_OUT_DIR = AQUARIUM_ROOT / ".planning/phases/86-decision-gate-evaluation-verdict"
+
+# Operator-string dispatch table (RESEARCH Pattern 1). Stdlib `operator` module
+# is well-tested and avoids `eval()` (Pitfall — security smell + lint-tripping).
+OPS = {
+    ">": op.gt,
+    ">=": op.ge,
+    "<": op.lt,
+    "<=": op.le,
+    "==": op.eq,
+}
+
+
+def evaluate_symbol_gates(criteria_block: dict, verdict_inputs: dict) -> dict[str, dict]:
+    """Evaluate criteria.gate_01..gate_NN against one symbol's verdict_inputs.
+
+    Args:
+        criteria_block: ``gate_yaml["criteria"]`` — dict with keys ``gate_01``,
+            ``gate_02``, ... Each value has shape
+            ``{"name": str, "metric": str, "operator": str, "threshold": number}``.
+        verdict_inputs: One symbol's ``verdict_inputs`` block from
+            ``*_wfe.json``. Keys are metric names (e.g. ``oos_aggregate_sharpe``,
+            ``wfe_degradation``, ``oos_total_trades``, ``max_consecutive_losses``,
+            ``n_oos_windows``). Values may be ``None`` per D-06.
+
+    Returns:
+        Dict keyed by gate_id with per-gate result dict containing
+        ``name``, ``metric``, ``value``, ``operator``, ``threshold``,
+        ``passed``, ``reason``. ``reason`` is populated only when the metric
+        value is ``None`` (cannot evaluate ⇒ FAIL per D-06).
+
+    Behavior:
+        - Iterate ``sorted(k for k in criteria_block if k.startswith("gate_"))``
+          for deterministic order independent of YAML loader insertion order.
+        - When ``verdict_inputs.get(metric_name) is None`` ⇒
+          ``passed=False``, ``reason="null metric '<metric>' (cannot evaluate ⇒ FAIL per D-06)"``.
+          Never compares ``None`` to a number (Pitfall 2 — would TypeError).
+        - Otherwise ⇒ ``passed = OPS[operator](value, threshold)``, ``reason=None``.
+    """
+    gates: dict[str, dict] = {}
+    for gate_key in sorted(k for k in criteria_block if k.startswith("gate_")):
+        spec = criteria_block[gate_key]
+        metric_name = spec["metric"]
+        operator_str = spec["operator"]
+        threshold = spec["threshold"]
+
+        value = verdict_inputs.get(metric_name)  # may be None per D-06
+
+        if value is None:
+            passed = False
+            reason = f"null metric '{metric_name}' (cannot evaluate ⇒ FAIL per D-06)"
+        else:
+            passed = OPS[operator_str](value, threshold)
+            reason = None
+
+        gates[gate_key] = {
+            "name": spec["name"],
+            "metric": metric_name,
+            "value": value,  # preserve None for JSON sidecar traceability
+            "operator": operator_str,
+            "threshold": threshold,
+            "passed": passed,
+            "reason": reason,
+        }
+    return gates
