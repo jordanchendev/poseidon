@@ -861,3 +861,388 @@ class TestOosTradesPipeline:
         text = driver_path.read_text()
         assert "factory_callable.metrics_kwargs" not in text
         assert ".metrics_kwargs" not in text
+
+
+# ---------------------------------------------------------------------------
+# Plan 85-04 — phase85_artifact JSON writer
+# ---------------------------------------------------------------------------
+
+from poseidon.backtest.phase85_artifact import (  # noqa: E402
+    ARTIFACT_SCHEMA_VERSION,
+    FROZEN_GATE_ANCHOR,
+    PASSED_FIELDS_FORBIDDEN,
+    REQUIRED_OPTUNA_KEYS,
+    REQUIRED_WFE_KEYS,
+    REQUIRED_WFE_VERDICT_INPUTS,
+    _ensure_no_passed,
+    _flatten_oos_trades,
+    build_optuna_payload,
+    build_wfe_payload,
+    write_optuna_artifact,
+    write_wfe_artifact,
+)
+from poseidon.backtest.phase85_metrics import to_jsonable  # noqa: E402
+
+
+def _synthetic_result(symbol: str = "BTCUSDT") -> SimpleNamespace:
+    """Build a Phase85SymbolResult-shaped object for artifact tests.
+
+    Each per_window dict carries `oos_trades` (list of trade records with
+    pnl/exit_time/entry_time) per the 85-03 driver contract.
+    """
+    ts = pd.Timestamp("2026-01-01T00:00:00Z")
+    per_window = [
+        {
+            "window_index": i,
+            "is_start": ts,
+            "is_end": ts + pd.Timedelta(days=90),
+            "oos_start": ts + pd.Timedelta(days=90),
+            "oos_end": ts + pd.Timedelta(days=180),
+            "is_metrics": {
+                "sharpe_ratio": 1.5 + 0.1 * i,
+                "trades": 80,
+                "annualized_return": 0.40,
+            },
+            "oos_metrics": {
+                "sharpe_ratio": 0.8 + 0.05 * i,
+                "trades": 60,
+                "annualized_return": 0.18,
+            },
+            "oos_trades": [
+                {
+                    "symbol": symbol,
+                    "action": "BUY",
+                    "entry_time": (ts + pd.Timedelta(hours=h)).isoformat(),
+                    "exit_time": (ts + pd.Timedelta(hours=h + 1)).isoformat(),
+                    "entry_price": 100.0,
+                    "exit_price": 100.5,
+                    "quantity": 1.0,
+                    "fees": 0.05,
+                    "pnl": (-1.0 if h % 3 == 0 else 0.5),
+                }
+                for h in range(20)
+            ],
+        }
+        for i in range(4)
+    ]
+    return SimpleNamespace(
+        symbol=symbol,
+        study_name=f"phase85_{symbol.lower()}_seed42",
+        storage_url_redacted=("postgresql://poseidon:***@10.0.0.5:5432/poseidon?options=-csearch_path=optuna"),
+        best_params={
+            "lookback_bars": 1440,
+            "cooldown_bars": 240,
+            "wick_ratio_min": 0.15,
+            "breakout_distance_min": 0.10,
+            "oi_buildup_min": 1.2,
+            "fib_level": 0.5,
+            "atr_multiplier_low": 2.5,
+            "atr_multiplier_mid": 3.0,
+            "atr_multiplier_high": 4.5,
+        },
+        factory_params_resolved={f"k{i}": float(i) for i in range(17)},
+        best_value=1.42,
+        n_trials_completed=87,
+        n_trials_failed=13,
+        wfe_per_window=per_window,
+        wfe_aggregate={"oos_aggregate_sharpe": 0.85, "trade_count": 240},
+        wfe_flags=[],
+        budget_samples=[],
+        budget_summary={
+            "peak_rss_mb": 8421.0,
+            "total_seconds": 18342.5,
+            "optuna_seconds": 12450.1,
+            "wfe_seconds": 5892.4,
+        },
+    )
+
+
+_WF_CFG = {
+    "train_days": 90,
+    "test_days": 90,
+    "step_days": 30,
+    "min_trades_per_oos": 25,
+    "bars_per_year": 525_600,
+}
+
+
+class TestArtifactSchema:
+    """D-14 / D-15 schema contracts pinned via REQUIRED_*_KEYS sets."""
+
+    def test_optuna_payload_has_all_d14_keys(self):
+        r = _synthetic_result()
+        payload = build_optuna_payload(
+            r,
+            n_trials_target=100,
+            seed=42,
+            data_window_start="2025-07-30T00:00:00Z",
+            data_window_end="2026-04-26T00:00:00Z",
+        )
+        assert set(payload.keys()) >= REQUIRED_OPTUNA_KEYS
+        assert payload["frozen_gate_anchor"] == "5a1ecc9"
+        assert payload["bars_per_year"] == 525_600
+        assert payload["schema_version"] == ARTIFACT_SCHEMA_VERSION
+        assert len(payload["best_params"]) == 9  # D-01 9-dim
+        assert payload["verdict_inputs"]["n_trials_completed"] == 87
+        assert payload["verdict_inputs"]["n_trials_failed"] == 13
+        assert payload["verdict_inputs"]["best_value_is_sharpe"] == pytest.approx(1.42)
+
+    def test_wfe_payload_has_all_d15_keys(self):
+        r = _synthetic_result()
+        payload = build_wfe_payload(r, wf_config_dict=_WF_CFG)
+        assert set(payload.keys()) >= REQUIRED_WFE_KEYS
+        assert payload["verdict_inputs"]["n_oos_windows"] == 4
+        assert payload["frozen_gate_anchor"] == FROZEN_GATE_ANCHOR
+
+    def test_wfe_verdict_inputs_align_to_gate_yaml(self):
+        """verdict_inputs keys must EXACTLY match GATE.yaml criteria.gate_NN.metric.
+
+        Frozen at aquarium 5a1ecc9:
+          gate_01.metric == 'oos_aggregate_sharpe'   (op '>',  threshold 0.0)
+          gate_02.metric == 'wfe_degradation'        (op '<',  threshold 0.40)
+          gate_03.metric == 'oos_total_trades'       (op '>=', threshold 100)
+          gate_04.metric == 'max_consecutive_losses' (op '<=', threshold 8)
+        Thresholds are Phase 86's domain — Phase 85 only emits raw values.
+        """
+        r = _synthetic_result()
+        payload = build_wfe_payload(r, wf_config_dict=_WF_CFG)
+        vi = payload["verdict_inputs"]
+        # Phase 86 will read these EXACT names from GATE.yaml.
+        assert "oos_aggregate_sharpe" in vi
+        assert "wfe_degradation" in vi
+        assert "oos_total_trades" in vi
+        assert "max_consecutive_losses" in vi
+        assert "n_oos_windows" in vi
+        assert set(vi.keys()) == REQUIRED_WFE_VERDICT_INPUTS
+        # Numeric types only (or None for wfe_degradation degenerate case).
+        assert isinstance(vi["oos_total_trades"], int)
+        assert isinstance(vi["oos_aggregate_sharpe"], float)
+        assert vi["wfe_degradation"] is None or isinstance(vi["wfe_degradation"], float)
+        assert isinstance(vi["max_consecutive_losses"], int)
+
+    def test_round_trip_via_json(self):
+        r = _synthetic_result()
+        payload = build_optuna_payload(
+            r,
+            n_trials_target=100,
+            seed=42,
+            data_window_start="2025-07-30T00:00:00Z",
+            data_window_end="2026-04-26T00:00:00Z",
+        )
+        text = json.dumps(payload, default=to_jsonable, allow_nan=False)
+        decoded = json.loads(text)
+        assert decoded["best_value_is_sharpe"] == pytest.approx(1.42)
+        assert decoded["n_trials_completed"] == 87
+
+    def test_write_to_disk(self, tmp_path):
+        r = _synthetic_result()
+        optuna_path = write_optuna_artifact(
+            r,
+            tmp_path,
+            n_trials_target=100,
+            seed=42,
+            data_window_start="2025-07-30T00:00:00Z",
+            data_window_end="2026-04-26T00:00:00Z",
+        )
+        wfe_path = write_wfe_artifact(r, tmp_path, wf_config_dict=_WF_CFG)
+        assert optuna_path.name == "btcusdt_optuna.json"
+        assert wfe_path.name == "btcusdt_wfe.json"
+        # Files must be parseable JSON (Pitfall 9).
+        json.loads(optuna_path.read_text())
+        json.loads(wfe_path.read_text())
+
+    def test_wfe_degradation_none_serializes(self):
+        """All-IS-negative degenerate case → wfe_degradation=None → JSON null."""
+        r = _synthetic_result()
+        # Force all IS sharpe negative so D-16 returns None.
+        for w in r.wfe_per_window:
+            w["is_metrics"]["sharpe_ratio"] = -0.5
+        payload = build_wfe_payload(r, wf_config_dict=_WF_CFG)
+        assert payload["verdict_inputs"]["wfe_degradation"] is None
+        # JSON serializes None → null literal (no NaN, no string).
+        text = json.dumps(payload, default=to_jsonable, allow_nan=False)
+        assert '"wfe_degradation": null' in text
+
+
+class TestArtifactRedaction:
+    """T-85-CRED: no raw password may appear in any artifact."""
+
+    def test_password_never_in_artifact(self):
+        r = _synthetic_result()
+        r.storage_url_redacted = "postgresql://poseidon:hunter2@host:5432/db"
+        with pytest.raises(ValueError, match="NOT redacted"):
+            build_optuna_payload(
+                r,
+                n_trials_target=100,
+                seed=42,
+                data_window_start="2025-07-30T00:00:00Z",
+                data_window_end="2026-04-26T00:00:00Z",
+            )
+
+    def test_already_redacted_passes(self):
+        r = _synthetic_result()
+        payload = build_optuna_payload(
+            r,
+            n_trials_target=100,
+            seed=42,
+            data_window_start="2025-07-30T00:00:00Z",
+            data_window_end="2026-04-26T00:00:00Z",
+        )
+        assert "***" in payload["storage_url_redacted"]
+        assert "hunter2" not in payload["storage_url_redacted"]
+
+
+class TestArtifactNoVerdict:
+    """PATTERNS.md do-not-copy: writer never emits a `passed` field."""
+
+    def test_no_passed_field(self):
+        r = _synthetic_result()
+        optuna = build_optuna_payload(
+            r,
+            n_trials_target=100,
+            seed=42,
+            data_window_start="2025-07-30T00:00:00Z",
+            data_window_end="2026-04-26T00:00:00Z",
+        )
+        wfe = build_wfe_payload(r, wf_config_dict=_WF_CFG)
+        for forbidden in PASSED_FIELDS_FORBIDDEN:
+            assert forbidden not in optuna
+            assert forbidden not in optuna["verdict_inputs"]
+            assert forbidden not in wfe
+            assert forbidden not in wfe["verdict_inputs"]
+
+    def test_writer_rejects_passed_field_smuggling(self):
+        """Defense in depth: if a future hand smuggles `passed`, guard catches it."""
+        r = _synthetic_result()
+        payload = build_optuna_payload(
+            r,
+            n_trials_target=100,
+            seed=42,
+            data_window_start="2025-07-30T00:00:00Z",
+            data_window_end="2026-04-26T00:00:00Z",
+        )
+        payload["passed"] = True
+        with pytest.raises(ValueError, match="forbidden field 'passed'"):
+            _ensure_no_passed(payload)
+
+
+class TestVerdictInputsRegression:
+    """B-1 follow-up: max_consecutive_losses MUST come from real OOS trades.
+
+    WindowResult only carries oos_trade_count (NOT the trade ledger);
+    85-03 driver re-runs per-window OOS backtests to attach `oos_trades`.
+    If `_flatten_oos_trades` silently returns [] on missing/empty windows,
+    compute_max_consecutive_losses([]) → 0, and gate_04 (<= 8) silently
+    passes for every run regardless of true streak — corrupts Phase 86.
+    """
+
+    def test_max_consecutive_losses_nonzero(self):
+        """5 consecutive losing trades → verdict_inputs.max_consecutive_losses == 5."""
+        ts = pd.Timestamp("2026-01-01T00:00:00Z")
+        losing_streak = [
+            {
+                "symbol": "BTCUSDT",
+                "action": "BUY",
+                "entry_time": (ts + pd.Timedelta(hours=i)).isoformat(),
+                "exit_time": (ts + pd.Timedelta(hours=i + 1)).isoformat(),
+                "entry_price": 100.0,
+                "exit_price": 99.0,
+                "quantity": 1.0,
+                "fees": 0.05,
+                "pnl": -1.0,
+            }
+            for i in range(5)
+        ]
+        wins = [
+            {
+                "symbol": "BTCUSDT",
+                "action": "BUY",
+                "entry_time": (ts + pd.Timedelta(hours=10 + i)).isoformat(),
+                "exit_time": (ts + pd.Timedelta(hours=11 + i)).isoformat(),
+                "entry_price": 100.0,
+                "exit_price": 101.0,
+                "quantity": 1.0,
+                "fees": 0.05,
+                "pnl": 0.95,
+            }
+            for i in range(3)
+        ]
+        per_window = [
+            {
+                "window_index": 0,
+                "is_metrics": {
+                    "sharpe_ratio": 1.0,
+                    "trades": 50,
+                    "annualized_return": 0.30,
+                },
+                "oos_metrics": {
+                    "sharpe_ratio": 0.5,
+                    "trades": 8,
+                    "annualized_return": 0.10,
+                },
+                "oos_trades": losing_streak + wins,
+            },
+            {
+                "window_index": 1,
+                "is_metrics": {
+                    "sharpe_ratio": 1.0,
+                    "trades": 50,
+                    "annualized_return": 0.30,
+                },
+                "oos_metrics": {
+                    "sharpe_ratio": 0.5,
+                    "trades": 2,
+                    "annualized_return": 0.10,
+                },
+                "oos_trades": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "action": "BUY",
+                        "entry_time": ts.isoformat(),
+                        "exit_time": (ts + pd.Timedelta(hours=1)).isoformat(),
+                        "entry_price": 100.0,
+                        "exit_price": 101.0,
+                        "quantity": 1.0,
+                        "fees": 0.05,
+                        "pnl": 0.95,
+                    },
+                ],
+            },
+        ]
+        r = _synthetic_result()
+        r.wfe_per_window = per_window
+        payload = build_wfe_payload(r, wf_config_dict=_WF_CFG)
+        # The 5 consecutive losses in window 0 must surface to verdict_inputs.
+        assert payload["verdict_inputs"]["max_consecutive_losses"] == 5
+
+    def test_flatten_raises_when_no_oos_trades(self):
+        """Every window has empty oos_trades → ValueError (no silent 0)."""
+        per_window_empty = [
+            {
+                "window_index": i,
+                "oos_metrics": {"sharpe_ratio": 0.0, "trades": 0},
+                "is_metrics": {"sharpe_ratio": 0.0, "trades": 0},
+                "oos_trades": [],
+            }
+            for i in range(4)
+        ]
+        with pytest.raises(ValueError, match="oos_trades"):
+            _flatten_oos_trades(per_window_empty)
+
+    def test_flatten_raises_when_oos_trades_key_missing(self):
+        """Every window missing oos_trades key → ValueError."""
+        per_window_missing = [
+            {
+                "window_index": i,
+                "oos_metrics": {"sharpe_ratio": 0.0, "trades": 0},
+                "is_metrics": {"sharpe_ratio": 0.0, "trades": 0},
+            }
+            for i in range(4)
+        ]
+        with pytest.raises(ValueError, match="oos_trades"):
+            _flatten_oos_trades(per_window_missing)
+
+    def test_flatten_raises_when_per_window_empty(self):
+        """Empty per_window list → ValueError (Phase 86 cannot proceed)."""
+        with pytest.raises(ValueError, match="per_window is empty"):
+            _flatten_oos_trades([])
