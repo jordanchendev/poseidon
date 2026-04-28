@@ -21,8 +21,14 @@ constants. CLI / `main()` / output writers land in Plan 03 (Wave 2).
 
 from __future__ import annotations
 
+import argparse
+import json
 import operator as op
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
+
+import yaml
 
 # Anchor: this file lives at poseidon/scripts/gate_86_verdict.py.
 # parents[0] = poseidon/scripts, parents[1] = poseidon, parents[2] = aquarium root.
@@ -178,3 +184,290 @@ def assert_frozen_anchor(gate_yaml: dict, artifacts: dict[str, dict]) -> None:
             mismatches.append(f"{label}: expected {expected!r}, got {got!r}")
     if mismatches:
         raise SystemExit("Frozen-gate anchor mismatch (D-20 violation):\n  " + "\n  ".join(mismatches))
+
+
+# ----------------------------------------------------------------------------
+# Plan 03 (Wave 2): CLI surface + writers + main() orchestration.
+# Per D-03 purity: stdlib + PyYAML only — no DB, no Redis, no network, no git.
+# Per D-11/D-12: this module never modifies STATE.md/PROJECT.md/ROADMAP.md.
+# ----------------------------------------------------------------------------
+
+
+def _load_yaml(path: Path) -> dict:
+    """Load YAML file via stdlib + PyYAML safe_load. Raises on parse error (fail-loud per D-03)."""
+    return yaml.safe_load(path.read_text())
+
+
+def _load_json(path: Path) -> dict:
+    """Load JSON file. Raises on parse error (fail-loud per D-03)."""
+    return json.loads(path.read_text())
+
+
+def _format_value(value: object) -> str:
+    """Render a metric value for the VERDICT.md per-gate-results table.
+
+    - ``None`` → ``"null"`` (D-06 null preservation in human-readable output)
+    - ``float`` → 4-decimal fixed-point (e.g. ``0.0404``)
+    - other (``int``, ``bool``) → ``str(value)``
+
+    JSON sidecar bypasses this helper and preserves the raw value (None included).
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        # bool is a subclass of int in Python; handle before the int/float branches
+        return str(value)
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    return str(value)
+
+
+def render_verdict_markdown(
+    *,
+    frozen_commit: str,
+    gate_yaml_path: Path,
+    eval_date: str,
+    per_symbol_results: dict,
+    milestone_verdict: str,
+    milestone_rationale: str,
+) -> str:
+    """Render the 6-section VERDICT.md text per D-08 layout (RESEARCH Pattern 3).
+
+    Sections (in order):
+      1. Header (title + frozen commit + evaluation date + GATE.yaml path)
+      2. ## Per-Gate Results table (4 gates × N symbols)
+      3. ## Per-Symbol Summary table
+      4. ## Milestone Verdict
+      5. ## Notes / Caveats
+      6. ## Action Path (D-11 PASS branch or D-12 FAIL branch — picked by milestone_verdict)
+
+    Args:
+        frozen_commit: gate_yaml["frozen_commit"] (e.g. "5a1ecc9").
+        gate_yaml_path: absolute or repo-relative path to GATE.yaml (rendered as code).
+        eval_date: ISO date string (YYYY-MM-DD) — date-only, not full timestamp.
+        per_symbol_results: insertion-ordered dict (BTCUSDT first per Plan 02 contract).
+        milestone_verdict: "PASS" or "FAIL".
+        milestone_rationale: aggregator-produced rationale string.
+
+    Returns:
+        Full markdown text. Caller writes to ``<out_dir>/VERDICT.md``.
+    """
+    lines: list[str] = []
+
+    # --- Section 1: Header --------------------------------------------------
+    lines.append("# Phase 86 — Decision Gate Verdict")
+    lines.append("")
+    lines.append(f"**Frozen GATE commit:** `{frozen_commit}`")
+    lines.append(f"**Evaluation date:** {eval_date}")
+    lines.append(f"**GATE.yaml:** `{gate_yaml_path}`")
+    lines.append("")
+
+    # --- Section 2: Per-Gate Results table ----------------------------------
+    lines.append("## Per-Gate Results")
+    lines.append("")
+    lines.append("| Symbol | Gate | Metric | Threshold | Operator | Value | Result |")
+    lines.append("|--------|------|--------|-----------|----------|-------|--------|")
+    for symbol, result in per_symbol_results.items():
+        gates = result["gates"]
+        for gate_id in sorted(gates.keys()):
+            g = gates[gate_id]
+            badge = "✅ PASS" if g["passed"] else "❌ FAIL"
+            cell = badge
+            if g.get("reason"):
+                cell = f"{badge} (null metric ⇒ cannot evaluate per D-06)"
+            lines.append(
+                f"| {symbol} | {gate_id} {g['name']} | {g['metric']} | "
+                f"{_format_value(g['threshold'])} | {g['operator']} | "
+                f"{_format_value(g['value'])} | {cell} |"
+            )
+    lines.append("")
+
+    # --- Section 3: Per-Symbol Summary --------------------------------------
+    lines.append("## Per-Symbol Summary")
+    lines.append("")
+    lines.append("| Symbol | passed_count | min_pass | Symbol Verdict |")
+    lines.append("|--------|--------------|----------|----------------|")
+    for symbol, result in per_symbol_results.items():
+        total = len(result["gates"])
+        lines.append(f"| {symbol} | {result['passed_count']}/{total} | {result['min_pass']} | {result['verdict']} |")
+    lines.append("")
+
+    # --- Section 4: Milestone Verdict ---------------------------------------
+    lines.append("## Milestone Verdict")
+    lines.append("")
+    lines.append(f"**{milestone_verdict}** — {milestone_rationale}")
+    lines.append("")
+
+    # --- Section 5: Notes / Caveats -----------------------------------------
+    lines.append("## Notes / Caveats")
+    lines.append("")
+    # Echo Phase 85 flags from each symbol's record (D-09 traceability echoed in markdown)
+    flags_lines: list[str] = []
+    for symbol, result in per_symbol_results.items():
+        flags = result.get("flags", [])
+        flags_lines.append(f"  - {symbol}: {flags}")
+    null_metric_note = ""
+    eth_record = per_symbol_results.get("ETHUSDT")
+    if eth_record is not None:
+        eth_g04 = eth_record.get("gates", {}).get("gate_04")
+        if eth_g04 and eth_g04.get("value") is None:
+            null_metric_note = (
+                "- ETH `max_consecutive_losses` is null because Phase 85 surfaced "
+                "`zero_oos_trades` flag (no trades ⇒ no loss-streak to compute). "
+                "Treated as FAIL per D-06."
+            )
+    if null_metric_note:
+        lines.append(null_metric_note)
+    lines.append("- Strict `>` comparisons treat `0.0` as FAIL (Pitfall 1 — correct frozen behavior, not a bug).")
+    lines.append(
+        "- `n_oos_windows = 3` for both symbols is below "
+        "`walk_forward.min_oos_windows = 4` configured in GATE.yaml, but the "
+        "`criteria` block does NOT include an n_oos_windows gate (D-07) — "
+        "informational only."
+    )
+    lines.append("- Phase 85 flags echoed in JSON sidecar:")
+    lines.extend(flags_lines)
+    lines.append("")
+
+    # --- Section 6: Action Path ---------------------------------------------
+    lines.append("## Action Path")
+    lines.append("")
+    if milestone_verdict == "PASS":
+        # D-11 — PASS branch (manual operator follow-ups)
+        lines.append("Per D-11 (PASS path — manual follow-up actions, NOT automated by this script):")
+        lines.append("")
+        lines.append("1. Mark Phase 86 complete in `.planning/ROADMAP.md`")
+        lines.append("2. Promote v17.0 milestone to next stage")
+        lines.append("3. Update `.planning/PROJECT.md` with PASS thesis")
+        lines.append("4. Plan v18.0 launch")
+    else:
+        # D-12 — FAIL branch (manual operator follow-ups)
+        lines.append("Per D-12 (FAIL path — manual follow-up actions, NOT automated by this script):")
+        lines.append("")
+        lines.append("1. Mark Phase 86 complete in `.planning/ROADMAP.md`")
+        lines.append("2. Close v17.0 milestone")
+        lines.append(
+            "3. Record dead-end thesis in `.planning/PROJECT.md` (mirror "
+            "`project_poseidon_ta_dead_end.md` memory pattern: which strategy / "
+            "which gates failed / evidence pointers)"
+        )
+        lines.append("4. Stop track — no v18.0 launch")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the locked 6-flag argparse surface (D-02). Defaults from Plan 02 constants."""
+    parser = argparse.ArgumentParser(
+        prog="gate_86_verdict.py",
+        description=(
+            "Phase 86 decision-gate evaluator. Reads frozen GATE.yaml + Phase 85 "
+            "WFE/Optuna artifacts, emits VERDICT.md + gate_86_results.json. Exits "
+            "0 on PASS milestone, 1 on FAIL (D-10)."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--gate-yaml", type=Path, default=DEFAULT_GATE_YAML)
+    parser.add_argument("--btc-wfe", type=Path, default=DEFAULT_BTC_WFE)
+    parser.add_argument("--eth-wfe", type=Path, default=DEFAULT_ETH_WFE)
+    parser.add_argument("--btc-optuna", type=Path, default=DEFAULT_BTC_OPTUNA)
+    parser.add_argument("--eth-optuna", type=Path, default=DEFAULT_ETH_OPTUNA)
+    parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Phase 86 decision-gate evaluator entrypoint.
+
+    Returns:
+        ``0`` if milestone verdict is PASS, ``1`` if FAIL (D-10).
+    """
+    args = _build_arg_parser().parse_args(argv)
+
+    # 1. Load all inputs (fail-loud on parse errors per D-03).
+    gate_yaml = _load_yaml(args.gate_yaml)
+    btc_wfe = _load_json(args.btc_wfe)
+    eth_wfe = _load_json(args.eth_wfe)
+    btc_optuna = _load_json(args.btc_optuna)
+    eth_optuna = _load_json(args.eth_optuna)
+
+    # 2. Frozen-anchor gate (D-20): all 4 artifacts must declare frozen_gate_anchor
+    #    matching gate_yaml.frozen_commit. SystemExit on mismatch.
+    assert_frozen_anchor(
+        gate_yaml,
+        {
+            "btc_wfe": btc_wfe,
+            "btc_optuna": btc_optuna,
+            "eth_wfe": eth_wfe,
+            "eth_optuna": eth_optuna,
+        },
+    )
+
+    # 3. Per-symbol evaluation (BTC first, ETH second — insertion order matters
+    #    for aggregate_milestone_verdict's rationale fragment ordering).
+    min_pass = gate_yaml["min_pass"]
+    per_symbol_results: dict[str, dict] = {}
+    for symbol, wfe in (("BTCUSDT", btc_wfe), ("ETHUSDT", eth_wfe)):
+        verdict_inputs = wfe["verdict_inputs"]
+        gates = evaluate_symbol_gates(gate_yaml["criteria"], verdict_inputs)
+        passed_count = sum(1 for g in gates.values() if g["passed"])
+        per_symbol_results[symbol] = {
+            "verdict": "PASS" if passed_count >= min_pass else "FAIL",
+            "passed_count": passed_count,
+            "min_pass": min_pass,
+            "verdict_inputs": verdict_inputs,
+            "flags": list(wfe.get("flags", [])),
+            "gates": gates,
+        }
+
+    # 4. Aggregate milestone verdict (both-must-pass per D-05).
+    milestone_verdict, milestone_rationale = aggregate_milestone_verdict(per_symbol_results, min_pass)
+
+    # 5. Build JSON sidecar payload (D-09 + 86-PATTERNS schema).
+    now = datetime.now(UTC)
+    payload = {
+        "phase": "86",
+        "frozen_commit": gate_yaml["frozen_commit"],
+        "evaluation_timestamp": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "min_pass": min_pass,
+        "input_paths": {
+            "gate_yaml": str(args.gate_yaml.resolve()),
+            "btc_wfe": str(args.btc_wfe.resolve()),
+            "eth_wfe": str(args.eth_wfe.resolve()),
+            "btc_optuna": str(args.btc_optuna.resolve()),
+            "eth_optuna": str(args.eth_optuna.resolve()),
+        },
+        "per_symbol": per_symbol_results,
+        "milestone_verdict": milestone_verdict,
+        "milestone_rationale": milestone_rationale,
+    }
+
+    # 6. Render VERDICT.md text.
+    verdict_md = render_verdict_markdown(
+        frozen_commit=gate_yaml["frozen_commit"],
+        gate_yaml_path=args.gate_yaml,
+        eval_date=now.strftime("%Y-%m-%d"),
+        per_symbol_results=per_symbol_results,
+        milestone_verdict=milestone_verdict,
+        milestone_rationale=milestone_rationale,
+    )
+
+    # 7. Write outputs (idempotent overwrite). Bounded to <out-dir> + <out-dir>/artifacts.
+    out_dir: Path = args.out_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    artifacts_dir = out_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    (out_dir / "VERDICT.md").write_text(verdict_md)
+    (artifacts_dir / "gate_86_results.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+
+    # 8. Human feedback line.
+    print(f"Phase 86 milestone verdict: {milestone_verdict} — {milestone_rationale}")
+
+    # 9. Exit code per D-10.
+    return 0 if milestone_verdict == "PASS" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
