@@ -148,3 +148,33 @@ def aggregate_milestone_verdict(
     if all_passed:
         return ("PASS", "; ".join(pass_fragments))
     return ("FAIL", "; ".join(fail_fragments))
+
+
+def assert_frozen_anchor(gate_yaml: dict, artifacts: dict[str, dict]) -> None:
+    """Verify every artifact's frozen_gate_anchor matches gate_yaml.frozen_commit.
+
+    Args:
+        gate_yaml: parsed GATE.yaml. MUST contain top-level ``frozen_commit``
+            string (raises KeyError otherwise — fail-loud is intentional).
+        artifacts: ``{label: parsed_json}`` mapping. Each value MUST be a dict
+            and SHOULD contain top-level ``frozen_gate_anchor``. A missing key
+            surfaces as ``got=None`` (distinct from a wrong-string value).
+
+    Behavior (RESEARCH Pattern 2 + Pitfall 3):
+        - Strict string equality. No truncation tolerance, no normalization.
+          ``"5a1ecc9" != "5a1ecc9e" != "5A1ECC9"``.
+        - On any mismatch, raise ``SystemExit`` with all mismatching labels
+          listed (D-20 violation). Exit code 1 propagates to CLI.
+        - Returns ``None`` implicitly on full match.
+
+    Raises:
+        SystemExit: when one or more artifacts carry a mismatched anchor.
+    """
+    expected = gate_yaml["frozen_commit"]
+    mismatches: list[str] = []
+    for label, art in artifacts.items():
+        got = art.get("frozen_gate_anchor")
+        if got != expected:
+            mismatches.append(f"{label}: expected {expected!r}, got {got!r}")
+    if mismatches:
+        raise SystemExit("Frozen-gate anchor mismatch (D-20 violation):\n  " + "\n  ".join(mismatches))
