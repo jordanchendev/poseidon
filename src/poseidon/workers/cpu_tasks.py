@@ -1485,17 +1485,101 @@ def trigger_risk_update(eval_result: dict | None = None) -> dict:
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.portfolio_monthly_rebalance")
 def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
-    """Monthly rebalance -- currently disabled.
+    """Monthly TW stock rebalance -- driven by PASSED signals in DB.
 
-    RevenueBreakoutStrategy removed in Phase 61 (FinLab data access
-    not yet available via Thalassa). Re-implement when Thalassa
-    serves FinLab-equivalent data.
+    Phase 89-02 W3 un-noop: instead of running RevenueBreakoutStrategy inline
+    (removed in Phase 61, FinLab data not available via Thalassa), this task
+    now consumes whatever PASSED tw_stock signals exist in SignalRepository
+    within the last 7 days and dispatches RebalanceOrders accordingly (D-08:
+    no new strategy logic; we only consume existing PASSED signals).
+
+    The 7-day freshness filter mechanically excludes the 13 legacy frozen
+    signals dated 2026-03-19 (CONTEXT D-15), which is the desired behaviour:
+    legacy signals stay legacy; new strategies (when registered) drive new
+    monthly rebalances via the standard signal pipeline.
+
+    Args:
+        signal_id: Optional incoming signal UUID — preserved for API
+            compatibility with Phase 61-era beat-trigger contracts. Not
+            currently used (multi-symbol rebalance reads its own batch).
     """
-    logger.warning(
-        "portfolio_monthly_rebalance: skipped — RevenueBreakoutStrategy "
-        "removed (FinLab data not available via Thalassa)"
+    import yaml
+
+    from poseidon.broker.config import BrokerConfig
+    from poseidon.orders.manager import OrderManager
+    from poseidon.orders.risk_checker import OrderRiskChecker
+    from poseidon.signals.repository import SignalRepository
+    from poseidon.strategies.portfolio.rebalancer import PortfolioRebalancer
+
+    now = datetime.now(UTC)
+
+    # Read fresh PASSED tw_stock signals (7d window; monthly cadence with slack).
+    signal_window_start = now - timedelta(days=7)
+    with db_session() as sig_db:
+        sig_repo = SignalRepository(sig_db)
+        recent_signals = sig_repo.latest_passed(
+            market="tw_stock",
+            since=signal_window_start,
+            limit=200,
+        )
+
+    if not recent_signals:
+        logger.info(
+            "portfolio_monthly_rebalance: no recent PASSED tw_stock signals "
+            "in last 7d; skipping (legacy frozen signals correctly excluded)"
+        )
+        return {"skipped": "no_recent_signals"}
+
+    # Translate signals -> target weights, capture provenance.
+    targets, signal_ids = _signals_to_target_positions(recent_signals)
+    if not targets:
+        return {"skipped": "no_actionable_signals"}
+
+    # Build broker + manager.
+    with open("config/broker.yaml") as bf:
+        broker_cfg = BrokerConfig(**yaml.safe_load(bf))
+    broker = _build_tw_stock_broker(broker_cfg)
+    position_tracker = _build_position_tracker()
+    risk_checker = OrderRiskChecker(
+        position_limit_pct=0.15,
+        max_exposure=1.0,
+        stop_loss_pct=broker_cfg.slippage_pct,
+        market="tw_stock",
     )
-    return {"skipped": "strategy_unavailable", "reason": "RevenueBreakoutStrategy removed — Phase 61"}
+    order_manager = OrderManager(broker, risk_checker, position_tracker, SessionLocal, broker_cfg)
+
+    # Compute differential orders against current tw_stock holdings.
+    current_holdings = {sym: h for sym, h in position_tracker.current_holdings().items() if h.market == "tw_stock"}
+    rebalancer = PortfolioRebalancer()
+    rebalance_orders = rebalancer.rebalance(targets, current_holdings)
+
+    if not rebalance_orders:
+        logger.info("portfolio_monthly_rebalance: holdings already aligned; no orders")
+        return {"rebalanced": True, "orders": 0}
+
+    # Get prices for weight-to-shares.
+    prices = _get_latest_prices([ro.symbol for ro in rebalance_orders])
+
+    # Dispatch — strategy_name: prefer signal's strategy_id (UUID->str) for traceability.
+    strategy_name_for_log = str(recent_signals[0].strategy_id) if recent_signals[0].strategy_id else "monthly_rebalance"
+    results = order_manager.execute_rebalance(
+        rebalance_orders,
+        strategy_name=strategy_name_for_log,
+        prices=prices,
+        market="tw_stock",
+        signal_ids=signal_ids,
+    )
+
+    logger.info(
+        "portfolio_monthly_rebalance: dispatched %d orders from %d fresh signals",
+        len(results),
+        len(recent_signals),
+    )
+    return {
+        "rebalanced": True,
+        "orders": len(results),
+        "signal_count": len(recent_signals),
+    }
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.portfolio_stop_loss_monitor")
