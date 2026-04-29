@@ -1668,6 +1668,13 @@ def portfolio_stop_loss_monitor() -> dict:
             strategy_name="stop_loss",
             prices=prices,
             market="tw_stock",
+            signal_ids=None,
+            # Phase 89-02 W4 audit whitelist: stop-loss exits are by-design
+            # protective closes, not signal-driven. Tagging the orders with
+            # order_origin="stop_loss" lets the 89-03 mini-audit classify
+            # signal_id-NULL orders as legitimate Cat-B instead of a wiring
+            # breach.
+            order_origin="stop_loss",
         )
 
         # Create TradeLogRecords for stopped-out positions
@@ -1979,6 +1986,12 @@ def perp_liquidation_monitor() -> dict:
         strategy_name="liquidation_protection",
         prices=mark_prices,
         market="crypto_perp",
+        signal_ids=None,
+        # Phase 89-02 W4 audit whitelist: liquidation-distance close-outs
+        # are by-design protective closes, not signal-driven. The
+        # order_origin="liquidation" tag lets the 89-03 mini-audit
+        # classify these signal_id-NULL orders as legitimate Cat-B.
+        order_origin="liquidation",
     )
 
     # 6. Create TradeLogRecords for liquidation-closed positions
