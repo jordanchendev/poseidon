@@ -1933,15 +1933,108 @@ def perp_liquidation_monitor() -> dict:
     return {"checked": len(positions), "closed": closed_symbols}
 
 
+def _signals_to_targets(signals) -> tuple[dict[str, float], dict[str, "uuid.UUID"]]:
+    """Translate a list of PASSED SignalRecords into (targets, signal_ids).
+
+    Phase 89-02 (W2): perp_rebalance / portfolio_monthly_rebalance consume
+    PASSED signals via SignalRepository.latest_passed and feed them into
+    PortfolioRebalancer + OrderManager.execute_rebalance(signal_ids=...).
+
+    Mapping (poseidon.signals.contract.SignalAction values are lowercase
+    strings persisted as ``action`` on SignalRecord):
+        action == 'long'  → targets[symbol] = quantity_pct (long side)
+        action == 'short' → targets[symbol] = quantity_pct (short side, conveyed via separate side dict if needed)
+        action == 'close' → targets[symbol] = 0.0  # exit existing
+        action == 'hold'  → skipped (no entry in targets)
+
+    Defensive newest-wins dedup: latest_passed already orders DESC by
+    signal_time, so first occurrence per symbol wins.
+
+    Returns:
+        targets: dict[symbol, weight] — passed to PortfolioRebalancer (after
+                 conversion to TargetPosition list at the call site)
+        signal_ids: dict[symbol, signal_uuid] — passed verbatim to
+                    OrderManager.execute_rebalance(signal_ids=...)
+    """
+    import uuid as _uuid
+
+    targets: dict[str, float] = {}
+    signal_ids: dict[str, _uuid.UUID] = {}
+    seen: set[str] = set()
+
+    for sig in signals:
+        symbol = sig.symbol
+        if symbol in seen:
+            continue  # newest-wins (caller must order DESC)
+        action = (sig.action or "").lower()
+        qty_pct = float(sig.quantity_pct) if sig.quantity_pct is not None else 0.0
+
+        if action == "hold":
+            continue
+        if action == "long":
+            targets[symbol] = qty_pct
+        elif action == "short":
+            targets[symbol] = qty_pct  # side propagated separately when building TargetPosition
+        elif action == "close":
+            targets[symbol] = 0.0
+        else:
+            continue
+
+        signal_ids[symbol] = sig.id
+        seen.add(symbol)
+
+    return targets, signal_ids
+
+
+def _signals_to_target_positions(signals) -> tuple[list, dict[str, "uuid.UUID"]]:
+    """Caller-friendly wrapper: returns list[TargetPosition] for the rebalancer.
+
+    Uses _signals_to_targets internally so the helper unit tests stay focused
+    on the dict-shape contract (which tests assert directly).
+    """
+    from poseidon.strategies.portfolio.schemas import TargetPosition
+
+    targets_dict, signal_ids = _signals_to_targets(signals)
+
+    # Reconstruct side from the original signal action (long/short/close).
+    side_by_symbol: dict[str, str] = {}
+    for sig in signals:
+        symbol = sig.symbol
+        if symbol in side_by_symbol:
+            continue
+        a = (sig.action or "").lower()
+        if a == "short":
+            side_by_symbol[symbol] = "short"
+        else:
+            side_by_symbol[symbol] = "long"
+
+    targets_list = [
+        TargetPosition(
+            symbol=sym,
+            weight=weight,
+            side=side_by_symbol.get(sym, "long"),
+            reason="signal" if weight > 0 else "signal_close",
+        )
+        for sym, weight in targets_dict.items()
+    ]
+    return targets_list, signal_ids
+
+
 @celery_app.task(name="poseidon.workers.cpu_tasks.perp_rebalance")
 def perp_rebalance(signal_id: str | None = None) -> dict:
-    """Every 4h: run CryptoTrendStrategy -> Rebalancer -> OrderManager (D-04, D-05).
+    """Every 4h: read PASSED crypto_perp signals from DB, rebalance, dispatch (D-04, D-05).
+
+    Phase 89-02 (W2): F8 wiring fix — replaces inline CryptoTrendStrategy with
+    SignalRepository.latest_passed("crypto_perp", since=now-8h) so live orders
+    are produced from PASSED signals (closing the 25-orders-zero-signals
+    breach found in Phase 88). signal_ids dict propagates to OrderManager so
+    each Order is auditably traceable to its upstream PASSED signal.
 
     24/7 -- NO weekend/holiday skip. Triggered 5 min after 4h OHLCV fetch.
     Uses leverage_limits from crypto_trend.yaml risk section (PRSK-03).
 
     Args:
-        signal_id: Optional signal UUID that triggered this rebalance.
+        signal_id: Optional signal UUID that triggered this rebalance (legacy).
     """
     import yaml
 
@@ -1950,13 +2043,14 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
     from poseidon.models.trade_log import TradeLogRecord
     from poseidon.orders.manager import OrderManager
     from poseidon.orders.risk_checker import OrderRiskChecker
-    from poseidon.strategies.portfolio.crypto_trend import CryptoTrendConfig, CryptoTrendStrategy
+    from poseidon.signals.repository import SignalRepository
+    from poseidon.strategies.portfolio.crypto_trend import CryptoTrendConfig
     from poseidon.strategies.portfolio.rebalancer import PortfolioRebalancer
 
     now = datetime.now(UTC)
     # NO weekend skip -- crypto 24/7
 
-    # Load strategy config
+    # Load strategy config (still needed for symbols/leverage/market metadata)
     config_path = "config/strategies/crypto_trend.yaml"
     with open(config_path) as f:
         raw_cfg = yaml.safe_load(f)
@@ -1982,8 +2076,6 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
 
     # Build components
     position_tracker = _build_position_tracker()
-    # Phase 56: CryptoTrendStrategy now uses DataRepository instead of PerpDataLoader
-    strategy = CryptoTrendStrategy(strategy_cfg)
     adapter = PerpPaperAdapter(SessionLocal, leverage=strategy_cfg.allocation.leverage)
 
     # Set per-symbol leverage on adapter
@@ -2024,12 +2116,22 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
             logger.warning("perp_rebalance: portfolio locked by daily_loss protection — %s", reason)
             return {"skipped": "protection_locked", "reason": reason}
 
-    # Run strategy (inject DataRepository with session for perp data access)
-    with db_session():
-        from poseidon.data.remote_repository import RemoteDataRepository
+    # Phase 89-02 (W2): consume PASSED signals from SignalRepository instead
+    # of running CryptoTrendStrategy inline. since=now-8h covers the 4h
+    # cadence with one missed-tick safety margin.
+    signals_window = now - timedelta(hours=8)
+    with db_session() as sig_db:
+        repo = SignalRepository(sig_db)
+        recent_signals = repo.latest_passed(strategy_cfg.market, since=signals_window, limit=100)
 
-        strategy._repo = RemoteDataRepository.from_settings()
-        targets = strategy.select_stocks(pd.DataFrame(), as_of=now.date())
+    if not recent_signals:
+        logger.info("perp_rebalance: no PASSED signals in last 8h — skipping (W2)")
+        return {"rebalanced": True, "orders": 0, "sells": 0, "skipped": "no_recent_signals"}
+
+    targets, signal_ids = _signals_to_target_positions(recent_signals)
+    if not targets:
+        logger.info("perp_rebalance: %d signals consumed, all hold/unknown — no targets", len(recent_signals))
+        return {"rebalanced": True, "orders": 0, "sells": 0, "skipped": "no_actionable_signals"}
 
     # Compute differential orders
     current_holdings = {sym: h for sym, h in position_tracker.current_holdings().items() if h.market == "crypto_perp"}
@@ -2076,11 +2178,14 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
                 }
 
     # Execute rebalance (with leverage enforcement from Plan 01)
+    # Phase 89-02 (W2): pass signal_ids so each Order is auditably traceable
+    # to its upstream PASSED signal (closes F8 wiring breach).
     results = order_manager.execute_rebalance(
         rebalance_orders,
         strategy_name=strategy_cfg.name,
         prices=prices,
         market=strategy_cfg.market,
+        signal_ids=signal_ids,
     )
 
     # Create TradeLogRecords for filled sell orders
