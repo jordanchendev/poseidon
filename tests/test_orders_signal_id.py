@@ -200,9 +200,9 @@ class TestOrderManagerSignalIdsPropagation:
         rorder = RebalanceOrder(
             symbol="BTCUSDT",
             action="buy",
-            target_weight=0.01,
+            target_weight=0.1,  # 0.1 * 1M / 50K = 2 shares (clears lot_size=1)
             current_weight=0.0,
-            delta_weight=0.01,
+            delta_weight=0.1,
             side="long",
         )
         sid = uuid.uuid4()
@@ -226,9 +226,9 @@ class TestOrderManagerSignalIdsPropagation:
         rorder = RebalanceOrder(
             symbol="BTCUSDT",
             action="buy",
-            target_weight=0.01,
+            target_weight=0.1,  # 0.1 * 1M / 50K = 2 shares (clears lot_size=1)
             current_weight=0.0,
-            delta_weight=0.01,
+            delta_weight=0.1,
             side="long",
         )
 
@@ -250,9 +250,9 @@ class TestOrderManagerSignalIdsPropagation:
         rorder = RebalanceOrder(
             symbol="BTCUSDT",
             action="buy",
-            target_weight=0.01,
+            target_weight=0.1,  # 0.1 * 1M / 50K = 2 shares (clears lot_size=1)
             current_weight=0.0,
-            delta_weight=0.01,
+            delta_weight=0.1,
             side="long",
         )
 

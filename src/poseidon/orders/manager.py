@@ -5,6 +5,7 @@ Per-order isolation: rejection of one order does not block others.
 """
 
 import logging
+import uuid
 from datetime import UTC, datetime
 
 from poseidon.broker.base import BrokerAdapter
@@ -77,6 +78,8 @@ class OrderManager:
         strategy_name: str,
         prices: dict[str, float],
         market: str = "tw_stock",
+        *,
+        signal_ids: dict[str, uuid.UUID] | None = None,
     ) -> list[OrderResult]:
         """Process rebalance orders end-to-end.
 
@@ -85,6 +88,13 @@ class OrderManager:
             strategy_name: Strategy that produced the orders
             prices: {symbol: current_price} for weight-to-shares conversion
             market: Market identifier (default "tw_stock")
+            signal_ids: Optional {symbol: signal_uuid} mapping. When provided,
+                each Order gets ``signal_id`` populated from this dict so the
+                order is auditably traceable to the upstream PASSED signal
+                (Phase 89-01 D-04, F8 wiring fix). Symbols missing from the
+                dict (or when signal_ids is None) yield Order.signal_id=None,
+                which is the correct semantic for protective close-outs and
+                portfolio-level rebalances that aren't signal-driven.
 
         Returns:
             List of OrderResult (one per processed RebalanceOrder, excludes qty==0 skips)
@@ -115,6 +125,11 @@ class OrderManager:
                 logger.info("Skipping %s %s: quantity rounds to 0 shares", action, rorder.symbol)
                 continue
 
+            # Phase 89-01 (D-04): attach signal_id when this rebalance order
+            # was triggered by a PASSED signal. Falls back to None for
+            # non-signal-driven flows (protective close, portfolio rebalance).
+            sid = signal_ids.get(rorder.symbol) if signal_ids else None
+
             # Create Order object
             order = Order(
                 symbol=rorder.symbol,
@@ -126,6 +141,7 @@ class OrderManager:
                 strategy_name=strategy_name,
                 broker_mode=self._config.mode,
                 side=rorder.side,
+                signal_id=sid,
             )
 
             # Per-order risk check (isolation: rejection of one does not block others)
@@ -266,6 +282,8 @@ class OrderManager:
                 broker_mode=order.broker_mode,
                 reject_reason=order.reject_reason,
                 side=order.side,
+                # Phase 89-01 (D-04, F8 wiring fix): persist FK to upstream signal.
+                signal_id=order.signal_id,
             )
             session.add(record)
             session.flush()  # get the DB-generated UUID
