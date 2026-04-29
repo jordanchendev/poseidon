@@ -4,7 +4,7 @@ import uuid
 import uuid as _uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from poseidon.orders.state_machine import OrderStatus
 
@@ -32,6 +32,11 @@ class Order:
     # rebalances, protective close-outs, and other non-signal-driven flows
     # (those carry order_origin tags instead — see Plan 89-02).
     signal_id: uuid.UUID | None = None
+    # Phase 89-02 (W4 audit whitelist): tags how this order was triggered so
+    # the mini-audit can distinguish "missing wiring" (origin=signal +
+    # signal_id IS NULL → breach) from "by-design protective close"
+    # (origin=stop_loss/liquidation + signal_id IS NULL → legitimate Cat-B).
+    order_origin: Literal["signal", "stop_loss", "liquidation", "manual"] = "signal"
     id: str = field(default_factory=lambda: _uuid.uuid4().hex)
 
 
