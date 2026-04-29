@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Float, String
+from sqlalchemy import DateTime, Float, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,5 +30,15 @@ class OrderRecord(Base):
     # TRUTH-03 (D-13): structured 4-key dict {check_name, rule, shortfall, details}
     # built via poseidon.risk.reject_reason.build_reject_reason. NULL when not rejected.
     reject_reason: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Phase 89-01 (D-04, F8 wiring fix): FK to signals(id) so we can audit
+    # whether this Order was driven by an upstream PASSED signal. Indexed for
+    # the Phase 88 mini-audit join (signals.status='passed' -> orders.signal_id).
+    # NULL for portfolio rebalance / protective close paths.
+    signal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("signals.id"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()", nullable=False)

@@ -1,5 +1,6 @@
 """Order and fill dataclasses for the broker/order subsystem."""
 
+import uuid
 import uuid as _uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -26,6 +27,11 @@ class Order:
     broker_order_id: str | None = None
     # TRUTH-03 (D-13/D-17): structured 4-key dict, not free text.
     reject_reason: dict[str, Any] | None = None
+    # Phase 89-01 (D-04, F8 wiring fix): FK to signals.id when this Order
+    # was triggered by an upstream PASSED signal. NULL for portfolio-level
+    # rebalances, protective close-outs, and other non-signal-driven flows
+    # (those carry order_origin tags instead — see Plan 89-02).
+    signal_id: uuid.UUID | None = None
     id: str = field(default_factory=lambda: _uuid.uuid4().hex)
 
 
