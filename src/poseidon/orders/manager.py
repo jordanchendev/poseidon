@@ -80,6 +80,7 @@ class OrderManager:
         market: str = "tw_stock",
         *,
         signal_ids: dict[str, uuid.UUID] | None = None,
+        order_origin: str = "signal",
     ) -> list[OrderResult]:
         """Process rebalance orders end-to-end.
 
@@ -95,6 +96,15 @@ class OrderManager:
                 dict (or when signal_ids is None) yield Order.signal_id=None,
                 which is the correct semantic for protective close-outs and
                 portfolio-level rebalances that aren't signal-driven.
+            order_origin: Tag stamped on every produced Order (and persisted
+                OrderRecord) so the 89-03 mini-audit can distinguish
+                signal-driven orders ("signal") from by-design protective
+                closes ("stop_loss", "liquidation", "manual"). Combined with
+                signal_id NULL, "signal" indicates a wiring breach while the
+                other tags whitelist legitimate Cat-B orphan orders. Defaults
+                to "signal" since perp_rebalance / portfolio_monthly_rebalance
+                are signal-driven; protective close-outs MUST pass an explicit
+                non-signal tag (Phase 89-02 W4 audit whitelist, D-04).
 
         Returns:
             List of OrderResult (one per processed RebalanceOrder, excludes qty==0 skips)
@@ -142,6 +152,9 @@ class OrderManager:
                 broker_mode=self._config.mode,
                 side=rorder.side,
                 signal_id=sid,
+                # Phase 89-02 (W4 audit whitelist): stamp origin so the
+                # mini-audit can classify orphan orders correctly.
+                order_origin=order_origin,
             )
 
             # Per-order risk check (isolation: rejection of one does not block others)
@@ -284,6 +297,9 @@ class OrderManager:
                 side=order.side,
                 # Phase 89-01 (D-04, F8 wiring fix): persist FK to upstream signal.
                 signal_id=order.signal_id,
+                # Phase 89-02 (W4 audit whitelist): persist origin tag so the
+                # mini-audit can classify orphan orders.
+                order_origin=order.order_origin,
             )
             session.add(record)
             session.flush()  # get the DB-generated UUID
