@@ -89,3 +89,36 @@ class SignalRepository:
             )
             .count()
         )
+
+    def latest_passed(
+        self,
+        market: str,
+        since: datetime,
+        limit: int = 100,
+    ) -> list[SignalRecord]:
+        """Return the most recent PASSED signals for ``market`` since ``since``.
+
+        Phase 89-02 wires perp_rebalance / portfolio_monthly_rebalance through
+        this method so live orders are produced from PASSED signals (closing
+        the F8 wiring breach found in Phase 88 — 25 orders, 0 matching signals).
+
+        Args:
+            market: Market identifier (e.g. ``"crypto_perp"``, ``"tw_stock"``).
+            since: Lower bound on ``signal_time`` (typically now() - 7d).
+            limit: Maximum rows returned (default 100, ordered DESC by signal_time).
+
+        Returns:
+            List of SignalRecord ordered by signal_time DESC. Excludes
+            pending / rejected signals — only ``status == 'passed'``.
+        """
+        return (
+            self._session.query(SignalRecord)
+            .filter(
+                SignalRecord.market == market,
+                SignalRecord.status == "passed",
+                SignalRecord.signal_time >= since,
+            )
+            .order_by(SignalRecord.signal_time.desc())
+            .limit(limit)
+            .all()
+        )
