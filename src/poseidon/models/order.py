@@ -40,5 +40,16 @@ class OrderRecord(Base):
         nullable=True,
         index=True,
     )
+    # Phase 89-02 (W4 audit whitelist): origin tag distinguishes
+    # signal-driven flows from protective close paths. Combined with
+    # signal_id NULL it lets the mini-audit reject false positives:
+    # NULL + origin=signal           -> wiring breach (must be 0 post-89)
+    # NULL + origin=stop_loss/liquidation/manual -> legitimate Cat-B
+    order_origin: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="signal",
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()", nullable=False)
