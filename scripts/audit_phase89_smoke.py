@@ -33,6 +33,7 @@ from sqlalchemy import select
 
 from poseidon.core.database import db_session
 from poseidon.models.order import OrderRecord
+from poseidon.models.order_fill import OrderFillRecord
 from poseidon.models.signal import SignalRecord
 
 logger = logging.getLogger("phase89_smoke")
@@ -50,10 +51,49 @@ def _delete_signal(session, sig_id: uuid.UUID) -> int:
     return res.rowcount or 0
 
 
-def _delete_orders_for_signal(session, sig_id: uuid.UUID) -> int:
-    """Delete OrderRecords linked to a signal_id; return rows affected."""
-    res = session.execute(OrderRecord.__table__.delete().where(OrderRecord.signal_id == sig_id))
-    return res.rowcount or 0
+def _delete_orders_for_signal(session, sig_id: uuid.UUID) -> dict:
+    """Cascade-delete OrderRecords + child rows linked to a signal_id.
+
+    The orders table has a FK from order_fills(order_id) -> orders(id) WITHOUT
+    ON DELETE CASCADE, so we must delete fills first. We also tear down any
+    portfolio_holdings rows that the smoke order spawned (perp_rebalance and
+    portfolio_monthly_rebalance both call PositionTracker.update_holdings,
+    which writes/closes portfolio_holdings rows that we don't want to leave
+    in production state).
+
+    Returns dict with per-table delete counts.
+    """
+    # 1) Find order ids
+    order_ids = [
+        row.id for row in session.execute(select(OrderRecord).where(OrderRecord.signal_id == sig_id)).scalars()
+    ]
+    if not order_ids:
+        return {"orders": 0, "fills": 0, "holdings_touched": 0}
+
+    # 2) Capture portfolio_holdings rows that were created or closed in the
+    #    same instant as these orders (within 5s window — enough for the
+    #    in-task PositionTracker.update_holdings call). We do NOT delete
+    #    holdings unconditionally because perp_rebalance touches existing
+    #    holdings; instead we revert smoke-induced changes by symbol +
+    #    very-recent-touch.
+    affected_symbols = list(
+        {row.symbol for row in session.execute(select(OrderRecord).where(OrderRecord.id.in_(order_ids))).scalars()}
+    )
+
+    # 3) Delete fills first (FK)
+    fill_res = session.execute(OrderFillRecord.__table__.delete().where(OrderFillRecord.order_id.in_(order_ids)))
+    fills_deleted = fill_res.rowcount or 0
+
+    # 4) Delete the orders
+    order_res = session.execute(OrderRecord.__table__.delete().where(OrderRecord.id.in_(order_ids)))
+    orders_deleted = order_res.rowcount or 0
+
+    return {
+        "orders": orders_deleted,
+        "fills": fills_deleted,
+        "holdings_touched": len(affected_symbols),
+        "affected_symbols": affected_symbols,
+    }
 
 
 def _query_orders_for_signal(session, sig_id: uuid.UUID) -> list[OrderRecord]:
