@@ -118,30 +118,40 @@ def post_process_funding_pnl(trades: list[dict], data: pd.DataFrame) -> dict:
             daily_pnl = -side × notional × funding_rate_daily(day)
         Sum across days, add to trade pnl.
     """
+    # Trades come as paired entries: open (action=long/short, exit_time=null) +
+    # close (action=close, has exit_time + pnl). Pair by entry_time to recover side.
+    open_side_by_entry: dict = {}
     funding_pnl_total = 0.0
     funding_pnl_by_trade = []
 
     for t in trades:
         action = t.get("action", "").lower()
-        if action == "long":
-            side = 1
-        elif action == "short":
-            side = -1
-        else:
+        entry_time_raw = t.get("entry_time")
+        if not entry_time_raw:
+            funding_pnl_by_trade.append(0.0)
+            continue
+        entry_time = pd.to_datetime(entry_time_raw).tz_localize(None)
+
+        if action in ("long", "short"):
+            open_side_by_entry[entry_time] = 1 if action == "long" else -1
             funding_pnl_by_trade.append(0.0)
             continue
 
-        entry_time = pd.to_datetime(t["entry_time"]).tz_localize(None) if t.get("entry_time") else None
-        exit_time = pd.to_datetime(t["exit_time"]).tz_localize(None) if t.get("exit_time") else None
-        if entry_time is None or exit_time is None:
+        if action != "close":
             funding_pnl_by_trade.append(0.0)
             continue
+
+        side = open_side_by_entry.get(entry_time)
+        exit_time_raw = t.get("exit_time")
+        if side is None or not exit_time_raw:
+            funding_pnl_by_trade.append(0.0)
+            continue
+        exit_time = pd.to_datetime(exit_time_raw).tz_localize(None)
 
         notional = float(t["entry_price"]) * float(t["quantity"])
-        # Slice funding rates over the hold period (inclusive)
         mask = (data.index >= entry_time) & (data.index < exit_time)
         funding_slice = data.loc[mask, "funding_rate_daily"]
-        # Long pays positive funding; short receives positive funding
+        # Long pays positive funding; short receives positive funding.
         trade_funding_pnl = float(-side * notional * funding_slice.sum())
 
         funding_pnl_by_trade.append(trade_funding_pnl)
