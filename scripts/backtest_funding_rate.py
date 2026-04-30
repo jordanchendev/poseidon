@@ -200,7 +200,7 @@ def run_one(repo: RemoteDataRepository, sym_pair: dict) -> dict:
 
 
 def main():
-    repo = RemoteDataRepository()
+    repo = RemoteDataRepository.from_settings()
     out = {"params": STRAT_PARAMS, "results": []}
     for sym_pair in SYMBOLS:
         logger.info("=== %s ===", sym_pair["ohlcv"])
