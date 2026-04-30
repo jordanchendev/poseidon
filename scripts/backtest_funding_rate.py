@@ -78,13 +78,17 @@ def fetch_data(repo: RemoteDataRepository, ohlcv_symbol: str, funding_symbol: st
     if funding.empty:
         raise RuntimeError(f"No funding for {funding_symbol}")
 
-    # Normalise both to date keys for merge
+    # Normalise both to date keys for merge.
+    # `read_funding_rates` returns DataFrame indexed by `date`; OHLCV is indexed by `time`.
     if ohlcv.index.name == "time":
         ohlcv = ohlcv.reset_index()
     ohlcv["date"] = pd.to_datetime(ohlcv["time"]).dt.tz_localize(None).dt.normalize()
-    funding["date"] = pd.to_datetime(funding["date"]).dt.tz_localize(None).dt.normalize()
 
-    merged = ohlcv.merge(funding[["date", "funding_rate_daily"]], on="date", how="left")
+    funding_df = funding.reset_index()
+    date_col = "date" if "date" in funding_df.columns else funding_df.columns[0]
+    funding_df["date"] = pd.to_datetime(funding_df[date_col]).dt.tz_localize(None).dt.normalize()
+
+    merged = ohlcv.merge(funding_df[["date", "funding_rate_daily"]], on="date", how="left")
     merged = merged.set_index("time").drop(columns=["date"])
     merged.index = pd.to_datetime(merged.index).tz_localize(None)
 
