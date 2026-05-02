@@ -63,6 +63,13 @@ qlib = [
     # mlflow imports `pkg_resources` which was removed from setuptools 81+.
     # Pin to <81 so the legacy import still works.
     "setuptools>=68,<81",
+    # Phase 90 (RL Order Execution): qlib.rl.contrib needs tianshou as the
+    # reinforcement-learning runtime and gymnasium for env/space contracts.
+    # pyqlib does NOT pull these transitively (RESEARCH §Pitfall 2).
+    # Pin tianshou below 2.x — 2.x is a major API rewrite that breaks the
+    # qlib.rl.order_execution.policy shim (RESEARCH A1).
+    "tianshou>=0.5,<2",
+    "gymnasium>=0.29,<2",
 ]
 
 [build-system]
