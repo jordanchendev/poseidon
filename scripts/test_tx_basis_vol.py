@@ -78,6 +78,9 @@ def main():
     tw0050.index = e_idx
     tx.index = pd.to_datetime(tx.index).normalize()
     tw0050.index = pd.to_datetime(tw0050.index).normalize()
+    # Dedupe (defensive: if any duplicate dates after normalize, keep last)
+    tx = tx[~tx.index.duplicated(keep="last")]
+    tw0050 = tw0050[~tw0050.index.duplicated(keep="last")]
 
     # Merge
     df = pd.DataFrame(
