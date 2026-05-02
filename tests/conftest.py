@@ -92,6 +92,69 @@ def make_synthetic_1m_ohlcv_with_sweep(
     return df
 
 
+def make_synthetic_1m_ohlcv(
+    periods: int = 270,
+    base_price: float = 16500.0,
+    seed: int = 42,
+    start_ts: str = "2026-01-01 09:00",
+) -> pd.DataFrame:
+    """Synthetic 1-minute TWSE-shape OHLCV fixture (Phase 90 Wave 0).
+
+    Default ``periods=270`` mirrors a single TWSE/TAIFEX session
+    (09:00–13:30, RESEARCH A4 / Pitfall 4). No engineered sweep — pure
+    deterministic random walk, used by Wave 1+ RL simulator scaffolds.
+
+    Cloned from ``make_synthetic_1m_ohlcv_with_sweep`` minus the sweep
+    candle injection, per Plan 90-01 Task 3.
+
+    Args:
+        periods: number of 1-minute bars (default 270 = one TWSE session).
+        base_price: starting close price for the random walk.
+        seed: random seed for reproducibility.
+        start_ts: ISO timestamp string for the index start (UTC-naive,
+            then localized to UTC for tz-awareness).
+
+    Returns:
+        DataFrame with columns ``[open, high, low, close, volume]`` indexed
+        by a 1-minute UTC DatetimeIndex of length ``periods``.
+    """
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range(start_ts, periods=periods, freq="1min", tz="UTC")
+
+    close = pd.Series(
+        base_price + np.cumsum(rng.normal(0, base_price * 0.0003, periods)),
+        index=idx,
+    )
+    open_ = close.shift(1).fillna(base_price)
+
+    # OHLC invariants: high >= max(o,c), low <= min(o,c)
+    body_max = pd.concat([open_, close], axis=1).max(axis=1)
+    body_min = pd.concat([open_, close], axis=1).min(axis=1)
+    high = body_max + np.abs(rng.normal(0, base_price * 0.0002, periods))
+    low = body_min - np.abs(rng.normal(0, base_price * 0.0002, periods))
+    volume = pd.Series(100.0, index=idx)
+
+    df = pd.DataFrame(
+        {"open": open_, "high": high, "low": low, "close": close, "volume": volume},
+        index=idx,
+    )
+    df["high"] = df[["open", "close", "high"]].max(axis=1)
+    df["low"] = df[["open", "close", "low"]].min(axis=1)
+    return df
+
+
+@pytest.fixture
+def synthetic_1m_tx() -> pd.DataFrame:
+    """270-tick synthetic 1m fixture priced like TX (~16500)."""
+    return make_synthetic_1m_ohlcv(base_price=16500.0)
+
+
+@pytest.fixture
+def synthetic_1m_etf() -> pd.DataFrame:
+    """270-tick synthetic 1m fixture priced like 0050 (~130)."""
+    return make_synthetic_1m_ohlcv(base_price=130.0)
+
+
 @pytest.fixture(autouse=True)
 def test_settings(monkeypatch):
     """Override settings for tests."""
