@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import traceback
 import uuid
 from datetime import UTC, datetime
@@ -58,18 +59,18 @@ from poseidon.workers.celery_app import POSEIDON_QLIB_QUEUE, celery_app
 
 logger = logging.getLogger(__name__)
 
-# AQUARIUM_ROOT discovery — the qlib-research container mounts the
-# aquarium working tree at /app (see docker-compose.yml). The container
-# CWD is /app, so ``Path.cwd()`` works at runtime; we anchor on the
-# package source directory and walk up to the project root for stability
-# under tests / Mac dev imports.
+# AQUARIUM_ROOT discovery — read from POSEIDON_AQUARIUM_ROOT env var so
+# the result_dir is stable regardless of how the package is installed.
 #
-# parents[0] = poseidon/src/poseidon/workers
-# parents[1] = poseidon/src/poseidon
-# parents[2] = poseidon/src
-# parents[3] = poseidon
-# parents[4] = aquarium
-AQUARIUM_ROOT = Path(__file__).resolve().parents[4]
+# Why env var instead of ``Path(__file__).resolve().parents[4]``: in the
+# qlib-research container poseidon is installed via ``uv sync --no-editable``
+# (Dockerfile.qlib), so ``__file__`` resolves inside ``.venv/lib/.../poseidon/
+# workers/qlib_rl_tasks.py``. parents[4] then points at ``.venv``, not at the
+# aquarium project root, and result_dir becomes ``.venv/local_dev/...`` —
+# unreachable from the host bind mount. The env var pins to ``/app`` in the
+# container (where docker-compose binds the project) and to a local dev path
+# on the developer machine.
+AQUARIUM_ROOT = Path(os.environ.get("POSEIDON_AQUARIUM_ROOT", "/app"))
 
 
 def _run_cancelled(session, run_id: str) -> bool:

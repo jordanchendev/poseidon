@@ -21,3 +21,7 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Phase 90 Wave 4a: rl_execute persists fills.parquet + summary.json here.
+# These are large (per-run) and host-specific (different on Mac dev vs stormtrooper).
+local_dev/

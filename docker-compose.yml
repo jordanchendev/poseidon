@@ -13,8 +13,15 @@ services:
       - POSEIDON_API_KEY=${POSEIDON_API_KEY}
       - POSEIDON_THALASSA_BASE_URL=${POSEIDON_THALASSA_BASE_URL:-}
       - POSEIDON_THALASSA_API_KEY=${POSEIDON_THALASSA_API_KEY:-}
+      # Phase 90-05b: /research/rl-execution/runs/{id}/results streams parquet
+      # written by qlib-research's rl_execute task. Same env var keeps both
+      # sides reading/writing under the same /app/local_dev tree.
+      - POSEIDON_AQUARIUM_ROOT=/app
     volumes:
       - model-artifacts:/data/models
+      # Phase 90-05b: read-only access to the rl_execute output directory so
+      # /research/rl-execution/runs/{id}/results can stream parquet files.
+      - ./local_dev:/app/local_dev:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -115,10 +122,20 @@ services:
       - POSEIDON_THALASSA_BASE_URL=${POSEIDON_THALASSA_BASE_URL:-}
       - POSEIDON_THALASSA_API_KEY=${POSEIDON_THALASSA_API_KEY:-}
       - MLFLOW_TRACKING_URI=postgresql+psycopg2://poseidon:poseidon@host.docker.internal:5433/poseidon?options=-csearch_path%3Dmlflow,public
+      # Phase 90-05a path-resolution fix: Dockerfile.qlib uses
+      # `uv sync --no-editable` so __file__ resolves inside .venv/site-packages,
+      # making `parents[4]` point at .venv. Pin the project root explicitly.
+      - POSEIDON_AQUARIUM_ROOT=/app
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - model-artifacts:/data/models
+      # Phase 90-05a result persistence: rl_execute writes
+      # fills.parquet + comparison.parquet + summary.json under
+      # /app/local_dev/rl-execution/runs/<run_id>/. Bind-mount keeps the
+      # output durable on the host and visible to the api service so the
+      # /research/rl-execution/runs/{id}/results endpoint can stream it.
+      - ./local_dev:/app/local_dev
       # Mount source for live edits during research sessions
       - ./src:/app/src
       - ./tests:/app/tests
