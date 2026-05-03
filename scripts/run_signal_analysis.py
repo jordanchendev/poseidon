@@ -205,7 +205,12 @@ def run_signal_analysis(
     logger.info("ic_decay: %d lag rows persisted", len(decay_df))
 
     # === D-15.3: Group analysis (quantile long-short) ===
-    ls_ret, lavg_ret = calc_long_short_return(pred, label, keep="last")
+    # qlib v0.9.7 calc_long_short_return signature:
+    #   calc_long_short_return(pred, label, date_col="datetime", quantile=0.2, dropna=False)
+    # Returns (long_short_r, long_avg_r) — daily series. ``keep`` kwarg from
+    # plan template does not exist in this version; ``dropna=True`` keeps
+    # behaviour stable when single-instrument panels have NaN at boundaries.
+    ls_ret, lavg_ret = calc_long_short_return(pred, label, dropna=True)
     ls_summary = {
         "ann_long_short_return": float(ls_ret.mean() * BARS_PER_YEAR),
         "ann_long_short_sharpe": (
