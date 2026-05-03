@@ -1,0 +1,76 @@
+# Phase 95 ACTIVATE-02 (D-09, D-10, D-13) — qrun YAML reproducing v18
+# scripts/test_tx_basis_vol.py thesis as a declarative pipeline.
+#
+# Pattern P4 — invoked via qlib.cli.run.workflow() (direct in-process call).
+# Pattern P8 — every `class:` entry MUST resolve through
+#   poseidon.qlib.allowlist.{resolve_handler,resolve_model} (RCE boundary).
+# Pitfall 1 — empty provider_uri because PoseidonDataHandlerForQrun bypasses
+#   qlib provider data via StaticDataLoader.
+# Pitfall 2 — driver pins MLFLOW_TRACKING_URI=file:... explicitly to avoid
+#   leaking onto the qlib-research container's Postgres MLflow backend.
+# Pitfall 8 — model handler is the Wave 0 PoseidonDataHandlerForQrun adapter
+#   (allowlisted), NOT qlib.contrib.data.handler.Alpha158.
+
+qlib_init:
+  provider_uri: ""
+  region: cn
+
+market: &market tx_basis_arb
+benchmark: &benchmark "0050"
+
+data_handler_config: &data_handler_config
+  start_time: 2021-03-22         # match scripts/test_tx_basis_vol.py START
+  end_time: 2026-04-30
+  fit_start_time: 2021-03-22
+  fit_end_time: 2024-12-31
+  instruments: ["TX"]
+  market: tw_futures
+  interval: 1d
+
+port_analysis_config: &port_analysis_config
+  strategy:
+    class: TopkDropoutStrategy
+    module_path: qlib.contrib.strategy.strategy
+    kwargs:
+      topk: 1
+      n_drop: 0
+      signal: <PRED>
+  backtest:
+    start_time: 2025-01-01
+    end_time: 2026-04-30
+    account: 1000000
+    benchmark: *benchmark
+
+task:
+  model:
+    class: LGBModel               # D-13 — Phase 94 allowlist entry
+    module_path: qlib.contrib.model.gbdt
+    kwargs:
+      loss: mse
+      num_threads: 4
+      learning_rate: 0.05
+  dataset:
+    class: DatasetH
+    module_path: qlib.data.dataset
+    kwargs:
+      handler:
+        class: PoseidonDataHandlerForQrun   # Wave 0 allowlist entry (Pitfall 8)
+        module_path: poseidon.qlib.data_handler_qrun
+        kwargs: *data_handler_config
+      segments:
+        train: [2021-03-22, 2023-12-31]
+        valid: [2024-01-01, 2024-12-31]
+        test:  [2025-01-01, 2026-04-30]
+  record:
+    - class: SignalRecord
+      module_path: qlib.workflow.record_temp
+      kwargs: {}
+    - class: SigAnaRecord
+      module_path: qlib.workflow.record_temp
+      kwargs:
+        ana_long_short: true
+        ann_scaler: 240            # BARS_PER_YEAR matches test_tx_basis_vol.py
+    - class: PortAnaRecord
+      module_path: qlib.workflow.record_temp
+      kwargs:
+        config: *port_analysis_config

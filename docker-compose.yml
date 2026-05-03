@@ -144,6 +144,10 @@ services:
       # under scripts/ alongside the existing v18 hand-written drivers. Mount
       # read-only so the qlib-research container can import them via PYTHONPATH.
       - ./scripts:/app/scripts:ro
+      # Phase 95 ACTIVATE-02: qrun_configs/v18/tx_basis_vol.yml — declarative
+      # qrun YAML pipeline. Mounted read-only so run_qrun_basis_vol.py can
+      # resolve the YAML path at /app/qrun_configs/v18/tx_basis_vol.yml.
+      - ./qrun_configs:/app/qrun_configs:ro
       - ./docker-compose.yml:/app/docker-compose.yml:ro
       # Phase 39-03 Task 1: expose alembic/ read-only so migration shape
       # tests (e.g. data_coverage_mv DDL assertions) can read migration
