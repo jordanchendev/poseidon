@@ -189,6 +189,57 @@ def make_synthetic_alpha158_features(
     return df, feature_names
 
 
+def make_synthetic_anchor_signal(n_days: int = 400, seed: int = 42) -> tuple[pd.Series, pd.Series]:
+    """Synthetic (pred, label) MultiIndex(datetime, instrument=['TX']) for
+    Phase 95 ACTIVATE-03 unit tests.
+
+    Pitfall 3: qlib's ``calc_ic`` / SignalRecord assume MultiIndex even for a
+    single-instrument series. The label is mildly correlated with the pred so
+    IC is non-trivial under the smoke harness, while the noise dominates so
+    the smoke does not accidentally certify a real edge.
+
+    Returns:
+        (pred, label) — both pd.Series with the same MultiIndex(datetime,
+        instrument=['TX']).
+    """
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2024-01-01", periods=n_days, freq="B")
+    mi = pd.MultiIndex.from_product([dates, ["TX"]], names=["datetime", "instrument"])
+    pred_values = rng.standard_normal(len(mi))
+    # Mildly correlated label so IC is non-trivial.
+    label_values = 0.15 * pred_values + 0.985 * rng.standard_normal(len(mi))
+    pred = pd.Series(pred_values, index=mi, name="score")
+    label = pd.Series(label_values, index=mi, name="label")
+    return pred, label
+
+
+def make_synthetic_basis_arb_panel(n_days: int = 400, seed: int = 42) -> pd.DataFrame:
+    """Synthetic OHLCV panel for ACTIVATE-01 Alpha158 fixture.
+
+    Returns DataFrame indexed (datetime, instrument=['TX']) with columns
+    ``$open, $high, $low, $close, $volume, $factor`` (Alpha158 expectations).
+    Pure pandas/numpy — no qlib import at module top, preserving Mac-side
+    ``pytest --collect-only`` health (RESEARCH Pitfall 2).
+    """
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2024-01-01", periods=n_days, freq="B")
+    mi = pd.MultiIndex.from_product([dates, ["TX"]], names=["datetime", "instrument"])
+    close = 100.0 * np.exp(np.cumsum(rng.normal(0.0005, 0.012, n_days)))
+    df = pd.DataFrame(
+        {
+            "$open": close * (1 + rng.normal(0, 0.003, n_days)),
+            "$high": close * (1 + np.abs(rng.normal(0, 0.005, n_days))),
+            "$low": close * (1 - np.abs(rng.normal(0, 0.005, n_days))),
+            "$close": close,
+            "$volume": rng.integers(int(5e5), int(5e6), n_days).astype(float),
+            "$factor": np.full(n_days, 1.0),
+        },
+        index=dates,
+    )
+    df.index = mi
+    return df
+
+
 def make_synthetic_mts_alpha158(
     n_instruments: int = 6,
     n_days: int = 60,
