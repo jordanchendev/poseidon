@@ -30,9 +30,19 @@ _RECORDER_DIR = Path("/app/local_dev/qlib-activations/qrun-runs/v18-tx_basis_vol
 
 
 def _smoke_dir(prong: str) -> Path:
+    """Resolve .planning/phases/95-*/smoke/{prong}/ from this file's path.
+
+    Inside the qlib-research container the bind-mount maps
+    aquarium/poseidon/tests → /app/tests, so parents[2] is "/" rather than the
+    real aquarium root. Detect this and fall back to /app/local_dev/phase95_smoke
+    which IS bind-mounted (matches Pattern S4 carry-over from test_alpha158_eval.py).
+    """
     here = Path(__file__).resolve()
     aquarium_root = here.parents[2]
-    out = aquarium_root / ".planning" / "phases" / "95-activate-underutilised-qlib-surface" / "smoke" / prong
+    if aquarium_root == Path("/"):
+        out = Path("/app/local_dev/phase95_smoke") / prong
+    else:
+        out = aquarium_root / ".planning" / "phases" / "95-activate-underutilised-qlib-surface" / "smoke" / prong
     out.mkdir(parents=True, exist_ok=True)
     return out
 

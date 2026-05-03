@@ -75,6 +75,12 @@ qlib = [
     # qlib-research image — `import plotly` raises ModuleNotFoundError).
     # Pin >=5 because plotly 5.x's go.Figure.write_html() API is the one we use.
     "plotly>=5,<7",
+    # Phase 95 ACTIVATE-05: qlib.contrib.report.analysis_model.analysis_model_performance
+    # imports statsmodels.api + matplotlib.pyplot at module-top. pyqlib does NOT
+    # pull these transitively. statsmodels is used for QQ-plot distribution fits;
+    # matplotlib is a fallback graph backend behind plotly.
+    "statsmodels>=0.14",
+    "matplotlib>=3.7",
 ]
 
 [build-system]

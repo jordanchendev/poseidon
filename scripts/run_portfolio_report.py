@@ -189,14 +189,24 @@ def run_portfolio_report(
             {"graph": "analysis_position.score_ic_graph", "status": "ERROR", "error": f"{type(e).__name__}: {e}"}
         )
 
-    # Graph 2: model_performance_graph (works on pred_label only)
-    # Use the default graph_names ['group_return', 'pred_ic', 'pred_autocorr'].
-    # Single-instrument NaN expected per 95-04 SUMMARY (cross-sectional metrics
-    # degenerate on N=1 panels) — graphs still render with NaN traces.
+    # Graph 2: model_performance_graph (works on pred_label only).
+    # Per 95-04 SUMMARY: single-instrument anchor (TX-only) makes cross-sectional
+    # metrics structurally degenerate. _group_return raises "df is empty" on N=1
+    # panels because `len(x)//N=0` produces empty quintile slices and qlib's
+    # ScatterGraph rejects empty dataframes (verified on stormtrooper).
+    # Workaround: drop 'group_return' from graph_names when n_instruments < 2.
+    n_instruments = pred_label.index.get_level_values("instrument").nunique()
+    if n_instruments < 2:
+        mp_graph_names = ["pred_ic", "pred_autocorr"]
+        mp_note = f"single-instrument panel (n={n_instruments}) — group_return graph excluded"
+    else:
+        mp_graph_names = ["group_return", "pred_ic", "pred_autocorr"]
+        mp_note = None
     try:
         figs = list(
             model_performance_graph(
                 pred_label,
+                graph_names=mp_graph_names,
                 show_notebook=False,
             )
         )
@@ -207,6 +217,8 @@ def run_portfolio_report(
                 "status": "OK",
                 "n_html": len(paths),
                 "paths": [str(p) for p in paths],
+                "graph_names": mp_graph_names,
+                "note": mp_note,
             }
         )
     except Exception as e:
@@ -215,6 +227,7 @@ def run_portfolio_report(
                 "graph": "analysis_model.model_performance_graph",
                 "status": "PARTIAL",
                 "error": f"{type(e).__name__}: {e}",
+                "graph_names": mp_graph_names,
             }
         )
 
