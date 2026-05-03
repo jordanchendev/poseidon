@@ -70,6 +70,11 @@ qlib = [
     # qlib.rl.order_execution.policy shim (RESEARCH A1).
     "tianshou>=0.5,<2",
     "gymnasium>=0.29,<2",
+    # Phase 95 ACTIVATE-05: qlib.contrib.report.* modules import plotly.graph_objs
+    # at module-top. pyqlib does NOT pull plotly transitively (verified on
+    # qlib-research image — `import plotly` raises ModuleNotFoundError).
+    # Pin >=5 because plotly 5.x's go.Figure.write_html() API is the one we use.
+    "plotly>=5,<7",
 ]
 
 [build-system]
