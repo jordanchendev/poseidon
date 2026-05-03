@@ -1,6 +1,7 @@
 """Pydantic schemas for API request/response validation."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -390,3 +391,69 @@ class FactorAnalysisTriggerResponse(BaseModel):
 
     id: str
     status: str
+
+
+# --- Phase 90 RL Order Execution (Plan 90-05b) ---
+
+
+class RLExecutionRequest(BaseModel):
+    """Request body for POST /research/rl-execution/run (D-22, EXEC-01).
+
+    Pydantic Literal allowlist enforces algo names (T-90-03 input validation).
+    Defense-in-depth: ``poseidon.api.rl_execution`` re-validates against
+    ``_ALLOWED_ALGOS`` set inside the endpoint body.
+    """
+
+    algos: list[Literal["twap", "vwap", "ppo", "opds"]] = Field(..., min_length=1, examples=[["twap", "vwap"]])
+    dates: list[str] | None = Field(
+        None,
+        description="Explicit trigger-day list (ISO YYYY-MM-DD); None = compute from v18 basis-z window",
+        examples=[["2024-01-15"]],
+    )
+    mode: Literal["full", "preflight"] = Field("full", examples=["full"])
+    notional_per_leg: float = Field(..., gt=0, examples=[1_000_000.0])
+
+
+class RLExecutionRunResponse(BaseModel):
+    """Short response for create + list items (mirrors TrainingRunResponse)."""
+
+    run_id: UUID
+    algos: list[str]
+    mode: str
+    status: str
+    verdict: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class RLExecutionRunDetailResponse(BaseModel):
+    """Full detail response for GET /runs/{run_id} (D-22)."""
+
+    run_id: UUID
+    algos: list[str]
+    dates: list[str] | None = None
+    mode: str
+    status: str
+    summary: dict | None = None
+    verdict: str | None = None
+    result_dir: str | None = None
+    error: str | None = None
+    requested_by: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class RLExecutionRunListResponse(BaseModel):
+    """Paginated list response for GET /runs."""
+
+    runs: list[RLExecutionRunResponse]
+    total: int
+    limit: int
+    offset: int

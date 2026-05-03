@@ -18,6 +18,7 @@ from poseidon.api import (
     research_api,
     risk,
     risk_metrics,
+    rl_execution,
     sentiment,
     signals,
     strategies,
@@ -71,3 +72,4 @@ app.include_router(
     factor_analysis.router, prefix="/api/v1/factor-analysis", tags=["factor-analysis"], dependencies=secured
 )
 app.include_router(research_api.router, prefix="/api/v1/models", tags=["research"], dependencies=secured)
+app.include_router(rl_execution.router, prefix="/research/rl-execution", tags=["rl-execution"], dependencies=secured)
