@@ -205,13 +205,21 @@ def run_one(
     # Output CSV path (qlib upstream layout).
     result_csv = Path(run_dir) / "outputs" / f"{algo}_{leg}" / "checkpoints" / "backtest_result.csv"
 
-    # Deferred import (PATTERNS.md §Deferred Qlib Import). Try callable form
-    # first — RESEARCH §A2 notes the callable export is not guaranteed
-    # across qlib versions, so subprocess fallback covers the gap.
+    # Deferred import (PATTERNS.md §Deferred Qlib Import). The qlib
+    # backtest entry point takes a config dict, not a path — load via
+    # get_backtest_config_fromfile first. Subprocess fallback covers the
+    # rare case where the callable import path is missing across qlib
+    # versions (RESEARCH §A2).
     try:
-        from qlib.rl.contrib.backtest import backtest as _qlib_backtest
+        from qlib.rl.contrib.backtest import (
+            backtest as _qlib_backtest,
+        )
+        from qlib.rl.contrib.backtest import (
+            get_backtest_config_fromfile,
+        )
 
-        _qlib_backtest(config_path=str(cfg_path))
+        backtest_config = get_backtest_config_fromfile(str(cfg_path))
+        _qlib_backtest(backtest_config)
     except ImportError:
         import subprocess
 

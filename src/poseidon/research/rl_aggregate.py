@@ -162,6 +162,22 @@ def compute_naive_intraday_ret(
         tz-naive) with the naive intraday return per day. Days with no
         bars in ``ohlcv_1m`` are dropped (not reported as NaN).
     """
+    # If the caller passed a frame whose index is not a DatetimeIndex (typical
+    # Thalassa REST shape: `time` lives as a column, index is RangeIndex),
+    # promote `time` to the index so the rest of the function can operate
+    # on a normalised DatetimeIndex. Smoke 2026-05-03 caught this — worker
+    # `set_index(...)` only fires when "time" is in columns, but a downstream
+    # mutation can drop the index.
+    if not isinstance(ohlcv_1m.index, pd.DatetimeIndex):
+        if "time" in ohlcv_1m.columns:
+            ohlcv_1m = ohlcv_1m.set_index(pd.to_datetime(ohlcv_1m["time"]))
+        else:
+            raise ValueError(
+                "compute_naive_intraday_ret requires a DatetimeIndex or a "
+                f"`time` column; got index type {type(ohlcv_1m.index).__name__} "
+                f"and columns {list(ohlcv_1m.columns)}"
+            )
+
     # Normalise the OHLCV index to a date-key column for grouping.
     idx = ohlcv_1m.index
     date_key = idx.tz_convert(None).normalize() if getattr(idx, "tz", None) is not None else idx.normalize()
