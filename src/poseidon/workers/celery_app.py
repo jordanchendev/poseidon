@@ -128,9 +128,17 @@ celery_app.conf.update(
             "schedule": crontab(hour="0,4,8,12,16,20", minute=15),
         },
     },
-    # Auto-discover task modules
+    # Auto-discover task modules.
+    # NB: poseidon.workers.qlib_tasks + poseidon.workers.qlib_rl_tasks must
+    # only be imported by the qlib-research worker (cp312 + qlib stack).
+    # api / cpu-worker / gpu-worker run on cp313 and would crash on a
+    # module-level ``import qlib`` — both modules defer their qlib imports
+    # to inside the task body so adding them here is safe (PATTERNS.md
+    # §Deferred Qlib Import). Phase 90 Wave 4a (Plan 90-05a) Task 3.
     imports=[
         "poseidon.workers.cpu_tasks",
         "poseidon.workers.gpu_tasks",
+        "poseidon.workers.qlib_tasks",
+        "poseidon.workers.qlib_rl_tasks",
     ],
 )
