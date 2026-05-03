@@ -17,6 +17,12 @@ ALLOWED_MODEL_CLASSES: dict[str, str] = {
     "LGBModel": "qlib.contrib.model.gbdt.LGBModel",
     "LinearModel": "qlib.contrib.model.linear.LinearModel",
     "XGBModel": "qlib.contrib.model.xgboost.XGBModel",
+    # Phase 94 additions (D-01..D-04; LocalformerModel substitutes for TFT
+    # per CONTEXT D-01 amendment 2026-05-03 — pyqlib 0.9.7 ships no
+    # compatible TFT path, see RESEARCH §OQ-1).
+    "ALSTM": "qlib.contrib.model.pytorch_alstm.ALSTM",
+    "TRAModel": "qlib.contrib.model.pytorch_tra.TRAModel",
+    "LocalformerModel": "qlib.contrib.model.pytorch_localformer.LocalformerModel",
 }
 
 
