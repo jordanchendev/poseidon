@@ -82,6 +82,10 @@ packages = ["src/poseidon"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Phase 95 ACTIVATE-01: tests import driver scripts via `from scripts.X import Y`
+# (mirroring the existing v18 driver test patterns). Add the project root to
+# the test pythonpath so `scripts/` is importable as a package.
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 120

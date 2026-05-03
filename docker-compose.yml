@@ -139,6 +139,11 @@ services:
       # Mount source for live edits during research sessions
       - ./src:/app/src
       - ./tests:/app/tests
+      # Phase 95 ACTIVATE-01: scripts/run_alpha158_eval.py + future Phase 95
+      # driver scripts (run_signal_analysis.py, run_portfolio_report.py) live
+      # under scripts/ alongside the existing v18 hand-written drivers. Mount
+      # read-only so the qlib-research container can import them via PYTHONPATH.
+      - ./scripts:/app/scripts:ro
       - ./docker-compose.yml:/app/docker-compose.yml:ro
       # Phase 39-03 Task 1: expose alembic/ read-only so migration shape
       # tests (e.g. data_coverage_mv DDL assertions) can read migration
