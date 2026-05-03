@@ -11,6 +11,9 @@ raise ``ValueError`` with a descriptive message listing all allowed options.
 ALLOWED_HANDLER_CLASSES: dict[str, str] = {
     "Alpha158Handler": "poseidon.qlib.data_handler.PoseidonDataHandler",
     "Alpha360Handler": "poseidon.qlib.data_handler.PoseidonDataHandler",
+    # Phase 95 ACTIVATE-02: qrun-YAML adapter (Pitfall 8). Allowlisted so the
+    # tx_basis_vol.yml config (Wave 2) resolves through the RCE boundary.
+    "PoseidonDataHandlerForQrun": "poseidon.qlib.data_handler_qrun.PoseidonDataHandlerForQrun",
 }
 
 ALLOWED_MODEL_CLASSES: dict[str, str] = {
