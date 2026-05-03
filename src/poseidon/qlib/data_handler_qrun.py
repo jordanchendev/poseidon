@@ -104,6 +104,11 @@ class PoseidonDataHandlerForQrun(PoseidonDataHandler):
             with contextlib.suppress(Exception):
                 self._session.close()
             self._session = None  # type: ignore[assignment]
+            # The PARENT class also stored the DatasetBuilder, and DatasetBuilder
+            # holds a reference to the Session (`self.session = session` in its
+            # __init__). Pickle walks the whole instance graph, so dropping
+            # only self._session is insufficient — drop the builder too.
+            self._dataset_builder = None  # type: ignore[assignment]
             logger.info(
                 "PoseidonDataHandlerForQrun ready: %d instruments, %s -> %s, market=%s interval=%s",
                 len(instruments),
