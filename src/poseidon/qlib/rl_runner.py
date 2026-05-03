@@ -1,0 +1,311 @@
+"""Qlib RL execution runner — runs ONLY in cp312 qlib-research container. All qlib imports are deferred inside run_one().
+
+Phase 90 / Wave 2 — rule-based execution path. Drives TWAP + VWAP through
+``qlib.rl.contrib.backtest`` against the qlib RL pickle layout produced by
+:mod:`poseidon.qlib.rl_dataset_adapter` and :mod:`poseidon.qlib.rl_order_builder`.
+
+PPO / OPDS branches raise ``NotImplementedError("Wave 3 implements")`` — they
+land in Plan 90-04 once trained checkpoints are wired.
+
+Key design points:
+
+* All qlib imports are inside function bodies (PATTERNS.md §Deferred Qlib
+  Import) — the cp313 API container auto-discovers this module via
+  ``celery_app.conf.imports`` and would crash on a module-level
+  ``import qlib``.
+* Cooperative-cancel pattern lifted verbatim from
+  ``poseidon/src/poseidon/workers/qlib_tasks.py:21-33`` — the same Phase 41
+  lifecycle convention every Poseidon long-running task obeys.
+* TWSE 09:00–13:30 = 270 ticks (RESEARCH §Pitfall 4 — qlib A-share defaults
+  are 09:30–14:54, must be overridden per-config).
+* Per-algo failure surfaces as ``summary[algo] = {"status": "PARTIAL", ...}``
+  rather than aborting the whole run (D-11 partial-tolerance).
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# --- Module-level constants ---
+
+ALGOS: list[str] = ["twap", "vwap", "ppo", "opds"]
+
+# Each leg = (instrument, market, side). Mirrors PATTERNS.md §rl_runner.py.
+LEGS_TX: tuple[str, str, str] = ("TX", "tw_futures", "buy")
+LEGS_ETF: tuple[str, str, str] = ("0050", "tw_stock", "sell")
+LEGS_ALL: list[tuple[str, str, str]] = [LEGS_TX, LEGS_ETF]
+
+# TWSE / TAIFEX session window — RESEARCH §A4 / Pitfall 4.
+# Qlib A-share defaults (09:30 / 14:54 / 240 ticks) MUST be overridden.
+TWSE_TICKS_PER_DAY: int = 270
+TWSE_START: str = "09:00"
+TWSE_END: str = "13:30"
+
+
+def _run_cancelled(session, run_id: str) -> bool:
+    """Re-read the RLExecutionRun row to check for cooperative cancel.
+
+    Verbatim port of
+    ``poseidon/src/poseidon/workers/qlib_tasks.py:21-33`` with ``TrainingRun``
+    swapped for ``RLExecutionRun``. The model lives in Wave 4 (Plan 90-05)
+    so the import stays deferred — this module remains importable on Mac
+    dev (no DB) until the row class lands.
+
+    A fresh ``session.refresh()`` is required because the ORM session cache
+    could otherwise hold a stale ``status`` from before the API cancel
+    committed.
+    """
+    from poseidon.models.rl_execution_run import RLExecutionRun  # deferred (Wave 4)
+
+    run = session.query(RLExecutionRun).filter_by(run_id=uuid.UUID(run_id)).one()
+    session.refresh(run)
+    return run.status == "cancelled"
+
+
+def _emit_backtest_config(
+    algo: str,
+    leg: str,
+    ohlcv_pickle_path: Path,
+    orders_pickle_path: Path,
+    run_dir: Path,
+) -> Path:
+    """Emit a qlib RL backtest YAML config for TWAP / VWAP.
+
+    Mirrors upstream qlib ``examples/rl_order_execution/exp_configs/
+    backtest_twap.yml`` shape (RESEARCH §Sources). Hand-rolls YAML as a
+    plain string to avoid a hard dependency on PyYAML at module-import
+    time; the qlib backtest entry point ``yaml.safe_load``s the file.
+
+    TWAP uses ``$close`` for deal price (mid-bar print). VWAP uses
+    ``$vwap`` with HLC/3 fallback (matches existing
+    :mod:`poseidon.qlib.dataset_builder` convention).
+
+    Args:
+        algo: ``"twap"`` or ``"vwap"`` (PPO / OPDS raise NotImplementedError).
+        leg: instrument symbol (``"TX"`` or ``"0050"``).
+        ohlcv_pickle_path: qlib RL pickle written by
+            :func:`poseidon.qlib.rl_dataset_adapter.write_pickle`.
+        orders_pickle_path: qlib Order pickle written by
+            :func:`poseidon.qlib.rl_order_builder.build_orders`.
+        run_dir: per-run directory; this function creates ``configs/``
+            and ``outputs/<algo>_<leg>/`` underneath it.
+
+    Returns:
+        Path to the emitted YAML config.
+    """
+    if algo not in ("twap", "vwap"):
+        raise NotImplementedError("Wave 3 implements")
+
+    # TWAP uses $close; VWAP uses HLC/3 fallback expression (mirrors
+    # poseidon.qlib.dataset_builder which expresses HLC/3 as the fallback
+    # for $vwap when volume is zero / missing).
+    deal_price_expr = "$close" if algo == "twap" else "($high + $low + $close) / 3"
+
+    configs_dir = run_dir / "configs"
+    configs_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = run_dir / "outputs" / f"{algo}_{leg}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    cfg_path = configs_dir / f"backtest_{algo}_{leg}.yml"
+
+    # NB: Mirrors qlib upstream backtest_twap.yml shape (RESEARCH §Sources).
+    # data_ticks=270, start_time=09:00, end_time=13:30 are the TWSE session
+    # overrides (RESEARCH §Pitfall 4 — qlib defaults to A-share hours).
+    yaml_text = f"""# Phase 90 RL backtest config — algo={algo} leg={leg}
+# Auto-generated by poseidon.qlib.rl_runner — do not edit by hand.
+# TWSE / TAIFEX session: {TWSE_START}-{TWSE_END} = {TWSE_TICKS_PER_DAY} 1-min ticks.
+strategies:
+  30min:
+    class: TWAPStrategy
+    module_path: qlib.contrib.strategy.rule_strategy
+    kwargs: {{}}
+  1day:
+    class: SAOEIntStrategy
+    module_path: qlib.rl.order_execution.strategy
+    kwargs: {{}}
+data:
+  source_dir: {ohlcv_pickle_path.parent}
+  data_dir: {ohlcv_pickle_path}
+  order_dir: {orders_pickle_path}
+  data_granularity: "1min"
+  start_time: "{TWSE_START}"
+  end_time: "{TWSE_END}"
+  data_ticks: {TWSE_TICKS_PER_DAY}
+  deal_price: "{deal_price_expr}"
+  total_time: {TWSE_TICKS_PER_DAY}
+  default_start_time: 0
+  default_end_time: {TWSE_TICKS_PER_DAY - 1}
+algo: {algo}
+leg: {leg}
+output_dir: {output_dir}
+runtime:
+  seed: 42
+  use_cuda: false
+"""
+    cfg_path.write_text(yaml_text)
+    logger.info("rl_runner: emitted config %s", cfg_path)
+    return cfg_path
+
+
+def run_one(
+    algo: str,
+    leg: str,
+    run_dir: Path,
+    ohlcv_pickle_path: Path,
+    orders_pickle_path: Path,
+) -> Path:
+    """Run a single (algo, leg) qlib RL backtest and return the result CSV path.
+
+    For ``algo in ("twap", "vwap")``: emits a YAML config under
+    ``<run_dir>/configs/`` then drives ``qlib.rl.contrib.backtest`` either
+    as a Python callable (preferred) or as a subprocess fallback if the
+    callable form is not exported by the installed qlib version
+    (RESEARCH §A2 / §Anti-Patterns).
+
+    For ``algo in ("ppo", "opds")``: raises ``NotImplementedError`` —
+    Wave 3 (Plan 90-04) implements the trained-policy execution path.
+
+    Args:
+        algo: one of ``ALGOS``. Only ``twap`` / ``vwap`` are functional in Wave 2.
+        leg: instrument label (``"TX"`` or ``"0050"``); used as the filename
+            suffix and qlib's instrument selector.
+        run_dir: per-run scratch directory (created by Wave 4 from the
+            ``run_id``).
+        ohlcv_pickle_path: dataset pickle from
+            :func:`poseidon.qlib.rl_dataset_adapter.write_pickle`.
+        orders_pickle_path: order pickle from
+            :func:`poseidon.qlib.rl_order_builder.build_orders`.
+
+    Returns:
+        ``<run_dir>/outputs/<algo>_<leg>/checkpoints/backtest_result.csv``
+        — the qlib upstream output layout. Caller is responsible for
+        loading + parsing the CSV.
+
+    Raises:
+        ValueError: if ``algo`` is not a known algo.
+        NotImplementedError: if ``algo`` is ``ppo`` or ``opds`` (Wave 3).
+    """
+    if algo not in ALGOS:
+        raise ValueError(f"run_one: unknown algo {algo!r}; must be one of {ALGOS}")
+    if algo in ("ppo", "opds"):
+        raise NotImplementedError(f"{algo} runner is Wave 3 — see 90-04-PLAN")
+
+    cfg_path = _emit_backtest_config(
+        algo=algo,
+        leg=leg,
+        ohlcv_pickle_path=Path(ohlcv_pickle_path),
+        orders_pickle_path=Path(orders_pickle_path),
+        run_dir=Path(run_dir),
+    )
+
+    # Output CSV path (qlib upstream layout).
+    result_csv = Path(run_dir) / "outputs" / f"{algo}_{leg}" / "checkpoints" / "backtest_result.csv"
+
+    # Deferred import (PATTERNS.md §Deferred Qlib Import). Try callable form
+    # first — RESEARCH §A2 notes the callable export is not guaranteed
+    # across qlib versions, so subprocess fallback covers the gap.
+    try:
+        from qlib.rl.contrib.backtest import backtest as _qlib_backtest
+
+        _qlib_backtest(config_path=str(cfg_path))
+    except ImportError:
+        import subprocess
+
+        subprocess.check_call(
+            [
+                "python",
+                "-m",
+                "qlib.rl.contrib.backtest",
+                "--config_path",
+                str(cfg_path),
+            ]
+        )
+
+    return result_csv
+
+
+def run_all_algos_legs(
+    run_dir: Path,
+    ohlcv_pickles: dict[str, Path],
+    orders_pickles: dict[str, Path],
+    session=None,
+    run_id: str | None = None,
+) -> dict[str, dict]:
+    """Loop ALGOS × LEGS_ALL, recording per-algo summary.
+
+    D-11 partial-tolerance: per-algo failures surface as
+    ``summary[algo] = {"status": "PARTIAL", "error": str(exc)}`` rather
+    than aborting the whole run. PPO/OPDS NotImplementedError in Wave 2 is
+    a normal partial outcome (Wave 3 implements).
+
+    Cooperative cancel: if ``session`` and ``run_id`` are supplied, the
+    function calls :func:`_run_cancelled` between every (algo, leg) pair
+    and raises ``CancelledError`` if the row was flipped to ``cancelled``.
+
+    Args:
+        run_dir: per-run directory (must already exist).
+        ohlcv_pickles: ``{leg: Path}`` mapping (e.g.
+            ``{"TX": tx_pkl, "0050": etf_pkl}``).
+        orders_pickles: ``{leg: Path}`` mapping (same keys as
+            ``ohlcv_pickles``).
+        session: optional SQLAlchemy session for cancel polling.
+        run_id: optional ``RLExecutionRun.run_id`` (UUID string).
+
+    Returns:
+        ``{algo: {"status": "OK"|"PARTIAL", "results": {leg: csv_path},
+        "error": str?}}``.
+    """
+    summary: dict[str, dict] = {}
+    for algo in ALGOS:
+        algo_results: dict[str, Path] = {}
+        algo_errors: list[str] = []
+        for leg_tup in LEGS_ALL:
+            leg = leg_tup[0]
+            # Cooperative cancel between every (algo, leg) iteration.
+            if session is not None and run_id is not None and _run_cancelled(session, run_id):
+                # Surface as a CancelledError so the Celery task wrapper
+                # can transition the row to "cancelled" and commit.
+                raise _CancelledError(f"rl_runner cancelled before {algo}/{leg}")
+            try:
+                csv_path = run_one(
+                    algo=algo,
+                    leg=leg,
+                    run_dir=Path(run_dir),
+                    ohlcv_pickle_path=ohlcv_pickles[leg],
+                    orders_pickle_path=orders_pickles[leg],
+                )
+                algo_results[leg] = csv_path
+            except NotImplementedError as exc:
+                # Wave 2 expected for PPO/OPDS — surface as PARTIAL with
+                # a "Wave 3" hint in the error.
+                algo_errors.append(f"{leg}: {exc}")
+            except Exception as exc:
+                algo_errors.append(f"{leg}: {exc}")
+                logger.exception("rl_runner: %s/%s failed (caught for D-11)", algo, leg)
+
+        if algo_errors and not algo_results:
+            summary[algo] = {
+                "status": "PARTIAL",
+                "results": {},
+                "error": "; ".join(algo_errors),
+            }
+        elif algo_errors:
+            summary[algo] = {
+                "status": "PARTIAL",
+                "results": {leg: str(p) for leg, p in algo_results.items()},
+                "error": "; ".join(algo_errors),
+            }
+        else:
+            summary[algo] = {
+                "status": "OK",
+                "results": {leg: str(p) for leg, p in algo_results.items()},
+            }
+    return summary
+
+
+class _CancelledError(Exception):
+    """Raised internally when the RLExecutionRun row is flipped to cancelled."""
