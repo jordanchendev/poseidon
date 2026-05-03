@@ -83,6 +83,15 @@ class PoseidonDataHandlerForQrun(PoseidonDataHandler):
                 start=pd.Timestamp(start_time).to_pydatetime(),
                 end=pd.Timestamp(end_time).to_pydatetime(),
             )
+            # Rule 1 fix (95-03 stormtrooper smoke): Thalassa returns tz-aware
+            # datetimes; qrun's YAML segments are tz-naive strings (e.g.
+            # "2025-01-01"). pandas slice_indexer raises
+            # `TypeError: Cannot compare tz-naive and tz-aware datetime-like`
+            # the moment qlib slices the test segment. Strip tz at the
+            # adapter boundary so all downstream qlib code sees a tz-naive
+            # MultiIndex without modifying the upstream PoseidonDataHandler
+            # contract used elsewhere.
+            self._raw_data = self._strip_tz_from_index(self._raw_data)
             self._qlib_handler = self.to_qlib_handler()
             logger.info(
                 "PoseidonDataHandlerForQrun ready: %d instruments, %s -> %s, market=%s interval=%s",
@@ -97,6 +106,36 @@ class PoseidonDataHandlerForQrun(PoseidonDataHandler):
             # qrun retries do not leak DB sessions in the worker container.
             self._session.close()
             raise
+
+    @staticmethod
+    def _strip_tz_from_index(df: pd.DataFrame) -> pd.DataFrame:
+        """Return ``df`` with the ``datetime`` level of its MultiIndex tz-naive.
+
+        DatasetBuilder fetches OHLCV from Postgres with timezone-aware
+        timestamps; qrun YAML segments are tz-naive strings, so qlib's
+        ``fetch_df_by_index`` slicer raises ``TypeError: Cannot compare
+        tz-naive and tz-aware datetime-like``. Strip tz here at the adapter
+        boundary so the rest of the qlib stack sees a homogeneous tz-naive
+        MultiIndex; this does NOT mutate the parent PoseidonDataHandler
+        contract used by non-qrun callers.
+        """
+        if df.empty or not isinstance(df.index, pd.MultiIndex):
+            return df
+        if "datetime" not in df.index.names:
+            return df
+        dt_level = df.index.get_level_values("datetime")
+        if getattr(dt_level, "tz", None) is None:
+            return df
+        # Rebuild MultiIndex with tz stripped from the datetime level only.
+        names = list(df.index.names)
+        levels = [
+            df.index.get_level_values(name).tz_localize(None) if name == "datetime" else df.index.get_level_values(name)
+            for name in names
+        ]
+        new_index = pd.MultiIndex.from_arrays(levels, names=names)
+        out = df.copy()
+        out.index = new_index
+        return out
 
     def fetch(self, *args: Any, **kwargs: Any) -> pd.DataFrame:
         """Forward fetch to the underlying qlib ``DataHandlerLP``."""
