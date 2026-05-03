@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from poseidon.data.remote_repository import RemoteDataRepository
+from poseidon.research.tx_basis_signal import BASIS_WIN, compute_basis_z
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -93,13 +94,18 @@ def main():
 
     print(f"Merged: {len(df)} bars  {df.index.min().date()} → {df.index.max().date()}\n")
 
+    # D-06: trigger-day math comes from the shared module.
+    # `compute_basis_z` does its own date-index alignment and dedupe; we
+    # re-derive the intermediate columns here only for diagnostics
+    # (basis / basis_dev / basis_std60 still printed in the sanity block
+    # below). The authoritative `basis_z` is what `compute_basis_z` returns.
     df["log_tx"] = np.log(df["tx_close"])
     df["log_etf"] = np.log(df["etf_adj"])
     df["basis"] = df["log_tx"] - df["log_etf"]
-    df["basis_ma60"] = df["basis"].rolling(60).mean()
+    df["basis_ma60"] = df["basis"].rolling(BASIS_WIN).mean()
     df["basis_dev"] = df["basis"] - df["basis_ma60"]
-    df["basis_std60"] = df["basis"].rolling(60).std()
-    df["basis_z"] = df["basis_dev"] / df["basis_std60"]
+    df["basis_std60"] = df["basis"].rolling(BASIS_WIN).std()
+    df["basis_z"] = compute_basis_z(tx, tw0050, adj_col=adj_col).reindex(df.index)
 
     # Daily returns on TX
     df["prev_tx_close"] = df["tx_close"].shift(1)
