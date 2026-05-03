@@ -47,10 +47,36 @@ def _smoke_dir(prong: str) -> Path:
     poseidon/tests/test_alpha158_eval.py → parents[0]=tests/, parents[1]=poseidon/,
     parents[2]=aquarium root (where .planning/ lives). NEVER take a path from
     user input — D-13 + Pitfall 6.
+
+    Inside the qlib-research container the bind-mount maps
+    aquarium/poseidon/tests → /app/tests, so parents[2] is "/" rather than the
+    real aquarium root. Detect this and fall back to /app/local_dev which IS
+    bind-mounted — keeps smoke artifacts host-visible for the verifier.
     """
     here = Path(__file__).resolve()
     aquarium_root = here.parents[2]
-    out = aquarium_root / ".planning" / "phases" / "95-activate-underutilised-qlib-surface" / "smoke" / prong
+    if aquarium_root == Path("/"):
+        # Container path: /app/tests/... — fall back to bind-mounted local_dev.
+        out = Path("/app/local_dev/phase95_smoke") / prong
+    else:
+        out = aquarium_root / ".planning" / "phases" / "95-activate-underutilised-qlib-surface" / "smoke" / prong
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def _features_out_dir() -> Path:
+    """D-07 production output dir: local_dev/qlib-activations/alpha158/basis_arb/.
+
+    Inside the qlib-research container this is bind-mounted to
+    aquarium/poseidon/local_dev so the artifacts persist on the host.
+    """
+    here = Path(__file__).resolve()
+    aquarium_root = here.parents[2]
+    if aquarium_root == Path("/"):
+        # Container — use the bind-mounted /app/local_dev tree.
+        out = Path("/app/local_dev/qlib-activations/alpha158/basis_arb")
+    else:
+        out = aquarium_root / "local_dev" / "qlib-activations" / "alpha158" / "basis_arb"
     out.mkdir(parents=True, exist_ok=True)
     return out
 
@@ -61,7 +87,8 @@ def test_alpha158_eval_smoke() -> None:
 
     from tests.conftest import make_synthetic_basis_arb_panel
 
-    out_dir = _smoke_dir("ACTIVATE-01")
+    smoke_dir = _smoke_dir("ACTIVATE-01")
+    out_dir = _features_out_dir()  # D-07 production target — host-visible
     panel = make_synthetic_basis_arb_panel(n_days=400)
 
     status = "OK"
@@ -77,8 +104,9 @@ def test_alpha158_eval_smoke() -> None:
         error = traceback.format_exc()
     elapsed = time.time() - t0
 
-    # Pattern P3 — persist machine-readable per-prong summary.
-    (out_dir / "output_summary.json").write_text(
+    # Pattern P3 — persist machine-readable per-prong summary in smoke_dir
+    # (separate from D-07 production output).
+    (smoke_dir / "output_summary.json").write_text(
         json.dumps(
             {
                 "prong": "ACTIVATE-01",
