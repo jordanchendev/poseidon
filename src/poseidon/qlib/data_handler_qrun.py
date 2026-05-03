@@ -93,6 +93,17 @@ class PoseidonDataHandlerForQrun(PoseidonDataHandler):
             # contract used elsewhere.
             self._raw_data = self._strip_tz_from_index(self._raw_data)
             self._qlib_handler = self.to_qlib_handler()
+            # Rule 1 fix #2 (95-03 stormtrooper smoke): qlib's mlflow recorder
+            # pickles the handler to disk after training. SQLAlchemy Session
+            # is not picklable (`PicklingError: Can't pickle <class
+            # 'sqlalchemy.orm.session.Session'>`). The session has done its
+            # job — DatasetBuilder already materialised _raw_data in memory
+            # — so close it and drop the attribute now. __del__ becomes a
+            # no-op but stays defensive in case __init__ raises before this
+            # point (the except branch above closes too).
+            with contextlib.suppress(Exception):
+                self._session.close()
+            self._session = None  # type: ignore[assignment]
             logger.info(
                 "PoseidonDataHandlerForQrun ready: %d instruments, %s -> %s, market=%s interval=%s",
                 len(instruments),
@@ -104,7 +115,10 @@ class PoseidonDataHandlerForQrun(PoseidonDataHandler):
         except Exception:
             # Make sure the SessionLocal handle is released on failure paths so
             # qrun retries do not leak DB sessions in the worker container.
-            self._session.close()
+            session = getattr(self, "_session", None)
+            if session is not None:
+                with contextlib.suppress(Exception):
+                    session.close()
             raise
 
     @staticmethod
