@@ -143,6 +143,101 @@ def make_synthetic_1m_ohlcv(
     return df
 
 
+def make_synthetic_alpha158_features(
+    n_instruments: int = 6,
+    n_days: int = 60,
+    n_features: int = 20,
+    seed: int = 42,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Synthetic Alpha158-shape feature matrix for Phase 94 smoke tests.
+
+    Per CONTEXT D-10: 6 instruments × 60 trading days × 20 representative
+    feature columns + 1 label column. Deterministic via numpy default_rng.
+    Outer-keyed column scheme [(feature, *), (label, *)] matching
+    DataHandlerLP convention (RESEARCH A5).
+
+    Used by tests/test_zoo_smoke.py::test_localformer_smoke and
+    tests/test_zoo_smoke.py::test_alstm_smoke. NOT for TRA — TRA's
+    MTSDatasetH shape is provided by make_synthetic_mts_alpha158
+    (RESEARCH Pitfall 3 / D-20).
+
+    Pure pandas/numpy — no qlib import at module top, preserving Mac-side
+    ``pytest --collect-only`` health (RESEARCH Pitfall 2).
+
+    Returns:
+        (df, feature_names): DataFrame with MultiIndex (datetime, instrument)
+        and outer-keyed columns [(feature, FEAT000..), (label, LABEL0)];
+        feature_names is the list of inner-level feature columns for the
+        caller's d_feat= model param.
+    """
+    rng = np.random.default_rng(seed)
+    instruments = [f"SYM{i:03d}" for i in range(n_instruments)]
+    dates = pd.date_range("2024-01-01", periods=n_days, freq="B")
+    idx = pd.MultiIndex.from_product([dates, instruments], names=["datetime", "instrument"])
+    feature_names = [f"FEAT{i:03d}" for i in range(n_features)]
+    features = pd.DataFrame(
+        rng.standard_normal((len(idx), n_features)),
+        index=idx,
+        columns=feature_names,
+    )
+    labels = pd.DataFrame(
+        rng.standard_normal((len(idx), 1)),
+        index=idx,
+        columns=["LABEL0"],
+    )
+    df = pd.concat([features, labels], axis=1, keys=["feature", "label"])
+    return df, feature_names
+
+
+def make_synthetic_mts_alpha158(
+    n_instruments: int = 6,
+    n_days: int = 60,
+    n_features: int = 20,
+    mts_horizon: int = 5,
+    seed: int = 43,  # different default seed from helper 1 to keep the
+    # TRA smoke trace independent
+) -> tuple[pd.DataFrame, list[str], int]:
+    """Synthetic MTSDatasetH-shape feature matrix for Phase 94 TRA smoke.
+
+    Per CONTEXT D-20 / RESEARCH Pitfall 3: TRA's fit/predict require
+    qlib.contrib.data.dataset.MTSDatasetH (multi-task sequential), not the
+    standard DatasetH. The DataFrame shape is identical to
+    make_synthetic_alpha158_features; the caller is responsible for
+    wrapping in MTSDatasetH(seq_len=mts_horizon, ...) at smoke time.
+
+    Used by tests/test_zoo_smoke.py::test_tra_smoke ONLY. n_days >=
+    mts_horizon is enforced (otherwise MTSDatasetH cannot form a single
+    sequence sample).
+
+    Pure pandas/numpy — no qlib import at module top, preserving Mac-side
+    ``pytest --collect-only`` health (RESEARCH Pitfall 2).
+
+    Returns:
+        (df, feature_names, mts_horizon): tuple suitable for the TRA smoke
+        harness. mts_horizon is returned so the caller can re-use it as the
+        MTSDatasetH seq_len without hard-coding a magic number.
+    """
+    if n_days < mts_horizon:
+        raise ValueError(f"n_days={n_days} < mts_horizon={mts_horizon}; MTSDatasetH cannot form a sequence sample")
+    rng = np.random.default_rng(seed)
+    instruments = [f"SYM{i:03d}" for i in range(n_instruments)]
+    dates = pd.date_range("2024-01-01", periods=n_days, freq="B")
+    idx = pd.MultiIndex.from_product([dates, instruments], names=["datetime", "instrument"])
+    feature_names = [f"FEAT{i:03d}" for i in range(n_features)]
+    features = pd.DataFrame(
+        rng.standard_normal((len(idx), n_features)),
+        index=idx,
+        columns=feature_names,
+    )
+    labels = pd.DataFrame(
+        rng.standard_normal((len(idx), 1)),
+        index=idx,
+        columns=["LABEL0"],
+    )
+    df = pd.concat([features, labels], axis=1, keys=["feature", "label"])
+    return df, feature_names, mts_horizon
+
+
 @pytest.fixture
 def synthetic_1m_tx() -> pd.DataFrame:
     """270-tick synthetic 1m fixture priced like TX (~16500)."""
