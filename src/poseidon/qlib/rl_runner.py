@@ -377,6 +377,14 @@ def _emit_train_config(
     max_epoch = int(os.environ.get(f"POSEIDON_RL_{algo_upper}_MAX_EPOCH", "50"))
     batch_size = int(os.environ.get(f"POSEIDON_RL_{algo_upper}_BATCH_SIZE", "1024"))
     episode_per_collect = int(os.environ.get(f"POSEIDON_RL_{algo_upper}_EPISODE_PER_COLLECT", "10000"))
+    # POSEIDON_RL_USE_CUDA controls runtime.use_cuda. Default false (qlib-research
+    # container has no GPU access by default; opt in once compose is updated to
+    # mount the GPU). Override with `POSEIDON_RL_USE_CUDA=true` for GPU runs.
+    use_cuda = os.environ.get("POSEIDON_RL_USE_CUDA", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
     max_step = TWSE_TICKS_PER_DAY // _TIME_PER_STEP  # 9 for 270-tick day at time_per_step=30
     end_time_index = TWSE_TICKS_PER_DAY - _TIME_PER_STEP - 1  # 270 - 30 - 1 = 239
@@ -441,7 +449,7 @@ policy:
   module_path: qlib.rl.order_execution.policy
 runtime:
   seed: 42
-  use_cuda: true
+  use_cuda: {str(use_cuda).lower()}
 trainer:
   max_epoch: {max_epoch}
   repeat_per_collect: 25
