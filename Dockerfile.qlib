@@ -67,6 +67,26 @@ RUN sed -i 's|pd\.concat(record_list, 0)|pd.concat(record_list, axis=0)|' \
         /app/.venv/lib/python3.12/site-packages/qlib/rl/contrib/backtest.py && \
     echo "qlib backtest.pd_concat patch applied OK"
 
+# Plan 90-04.2: qlib env_wrapper.reset returns just `obs` (old OpenAI Gym
+# API) but tianshou+shimmy expects `(obs, info_dict)` (Gymnasium API).
+# Patch the two return points to return (obs, {}) tuple.
+RUN sed -i 's|^            return obs$|            return obs, {}|' \
+        /app/.venv/lib/python3.12/site-packages/qlib/rl/utils/env_wrapper.py && \
+    sed -i 's|^            return generate_nan_observation(self.observation_space)$|            return generate_nan_observation(self.observation_space), {}|' \
+        /app/.venv/lib/python3.12/site-packages/qlib/rl/utils/env_wrapper.py && \
+    grep -q "return obs, {}" \
+        /app/.venv/lib/python3.12/site-packages/qlib/rl/utils/env_wrapper.py && \
+    echo "qlib env_wrapper.reset Gymnasium-API patch applied OK"
+
+# Plan 90-04.2: env_wrapper.step also returns 4-tuple (obs, reward, done, info)
+# but Gymnasium expects 5-tuple (obs, reward, terminated, truncated, info).
+# Patch the return to split done into (terminated=done, truncated=False).
+RUN sed -i 's|return obs, rew, done, info_dict|return obs, rew, done, False, info_dict|' \
+        /app/.venv/lib/python3.12/site-packages/qlib/rl/utils/env_wrapper.py && \
+    grep -q "return obs, rew, done, False, info_dict" \
+        /app/.venv/lib/python3.12/site-packages/qlib/rl/utils/env_wrapper.py && \
+    echo "qlib env_wrapper.step Gymnasium-API patch applied OK"
+
 COPY config/ config/
 COPY alembic/ alembic/
 COPY alembic.ini .
