@@ -204,13 +204,27 @@ def build_orders_split(
     # test absorbs any remainder
     n_test = n - n_train - n_valid
 
-    if n_train == 0 or n_valid == 0 or n_test == 0:
-        # Each split must have at least 1 trigger day for qlib to construct
-        # train/valid/test datasets. Surface loud if the input is too small.
-        raise ValueError(
-            f"build_orders_split: split sizes {n_train}/{n_valid}/{n_test} "
-            f"contain a zero — need ≥3 trigger days for default 70/15/15"
-        )
+    if n < 3:
+        # Need at least 1 day per bucket. With fewer than 3 trigger days the
+        # split is degenerate — caller should pass more triggers (or use the
+        # single-pickle build_orders for backtest-only flows).
+        raise ValueError(f"build_orders_split: need ≥3 trigger days for 3-way split, got {n}")
+
+    # Smooth-out rounding edge cases (e.g. 5 triggers × 70/15/15 → 3/0/2):
+    # ensure each bucket has at least 1 trigger by stealing from the largest
+    # non-singleton bucket.
+    while n_valid == 0 or n_test == 0:
+        if n_valid == 0 and n_train > 1:
+            n_train -= 1
+            n_valid += 1
+        elif n_test == 0 and n_train > 1:
+            n_train -= 1
+            n_test += 1
+        elif n_valid == 0 and n_test > 1:
+            n_test -= 1
+            n_valid += 1
+        else:
+            break
 
     train_dates = sorted_dates[:n_train]
     valid_dates = sorted_dates[n_train : n_train + n_valid]
