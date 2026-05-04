@@ -743,11 +743,11 @@ def run_one(
     )
 
     output_dir = Path(run_dir) / "outputs" / f"{algo}_{leg}"
-    # Qlib's upstream backtest writes one CSV per instrument under
-    # ``output_dir`` via ``CsvWriter``. The expected file is
-    # ``<leg>.csv`` (instrument-named). Our caller can also fall back to
-    # any CSV the directory contains.
-    result_csv = output_dir / f"{leg}.csv"
+    # qlib v0.9.7 writes the combined backtest report under
+    # `<output_dir>/backtest_result.csv` (verified live 2026-05-05). All
+    # legs in the order file are processed in one parallel call so each
+    # run_one invocation produces the same combined result file.
+    result_csv = output_dir / "backtest_result.csv"
 
     # Deferred import (PATTERNS.md §Deferred Qlib Import). The qlib
     # backtest entry point takes a config dict, not a path — load via

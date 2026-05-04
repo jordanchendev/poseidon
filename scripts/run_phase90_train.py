@@ -107,7 +107,18 @@ def fetch_ohlcv_1min(
             f"fetch_ohlcv_1min: no rows returned for {symbol}/{market} {start}..{end} from {THALASSA_BASE_URL}"
         )
     df = pd.concat(pieces, ignore_index=True).drop_duplicates(subset=["time"])
-    return df.set_index("time").sort_index()
+    df = df.set_index("time").sort_index()
+
+    # Filter to TWSE day session 09:00-13:30 only.
+    # TX (TAIFEX futures) has a night session 15:00-05:00 next day; bars from
+    # the night session pollute our calendar and break qlib backtest's TWAP
+    # 09:00-13:30 trade window. 0050 is intra-day only so this filter is a
+    # no-op for it. Strip tz before comparing — Thalassa returns +00:00 but
+    # the underlying time IS TWSE local (UTC+8 not applied at storage layer).
+    if df.index.tz is not None:
+        df.index = df.index.tz_localize(None)
+    df = df.between_time("09:00", "13:30")
+    return df
 
 
 # ---------------------------------------------------------------------------
