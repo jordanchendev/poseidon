@@ -49,6 +49,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 THALASSA_BASE_URL = os.environ.get("POSEIDON_THALASSA_BASE_URL", "http://192.168.31.241:8001")
+THALASSA_API_KEY = os.environ.get("POSEIDON_THALASSA_API_KEY", "")
 DEFAULT_WINDOW = "2020-04-01:2026-04-30"  # 6yr TX×0050 1m overlap
 
 
@@ -82,10 +83,12 @@ def fetch_ohlcv_1min(
             "end": chunk_end.isoformat(),
             "limit": 200_000,
         }
-        r = requests.get(url, params=params, timeout=120)
+        headers = {"X-API-Key": THALASSA_API_KEY} if THALASSA_API_KEY else {}
+        r = requests.get(url, params=params, headers=headers, timeout=120)
         r.raise_for_status()
         body = r.json()
-        rows = body.get("rows", body) if isinstance(body, dict) else body
+        # Thalassa returns {count, data, interval, market, symbol}
+        rows = body.get("data") or body.get("rows") or body if isinstance(body, dict) else body
         if rows:
             df = pd.DataFrame(rows)
             df["time"] = pd.to_datetime(df["time"])
