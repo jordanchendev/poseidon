@@ -301,7 +301,7 @@ strategies:
             kwargs:
               data_dir: {pickle_dir}/
               feature_columns_today: ["$high", "$low", "$open", "$close", "$volume"]
-              feature_columns_yesterday: []
+              feature_columns_yesterday: ["$high_1", "$low_1", "$open_1", "$close_1", "$volume_1"]
             module_path: qlib.rl.data.native
         module_path: qlib.rl.order_execution.interpreter
     module_path: qlib.rl.order_execution.strategy
@@ -416,7 +416,7 @@ state_interpreter:
       kwargs:
         data_dir: {pickle_dir}/
         feature_columns_today: ["$high", "$low", "$open", "$close", "$volume"]
-        feature_columns_yesterday: []
+        feature_columns_yesterday: ["$high_1", "$low_1", "$open_1", "$close_1", "$volume_1"]
         backtest: false
       module_path: qlib.rl.data.native
   module_path: qlib.rl.order_execution.interpreter

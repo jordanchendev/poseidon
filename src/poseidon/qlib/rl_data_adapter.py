@@ -181,12 +181,25 @@ def _normalize_ohlcv(df: pd.DataFrame, instrument: str) -> pd.DataFrame:
     # qlib's DataframeIntradayBacktestData hardcodes price_column="$close0" /
     # volume_column="$volume0" defaults (qlib v0.9.7 — qlib/rl/data/native.py).
     # Add the suffix-0 aliases (today's bar) so its get_deal_price() / get_volume()
-    # find the columns. The "1" suffix would be yesterday — we don't compute that.
+    # find the columns.
     out["$close0"] = out["$close"]
     out["$volume0"] = out["$volume"]
     out["$open0"] = out["$open"]
     out["$high0"] = out["$high"]
     out["$low0"] = out["$low"]
+    # qlib's FullHistoryStateInterpreter observation_space mandates
+    # `data_processed_prev` shape = (data_ticks, data_dim) — same as today's
+    # observation. We don't compute true yesterday-bar features (would require
+    # a per-day shift and only matters for policies that condition on
+    # yesterday's state). Provide zero-filled "$<field>_1" columns so qlib's
+    # space validator passes; learning signal from yesterday is therefore
+    # null but the policy network handles that gracefully (zeros pass through
+    # the conv/RNN layers as no-information).
+    out["$close_1"] = 0.0
+    out["$volume_1"] = 0.0
+    out["$open_1"] = 0.0
+    out["$high_1"] = 0.0
+    out["$low_1"] = 0.0
 
     out.index.name = "datetime"
     out["instrument"] = instrument
