@@ -367,15 +367,20 @@ def _stub_qlib_backtest_module(monkeypatch) -> list[dict]:
     pkgs = ["qlib", "qlib.rl", "qlib.rl.contrib", "qlib.rl.contrib.backtest"]
     for name in pkgs:
         if name not in sys.modules:
+            # Mac dev: build a minimal stub package tree. monkeypatch.setitem
+            # restores the original (absent) state on test teardown.
             mod = types.ModuleType(name)
             mod.__path__ = []  # type: ignore[attr-defined]
-            sys.modules[name] = mod
-            monkeypatch.setattr(sys.modules[name], "__path__", [], raising=False)
-            monkeypatch.delitem(sys.modules, name, raising=False)
-            sys.modules[name] = mod
-    sys.modules["qlib.rl.contrib.backtest"].backtest = _stub_backtest  # type: ignore[attr-defined]
-    sys.modules["qlib.rl.contrib.backtest"].get_backtest_config_fromfile = (  # type: ignore[attr-defined]
-        _stub_get_backtest_config_fromfile
+            monkeypatch.setitem(sys.modules, name, mod)
+    # Patch the backtest entry points via monkeypatch.setattr so cleanup
+    # restores the originals (matters on stormtrooper where real qlib is
+    # already imported and other tests need it intact).
+    monkeypatch.setattr(sys.modules["qlib.rl.contrib.backtest"], "backtest", _stub_backtest, raising=False)
+    monkeypatch.setattr(
+        sys.modules["qlib.rl.contrib.backtest"],
+        "get_backtest_config_fromfile",
+        _stub_get_backtest_config_fromfile,
+        raising=False,
     )
 
     return calls
