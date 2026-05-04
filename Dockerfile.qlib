@@ -56,6 +56,17 @@ RUN sed -i 's|return pd.Series(self.data, index=self.index)|return pd.Series(sel
         /app/.venv/lib/python3.12/site-packages/qlib/utils/index_data.py && \
     echo "qlib index_data.to_series patch applied OK"
 
+# Plan 90-04.1: pandas 2.x dropped positional `axis` in pd.concat(); qlib v0.9.7
+# still calls `pd.concat(..., 0)` in two places in qlib/rl/contrib/backtest.py.
+# Patch both call sites to use keyword axis=0.
+RUN sed -i 's|pd\.concat(record_list, 0)|pd.concat(record_list, axis=0)|' \
+        /app/.venv/lib/python3.12/site-packages/qlib/rl/contrib/backtest.py && \
+    sed -i 's|pd\.concat(\[r\[0\] for r in res\], 0)|pd.concat([r[0] for r in res], axis=0)|' \
+        /app/.venv/lib/python3.12/site-packages/qlib/rl/contrib/backtest.py && \
+    grep -q "pd.concat(record_list, axis=0)" \
+        /app/.venv/lib/python3.12/site-packages/qlib/rl/contrib/backtest.py && \
+    echo "qlib backtest.pd_concat patch applied OK"
+
 COPY config/ config/
 COPY alembic/ alembic/
 COPY alembic.ini .
