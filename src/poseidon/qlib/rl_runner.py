@@ -93,14 +93,25 @@ _AQUARIUM_ROOT: Path | None = None
 
 
 def _discover_aquarium_root(start: Path | None = None) -> Path:
-    """Walk parents of ``start`` until a ``.planning/`` directory is found.
+    """Discover the workspace root for checkpoint storage.
+
+    Resolution order:
+      1. ``POSEIDON_AQUARIUM_ROOT`` env var (set inside docker containers
+         by docker-compose.yml — typically ``/app``).
+      2. Walk parents of ``__file__`` until a ``.planning/`` directory is
+         found (Mac dev / aquarium tree).
+      3. Fall back to ``$PWD`` so checkpoints land somewhere writable when
+         neither anchor is present.
 
     Returns the cached root after first discovery so repeated calls are
-    cheap. Raises ``RuntimeError`` if no ancestor contains ``.planning/``
-    (e.g. running outside the aquarium workspace).
+    cheap.
     """
     global _AQUARIUM_ROOT
     if _AQUARIUM_ROOT is not None:
+        return _AQUARIUM_ROOT
+    env_root = os.environ.get("POSEIDON_AQUARIUM_ROOT")
+    if env_root:
+        _AQUARIUM_ROOT = Path(env_root)
         return _AQUARIUM_ROOT
     if start is None:
         start = Path(__file__).resolve()
@@ -108,7 +119,13 @@ def _discover_aquarium_root(start: Path | None = None) -> Path:
         if (parent / ".planning").is_dir():
             _AQUARIUM_ROOT = parent
             return parent
-    raise RuntimeError(f"_discover_aquarium_root: no .planning ancestor found above {start}")
+    _AQUARIUM_ROOT = Path.cwd()
+    logger.warning(
+        "rl_runner._discover_aquarium_root: no .planning ancestor + no POSEIDON_AQUARIUM_ROOT env — "
+        "falling back to cwd %s",
+        _AQUARIUM_ROOT,
+    )
+    return _AQUARIUM_ROOT
 
 
 def _checkpoint_path(algo: str) -> Path:
