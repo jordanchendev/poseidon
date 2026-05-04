@@ -50,6 +50,10 @@ dev = [
 qlib = [
     "pyqlib>=0.9",
     "shap>=0.50",
+    # Plan 90-04.1: tianshou (qlib RL trainer dep) requires shimmy as the
+    # OpenAI Gym → Gymnasium adapter. Without it, train_onpolicy crashes at
+    # SubprocEnvWorker init with `ModuleNotFoundError: No module named 'shimmy'`.
+    "shimmy>=2.0",
     # Phase 68: qlib research runs include XGBModel, so the research image
     # must install xgboost with the qlib extra instead of relying on gpu-only deps.
     "xgboost>=2.0",
