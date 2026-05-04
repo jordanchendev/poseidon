@@ -58,7 +58,14 @@ def test_dataset_adapter_roundtrip(tmp_path: Path):
 
 
 def test_order_builder_shape(tmp_path: Path):
-    """build_orders emits 3 rows × [amount, order_type] for 3 trigger days."""
+    """build_orders emits 3 rows × [amount, order_type] for 3 trigger days.
+
+    Plan 90-04.1 schema:
+      * Index: ``[date, instrument]`` (date OUTER per upstream convention)
+      * order_type: int (OrderDir.BUY = 1)
+    """
+    from poseidon.qlib.rl_order_builder import ORDER_DIR_BUY
+
     triggers = [
         pd.Timestamp("2024-03-04"),
         pd.Timestamp("2024-04-15"),
@@ -77,20 +84,81 @@ def test_order_builder_shape(tmp_path: Path):
     loaded = pd.read_pickle(out)
     assert len(loaded) == 3
     assert list(loaded.columns) == ["amount", "order_type"]
-    assert loaded.index.names == ["datetime", "instrument"]
-    assert (loaded["order_type"] == "BUY").all()
-    # All instruments == "TX"
+    assert loaded.index.names == ["date", "instrument"]
+    # OrderDir.BUY = 1 verified live against qlib v0.9.7 in Plan 90-04.1.
+    assert (loaded["order_type"] == ORDER_DIR_BUY).all()
     assert (loaded.index.get_level_values("instrument") == "TX").all()
 
 
 def test_order_builder_sell_leg(tmp_path: Path):
-    """leg='0050' → order_type='SELL' (short the spot ETF)."""
+    """leg='0050' → order_type=OrderDir.SELL (0) — short the spot ETF."""
+    from poseidon.qlib.rl_order_builder import ORDER_DIR_SELL
+
     triggers = [pd.Timestamp("2024-03-04")]
     out = tmp_path / "orders_sell.pkl"
     build_orders(triggers, leg="0050", notional=1_000_000.0, out_path=out)
     loaded = pd.read_pickle(out)
-    assert loaded["order_type"].iloc[0] == "SELL"
+    assert loaded["order_type"].iloc[0] == ORDER_DIR_SELL
     assert loaded.index.get_level_values("instrument")[0] == "0050"
+
+
+def test_build_orders_split_chronological(tmp_path: Path):
+    """build_orders_split chunks 100 trigger days chronologically into 70/15/15."""
+    from poseidon.qlib.rl_order_builder import build_orders_split
+
+    triggers = pd.date_range("2024-01-01", periods=100, freq="3D").tolist()
+    paths = build_orders_split(
+        triggers,
+        legs={"TX": 1_000_000.0, "0050": 1_000_000.0},
+        out_dir=tmp_path,
+    )
+
+    train = pd.read_pickle(paths["train"])
+    valid = pd.read_pickle(paths["valid"])
+    test = pd.read_pickle(paths["test"])
+
+    # 100 trigger days × 2 legs = 200 rows total
+    assert len(train) == 70 * 2
+    assert len(valid) == 15 * 2
+    assert len(test) == 15 * 2
+
+    # Chronological — train.max < valid.min < test.min
+    train_dates = train.index.get_level_values("date")
+    valid_dates = valid.index.get_level_values("date")
+    test_dates = test.index.get_level_values("date")
+    assert train_dates.max() < valid_dates.min()
+    assert valid_dates.max() < test_dates.min()
+
+
+def test_build_orders_multileg_combines_legs(tmp_path: Path):
+    """build_orders_multileg writes one pickle with rows for each (date, leg) pair."""
+    from poseidon.qlib.rl_order_builder import build_orders_multileg
+
+    triggers = [pd.Timestamp("2024-03-04"), pd.Timestamp("2024-04-15")]
+    out = tmp_path / "all_orders.pkl"
+    build_orders_multileg(
+        triggers,
+        legs={"TX": 1_000_000.0, "0050": 500_000.0},
+        out_path=out,
+    )
+
+    df = pd.read_pickle(out)
+    assert len(df) == 4  # 2 dates × 2 legs
+    assert set(df.index.get_level_values("instrument").unique()) == {"TX", "0050"}
+    # TX row should have notional 1e6, 0050 should have 5e5
+    tx_row = df.xs("TX", level="instrument")
+    etf_row = df.xs("0050", level="instrument")
+    assert (tx_row["amount"] == 1_000_000.0).all()
+    assert (etf_row["amount"] == 500_000.0).all()
+
+
+def test_orderdir_consistency_probe(tmp_path: Path):
+    """If qlib is installed (stormtrooper), the cached OrderDir constants match upstream."""
+    from poseidon.qlib.rl_order_builder import _assert_orderdir_consistency
+
+    # Mac dev: qlib not installed — function silently returns. Stormtrooper:
+    # raises if OrderDir drifted. Either way, the call must not raise.
+    _assert_orderdir_consistency()
 
 
 # --- rl_runner.py unit tests (no qlib required) ---
