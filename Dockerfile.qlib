@@ -41,17 +41,20 @@ RUN uv sync --extra qlib --no-dev --no-install-project
 COPY src/ src/
 RUN uv sync --extra qlib --no-dev --no-editable
 
-# Plan 90-04.1: pin pandas<2.3 inside qlib-research only.
-# qlib v0.9.7's RL backtest (qlib.rl.contrib.backtest + SAOEIntStrategy)
-# constructs pd.Index() from qlib.utils.index_data.Index objects internally.
-# pandas 2.3+ rejects this with "Index(...) must be called with a collection
-# of some kind". Downgrade pandas to 2.2.x (qlib-tested range) resolves the
-# crash without affecting other Poseidon containers (api, cpu-worker,
-# gpu-worker, beat) that need pandas 2.3+ for pandas-ta.
-# Use --no-deps so we don't drag pandas-ta back to >=2.3.2 (pandas-ta is not
-# imported inside qlib-research).
-RUN uv pip install --no-deps "pandas>=2.2,<2.3" && \
-    /app/.venv/bin/python -c "import pandas; ver = pandas.__version__; assert ver.startswith('2.2'), f'pandas pin failed: got {ver}'; print(f'pandas {ver} OK (qlib×pandas-2.x compat pin)')"
+# Plan 90-04.1: patch a known qlib v0.9.7 upstream bug in
+# qlib/utils/index_data.py:to_series — it calls pd.Series(data, index=self.index)
+# where self.index is a qlib.utils.index_data.Index object, not a pandas Index.
+# Pandas's ensure_index() refuses to wrap it ("Index(...) must be called with
+# a collection of some kind"). The same file's __repr__ method has the correct
+# form `index=self.index.tolist()` two lines below — clearly a one-line bug
+# in to_series. Fix it via sed at build time so we don't fork qlib.
+# Verified manually 2026-05-05: this single patch unblocks qlib.rl.contrib.backtest
+# all the way through SAOEIntStrategy + Exchange under pandas 2.x.
+RUN sed -i 's|return pd.Series(self.data, index=self.index)|return pd.Series(self.data, index=self.index.tolist())|' \
+        /app/.venv/lib/python3.12/site-packages/qlib/utils/index_data.py && \
+    grep -q "return pd.Series(self.data, index=self.index.tolist())" \
+        /app/.venv/lib/python3.12/site-packages/qlib/utils/index_data.py && \
+    echo "qlib index_data.to_series patch applied OK"
 
 COPY config/ config/
 COPY alembic/ alembic/
