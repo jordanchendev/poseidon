@@ -75,6 +75,19 @@ DEFAULT_TIME_BUDGET_SECONDS: int = 14400
 # Cooperative-cancel poll interval inside train_one's wait loop (seconds).
 _CANCEL_POLL_INTERVAL_SECONDS: float = 30.0
 
+# Upstream qlib RL example uses time_per_step=30 (30 ticks per decision step).
+# At our 1-min granularity this gives 9 steps over the 270-tick TWSE day,
+# matching the upstream 5-min × 8-step + 1 trailing window structure.
+_TIME_PER_STEP: int = 30
+
+# Categorical action values — upstream uses 4. Action_interpreter discretises
+# the per-step "trade now" decision into N options.
+_ACTION_VALUES: int = 4
+
+# Backtest parallelism — stormtrooper has 12 cores; cap at 4 to leave room
+# for Triton GPU worker (Triton runs on GPU but its CPU plumbing competes).
+_BACKTEST_CONCURRENCY: int = 4
+
 # AQUARIUM_ROOT discovery cache.
 _AQUARIUM_ROOT: Path | None = None
 
@@ -133,35 +146,37 @@ def _run_cancelled(session, run_id: str) -> bool:
 def _emit_backtest_config(
     algo: str,
     leg: str,
-    ohlcv_pickle_path: Path,
+    bin_dir: Path,
+    pickle_dir: Path,
     orders_pickle_path: Path,
     run_dir: Path,
     checkpoint_path: Path | None = None,
 ) -> Path:
-    """Emit a qlib RL backtest YAML config for any of the 4 algos.
+    """Emit a qlib RL backtest YAML config (upstream-compatible schema).
 
-    Wave 2 lit up TWAP / VWAP (rule-based). Wave 3 extends with PPO / OPDS,
-    which require a trained checkpoint loaded into ``policy.kwargs.weight_file``.
-
-    Mirrors upstream ``examples/rl_order_execution/exp_configs/
-    backtest_twap.yml`` (TWAP/VWAP) and ``backtest_opds.yml`` (PPO/OPDS).
-    Hand-rolls YAML as a plain string to avoid a hard dependency on PyYAML
-    at module-import time; the qlib backtest entry point ``yaml.safe_load``s
-    the file.
-
-    TWAP uses ``$close`` for deal price (mid-bar print). VWAP uses
-    HLC/3 fallback (matches existing :mod:`poseidon.qlib.dataset_builder`
-    convention).
+    Plan 90-04.1 rewrite. Mirrors upstream qlib v0.9.7
+    ``examples/rl_order_execution/exp_configs/backtest_twap.yml`` (TWAP/VWAP)
+    and ``backtest_opds.yml`` (PPO/OPDS) byte-for-byte except for the TWSE
+    overrides documented inline. Hand-rolls YAML as a plain string to avoid
+    a hard dependency on PyYAML at module-import time; the qlib backtest
+    entry point ``yaml.safe_load``s the file.
 
     Args:
-        algo: ``"twap"``, ``"vwap"``, ``"ppo"`` or ``"opds"``.
-        leg: instrument symbol (``"TX"`` or ``"0050"``).
-        ohlcv_pickle_path: qlib RL pickle written by
-            :func:`poseidon.qlib.rl_dataset_adapter.write_pickle`.
-        orders_pickle_path: qlib Order pickle written by
-            :func:`poseidon.qlib.rl_order_builder.build_orders`.
-        run_dir: per-run directory; this function creates ``configs/``
-            and ``outputs/<algo>_<leg>/`` underneath it.
+        algo: one of :data:`ALGOS`.
+        leg: instrument symbol used to label the output dir (``"TX"`` or
+            ``"0050"``). Note: the actual qlib backtest reads ALL legs
+            present in ``orders_pickle_path`` simultaneously — ``leg`` here
+            is just for filename / log clarity.
+        bin_dir: qlib bin-format directory (will be set as
+            ``qlib.provider_uri_1min``). Materialized by
+            :func:`poseidon.qlib.rl_data_adapter.write_qlib_data_dir`.
+        pickle_dir: qlib pickle-handler directory containing ``feature/`` and
+            ``backtest/`` subdirs. Used by SAOEIntStrategy's
+            ``HandlerProcessedDataProvider`` for PPO/OPDS.
+        orders_pickle_path: single multi-leg orders pickle (e.g. from
+            :func:`build_orders_split`'s ``test`` output).
+        run_dir: per-run directory; this function creates ``configs/`` and
+            ``outputs/<algo>_<leg>/`` underneath it.
         checkpoint_path: required for PPO/OPDS; ignored for TWAP/VWAP.
 
     Returns:
@@ -179,110 +194,106 @@ def _emit_backtest_config(
 
     cfg_path = configs_dir / f"backtest_{algo}_{leg}.yml"
 
-    if algo in ("twap", "vwap"):
-        # TWAP uses $close; VWAP uses HLC/3 fallback expression (mirrors
-        # poseidon.qlib.dataset_builder which expresses HLC/3 as the fallback
-        # for $vwap when volume is zero / missing).
-        deal_price_expr = "$close" if algo == "twap" else "($high + $low + $close) / 3"
+    # TWSE session — upstream uses 9:30/14:54 for A-share; we override.
+    # data_granularity uses STRING form ("1min") in backtest YAML.
+    # max_step = TWSE_TICKS_PER_DAY / time_per_step = 270 / 30 = 9
+    max_step = TWSE_TICKS_PER_DAY // _TIME_PER_STEP
 
-        # NB: Mirrors qlib upstream backtest_twap.yml shape (RESEARCH §Sources).
-        # data_ticks=270, start_time=09:00, end_time=13:30 are the TWSE session
-        # overrides (RESEARCH §Pitfall 4 — qlib defaults to A-share hours).
+    if algo in ("twap", "vwap"):
+        # Upstream backtest_twap.yml: TWAP at both 30min and 1day strategy
+        # levels. VWAP variant flips deal_price to HLC/3 (matches our
+        # dataset_builder convention).
+        deal_price_pair = (
+            '["$close", "$close"]'
+            if algo == "twap"
+            else '["($high + $low + $close) / 3", "($high + $low + $close) / 3"]'
+        )
         yaml_text = f"""# Phase 90 RL backtest config — algo={algo} leg={leg}
 # Auto-generated by poseidon.qlib.rl_runner — do not edit by hand.
 # TWSE / TAIFEX session: {TWSE_START}-{TWSE_END} = {TWSE_TICKS_PER_DAY} 1-min ticks.
+order_file: {orders_pickle_path}
+start_time: "{TWSE_START}"
+end_time: "{TWSE_END}"
+data_granularity: "1min"
+qlib:
+  provider_uri_1min: {bin_dir}
+exchange:
+  limit_threshold: null
+  deal_price: {deal_price_pair}
+  volume_threshold: null
 strategies:
+  1day:
+    class: TWAPStrategy
+    kwargs: {{}}
+    module_path: qlib.contrib.strategy.rule_strategy
   30min:
     class: TWAPStrategy
+    kwargs: {{}}
     module_path: qlib.contrib.strategy.rule_strategy
-    kwargs: {{}}
-  1day:
-    class: SAOEIntStrategy
-    module_path: qlib.rl.order_execution.strategy
-    kwargs: {{}}
-data:
-  source_dir: {ohlcv_pickle_path.parent}
-  data_dir: {ohlcv_pickle_path}
-  order_dir: {orders_pickle_path}
-  data_granularity: "1min"
-  start_time: "{TWSE_START}"
-  end_time: "{TWSE_END}"
-  data_ticks: {TWSE_TICKS_PER_DAY}
-  deal_price: "{deal_price_expr}"
-  total_time: {TWSE_TICKS_PER_DAY}
-  default_start_time: 0
-  default_end_time: {TWSE_TICKS_PER_DAY - 1}
-algo: {algo}
-leg: {leg}
-output_dir: {output_dir}
-runtime:
-  seed: 42
-  use_cuda: false
+concurrency: {_BACKTEST_CONCURRENCY}
+output_dir: {output_dir}/
 """
     else:
-        # PPO / OPDS — mirror upstream backtest_opds.yml.
-        # The 1-day strategy is SAOEIntStrategy with a learned policy. The
-        # checkpoint is loaded via policy.kwargs.weight_file (qlib upstream
-        # convention; see qlib.rl.order_execution.policy.PPO / OPDS).
+        # Upstream backtest_opds.yml: 1day uses SAOEIntStrategy with a
+        # trained policy; 30min remains TWAPStrategy (the action sequence
+        # the policy decides at 30-min intervals is TWAP-distributed
+        # within each 30-min sub-window).
         algo_class = "PPO" if algo == "ppo" else "OPDS"
         yaml_text = f"""# Phase 90 RL backtest config — algo={algo} leg={leg}
 # Auto-generated by poseidon.qlib.rl_runner — do not edit by hand.
 # TWSE / TAIFEX session: {TWSE_START}-{TWSE_END} = {TWSE_TICKS_PER_DAY} 1-min ticks.
+order_file: {orders_pickle_path}
+start_time: "{TWSE_START}"
+end_time: "{TWSE_END}"
+data_granularity: "1min"
+qlib:
+  provider_uri_1min: {bin_dir}
+exchange:
+  limit_threshold: null
+  deal_price: ["$close", "$close"]
+  volume_threshold: null
 strategies:
-  30min:
-    class: TWAPStrategy
-    module_path: qlib.contrib.strategy.rule_strategy
-    kwargs: {{}}
   1day:
     class: SAOEIntStrategy
-    module_path: qlib.rl.order_execution.strategy
     kwargs:
-      state_interpreter:
-        class: FullHistoryStateInterpreter
-        module_path: qlib.rl.order_execution.interpreter
-        kwargs:
-          max_step: {TWSE_TICKS_PER_DAY}
-          data_ticks: {TWSE_TICKS_PER_DAY}
-          data_dim: 5
-          processed_data_provider:
-            class: PickleProcessedDataProvider
-            module_path: qlib.rl.data.pickle_styled
-            kwargs:
-              data_dir: {ohlcv_pickle_path.parent}
+      data_granularity: 1
       action_interpreter:
         class: CategoricalActionInterpreter
-        module_path: qlib.rl.order_execution.interpreter
         kwargs:
-          values: 14
-          max_step: {TWSE_TICKS_PER_DAY}
+          max_step: {max_step}
+          values: {_ACTION_VALUES}
+        module_path: qlib.rl.order_execution.interpreter
       network:
         class: Recurrent
-        module_path: qlib.rl.order_execution.network
         kwargs: {{}}
+        module_path: qlib.rl.order_execution.network
       policy:
         class: {algo_class}
-        module_path: qlib.rl.order_execution.policy
         kwargs:
           lr: 0.0001
           weight_file: {checkpoint_path}
-data:
-  source_dir: {ohlcv_pickle_path.parent}
-  data_dir: {ohlcv_pickle_path}
-  order_dir: {orders_pickle_path}
-  data_granularity: "1min"
-  start_time: "{TWSE_START}"
-  end_time: "{TWSE_END}"
-  data_ticks: {TWSE_TICKS_PER_DAY}
-  deal_price: "$close"
-  total_time: {TWSE_TICKS_PER_DAY}
-  default_start_time: 0
-  default_end_time: {TWSE_TICKS_PER_DAY - 1}
-algo: {algo}
-leg: {leg}
-output_dir: {output_dir}
-runtime:
-  seed: 42
-  use_cuda: true
+        module_path: qlib.rl.order_execution.policy
+      state_interpreter:
+        class: FullHistoryStateInterpreter
+        kwargs:
+          data_dim: 5
+          data_ticks: {TWSE_TICKS_PER_DAY}
+          max_step: {max_step}
+          processed_data_provider:
+            class: HandlerProcessedDataProvider
+            kwargs:
+              data_dir: {pickle_dir}/
+              feature_columns_today: ["$high", "$low", "$open", "$close", "$volume"]
+              feature_columns_yesterday: []
+            module_path: qlib.rl.data.native
+        module_path: qlib.rl.order_execution.interpreter
+    module_path: qlib.rl.order_execution.strategy
+  30min:
+    class: TWAPStrategy
+    kwargs: {{}}
+    module_path: qlib.contrib.strategy.rule_strategy
+concurrency: {_BACKTEST_CONCURRENCY}
+output_dir: {output_dir}/
 """
     cfg_path.write_text(yaml_text)
     logger.info("rl_runner: emitted backtest config %s", cfg_path)
@@ -292,33 +303,43 @@ runtime:
 def _emit_train_config(
     algo: str,
     leg: str,
-    ohlcv_pickle_path: Path,
-    orders_pickle_path: Path,
+    pickle_dir: Path,
+    order_dir: Path,
     run_dir: Path,
     checkpoint_out_dir: Path,
 ) -> Path:
-    """Emit a qlib RL train YAML config for PPO or OPDS.
+    """Emit a qlib RL train YAML config (upstream-compatible schema).
 
-    Mirrors upstream ``examples/rl_order_execution/exp_configs/train_ppo.yml``
-    / ``train_opds.yml`` (RESEARCH §Sources). Override fields (TWSE session,
-    output dir, ``concurrency`` / ``n_envs``) layer on top of the upstream
-    skeleton.
+    Plan 90-04.1 rewrite. Mirrors upstream qlib v0.9.7
+    ``examples/rl_order_execution/exp_configs/train_ppo.yml`` /
+    ``train_opds.yml`` byte-for-byte except for the TWSE overrides
+    documented inline.
 
-    The default ``concurrency`` is 4 environments; override via the
-    ``POSEIDON_RL_PPO_N_ENVS`` / ``POSEIDON_RL_OPDS_N_ENVS`` environment
-    variables when pre-flight extrapolation says GPU memory is tight.
+    The actual qlib trainer keys (``simulator.time_per_step``,
+    ``data.source.feature_root_dir``, ``data.source.order_dir``,
+    ``trainer.max_epoch``, etc.) are matched verbatim — earlier Wave 3
+    emitter used different key names (``trainer.max_iters``,
+    ``data_dir``) which would have crashed in
+    ``train_onpolicy.train_and_test``.
+
+    Env-var overrides (used by pre-flight extrapolation):
+
+    * ``POSEIDON_RL_<ALGO>_N_ENVS`` — env.concurrency (default 4)
+    * ``POSEIDON_RL_<ALGO>_MAX_EPOCH`` — trainer.max_epoch (default 50)
+    * ``POSEIDON_RL_<ALGO>_BATCH_SIZE`` — trainer.batch_size (default 1024)
+    * ``POSEIDON_RL_<ALGO>_EPISODE_PER_COLLECT`` (default 10000)
 
     Args:
         algo: ``"ppo"`` or ``"opds"``.
-        leg: instrument symbol (``"TX"`` or ``"0050"``); used as a label
-            only — train sees both legs together via the ``order_file``.
-        ohlcv_pickle_path: qlib RL pickle written by
-            :func:`poseidon.qlib.rl_dataset_adapter.write_pickle`.
-        orders_pickle_path: qlib Order pickle written by
-            :func:`poseidon.qlib.rl_order_builder.build_orders`.
-        run_dir: per-run directory; this function creates ``configs/``
-            underneath it.
-        checkpoint_out_dir: directory qlib writes the checkpoint into.
+        leg: label used in config filename only — train consumes ALL legs
+            present in ``order_dir``'s split files.
+        pickle_dir: ``feature_root_dir`` value — directory containing
+            ``feature/<stock>.pkl`` + ``backtest/<stock>.pkl``.
+        order_dir: directory containing ``train``, ``valid``, ``test`` order
+            pickles (output of :func:`build_orders_split`).
+        run_dir: per-run scratch directory (this function writes ``configs/``).
+        checkpoint_out_dir: where qlib writes the trained checkpoint
+            (``trainer.checkpoint_path``).
 
     Returns:
         Path to the emitted YAML config.
@@ -332,64 +353,87 @@ def _emit_train_config(
     checkpoint_out_dir.mkdir(parents=True, exist_ok=True)
 
     algo_class = "PPO" if algo == "ppo" else "OPDS"
-    n_envs = int(os.environ.get(f"POSEIDON_RL_{algo.upper()}_N_ENVS", "4"))
-    max_iters = int(os.environ.get(f"POSEIDON_RL_{algo.upper()}_MAX_ITERS", "50"))
+    reward_class = "PPOReward" if algo == "ppo" else "PAPenaltyReward"
+
+    algo_upper = algo.upper()
+    n_envs = int(os.environ.get(f"POSEIDON_RL_{algo_upper}_N_ENVS", "4"))
+    max_epoch = int(os.environ.get(f"POSEIDON_RL_{algo_upper}_MAX_EPOCH", "50"))
+    batch_size = int(os.environ.get(f"POSEIDON_RL_{algo_upper}_BATCH_SIZE", "1024"))
+    episode_per_collect = int(os.environ.get(f"POSEIDON_RL_{algo_upper}_EPISODE_PER_COLLECT", "10000"))
+
+    max_step = TWSE_TICKS_PER_DAY // _TIME_PER_STEP  # 9 for 270-tick day at time_per_step=30
+    end_time_index = TWSE_TICKS_PER_DAY - _TIME_PER_STEP - 1  # 270 - 30 - 1 = 239
 
     yaml_text = f"""# Phase 90 RL train config — algo={algo} leg={leg}
 # Auto-generated by poseidon.qlib.rl_runner — do not edit by hand.
 # TWSE / TAIFEX session: {TWSE_START}-{TWSE_END} = {TWSE_TICKS_PER_DAY} 1-min ticks.
 simulator:
-  data_dir: {ohlcv_pickle_path.parent}
-  feature_columns_today: ["$open", "$high", "$low", "$close", "$volume"]
-  feature_columns_yesterday: []
-  data_granularity: "1min"
-  start_time: "{TWSE_START}"
-  end_time: "{TWSE_END}"
-  data_ticks: {TWSE_TICKS_PER_DAY}
-  total_time: {TWSE_TICKS_PER_DAY}
-  default_start_time: 0
-  default_end_time: {TWSE_TICKS_PER_DAY - 1}
-state_interpreter:
-  class: FullHistoryStateInterpreter
-  module_path: qlib.rl.order_execution.interpreter
-  kwargs:
-    max_step: {TWSE_TICKS_PER_DAY}
-    data_ticks: {TWSE_TICKS_PER_DAY}
-    data_dim: 5
-    processed_data_provider:
-      class: PickleProcessedDataProvider
-      module_path: qlib.rl.data.pickle_styled
-      kwargs:
-        data_dir: {ohlcv_pickle_path.parent}
+  data_granularity: 1
+  time_per_step: {_TIME_PER_STEP}
+  vol_limit: null
+env:
+  concurrency: {n_envs}
+  parallel_mode: subproc
 action_interpreter:
   class: CategoricalActionInterpreter
-  module_path: qlib.rl.order_execution.interpreter
   kwargs:
-    values: 14
-    max_step: {TWSE_TICKS_PER_DAY}
+    values: {_ACTION_VALUES}
+    max_step: {max_step}
+  module_path: qlib.rl.order_execution.interpreter
+state_interpreter:
+  class: FullHistoryStateInterpreter
+  kwargs:
+    data_dim: 5
+    data_ticks: {TWSE_TICKS_PER_DAY}
+    max_step: {max_step}
+    processed_data_provider:
+      class: HandlerProcessedDataProvider
+      kwargs:
+        data_dir: {pickle_dir}/
+        feature_columns_today: ["$high", "$low", "$open", "$close", "$volume"]
+        feature_columns_yesterday: []
+        backtest: false
+      module_path: qlib.rl.data.native
+  module_path: qlib.rl.order_execution.interpreter
+reward:
+  class: {reward_class}
+  kwargs:
+    max_step: {max_step}
+    start_time_index: 0
+    end_time_index: {end_time_index}
+  module_path: qlib.rl.order_execution.reward
+data:
+  source:
+    order_dir: {order_dir}
+    feature_root_dir: {pickle_dir}/
+    feature_columns_today: ["$close", "$volume"]
+    feature_columns_yesterday: []
+    total_time: {TWSE_TICKS_PER_DAY}
+    default_start_time_index: 0
+    default_end_time_index: {end_time_index}
+    proc_data_dim: 5
+  num_workers: 0
+  queue_size: 20
 network:
   class: Recurrent
   module_path: qlib.rl.order_execution.network
-  kwargs: {{}}
 policy:
   class: {algo_class}
-  module_path: qlib.rl.order_execution.policy
   kwargs:
     lr: 0.0001
-order_file: {orders_pickle_path}
-trainer:
-  max_iters: {max_iters}
-  loggers:
-    - class: ConsoleWriter
-      module_path: tianshou.utils.logger.base
-      kwargs: {{}}
-  concurrency: {n_envs}
-  finite_env_type: subproc
-  val_every_n_iters: 5
-checkpoint_path: {checkpoint_out_dir}
+  module_path: qlib.rl.order_execution.policy
 runtime:
   seed: 42
   use_cuda: true
+trainer:
+  max_epoch: {max_epoch}
+  repeat_per_collect: 25
+  earlystop_patience: 50
+  episode_per_collect: {episode_per_collect}
+  batch_size: {batch_size}
+  val_every_n_epoch: 4
+  checkpoint_path: {checkpoint_out_dir}
+  checkpoint_every_n_iters: 1
 """
     cfg_path.write_text(yaml_text)
     logger.info("rl_runner: emitted train config %s", cfg_path)
@@ -405,8 +449,8 @@ def train_one(
     algo: str,
     leg: str,
     run_dir: Path,
-    ohlcv_pickle_path: Path,
-    orders_pickle_path: Path,
+    pickle_dir: Path,
+    order_dir: Path,
     time_budget_seconds: int = DEFAULT_TIME_BUDGET_SECONDS,
     session=None,
     run_id: str | None = None,
@@ -458,8 +502,8 @@ def train_one(
     cfg_path = _emit_train_config(
         algo=algo,
         leg=leg,
-        ohlcv_pickle_path=Path(ohlcv_pickle_path),
-        orders_pickle_path=Path(orders_pickle_path),
+        pickle_dir=Path(pickle_dir),
+        order_dir=Path(order_dir),
         run_dir=Path(run_dir),
         checkpoint_out_dir=checkpoint_out_dir,
     )
@@ -598,43 +642,55 @@ def run_one(
     algo: str,
     leg: str,
     run_dir: Path,
-    ohlcv_pickle_path: Path,
-    orders_pickle_path: Path,
+    bin_dir: Path,
+    pickle_dir: Path,
+    order_dir: Path,
+    test_orders_pickle_path: Path,
     session=None,
     run_id: str | None = None,
 ) -> Path:
     """Run a single (algo, leg) qlib RL backtest and return the result CSV path.
 
-    For ``algo in ("twap", "vwap")``: emits a YAML config under
-    ``<run_dir>/configs/`` then drives ``qlib.rl.contrib.backtest`` either
-    as a Python callable (preferred) or as a subprocess fallback if the
-    callable form is not exported by the installed qlib version
-    (RESEARCH §A2 / §Anti-Patterns).
+    Plan 90-04.1 signature flip — accepts the qlib-data directory paths
+    that :func:`poseidon.qlib.rl_data_adapter.write_qlib_data_dir` and
+    :func:`poseidon.qlib.rl_order_builder.build_orders_split` produce.
+    The previous ``ohlcv_pickle_path`` / ``orders_pickle_path`` arguments
+    are gone — they pointed at our legacy MultiIndex + string-orderdir
+    pickles which qlib could not consume.
+
+    For ``algo in ("twap", "vwap")``: emits a YAML config matching upstream
+    ``backtest_twap.yml`` (with ``order_file`` = ``test_orders_pickle_path``,
+    ``qlib.provider_uri_1min`` = ``bin_dir``). The qlib backtest is invoked
+    via ``qlib.rl.contrib.backtest`` (callable preferred, subprocess fallback).
 
     For ``algo in ("ppo", "opds")``: cache-then-train-then-backtest. Reads
     ``<AQUARIUM_ROOT>/local_dev/rl-execution/checkpoints/<algo>/checkpoint.pth``;
-    if missing or empty, calls :func:`train_one` once. Then emits a
-    backtest YAML referencing the checkpoint and runs qlib backtest the
-    same way as TWAP/VWAP.
+    if missing/empty, calls :func:`train_one` with ``order_dir`` (containing
+    ``train``/``valid``/``test`` files) and ``pickle_dir``.
 
     Args:
-        algo: one of ``ALGOS``.
+        algo: one of :data:`ALGOS`.
         leg: instrument label (``"TX"`` or ``"0050"``); used as the filename
-            suffix and qlib's instrument selector.
-        run_dir: per-run scratch directory (created by Wave 4 from the
-            ``run_id``).
-        ohlcv_pickle_path: dataset pickle from
-            :func:`poseidon.qlib.rl_dataset_adapter.write_pickle`.
-        orders_pickle_path: order pickle from
-            :func:`poseidon.qlib.rl_order_builder.build_orders`.
+            suffix only — qlib backtest reads all legs from
+            ``test_orders_pickle_path`` simultaneously.
+        run_dir: per-run scratch directory.
+        bin_dir: qlib bin-format root (``provider_uri_1min`` value).
+        pickle_dir: qlib handler-pickle root containing ``feature/`` and
+            ``backtest/`` subdirs.
+        order_dir: train order directory (containing ``train``/``valid``/
+            ``test`` pickles); only used by PPO/OPDS train path.
+        test_orders_pickle_path: single multi-leg pickle for the backtest
+            ``order_file`` (typically the ``test`` file from
+            :func:`build_orders_split`).
         session / run_id: optional ORM session + RLExecutionRun.run_id —
             forwarded to :func:`train_one` for cooperative cancel during
             long PPO/OPDS training.
 
     Returns:
-        ``<run_dir>/outputs/<algo>_<leg>/checkpoints/backtest_result.csv``
-        — the qlib upstream output layout. Caller is responsible for
-        loading + parsing the CSV.
+        Path to ``<run_dir>/outputs/<algo>_<leg>/<leg>.csv`` (qlib's actual
+        output filename — the upstream code calls ``CsvWriter(output_dir)``
+        which writes one CSV per instrument). Caller is responsible for
+        loading + parsing.
 
     Raises:
         ValueError: if ``algo`` is not a known algo.
@@ -658,8 +714,8 @@ def run_one(
                 algo=algo,
                 leg=leg,
                 run_dir=Path(run_dir),
-                ohlcv_pickle_path=Path(ohlcv_pickle_path),
-                orders_pickle_path=Path(orders_pickle_path),
+                pickle_dir=Path(pickle_dir),
+                order_dir=Path(order_dir),
                 session=session,
                 run_id=run_id,
             )
@@ -679,14 +735,19 @@ def run_one(
     cfg_path = _emit_backtest_config(
         algo=algo,
         leg=leg,
-        ohlcv_pickle_path=Path(ohlcv_pickle_path),
-        orders_pickle_path=Path(orders_pickle_path),
+        bin_dir=Path(bin_dir),
+        pickle_dir=Path(pickle_dir),
+        orders_pickle_path=Path(test_orders_pickle_path),
         run_dir=Path(run_dir),
         checkpoint_path=checkpoint_path,
     )
 
-    # Output CSV path (qlib upstream layout).
-    result_csv = Path(run_dir) / "outputs" / f"{algo}_{leg}" / "checkpoints" / "backtest_result.csv"
+    output_dir = Path(run_dir) / "outputs" / f"{algo}_{leg}"
+    # Qlib's upstream backtest writes one CSV per instrument under
+    # ``output_dir`` via ``CsvWriter``. The expected file is
+    # ``<leg>.csv`` (instrument-named). Our caller can also fall back to
+    # any CSV the directory contains.
+    result_csv = output_dir / f"{leg}.csv"
 
     # Deferred import (PATTERNS.md §Deferred Qlib Import). The qlib
     # backtest entry point takes a config dict, not a path — load via
@@ -717,68 +778,141 @@ def run_one(
     return result_csv
 
 
+def materialize_qlib_data(
+    run_dir: Path,
+    ohlcv_dataframes,
+    triggers,
+    leg_notionals: dict[str, float],
+    split: tuple[float, float, float] = (0.7, 0.15, 0.15),
+) -> dict[str, Path]:
+    """One-shot materialization of the qlib data directory for a run.
+
+    Deferred-import call to :mod:`poseidon.qlib.rl_data_adapter` and
+    :mod:`poseidon.qlib.rl_order_builder`. Idempotent: if
+    ``<run_dir>/qlib-data/bin/`` and ``pickle/`` already exist, no work is
+    done; otherwise both are written, plus the orders directory with
+    ``train``/``valid``/``test`` files.
+
+    Returns paths consumed by :func:`run_one`:
+
+    * ``bin_dir`` — qlib provider_uri_1min
+    * ``pickle_dir`` — handler pickle root
+    * ``order_dir`` — directory of train/valid/test orders
+    * ``test_orders_pickle_path`` — single ``test`` file (re-used as
+      backtest's ``order_file``)
+    """
+    from poseidon.qlib.rl_data_adapter import write_qlib_data_dir
+    from poseidon.qlib.rl_order_builder import build_orders_split
+
+    qlib_data_root = Path(run_dir) / "qlib-data"
+    bin_dir = qlib_data_root / "bin"
+    pickle_dir = qlib_data_root / "pickle"
+    order_dir = qlib_data_root / "orders"
+
+    # Cache hit — skip both calls.
+    feature_pkls_present = (pickle_dir / "feature" / f"{next(iter(leg_notionals))}.pkl").exists()
+    bin_present = (bin_dir / "calendars" / "1min.txt").exists()
+    if feature_pkls_present and bin_present:
+        logger.info(
+            "rl_runner.materialize_qlib_data: cache hit at %s — skipping",
+            qlib_data_root,
+        )
+    else:
+        write_qlib_data_dir(legs=ohlcv_dataframes, out_root=qlib_data_root)
+
+    order_paths_present = all((order_dir / name).exists() for name in ("train", "valid", "test"))
+    if order_paths_present:
+        order_paths = {name: order_dir / name for name in ("train", "valid", "test")}
+    else:
+        order_paths = build_orders_split(triggers, legs=leg_notionals, out_dir=order_dir, split=split)
+
+    return {
+        "bin_dir": bin_dir,
+        "pickle_dir": pickle_dir,
+        "order_dir": order_dir,
+        "test_orders_pickle_path": order_paths["test"],
+    }
+
+
 def run_all_algos_legs(
     run_dir: Path,
-    ohlcv_pickles: dict[str, Path],
-    orders_pickles: dict[str, Path],
+    ohlcv_dataframes,
+    triggers,
+    leg_notionals: dict[str, float] | None = None,
+    algos: list[str] | None = None,
     session=None,
     run_id: str | None = None,
 ) -> dict[str, dict]:
     """Loop ALGOS × LEGS_ALL, recording per-algo summary.
 
+    Plan 90-04.1 signature flip — accepts raw OHLCV DataFrames and a
+    trigger-day list directly. Internally calls :func:`materialize_qlib_data`
+    once to write the qlib data dir, then dispatches to :func:`run_one`
+    for each (algo, leg) pair.
+
     D-11 + D-12 partial-tolerance: per-algo failures surface as
     ``summary[algo] = {"status": "PARTIAL", "error": str(exc)}`` rather
-    than aborting the whole run. PPO/OPDS training failures (OOM, budget
-    exhaust without a usable checkpoint, qlib crash) are caught and recorded
-    here.
+    than aborting the whole run.
 
-    Cooperative cancel: if ``session`` and ``run_id`` are supplied, the
-    function calls :func:`_run_cancelled` between every (algo, leg) pair
-    AND inside :func:`train_one` polling — and raises
-    :class:`_CancelledError` if the row was flipped to ``cancelled``.
+    Cooperative cancel: forwarded through to :func:`train_one`'s polling
+    loop. ``_CancelledError`` propagates so the Celery task wrapper can
+    commit ``status = cancelled``.
 
     Args:
         run_dir: per-run directory (must already exist).
-        ohlcv_pickles: ``{leg: Path}`` mapping (e.g.
-            ``{"TX": tx_pkl, "0050": etf_pkl}``).
-        orders_pickles: ``{leg: Path}`` mapping (same keys as
-            ``ohlcv_pickles``).
-        session: optional SQLAlchemy session for cancel polling.
-        run_id: optional ``RLExecutionRun.run_id`` (UUID string).
+        ohlcv_dataframes: ``{leg: pd.DataFrame}`` mapping with raw OHLCV.
+        triggers: list of trigger-day Timestamps (output of
+            :func:`poseidon.research.tx_basis_signal.extract_r2_trigger_days`).
+        leg_notionals: ``{leg: notional}`` mapping. Defaults to
+            ``{"TX": 1_000_000.0, "0050": 1_000_000.0}``.
+        algos: subset of :data:`ALGOS` to run. Defaults to all four.
+        session / run_id: ORM cooperative-cancel hooks.
 
     Returns:
-        ``{algo: {"status": "OK"|"PARTIAL", "results": {leg: csv_path},
-        "error": str?}}``.
+        ``{algo: {"status": "OK"|"PARTIAL", "results": {leg: csv_path}, "error": str?}}``.
     """
+    if leg_notionals is None:
+        leg_notionals = {"TX": 1_000_000.0, "0050": 1_000_000.0}
+    if algos is None:
+        algos = list(ALGOS)
+    for a in algos:
+        if a not in ALGOS:
+            raise ValueError(f"run_all_algos_legs: unknown algo {a!r}; must be in {ALGOS}")
+
+    paths = materialize_qlib_data(
+        run_dir=Path(run_dir),
+        ohlcv_dataframes=ohlcv_dataframes,
+        triggers=triggers,
+        leg_notionals=leg_notionals,
+    )
+
     summary: dict[str, dict] = {}
-    for algo in ALGOS:
+    for algo in algos:
         algo_results: dict[str, Path] = {}
         algo_errors: list[str] = []
         for leg_tup in LEGS_ALL:
             leg = leg_tup[0]
+            if leg not in leg_notionals:
+                continue
             # Cooperative cancel between every (algo, leg) iteration.
             if session is not None and run_id is not None and _run_cancelled(session, run_id):
-                # Surface as a CancelledError so the Celery task wrapper
-                # can transition the row to "cancelled" and commit.
                 raise _CancelledError(f"rl_runner cancelled before {algo}/{leg}")
             try:
                 csv_path = run_one(
                     algo=algo,
                     leg=leg,
                     run_dir=Path(run_dir),
-                    ohlcv_pickle_path=ohlcv_pickles[leg],
-                    orders_pickle_path=orders_pickles[leg],
+                    bin_dir=paths["bin_dir"],
+                    pickle_dir=paths["pickle_dir"],
+                    order_dir=paths["order_dir"],
+                    test_orders_pickle_path=paths["test_orders_pickle_path"],
                     session=session,
                     run_id=run_id,
                 )
                 algo_results[leg] = csv_path
             except _CancelledError:
-                # Cooperative cancel from inside train_one — propagate.
                 raise
             except NotImplementedError as exc:
-                # Defensive — Wave 3 should have removed all NotImplementedError
-                # paths, but if a future algo lands as not-yet-implemented this
-                # surfaces it cleanly.
                 algo_errors.append(f"{leg}: {exc}")
             except Exception as exc:
                 algo_errors.append(f"{leg}: {exc}")
