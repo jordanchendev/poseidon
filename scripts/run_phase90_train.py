@@ -153,7 +153,13 @@ def aggregate_to_daily(ohlcv_1m: pd.DataFrame) -> pd.DataFrame:
 
 
 def compute_triggers(tx_1m: pd.DataFrame, etf_1m: pd.DataFrame) -> list[pd.Timestamp]:
-    """basis_z<-1 trigger days from D-06."""
+    """basis_z<-1 trigger days from D-06.
+
+    Drops triggers on the last calendar day of available data — qlib's
+    backtest calendar manager reads t+1 internally and crashes with
+    IndexError on out-of-bounds when the trigger sits at the end of the
+    calendar. Trimming the very last trigger day is a safe workaround.
+    """
     from poseidon.research.tx_basis_signal import (
         compute_basis_z,
         extract_r2_trigger_days,
@@ -162,7 +168,12 @@ def compute_triggers(tx_1m: pd.DataFrame, etf_1m: pd.DataFrame) -> list[pd.Times
     tx_d = aggregate_to_daily(tx_1m)
     etf_d = aggregate_to_daily(etf_1m)
     basis_z = compute_basis_z(tx_d, etf_d, adj_col="close")
-    return extract_r2_trigger_days(basis_z)
+    triggers = extract_r2_trigger_days(basis_z)
+    # Drop trigger on the last available calendar day (qlib t+1 lookup
+    # would IndexError out-of-bounds).
+    last_day = max(tx_d.index.max(), etf_d.index.max()).normalize()
+    triggers = [t for t in triggers if pd.Timestamp(t).normalize() < last_day]
+    return triggers
 
 
 # ---------------------------------------------------------------------------
