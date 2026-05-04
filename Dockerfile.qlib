@@ -87,6 +87,18 @@ RUN sed -i 's|return obs, rew, done, info_dict|return obs, rew, done, False, inf
         /app/.venv/lib/python3.12/site-packages/qlib/rl/utils/env_wrapper.py && \
     echo "qlib env_wrapper.step Gymnasium-API patch applied OK"
 
+# Plan 90-04.2: qlib's FiniteVectorEnv.reset zips request_id with the result
+# of super().reset() — but tianshou 0.5+ returns 2-tuple (obs_list, info_list)
+# instead of just obs_list (Gymnasium API). Without unpacking, qlib zips
+# request_id with the tuple and gets wrong items (info_list pairs with
+# request_id[1]) — eventually triggering "Invalid integer data type 'O'" when
+# is_invalid tries to validate a dict-list as ndarray.
+RUN sed -i 's|for i, o in zip(request_id, super().reset(request_id)):|_super_ret = super().reset(request_id)\n            _super_obs = _super_ret[0] if isinstance(_super_ret, tuple) else _super_ret\n            for i, o in zip(request_id, _super_obs):|' \
+        /app/.venv/lib/python3.12/site-packages/qlib/rl/utils/finite_env.py && \
+    grep -q "_super_obs = _super_ret" \
+        /app/.venv/lib/python3.12/site-packages/qlib/rl/utils/finite_env.py && \
+    echo "qlib finite_env.reset 2-tuple unpack patch applied OK"
+
 COPY config/ config/
 COPY alembic/ alembic/
 COPY alembic.ini .
