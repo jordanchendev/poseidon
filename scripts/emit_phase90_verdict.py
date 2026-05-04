@@ -58,7 +58,9 @@ def fetch_daily_ohlcv(symbol: str, market: str, start: pd.Timestamp, end: pd.Tim
     if df["time"].dt.tz is None:
         df["time"] = df["time"].dt.tz_localize("UTC")
     df["time"] = df["time"].dt.tz_convert("Asia/Taipei").dt.tz_localize(None).dt.normalize()
-    return df.set_index("time").sort_index()
+    df = df.set_index("time").sort_index()
+    # Dedupe (Thalassa occasionally returns duplicate daily rows around DST/holiday boundaries).
+    return df[~df.index.duplicated(keep="last")]
 
 
 def load_backtest_csvs(run_dir: Path) -> dict[str, pd.DataFrame]:
