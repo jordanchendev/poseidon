@@ -117,10 +117,11 @@ def fetch_ohlcv_1min(
         df.index = df.index.tz_localize("UTC")
     df.index = df.index.tz_convert("Asia/Taipei").tz_localize(None)
 
-    # Filter to TWSE day session 09:00-13:30 only. TX (TAIFEX futures) has a
-    # night session 15:00-05:00 next day; bars from the night session pollute
-    # our calendar and break qlib backtest's TWAP 09:00-13:30 trade window.
-    df = df.between_time("09:00", "13:30")
+    # Filter to TWSE day session — exactly 270 1-min bars per day,
+    # 09:00:00 .. 13:29:00 inclusive (qlib expects data_ticks=270, not 271).
+    # TX (TAIFEX futures) has a night session 15:00-05:00 next day; bars from
+    # the night session also need filtering out.
+    df = df.between_time("09:00", "13:29")
     return df
 
 
