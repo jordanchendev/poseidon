@@ -233,13 +233,23 @@ def build_orders_split(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Layout:
+    #   <out_dir>/train/all.pkl  (qlib trainer reads <out_dir>/train as a dir
+    #                             and iterates files — one .pkl works)
+    #   <out_dir>/valid/all.pkl
+    #   <out_dir>/test/all.pkl   (qlib backtest reads this file directly via
+    #                             `order_file: <out_dir>/test/all.pkl`)
+    # The .pkl extension is required by qlib.rl.contrib.utils.read_order_file
+    # which validates `order_file.suffix in (".pkl", ".csv")`.
     paths: dict[str, Path] = {}
     for name, dates in (
         ("train", train_dates),
         ("valid", valid_dates),
         ("test", test_dates),
     ):
-        out_path = out_dir / name
+        sub_dir = out_dir / name
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        out_path = sub_dir / "all.pkl"
         build_orders_multileg(dates, legs=legs, out_path=out_path)
         paths[name] = out_path
 

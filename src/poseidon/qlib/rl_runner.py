@@ -820,9 +820,10 @@ def materialize_qlib_data(
     else:
         write_qlib_data_dir(legs=ohlcv_dataframes, out_root=qlib_data_root)
 
-    order_paths_present = all((order_dir / name).exists() for name in ("train", "valid", "test"))
+    # build_orders_split layout: <order_dir>/<split>/all.pkl
+    order_paths_present = all((order_dir / name / "all.pkl").exists() for name in ("train", "valid", "test"))
     if order_paths_present:
-        order_paths = {name: order_dir / name for name in ("train", "valid", "test")}
+        order_paths = {name: order_dir / name / "all.pkl" for name in ("train", "valid", "test")}
     else:
         order_paths = build_orders_split(triggers, legs=leg_notionals, out_dir=order_dir, split=split)
 
