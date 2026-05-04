@@ -398,7 +398,7 @@ simulator:
   vol_limit: null
 env:
   concurrency: {n_envs}
-  parallel_mode: subproc
+  parallel_mode: {os.environ.get("POSEIDON_RL_PARALLEL_MODE", "dummy")}
 action_interpreter:
   class: CategoricalActionInterpreter
   kwargs:
