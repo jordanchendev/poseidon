@@ -431,7 +431,7 @@ data:
   source:
     order_dir: {order_dir}
     feature_root_dir: {pickle_dir}/
-    feature_columns_today: ["$close", "$volume"]
+    feature_columns_today: ["$close0", "$volume0"]
     feature_columns_yesterday: []
     total_time: {TWSE_TICKS_PER_DAY}
     default_start_time_index: 0

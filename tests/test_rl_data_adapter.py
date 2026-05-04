@@ -60,7 +60,12 @@ def test_normalize_ohlcv_reshapes_to_qlib_layout():
 
     assert out.index.names == ["instrument", "datetime"]
     assert (out.index.get_level_values("instrument") == "TX").all()
-    assert list(out.columns) == PICKLE_FEATURE_COLUMNS
+    # All 5 base feature columns present (plus suffix-0 aliases for qlib's
+    # DataframeIntradayBacktestData which hardcodes price_column="$close0").
+    for col in PICKLE_FEATURE_COLUMNS:
+        assert col in out.columns
+    for col in ["$close0", "$volume0", "$open0", "$high0", "$low0"]:
+        assert col in out.columns
 
 
 def test_normalize_ohlcv_drops_tz():
@@ -88,7 +93,8 @@ def test_simple_handler_fetch_index_slice():
     sliced = handler.fetch(pd.IndexSlice["TX", "2024-03-04 09:00":"2024-03-04 09:09"], level=None)
     # 10 bars (09:00 - 09:09 inclusive)
     assert len(sliced) == 10
-    assert list(sliced.columns) == PICKLE_FEATURE_COLUMNS
+    for col in PICKLE_FEATURE_COLUMNS:
+        assert col in sliced.columns
 
 
 def test_simple_handler_fetch_empty_returns_empty_frame():
@@ -97,7 +103,8 @@ def test_simple_handler_fetch_empty_returns_empty_frame():
     out = handler.fetch(pd.IndexSlice["NOPE", "2024-03-04":"2024-03-05"])
     # Empty result — but must still have feature columns for downstream
     # subscript to not raise.
-    assert list(out.columns) == PICKLE_FEATURE_COLUMNS
+    for col in PICKLE_FEATURE_COLUMNS:
+        assert col in out.columns
 
 
 def test_simple_handler_rejects_wrong_index():
@@ -125,7 +132,8 @@ def test_handler_pickle_roundtrip(tmp_path: Path):
     assert isinstance(loaded, _SimpleDataset)
     sliced = loaded.handler.fetch(pd.IndexSlice["TX", "2024-03-04 09:00":"2024-03-04 09:04"], level=None)
     assert len(sliced) == 5
-    assert list(sliced.columns) == PICKLE_FEATURE_COLUMNS
+    for col in PICKLE_FEATURE_COLUMNS:
+        assert col in sliced.columns
 
 
 # ---------------------------------------------------------------------------

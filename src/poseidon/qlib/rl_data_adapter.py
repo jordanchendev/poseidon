@@ -178,6 +178,15 @@ def _normalize_ohlcv(df: pd.DataFrame, instrument: str) -> pd.DataFrame:
             "volume": "$volume",
         }
     )
+    # qlib's DataframeIntradayBacktestData hardcodes price_column="$close0" /
+    # volume_column="$volume0" defaults (qlib v0.9.7 — qlib/rl/data/native.py).
+    # Add the suffix-0 aliases (today's bar) so its get_deal_price() / get_volume()
+    # find the columns. The "1" suffix would be yesterday — we don't compute that.
+    out["$close0"] = out["$close"]
+    out["$volume0"] = out["$volume"]
+    out["$open0"] = out["$open"]
+    out["$high0"] = out["$high"]
+    out["$low0"] = out["$low"]
 
     out.index.name = "datetime"
     out["instrument"] = instrument
