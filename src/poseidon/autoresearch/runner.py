@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from poseidon.autoresearch.guard import autoresearch_context, autoresearch_guard
@@ -40,6 +41,7 @@ class MarketResult:
     spec: MarketSpec
     search_result: SearchResult | None = None
     error: str | None = None
+    ddg_da_result: dict | None = None  # Phase 92 D-03: populated when use_ddg_da=True
 
 
 class AutoResearchRunner:
@@ -69,6 +71,12 @@ class AutoResearchRunner:
         progress_callback: Callable[[int, int, str], None] | None = None,
         model_version_id: int | None = None,
         strategy_factory: Any | None = None,  # D-15: injectable strategy factory
+        # Phase 92 D-03: DDG-DA integration kwargs (keyword-only, backwards-compat default).
+        use_ddg_da: bool = False,
+        ddg_da_working_dir: Path | None = None,
+        ddg_da_handler_class: str = "Alpha158Handler",
+        ddg_da_model_class: str = "LGBModel",
+        ddg_da_segments: dict[str, tuple[str, str]] | None = None,
     ) -> None:
         self.db_session = db_session
         self.search_config = search_config
@@ -79,12 +87,26 @@ class AutoResearchRunner:
         self.progress_callback = progress_callback
         self.model_version_id = model_version_id
         self.strategy_factory = strategy_factory  # None = VotingStrategyFactory (backward compat)
+        # Phase 92 D-03 fields.
+        self.use_ddg_da = use_ddg_da
+        self.ddg_da_working_dir = ddg_da_working_dir
+        self.ddg_da_handler_class = ddg_da_handler_class
+        self.ddg_da_model_class = ddg_da_model_class
+        self.ddg_da_segments = ddg_da_segments
 
     def run(self, markets: list[MarketSpec]) -> list[MarketResult]:
         """Run parameter search across all markets with immutability guard active.
 
         Per D-13: per-market failure isolation -- catch exception + log + continue.
+
+        Phase 92 D-03/D-05: when ``use_ddg_da=True``, dispatch to the DDG-DA path
+        BEFORE entering ``autoresearch_context()`` — DDG-DA's internal mutations
+        would trip ``ImmutabilityViolationError`` if the guard were active.
         """
+        if self.use_ddg_da:
+            # Phase 92 D-03/D-05 dispatch BEFORE autoresearch_context.
+            return self._run_ddg_da(markets)
+
         results: list[MarketResult] = []
 
         with autoresearch_context():
@@ -207,4 +229,61 @@ class AutoResearchRunner:
                     self.db_session.rollback()
                     results.append(MarketResult(spec=spec, error=str(exc)))
 
+        return results
+
+    def _run_ddg_da(self, markets: list[MarketSpec]) -> list[MarketResult]:
+        """Phase 92 D-03 DDG-DA dispatch path.
+
+        D-05 invariant: this method does NOT enter ``autoresearch_context()``.
+        ``PoseidonDDGDA.__init__`` + ``run()`` both execute with
+        ``_AUTORESEARCH_ACTIVE`` False — DDG-DA's internal dataset/model mutations
+        would otherwise trip ``ImmutabilityViolationError``.
+
+        Per D-13: per-market failure isolation — catch exception + log + continue.
+        """
+        # Deferred import — keeps cp313 containers importable even when ddg_da
+        # itself triggers a downstream qlib import path.
+        from poseidon.autoresearch.ddg_da import PoseidonDDGDA
+
+        results: list[MarketResult] = []
+        base_wd = self.ddg_da_working_dir or Path("local_dev/ddg-da/runs/_runner_default")
+        # Default segments: caller can override via ddg_da_segments. If None,
+        # fall back to the v18-era TX window CONTEXT D-09 references.
+        default_segments = self.ddg_da_segments or {
+            "train": ("2021-03-22", "2024-12-31"),
+            "valid": ("2025-01-01", "2025-06-30"),
+            "test": ("2025-07-01", "2026-05-04"),
+        }
+
+        for i, spec in enumerate(markets):
+            # D-12: graceful stop check
+            if self.stop_check and self.stop_check():
+                logger.info("Graceful stop requested in DDG-DA path, stopping after %d markets", i)
+                break
+
+            # D-11: heartbeat
+            if self.progress_callback:
+                self.progress_callback(i, len(markets), spec.symbol)
+
+            try:
+                market_wd = base_wd / f"{spec.market}_{spec.symbol}_{spec.interval}"
+                wrapper = PoseidonDDGDA(
+                    working_dir=market_wd,
+                    handler_class=self.ddg_da_handler_class,
+                    model_class=self.ddg_da_model_class,
+                    market=spec.market,
+                    interval=spec.interval,
+                    segments=default_segments,
+                )
+                ddg_result = wrapper.run()
+                results.append(MarketResult(spec=spec, search_result=None, ddg_da_result=ddg_result))
+            except Exception as exc:
+                logger.error(
+                    "DDG-DA path failed for %s/%s: %s",
+                    spec.symbol,
+                    spec.market,
+                    exc,
+                    exc_info=True,
+                )
+                results.append(MarketResult(spec=spec, error=str(exc)))
         return results
