@@ -325,6 +325,10 @@ def fake_redis():
 def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line("markers", "phase38: Phase 38 data-foundation tests")
+    config.addinivalue_line(
+        "markers",
+        "stormtrooper: requires stormtrooper qlib-research container (set STORMTROOPER=1 inside docker compose exec)",
+    )
 
 
 @pytest.fixture
