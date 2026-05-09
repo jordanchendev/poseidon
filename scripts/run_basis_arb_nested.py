@@ -367,7 +367,7 @@ def _append_cost_delta_to_research(
         sources_marker = "\n## Sources\n"
         if sources_marker in text:
             sources_idx = text.find(sources_marker)
-            new_text = text[:sources_idx] + "\n" + section_body + text[sources_idx + 1 :]
+            new_text = text[:sources_idx] + "\n" + section_body + "\n" + text[sources_idx + 1 :]
         else:
             # Fall back to appending at EOF.
             new_text = text.rstrip() + "\n\n" + section_body
