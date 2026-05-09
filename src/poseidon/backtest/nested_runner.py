@@ -332,8 +332,16 @@ class NestedBacktestRunner:
         not just the 集合競價 window).
 
         Args:
-            run_dir: Filesystem directory containing ``orders.pkl``
-                (parent-order pickle produced upstream).
+            run_dir: Filesystem directory containing ``orders.csv``
+                (parent-order CSV produced upstream).  ``qlib.contrib.strategy
+                .rule_strategy.FileOrderStrategy.__init__`` calls
+                ``pd.read_csv(f, dtype={"datetime": str})`` and expects
+                columns ``datetime, instrument, amount, direction``.  Plan
+                93-04 [Rule 1] auto-fix: previously pointed at the
+                pickle output of ``rl_order_builder.build_orders_multileg``,
+                but that pickle is only consumable by the qlib RL pipeline
+                (different schema).  FileOrderStrategy requires CSV — the
+                Wave 3 driver writes ``orders.csv`` alongside the pickle.
 
         Returns:
             dict suitable for ``qlib.backtest.backtest(strategy=...)``.
@@ -343,7 +351,7 @@ class NestedBacktestRunner:
             "class": "FileOrderStrategy",
             "module_path": _RULE_STRATEGY_MODULE,
             "kwargs": {
-                "file": str(run_dir / "orders.pkl"),
+                "file": str(run_dir / "orders.csv"),
                 "trade_range": {
                     "class": "TradeRangeByTime",
                     "module_path": self._load_trade_range_module_path(),

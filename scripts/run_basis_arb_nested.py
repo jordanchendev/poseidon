@@ -623,13 +623,56 @@ def main(argv: list[str] | None = None) -> int:
     )
     logger.info("qlib-data materialised at %s", qlib_paths["bin_dir"])
 
-    # 5. Build multi-leg orders pickle (D-25 long TX + short 0050)
+    # 5. Build multi-leg orders for FileOrderStrategy.
+    #
+    # Two output files written to run_dir:
+    # - orders.pkl  — qlib-RL-pipeline schema (MultiIndex [date, instrument],
+    #   columns [amount, order_type:int]).  Retained for parity with Phase 90
+    #   layout; not consumed by FileOrderStrategy in this run.
+    # - orders.csv  — qlib.contrib.strategy.rule_strategy.FileOrderStrategy
+    #   schema (CSV with columns datetime, instrument, amount, direction).
+    #   This is what NestedBacktestRunner._build_strategy_config points at
+    #   (Plan 93-04 [Rule 1] auto-fix — qlib FileOrderStrategy reads the
+    #   file via pd.read_csv at line 639, so the pickle path errors with
+    #   UnicodeDecodeError on first byte 0x80).  D-25 long TX + short 0050.
     orders_pkl = build_orders_multileg(
         trigger_dates=triggers,
         legs={"TX": args.notional_tx, "0050": args.notional_etf},
         out_path=run_dir / "orders.pkl",
     )
     logger.info("orders pickle → %s", orders_pkl)
+
+    # qlib bin uses lowercase instrument codes (verified: bin/features/tx,
+    # bin/features/0050).  FileOrderStrategy looks up instruments by exact
+    # match against the qlib calendar's instrument list.
+    orders_csv_rows: list[dict] = []
+    for trigger_date in triggers:
+        ts_open = pd.Timestamp(trigger_date).normalize() + pd.Timedelta("9h")
+        # TX leg — long
+        orders_csv_rows.append(
+            {
+                "datetime": ts_open.strftime("%Y-%m-%d %H:%M:%S"),
+                "instrument": "tx",
+                "amount": args.notional_tx,
+                "direction": "buy",
+            }
+        )
+        # 0050 leg — short
+        orders_csv_rows.append(
+            {
+                "datetime": ts_open.strftime("%Y-%m-%d %H:%M:%S"),
+                "instrument": "0050",
+                "amount": args.notional_etf,
+                "direction": "sell",
+            }
+        )
+    orders_csv_path = run_dir / "orders.csv"
+    pd.DataFrame(orders_csv_rows).to_csv(orders_csv_path, index=False)
+    logger.info(
+        "orders CSV (FileOrderStrategy schema) → %s (%d rows)",
+        orders_csv_path,
+        len(orders_csv_rows),
+    )
 
     # 6. Run NestedBacktestRunner
     from poseidon.backtest.cost_model import get_cost_model
