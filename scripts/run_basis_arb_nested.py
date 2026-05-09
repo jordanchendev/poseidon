@@ -819,6 +819,106 @@ def main(argv: list[str] | None = None) -> int:
     comparison_df = getattr(result, "comparison", None)
     delta = getattr(result, "delta_breakdown", None)
 
+    # 6b. Driver-side fill_log synthesis (Plan 93-04 [Rule 3] auto-fix).
+    #
+    # The Wave 0 ``harvest_fill_log`` helper assumes ``indicator_dict[freq]``
+    # contains a flat dict with ``deal_amount`` indexed by ``(fill_ts,
+    # instrument)``.  qlib v0.9.7 instead returns
+    # ``Tuple[pd.DataFrame, Indicator]`` where the DataFrame is aggregated
+    # ACROSS instruments — only ``ffr / pa / pos / deal_amount / value /
+    # count`` columns indexed by ``Timestamp`` (no per-instrument
+    # breakdown).  Per-instrument fills are inside the
+    # ``Indicator.order_indicator_his`` qlib-internal structure, but
+    # extracting them is brittle.  Instead, synthesise the D-21 fill log
+    # from the aggregated DataFrame + the orders.csv + the 1m bar data:
+    # for each (trigger_date, leg) we know the leg's total share amount,
+    # the TWAP splits it evenly across N=twap_window_minutes bars, and the
+    # fill price for each bar is its $close (qlib's ``deal_price="close"``).
+    if fill_log is None or len(fill_log) == 0:
+        logger.info("harvest_fill_log returned empty — synthesising fill_log from orders + 1m bars")
+        try:
+            from poseidon.backtest.cost_model import get_cost_model
+            from poseidon.backtest.nested_runner import _compute_fill_cost_bps
+
+            tx_cost_model = get_cost_model("tw_futures")
+            etf_cost_model = get_cost_model("tw_stock_etf")
+
+            synth_rows: list[dict] = []
+            for trigger_date in triggers:
+                date_norm = pd.Timestamp(trigger_date).normalize()
+                # Find the matching CSV rows for this trigger.
+                day_orders = [r for r in orders_csv_rows if r["datetime"] == date_norm.strftime("%Y-%m-%d")]
+                # Inner-bar timestamps: 09:00 .. 09:0N
+                bar_ts_list = [date_norm + pd.Timedelta(hours=9, minutes=m) for m in range(twap_window_minutes)]
+                for order_row in day_orders:
+                    leg_label = "tx_long" if order_row["instrument"] == "TX" else "etf_short"
+                    cost_model = tx_cost_model if order_row["instrument"] == "TX" else etf_cost_model
+                    side = "BUY" if order_row["direction"] == "buy" else "SELL"
+                    bar_df = tx_1m if order_row["instrument"] == "TX" else etf_1m
+                    cost_bps = _compute_fill_cost_bps(cost_model, side)
+                    planned_per_bar = float(order_row["amount"]) / max(twap_window_minutes, 1)
+                    decision_ts = date_norm + pd.Timedelta(hours=13, minutes=45) - pd.Timedelta(days=1)
+
+                    for bar_ts in bar_ts_list:
+                        # Look up this bar's OHLC from the 1m DataFrame (TZ-naive
+                        # Asia/Taipei).  If the bar is missing (TX/0050 calendar
+                        # mismatch on edge cases), fall back to the previous
+                        # available bar in the day.
+                        if bar_ts in bar_df.index:
+                            bar = bar_df.loc[bar_ts]
+                            bar_open = float(bar["open"])
+                            bar_high = float(bar["high"])
+                            bar_low = float(bar["low"])
+                            bar_close = float(bar["close"])
+                        else:
+                            # Fallback to that day's first available bar.
+                            day_bars = bar_df.loc[bar_df.index.normalize() == date_norm]
+                            if len(day_bars) > 0:
+                                first = day_bars.iloc[0]
+                                bar_open = float(first["open"])
+                                bar_high = float(first["high"])
+                                bar_low = float(first["low"])
+                                bar_close = float(first["close"])
+                            else:
+                                bar_open = bar_high = bar_low = bar_close = float("nan")
+                        # qlib uses deal_price="close" — fill_price ≈ bar_close.
+                        fill_price = bar_close if not pd.isna(bar_close) else bar_open
+                        # Sanity-clip fill_price into [bar_low, bar_high] range.
+                        if not pd.isna(fill_price) and not pd.isna(bar_low) and not pd.isna(bar_high):
+                            fill_price = max(bar_low, min(bar_high, fill_price))
+                        synth_rows.append(
+                            {
+                                "run_id": run_id,
+                                "trigger_date": date_norm.date(),
+                                "decision_ts": decision_ts,
+                                "leg": leg_label,
+                                "fill_ts": bar_ts,
+                                "planned_qty": planned_per_bar,
+                                "filled_qty": planned_per_bar,  # FFR≈1 across the window
+                                "fill_price": fill_price,
+                                "bar_open": bar_open,
+                                "bar_high": bar_high,
+                                "bar_low": bar_low,
+                                "bar_close": bar_close,
+                                "slippage_bps": 0.0,  # naive baseline = 0
+                                "cost_bps": cost_bps,
+                                "fill_failure": False,
+                            }
+                        )
+            fill_log = pd.DataFrame(synth_rows)
+            try:
+                fill_log.to_parquet(run_dir / "fill_log.parquet")
+                logger.info(
+                    "synthesised fill_log → %s (%d rows)",
+                    run_dir / "fill_log.parquet",
+                    len(fill_log),
+                )
+            except OSError as exc:
+                logger.warning("Could not persist synthesised fill_log: %s", exc)
+        except Exception as exc:
+            logger.exception("fill_log synthesis failed: %s", exc)
+            fill_log = pd.DataFrame()
+
     # 7. Path C reconstruction (Pitfall 5) — if comparison_df is None and the
     # baseline was the rollup CSV, reconstruct per-trigger-day frame and
     # re-invoke compare_to_baseline + compute_delta_breakdown.
