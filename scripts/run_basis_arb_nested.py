@@ -945,6 +945,13 @@ def main(argv: list[str] | None = None) -> int:
             )
             # Aggregate nested fill_log to per-trigger-day rows and join.
             nested_per_day = _aggregate_nested_fill_log(fill_log)
+            # Align trigger_date dtype between the two frames before merge —
+            # path_c_baseline.trigger_date is datetime64[ns] (we built it from
+            # pd.Timestamp.normalize()), but _aggregate_nested_fill_log can
+            # return ``object`` dtype (date or string) depending on input.
+            # Normalise both to ``datetime64[ns]`` so the merge succeeds.
+            path_c_baseline["trigger_date"] = pd.to_datetime(path_c_baseline["trigger_date"])
+            nested_per_day["trigger_date"] = pd.to_datetime(nested_per_day["trigger_date"])
             comparison_df = path_c_baseline.merge(nested_per_day, on="trigger_date", how="left")
             try:
                 comparison_df.to_parquet(run_dir / "comparison.parquet")
