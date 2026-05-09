@@ -664,13 +664,20 @@ def main(argv: list[str] | None = None) -> int:
     # bin/instruments/all.txt (verified: ``TX\t...\n0050\t...\n``).  qlib
     # internally lower-cases for feature-dir lookup but the orders CSV must
     # use the on-disk casing.
+    #
+    # FileOrderStrategy.generate_trade_decision (qlib v0.9.7 line 654) does
+    # ``self.order_df.loc(axis=0)[start]`` where ``start`` is the outer
+    # bar's start time — for outer ``time_per_step="day"`` this is the
+    # day at midnight (2024-03-08 00:00:00).  The TradeRangeByTime
+    # ("09:00", "09:0N") on the inner-level decision filter then narrows
+    # the actual fill window.  Use midnight here so the lookup hits.
     orders_csv_rows: list[dict] = []
     for trigger_date in triggers:
-        ts_open = pd.Timestamp(trigger_date).normalize() + pd.Timedelta("9h")
+        ts_midnight = pd.Timestamp(trigger_date).normalize()
         # TX leg — long
         orders_csv_rows.append(
             {
-                "datetime": ts_open.strftime("%Y-%m-%d %H:%M:%S"),
+                "datetime": ts_midnight.strftime("%Y-%m-%d"),
                 "instrument": "TX",
                 "amount": args.notional_tx,
                 "direction": "buy",
@@ -679,7 +686,7 @@ def main(argv: list[str] | None = None) -> int:
         # 0050 leg — short
         orders_csv_rows.append(
             {
-                "datetime": ts_open.strftime("%Y-%m-%d %H:%M:%S"),
+                "datetime": ts_midnight.strftime("%Y-%m-%d"),
                 "instrument": "0050",
                 "amount": args.notional_etf,
                 "direction": "sell",
