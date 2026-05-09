@@ -56,7 +56,7 @@ def test_nested_twap_within_5pct_of_phase90_baseline(tmp_path: Path):
             "--out-dir",
             str(out_dir),
             "--phase90-baseline",
-            "/app/.planning/phases/90-rl-order-execution/verdict-artifacts/comparison.csv",
+            "/app/local_dev/rl-execution/runs/wave2-full-002/comparison.csv",
         ]
     )
     elapsed = time.time() - t0

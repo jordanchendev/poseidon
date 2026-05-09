@@ -88,6 +88,10 @@ def test_nested_executor_basic_smoke():
     # Wave 3 will land scripts/run_basis_arb_nested.py — until then, this RED is expected
     from scripts.run_basis_arb_nested import main as run_nested
 
+    # Inside qlib-research container, .planning/ is NOT bind-mounted but Phase
+    # 90 wave2-full-002/ is at /app/local_dev/rl-execution/runs/wave2-full-002/.
+    # Pass it explicitly so Path C reconstruction can produce comparison.parquet.
+    phase90_baseline = "/app/local_dev/rl-execution/runs/wave2-full-002/comparison.csv"
     rc = run_nested(
         [
             "--smoke",
@@ -95,6 +99,8 @@ def test_nested_executor_basic_smoke():
             "2",
             "--out-dir",
             str(run_dir),
+            "--phase90-baseline",
+            phase90_baseline,
         ]
     )
     elapsed = time.time() - t0
