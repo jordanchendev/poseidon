@@ -101,6 +101,14 @@ asyncio_mode = "auto"
 # (mirroring the existing v18 driver test patterns). Add the project root to
 # the test pythonpath so `scripts/` is importable as a package.
 pythonpath = ["."]
+# Phase 93 W0: register pytest markers in pyproject.toml (in addition to the
+# `pytest_configure` registration in tests/conftest.py for backward compat).
+# `--strict-markers` users (including future CI) require markers to be declared
+# at config-file level, not just runtime.
+markers = [
+    "phase38: Phase 38 data-foundation tests",
+    "stormtrooper: smoke tests gated to stormtrooper qlib-research container (set STORMTROOPER=1 to enable)",
+]
 
 [tool.ruff]
 line-length = 120

@@ -452,3 +452,110 @@ def db_session():
         session.rollback()
         session.close()
         engine.dispose()
+
+
+@pytest.fixture
+def make_synthetic_indicator_dict():
+    """Phase 93 — produces a minimal qlib-shaped indicator_dict for unit tests.
+
+    No qlib import. Mirrors the structure documented in 93-RESEARCH.md §Pattern 2:
+    a top-level dict keyed by inner-level frequency string (default ``"1min"`` —
+    locked from the W0 import probe; alternative candidates were ``"minute"`` /
+    ``"min"``), whose value is itself a dict of indicator name → pd.Series indexed
+    by (timestamp, instrument) MultiIndex.
+
+    Usage:
+        def test_x(make_synthetic_indicator_dict):
+            indicator_dict, expected_n_rows = make_synthetic_indicator_dict(
+                n_triggers=2, twap_window_minutes=5
+            )
+    """
+
+    def _factory(
+        n_triggers: int = 2,
+        twap_window_minutes: int = 5,
+        legs: tuple[str, ...] = ("TX", "0050"),
+        trigger_dates: list | None = None,
+        inner_key: str = "1min",
+    ):
+        if trigger_dates is None:
+            trigger_dates = [pd.Timestamp("2024-08-05"), pd.Timestamp("2024-08-06")][:n_triggers]
+        rows_amount: dict = {}
+        rows_price: dict = {}
+        rows_pa: dict = {}
+        rows_ffr: dict = {}
+        for td in trigger_dates:
+            for m in range(twap_window_minutes):
+                fill_ts = td + pd.Timedelta(hours=9, minutes=m)
+                for leg in legs:
+                    # planned 30 / window 5 = 6 per bar (synthetic)
+                    rows_amount[(fill_ts, leg)] = 6.0
+                    rows_price[(fill_ts, leg)] = 17000.0 if leg == "TX" else 145.0
+                    rows_pa[(fill_ts, leg)] = 0.00037  # ~3.7 bps slippage
+                    rows_ffr[(fill_ts, leg)] = 1.0  # full fill ratio
+        mk = lambda d: pd.Series(d, name="value")  # noqa: E731
+        indicator_dict = {
+            inner_key: {
+                "deal_amount": mk(rows_amount),
+                "deal_price": mk(rows_price),
+                "pa": mk(rows_pa),
+                "ffr": mk(rows_ffr),
+            }
+        }
+        expected_n_rows = n_triggers * twap_window_minutes * len(legs)
+        return indicator_dict, expected_n_rows
+
+    return _factory
+
+
+@pytest.fixture
+def make_synthetic_phase90_baseline(tmp_path):
+    """Phase 93 — produces a minimal per-trigger-day Phase 90 baseline frame
+    matching ``compare_to_baseline()`` input schema. Returns (path, df).
+
+    Mirrors `.planning/phases/90-rl-order-execution/verdict-artifacts/comparison.csv`
+    rollup-row format extended to per-trigger-day rows (Phase 90 wave2-full-002
+    parquet shape). D-17 schema: per-trigger-day rows × {Naive, v18 |gap|/4,
+    NestedExecutor TWAP} columns; each cell {pair_pnl_bps, slippage_bps_per_leg,
+    fill_failure}.
+
+    Usage:
+        def test_x(make_synthetic_phase90_baseline):
+            path, df = make_synthetic_phase90_baseline(
+                trigger_dates=[pd.Timestamp("2024-08-05")],
+                format="csv",
+            )
+    """
+
+    def _factory(trigger_dates: list | None = None, format: str = "csv"):
+        if trigger_dates is None:
+            trigger_dates = [
+                pd.Timestamp("2024-08-05"),
+                pd.Timestamp("2024-08-06"),
+                pd.Timestamp("2024-08-07"),
+            ]
+        df = pd.DataFrame(
+            {
+                "trigger_date": trigger_dates,
+                "naive_pair_pnl_bps": [10.0, 5.0, -2.0],
+                "naive_slippage_bps_per_leg": [0.0, 0.0, 0.0],
+                "naive_fill_failure": [False, False, False],
+                "v18_gap4_pair_pnl_bps": [8.0, 3.0, -4.0],
+                "v18_gap4_cost_bps": [22.3, 22.3, 22.3],
+                "v18_gap4_slippage_bps_per_leg": [0.0, 0.0, 0.0],
+                "v18_gap4_fill_failure": [False, False, False],
+                "phase90_twap_pair_pnl_bps": [9.5, 4.7, -2.4],
+                "phase90_twap_slippage_bps_per_leg": [3.7, 3.5, 4.1],
+                "phase90_twap_cost_bps": [4.0, 4.0, 4.0],
+                "phase90_twap_fill_failure": [False, False, False],
+            }
+        )
+        if format == "csv":
+            p = tmp_path / "phase90_baseline.csv"
+            df.to_csv(p, index=False)
+        else:
+            p = tmp_path / "phase90_baseline.parquet"
+            df.to_parquet(p)
+        return p, df
+
+    return _factory
