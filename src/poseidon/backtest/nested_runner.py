@@ -473,12 +473,22 @@ class NestedBacktestRunner:
             "trade_unit": None,
         }
 
+        # benchmark=None: Phase 93 fills the qlib bin tree with 1min-only
+        # features (Phase 90 rl_data_adapter convention).  qlib's
+        # PortfolioMetrics tries to compute benchmark daily returns via
+        # ``D.features([benchmark], ["$close"], freq="day")`` which fails
+        # with ``ValueError: The benchmark ['0050'] does not exist``
+        # because there are no day-frequency feature bins.  Phase 93 does
+        # not need the benchmark column (compute_delta_breakdown derives
+        # cost / slippage / fill_failure deltas directly from indicator_dict
+        # — no benchmark anywhere in the path), so disable it.  Plan 93-04
+        # [Rule 3] auto-fix.
         port_metric, indicator_dict = qlib_backtest(
             start_time=start_time,
             end_time=end_time,
             strategy=strategy_config,
             executor=executor_config,
-            benchmark="0050",
+            benchmark=None,
             account=10_000_000.0,
             exchange_kwargs=exchange_kwargs,
         )
