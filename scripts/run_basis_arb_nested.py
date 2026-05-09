@@ -623,6 +623,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     logger.info("qlib-data materialised at %s", qlib_paths["bin_dir"])
 
+    # Plan 93-04 [Rule 3] auto-fix — write a day-level calendar.
+    #
+    # ``rl_data_adapter.write_qlib_data_dir`` only emits the 1min calendar,
+    # but NestedExecutor with outer ``time_per_step="day"`` calls
+    # ``Cal.calendar(freq="day")`` and crashes with ``ValueError: calendar
+    # not exists: .../bin/calendars/day.txt`` (verified live on
+    # stormtrooper smoke 2026-05-09).  Derive day.txt from the unique
+    # normalised dates in the 1min calendar.
+    cal_dir = qlib_paths["bin_dir"] / "calendars"
+    cal_1min_path = cal_dir / "1min.txt"
+    cal_day_path = cal_dir / "day.txt"
+    if cal_1min_path.exists() and not cal_day_path.exists():
+        cal_1min = pd.to_datetime(cal_1min_path.read_text().splitlines())
+        # Unique days at midnight (qlib day calendar convention)
+        cal_day = sorted({ts.normalize() for ts in cal_1min})
+        cal_day_path.write_text("\n".join(ts.strftime("%Y-%m-%d") for ts in cal_day) + "\n")
+        logger.info("derived day calendar (%d days) → %s", len(cal_day), cal_day_path)
+
     # 5. Build multi-leg orders for FileOrderStrategy.
     #
     # Two output files written to run_dir:
@@ -642,9 +660,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     logger.info("orders pickle → %s", orders_pkl)
 
-    # qlib bin uses lowercase instrument codes (verified: bin/features/tx,
-    # bin/features/0050).  FileOrderStrategy looks up instruments by exact
-    # match against the qlib calendar's instrument list.
+    # FileOrderStrategy looks up instruments by case-sensitive match against
+    # bin/instruments/all.txt (verified: ``TX\t...\n0050\t...\n``).  qlib
+    # internally lower-cases for feature-dir lookup but the orders CSV must
+    # use the on-disk casing.
     orders_csv_rows: list[dict] = []
     for trigger_date in triggers:
         ts_open = pd.Timestamp(trigger_date).normalize() + pd.Timedelta("9h")
@@ -652,7 +671,7 @@ def main(argv: list[str] | None = None) -> int:
         orders_csv_rows.append(
             {
                 "datetime": ts_open.strftime("%Y-%m-%d %H:%M:%S"),
-                "instrument": "tx",
+                "instrument": "TX",
                 "amount": args.notional_tx,
                 "direction": "buy",
             }
