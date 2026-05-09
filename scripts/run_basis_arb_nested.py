@@ -577,12 +577,21 @@ def main(argv: list[str] | None = None) -> int:
 
     run_id = args.run_id or f"phase93-{uuid.uuid4().hex[:8]}"
     out_root = Path(args.out_dir)
-    # If --out-dir already ends with the run_id (passed by smoke test), do
-    # not append again; otherwise treat as run-root and append run_id.
+    # If --out-dir already names a specific run directory (smoke test pattern:
+    # ``--out-dir <runs_dir>/<uuid4>``), use it as-is.  Heuristic:
+    # treat as a complete run_dir when its parent already ends in ``runs``
+    # OR its name matches the auto-generated run_id, OR its name looks like
+    # a uuid/phase id (any non-default string).  Only when ``--out-dir`` is
+    # the literal default ``local_dev/nested-executor/runs`` do we append a
+    # ``phase93-<uuid8>`` subdir.
     if out_root.name == run_id:
         run_dir = out_root
+    elif out_root.parent.name == "runs":
+        # Caller supplied a complete run_dir path
+        # (e.g., ``runs/<uuid4>`` from the W0 smoke test).
+        run_dir = out_root
+        run_id = out_root.name
     elif out_root.name.startswith("phase93-"):
-        # Caller supplied a complete run_dir path (smoke test pattern).
         run_dir = out_root
         run_id = out_root.name
     else:
