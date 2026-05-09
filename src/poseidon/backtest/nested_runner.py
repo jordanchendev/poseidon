@@ -542,23 +542,23 @@ class NestedBacktestRunner:
         )
 
     # ------------------------------------------------------------------
-    # Wave 2 placeholder — comparison path
+    # Comparison path — thin shim over module-level compare_to_baseline
     # ------------------------------------------------------------------
 
     @staticmethod
     def compare_to_baseline(
-        nested_result: BacktestResult,
+        nested_fill_log: pd.DataFrame,
         phase90_baseline_path: Path,
+        triggers: list | None = None,
     ) -> pd.DataFrame:
-        """Compare NestedExecutor result to Phase 90 baseline (Wave 2 stub).
+        """Compare NestedExecutor result to Phase 90 baseline (D-17 schema).
 
-        Wave 2 (Plan 93-03) implements the per-trigger-day join + delta
-        computation (D-17 / D-18 schema).
+        Thin staticmethod shim over the module-level ``compare_to_baseline``
+        function — both entry points share a single implementation.  See the
+        module-level function docstring for full behavior + Pitfall 5 path
+        handling.
         """
-        raise NotImplementedError(
-            "Wave 2 (Plan 93-03) implements compare_to_baseline; "
-            "Wave 1 only ships __init__ + executor/strategy config builders."
-        )
+        return compare_to_baseline(nested_fill_log, phase90_baseline_path, triggers=triggers)
 
 
 # ---------------------------------------------------------------------------
@@ -845,17 +845,179 @@ def compute_delta_breakdown(comparison_df: pd.DataFrame) -> dict:
     )
 
 
-def compare_to_baseline(
-    nested_result: BacktestResult,
-    phase90_baseline_path: Path,
-) -> pd.DataFrame:
-    """Module-level shim mirroring ``NestedBacktestRunner.compare_to_baseline``.
+def _aggregate_nested_fill_log(fill_log: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate a raw D-21 fill_log into per-trigger-day NestedExecutor TWAP rows.
 
-    Wave 2 (Plan 93-03) implements both entry points consistently.
+    Used by ``compare_to_baseline`` when the caller passes a raw fill_log
+    (Wave 3 driver path) instead of a pre-aggregated nested-result frame.
+
+    Args:
+        fill_log: DataFrame with D-21 columns (one row per fill event).
+
+    Returns:
+        DataFrame with columns ``trigger_date, nested_twap_pair_pnl_bps,
+        nested_twap_slippage_bps_per_leg, nested_twap_cost_bps,
+        nested_twap_fill_failure``.  ``pair_pnl_bps`` is left as NaN here —
+        Wave 3 driver computes the real pair PnL via Phase 90 helpers; W2
+        unit tests pass the pre-aggregated frame so this column is unused.
     """
-    raise NotImplementedError(
-        "Wave 2 (Plan 93-03) implements compare_to_baseline; Wave 1 only ships executor/strategy config builders."
+    if "trigger_date" not in fill_log.columns:
+        return pd.DataFrame(
+            columns=[
+                "trigger_date",
+                "nested_twap_pair_pnl_bps",
+                "nested_twap_slippage_bps_per_leg",
+                "nested_twap_cost_bps",
+                "nested_twap_fill_failure",
+            ]
+        )
+    grouped = fill_log.groupby("trigger_date", as_index=False).agg(
+        nested_twap_slippage_bps_per_leg=("slippage_bps", "mean"),
+        nested_twap_cost_bps=("cost_bps", "mean"),
+        nested_twap_fill_failure=("fill_failure", "any"),
     )
+    grouped["nested_twap_pair_pnl_bps"] = float("nan")
+    return grouped[
+        [
+            "trigger_date",
+            "nested_twap_pair_pnl_bps",
+            "nested_twap_slippage_bps_per_leg",
+            "nested_twap_cost_bps",
+            "nested_twap_fill_failure",
+        ]
+    ]
+
+
+def _read_baseline_frame(phase90_baseline_path: Path) -> pd.DataFrame:
+    """Read a Phase 90 baseline file (.parquet preferred, .csv fallback).
+
+    Pitfall 5: accepts both formats so callers can pass either the per-day
+    parquet (path B — preferred) or the rollup CSV (path C — algorithmic
+    fallback).  Format detection is by suffix; downstream code inspects the
+    schema to decide whether to treat as per-day or rollup.
+
+    Args:
+        phase90_baseline_path: Path to baseline file.
+
+    Returns:
+        DataFrame with whatever columns the file shipped.
+
+    Raises:
+        FileNotFoundError: If the path does not resolve.
+        ValueError: If the suffix is unsupported.
+    """
+    p = Path(phase90_baseline_path)
+    if not p.exists():
+        raise FileNotFoundError(f"Phase 90 baseline path not found: {p}")
+    suffix = p.suffix.lower()
+    if suffix == ".parquet":
+        return pd.read_parquet(p)
+    if suffix == ".csv":
+        return pd.read_csv(p)
+    raise ValueError(f"Unsupported baseline file suffix {suffix!r}; expected .parquet or .csv")
+
+
+def _normalize_trigger_date_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Coerce ``trigger_date`` column to ``pd.Timestamp.normalize()`` (date-only).
+
+    Both per-day baseline frames and synthetic test frames may use mixed
+    representations (date / Timestamp / string).  Normalizing to Timestamp
+    midnight makes the join key consistent.
+    """
+    if "trigger_date" not in df.columns:
+        return df
+    out = df.copy()
+    out["trigger_date"] = pd.to_datetime(out["trigger_date"]).dt.normalize()
+    return out
+
+
+def compare_to_baseline(
+    nested_fill_log: pd.DataFrame,
+    phase90_baseline_path: Path,
+    triggers: list | None = None,
+) -> pd.DataFrame:
+    """Compare NestedExecutor TWAP results against Phase 90 baseline (D-17 schema).
+
+    Joins per-trigger-day NestedExecutor TWAP rows with Phase 90's per-day
+    baseline (Naive single-fill + v18 |gap|/4 + Phase 90 TWAP/VWAP) and
+    returns a frame with D-17 columns.
+
+    Pitfall 5 path handling:
+    - Path B (preferred): per-day baseline parquet/CSV with ``trigger_date``
+      column → direct left-join on ``trigger_date``.
+    - Path C (algorithmic fallback): rollup CSV (no ``trigger_date`` column,
+      e.g. ``verdict-artifacts/comparison.csv`` rollup format) → raise
+      ValueError matching "schema" so caller / driver knows to compute
+      naive + v18 |gap|/4 algorithmically from the input fill_log.
+
+    Args:
+        nested_fill_log: Either a raw D-21 fill_log (Wave 3 driver path) or
+            a pre-aggregated nested-result frame (W2 unit-test path).
+            Detection: presence of ``nested_twap_pair_pnl_bps`` column → use
+            as-is; absence → aggregate via ``_aggregate_nested_fill_log``.
+        phase90_baseline_path: Path to Phase 90 per-day baseline file
+            (.parquet or .csv).
+        triggers: Optional list of pd.Timestamp triggers (currently unused;
+            reserved for Wave 3 driver alignment validation).
+
+    Returns:
+        DataFrame with D-17 column ordering — per-trigger-day rows × the
+        three algorithm column-groups (Naive, v18 |gap|/4, NestedExecutor
+        TWAP) + optional Phase 90 TWAP carry-forward.
+
+    Raises:
+        ValueError: If
+            - matched row counts but disjoint trigger_date sets
+              (message contains "alignment failed"); OR
+            - baseline is rollup-only (path C — message contains "schema");
+              caller must algorithmically reconstruct.
+    """
+    _ = triggers  # reserved for Wave 3 alignment check
+
+    # Step 1: detect raw vs aggregated nested input.
+    if "nested_twap_pair_pnl_bps" in nested_fill_log.columns:
+        nested_agg = nested_fill_log.copy()
+    else:
+        nested_agg = _aggregate_nested_fill_log(nested_fill_log)
+
+    nested_agg = _normalize_trigger_date_column(nested_agg)
+
+    # Step 2: read baseline.
+    baseline = _read_baseline_frame(phase90_baseline_path)
+
+    # Step 3: schema check — rollup CSV has no ``trigger_date`` column.
+    if "trigger_date" not in baseline.columns:
+        raise ValueError(
+            f"Phase 90 baseline schema rollup-only (no 'trigger_date' column); "
+            f"got columns: {list(baseline.columns)}. "
+            "Use Pitfall 5 path C — caller must algorithmically reconstruct "
+            "naive + v18 |gap|/4 per-trigger-day rows from input fill_log."
+        )
+
+    baseline = _normalize_trigger_date_column(baseline)
+
+    # Step 4: alignment check — disjoint trigger_date sets.
+    nested_dates = set(nested_agg["trigger_date"].unique())
+    baseline_dates = set(baseline["trigger_date"].unique())
+    overlap = nested_dates & baseline_dates
+    if not overlap and len(nested_dates) > 0 and len(baseline_dates) > 0:
+        raise ValueError(
+            f"alignment failed: nested triggers vs baseline triggers have empty intersection "
+            f"(nested={sorted(map(str, nested_dates))}, baseline={sorted(map(str, baseline_dates))})"
+        )
+
+    # Step 5: left-join on trigger_date (nested as primary).
+    merged = nested_agg.merge(baseline, on="trigger_date", how="left", suffixes=("", "_baseline"))
+
+    # Step 6: project to D-17 columns; back-fill missing columns with NaN.
+    out_cols: list[str] = []
+    for col in _D17_COLUMNS:
+        if col in merged.columns:
+            out_cols.append(col)
+        else:
+            merged[col] = float("nan") if "fill_failure" not in col else False
+            out_cols.append(col)
+    return merged[out_cols].copy()
 
 
 __all__ = [

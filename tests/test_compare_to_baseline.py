@@ -108,7 +108,15 @@ def test_compare_to_baseline_csv_fallback():
     # Synthetic minimal NestedExecutor frame — alignment may or may not succeed
     # depending on the staged CSV's row schema (rollup vs per-trigger-day);
     # the helper must accept the path argument without raising on path resolution.
-    nested_frame = _mk_nested_result_frame([pd.Timestamp("2024-08-05")])
+    # _mk_nested_result_frame is parameterized for length-3 lists; supply 3 dates
+    # to satisfy pandas DataFrame construction.
+    nested_frame = _mk_nested_result_frame(
+        [
+            pd.Timestamp("2024-08-05"),
+            pd.Timestamp("2024-08-06"),
+            pd.Timestamp("2024-08-07"),
+        ]
+    )
     try:
         compare_to_baseline(nested_frame, csv_path)
     except ValueError as exc:
