@@ -873,6 +873,24 @@ def harvest_fill_log(
         )
 
     inner = indicator_dict[inner_key]
+
+    # Pitfall 4 defense — qlib v0.9.7 returns
+    # ``INDICATOR_METRIC = Dict[str, Tuple[pd.DataFrame, Indicator]]`` (verified
+    # 2026-05-09 stormtrooper smoke).  The ``DataFrame`` carries the
+    # ``deal_amount / deal_price / pa / ffr`` columns indexed by
+    # ``(fill_ts, instrument)``.  Older snapshots (and the synthetic test
+    # fixtures used by Wave 0 unit tests) instead pass a flat
+    # ``Dict[str, Series]``.  Accept both shapes — Plan 93-04 [Rule 3] auto-fix.
+    if isinstance(inner, tuple):
+        # qlib v0.9.7 production shape: (DataFrame, Indicator)
+        inner_df = inner[0]
+        if not isinstance(inner_df, pd.DataFrame):
+            raise ValueError(
+                f"indicator_dict[inner_key] tuple element 0 expected pd.DataFrame; got {type(inner_df).__name__}"
+            )
+        # Convert to flat dict-like: each column → Series with the same index.
+        inner = {col: inner_df[col] for col in inner_df.columns}
+
     deal_amount = inner["deal_amount"]
     deal_price = inner.get("deal_price")
     pa_series = inner.get("pa")
