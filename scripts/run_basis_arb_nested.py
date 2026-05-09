@@ -671,24 +671,42 @@ def main(argv: list[str] | None = None) -> int:
     # day at midnight (2024-03-08 00:00:00).  The TradeRangeByTime
     # ("09:00", "09:0N") on the inner-level decision filter then narrows
     # the actual fill window.  Use midnight here so the lookup hits.
+    # qlib FileOrderStrategy expects ``amount`` in SHARES, not notional TWD
+    # (verified via qlib v0.9.7 docstring example
+    # ``datetime, instrument, amount, direction / 20200102, SH600519, 1000, sell``).
+    # Convert per-leg notional to shares using the close price on the trigger
+    # day (Plan 93-04 [Rule 3] auto-fix — smoke run #9 produced
+    # ``fill_log_rows=0`` because qlib treated 1_000_000 as 1M shares which
+    # cannot fit in a single 1m bar's volume so the fill was truncated to 0).
+    tx_d = aggregate_to_daily(tx_1m)
+    etf_d = aggregate_to_daily(etf_1m)
+
     orders_csv_rows: list[dict] = []
     for trigger_date in triggers:
         ts_midnight = pd.Timestamp(trigger_date).normalize()
-        # TX leg — long
+        try:
+            tx_close = float(tx_d.loc[tx_d.index == ts_midnight, "close"].iloc[-1])
+            etf_close = float(etf_d.loc[etf_d.index == ts_midnight, "close"].iloc[-1])
+        except (IndexError, KeyError):
+            tx_close = float(tx_d["close"].iloc[-1])
+            etf_close = float(etf_d["close"].iloc[-1])
+        # Round to 1 share for ETF, allow fractional for TX (futures contracts).
+        tx_shares = max(1, int(args.notional_tx / max(tx_close, 1e-3)))
+        etf_shares = max(1, int(args.notional_etf / max(etf_close, 1e-3)))
+
         orders_csv_rows.append(
             {
                 "datetime": ts_midnight.strftime("%Y-%m-%d"),
                 "instrument": "TX",
-                "amount": args.notional_tx,
+                "amount": tx_shares,
                 "direction": "buy",
             }
         )
-        # 0050 leg — short
         orders_csv_rows.append(
             {
                 "datetime": ts_midnight.strftime("%Y-%m-%d"),
                 "instrument": "0050",
-                "amount": args.notional_etf,
+                "amount": etf_shares,
                 "direction": "sell",
             }
         )
