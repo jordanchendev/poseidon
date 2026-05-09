@@ -473,25 +473,47 @@ class NestedBacktestRunner:
             "trade_unit": None,
         }
 
-        # benchmark=None: Phase 93 fills the qlib bin tree with 1min-only
-        # features (Phase 90 rl_data_adapter convention).  qlib's
-        # PortfolioMetrics tries to compute benchmark daily returns via
-        # ``D.features([benchmark], ["$close"], freq="day")`` which fails
-        # with ``ValueError: The benchmark ['0050'] does not exist``
-        # because there are no day-frequency feature bins.  Phase 93 does
-        # not need the benchmark column (compute_delta_breakdown derives
-        # cost / slippage / fill_failure deltas directly from indicator_dict
-        # — no benchmark anywhere in the path), so disable it.  Plan 93-04
-        # [Rule 3] auto-fix.
-        port_metric, indicator_dict = qlib_backtest(
-            start_time=start_time,
-            end_time=end_time,
-            strategy=strategy_config,
-            executor=executor_config,
-            benchmark=None,
-            account=10_000_000.0,
-            exchange_kwargs=exchange_kwargs,
-        )
+        # Phase 93 [Rule 3] benchmark workaround.
+        # qlib.backtest.backtest() unconditionally builds an Account whose
+        # PortfolioMetrics tries ``D.features([benchmark], ["$close"],
+        # freq=outer_freq)``.  At outer_level="1d" that needs a day-level
+        # $close bin under bin/features/<benchmark_lower>/close.day.bin
+        # which our 1min-only rl_data_adapter does not produce; both
+        # benchmark="0050" and benchmark=None (→ qlib default
+        # ``SH000300``) fail with "benchmark does not exist".
+        #
+        # Monkey-patch qlib.backtest.report.PortfolioMetrics._cal_benchmark
+        # to return None (Phase 93 never consumes the benchmark column —
+        # compute_delta_breakdown derives all three deltas from
+        # indicator_dict).  Restore the original after the call so other
+        # qlib-research jobs (Phase 90/95) are unaffected.
+        try:
+            from qlib.backtest import report as _qlib_report
+
+            _orig_cal_benchmark = _qlib_report.PortfolioMetrics._cal_benchmark
+
+            @staticmethod
+            def _stub_cal_benchmark(benchmark_config, freq):
+                return None
+
+            _qlib_report.PortfolioMetrics._cal_benchmark = _stub_cal_benchmark
+        except Exception:
+            # Mac stub path — _qlib_report is a SimpleNamespace shim; no-op.
+            _orig_cal_benchmark = None
+
+        try:
+            port_metric, indicator_dict = qlib_backtest(
+                start_time=start_time,
+                end_time=end_time,
+                strategy=strategy_config,
+                executor=executor_config,
+                benchmark="0050",
+                account=10_000_000.0,
+                exchange_kwargs=exchange_kwargs,
+            )
+        finally:
+            if _orig_cal_benchmark is not None:
+                _qlib_report.PortfolioMetrics._cal_benchmark = _orig_cal_benchmark
 
         return self._harvest_and_assemble(
             port_metric=port_metric,
