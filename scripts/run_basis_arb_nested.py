@@ -211,8 +211,20 @@ def compute_triggers(
     basis_z = compute_basis_z(tx_d, etf_d, adj_col="close")
     triggers = extract_r2_trigger_days(basis_z)
 
+    # Drop triggers near the calendar tail — qlib's NestedExecutor t+1 lookup
+    # panics with ``IndexError: index N out of bounds`` when the trigger sits
+    # within ~3 trading days of the calendar's last index.  Plan 93-04
+    # [Rule 3] auto-fix: trim 5 trading days from both edges so qlib has
+    # plenty of headroom.
     last_day = max(tx_d.index.max(), etf_d.index.max()).normalize()
-    triggers = [t for t in triggers if pd.Timestamp(t).normalize() < last_day]
+    first_day = min(tx_d.index.min(), etf_d.index.min()).normalize()
+    edge_buffer = pd.Timedelta(days=5)
+    triggers = [
+        t
+        for t in triggers
+        if pd.Timestamp(t).normalize() < last_day - edge_buffer
+        and pd.Timestamp(t).normalize() > first_day + edge_buffer
+    ]
 
     if max_triggers is not None and len(triggers) > max_triggers:
         # D-32: smoke run — pick the K most extreme |basis_z| trigger days.
