@@ -974,6 +974,17 @@ def main(argv: list[str] | None = None) -> int:
             path_c_baseline["trigger_date"] = pd.to_datetime(path_c_baseline["trigger_date"])
             nested_per_day["trigger_date"] = pd.to_datetime(nested_per_day["trigger_date"])
             comparison_df = path_c_baseline.merge(nested_per_day, on="trigger_date", how="left")
+            # ``_aggregate_nested_fill_log`` leaves nested_twap_pair_pnl_bps
+            # as NaN by design (W2 unit tests don't exercise PnL math).  Wave 3
+            # driver fills it from path_c_baseline.naive_pair_pnl_bps minus
+            # nested_twap cost — same pair_pnl as the naive baseline less the
+            # realistic NestedExecutor TWAP fees / slippage (Plan 93-04 [Rule
+            # 1] auto-fix; numerics smoke test depends on this being non-NaN).
+            comparison_df["nested_twap_pair_pnl_bps"] = (
+                comparison_df["naive_pair_pnl_bps"]
+                - comparison_df["nested_twap_cost_bps"] * 2
+                - comparison_df["nested_twap_slippage_bps_per_leg"] * 2
+            )
             try:
                 comparison_df.to_parquet(run_dir / "comparison.parquet")
                 logger.info("Path C comparison.parquet → %s", run_dir / "comparison.parquet")
