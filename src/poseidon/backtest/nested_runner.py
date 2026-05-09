@@ -366,37 +366,47 @@ class NestedBacktestRunner:
         leg_notionals: dict[str, float],
         run_dir: Path,
         window: tuple[pd.Timestamp, pd.Timestamp],
+        phase90_baseline_path: Path | None = None,
     ) -> BacktestResult:
-        """Run a NestedExecutor backtest and harvest results.
+        """Run a NestedExecutor backtest and harvest results (Wave 2 GREEN).
 
-        Wave 1 (Plan 93-02) ships:
-        - executor / strategy config construction (verified via Wave 0 unit test).
+        Wave 2 (Plan 93-03) wires:
+        - executor / strategy config construction.
         - lazy qlib import inside ``_run_nested_executor``.
-        - stub ``_harvest_and_assemble`` returning ``status="wave1_stub"``.
-
-        Wave 2 (Plan 93-03) replaces ``_harvest_and_assemble`` with the real
-        per-fill harvest path (indicator_dict → fill_log → cost annotation →
-        delta_breakdown vs Phase 90 baseline).
+        - real ``_harvest_and_assemble`` (D-21 fill_log → comparison.parquet →
+          delta_breakdown dict + cost-delta sentence).
 
         Args:
             triggers: Daily timestamps where the outer signal fires
                 (``basis_z < -1`` per D-08).
             legs_1m: ``{symbol: 1-min OHLCV DataFrame}`` keyed by leg
-                identifier (e.g., ``{"TX": df, "0050": df}``).  Wave 1 does
-                not consume these — they flow to qlib's bin/pickle loader
-                via the upstream rl_data_adapter (Wave 3 driver wires that).
-            leg_notionals: ``{symbol: notional_TWD}`` per leg.  Stored on
-                the result for caller-side sizing reconstruction.
+                identifier (e.g., ``{"TX": df, "0050": df}``).  Used by
+                ``harvest_fill_log`` to populate per-fill bar OHLC.
+            leg_notionals: ``{symbol: notional_TWD}`` per leg.  Used by
+                ``harvest_fill_log`` to derive per-bar planned_qty for
+                fill_failure detection.
             run_dir: Filesystem directory holding ``orders.pkl`` and where
-                ``fill_log.parquet`` / ``comparison.parquet`` will be
-                written by Wave 2 / Wave 3.
+                ``fill_log.parquet`` / ``comparison.parquet`` /
+                ``comparison_summary.md`` will be written by Wave 2.
             window: ``(start_time, end_time)`` pandas Timestamp pair bounding
                 the backtest range.
+            phase90_baseline_path: Optional Phase 90 per-day baseline file
+                (.parquet preferred, .csv fallback per Pitfall 5).  When
+                None, ``comparison_df`` and ``delta_breakdown`` are not
+                computed; ``fill_log`` is still persisted.
 
         Returns:
-            ``BacktestResult`` with ``inner_level``, ``outer_level``, and
-            ``leg_notionals`` attached as model_extra fields (Phase 93 D-03).
+            ``BacktestResult`` with ``inner_level``, ``outer_level``,
+            ``leg_notionals``, ``fill_log``, ``comparison``, and
+            ``delta_breakdown`` attached as model_extra fields (D-03).
         """
+        # Stash run-time arguments on self so _harvest_and_assemble can access
+        # them without a long parameter list.
+        self._triggers = triggers
+        self._legs_1m = legs_1m
+        self._leg_notionals = leg_notionals
+        self._phase90_baseline_path = phase90_baseline_path
+
         executor_config = self._build_executor_config()
         strategy_config = self._build_strategy_config(run_dir)
 
@@ -412,10 +422,6 @@ class NestedBacktestRunner:
                 triggers=triggers,
                 leg_notionals=leg_notionals,
             )
-        except NotImplementedError:
-            # Wave 1 stub explicitly raises in _harvest_and_assemble dependents.
-            # Re-raise so callers see the contract gap; Wave 2 fills it in.
-            raise
         except Exception as exc:
             # Mirror BacktestRunner / portfolio_backtester try/except wrapping
             # (runner.py + portfolio_backtester.py:62-94 pattern).
@@ -479,46 +485,148 @@ class NestedBacktestRunner:
 
     def _harvest_and_assemble(
         self,
-        port_metric,  # Wave 2 types this concretely (qlib PortMetric)
-        indicator_dict,  # Wave 2 types this concretely (dict[str, dict])
+        port_metric,
+        indicator_dict,
         run_dir: Path,
         triggers: list[pd.Timestamp],
         leg_notionals: dict[str, float],
     ) -> BacktestResult:
-        """Stub harvest path (Wave 1).
+        """Real Wave 2 harvest path (Plan 93-03).
 
-        Wave 2 (Plan 93-03) replaces this with the real harvest:
-        - Iterate ``indicator_dict[self.inner_level]`` per-fill rows.
-        - Annotate ``cost_bps`` via ``_compute_fill_cost_bps``.
-        - Persist ``fill_log.parquet`` to ``run_dir``.
-        - Compute ``delta_breakdown`` against Phase 90 baseline.
-
-        Wave 1 returns a minimal ``BacktestResult`` with the level metadata
-        attached as ``model_extra`` fields so unit tests can verify shape.
+        Steps:
+        1. ``harvest_fill_log(...)`` → per-fill D-21 rows.
+        2. Persist ``fill_log.parquet`` to ``run_dir``.
+        3. If ``self._phase90_baseline_path`` exists:
+           - ``compare_to_baseline(...)`` → D-17 comparison frame.
+           - ``compute_delta_breakdown(...)`` → D-18 + D-19 dict.
+           - Persist ``comparison.parquet`` and ``comparison_summary.md``.
+        4. Build ``BacktestResult`` with all artifacts attached.
         """
+        from poseidon.backtest.cost_model import get_cost_model
+
         config = BacktestConfig(
-            strategy_type="rule",  # FileOrderStrategy is rule-driven (D-08)
-            symbol="TX×0050",  # Phase 93 dual-leg basis arb (D-25)
-            market="tw_futures",  # outer leg market; per-leg cost via cost_model
+            strategy_type="rule",
+            symbol="TX×0050",
+            market="tw_futures",
             interval=self.outer_level,
         )
 
+        # 1. Harvest fill log via the Plan 93-03 module-level helper.
+        try:
+            cost_model_per_leg = {
+                "TX": get_cost_model("tw_futures"),
+                "0050": get_cost_model("tw_stock_etf"),
+            }
+        except ValueError:
+            cost_model_per_leg = None
+
+        run_id = run_dir.name if run_dir is not None else "run"
+
+        fill_log = harvest_fill_log(
+            indicator_dict=indicator_dict,
+            run_id=run_id,
+            triggers=triggers,
+            twap_window_minutes=self.twap_window_minutes,
+            leg_notionals=leg_notionals,
+            legs_ohlcv_1m=self._legs_1m,
+            cost_model_per_leg=cost_model_per_leg,
+            inner_key=self.inner_level,
+        )
+
+        # 2. Persist fill_log.parquet (best-effort — driver may pass a
+        # tmp_path-like run_dir; failures are non-fatal).
+        fill_log_path: Path | None = None
+        try:
+            run_dir.mkdir(parents=True, exist_ok=True)
+            fill_log_path = run_dir / "fill_log.parquet"
+            if len(fill_log) > 0:
+                fill_log.to_parquet(fill_log_path)
+            else:
+                # Empty fill_log → write the schema-only frame so downstream
+                # readers don't crash on missing file.
+                fill_log.to_parquet(fill_log_path)
+        except OSError as exc:
+            logger.warning("Could not persist fill_log.parquet to %s: %s", fill_log_path, exc)
+
+        # 3. Optional comparison + delta_breakdown.
+        comparison_df: pd.DataFrame | None = None
+        delta: dict | None = None
+        if self._phase90_baseline_path is not None and Path(self._phase90_baseline_path).exists():
+            try:
+                comparison_df = compare_to_baseline(
+                    fill_log,
+                    self._phase90_baseline_path,
+                    triggers=triggers,
+                )
+                delta = compute_delta_breakdown(comparison_df, twap_window_minutes=self.twap_window_minutes)
+                # Persist comparison artefacts.
+                try:
+                    comparison_df.to_parquet(run_dir / "comparison.parquet")
+                except OSError as exc:
+                    logger.warning("Could not persist comparison.parquet: %s", exc)
+                try:
+                    summary_md = run_dir / "comparison_summary.md"
+                    summary_md.write_text(
+                        "# Phase 93 NestedExecutor TWAP vs Phase 90 baseline\n\n"
+                        f"- run_id: {run_id}\n"
+                        f"- twap_window_minutes: {self.twap_window_minutes}\n"
+                        f"- n_trigger_days: {delta['n_trigger_days']}\n"
+                        f"- cost_delta_bps: {delta['cost_delta_bps']:.3f}\n"
+                        f"- slippage_delta_bps: {delta['slippage_delta_bps']:.3f}\n"
+                        f"- fill_failure_rate_pct: {delta['fill_failure_rate_pct']:.2f}\n\n"
+                        f"## Cost Delta\n\n{delta['cost_delta_sentence']}\n"
+                    )
+                except OSError as exc:
+                    logger.warning("Could not write comparison_summary.md: %s", exc)
+            except (ValueError, FileNotFoundError) as exc:
+                # Pitfall 5 path C — rollup CSV / disjoint dates / missing file.
+                # Log + leave comparison_df=None so caller knows to handle.
+                logger.warning(
+                    "compare_to_baseline raised %s: %s. comparison_df left unset.",
+                    type(exc).__name__,
+                    exc,
+                )
+        else:
+            logger.info("phase90_baseline_path not provided / not found; skipping comparison + delta_breakdown")
+
+        # 4. Assemble BacktestResult.
+        n_fills = len(fill_log)
+        n_failures = int(fill_log["fill_failure"].astype(bool).sum()) if n_fills > 0 else 0
+
+        metrics = {
+            "n_fills": n_fills,
+            "n_failures": n_failures,
+        }
+        if delta is not None:
+            metrics.update(
+                {
+                    "cost_delta_bps": delta["cost_delta_bps"],
+                    "slippage_delta_bps": delta["slippage_delta_bps"],
+                    "fill_failure_rate_pct": delta["fill_failure_rate_pct"],
+                }
+            )
+
         result = BacktestResult(
             config=config,
-            metrics={},
-            trade_count=0,
+            metrics=metrics,
+            trade_count=n_fills,
             equity_curve_length=0,
-            status="wave1_stub",
+            status="ok",
             inner_level=self.inner_level,
             outer_level=self.outer_level,
             leg_notionals=leg_notionals,
             triggers_count=len(triggers),
             run_dir=str(run_dir),
+            fill_log=fill_log,
+            comparison=comparison_df,
+            delta_breakdown=delta,
         )
         logger.info(
-            "NestedBacktestRunner Wave 1 stub returned: triggers=%d run_dir=%s",
-            len(triggers),
-            run_dir,
+            "NestedBacktestRunner Wave 2 harvest complete: n_fills=%d n_failures=%d comparison=%s delta=%s",
+            n_fills,
+            n_failures,
+            "yes" if comparison_df is not None else "no",
+            "yes" if delta is not None else "no",
         )
         return result
 
@@ -832,17 +940,135 @@ def harvest_fill_log(
     return df
 
 
-def compute_delta_breakdown(comparison_df: pd.DataFrame) -> dict:
-    """Compute D-18 delta breakdown (Wave 2 stub).
+def _format_cost_delta_sentence(
+    cost_delta_bps: float,
+    n_trigger_days: int,
+    twap_window_minutes: int,
+    mean_v18_gap4_cost_bps: float,
+) -> str:
+    """Format the D-19 cost-delta sentence (single-line, human-readable).
 
-    Wave 2 (Plan 93-03) emits the three deltas:
-    - cost_delta_bps = mean(NestedExecutor TWAP cost) − mean(v18 |gap|/4 cost)
-    - slippage_delta_bps = mean(NestedExecutor TWAP slippage) − mean(naive slippage = 0)
-    - fill_failure_rate = NestedExecutor trigger-day fill_failure proportion
+    Required by ROADMAP success criterion 3 ("the cost delta is surfaced in
+    writing").  Three branches per D-19:
+    - cost_delta < -threshold → "cheaper"
+    - cost_delta > +threshold → "dearer" (also includes "more expensive" for
+      compatibility with both wording conventions)
+    - |cost_delta| < threshold → "approximately equal-cost"
+
+    Template (RESEARCH §Cost-Delta Sentence Schema):
+
+        "NestedExecutor TWAP-{N}min @ 09:00 has cost {direction-clause} per
+        leg on TX-vs-0050 basis arb 6yr OOS ({K} trigger days) — Phase 90
+        |gap|/4 model predicted cost {pred_bps:.1f} bps per leg."
+
+    Args:
+        cost_delta_bps: Signed cost delta (NestedExecutor TWAP - v18 |gap|/4).
+        n_trigger_days: Number of trigger days in the comparison.
+        twap_window_minutes: TWAP window length (D-13).
+        mean_v18_gap4_cost_bps: Mean v18 |gap|/4 cost for the predicted-dir
+            framing in the sentence tail.
+
+    Returns:
+        Single-line string suitable for ``93-RESEARCH.md § Cost Delta``.
     """
-    raise NotImplementedError(
-        "Wave 2 (Plan 93-03) implements delta_breakdown; Wave 1 only ships executor/strategy config builders."
+    abs_delta = abs(cost_delta_bps)
+    if abs_delta < _COST_DELTA_EQUAL_THRESHOLD_BPS:
+        direction_clause = (
+            f"approximately equal-cost (Δ={cost_delta_bps:+.2f} bps per leg) compared to v18 |gap|/4 baseline"
+        )
+    elif cost_delta_bps < 0:
+        direction_clause = f"~{abs_delta:.1f} bps cheaper per leg than v18 |gap|/4 baseline"
+    else:
+        direction_clause = f"~{abs_delta:.1f} bps dearer (more expensive) per leg than v18 |gap|/4 baseline"
+
+    return (
+        f"NestedExecutor TWAP-{twap_window_minutes}min @ 09:00 is "
+        f"{direction_clause} on TX-vs-0050 basis arb "
+        f"({n_trigger_days} trigger days) — Phase 90 |gap|/4 model predicted "
+        f"cost {mean_v18_gap4_cost_bps:.1f} bps per leg."
     )
+
+
+def compute_delta_breakdown(
+    comparison_df: pd.DataFrame,
+    twap_window_minutes: int = 5,
+) -> dict:
+    """Compute the D-18 three deltas + D-19 cost-delta sentence.
+
+    Inputs come from ``compare_to_baseline()``'s D-17 frame.  Output is the
+    summary dict that drives ``93-RESEARCH.md § Cost Delta`` (D-19) and the
+    Wave 3 driver's verdict-style metrics.
+
+    D-18 keys:
+    - ``cost_delta_bps`` = mean(nested_twap_cost_bps) − mean(v18_gap4_cost_bps)
+    - ``slippage_delta_bps`` = mean(nested_twap_slippage_bps_per_leg) − 0
+      (naive single-fill slippage = 0 by definition)
+    - ``fill_failure_rate_pct`` = nested trigger-days with fill_failure=True
+      ÷ total × 100
+
+    D-19 key:
+    - ``cost_delta_sentence``: single-line string with ``cheaper`` / ``dearer``
+      / ``equal-cost`` direction word per ``_format_cost_delta_sentence``.
+
+    Auxiliary keys (driver convenience):
+    - ``mean_v18_gap4_cost_bps``, ``mean_nested_twap_cost_bps``,
+      ``n_trigger_days``.
+
+    Args:
+        comparison_df: Output of ``compare_to_baseline()`` with D-17 columns.
+        twap_window_minutes: TWAP window length used by the run (D-13;
+            default 5).  Surfaced in the cost-delta sentence.
+
+    Returns:
+        dict with the keys above.
+
+    Raises:
+        ValueError: If required D-17 columns are missing from
+            ``comparison_df`` (defensive — callers should pass output from
+            ``compare_to_baseline``).
+    """
+    required = {
+        "nested_twap_cost_bps",
+        "v18_gap4_cost_bps",
+        "nested_twap_slippage_bps_per_leg",
+        "nested_twap_fill_failure",
+    }
+    missing = required - set(comparison_df.columns)
+    if missing:
+        raise ValueError(
+            f"comparison_df missing required D-17 columns: {sorted(missing)}; got: {list(comparison_df.columns)}"
+        )
+
+    n_trigger_days = len(comparison_df)
+
+    mean_nested_twap_cost_bps = float(comparison_df["nested_twap_cost_bps"].mean())
+    mean_v18_gap4_cost_bps = float(comparison_df["v18_gap4_cost_bps"].mean())
+    cost_delta_bps = mean_nested_twap_cost_bps - mean_v18_gap4_cost_bps
+
+    mean_nested_twap_slippage_bps = float(comparison_df["nested_twap_slippage_bps_per_leg"].mean())
+    # Naive single-fill slippage = 0 by definition (D-18); delta is just the
+    # NestedExecutor TWAP mean slippage.
+    slippage_delta_bps = mean_nested_twap_slippage_bps - 0.0
+
+    fill_failure_count = int(comparison_df["nested_twap_fill_failure"].astype(bool).sum())
+    fill_failure_rate_pct = 100.0 * fill_failure_count / n_trigger_days if n_trigger_days > 0 else 0.0
+
+    cost_delta_sentence = _format_cost_delta_sentence(
+        cost_delta_bps=cost_delta_bps,
+        n_trigger_days=n_trigger_days,
+        twap_window_minutes=twap_window_minutes,
+        mean_v18_gap4_cost_bps=mean_v18_gap4_cost_bps,
+    )
+
+    return {
+        "cost_delta_bps": float(cost_delta_bps),
+        "slippage_delta_bps": float(slippage_delta_bps),
+        "fill_failure_rate_pct": float(fill_failure_rate_pct),
+        "cost_delta_sentence": cost_delta_sentence,
+        "mean_v18_gap4_cost_bps": float(mean_v18_gap4_cost_bps),
+        "mean_nested_twap_cost_bps": float(mean_nested_twap_cost_bps),
+        "n_trigger_days": n_trigger_days,
+    }
 
 
 def _aggregate_nested_fill_log(fill_log: pd.DataFrame) -> pd.DataFrame:
