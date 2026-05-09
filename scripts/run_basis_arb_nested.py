@@ -738,13 +738,37 @@ def main(argv: list[str] | None = None) -> int:
                 phase90_baseline_path,
             )
 
+    # Tight backtest window — Plan 93-04 [Rule 3] auto-fix.  qlib's
+    # NestedExecutor walks every day in the calendar between
+    # ``start_time`` and ``end_time``.  At outer "day" frequency over
+    # the 6yr (2020-04..2026-04) overlap window that's 1485 days; on
+    # smoke runs (2 triggers) walking all 1485 days takes ~30+ min and
+    # an off-by-one at the calendar tail trips an
+    # ``IndexError: index 1485 is out of bounds`` when qlib looks up
+    # t+1 at the final day.  Constrain ``end_time`` to the day
+    # AFTER the last trigger (so qlib's t+1 lookup is safe and the loop
+    # stops promptly) and ``start_time`` to the FIRST trigger day.
+    if triggers:
+        bt_start = pd.Timestamp(min(triggers)).normalize()
+        last_trig = pd.Timestamp(max(triggers)).normalize()
+        # Allow 1 trading day of headroom for qlib's t+1 calendar lookup.
+        bt_end = last_trig + pd.Timedelta(days=2)
+        # Clamp to the original window so we never request data outside
+        # what was fetched.
+        bt_start = max(bt_start, window_start)
+        bt_end = min(bt_end, window_end)
+    else:
+        bt_start, bt_end = window_start, window_end
+
+    logger.info("Tight qlib backtest window: %s → %s (vs full %s → %s)", bt_start, bt_end, window_start, window_end)
+
     t_run = time.monotonic()
     result = runner.run(
         triggers=triggers,
         legs_1m=legs_1m,
         leg_notionals=leg_notionals,
         run_dir=run_dir,
-        window=(window_start, window_end),
+        window=(bt_start, bt_end),
         phase90_baseline_path=phase90_baseline_path,
     )
     logger.info("NestedBacktestRunner.run completed in %.1fs status=%s", time.monotonic() - t_run, result.status)
