@@ -1,11 +1,15 @@
-"""Pydantic schemas for backtest configuration and results."""
+"""Pydantic schemas for backtest configuration and results.
+
+Phase 93 D-03: BacktestResult accepts ad-hoc fields (fill_log, delta_breakdown,
+inner_level, outer_level) attached by NestedBacktestRunner via ``extra="allow"``.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BacktestConfig(BaseModel):
@@ -27,7 +31,14 @@ class BacktestConfig(BaseModel):
 
 
 class BacktestResult(BaseModel):
-    """Result of a completed backtest run."""
+    """Result of a completed backtest run.
+
+    Phase 93 D-03: ``model_config = ConfigDict(extra="allow")`` permits
+    NestedBacktestRunner to attach ``fill_log`` / ``delta_breakdown`` /
+    ``inner_level`` / ``outer_level`` without subclassing.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     backtest_id: UUID = Field(default_factory=uuid4)
     config: BacktestConfig
