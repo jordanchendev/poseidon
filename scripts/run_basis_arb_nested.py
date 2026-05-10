@@ -428,9 +428,13 @@ def _build_path_c_per_day_baseline(
             etf_close = float(etf_d.loc[etf_d.index == date_norm, "close"].iloc[-1])
             tx_gap_bps = 10_000.0 * (float(tx_next["open"]) - tx_close) / tx_close if tx_close else 0.0
             etf_gap_bps = 10_000.0 * (float(etf_next["open"]) - etf_close) / etf_close if etf_close else 0.0
+            have_next_bars = True
         except (IndexError, KeyError):
             tx_gap_bps = 0.0
             etf_gap_bps = 0.0
+            tx_next = None
+            etf_next = None
+            have_next_bars = False
 
         # v18 cost model: max(0.00032, |gap|/4) per Phase 90 90-VERDICT.md.
         v18_cost_bps_per_leg = 0.5 * (max(3.2, abs(tx_gap_bps) / 4.0) + max(3.2, abs(etf_gap_bps) / 4.0))
@@ -440,20 +444,29 @@ def _build_path_c_per_day_baseline(
         # because both pay the day-open fill price; v18 |gap|/4 subtracts the
         # extra cost).
         day_fills = fill_log[fill_log["trigger_date"] == date_norm.date()]
-        if len(day_fills) > 0 and "fill_price" in day_fills.columns:
+        if (
+            have_next_bars
+            and tx_next is not None
+            and etf_next is not None
+            and len(day_fills) > 0
+            and "fill_price" in day_fills.columns
+        ):
             # Approximate pair_pnl: long TX leg gain, short 0050 leg gain in bps.
             tx_leg = day_fills[day_fills["leg"] == "tx_long"]
             etf_leg = day_fills[day_fills["leg"] == "etf_short"]
             tx_avg = float(tx_leg["fill_price"].mean()) if len(tx_leg) else 0.0
             etf_avg = float(etf_leg["fill_price"].mean()) if len(etf_leg) else 0.0
-            # Use t+1 open as exit reference.
+            # Use t+1 open as exit reference.  Sentinel-guarded above so
+            # tx_next / etf_next are guaranteed non-None here; the inner
+            # try/except now only handles unexpected per-row data shape
+            # issues (e.g. missing "open" column).
             try:
                 tx_exit = float(tx_next["open"])
                 etf_exit = float(etf_next["open"])
                 tx_pnl = 10_000.0 * (tx_exit - tx_avg) / tx_avg if tx_avg else 0.0
                 etf_pnl = -10_000.0 * (etf_exit - etf_avg) / etf_avg if etf_avg else 0.0
                 pair_pnl_bps = tx_pnl + etf_pnl
-            except (IndexError, KeyError, NameError):
+            except (IndexError, KeyError):
                 pair_pnl_bps = 0.0
         else:
             pair_pnl_bps = 0.0
