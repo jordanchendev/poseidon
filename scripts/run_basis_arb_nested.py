@@ -76,6 +76,13 @@ DEFAULT_NOTIONAL_TX = 1_000_000.0
 DEFAULT_NOTIONAL_ETF = 1_000_000.0
 DEFAULT_TWAP_WINDOW_MIN = 5  # D-13 default
 
+# v18 cost-model commission floor used by ``_build_path_c_per_day_baseline``
+# Path C reconstruction (WR-03).  Source: Phase 90 90-VERDICT.md uses a
+# decimal commission rate of 0.00032 (≡ 3.2 bps after × 10_000).  The
+# baseline formula is ``max(_V18_GAP4_FLOOR_BPS, |gap|/4)`` per leg.  Keep
+# this in sync with ``cost_model.py::tw_futures`` if commission changes.
+_V18_GAP4_FLOOR_BPS = 3.2
+
 # Cost-delta sentence is written to this file ONLY when run on host (Mac),
 # never from inside the qlib-research container (where .planning/ is not
 # mounted).
@@ -436,8 +443,11 @@ def _build_path_c_per_day_baseline(
             etf_next = None
             have_next_bars = False
 
-        # v18 cost model: max(0.00032, |gap|/4) per Phase 90 90-VERDICT.md.
-        v18_cost_bps_per_leg = 0.5 * (max(3.2, abs(tx_gap_bps) / 4.0) + max(3.2, abs(etf_gap_bps) / 4.0))
+        # v18 cost model: max(_V18_GAP4_FLOOR_BPS, |gap|/4) per Phase 90
+        # 90-VERDICT.md.  Floor promoted to module-level constant (WR-03).
+        v18_cost_bps_per_leg = 0.5 * (
+            max(_V18_GAP4_FLOOR_BPS, abs(tx_gap_bps) / 4.0) + max(_V18_GAP4_FLOOR_BPS, abs(etf_gap_bps) / 4.0)
+        )
 
         # Per-day pair_pnl_bps from the fill_log (mean of nested twap rows for
         # this trigger_date — naive baseline uses the SAME pair_pnl as nested
