@@ -262,13 +262,23 @@ def run_comparison(
         without_dir.mkdir(parents=True, exist_ok=True)
 
         # WITH DDG-DA leg
+        # Plan 92-04.1 BUG-2 fix: handler_class="Alpha158" → qlib.contrib.data.handler.Alpha158
+        # (qlib stock handler accepts the start_time/end_time/fit_start_time/fit_end_time/
+        # instruments/label kwargs that qlib's Rolling driver injects). The previous
+        # "Alpha158Handler" entry maps to PoseidonDataHandler whose __init__ rejects those
+        # kwargs (TypeError: unexpected keyword argument 'end_time'). Plan 95 qrun work
+        # continues to use "Alpha158Handler" → PoseidonDataHandler for backward compat.
+        # Plan 92-04.1 BUG-1 fix: explicit instruments + provider_uri at call site for
+        # audit clarity (defaults already point at TX / poseidon_tw_futures).
         wrapper = PoseidonDDGDA(
             working_dir=with_dir,
-            handler_class="Alpha158Handler",
+            handler_class="Alpha158",
             model_class=model_class,
             market="tw_futures",
             interval="1d",
             segments=segments,
+            instruments="TX",
+            provider_uri="/root/.qlib/qlib_data/poseidon_tw_futures",
         )
         with_result = wrapper.run()
 

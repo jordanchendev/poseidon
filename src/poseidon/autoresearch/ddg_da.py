@@ -55,6 +55,11 @@ class PoseidonDDGDA:
         horizon: prediction horizon in bars (qlib default 20).
         step: walk-forward step in bars (qlib default 20).
         sim_task_model: must be "gbdt" or "linear" — D-11 LGBModel maps to "gbdt".
+        instruments: qlib instruments key (Plan 92-04.1 BUG-1 fix). Default
+            "TX" — Plan 92-2.5 ingest target. Was hardcoded "csi300" pre-92-04.1.
+        provider_uri: qlib_data tree root (Plan 92-04.1 BUG-1 fix). Default
+            "/root/.qlib/qlib_data/poseidon_tw_futures" — Plan 92-2.5 ingest
+            output. Was hardcoded "~/.qlib/qlib_data/cn_data" pre-92-04.1.
     """
 
     def __init__(
@@ -69,6 +74,8 @@ class PoseidonDDGDA:
         horizon: int = 20,
         step: int = 20,
         sim_task_model: str = "gbdt",
+        instruments: str = "TX",  # Plan 92-04.1 BUG-1 fix: was hardcoded "csi300" in _emit_yaml
+        provider_uri: str = "/root/.qlib/qlib_data/poseidon_tw_futures",  # Plan 92-04.1 BUG-1 fix: was hardcoded "~/.qlib/qlib_data/cn_data"
     ) -> None:
         # T-92-01: validate allowlist BEFORE storing — fail fast on bad input.
         self._handler_fqn = resolve_handler(handler_class)  # raises ValueError on unknown
@@ -98,6 +105,10 @@ class PoseidonDDGDA:
         self.horizon = horizon
         self.step = step
         self.sim_task_model = sim_task_model
+        # Plan 92-04.1 BUG-1 fix: thread caller-supplied instruments/provider_uri
+        # through to _emit_yaml (was hardcoded csi300 / cn_data, broke TX runs).
+        self.instruments = instruments
+        self.provider_uri = provider_uri
         self._yaml_path = self.working_dir / "ddg_da_task.yaml"
 
     def _emit_yaml(self) -> Path:
@@ -109,7 +120,9 @@ class PoseidonDDGDA:
         handler_module, _, handler_class = self._handler_fqn.rpartition(".")
         model_module, _, model_class = self._model_fqn.rpartition(".")
         config = {
-            "qlib_init": {"provider_uri": "~/.qlib/qlib_data/cn_data", "region": "cn"},
+            # Plan 92-04.1 BUG-1 fix: provider_uri from constructor, not hardcoded cn_data.
+            # region="cn" is correct for trading-calendar lookup regardless of dataset path.
+            "qlib_init": {"provider_uri": self.provider_uri, "region": "cn"},
             "task": {
                 "model": {"class": model_class, "module_path": model_module},
                 "dataset": {
@@ -120,7 +133,10 @@ class PoseidonDDGDA:
                             "class": handler_class,
                             "module_path": handler_module,
                             "kwargs": {
-                                "instruments": "csi300",  # caller may override; cn_data toy default
+                                # Plan 92-04.1 BUG-1 fix: caller-supplied instruments
+                                # (was hardcoded "csi300"); Plan 92-2.5 ingested "TX"
+                                # into provider_uri tree.
+                                "instruments": self.instruments,
                                 "start_time": self.segments["train"][0],
                                 "end_time": self.segments["test"][1],
                                 "fit_start_time": self.segments["train"][0],

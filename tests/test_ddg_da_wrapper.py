@@ -215,6 +215,61 @@ class TestPoseidonDDGDA:
                 },
             )
 
+    def test_emit_yaml_uses_provided_instruments_and_provider_uri(self, tmp_path: Path) -> None:
+        """Plan 92-04.1 BUG-1 fix: PoseidonDDGDA threads instruments + provider_uri to YAML.
+
+        Pre-92-04.1 the wrapper hardcoded ``instruments='csi300'`` and
+        ``provider_uri='~/.qlib/qlib_data/cn_data'`` (qlib's default cn_data
+        toy scenario), which broke Plan 92-2.5 TX runs against
+        ``/root/.qlib/qlib_data/poseidon_tw_futures``. This test asserts the
+        constructor params propagate through to the emitted YAML config.
+        """
+        wrapper = PoseidonDDGDA(
+            working_dir=tmp_path / "bug1_fix",
+            handler_class="Alpha158",
+            model_class="LGBModel",
+            market="tw_futures",
+            interval="1d",
+            segments=_default_segments(),
+            instruments="TX",
+            provider_uri="/root/.qlib/qlib_data/poseidon_tw_futures",
+        )
+        yaml_path = wrapper._emit_yaml()
+        with yaml_path.open() as f:
+            cfg = yaml.safe_load(f)
+        # qlib_init.provider_uri must reflect the constructor argument (not cn_data).
+        assert cfg["qlib_init"]["provider_uri"] == "/root/.qlib/qlib_data/poseidon_tw_futures"
+        # handler.kwargs.instruments must be "TX" (not "csi300").
+        handler_kwargs = cfg["task"]["dataset"]["kwargs"]["handler"]["kwargs"]
+        assert handler_kwargs["instruments"] == "TX"
+
+    def test_emit_yaml_uses_alpha158_class_for_bug2_fix(self, tmp_path: Path) -> None:
+        """Plan 92-04.1 BUG-2 fix: handler_class='Alpha158' → qlib stock Alpha158.
+
+        Pre-92-04.1 the only ``Alpha158`` allowlist key was
+        ``Alpha158Handler → poseidon.qlib.data_handler.PoseidonDataHandler``,
+        whose ``__init__`` does not accept the ``start_time/end_time/...``
+        kwargs that qlib's Rolling driver injects (``TypeError: unexpected
+        keyword argument 'end_time'``). Plan 92-04.1 adds an ``Alpha158`` key
+        pointing at qlib's stock handler which DOES accept them. This test
+        asserts the YAML emitter resolves the new key to the correct FQN.
+        """
+        wrapper = PoseidonDDGDA(
+            working_dir=tmp_path / "bug2_fix",
+            handler_class="Alpha158",
+            model_class="LGBModel",
+            market="tw_futures",
+            interval="1d",
+            segments=_default_segments(),
+        )
+        yaml_path = wrapper._emit_yaml()
+        with yaml_path.open() as f:
+            cfg = yaml.safe_load(f)
+        handler = cfg["task"]["dataset"]["kwargs"]["handler"]
+        # Class name resolves to "Alpha158" (qlib stock), NOT "PoseidonDataHandler".
+        assert handler["class"] == "Alpha158"
+        assert handler["module_path"] == "qlib.contrib.data.handler"
+
 
 # Mark patch as referenced in case it's used in future scaffolds; suppresses ruff F401.
 _ = patch

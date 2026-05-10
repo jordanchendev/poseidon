@@ -14,6 +14,12 @@ ALLOWED_HANDLER_CLASSES: dict[str, str] = {
     # Phase 95 ACTIVATE-02: qrun-YAML adapter (Pitfall 8). Allowlisted so the
     # tx_basis_vol.yml config (Wave 2) resolves through the RCE boundary.
     "PoseidonDataHandlerForQrun": "poseidon.qlib.data_handler_qrun.PoseidonDataHandlerForQrun",
+    # Phase 92 Plan 92-04.1 BUG-2 fix: qlib stock Alpha158 handler. PoseidonDataHandler
+    # (the existing "Alpha158Handler" entry) does not accept the start_time/end_time/
+    # fit_start_time/fit_end_time/instruments/label kwargs that qlib's Rolling driver
+    # injects via init_instance_by_config. The qlib stock handler does. Phase 95 qrun
+    # work continues to use "Alpha158Handler" → PoseidonDataHandler for backward compat.
+    "Alpha158": "qlib.contrib.data.handler.Alpha158",
 }
 
 ALLOWED_MODEL_CLASSES: dict[str, str] = {
