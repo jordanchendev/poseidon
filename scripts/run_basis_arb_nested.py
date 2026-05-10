@@ -880,6 +880,11 @@ def main(argv: list[str] | None = None) -> int:
     # fill price for each bar is its $close (qlib's ``deal_price="close"``).
     if fill_log is None or len(fill_log) == 0:
         logger.info("harvest_fill_log returned empty — synthesising fill_log from orders + 1m bars")
+        # Import D-21 column schema OUTSIDE the synthesis try/except so that
+        # the WR-06 fallback `pd.DataFrame(columns=list(_D21_COLUMNS))` is
+        # always reachable even if the cost-model imports below fail.
+        from poseidon.backtest.nested_runner import _D21_COLUMNS
+
         try:
             from poseidon.backtest.cost_model import get_cost_model
             from poseidon.backtest.nested_runner import _compute_fill_cost_bps
@@ -959,9 +964,18 @@ def main(argv: list[str] | None = None) -> int:
                 )
             except OSError as exc:
                 logger.warning("Could not persist synthesised fill_log: %s", exc)
-        except Exception as exc:
+        except (KeyError, ValueError, AttributeError, ImportError) as exc:
+            # Narrow synthesis exception (WR-06): catch only expected
+            # synthesis-logic errors (missing CSV columns, bad cost-model
+            # configuration, attribute lookup on unexpected order shape,
+            # import failures inside the qlib-research container).  OSError
+            # is handled separately by the inner try at parquet write time.
+            # Other exception types (e.g. KeyboardInterrupt, SystemExit)
+            # should propagate.  Preserve D-21 column schema so downstream
+            # ``compare_to_baseline`` raises a meaningful schema error
+            # rather than a confusing column-mismatch error.
             logger.exception("fill_log synthesis failed: %s", exc)
-            fill_log = pd.DataFrame()
+            fill_log = pd.DataFrame(columns=list(_D21_COLUMNS))
 
     # 7. Path C reconstruction (Pitfall 5) — if comparison_df is None and the
     # baseline was the rollup CSV, reconstruct per-trigger-day frame and
