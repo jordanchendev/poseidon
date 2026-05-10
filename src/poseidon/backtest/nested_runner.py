@@ -528,8 +528,11 @@ class NestedBacktestRunner:
                 return None
 
             _qlib_report.PortfolioMetrics._cal_benchmark = _stub_cal_benchmark
-        except Exception:
-            # Mac stub path — _qlib_report is a SimpleNamespace shim; no-op.
+        except (ImportError, AttributeError):
+            # Mac stub path (ImportError — _qlib_report is a SimpleNamespace
+            # shim) or qlib upgrade renamed/removed _cal_benchmark
+            # (AttributeError); no-op fallback.  Other exception types should
+            # propagate so we do not silently swallow real errors.
             _orig_cal_benchmark = None
 
         try:
