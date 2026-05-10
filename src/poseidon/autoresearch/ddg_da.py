@@ -190,6 +190,31 @@ class PoseidonDDGDA:
         # singleton.
         qlib.init(provider_uri=self.provider_uri, region="cn")
 
+        # Plan 92-04.1 Rule-1 deviation (BUG-5): qlib v0.9.7 DDGDA._dump_meta_ipt
+        # hardcodes `early_stopping_rounds: None` in sim_task["model"]["kwargs"]
+        # (qlib/contrib/rolling/ddgda.py:243). Modern lightgbm rejects None and
+        # raises TypeError("early_stopping_round should be an integer. Got 'NoneType'").
+        # Same upstream qlib×lightgbm API drift pattern Phase 90 fought (7 sed
+        # patches in Dockerfile.qlib). In-process monkey-patch on lightgbm's
+        # callback validator is the smallest scoped fix that doesn't require a
+        # container rebuild — translate None to a no-early-stopping sentinel.
+        try:
+            from lightgbm import callback as _lgb_cb
+
+            _orig_should_enable = _lgb_cb._should_enable_early_stopping
+            if not getattr(_orig_should_enable, "_poseidon_92_04_1_patched", False):
+
+                def _patched_should_enable(stopping_rounds):
+                    # None → disabled (Plan 92-04.1 BUG-5: qlib v0.9.7 hardcodes None)
+                    if stopping_rounds is None:
+                        return False
+                    return _orig_should_enable(stopping_rounds)
+
+                _patched_should_enable._poseidon_92_04_1_patched = True
+                _lgb_cb._should_enable_early_stopping = _patched_should_enable
+        except ImportError:
+            pass  # lightgbm not available; LGBModel path won't be exercised anyway
+
         ddgda = DDGDA(
             conf_path=yaml_path,
             horizon=self.horizon,
