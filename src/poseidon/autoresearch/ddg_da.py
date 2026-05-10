@@ -172,6 +172,7 @@ class PoseidonDDGDA:
         # Pattern 1 from PATTERNS.md §`ddg_da.py`: deferred qlib import with
         # ImportError-with-hint mirror of poseidon/src/poseidon/qlib/data_handler.py:138-147.
         try:
+            import qlib
             from qlib.contrib.rolling.ddgda import DDGDA
         except ImportError as exc:
             raise ImportError(
@@ -179,6 +180,15 @@ class PoseidonDDGDA:
                 "pyqlib >= 0.9.7. Install via `uv sync --extra qlib` or use the "
                 "Dockerfile.qlib research image (D-06)."
             ) from exc
+
+        # Plan 92-04.1 Rule-1 deviation (BUG-3): qlib.contrib.rolling.base.Rolling
+        # explicitly ignores the qlib_init section of its YAML (line 115 comment:
+        # "the qlib_init section will be ignored by me"). The caller must invoke
+        # qlib.init() before Rolling/DDGDA queries the dataset, or qlib's lazy
+        # data layer raises AttributeError("Please run qlib.init() first using qlib").
+        # Idempotent — safe to call repeatedly; qlib.init() guards via _provider
+        # singleton.
+        qlib.init(provider_uri=self.provider_uri, region="cn")
 
         ddgda = DDGDA(
             conf_path=yaml_path,

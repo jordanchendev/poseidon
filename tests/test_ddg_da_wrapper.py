@@ -138,9 +138,15 @@ class TestPoseidonDDGDA:
 
         fake_ddgda_mod.DDGDA = _FakeDDGDA
         # Inject ancestor modules so `from qlib.contrib.rolling.ddgda import DDGDA` resolves.
+        # Plan 92-04.1 Rule-1 fix: qlib parent module must expose `init` because
+        # PoseidonDDGDA.run() now calls qlib.init() before instantiating DDGDA
+        # (qlib's Rolling explicitly ignores qlib_init YAML section, see
+        # qlib/contrib/rolling/base.py:115). Provide a no-op init for the fake.
         for parent in ("qlib", "qlib.contrib", "qlib.contrib.rolling"):
             if parent not in sys.modules:
                 sys.modules[parent] = types.ModuleType(parent)
+        if not hasattr(sys.modules["qlib"], "init"):
+            sys.modules["qlib"].init = lambda *args, **kwargs: None  # type: ignore[attr-defined]
         sys.modules["qlib.contrib.rolling.ddgda"] = fake_ddgda_mod
         try:
             result = wrapper.run()
