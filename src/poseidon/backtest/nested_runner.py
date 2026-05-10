@@ -1117,7 +1117,9 @@ def compute_delta_breakdown(
     Raises:
         ValueError: If required D-17 columns are missing from
             ``comparison_df`` (defensive — callers should pass output from
-            ``compare_to_baseline``).
+            ``compare_to_baseline``); or if ``comparison_df`` is empty
+            (WR-05 — empty frame would yield NaN cost-delta which then
+            poisons the cost-delta sentence).
     """
     required = {
         "nested_twap_cost_bps",
@@ -1132,6 +1134,10 @@ def compute_delta_breakdown(
         )
 
     n_trigger_days = len(comparison_df)
+    if n_trigger_days == 0:
+        raise ValueError(
+            "comparison_df is empty; cannot compute delta_breakdown (would produce NaN cost-delta sentence — WR-05)"
+        )
 
     mean_nested_twap_cost_bps = float(comparison_df["nested_twap_cost_bps"].mean())
     mean_v18_gap4_cost_bps = float(comparison_df["v18_gap4_cost_bps"].mean())
