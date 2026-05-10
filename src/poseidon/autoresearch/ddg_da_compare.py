@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -243,8 +244,20 @@ def run_comparison(
         dict with keys ``run_dir``, ``comparison_summary_parquet``,
         ``bootstrap_result``, ``n_folds``.
     """
-    run_dir = Path(run_dir)
+    run_dir = Path(run_dir).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Plan 92-04.2 BUG-6 fix: per-run isolated mlruns directory.
+    # qlib reads MLFLOW_TRACKING_URI on import; this MUST be set before ANY
+    # qlib import in this function or anywhere downstream. Without isolation,
+    # qlib's DDGDA InternalData.setup() assertion ("An empty experiment is
+    # required for setup InternalData") fails after the first run because the
+    # global /app/mlruns experiment retains recorders from previous runs.
+    # By scoping the tracking URI under run_dir, each run gets a fresh
+    # mlruns directory and there is no cross-run state pollution.
+    mlruns_dir = run_dir / "mlruns"
+    mlruns_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["MLFLOW_TRACKING_URI"] = f"file://{mlruns_dir}"
 
     # File-lock (D-23 simplification of Phase 90/91 durable-row lifecycle).
     lock_path = run_dir / "run.lock"

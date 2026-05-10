@@ -111,12 +111,19 @@ def test_ddg_da_compare_smoke():
         )
 
         # Plan 92-2.5 Option B segments — train 33mo / test 28-fold
-        # (2024-01-01..2026-05-04). Smoke trims to last 2 folds via
+        # (2024-01-01..2026-04-30). Smoke trims to last 2 folds via
         # smoke=True flag in run_comparison.
+        # Plan 92-04.2 BUG-7 fix: trimmed test end_time from 2026-05-04 to
+        # 2026-04-30 to stay inside the TX qlib_data tree boundary
+        # (Plan 92-2.5 ingest produced data through 2026-05-01 per
+        # instruments/all.txt: "TX 2021-03-22 2026-05-01"). The previous
+        # 2026-05-04 end caused the last walk-forward fold to slice past
+        # the data tail → empty dataset → lightgbm refuses to train with
+        # ValueError "Empty data from dataset".
         segments = {
             "train": ("2021-03-22", "2023-08-31"),
             "valid": ("2023-09-01", "2023-12-31"),
-            "test": ("2024-01-01", "2026-05-04"),
+            "test": ("2024-01-01", "2026-04-30"),
         }
         result = run_comparison(
             thesis_name="tx_gap_intraday",

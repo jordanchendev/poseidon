@@ -22,7 +22,7 @@ Designed to run INSIDE poseidon-qlib-research container on stormtrooper:
         python scripts/run_ddg_da_comparison.py \\
             --thesis tx_gap_intraday \\
             --model-class LGBModel \\
-            --window 2021-03-22:2026-05-04 \\
+            --window 2021-03-22:2026-04-30 \\
             --train-end 2023-12-31 \\
             --valid-end 2024-06-30
 """
@@ -59,8 +59,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--window",
-        default="2021-03-22:2026-05-04",
-        help=("Data window as 'YYYY-MM-DD:YYYY-MM-DD'. Default matches Plan 92-2.5 Option B span."),
+        default="2021-03-22:2026-04-30",
+        help=(
+            "Data window as 'YYYY-MM-DD:YYYY-MM-DD'. Default matches Plan "
+            "92-2.5 Option B span. Plan 92-04.2 BUG-7 fix: trimmed end-date "
+            "from 2026-05-04 to 2026-04-30 to stay inside the TX qlib_data "
+            "tree boundary (data tail at 2026-05-01)."
+        ),
     )
     parser.add_argument(
         "--train-end",

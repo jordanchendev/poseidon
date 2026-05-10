@@ -88,3 +88,62 @@ def test_bootstrap_imports_from_compare_module():
     assert "mean_delta_sharpe" in result
     assert result["ci95_low"] <= result["mean_delta_sharpe"] <= result["ci95_high"]
     assert result["mean_delta_sharpe"] > 0  # detectable mean shift
+
+
+def test_run_comparison_sets_mlflow_tracking_uri_under_run_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Plan 92-04.2 BUG-6 fix verification: ``run_comparison`` sets
+    ``MLFLOW_TRACKING_URI`` to a per-run directory under ``run_dir``
+    BEFORE invoking any qlib code, ensuring mlruns state isolation
+    between iterations.
+
+    This test runs Mac-side without qlib installed: we mock
+    ``PoseidonDDGDA`` so the function fails downstream of the env-var
+    write but AFTER the env var has been set. The assertion is on the
+    final state of ``os.environ['MLFLOW_TRACKING_URI']``.
+    """
+    import contextlib
+    import os
+    from unittest.mock import patch
+
+    run_dir = tmp_path / "run-uuid-92-04-2-test"
+    # Ensure no leftover state from a previous test in this process.
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+
+    # Patch PoseidonDDGDA at the symbol used inside run_comparison's deferred
+    # import (poseidon.autoresearch.ddg_da.PoseidonDDGDA). When run_comparison
+    # tries to instantiate / run it, raise — by that point the env var is set.
+    with patch("poseidon.autoresearch.ddg_da.PoseidonDDGDA") as mock_ddgda:
+        mock_ddgda.side_effect = RuntimeError("test sentinel — bypass qlib path")
+        from poseidon.autoresearch.ddg_da_compare import run_comparison
+
+        # Expected — the env var is set BEFORE the deferred imports run, so
+        # the env-var assertion below is reachable regardless of whether
+        # qlib is installed (ImportError) or the mock fires (RuntimeError).
+        with contextlib.suppress(RuntimeError, ImportError):
+            run_comparison(
+                thesis_name="tx_gap_intraday",
+                model_class="LGBModel",
+                segments={
+                    "train": ("2021-03-22", "2023-08-31"),
+                    "valid": ("2023-09-01", "2023-12-31"),
+                    "test": ("2024-01-01", "2026-04-30"),
+                },
+                run_dir=run_dir,
+                smoke=True,
+            )
+
+    # BUG-6 fix invariant: the env var must point under run_dir and use
+    # the file:// scheme.
+    assert "MLFLOW_TRACKING_URI" in os.environ, (
+        "run_comparison must set MLFLOW_TRACKING_URI before any qlib import (BUG-6 fix)"
+    )
+    tracking_uri = os.environ["MLFLOW_TRACKING_URI"]
+    assert tracking_uri.startswith("file://"), f"MLFLOW_TRACKING_URI must use file:// scheme; got {tracking_uri!r}"
+    # run_dir is resolve()'d inside run_comparison, so compare against
+    # the same resolved form.
+    expected_mlruns = run_dir.resolve() / "mlruns"
+    assert str(expected_mlruns) in tracking_uri, (
+        f"MLFLOW_TRACKING_URI={tracking_uri!r} should contain run_dir/mlruns={expected_mlruns!r}"
+    )
+    # Per-run mlruns dir must be created on the filesystem.
+    assert expected_mlruns.is_dir(), f"run_comparison must create run_dir/mlruns; missing: {expected_mlruns}"
