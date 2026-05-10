@@ -1178,17 +1178,14 @@ def _aggregate_nested_fill_log(fill_log: pd.DataFrame) -> pd.DataFrame:
         nested_twap_fill_failure``.  ``pair_pnl_bps`` is left as NaN here —
         Wave 3 driver computes the real pair PnL via Phase 90 helpers; W2
         unit tests pass the pre-aggregated frame so this column is unused.
+
+    Raises:
+        ValueError: If ``fill_log`` is missing the required ``trigger_date``
+            column (WR-04 — fail loud rather than return an empty frame which
+            silently produces NaN cost-delta sentences downstream).
     """
     if "trigger_date" not in fill_log.columns:
-        return pd.DataFrame(
-            columns=[
-                "trigger_date",
-                "nested_twap_pair_pnl_bps",
-                "nested_twap_slippage_bps_per_leg",
-                "nested_twap_cost_bps",
-                "nested_twap_fill_failure",
-            ]
-        )
+        raise ValueError(f"fill_log missing required 'trigger_date' column; got columns: {list(fill_log.columns)}")
     grouped = fill_log.groupby("trigger_date", as_index=False).agg(
         nested_twap_slippage_bps_per_leg=("slippage_bps", "mean"),
         nested_twap_cost_bps=("cost_bps", "mean"),
