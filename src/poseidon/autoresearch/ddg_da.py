@@ -74,7 +74,7 @@ class PoseidonDDGDA:
         horizon: int = 20,
         step: int = 20,
         sim_task_model: str = "gbdt",
-        instruments: str = "TX",  # Plan 92-04.1 BUG-1 fix: was hardcoded "csi300" in _emit_yaml
+        instruments: str = "all",  # Plan 92-04.1: qlib treats this as a market-file name (looks up provider_uri/instruments/{instruments}.txt). Plan 92-2.5 ingest writes only "all.txt" containing TX, so "all" is the correct lookup key. Was "TX" pre-92-04.1 fix attempt (qlib lowercases it to tx.txt → ValueError instrument not exists). Was hardcoded "csi300" pre-92-04.1.
         provider_uri: str = "/root/.qlib/qlib_data/poseidon_tw_futures",  # Plan 92-04.1 BUG-1 fix: was hardcoded "~/.qlib/qlib_data/cn_data"
     ) -> None:
         # T-92-01: validate allowlist BEFORE storing — fail fast on bad input.

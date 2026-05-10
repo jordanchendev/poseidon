@@ -277,7 +277,12 @@ def run_comparison(
             market="tw_futures",
             interval="1d",
             segments=segments,
-            instruments="TX",
+            # Plan 92-04.1 BUG-4 fix: qlib treats `instruments` (string) as a
+            # market-group filename — looks up `<provider_uri>/instruments/{name}.txt`
+            # after lowercasing. Plan 92-2.5 ingest writes ONLY `all.txt`
+            # containing TX, so "all" is the only valid key. "TX" → tries `tx.txt`
+            # which doesn't exist → ValueError "instrument not exists".
+            instruments="all",
             provider_uri="/root/.qlib/qlib_data/poseidon_tw_futures",
         )
         with_result = wrapper.run()
