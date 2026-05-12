@@ -2,7 +2,7 @@
 
 Compares regime-routed VotingStrategy vs static VotingStrategy on holdout data.
 Gate auto-enables RegimeRouter only when regime routing STRICTLY outperforms
-the static baseline (D-07). Model and config preserved after gate failure (D-08).
+the static baseline. Model and config preserved after gate failure.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def evaluate_regime_gate(
 
     Runs paired backtest: static VotingStrategy vs RegimeRouter on holdout data.
     Sets regime_router.enabled based on strict outperformance comparison.
-    Model and config are preserved after gate failure (D-08).
+    Model and config are preserved after gate failure.
 
     Args:
         ohlcv: Full OHLCV DataFrame with datetime index.
@@ -105,10 +105,10 @@ def evaluate_regime_gate(
     regime_result = regime_runner.run(ohlcv_holdout)
     regime_score = compute_composite_score(regime_result.metrics)
 
-    # Step 4: Strict outperformance comparison (D-07)
+    # Step 4: Strict outperformance comparison
     passed = regime_score > static_score
 
-    # Step 5: Set enabled flag (D-08: model/config preserved, only bypass)
+    # Step 5: Set enabled flag (model/config preserved, only bypass)
     regime_router.enabled = passed
 
     logger.info(

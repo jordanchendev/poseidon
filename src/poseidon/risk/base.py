@@ -36,7 +36,7 @@ class BaseRule(ABC):
     name: str = ""
     enabled: bool = True
 
-    # Capability metadata (Phase 34)
+    # Capability metadata
     supports_backtest: bool = True
     supports_live: bool = False
     bias_risk: list[str] = []

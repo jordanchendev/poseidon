@@ -5,9 +5,9 @@ Reads prediction cache Parquet data and exposes ML model confidence as the
 via the ``prediction_data`` kwarg by FeatureEngine.compute_with_companions()
 -- this feature class does NOT load Parquet files or access the database.
 
-The actual data loading and injection is handled by BacktestRunner (Phase 44
-Plan 02) which pre-loads prediction Parquet and passes it through
-FeatureEngine's ``extra_nonprice_data`` mechanism.
+The actual data loading and injection is handled by BacktestRunner, which
+pre-loads prediction Parquet and passes it through FeatureEngine's
+``extra_nonprice_data`` mechanism.
 """
 
 import logging
@@ -52,7 +52,7 @@ class ModelPredictionFeature(BaseFeature):
 
     The prediction data must come from a model trained *before* the
     backtest period to avoid look-ahead bias. This is enforced by the
-    prediction cache's bias protection (Phase 43).
+    prediction cache's bias protection.
     """
 
     name = "qlib_prediction"

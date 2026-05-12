@@ -4,7 +4,7 @@ Tests the CascadeComposite feature class which detects confluence of
 multiple micro-structure signals (OI extremes, wick rejections, volume
 spikes) as a single boolean composite indicator.
 
-References: CONTEXT.md D-10, D-11, D-12, D-13.
+References: cascade-direction design notes.
 """
 
 import numpy as np
@@ -171,7 +171,7 @@ def test_cascade_no_fire_below_threshold():
     assert nonzero_frac < 0.1, f"Expected mostly zero signals in quiet data, got {nonzero_frac:.1%} non-zero"
 
 
-# ── Test 4: Direction follows oiwap_distance sign (D-13) ─────────────
+# ── Test 4: Direction follows oiwap_distance sign ─────────────
 
 
 def test_cascade_direction_from_oiwap_distance():

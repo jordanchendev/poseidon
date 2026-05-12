@@ -20,7 +20,7 @@ class OFI(BaseFeature):
     """Order Flow Imbalance from BVC-derived buy/sell volume.
 
     OFI = delta(buy_volume) - delta(sell_volume) per bar.
-    Smoothed via rolling sum over N bars (D-14, D-15).
+    Smoothed via rolling sum over N bars.
     """
 
     name = "ofi"

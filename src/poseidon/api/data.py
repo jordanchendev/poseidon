@@ -1,6 +1,6 @@
 """Data management API endpoints.
 
-Phase 61: Trimmed to OHLCV-only. All fetch/backfill/coverage/gaps/freshness/funding
+Trimmed to OHLCV-only. All fetch/backfill/coverage/gaps/freshness/funding
 endpoints removed -- those responsibilities moved to Thalassa.
 """
 

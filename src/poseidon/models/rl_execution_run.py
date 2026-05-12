@@ -1,20 +1,20 @@
-"""RLExecutionRun ORM model — tracks Qlib RL execution job lifecycle (Phase 90).
+"""RLExecutionRun ORM model — tracks Qlib RL execution job lifecycle.
 
-A RLExecutionRun is created by ``POST /research/rl-execution/run`` (Wave
-4b, Plan 90-05b) and progresses through the same status enum as
-TrainingRun (Phase 41 D-05 — D-25 mandates verbatim lifecycle reuse):
+A RLExecutionRun is created by ``POST /research/rl-execution/run`` and
+progresses through the same status enum as TrainingRun (verbatim
+lifecycle reuse):
 
     pending -> running -> succeeded | failed | cancelled
 
 Only **succeeded** runs populate ``summary`` (per-algo metrics dict),
-``verdict`` (deploy / refine / kill, set by the Wave 5 verdict gate),
-and ``result_dir`` (path to ``local_dev/rl-execution/runs/<run_id>/``
-where fills.parquet + summary.json + comparison.parquet live).
+``verdict`` (deploy / refine / kill, set by the verdict gate), and
+``result_dir`` (path to ``local_dev/rl-execution/runs/<run_id>/`` where
+fills.parquet + summary.json + comparison.parquet live).
 
-Schema: D-25 (rl_execution_runs columns; alembic 038)
-Status: D-25 -> Phase 41 D-05 (pending / running / succeeded / failed / cancelled)
-Result persistence: D-24 (per-run parquet under local_dev/rl-execution/runs/<run_id>/)
-Verdict: D-17/D-18/D-19 (frozen YAML gate + 3-way deploy/refine/kill)
+Schema: rl_execution_runs columns; alembic 038.
+Status: pending / running / succeeded / failed / cancelled.
+Result persistence: per-run parquet under local_dev/rl-execution/runs/<run_id>/.
+Verdict: frozen YAML gate + 3-way deploy/refine/kill.
 """
 
 import uuid

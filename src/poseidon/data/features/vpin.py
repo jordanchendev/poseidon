@@ -1,8 +1,8 @@
 """VPIN (Volume-synchronized Probability of Informed Trading) feature.
 
 Computes VPIN using volume buckets with BVC classification.  Bucket size
-adapts to the median single-bar volume over a trailing window (D-17).
-Output is a probability in the [0, 1] range (D-18).
+adapts to the median single-bar volume over a trailing window.
+Output is a probability in the [0, 1] range.
 
 Algorithm
 ---------
@@ -18,7 +18,7 @@ Algorithm
 References
 ----------
 - Easley, Lopez de Prado & O'Hara (2012) -- original VPIN on tick data.
-- Adapted for OHLCV bars per CONTEXT.md D-16, D-17, D-18.
+- Adapted for OHLCV bars.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ class VPIN(BaseFeature):
         sell_vol = bvc["sell_volume"].values
         volume = ohlcv["volume"].values
 
-        # Adaptive bucket size: rolling median of bar volume (D-17)
+        # Adaptive bucket size: rolling median of bar volume
         median_vol = pd.Series(volume).rolling(window=lookback, min_periods=lookback).median().values
 
         n = len(ohlcv)

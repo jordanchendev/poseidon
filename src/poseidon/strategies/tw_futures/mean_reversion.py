@@ -1,6 +1,6 @@
 """MeanReversionStrategy -- Bollinger Band + RSI for TX 1h bars.
 
-Signal logic (D-10):
+Signal logic:
   - close < BB_lower AND RSI < oversold -> LONG entry
   - close > BB_upper AND RSI > overbought -> SHORT entry
   - Price returns to BB middle band -> CLOSE exit
@@ -95,7 +95,7 @@ class MeanReversionStrategy(BaseStrategy):
         signal_time = self._extract_signal_time(features)
         signals: list[Signal] = []
 
-        # --- Exit logic: price returns to BB middle band (D-10) ---
+        # --- Exit logic: price returns to BB middle band ---
         if self._position_side == "long" and close >= bb_middle:
             signals.append(self._make_signal(SignalAction.CLOSE, close, signal_time))
             self._reset_state()
@@ -106,7 +106,7 @@ class MeanReversionStrategy(BaseStrategy):
             self._reset_state()
             return signals
 
-        # --- Entry logic: BB touch + RSI extreme (D-10) ---
+        # --- Entry logic: BB touch + RSI extreme ---
         if close < bb_lower and rsi < self.config.rsi_oversold:
             if self._position_side != "long":
                 # Close existing short first

@@ -8,8 +8,8 @@ Implements the liquidity sweep strategy:
 Supports direction modes (long_only, short_only, bidirectional) and
 stateful position tracking with cooldown after exit.
 
-All numerical thresholds are config parameters (not hardcoded) so Phase 52
-Optuna can search them.
+All numerical thresholds are config parameters (not hardcoded) so Optuna
+can search them.
 """
 
 import logging
@@ -56,7 +56,7 @@ class LiquiditySweepStrategy(BaseStrategy):
         self.instrument = instrument
         self.strategy_id = strategy_id or uuid4()
 
-        # Detection config (D-04, D-08, D-09)
+        # Detection config
         detection = config.get("detection", {})
         self._lookback_bars: int = detection.get("lookback_bars", 24)
         self._wick_ratio_min: float = detection.get("wick_ratio_min", 0.15)
@@ -67,32 +67,32 @@ class LiquiditySweepStrategy(BaseStrategy):
         self._w_volume: float = detection.get("w_volume", 0.3)
         self._w_funding: float = detection.get("w_funding", 0.3)
 
-        # Entry config (D-12, D-13)
+        # Entry config
         entry = config.get("entry", {})
         self._fib_level: float = entry.get("fib_level", 0.618)
         raw_multipliers = entry.get("atr_multipliers", {0: 0.5, 1: 1.0, 2: 1.5, 3: 2.0})
         # Ensure keys are int (JSON may deserialize as str)
         self._atr_multipliers: dict[int, float] = {int(k): float(v) for k, v in raw_multipliers.items()}
 
-        # Exit config (D-20, D-21)
+        # Exit config
         exit_cfg = config.get("exit", {})
         self._cooldown_bars: int = exit_cfg.get("cooldown_bars", 4)
         self._max_holding_bars: int | None = exit_cfg.get("max_holding_bars", None)
 
-        # Trailing stop config (D-07, D-08, D-09)
+        # Trailing stop config
         trailing = config.get("trailing", {})
         self._trailing_activation_r: float = trailing.get("activation_r", 1.0)
         self._trail_atr_multiplier: float = trailing.get("atr_multiplier", 2.0)
 
-        # Direction mode (D-16)
+        # Direction mode
         self._direction_mode: str = config.get("direction_mode", "bidirectional")
 
-        # Position state (D-18, D-20)
+        # Position state
         self._position_direction: str | None = None
         self._bars_since_exit: int = 999  # starts high so first trade isn't blocked
         self._bars_in_position: int = 0
 
-        # Trailing stop state (D-07)
+        # Trailing stop state
         self._trailing_active: bool = False
         self._position_high_watermark: float | None = None
         self._position_low_watermark: float | None = None
@@ -101,7 +101,7 @@ class LiquiditySweepStrategy(BaseStrategy):
         self._current_stop_loss: float | None = None
 
     def get_feature_specs(self) -> list[tuple[str, dict]]:
-        """Declare all required features for this strategy (D-03)."""
+        """Declare all required features for this strategy."""
         return [
             ("swing_high", {"period": self._lookback_bars}),
             ("swing_low", {"period": self._lookback_bars}),
@@ -141,7 +141,7 @@ class LiquiditySweepStrategy(BaseStrategy):
         if self._position_direction is not None:
             self._bars_in_position += 1
 
-            # Max holding bars exit (D-21c)
+            # Max holding bars exit
             if self._max_holding_bars is not None and self._bars_in_position > self._max_holding_bars:
                 signals.append(
                     Signal(
@@ -186,7 +186,7 @@ class LiquiditySweepStrategy(BaseStrategy):
         if self._bars_since_exit <= self._cooldown_bars:
             return []
 
-        # Stage 1: Identify zones (D-05, D-06, D-07)
+        # Stage 1: Identify zones
         zones = self._identify_zones(row)
 
         # Stage 2 & 3: Detect sweeps and calculate entries
@@ -205,18 +205,18 @@ class LiquiditySweepStrategy(BaseStrategy):
         if not sweep_candidates:
             return []
 
-        # If both directions trigger, prefer higher confirmation score (D-13 note)
+        # If both directions trigger, prefer higher confirmation score
         sweep_candidates.sort(key=lambda x: x[1], reverse=True)
         direction, score, zone_level = sweep_candidates[0]
 
-        # Stage 3: Calculate entry price (D-12, D-13, D-14)
+        # Stage 3: Calculate entry price
         entry_price, stop_loss, take_profit = self._calculate_entry_price(row, zone_level, direction)
 
         # Determine vol regime for metadata
         vol_regime = int(row["vol_regime"]) if not pd.isna(row.get("vol_regime", float("nan"))) else 1
         vol_multiplier = self._atr_multipliers.get(vol_regime, 1.0)
 
-        # Emit signal (D-14, D-15)
+        # Emit signal
         signal = Signal(
             strategy_id=self.strategy_id,
             symbol=self.symbol,
@@ -240,7 +240,7 @@ class LiquiditySweepStrategy(BaseStrategy):
         )
         signals.append(signal)
 
-        # Update position state (D-18) and trailing stop entry context
+        # Update position state and trailing stop entry context
         self._position_direction = direction
         self._bars_in_position = 0
         self._entry_price = entry_price
@@ -267,12 +267,12 @@ class LiquiditySweepStrategy(BaseStrategy):
         return signals
 
     def _check_trailing_stop(self, row: pd.Series, close: float) -> float | None:
-        """Check and update trailing stop if applicable (ADV-01, D-07/D-08/D-09).
+        """Check and update trailing stop if applicable.
 
         Trailing stop activates when unrealized profit reaches
         trailing_activation_r * 1R (where 1R = |entry - initial_stop|).
         Once active, SL trails via ATR-based distance from high/low watermark.
-        SL only tightens, never loosens (D-08).
+        SL only tightens, never loosens.
 
         Args:
             row: Current bar feature values.
@@ -310,7 +310,7 @@ class LiquiditySweepStrategy(BaseStrategy):
 
             if self._trailing_active and atr > 0:
                 trail_sl = self._position_high_watermark - atr * self._trail_atr_multiplier
-                # Only tighten (D-08): for long, SL can only move up
+                # Only tighten: for long, SL can only move up
                 self._current_stop_loss = max(trail_sl, self._current_stop_loss)
 
         elif self._position_direction == "short":
@@ -326,7 +326,7 @@ class LiquiditySweepStrategy(BaseStrategy):
 
             if self._trailing_active and atr > 0:
                 trail_sl = self._position_low_watermark + atr * self._trail_atr_multiplier
-                # Only tighten (D-08): for short, SL can only move down
+                # Only tighten: for short, SL can only move down
                 self._current_stop_loss = min(trail_sl, self._current_stop_loss)
 
         # Return new SL only if it changed
@@ -335,7 +335,7 @@ class LiquiditySweepStrategy(BaseStrategy):
         return None
 
     def _identify_zones(self, row: pd.Series) -> dict:
-        """Stage 1: Identify stop-loss cluster zones (D-05, D-06, D-07).
+        """Stage 1: Identify stop-loss cluster zones.
 
         Returns dict with keys 'downward' and/or 'upward', each containing
         {'level': float, 'oiwap_dist': float}.
@@ -351,7 +351,7 @@ class LiquiditySweepStrategy(BaseStrategy):
 
         zones: dict = {}
 
-        # OI buildup filter (D-06): skip zone if OI is present but below threshold.
+        # OI buildup filter: skip zone if OI is present but below threshold.
         # When OI is NaN (no data), degrade gracefully — use swing levels without OI filter.
         if not pd.isna(oi_buildup) and oi_buildup <= self._oi_buildup_min:
             return zones
@@ -385,7 +385,7 @@ class LiquiditySweepStrategy(BaseStrategy):
 
         close = float(close)
 
-        # === Mandatory boolean gates (D-08) ===
+        # === Mandatory boolean gates ===
         if direction == "downward":
             wick_ratio = row.get("wick_ratio_lower", float("nan"))
             breakout_dist = row.get(f"breakout_down_{self._lookback_bars}", float("nan"))
@@ -412,7 +412,7 @@ class LiquiditySweepStrategy(BaseStrategy):
         if not reversal:
             return False, 0.0, 0.0
 
-        # === Confirmatory weighted scoring (D-09, D-10) ===
+        # === Confirmatory weighted scoring ===
         oi_zscore = row.get("oi_change_zscore_20", 0.0)
         if pd.isna(oi_zscore):
             oi_zscore = 0.0
@@ -442,7 +442,7 @@ class LiquiditySweepStrategy(BaseStrategy):
         """Stage 3: Calculate ambush entry, stop-loss, and take-profit prices.
 
         Uses Fibonacci extension from sweep level with volatility-adaptive
-        distance (D-12, D-13, D-14).
+        distance.
 
         Returns:
             (entry_price, stop_loss_price, take_profit_price)
@@ -480,7 +480,7 @@ class LiquiditySweepStrategy(BaseStrategy):
         return entry_price, stop_loss, take_profit
 
     def validate_config(self) -> bool:
-        """Validate strategy configuration (D-02).
+        """Validate strategy configuration.
 
         Returns:
             True if configuration is valid.
@@ -505,11 +505,11 @@ class LiquiditySweepStrategy(BaseStrategy):
         return True
 
     def reset(self) -> None:
-        """Reset position state and trailing stop state (D-18, D-20, ADV-01)."""
+        """Reset position state and trailing stop state."""
         self._position_direction = None
         self._bars_since_exit = 999
         self._bars_in_position = 0
-        # Trailing stop state (D-07)
+        # Trailing stop state
         self._trailing_active = False
         self._position_high_watermark = None
         self._position_low_watermark = None

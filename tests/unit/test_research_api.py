@@ -1,4 +1,4 @@
-"""Tests for the Phase 41 Research API endpoints (plan 41-02).
+"""Tests for the Research API endpoints.
 
 Covers RESEARCH-API-01 (POST /train), RESEARCH-API-02 (allowlist reject),
 RESEARCH-API-04 (GET /runs, GET /runs/{run_id}), RESEARCH-API-05 (cancel).

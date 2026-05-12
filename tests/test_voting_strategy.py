@@ -543,7 +543,7 @@ class TestBearShortSignals:
 
 
 class TestDefaultATRMultiplier:
-    """Default atr_multiplier should be 5.5 per D-05."""
+    """Default atr_multiplier should be 5.5."""
 
     def test_default_atr_multiplier_is_5_5(self):
         """Default atr_multiplier is 5.5."""

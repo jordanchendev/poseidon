@@ -1,7 +1,7 @@
 """VaR limit risk rule.
 
 Rejects signals when portfolio VaR exceeds configurable limit.
-Reads cached VaR snapshot from Redis -- never computes inline (per D-01).
+Reads cached VaR snapshot from Redis -- never computes inline.
 """
 
 from __future__ import annotations
@@ -28,8 +28,8 @@ _STALE_THRESHOLD = timedelta(hours=3)
 class VaRLimitRule(BaseRule):
     """Reject signals when portfolio VaR exceeds configurable limit.
 
-    Per D-01: reads cached VaR snapshot from Redis, never computes inline.
-    Per D-02: reads poseidon:var:latest:{method} key.
+    Reads cached VaR snapshot from Redis, never computes inline.
+    Reads poseidon:var:latest:{method} key.
     """
 
     name = "var_limit"

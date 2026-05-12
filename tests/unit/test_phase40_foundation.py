@@ -1,11 +1,11 @@
-"""Tests for the Phase 40 foundation slice (plan 40-01).
+"""Tests for the data health & observability foundation slice.
 
-Covers the locked Phase 40 decisions in
-.planning/phases/40-data-health-observability/40-CONTEXT.md:
+Covers the locked design decisions in
+the foundation context:
 
-- Task 1: migration 023 (``data_gaps`` table) + DataGap ORM model
-- Task 2: migration 024 (``ohlcv_1d_cagg`` continuous aggregate) shape
-- Task 3: Settings fields (``freshness_sla``, ``uptime_kuma_push_url``,
+- migration 023 (``data_gaps`` table) + DataGap ORM model
+- migration 024 (``ohlcv_1d_cagg`` continuous aggregate) shape
+- Settings fields (``freshness_sla``, ``uptime_kuma_push_url``,
   ``cagg_1d_markets``) + DataGapResponse / DataFreshnessResponse schemas
 
 The unit suite runs against an in-memory SQLite harness that uses the
@@ -13,7 +13,7 @@ Postgres-only types via the same ``@compiles`` shims as
 ``tests/unit/test_data_coverage_api.py``. TimescaleDB-specific DDL (CAGG +
 refresh policy) and Postgres server_default (``gen_random_uuid()``) are
 exercised here only at the grep/assertion level; real DDL execution runs
-end-to-end on stormtrooper via the Phase 40 smoke runbook (plan 40-06).
+end-to-end on stormtrooper via the smoke runbook.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _compile_uuid_sqlite(type_, compiler, **kw):  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
-# Task 1: migration 023 + DataGap ORM
+# migration 023 + DataGap ORM
 # ---------------------------------------------------------------------------
 
 MIGRATION_023_PATH = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "023_create_data_gaps.py"
@@ -54,7 +54,7 @@ def test_migration_023_creates_data_gaps_table():
     assert 'down_revision = "022"' in content
     assert "op.create_table(" in content
     assert '"data_gaps"' in content
-    # Required columns (D-04 schema)
+    # Required columns
     for col in (
         "gap_id",
         "market",
@@ -70,9 +70,9 @@ def test_migration_023_creates_data_gaps_table():
 
 
 def test_migration_023_unique_index():
-    """D-04: unique index on (market, symbol, interval, gap_start) enforces
-    the idempotent ``ON CONFLICT DO NOTHING`` contract used by the daily audit
-    (D-07)."""
+    """Unique index on (market, symbol, interval, gap_start) enforces
+    the idempotent ``ON CONFLICT DO NOTHING`` contract used by the daily audit."""
+
     content = MIGRATION_023_PATH.read_text()
 
     # Must have the unique tuple-start index
@@ -105,7 +105,7 @@ def test_data_gap_orm_tablename():
 
 
 def test_data_gap_orm_columns():
-    """DataGap must expose every column required by the D-04 schema."""
+    """DataGap must expose every column required by the schema."""
     from poseidon.models.data_gap import DataGap
 
     columns = {c.name for c in DataGap.__table__.columns}
@@ -124,15 +124,15 @@ def test_data_gap_orm_columns():
 
 
 def test_data_gap_importable_from_models_package():
-    """DataGap must be re-exported from poseidon.models so downstream
-    plans (40-02/40-03/40-04) can import it without reaching into a submodule."""
+    """DataGap must be re-exported from poseidon.models so downstream consumers
+    can import it without reaching into a submodule."""
     from poseidon.models import DataGap
 
     assert DataGap.__tablename__ == "data_gaps"
 
 
 # ---------------------------------------------------------------------------
-# Task 2: migration 024 — ohlcv_1d_cagg
+# migration 024 — ohlcv_1d_cagg
 # ---------------------------------------------------------------------------
 
 MIGRATION_024_PATH = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "024_create_ohlcv_1d_cagg.py"
@@ -150,20 +150,20 @@ def test_migration_024_creates_continuous_aggregate():
 
 
 def test_migration_024_restricts_source_intervals():
-    """D-18: The CAGG must only roll up sub-daily intervals so raw 1d rows
+    """The CAGG must only roll up sub-daily intervals so raw 1d rows
     for tw_stock/tw_futures/us_stock are NOT double-rolled (identity feedback)."""
     content = MIGRATION_024_PATH.read_text()
     assert "interval IN ('1m','5m','15m','30m','1h','4h')" in content
 
 
 def test_migration_024_uses_daily_time_bucket():
-    """D-17: Must use ``time_bucket('1 day', time)`` for the rollup."""
+    """Must use ``time_bucket('1 day', time)`` for the rollup."""
     content = MIGRATION_024_PATH.read_text()
     assert "time_bucket('1 day', time)" in content
 
 
 def test_migration_024_hourly_refresh_policy():
-    """D-19: Must install an hourly ``add_continuous_aggregate_policy``."""
+    """Must install an hourly ``add_continuous_aggregate_policy``."""
     content = MIGRATION_024_PATH.read_text()
     assert "add_continuous_aggregate_policy" in content
     assert "schedule_interval => INTERVAL '1 hour'" in content
@@ -178,34 +178,34 @@ def test_migration_024_downgrade_removes_policy_and_view():
 
 
 # ---------------------------------------------------------------------------
-# Task 3: Settings + schemas
+# Settings + schemas
 # ---------------------------------------------------------------------------
 
 
 def test_settings_freshness_sla_defaults():
-    """D-10/D-11: Settings.freshness_sla must default to the locked Phase 40
+    """Settings.freshness_sla must default to the locked foundation
     SLA values, keyed as ``"market:interval"`` -> seconds."""
     from poseidon.core.config import Settings
 
     s = Settings()
     assert isinstance(s.freshness_sla, dict)
     assert s.freshness_sla  # non-empty
-    # D-11: crypto_perp/4h -> 5h (18000s)
+    # crypto_perp/4h -> 5h (18000s)
     assert s.freshness_sla["crypto_perp:4h"] == 18000
-    # D-11: crypto_spot/1h -> 2h (7200s)
+    # crypto_spot/1h -> 2h (7200s)
     assert s.freshness_sla["crypto_spot:1h"] == 7200
-    # D-11: crypto_spot/1d -> 30h (108000s)
+    # crypto_spot/1d -> 30h (108000s)
     assert s.freshness_sla["crypto_spot:1d"] == 108000
-    # D-11: tw_stock/1d -> 30h (covers weekends+holidays)
+    # tw_stock/1d -> 30h (covers weekends+holidays)
     assert s.freshness_sla["tw_stock:1d"] == 108000
-    # D-11: tw_futures/1d -> 30h
+    # tw_futures/1d -> 30h
     assert s.freshness_sla["tw_futures:1d"] == 108000
-    # D-11: us_stock/1d -> 30h
+    # us_stock/1d -> 30h
     assert s.freshness_sla["us_stock:1d"] == 108000
 
 
 def test_settings_uptime_kuma_push_url_default_empty():
-    """D-13: uptime_kuma_push_url defaults to empty string (no-op for
+    """uptime_kuma_push_url defaults to empty string (no-op for
     local/dev) and reads UPTIME_KUMA_PUSH_URL (unprefixed env var)."""
     from poseidon.core.config import Settings
 
@@ -224,7 +224,7 @@ def test_settings_uptime_kuma_push_url_env_override(monkeypatch):
 
 
 def test_settings_cagg_1d_markets_default():
-    """D-20: cagg_1d_markets defaults to crypto_perp and crypto_spot only
+    """cagg_1d_markets defaults to crypto_perp and crypto_spot only
     (the only markets with sub-daily raw data today)."""
     from poseidon.core.config import Settings
 
@@ -233,7 +233,7 @@ def test_settings_cagg_1d_markets_default():
 
 
 def test_data_gap_response_schema_instantiates():
-    """D-02: DataGapResponse must accept the D-04 row shape directly."""
+    """DataGapResponse must accept the data_gaps row shape directly."""
     from uuid import uuid4
 
     from poseidon.core.schemas import DataGapResponse
@@ -255,7 +255,7 @@ def test_data_gap_response_schema_instantiates():
 
 
 def test_data_freshness_response_schema_instantiates():
-    """D-03/D-11/D-16: DataFreshnessResponse must carry per-(market, interval)
+    """DataFreshnessResponse must carry per-(market, interval)
     SLA status derived from ingest_state.last_successful_ts."""
     from poseidon.core.schemas import DataFreshnessResponse
 

@@ -1,6 +1,6 @@
 """Ingest TX 1d daily OHLCV from Thalassa REST → qlib binary tree.
 
-Phase 92 Plan 92-2.5 prerequisite for Plan 92-03 (DDG-DA comparison driver).
+Prerequisite for the DDG-DA comparison driver.
 
 Flow
 ----
@@ -17,16 +17,16 @@ Flow
    ``poseidon/scripts/qlib_alpha158_demo.py:dump_qlib_bin`` for the
    canonical pattern this script reuses).
 5. Smoke-load via ``qlib.init`` + ``D.features([\'TX\'], [\'$close\'], ...)``
-   and assert ≥500 rows for the B-decision test segment 2024-01-01..2026-05-04.
+   and assert ≥500 rows for the test segment 2024-01-01..2026-05-04.
 
-Decision context (Plan 92-2.5 Option B)
----------------------------------------
+Decision context
+----------------
 - Train segment: 2021-03-22..2023-12-31 (~692 trading days, ~3 regimes:
   2021 post-COVID rally → 2022 bear → 2023 sideways/recovery)
 - Test segment: 2024-01-01..2026-05-04 (~566 trading days, ~31 walk-forward
   folds at qlib default ``step=20``)
-- Train/test split lives in the ML driver (Plan 92-03), NOT this ingest.
-  This script ingests the full window into a single qlib_data tree.
+- Train/test split lives in the ML driver, NOT this ingest.  This script
+  ingests the full window into a single qlib_data tree.
 
 Run on stormtrooper (qlib-research container has Thalassa creds + qlib)::
 
@@ -36,12 +36,12 @@ Run on stormtrooper (qlib-research container has Thalassa creds + qlib)::
 The script is idempotent: re-running rebuilds the qlib_data tree from
 scratch (``shutil.rmtree`` first) — safe to re-invoke.
 
-Threat model (Plan 92-2.5 §threat_model)
-----------------------------------------
-- T-92-02 (path traversal): qlib_data path is hardcoded
+Threat model
+------------
+- Path traversal: qlib_data path is hardcoded
   (``~/.qlib/qlib_data/poseidon_tw_futures``); script asserts realpath
   is under ``~/.qlib/`` before any write.
-- T-92-DataIntegrity: row-count + gap-pattern validation before commit.
+- Data integrity: row-count + gap-pattern validation before commit.
 """
 
 from __future__ import annotations
@@ -60,20 +60,20 @@ import pandas as pd
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("ingest_tx_1d")
 
-# Plan 92-2.5 Option B decision: 2021-03-22..2026-05-04 (~5yr).
+# Window decision: 2021-03-22..2026-05-04 (~5yr).
 # Source: pre-T1 Thalassa probe (1253 rows for this window).
 START_DATE = datetime(2021, 3, 22)
 END_DATE = datetime(2026, 5, 4)
 
-# Acceptance threshold (Plan 92-2.5 plan-spec line: ≥1800 → Option B
-# override: ≥1200, since the actual data extent caps at ~1253 rows).
+# Acceptance threshold (originally ≥1800; relaxed to ≥1200 since the actual
+# data extent caps at ~1253 rows).
 MIN_ROWS = 1200
 
 # LNY closures span ~10-13 calendar days (Lunar New Year holiday cluster).
 # Anything > 14 calendar days is an unexpected gap and aborts the run.
 LNY_MAX_GAP_DAYS = 14
 
-# Hardcoded qlib_data location (CONTEXT D-19-style; not user-supplied).
+# Hardcoded qlib_data location (not user-supplied).
 QLIB_DATA_DIR = Path.home() / ".qlib" / "qlib_data" / "poseidon_tw_futures"
 
 # CSV staging path (sits inside the bind-mounted /app/local_dev so it's
@@ -81,14 +81,14 @@ QLIB_DATA_DIR = Path.home() / ".qlib" / "qlib_data" / "poseidon_tw_futures"
 CSV_OUT_DIR = Path("/app/local_dev/qlib-data-prep/tx_1d")
 CSV_OUT_PATH = CSV_OUT_DIR / "TX.csv"
 
-# Smoke-load test segment (Plan 92-2.5 Option B test split).
+# Smoke-load test segment.
 SMOKE_START = "2024-01-01"
 SMOKE_END = "2026-05-04"
 SMOKE_MIN_ROWS = 500
 
 
 # --------------------------------------------------------------------- #
-# Step 1: Thalassa pull
+# 1. Thalassa pull
 # --------------------------------------------------------------------- #
 
 
@@ -121,7 +121,7 @@ def pull_tx_1d_from_thalassa() -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------- #
-# Step 2: validate
+# 2. Validate
 # --------------------------------------------------------------------- #
 
 
@@ -164,7 +164,7 @@ def validate(df: pd.DataFrame) -> None:
 
 
 # --------------------------------------------------------------------- #
-# Step 3: CSV staging
+# 3. CSV staging
 # --------------------------------------------------------------------- #
 
 
@@ -188,12 +188,12 @@ def write_csv(df: pd.DataFrame) -> None:
 
 
 # --------------------------------------------------------------------- #
-# Step 4: qlib bin dump (fallback — pyqlib 0.9.7 has no qlib.scripts.dump_bin)
+# 4. qlib bin dump (fallback — pyqlib 0.9.7 has no qlib.scripts.dump_bin)
 # --------------------------------------------------------------------- #
 
 
 def _assert_under_qlib_home(p: Path) -> None:
-    """T-92-02 mitigation: refuse to write outside ~/.qlib/."""
+    """Path-traversal mitigation: refuse to write outside ~/.qlib/."""
     qlib_home = (Path.home() / ".qlib").resolve()
     real = p.resolve()
     try:
@@ -212,10 +212,10 @@ def dump_qlib_bin(df: pd.DataFrame) -> None:
           instruments/all.txt            # inst<TAB>start<TAB>end
           features/tx/<field>.day.bin    # first float32 = start_idx, then values
 
-    This is the fallback pattern documented in the Plan 92-2.5 deviation_handling
-    section: pyqlib 0.9.7 ships no ``qlib.scripts.dump_bin`` module
-    (``ModuleNotFoundError: No module named 'qlib.scripts'``), so we reuse the
-    pattern from ``poseidon/scripts/qlib_alpha158_demo.py:dump_qlib_bin``.
+    This is the fallback pattern: pyqlib 0.9.7 ships no
+    ``qlib.scripts.dump_bin`` module (``ModuleNotFoundError: No module named
+    'qlib.scripts'``), so we reuse the pattern from
+    ``poseidon/scripts/qlib_alpha158_demo.py:dump_qlib_bin``.
     """
     _assert_under_qlib_home(QLIB_DATA_DIR)
 
@@ -234,7 +234,7 @@ def dump_qlib_bin(df: pd.DataFrame) -> None:
     log.info("calendars/day.txt: %d entries (%s..%s)", len(cal_strs), cal_strs[0], cal_strs[-1])
 
     # Instruments: single-line "tx <TAB> start <TAB> end".
-    # qlib lowercase convention (Phase 92-2.5: also uppercase TX so D.features(['TX'],...) works
+    # qlib lowercase convention (also uppercase TX so D.features(['TX'],...) works
     # — qlib normalizes case-insensitively but we ship the canonical lowercase form).
     inst_start = df.index[0].strftime("%Y-%m-%d")
     inst_end = df.index[-1].strftime("%Y-%m-%d")
@@ -271,7 +271,7 @@ def dump_qlib_bin(df: pd.DataFrame) -> None:
 
 
 # --------------------------------------------------------------------- #
-# Step 5: smoke load
+# 5. Smoke load
 # --------------------------------------------------------------------- #
 
 

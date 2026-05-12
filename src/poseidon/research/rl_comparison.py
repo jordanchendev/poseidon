@@ -1,20 +1,19 @@
-"""Phase 90 Wave 2 — 5-route RL comparison-table builder.
+"""5-route RL comparison-table builder.
 
-Builds the 6-column × 9-row comparison DataFrame that Wave 5's verdict
-gate consumes (RESEARCH §"Comparison Table Schema (Required Output)").
-Columns: Naive / TWAP / VWAP / PPO / OPDS / v18_gap_over_4. Rows:
-per-leg + net Sharpe / cumulative return / MDD / per-leg + net slippage
-bps / trigger-day count / Sharpe Δ vs naive / Note.
+Builds the 6-column × 9-row comparison DataFrame that the verdict gate
+consumes (§"Comparison Table Schema"). Columns: Naive / TWAP / VWAP / PPO /
+OPDS / v18_gap_over_4. Rows: per-leg + net Sharpe / cumulative return / MDD
+/ per-leg + net slippage bps / trigger-day count / Sharpe Δ vs naive / Note.
 
-PPO / OPDS columns may carry NaN with ``Note="PARTIAL"`` until Wave 3
-(Plan 90-04) wires the trained outputs — the table shape (9 × 6) is locked
-NOW so Wave 5 has a stable input contract.
+PPO / OPDS columns may carry NaN with ``Note="PARTIAL"`` when the trained
+outputs are missing — the table shape (9 × 6) is locked so the verdict gate
+has a stable input contract.
 
 Single-source-of-truth invariants:
 
 * The v18 ``|gap|/4`` baseline column **must** call
   :func:`poseidon.research.rl_aggregate.v18_gap_cost_per_leg` — no
-  re-implementation. (D-16 / RESEARCH §Code Example 2.)
+  re-implementation.
 * Pair metrics route through
   :func:`poseidon.research.rl_aggregate.aggregate_pair_metrics` so the
   v18 baseline column is computed identically to RL columns.
@@ -30,10 +29,10 @@ from poseidon.research.rl_aggregate import (
     v18_gap_cost_per_leg,
 )
 
-# Column order — Wave 5 verdict gate depends on this order.
+# Column order — the verdict gate depends on this order.
 _COLUMNS: list[str] = ["Naive", "TWAP", "VWAP", "PPO", "OPDS", "v18_gap_over_4"]
 
-# Row order — RESEARCH §Comparison Table Schema lines 944-960.
+# Row order — §Comparison Table Schema.
 _ROWS: list[str] = [
     "Pair net Sharpe",
     "Pair cumulative return %",
@@ -124,8 +123,8 @@ def build_comparison_table(
             and surface as NaN values + ``Note="PARTIAL"``.
         naive: dict with the same keys as per_algo entries (the
             "no-execution" baseline — single fill at session open per
-            D-13). ``TX leg avg slippage`` is 0.0 by definition for
-            Naive (D-13 single-fill at open).
+            single-fill at open). ``TX leg avg slippage`` is 0.0 by
+            definition for Naive (single-fill at open).
         v18_gap: dict produced by :func:`build_v18_gap_baseline`. Same key
             shape as per_algo entries.
 
@@ -136,7 +135,7 @@ def build_comparison_table(
     columns: dict[str, dict[str, object]] = {}
 
     naive_col = _populate_column(naive)
-    # D-13: Naive has zero leg-slippage by construction (single fill at open).
+    # Naive has zero leg-slippage by construction (single fill at open).
     naive_col["TX leg avg slippage (bps)"] = 0.0
     naive_col["0050 leg avg slippage (bps)"] = 0.0
     naive_col["Net pair slippage (bps)"] = 0.0
@@ -185,7 +184,7 @@ def build_v18_gap_baseline(
     ``test_tx_gap_validate.py:185``). We:
 
     1. Call :func:`v18_gap_cost_per_leg` to get fraction-of-notional cost
-       per day (single source of truth — D-16, no re-implementation).
+       per day (single source of truth, no re-implementation).
     2. Convert to bps and apply as **negative** PA on both legs (cost
        erodes return; positive PA = price advantage in our convention).
     3. Run through :func:`aggregate_pair_metrics` so the result dict

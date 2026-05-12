@@ -1,4 +1,4 @@
-"""Tests for the stateful protection layer (Phase 36).
+"""Tests for the stateful protection layer.
 
 Covers BaseProtection, ProtectionManager, and all 4 concrete protections
 using a fake SQLAlchemy session to avoid hitting a real database.
@@ -144,7 +144,7 @@ class TestCapabilityMetadata:
         ],
     )
     def test_protection_declares_stateful_and_live(self, cls):
-        # Per Phase 34 + CONTEXT.md D-04: all protections are stateful and live-safe
+        # All protections are stateful and live-safe
         assert cls.supports_live is True
         assert cls.stateful is True
         assert cls.supports_backtest is True

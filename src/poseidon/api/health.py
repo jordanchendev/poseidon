@@ -76,7 +76,7 @@ async def health(details: bool = Query(False)):
             "latency_ms": round(latency_ms, 1),
         }
 
-        # Include circuit breaker state if available (per D-17)
+        # Include circuit breaker state if available
         try:
             from poseidon.data.remote_repository import RemoteDataRepository  # noqa: F401
 

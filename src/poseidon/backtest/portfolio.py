@@ -287,7 +287,7 @@ class BacktestPortfolio:
     ) -> TradeRecord | None:
         """Close a position via SL or TP trigger at the exact trigger price.
 
-        No slippage is applied -- the trigger price IS the fill price (D-13).
+        No slippage is applied -- the trigger price IS the fill price.
         Exit fees use sell_commission_rate + tax_rate (same as _execute_close).
 
         Args:
@@ -353,9 +353,9 @@ class BacktestPortfolio:
             TradeRecord for the fill, or None if fill cannot be executed.
         """
         signal = fill_event.signal
-        fill_price = fill_event.fill_price  # No slippage (D-21)
+        fill_price = fill_event.fill_price  # No slippage
         key = f"{signal.market}:{signal.symbol}"
-        fee_rate = self.cost_model.buy_commission_rate  # Maker rate (D-20)
+        fee_rate = self.cost_model.buy_commission_rate  # Maker rate
 
         if signal.action == SignalAction.LONG:
             quantity_pct = signal.quantity_pct or 0.1
@@ -436,7 +436,7 @@ class BacktestPortfolio:
             current_price: Current market price for mark-to-market valuation.
 
         Short positions are valued as (entry_price - current_price) * quantity,
-        reflecting profit when price drops and loss when price rises (D-12).
+        reflecting profit when price drops and loss when price rises.
         """
         point_value = getattr(self.cost_model, "point_value", 1.0)
         position_value = 0.0

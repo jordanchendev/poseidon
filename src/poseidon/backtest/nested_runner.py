@@ -1,4 +1,4 @@
-"""Phase 93 sibling backtest runner using qlib's NestedExecutor.
+"""Sibling backtest runner using qlib's NestedExecutor.
 
 Outer = daily decision (basis_z<-1 trigger; emitted upstream as a parent-orders
 pickle consumed by ``qlib.contrib.strategy.rule_strategy.FileOrderStrategy``).
@@ -6,28 +6,19 @@ Inner = 1-minute TWAP fill at 09:00..09:N (TWSE 集合競價 window) via
 ``qlib.backtest.executor.NestedExecutor`` wrapping ``SimulatorExecutor`` and
 ``qlib.contrib.strategy.rule_strategy.TWAPStrategy``.
 
-Sibling, NOT a replacement for ``poseidon.backtest.runner.BacktestRunner`` (D-02
-/ D-03 / D-04). Existing legacy callers stay on ``BacktestRunner.run()``;
-NestedExecutor consumers import ``NestedBacktestRunner`` directly.
+Sibling, NOT a replacement for ``poseidon.backtest.runner.BacktestRunner``.
+Existing legacy callers stay on ``BacktestRunner.run()``; NestedExecutor
+consumers import ``NestedBacktestRunner`` directly.
 
-Pattern P9 (lazy qlib import): NO ``import qlib`` at module top.  All qlib
-imports are deferred inside ``_run_nested_executor`` body so that
+Lazy qlib import: NO ``import qlib`` at module top.  All qlib imports are
+deferred inside ``_run_nested_executor`` body so that
 ``from poseidon.backtest.nested_runner import NestedBacktestRunner`` resolves on
 Mac without qlib installed (Mac-collectable pytest, gates qlib calls behind
 runtime entry points).
 
-Pitfall 7 (CostModel is passive):  ``CostModel`` is a frozen dataclass with no
+CostModel is passive: ``CostModel`` is a frozen dataclass with no
 ``compute_cost(...)`` method.  Cost computation is replicated inline by the
 module-level ``_compute_fill_cost_bps`` helper.
-
-Wave structure:
-- Wave 1 (this file, Plan 93-02): __init__ capability validation, executor /
-  strategy config dict construction (RESEARCH §Pattern 1 verbatim), cost helper,
-  run() + _run_nested_executor + _harvest_and_assemble stub.
-- Wave 2 (Plan 93-03): real ``harvest_fill_log``, ``compute_delta_breakdown``,
-  ``compare_to_baseline`` bodies replace the ``NotImplementedError`` placeholders.
-- Wave 3 (Plan 93-04): ``scripts/run_basis_arb_nested.py`` driver + stormtrooper
-  smoke + 67-day full run + cost-delta sentence in 93-RESEARCH.md.
 """
 
 from __future__ import annotations
@@ -48,25 +39,25 @@ logger = logging.getLogger(__name__)
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-# Inner indicator_dict key (qlib v0.9.7).  Confirmed by Phase 93 W0 probe; live
+# Inner indicator_dict key (qlib v0.9.7).  Confirmed by upstream probe; live
 # value from indicator_dict requires ``qlib.init()`` so the conservative default
-# follows Phase 90 precedent and RESEARCH §Assumptions A1.
+# follows precedent established by the qlib-research code paths.
 _DEFAULT_INNER_KEY = "1min"
 
-# twap_window_minutes valid range — matches D-13 (default 5; planner range 1..30).
+# twap_window_minutes valid range (default 5; planner range 1..30).
 _VALID_TWAP_WINDOW_RANGE = (1, 30)
 
-# qlib import paths locked by Wave 0 probe (qlib v0.9.7), confirmed via
-# ``.planning/phases/93-nestedexecutor-multi-level-backtest/probe-artifacts/qlib_import_probe.json``.
+# qlib import paths locked by upstream probe (qlib v0.9.7), confirmed via
+# the probe JSON shipped with this module.
 _NESTED_EXECUTOR_MODULE = "qlib.backtest.executor"
 _RULE_STRATEGY_MODULE = "qlib.contrib.strategy.rule_strategy"
 # TradeRangeByTime path is resolved at runtime via ``_load_trade_range_module_path``;
-# this is the default fallback if probe JSON is unavailable. Wave 0 probe confirmed
-# the actual path is ``qlib.backtest.decision`` (NOT ``qlib.backtest.utils`` from
-# RESEARCH §Pattern 1 caveat) — Pitfall 1 RESOLVED, Candidate B.
+# this is the default fallback if probe JSON is unavailable. Probe confirmed
+# the actual path is ``qlib.backtest.decision`` (NOT ``qlib.backtest.utils``
+# as the upstream research notes initially suggested).
 _TRADE_RANGE_BY_TIME_MODULE_PATH_DEFAULT = "qlib.backtest.decision"
 
-# Probe JSON location (relative to aquarium root).  Used by
+# Probe JSON location (relative to repo root).  Used by
 # ``_load_trade_range_module_path`` to read the runtime-confirmed path.
 _PROBE_JSON_RELPATH = ".planning/phases/93-nestedexecutor-multi-level-backtest/probe-artifacts/qlib_import_probe.json"
 
@@ -74,7 +65,7 @@ _PROBE_JSON_RELPATH = ".planning/phases/93-nestedexecutor-multi-level-backtest/p
 # by ``harvest_fill_log`` to derive ``planned_qty`` for fill-failure detection.
 _DEFAULT_LEG_NOTIONAL_TWD = 1_000_000.0
 
-# D-21 fill-log column ordering (byte-frozen — must match
+# Fill-log column ordering (byte-frozen — must match
 # ``test_nested_runner_fill_log_schema.py::D21_COLUMNS``).
 _D21_COLUMNS: tuple[str, ...] = (
     "run_id",
@@ -94,7 +85,7 @@ _D21_COLUMNS: tuple[str, ...] = (
     "fill_failure",
 )
 
-# D-17 comparison-frame column ordering (byte-frozen — used by
+# Comparison-frame column ordering (byte-frozen — used by
 # ``compare_to_baseline`` and asserted indirectly in
 # ``test_compare_to_baseline.py``).
 _D17_COLUMNS: tuple[str, ...] = (
@@ -124,14 +115,14 @@ _COST_DELTA_EQUAL_THRESHOLD_BPS = 0.1
 
 
 # ---------------------------------------------------------------------------
-# Cost helper (Pitfall 7 — inline replacement for absent CostModel.compute_cost)
+# Cost helper (inline replacement for absent CostModel.compute_cost)
 # ---------------------------------------------------------------------------
 
 
 def _compute_fill_cost_bps(cost_model: CostModel, side: str) -> float:
     """Compute per-fill cost in basis points.
 
-    Inline replacement for nonexistent ``CostModel.compute_cost(...)`` (Pitfall 7).
+    Inline replacement for nonexistent ``CostModel.compute_cost(...)``.
     Cost = commission_rate (+ tax_rate on SELL) × 10_000 bps.
 
     Args:
@@ -161,29 +152,27 @@ def _compute_fill_cost_bps(cost_model: CostModel, side: str) -> float:
 class NestedBacktestRunner:
     """qlib NestedExecutor wrapper for daily-decision + 1-min-execution backtests.
 
-    Built for Phase 93 TX×0050 basis arb realistic-fill simulation but generic
-    enough to accept any rule-based parent-orders pickle (FileOrderStrategy
-    upstream).  Sibling to ``BacktestRunner``; does not subclass and does not
-    replace it (D-04).
+    Built for TX×0050 basis arb realistic-fill simulation but generic enough
+    to accept any rule-based parent-orders pickle (FileOrderStrategy upstream).
+    Sibling to ``BacktestRunner``; does not subclass and does not replace it.
 
     Args:
         cost_model: Per-leg ``CostModel`` (typically resolved from
             ``poseidon.backtest.cost_model.get_cost_model``).
         twap_window_minutes: Length of the inner-executor TWAP window in
-            minutes.  Default 5 (D-13).  Must be in ``[1, 30]``.
+            minutes.  Default 5.  Must be in ``[1, 30]``.
         outer_decision_time: HH:MM at which outer-level signal fires.
-            Default ``"13:45"`` (D-09).  Stored for documentation; qlib's
-            outer scheduler runs end-of-day, so this string is informational.
-        outer_level: Outer-level frequency label.  Default ``"1d"`` (D-07);
-            mapped to qlib's ``"day"`` inside ``_build_executor_config``.
-        inner_level: Inner-level frequency label.  Default ``"1min"`` (D-10).
-        inner_fill: Inner fill model.  Default ``"twap"`` (D-12).  Currently
-            only TWAP is supported; VWAP / SAOEIntStrategy slots reserved for
-            later phases (D-15).
-        phase90_slippage_table: Optional Phase 90 advisory slippage table
-            (D-14).  When provided, the harvest path may use it to override
-            default TWAP slippage assumptions.  Wave 1 stores but does not
-            consume it; Wave 2 wires it into ``_harvest_and_assemble``.
+            Default ``"13:45"``.  Stored for documentation; qlib's outer
+            scheduler runs end-of-day, so this string is informational.
+        outer_level: Outer-level frequency label.  Default ``"1d"``; mapped
+            to qlib's ``"day"`` inside ``_build_executor_config``.
+        inner_level: Inner-level frequency label.  Default ``"1min"``.
+        inner_fill: Inner fill model.  Default ``"twap"``.  Currently only
+            TWAP is supported; VWAP / SAOEIntStrategy slots reserved for
+            later work.
+        phase90_slippage_table: Optional advisory slippage table from upstream
+            Phase 90 research.  When provided, the harvest path may use it to
+            override default TWAP slippage assumptions.
 
     Raises:
         ValueError: If ``twap_window_minutes`` is outside ``[1, 30]``.
@@ -199,7 +188,7 @@ class NestedBacktestRunner:
         inner_fill: str = "twap",
         phase90_slippage_table: pd.DataFrame | None = None,
     ) -> None:
-        # twap_window_minutes validation (D-13)
+        # twap_window_minutes validation
         lo, hi = _VALID_TWAP_WINDOW_RANGE
         if not isinstance(twap_window_minutes, int) or not (lo <= twap_window_minutes <= hi):
             raise ValueError(f"twap_window_minutes must be in [{lo}, {hi}], got {twap_window_minutes!r}")
@@ -212,13 +201,13 @@ class NestedBacktestRunner:
         self.inner_fill = inner_fill
         self.phase90_slippage_table = phase90_slippage_table
 
-        # D-05 v8.0 capability metadata reuse (mirror runner.py:146-153).
-        # Phase 93 outer signal is qlib-upstream FileOrderStrategy (NOT a
+        # Capability metadata reuse (mirrors runner.py).
+        # The outer signal here is qlib-upstream FileOrderStrategy (NOT a
         # poseidon BaseStrategy), so the strategies list is empty by design.
         # validate_backtest_components([]) is a no-op; warn_bias_risks([])
-        # logs nothing.  This call exists to honor the v8.0 standing rule
-        # that every BacktestRunner-class component runs the capability check
-        # at __init__.
+        # logs nothing.  This call exists to honor the standing rule that
+        # every BacktestRunner-class component runs the capability check at
+        # __init__.
         from poseidon.capabilities.validation import (
             validate_backtest_components,
             warn_bias_risks,
@@ -244,14 +233,13 @@ class NestedBacktestRunner:
     def _load_trade_range_module_path(self) -> str:
         """Resolve TradeRangeByTime ``module_path`` from probe JSON.
 
-        Reads ``.planning/phases/93-nestedexecutor-multi-level-backtest/
-        probe-artifacts/qlib_import_probe.json`` if it exists in the aquarium
-        root (relative to this file).  Falls through to the default
-        ``qlib.backtest.decision`` if the file is missing or malformed.
+        Reads the probe JSON if it exists in the repo root (relative to this
+        file).  Falls through to the default ``qlib.backtest.decision`` if the
+        file is missing or malformed.
 
-        Pattern P7 (container/host path resolution): walks parents until a
-        ``.planning`` directory is found.  Both Mac (``aquarium/`` root) and
-        in-container (``/app/``) layouts are handled.
+        Container/host path resolution: walks parents until a ``.planning``
+        directory is found.  Both Mac (repo root) and in-container
+        (``/app/``) layouts are handled.
 
         Returns:
             Module path string (e.g., ``"qlib.backtest.decision"``).
@@ -280,21 +268,21 @@ class NestedBacktestRunner:
         return _TRADE_RANGE_BY_TIME_MODULE_PATH_DEFAULT
 
     # ------------------------------------------------------------------
-    # Config builders (RESEARCH §Pattern 1 verbatim)
+    # Config builders
     # ------------------------------------------------------------------
 
     def _build_executor_config(self) -> dict:
         """Build the qlib executor_config dict (NestedExecutor outer + SimulatorExecutor inner).
 
-        Verbatim from RESEARCH §Pattern 1.  Outer ``time_per_step`` is the qlib
-        label ``"day"`` (mapped from ``self.outer_level == "1d"``).  Inner
-        ``time_per_step`` mirrors ``self.inner_level``.
+        Outer ``time_per_step`` is the qlib label ``"day"`` (mapped from
+        ``self.outer_level == "1d"``).  Inner ``time_per_step`` mirrors
+        ``self.inner_level``.
 
         Returns:
             dict suitable for ``qlib.backtest.backtest(executor=...)``.
         """
         # Map ``"1d"`` → ``"day"``; pass any other outer_level label through
-        # unchanged (qlib also accepts ``"30min"`` etc., reserved for later phases).
+        # unchanged (qlib also accepts ``"30min"`` etc., reserved for later use).
         outer_time_per_step = "day" if self.outer_level == "1d" else self.outer_level
 
         return {
@@ -309,7 +297,7 @@ class NestedBacktestRunner:
                         "time_per_step": self.inner_level,
                         "generate_portfolio_metrics": False,
                         "verbose": False,
-                        "track_data": True,  # surfaces decision_list (RESEARCH §Pattern 1)
+                        "track_data": True,  # surfaces decision_list
                         "indicator_config": {"show_indicator": True},
                     },
                 },
@@ -326,22 +314,21 @@ class NestedBacktestRunner:
     def _build_strategy_config(self, run_dir: Path) -> dict:
         """Build the qlib strategy_config dict (FileOrderStrategy outer + TradeRangeByTime).
 
-        Verbatim from RESEARCH §Pattern 1.  ``trade_range`` window restricts
-        each parent order's lifetime to ``09:00..09:0N`` (Pitfall 2 — without
-        this, TWAPStrategy would split across the WHOLE inner decision window,
-        not just the 集合競價 window).
+        ``trade_range`` window restricts each parent order's lifetime to
+        ``09:00..09:0N`` — without this, TWAPStrategy would split across the
+        WHOLE inner decision window, not just the 集合競價 window.
 
         Args:
             run_dir: Filesystem directory containing ``orders.csv``
                 (parent-order CSV produced upstream).  ``qlib.contrib.strategy
                 .rule_strategy.FileOrderStrategy.__init__`` calls
                 ``pd.read_csv(f, dtype={"datetime": str})`` and expects
-                columns ``datetime, instrument, amount, direction``.  Plan
-                93-04 [Rule 1] auto-fix: previously pointed at the
-                pickle output of ``rl_order_builder.build_orders_multileg``,
-                but that pickle is only consumable by the qlib RL pipeline
-                (different schema).  FileOrderStrategy requires CSV — the
-                Wave 3 driver writes ``orders.csv`` alongside the pickle.
+                columns ``datetime, instrument, amount, direction``.
+                Previously pointed at the pickle output of
+                ``rl_order_builder.build_orders_multileg``, but that pickle
+                is only consumable by the qlib RL pipeline (different
+                schema).  FileOrderStrategy requires CSV — the driver writes
+                ``orders.csv`` alongside the pickle.
 
         Returns:
             dict suitable for ``qlib.backtest.backtest(strategy=...)``.
@@ -376,17 +363,17 @@ class NestedBacktestRunner:
         window: tuple[pd.Timestamp, pd.Timestamp],
         phase90_baseline_path: Path | None = None,
     ) -> BacktestResult:
-        """Run a NestedExecutor backtest and harvest results (Wave 2 GREEN).
+        """Run a NestedExecutor backtest and harvest results.
 
-        Wave 2 (Plan 93-03) wires:
+        Wires:
         - executor / strategy config construction.
         - lazy qlib import inside ``_run_nested_executor``.
-        - real ``_harvest_and_assemble`` (D-21 fill_log → comparison.parquet →
+        - real ``_harvest_and_assemble`` (fill_log → comparison.parquet →
           delta_breakdown dict + cost-delta sentence).
 
         Args:
             triggers: Daily timestamps where the outer signal fires
-                (``basis_z < -1`` per D-08).
+                (``basis_z < -1``).
             legs_1m: ``{symbol: 1-min OHLCV DataFrame}`` keyed by leg
                 identifier (e.g., ``{"TX": df, "0050": df}``).  Used by
                 ``harvest_fill_log`` to populate per-fill bar OHLC.
@@ -395,18 +382,18 @@ class NestedBacktestRunner:
                 fill_failure detection.
             run_dir: Filesystem directory holding ``orders.pkl`` and where
                 ``fill_log.parquet`` / ``comparison.parquet`` /
-                ``comparison_summary.md`` will be written by Wave 2.
+                ``comparison_summary.md`` will be written.
             window: ``(start_time, end_time)`` pandas Timestamp pair bounding
                 the backtest range.
             phase90_baseline_path: Optional Phase 90 per-day baseline file
-                (.parquet preferred, .csv fallback per Pitfall 5).  When
-                None, ``comparison_df`` and ``delta_breakdown`` are not
-                computed; ``fill_log`` is still persisted.
+                (.parquet preferred, .csv fallback).  When None,
+                ``comparison_df`` and ``delta_breakdown`` are not computed;
+                ``fill_log`` is still persisted.
 
         Returns:
             ``BacktestResult`` with ``inner_level``, ``outer_level``,
             ``leg_notionals``, ``fill_log``, ``comparison``, and
-            ``delta_breakdown`` attached as model_extra fields (D-03).
+            ``delta_breakdown`` attached as model_extra fields.
         """
         # Stash run-time arguments on self so _harvest_and_assemble can access
         # them without a long parameter list.
@@ -437,7 +424,7 @@ class NestedBacktestRunner:
             return self._build_failed_result(error_message=str(exc))
 
     # ------------------------------------------------------------------
-    # qlib invocation (P9 — lazy qlib import inside this method body)
+    # qlib invocation (lazy qlib import inside this method body)
     # ------------------------------------------------------------------
 
     def _run_nested_executor(
@@ -452,25 +439,24 @@ class NestedBacktestRunner:
     ) -> BacktestResult:
         """Invoke ``qlib.backtest.backtest`` and dispatch to harvest.
 
-        Pattern P9: qlib import is local to this body, never module-top.  Mac
+        qlib import is local to this body, never module-top.  Mac
         ``pytest --collect-only`` succeeds without qlib; the real call only
         happens at run time on stormtrooper or under ``monkeypatch.setitem``
         in unit tests.
         """
-        # P9 — lazy qlib import.  The Wave 0 unit test
-        # (test_nested_runner_config.py) substitutes a stub
+        # Lazy qlib import.  The config unit test substitutes a stub
         # ``qlib.backtest`` module via ``monkeypatch.setitem(sys.modules, ...)``
         # before this line runs, so the import resolves to the stub on Mac.
         from qlib.backtest import backtest as qlib_backtest
 
-        # Plan 93-04 [Rule 3] auto-fix.  ``FileOrderStrategy.__init__`` stores
-        # the ``trade_range`` kwarg as-is — it does NOT auto-instantiate from
-        # a config dict.  Later qlib code calls ``self.trade_range(...)`` as
-        # a callable, so we must hand it an instantiated TradeRangeByTime
-        # object.  But the W1 config test asserts on the dict shape returned
-        # by ``_build_strategy_config``, so we keep the dict shape there and
+        # ``FileOrderStrategy.__init__`` stores the ``trade_range`` kwarg
+        # as-is — it does NOT auto-instantiate from a config dict.  Later
+        # qlib code calls ``self.trade_range(...)`` as a callable, so we
+        # must hand it an instantiated TradeRangeByTime object.  But the
+        # config unit test asserts on the dict shape returned by
+        # ``_build_strategy_config``, so we keep the dict shape there and
         # instantiate at runtime here (after the test capture point).
-        # The W1 config test stubs ``qlib.backtest`` via
+        # The config unit test stubs ``qlib.backtest`` via
         # ``monkeypatch.setitem(sys.modules, ...)`` but does NOT stub
         # ``qlib.utils`` / ``qlib.backtest.decision`` — so wrap the
         # instantiation in a try/ImportError so the unit test still
@@ -490,8 +476,8 @@ class NestedBacktestRunner:
                 except ImportError:
                     # Mac stub path — qlib.utils / qlib.backtest.decision
                     # not present in the unit-test sys.modules stub.  Leave
-                    # the dict untouched; the W1 config test then asserts
-                    # on the un-instantiated shape.
+                    # the dict untouched; the config test then asserts on
+                    # the un-instantiated shape.
                     pass
 
         exchange_kwargs = {
@@ -504,7 +490,7 @@ class NestedBacktestRunner:
             "trade_unit": None,
         }
 
-        # Phase 93 [Rule 3] benchmark workaround.
+        # Benchmark workaround.
         # qlib.backtest.backtest() unconditionally builds an Account whose
         # PortfolioMetrics tries ``D.features([benchmark], ["$close"],
         # freq=outer_freq)``.  At outer_level="1d" that needs a day-level
@@ -514,10 +500,10 @@ class NestedBacktestRunner:
         # ``SH000300``) fail with "benchmark does not exist".
         #
         # Monkey-patch qlib.backtest.report.PortfolioMetrics._cal_benchmark
-        # to return None (Phase 93 never consumes the benchmark column —
-        # compute_delta_breakdown derives all three deltas from
+        # to return None — this runner never consumes the benchmark column
+        # (compute_delta_breakdown derives all three deltas from
         # indicator_dict).  Restore the original after the call so other
-        # qlib-research jobs (Phase 90/95) are unaffected.
+        # qlib-research jobs are unaffected.
         try:
             from qlib.backtest import report as _qlib_report
 
@@ -565,14 +551,14 @@ class NestedBacktestRunner:
         triggers: list[pd.Timestamp],
         leg_notionals: dict[str, float],
     ) -> BacktestResult:
-        """Real Wave 2 harvest path (Plan 93-03).
+        """Harvest path.
 
         Steps:
-        1. ``harvest_fill_log(...)`` → per-fill D-21 rows.
+        1. ``harvest_fill_log(...)`` → per-fill rows.
         2. Persist ``fill_log.parquet`` to ``run_dir``.
         3. If ``self._phase90_baseline_path`` exists:
-           - ``compare_to_baseline(...)`` → D-17 comparison frame.
-           - ``compute_delta_breakdown(...)`` → D-18 + D-19 dict.
+           - ``compare_to_baseline(...)`` → comparison frame.
+           - ``compute_delta_breakdown(...)`` → delta dict.
            - Persist ``comparison.parquet`` and ``comparison_summary.md``.
         4. Build ``BacktestResult`` with all artifacts attached.
         """
@@ -585,7 +571,7 @@ class NestedBacktestRunner:
             interval=self.outer_level,
         )
 
-        # 1. Harvest fill log via the Plan 93-03 module-level helper.
+        # 1. Harvest fill log via the module-level helper.
         try:
             cost_model_per_leg = {
                 "TX": get_cost_model("tw_futures"),
@@ -641,7 +627,7 @@ class NestedBacktestRunner:
                 try:
                     summary_md = run_dir / "comparison_summary.md"
                     summary_md.write_text(
-                        "# Phase 93 NestedExecutor TWAP vs Phase 90 baseline\n\n"
+                        "# NestedExecutor TWAP vs Phase 90 baseline\n\n"
                         f"- run_id: {run_id}\n"
                         f"- twap_window_minutes: {self.twap_window_minutes}\n"
                         f"- n_trigger_days: {delta['n_trigger_days']}\n"
@@ -653,7 +639,7 @@ class NestedBacktestRunner:
                 except OSError as exc:
                     logger.warning("Could not write comparison_summary.md: %s", exc)
             except (ValueError, FileNotFoundError) as exc:
-                # Pitfall 5 path C — rollup CSV / disjoint dates / missing file.
+                # Rollup CSV / disjoint dates / missing file fallback path.
                 # Log + leave comparison_df=None so caller knows to handle.
                 logger.warning(
                     "compare_to_baseline raised %s: %s. comparison_df left unset.",
@@ -696,7 +682,7 @@ class NestedBacktestRunner:
             delta_breakdown=delta,
         )
         logger.info(
-            "NestedBacktestRunner Wave 2 harvest complete: n_fills=%d n_failures=%d comparison=%s delta=%s",
+            "NestedBacktestRunner harvest complete: n_fills=%d n_failures=%d comparison=%s delta=%s",
             n_fills,
             n_failures,
             "yes" if comparison_df is not None else "no",
@@ -733,7 +719,7 @@ class NestedBacktestRunner:
         phase90_baseline_path: Path,
         triggers: list | None = None,
     ) -> pd.DataFrame:
-        """Compare NestedExecutor result to Phase 90 baseline (D-17 schema).
+        """Compare NestedExecutor result to Phase 90 baseline.
 
         Thin staticmethod shim over the module-level ``compare_to_baseline``
         function — both entry points share a single implementation.  See the
@@ -744,7 +730,7 @@ class NestedBacktestRunner:
 
 
 # ---------------------------------------------------------------------------
-# Module-level Wave 2 placeholder helpers
+# Module-level helpers
 # ---------------------------------------------------------------------------
 
 
@@ -754,10 +740,10 @@ def _resolve_trigger_for_fill(
 ) -> pd.Timestamp | None:
     """Find the latest trigger ``t`` whose normalized date <= ``fill_ts``'s date.
 
-    The fill event executes on the trigger's NEXT trading day (Pattern 3 in
-    93-RESEARCH.md): "decided 13:45 yesterday, executed 09:00 today".  For unit
-    tests the fixture stamps fill_ts on the SAME day as trigger_date for
-    simplicity, so we tolerate both same-day-or-earlier triggers.
+    The fill event executes on the trigger's NEXT trading day: "decided 13:45
+    yesterday, executed 09:00 today".  For unit tests the fixture stamps
+    fill_ts on the SAME day as trigger_date for simplicity, so we tolerate
+    both same-day-or-earlier triggers.
 
     Args:
         fill_ts: Timestamp of the inner-level fill event.
@@ -823,7 +809,7 @@ def _lookup_bar_ohlc(
 
 
 def _leg_to_side(leg: str) -> str:
-    """Map leg label → BUY/SELL side (Phase 93 D-25 dual-leg setup).
+    """Map leg label → BUY/SELL side (dual-leg setup).
 
     ``tx_long`` → BUY (long TX); ``etf_short`` → SELL (short 0050).
     """
@@ -833,7 +819,7 @@ def _leg_to_side(leg: str) -> str:
 
 
 def _instrument_to_leg(instrument: str) -> str:
-    """Map instrument symbol → leg label (D-25)."""
+    """Map instrument symbol → leg label."""
     return "tx_long" if instrument == "TX" else "etf_short"
 
 
@@ -848,18 +834,18 @@ def harvest_fill_log(
     decision_ts_per_trigger: dict | None = None,
     inner_key: str = _DEFAULT_INNER_KEY,
 ) -> pd.DataFrame:
-    """Harvest per-fill log rows from qlib ``indicator_dict`` per D-21 schema.
+    """Harvest per-fill log rows from qlib ``indicator_dict``.
 
     Walks ``indicator_dict[inner_key]`` (deal_amount / deal_price / pa / ffr
     Series each indexed by ``(fill_ts, instrument)`` MultiIndex) and emits
-    one row per fill event.  Per-row schema is byte-frozen to D-21:
+    one row per fill event.  Per-row schema is byte-frozen:
 
         run_id, trigger_date, decision_ts, leg, fill_ts,
         planned_qty, filled_qty, fill_price,
         bar_open, bar_high, bar_low, bar_close,
         slippage_bps, cost_bps, fill_failure
 
-    fill_failure semantics (D-21):
+    fill_failure semantics:
     - ``planned_qty = leg_notional / fill_price / twap_window_minutes`` per bar
       when ``leg_notionals`` is provided; else falls back to
       ``_DEFAULT_LEG_NOTIONAL_TWD`` (1_000_000 TWD/leg).
@@ -867,16 +853,16 @@ def harvest_fill_log(
     - ``fill_failure = filled_qty < planned_qty * _FILL_FAILURE_THRESHOLD``
       (default threshold 0.999).
 
-    Pitfall 4 defense: If ``inner_key`` is not in ``indicator_dict``, raises
-    ``ValueError`` listing all available keys (KeyError-style message but
-    ValueError type for cleaner ``pytest.raises`` matching).
+    If ``inner_key`` is not in ``indicator_dict``, raises ``ValueError``
+    listing all available keys (KeyError-style message but ValueError type
+    for cleaner ``pytest.raises`` matching).
 
     Args:
         indicator_dict: qlib ``backtest()`` second return value — outer dict
             keyed by frequency string, inner dict keyed by indicator name.
         run_id: Caller-supplied run identifier (e.g., ``"wave3-full-001"``).
         triggers: List of pd.Timestamp daily decision dates.
-        twap_window_minutes: TWAP window in minutes (D-13; default 5).
+        twap_window_minutes: TWAP window in minutes (default 5).
         leg_notionals: Optional ``{instrument: notional_TWD}`` per leg.  When
             absent, ``_DEFAULT_LEG_NOTIONAL_TWD`` is used per leg (sufficient
             for the unit-test fill_failure contract; production callers MUST
@@ -887,18 +873,18 @@ def harvest_fill_log(
         cost_model_per_leg: Optional ``{instrument: CostModel}`` for per-fill
             cost annotation; falls back to NaN when absent.
         decision_ts_per_trigger: Optional ``{trigger_date: decision_ts}`` map
-            (Phase 93 D-09: 13:45 prev-day cutoff).  Falls back to
-            ``trigger_date.normalize() + 13:45`` per D-09.
+            (13:45 prev-day cutoff).  Falls back to
+            ``trigger_date.normalize() + 13:45``.
         inner_key: Inner-level frequency key inside ``indicator_dict``
             (default ``"1min"``; locked from W0 import probe).
 
     Returns:
-        DataFrame with columns in D-21 order; one row per (fill_ts, leg)
+        DataFrame with columns in canonical order; one row per (fill_ts, leg)
         fill event from ``indicator_dict[inner_key]["deal_amount"]``.
 
     Raises:
         ValueError: If ``inner_key`` is not present in ``indicator_dict``
-            (Pitfall 4 — qlib freq-label version drift defense).
+            (qlib freq-label version drift defense).
     """
     if inner_key not in indicator_dict:
         raise ValueError(
@@ -908,13 +894,13 @@ def harvest_fill_log(
 
     inner = indicator_dict[inner_key]
 
-    # Pitfall 4 defense — qlib v0.9.7 returns
+    # qlib v0.9.7 returns
     # ``INDICATOR_METRIC = Dict[str, Tuple[pd.DataFrame, Indicator]]`` (verified
     # 2026-05-09 stormtrooper smoke).  The ``DataFrame`` carries the
     # ``deal_amount / deal_price / pa / ffr`` columns indexed by
     # ``(fill_ts, instrument)``.  Older snapshots (and the synthetic test
-    # fixtures used by Wave 0 unit tests) instead pass a flat
-    # ``Dict[str, Series]``.  Accept both shapes — Plan 93-04 [Rule 3] auto-fix.
+    # fixtures used by config-level unit tests) instead pass a flat
+    # ``Dict[str, Series]``.  Accept both shapes.
     if isinstance(inner, tuple):
         # qlib v0.9.7 production shape: (DataFrame, Indicator)
         inner_df = inner[0]
@@ -976,9 +962,9 @@ def harvest_fill_log(
         if decision_ts_per_trigger is not None and trigger_date in decision_ts_per_trigger:
             decision_ts = decision_ts_per_trigger[trigger_date]
         else:
-            # D-09: 13:45 cutoff on prev-trading-day.  Wave-3 driver may
-            # supply a true prev-trading-day mapping; here we use the trigger
-            # date itself stamped at 13:45 for documentation.
+            # 13:45 cutoff on prev-trading-day.  Driver may supply a true
+            # prev-trading-day mapping; here we use the trigger date itself
+            # stamped at 13:45 for documentation.
             decision_ts = pd.Timestamp(trigger_date).normalize() + pd.Timedelta(hours=13, minutes=45)
 
         # planned_qty per bar — split notional across the TWAP window.
@@ -1024,8 +1010,8 @@ def harvest_fill_log(
         )
 
     if not rows:
-        # Empty-result path: still return a DataFrame with the D-21 columns
-        # so downstream parquet writes don't error on schema mismatch.
+        # Empty-result path: still return a DataFrame with the canonical
+        # columns so downstream parquet writes don't error on schema mismatch.
         return pd.DataFrame(columns=list(_D21_COLUMNS))
 
     df = pd.DataFrame(rows, columns=list(_D21_COLUMNS))
@@ -1038,16 +1024,16 @@ def _format_cost_delta_sentence(
     twap_window_minutes: int,
     mean_v18_gap4_cost_bps: float,
 ) -> str:
-    """Format the D-19 cost-delta sentence (single-line, human-readable).
+    """Format the cost-delta sentence (single-line, human-readable).
 
-    Required by ROADMAP success criterion 3 ("the cost delta is surfaced in
-    writing").  Three branches per D-19:
+    Required by the roadmap success criterion ("the cost delta is surfaced in
+    writing").  Three branches:
     - cost_delta < -threshold → "cheaper"
     - cost_delta > +threshold → "dearer" (also includes "more expensive" for
       compatibility with both wording conventions)
     - |cost_delta| < threshold → "approximately equal-cost"
 
-    Template (RESEARCH §Cost-Delta Sentence Schema):
+    Template:
 
         "NestedExecutor TWAP-{N}min @ 09:00 has cost {direction-clause} per
         leg on TX-vs-0050 basis arb 6yr OOS ({K} trigger days) — Phase 90
@@ -1056,12 +1042,12 @@ def _format_cost_delta_sentence(
     Args:
         cost_delta_bps: Signed cost delta (NestedExecutor TWAP - v18 |gap|/4).
         n_trigger_days: Number of trigger days in the comparison.
-        twap_window_minutes: TWAP window length (D-13).
+        twap_window_minutes: TWAP window length.
         mean_v18_gap4_cost_bps: Mean v18 |gap|/4 cost for the predicted-dir
             framing in the sentence tail.
 
     Returns:
-        Single-line string suitable for ``93-RESEARCH.md § Cost Delta``.
+        Single-line string suitable for the cost-delta summary.
     """
     abs_delta = abs(cost_delta_bps)
     if abs_delta < _COST_DELTA_EQUAL_THRESHOLD_BPS:
@@ -1085,20 +1071,20 @@ def compute_delta_breakdown(
     comparison_df: pd.DataFrame,
     twap_window_minutes: int = 5,
 ) -> dict:
-    """Compute the D-18 three deltas + D-19 cost-delta sentence.
+    """Compute the three deltas + cost-delta sentence.
 
-    Inputs come from ``compare_to_baseline()``'s D-17 frame.  Output is the
-    summary dict that drives ``93-RESEARCH.md § Cost Delta`` (D-19) and the
-    Wave 3 driver's verdict-style metrics.
+    Inputs come from ``compare_to_baseline()``'s comparison frame.  Output is
+    the summary dict that drives the cost-delta writeup and the driver's
+    verdict-style metrics.
 
-    D-18 keys:
+    Delta keys:
     - ``cost_delta_bps`` = mean(nested_twap_cost_bps) − mean(v18_gap4_cost_bps)
     - ``slippage_delta_bps`` = mean(nested_twap_slippage_bps_per_leg) − 0
       (naive single-fill slippage = 0 by definition)
     - ``fill_failure_rate_pct`` = nested trigger-days with fill_failure=True
       ÷ total × 100
 
-    D-19 key:
+    Sentence key:
     - ``cost_delta_sentence``: single-line string with ``cheaper`` / ``dearer``
       / ``equal-cost`` direction word per ``_format_cost_delta_sentence``.
 
@@ -1107,19 +1093,19 @@ def compute_delta_breakdown(
       ``n_trigger_days``.
 
     Args:
-        comparison_df: Output of ``compare_to_baseline()`` with D-17 columns.
-        twap_window_minutes: TWAP window length used by the run (D-13;
-            default 5).  Surfaced in the cost-delta sentence.
+        comparison_df: Output of ``compare_to_baseline()``.
+        twap_window_minutes: TWAP window length used by the run (default 5).
+            Surfaced in the cost-delta sentence.
 
     Returns:
         dict with the keys above.
 
     Raises:
-        ValueError: If required D-17 columns are missing from
-            ``comparison_df`` (defensive — callers should pass output from
-            ``compare_to_baseline``); or if ``comparison_df`` is empty
-            (WR-05 — empty frame would yield NaN cost-delta which then
-            poisons the cost-delta sentence).
+        ValueError: If required columns are missing from ``comparison_df``
+            (defensive — callers should pass output from
+            ``compare_to_baseline``); or if ``comparison_df`` is empty (empty
+            frame would yield NaN cost-delta which then poisons the
+            cost-delta sentence).
     """
     required = {
         "nested_twap_cost_bps",
@@ -1130,13 +1116,13 @@ def compute_delta_breakdown(
     missing = required - set(comparison_df.columns)
     if missing:
         raise ValueError(
-            f"comparison_df missing required D-17 columns: {sorted(missing)}; got: {list(comparison_df.columns)}"
+            f"comparison_df missing required columns: {sorted(missing)}; got: {list(comparison_df.columns)}"
         )
 
     n_trigger_days = len(comparison_df)
     if n_trigger_days == 0:
         raise ValueError(
-            "comparison_df is empty; cannot compute delta_breakdown (would produce NaN cost-delta sentence — WR-05)"
+            "comparison_df is empty; cannot compute delta_breakdown (would produce NaN cost-delta sentence)"
         )
 
     mean_nested_twap_cost_bps = float(comparison_df["nested_twap_cost_bps"].mean())
@@ -1144,7 +1130,7 @@ def compute_delta_breakdown(
     cost_delta_bps = mean_nested_twap_cost_bps - mean_v18_gap4_cost_bps
 
     mean_nested_twap_slippage_bps = float(comparison_df["nested_twap_slippage_bps_per_leg"].mean())
-    # Naive single-fill slippage = 0 by definition (D-18); delta is just the
+    # Naive single-fill slippage = 0 by definition; delta is just the
     # NestedExecutor TWAP mean slippage.
     slippage_delta_bps = mean_nested_twap_slippage_bps - 0.0
 
@@ -1170,24 +1156,25 @@ def compute_delta_breakdown(
 
 
 def _aggregate_nested_fill_log(fill_log: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate a raw D-21 fill_log into per-trigger-day NestedExecutor TWAP rows.
+    """Aggregate a raw fill_log into per-trigger-day NestedExecutor TWAP rows.
 
     Used by ``compare_to_baseline`` when the caller passes a raw fill_log
-    (Wave 3 driver path) instead of a pre-aggregated nested-result frame.
+    (driver path) instead of a pre-aggregated nested-result frame.
 
     Args:
-        fill_log: DataFrame with D-21 columns (one row per fill event).
+        fill_log: DataFrame with fill-log columns (one row per fill event).
 
     Returns:
         DataFrame with columns ``trigger_date, nested_twap_pair_pnl_bps,
         nested_twap_slippage_bps_per_leg, nested_twap_cost_bps,
         nested_twap_fill_failure``.  ``pair_pnl_bps`` is left as NaN here —
-        Wave 3 driver computes the real pair PnL via Phase 90 helpers; W2
-        unit tests pass the pre-aggregated frame so this column is unused.
+        the driver computes the real pair PnL via Phase 90 helpers; the
+        comparison unit tests pass the pre-aggregated frame so this column
+        is unused.
 
     Raises:
         ValueError: If ``fill_log`` is missing the required ``trigger_date``
-            column (WR-04 — fail loud rather than return an empty frame which
+            column (fail loud rather than return an empty frame which
             silently produces NaN cost-delta sentences downstream).
     """
     if "trigger_date" not in fill_log.columns:
@@ -1212,10 +1199,10 @@ def _aggregate_nested_fill_log(fill_log: pd.DataFrame) -> pd.DataFrame:
 def _read_baseline_frame(phase90_baseline_path: Path) -> pd.DataFrame:
     """Read a Phase 90 baseline file (.parquet preferred, .csv fallback).
 
-    Pitfall 5: accepts both formats so callers can pass either the per-day
-    parquet (path B — preferred) or the rollup CSV (path C — algorithmic
-    fallback).  Format detection is by suffix; downstream code inspects the
-    schema to decide whether to treat as per-day or rollup.
+    Accepts both formats so callers can pass either the per-day parquet
+    (preferred) or the rollup CSV (algorithmic fallback).  Format detection
+    is by suffix; downstream code inspects the schema to decide whether to
+    treat as per-day or rollup.
 
     Args:
         phase90_baseline_path: Path to baseline file.
@@ -1257,32 +1244,32 @@ def compare_to_baseline(
     phase90_baseline_path: Path,
     triggers: list | None = None,
 ) -> pd.DataFrame:
-    """Compare NestedExecutor TWAP results against Phase 90 baseline (D-17 schema).
+    """Compare NestedExecutor TWAP results against Phase 90 baseline.
 
     Joins per-trigger-day NestedExecutor TWAP rows with Phase 90's per-day
     baseline (Naive single-fill + v18 |gap|/4 + Phase 90 TWAP/VWAP) and
-    returns a frame with D-17 columns.
+    returns a frame with the canonical comparison columns.
 
-    Pitfall 5 path handling:
-    - Path B (preferred): per-day baseline parquet/CSV with ``trigger_date``
-      column → direct left-join on ``trigger_date``.
-    - Path C (algorithmic fallback): rollup CSV (no ``trigger_date`` column,
+    Path handling:
+    - Preferred: per-day baseline parquet/CSV with ``trigger_date`` column →
+      direct left-join on ``trigger_date``.
+    - Algorithmic fallback: rollup CSV (no ``trigger_date`` column,
       e.g. ``verdict-artifacts/comparison.csv`` rollup format) → raise
       ValueError matching "schema" so caller / driver knows to compute
       naive + v18 |gap|/4 algorithmically from the input fill_log.
 
     Args:
-        nested_fill_log: Either a raw D-21 fill_log (Wave 3 driver path) or
-            a pre-aggregated nested-result frame (W2 unit-test path).
+        nested_fill_log: Either a raw fill_log (driver path) or a
+            pre-aggregated nested-result frame (unit-test path).
             Detection: presence of ``nested_twap_pair_pnl_bps`` column → use
             as-is; absence → aggregate via ``_aggregate_nested_fill_log``.
         phase90_baseline_path: Path to Phase 90 per-day baseline file
             (.parquet or .csv).
         triggers: Optional list of pd.Timestamp triggers (currently unused;
-            reserved for Wave 3 driver alignment validation).
+            reserved for driver alignment validation).
 
     Returns:
-        DataFrame with D-17 column ordering — per-trigger-day rows × the
+        DataFrame with canonical column ordering — per-trigger-day rows × the
         three algorithm column-groups (Naive, v18 |gap|/4, NestedExecutor
         TWAP) + optional Phase 90 TWAP carry-forward.
 
@@ -1290,10 +1277,10 @@ def compare_to_baseline(
         ValueError: If
             - matched row counts but disjoint trigger_date sets
               (message contains "alignment failed"); OR
-            - baseline is rollup-only (path C — message contains "schema");
+            - baseline is rollup-only (message contains "schema");
               caller must algorithmically reconstruct.
     """
-    _ = triggers  # reserved for Wave 3 alignment check
+    _ = triggers  # reserved for driver alignment check
 
     # Step 1: detect raw vs aggregated nested input.
     if "nested_twap_pair_pnl_bps" in nested_fill_log.columns:
@@ -1330,7 +1317,7 @@ def compare_to_baseline(
     # Step 5: left-join on trigger_date (nested as primary).
     merged = nested_agg.merge(baseline, on="trigger_date", how="left", suffixes=("", "_baseline"))
 
-    # Step 6: project to D-17 columns; back-fill missing columns with NaN.
+    # Step 6: project to canonical columns; back-fill missing columns with NaN.
     out_cols: list[str] = []
     for col in _D17_COLUMNS:
         if col in merged.columns:

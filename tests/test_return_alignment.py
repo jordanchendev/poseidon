@@ -329,6 +329,6 @@ class TestCovarianceCache:
 
         cache_covariance(fake_redis, symbols, cov, as_of)
 
-        # Verify the key is exactly what D-05 specifies
+        # Verify the key matches the contract
         assert COVARIANCE_CACHE_KEY == "poseidon:var:covariance:latest"
         assert fake_redis.exists(COVARIANCE_CACHE_KEY)

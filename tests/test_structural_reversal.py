@@ -35,10 +35,10 @@ def make_structural_features(n_rows: int = 200, **overrides) -> pd.DataFrame:
             "close": [50200.0] * n_rows,
             "volume": [1000.0] * n_rows,
             # IC-validated features
-            "oiwap_distance_168": [-4.0] * n_rows,  # D-07: below threshold -> long
+            "oiwap_distance_168": [-4.0] * n_rows,  # below threshold -> long
             "oiwap_168": [50000.0] * n_rows,
-            "cascade_direction": [1.0] * n_rows,  # D-08: positive = confirms long
-            "cvd_change_20": [-100.0] * n_rows,  # D-09: negative = bullish (IC=-0.027)
+            "cascade_direction": [1.0] * n_rows,  # positive = confirms long
+            "cvd_change_20": [-100.0] * n_rows,  # negative = bullish (IC=-0.027)
             "atr_14": [500.0] * n_rows,
         },
         index=idx,
@@ -63,7 +63,7 @@ class TestEntryConditions:
     """STRAT-01: Strategy emits max 2-3 condition signals with LIMIT orders."""
 
     def test_long_entry_oiwap_cascade_triggers(self):
-        """D-07 + D-08: negative oiwap_distance + positive cascade -> LONG LIMIT."""
+        """Negative oiwap_distance + positive cascade -> LONG LIMIT."""
         strategy = _make_strategy()
         features = make_structural_features()
         signals = strategy.evaluate(features)
@@ -74,7 +74,7 @@ class TestEntryConditions:
         assert sig.order_price is not None
 
     def test_short_entry_oiwap_cascade_triggers(self):
-        """D-07 + D-08: positive oiwap_distance + negative cascade -> SHORT LIMIT."""
+        """Positive oiwap_distance + negative cascade -> SHORT LIMIT."""
         strategy = _make_strategy()
         features = make_structural_features(oiwap_distance_168=4.0, cascade_direction=-1.0)
         signals = strategy.evaluate(features)
@@ -84,14 +84,14 @@ class TestEntryConditions:
         assert sig.order_type == OrderType.LIMIT
 
     def test_no_entry_when_oiwap_within_threshold(self):
-        """D-07: oiwap_distance within threshold -> no signal."""
+        """oiwap_distance within threshold -> no signal."""
         strategy = _make_strategy()
         features = make_structural_features(oiwap_distance_168=-1.0)
         signals = strategy.evaluate(features)
         assert len(signals) == 0
 
     def test_no_entry_when_cascade_disagrees(self):
-        """D-08: cascade_direction must confirm direction."""
+        """cascade_direction must confirm direction."""
         strategy = _make_strategy()
         # oiwap_distance is negative (long), but cascade is negative (disagrees)
         features = make_structural_features(cascade_direction=-1.0)
@@ -99,7 +99,7 @@ class TestEntryConditions:
         assert len(signals) == 0
 
     def test_cvd_filter_blocks_when_enabled(self):
-        """D-09: positive cvd_change blocks long entry when filter is on."""
+        """Positive cvd_change blocks long entry when filter is on."""
         strategy = _make_strategy(use_cvd_filter=True)
         # cvd_change_20=100.0 is positive, should block long
         features = make_structural_features(cvd_change_20=100.0)
@@ -107,7 +107,7 @@ class TestEntryConditions:
         assert len(signals) == 0
 
     def test_cvd_filter_passes_when_negative_for_long(self):
-        """D-09: negative cvd_change confirms long entry when filter is on."""
+        """Negative cvd_change confirms long entry when filter is on."""
         strategy = _make_strategy(use_cvd_filter=True)
         # cvd_change_20=-100.0 is negative, should allow long
         features = make_structural_features(cvd_change_20=-100.0)
@@ -146,7 +146,7 @@ class TestLimitPriceDerivation:
     """STRAT-02: Limit price = OIWAP +/- (ATR_multiplier * ATR_14)."""
 
     def test_long_limit_price_below_oiwap(self):
-        """D-12: Long limit price = OIWAP - (atr_mult * ATR)."""
+        """Long limit price = OIWAP - (atr_mult * ATR)."""
         strategy = _make_strategy(atr_multiplier=1.0)
         features = make_structural_features()
         # Expected: 50000.0 - (1.0 * 500.0) = 49500.0
@@ -155,7 +155,7 @@ class TestLimitPriceDerivation:
         assert signals[0].order_price == 49500.0
 
     def test_short_limit_price_above_oiwap(self):
-        """D-12: Short limit price = OIWAP + (atr_mult * ATR)."""
+        """Short limit price = OIWAP + (atr_mult * ATR)."""
         strategy = _make_strategy(atr_multiplier=1.0)
         features = make_structural_features(oiwap_distance_168=4.0, cascade_direction=-1.0)
         # Expected: 50000.0 + (1.0 * 500.0) = 50500.0
@@ -164,7 +164,7 @@ class TestLimitPriceDerivation:
         assert signals[0].order_price == 50500.0
 
     def test_atr_multiplier_affects_price(self):
-        """D-13: ATR_multiplier scales the offset from OIWAP."""
+        """ATR_multiplier scales the offset from OIWAP."""
         strategy = _make_strategy(atr_multiplier=2.0)
         features = make_structural_features()
         # Expected: 50000.0 - (2.0 * 500.0) = 49000.0
@@ -249,7 +249,7 @@ class TestTrailingStop:
 
 
 class TestTimeExpiry:
-    """D-18: Time-based expiry after max_holding_bars."""
+    """Time-based expiry after max_holding_bars."""
 
     def test_close_after_max_holding_bars(self):
         """Position held >= max_holding_bars -> CLOSE MARKET signal."""
@@ -279,7 +279,7 @@ class TestMaxDDEnforcement:
     """STRAT-08: 20% MaxDD hard stop enforced via set_equity/_check_drawdown."""
 
     def test_no_entry_when_drawdown_exceeds_20pct(self):
-        """D-25: >20% DD from peak -> no new entries."""
+        """>20% DD from peak -> no new entries."""
         strategy = _make_strategy(max_drawdown=0.20)
         strategy.set_equity(100000)
         strategy.set_equity(79000)  # 21% drawdown
@@ -289,7 +289,7 @@ class TestMaxDDEnforcement:
         assert len(signals) == 0
 
     def test_entry_allowed_when_drawdown_below_20pct(self):
-        """D-25: <20% DD -> entries allowed."""
+        """<20% DD -> entries allowed."""
         strategy = _make_strategy(max_drawdown=0.20)
         strategy.set_equity(100000)
         strategy.set_equity(85000)  # 15% drawdown
@@ -300,7 +300,7 @@ class TestMaxDDEnforcement:
         assert signals[0].action == SignalAction.LONG
 
     def test_drawdown_at_exactly_threshold_allows_entry(self):
-        """D-25: Exactly 20% DD -> entries allowed (strict greater-than check)."""
+        """Exactly 20% DD -> entries allowed (strict greater-than check)."""
         strategy = _make_strategy(max_drawdown=0.20)
         strategy.set_equity(100000)
         strategy.set_equity(80000)  # exactly 20% DD, not exceeding
@@ -311,7 +311,7 @@ class TestMaxDDEnforcement:
         assert len(signals) == 1
 
     def test_drawdown_just_over_threshold_blocks(self):
-        """D-25: 20.01% DD -> no entries."""
+        """20.01% DD -> no entries."""
         strategy = _make_strategy(max_drawdown=0.20)
         strategy.set_equity(100000)
         strategy.set_equity(79990)  # 20.01% DD
@@ -383,7 +383,7 @@ class TestFundingDeduction:
     """STRAT-07: net_sharpe covers funding + fee hurdle."""
 
     def test_net_sharpe_deduction(self):
-        """Pure unit test of funding cost math (D-24).
+        """Pure unit test of funding cost math.
 
         Given:
           gross_sharpe = 1.5
@@ -518,12 +518,12 @@ class TestEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# D-27: MaxDD Integration Verification
+# MaxDD Integration Verification
 # ---------------------------------------------------------------------------
 
 
 class TestMaxDDIntegration:
-    """D-27: Verify strategy-internal MaxDD enforcement in backtest context.
+    """Verify strategy-internal MaxDD enforcement in backtest context.
 
     Simulates a mini backtest loop where set_equity() is called before
     each evaluate(), confirming MaxDD gate correctly suppresses new entries
@@ -555,7 +555,7 @@ class TestMaxDDIntegration:
     def test_maxdd_does_not_block_existing_position_management(self):
         """When in position and MaxDD breached, HOLD/CLOSE signals still work.
 
-        D-26: Only new entries are blocked, not position management.
+        Only new entries are blocked, not position management.
         """
         strategy = _make_strategy(max_drawdown=0.20, max_holding_bars=40)
 

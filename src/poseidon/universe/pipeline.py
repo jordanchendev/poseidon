@@ -47,7 +47,7 @@ class UniversePipeline:
         for f in self.filters:
             candidates = f.filter(candidates, market)
 
-        # Position-aware retention (D-08): never remove symbols with open positions
+        # Position-aware retention: never remove symbols with open positions
         if db_session is not None:
             held_ids = self._get_held_symbol_ids(market, db_session)
             if held_ids:

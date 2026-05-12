@@ -1,6 +1,6 @@
 """Tests for PendingOrderBook lifecycle (submit/fill/expire) and fill models.
 
-Phase 50-01 Task 1: Unit tests for pending order management.
+Unit tests for pending order management.
 """
 
 from __future__ import annotations
@@ -384,7 +384,7 @@ class TestExecuteSlTpExit:
         assert trade.pnl > 0  # TP exit = profit
 
     def test_sl_priority_over_tp(self):
-        """When both SL and TP trigger, SL takes priority (D-12)."""
+        """When both SL and TP trigger, SL takes priority."""
         # This tests the execute_sl_tp_exit behavior directly
         # The SL priority logic lives in _evaluate_sl_tp (runner.py, Task 3)
         # Here we just verify that calling execute_sl_tp_exit with "sl"

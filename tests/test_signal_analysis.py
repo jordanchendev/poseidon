@@ -1,10 +1,10 @@
-"""Phase 95 ACTIVATE-03 — Signal Analysis / IC report smoke (stormtrooper-only).
+"""ACTIVATE-03 — Signal Analysis / IC report smoke (stormtrooper-only).
 
 Pattern S4 (STORMTROOPER gate) + Pattern P9 (`importorskip` inside the body)
 + Pitfall 3 / Pattern P10 (MultiIndex via ``make_synthetic_anchor_signal``).
 
 Persists smoke artifacts to
-``.planning/phases/95-*/smoke/ACTIVATE-03/`` plus the production output
+the smoke output directory plus the production output
 sink at ``local_dev/qlib-activations/signal-analysis/basis_arb/`` via the
 ``run_signal_analysis`` driver.
 """
@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(
     reason="stormtrooper-only smoke — set STORMTROOPER=1 inside qlib-research container",
 )
 
-# D-31 5-prong smoke budget = 30 min total → ≤6 min per prong; signal analysis
+# 5-prong smoke budget = 30 min total → ≤6 min per prong; signal analysis
 # is the cheapest of the 5 (no model train, no data fetch). 300 s gives 50x
 # headroom over expected wall-clock (~5 s for 400-day synthetic panel).
 _BUDGET_SEC = 300.0
@@ -42,12 +42,12 @@ def test_signal_analysis_smoke() -> None:
     """ACTIVATE-03 smoke: synthetic anchor → run_signal_analysis → 4 outputs.
 
     Asserts:
-    * All three D-15 output files persisted (ic.json + ic_decay.parquet +
+    * All three output files persisted (ic.json + ic_decay.parquet +
       group_analysis.parquet).
-    * D-16 comparison_vs_v18.json present (v18 baseline may be null).
+    * comparison_vs_v18.json present (v18 baseline may be null).
     * IC summary has expected keys; n_dates > 30 (sample sanity).
     * IC decay parquet has columns ``[lag, ic_mean, n]`` and at least one row.
-    * Wall-clock < ``_BUDGET_SEC`` (D-31).
+    * Wall-clock < ``_BUDGET_SEC``.
     """
     pytest.importorskip("qlib")
     from tests.conftest import make_synthetic_anchor_signal
@@ -83,13 +83,13 @@ def test_signal_analysis_smoke() -> None:
         )
     )
 
-    # === D-15: 3 standard signal-analysis outputs ===
+    # === 3 standard signal-analysis outputs ===
     assert status == "OK", f"signal analysis smoke {status}: {error}"
-    assert (out_dir / "ic.json").exists(), "D-15.1 ic.json missing"
-    assert (out_dir / "ic_decay.parquet").exists(), "D-15.2 ic_decay.parquet missing"
-    assert (out_dir / "group_analysis.parquet").exists(), "D-15.3 group_analysis.parquet missing"
-    # === D-16: comparison vs v18 perf() ===
-    assert (out_dir / "comparison_vs_v18.json").exists(), "D-16 comparison_vs_v18.json missing"
+    assert (out_dir / "ic.json").exists(), "ic.json missing"
+    assert (out_dir / "ic_decay.parquet").exists(), "ic_decay.parquet missing"
+    assert (out_dir / "group_analysis.parquet").exists(), "group_analysis.parquet missing"
+    # === Comparison vs v18 perf() ===
+    assert (out_dir / "comparison_vs_v18.json").exists(), "comparison_vs_v18.json missing"
 
     # === IC summary sanity (synthetic fixture has 0.15 correlation built-in) ===
     ic_summary = json.loads((out_dir / "ic.json").read_text())
@@ -114,11 +114,11 @@ def test_signal_analysis_smoke() -> None:
         f"group_analysis missing required columns; got {list(group.columns)}"
     )
 
-    # === D-16 comparison shape ===
+    # === Comparison shape ===
     comp = json.loads((out_dir / "comparison_vs_v18.json").read_text())
     assert "qlib_signal_analysis" in comp, "comparison_vs_v18 missing qlib_signal_analysis block"
     assert "v18_perf_full" in comp, "comparison_vs_v18 missing v18_perf_full block"
     # v18_perf_full may be null on Mac path; on stormtrooper baseline may be absent
-    # (Plan 95-03 generated it once but it's not in scripts/output by default).
+    # (A prior plan generated it once but it's not in scripts/output by default).
 
-    assert elapsed < _BUDGET_SEC, f"wall-clock {elapsed:.1f}s >= {_BUDGET_SEC}s budget (D-31)"
+    assert elapsed < _BUDGET_SEC, f"wall-clock {elapsed:.1f}s >= {_BUDGET_SEC}s budget"

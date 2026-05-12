@@ -1,4 +1,4 @@
-"""Tests for the Phase 41 handler/model allowlist module (RESEARCH-API-02).
+"""Tests for the handler/model allowlist module.
 
 Pure Python unit tests -- no database, no SQLite shim needed. Validates that
 the static allowlist dicts contain the expected entries and that the resolve
@@ -43,7 +43,7 @@ def test_allowed_model_classes_contains_expected_entries():
 
 
 def test_allowed_model_classes_contains_zoo_entries():
-    """Phase 94: LocalformerModel, TRAModel, ALSTM must be present with correct FQN."""
+    """LocalformerModel, TRAModel, ALSTM must be present with correct FQN."""
     assert "ALSTM" in ALLOWED_MODEL_CLASSES
     assert "TRAModel" in ALLOWED_MODEL_CLASSES
     assert "LocalformerModel" in ALLOWED_MODEL_CLASSES
@@ -88,7 +88,7 @@ def test_resolve_model_invalid_raises_valueerror():
 
 
 # ---------------------------------------------------------------------------
-# Phase 94 — model zoo entries (D-01..D-03 amended; OQ-1 OPTION 1 Localformer)
+# Model zoo entries
 # ---------------------------------------------------------------------------
 
 

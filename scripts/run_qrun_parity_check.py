@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""ACTIVATE-02 D-11 amended parity check.
+"""Amended qrun parity check.
 
-Per CONTEXT.md D-11 (amended 2026-05-03 post-OQ-2): qrun YAML emits a
-continuous LGBModel prediction; ``scripts/test_tx_basis_vol.py`` emits a
-discrete rule-based engagement mask (basis_z<-1). 1e-6 numerical parity is
-mathematically impossible. Re-frame as **directional + order-of-magnitude**:
+qrun YAML emits a continuous LGBModel prediction;
+``scripts/test_tx_basis_vol.py`` emits a discrete rule-based engagement mask
+(basis_z<-1). 1e-6 numerical parity is mathematically impossible. Re-frame
+as **directional + order-of-magnitude**:
 
   1. **Sign agreement**: ``sign(qrun_sharpe) == sign(v18_sharpe)`` (same direction)
   2. **Magnitude bracket**: ``|qrun_sharpe / v18_sharpe| ∈ [0.5, 2.0]`` (same scale)
 
-Pass = both conditions True. Fail-open per D-12: any failure returns
+Pass = both conditions True. Fail-open: any failure returns
 ``status="PARTIAL"`` with a structured ``partial_reason`` so the SUMMARY can
 record root cause without aborting the phase.
 
@@ -39,7 +39,7 @@ V18_RUN_KEY = "warmup_252"
 QRUN_RECORDER_DIR = Path("/app/local_dev/qlib-activations/qrun-runs/v18-tx_basis_vol")
 QRUN_EXPERIMENT_NAME = "phase95_tx_basis_vol"
 
-# D-11 amended bracket (CONTEXT.md 2026-05-03).
+# Amended bracket.
 MAGNITUDE_LO = 0.5
 MAGNITUDE_HI = 2.0
 
@@ -95,7 +95,7 @@ def parity_check(
     recorder_dir: Path | None = None,
     v18_json_path: Path | None = None,
 ) -> dict[str, Any]:
-    """D-11 amended parity check — sign agreement + magnitude bracket.
+    """Amended parity check — sign agreement + magnitude bracket.
 
     Returns a dict with::
 
@@ -155,7 +155,7 @@ def parity_check(
         result["partial_reason"] = "v18 sharpe is zero — magnitude ratio undefined"
         return result
 
-    # 4. D-11 sign + magnitude.
+    # 4. Sign + magnitude check.
     sign_match = (qsh > 0) == (vsh > 0)
     magnitude_ratio = abs(qsh / vsh)
     magnitude_ok = MAGNITUDE_LO <= magnitude_ratio <= MAGNITUDE_HI
@@ -178,7 +178,7 @@ def parity_check(
 
 def main() -> None:
     result = parity_check()
-    # Persist parity.json next to mlruns/ so Wave 5 + verifier can read it.
+    # Persist parity.json next to mlruns/ so the verifier can read it.
     parity_path = QRUN_RECORDER_DIR / "parity.json"
     parity_path.parent.mkdir(parents=True, exist_ok=True)
     parity_path.write_text(json.dumps(result, indent=2, default=str))

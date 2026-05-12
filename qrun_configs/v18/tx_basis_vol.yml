@@ -1,5 +1,5 @@
-# Phase 95 ACTIVATE-02 (D-09, D-10, D-13) — qrun YAML reproducing v18
-# scripts/test_tx_basis_vol.py thesis as a declarative pipeline.
+# qrun YAML reproducing the v18 scripts/test_tx_basis_vol.py thesis as a
+# declarative pipeline.
 #
 # Pattern P4 — invoked via qlib.cli.run.workflow() (direct in-process call).
 # Pattern P8 — every `class:` entry MUST resolve through
@@ -8,7 +8,7 @@
 #   qlib provider data via StaticDataLoader.
 # Pitfall 2 — driver pins MLFLOW_TRACKING_URI=file:... explicitly to avoid
 #   leaking onto the qlib-research container's Postgres MLflow backend.
-# Pitfall 8 — model handler is the Wave 0 PoseidonDataHandlerForQrun adapter
+# Pitfall 8 — model handler is the PoseidonDataHandlerForQrun adapter
 #   (allowlisted), NOT qlib.contrib.data.handler.Alpha158.
 
 qlib_init:
@@ -43,7 +43,7 @@ port_analysis_config: &port_analysis_config
 
 task:
   model:
-    class: LGBModel               # D-13 — Phase 94 allowlist entry
+    class: LGBModel               # allowlist entry
     module_path: qlib.contrib.model.gbdt
     kwargs:
       loss: mse
@@ -54,7 +54,7 @@ task:
     module_path: qlib.data.dataset
     kwargs:
       handler:
-        class: PoseidonDataHandlerForQrun   # Wave 0 allowlist entry (Pitfall 8)
+        class: PoseidonDataHandlerForQrun   # allowlist entry (Pitfall 8)
         module_path: poseidon.qlib.data_handler_qrun
         kwargs: *data_handler_config
       segments:

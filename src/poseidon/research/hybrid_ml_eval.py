@@ -1,4 +1,4 @@
-"""Helpers for Phase 68 hybrid ML artifact loading and portfolio comparison."""
+"""Helpers for hybrid ML artifact loading and portfolio comparison."""
 
 from __future__ import annotations
 
@@ -169,7 +169,7 @@ def compare_against_phase67_benchmark(
     alpha158_lgb: Any,
     alpha158_xgb: Any,
 ) -> dict[str, Any]:
-    """Build a markdown-ready comparison payload for the Phase 67 benchmark."""
+    """Build a markdown-ready comparison payload for the benchmark."""
     rows = [
         _row("fundamental_rule_based", fundamental_rule_based),
         _row("alpha158_lgb", alpha158_lgb),

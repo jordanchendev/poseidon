@@ -1,6 +1,6 @@
-"""Phase 92 Plan 92-03 — per-fold Sharpe extractor unit tests.
+"""Per-fold Sharpe extractor unit tests.
 
-Validates Pattern B from 92-RESEARCH.md §Code Examples lines 575-610 —
+Validates Pattern B from prior research examples —
 extractor walks qlib mlflow recorders and computes per-fold OOS Sharpe.
 
 B-1 fix (per checker review): tests inject a synthetic ``recorders_iter``

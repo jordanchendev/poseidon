@@ -1,9 +1,7 @@
-"""Phase 85 driver/factory test suite.
+"""Driver and factory tests for the phase85 module.
 
-See VALIDATION.md task IDs 85-XX-01 .. 85-XX-12 for the full test plan;
-this Wave-0 module currently exercises pre-flight (D-05, D-20), the 9-dim
-→ 17-key strategy factory remap, walk-forward window count under D-06/D-07,
-and the WindowResult attribute surface (A2).
+Exercises pre-flight checks, the 9-dim → 17-key strategy factory remap,
+walk-forward window count, and the WindowResult attribute surface.
 """
 
 from __future__ import annotations
@@ -15,13 +13,13 @@ import pytest
 
 
 class TestPreFlight:
-    """D-20 ordering anchor + D-05 schema check."""
+    """Ordering anchor + Postgres schema check."""
 
     def test_d20_anchor_in_git_log(self):
-        """D-20: frozen-gate commit 5a1ecc9 must precede every Phase 85 commit."""
+        """Frozen-gate commit 5a1ecc9 must precede every phase85 commit."""
         # Anchor lives in the AQUARIUM repo, not poseidon. Walk up from this
-        # file (poseidon/tests/backtest/test_phase85_driver.py) to find aquarium
-        # root (../../../..). Fall back to AQUARIUM_ROOT env if path varies.
+        # file to find aquarium root (../../../..). Fall back to AQUARIUM_ROOT
+        # env if path varies.
         candidate = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
         result = subprocess.run(
             ["git", "log", "--oneline", "5a1ecc9", "-1"],
@@ -37,11 +35,11 @@ class TestPreFlight:
                 capture_output=True,
                 text=True,
             )
-        assert result.returncode == 0, f"D-20 anchor 5a1ecc9 missing from git history: {result.stderr}"
+        assert result.returncode == 0, f"frozen-gate anchor 5a1ecc9 missing from git history: {result.stderr}"
         assert "5a1ecc9" in result.stdout
 
     def test_pg_schema_check(self, fixture_postgres_url):
-        """D-05: Postgres ``optuna`` schema exists. Skip if Postgres unreachable."""
+        """Postgres ``optuna`` schema exists. Skip if Postgres unreachable."""
         psycopg2 = pytest.importorskip("psycopg2")
         from urllib.parse import urlparse
 
@@ -67,7 +65,7 @@ class TestPreFlight:
 
 
 # ---------------------------------------------------------------------------
-# Task 2 — phase85_strategy_factory remap + WFE window-count + per-window shape
+# phase85_strategy_factory remap + WFE window-count + per-window shape
 # ---------------------------------------------------------------------------
 
 SAMPLE_D01: dict = {
@@ -84,7 +82,7 @@ SAMPLE_D01: dict = {
 
 
 class TestParamRemap:
-    """Phase 85 9-dim D-01 → 17-key factory namespace remap (RESEARCH Pitfall 5)."""
+    """9-dim → 17-key factory namespace remap."""
 
     def test_atr_low_maps_to_regime_0(self):
         from poseidon.backtest.phase85_strategy_factory import remap_d01_to_factory
@@ -101,18 +99,18 @@ class TestParamRemap:
         assert remapped["atr_mult_regime_2"] == 4.5
 
     def test_atr_regime_3_uses_default(self):
-        """D-01 omits regime_3; resolved 17-key dict must surface factory default 2.0."""
+        """When regime_3 is omitted from input, resolved 17-key dict must surface factory default 2.0."""
         from poseidon.backtest.phase85_strategy_factory import resolve_factory_params
 
         resolved = resolve_factory_params(SAMPLE_D01)
         assert "atr_mult_regime_3" in resolved
         # Factory default for regime_3 (extreme vol) is 2.0 per
-        # liquidity_sweep_factory.py line 78. Must NOT echo user's `high` (4.5).
+        # liquidity_sweep_factory.py. Must NOT echo user's `high` (4.5).
         assert resolved["atr_mult_regime_3"] == 2.0
         assert resolved["atr_mult_regime_3"] != SAMPLE_D01["atr_multiplier_high"]
 
     def test_unspecified_8_params_use_factory_defaults(self):
-        """A3 resolution: factory accepts a 9-key subset without raising."""
+        """Factory accepts a 9-key subset without raising."""
         from poseidon.backtest.phase85_strategy_factory import (
             make_phase85_strategy_factory,
         )
@@ -147,7 +145,7 @@ class TestParamRemap:
 
 
 class TestWalkForwardWindowCount:
-    """RESEARCH Pitfall 4 + D-06/D-07: 270d 1m fixture must yield 4 windows."""
+    """270d 1m fixture must yield 4 windows (Pitfall 4 regression)."""
 
     def test_270d_yields_4_windows(self, fixture_270d_1m_ohlcv):
         from poseidon.backtest.walk_forward import (
@@ -175,7 +173,9 @@ class TestWalkForwardWindowCount:
         # Window 3 IS=[129_600, 259_200), OOS=[259_200, 388_800) — fits exactly
         # Window 4 IS=[172_800, 302_400), OOS=[302_400, 432_000) — exceeds 388_800
         # → exactly 4 windows
-        assert len(windows) == 4, f"expected 4 windows on 270d 1m (388_800 bars) under D-07 config, got {len(windows)}"
+        assert len(windows) == 4, (
+            f"expected 4 windows on 270d 1m (388_800 bars) under standard config, got {len(windows)}"
+        )
 
     def test_passing_literal_90_yields_wrong_window_count(self, fixture_270d_1m_ohlcv):
         """Negative test — proves Pitfall 4 (literal day count vs bar count) is real."""
@@ -211,16 +211,16 @@ class TestPerWindowShape:
 
         field_names = {f.name for f in fields(WindowResult)}
 
-        # Hard requirements (D-15 schema input):
+        # Hard requirements (artifact schema input):
         assert "is_metrics" in field_names
         assert "oos_metrics" in field_names
         # window_index is the only stable cross-window identifier.
         assert "window_index" in field_names
 
         # A2 question — DOCUMENT presence/absence (informational, no fail).
-        # Current verdict (Phase 85 Wave-1 baseline): WindowResult exposes
+        # Current verdict: WindowResult exposes
         #   {window_index, is_metrics, oos_metrics, is_trade_count, oos_trade_count}
-        # but NOT timestamp ranges or raw trades. Plan 85-03 must either
+        # but NOT timestamp ranges or raw trades. The driver must either
         #   (a) extend WindowResult to expose oos_trades/oos_period, or
         #   (b) re-run BacktestRunner per window for max_consecutive_losses.
         has_oos_trades = "oos_trades" in field_names
@@ -230,7 +230,7 @@ class TestPerWindowShape:
 
         try:
             with open("/tmp/phase85_a2_resolution.txt", "w") as fh:
-                fh.write("Phase 85 A2 resolution (TestPerWindowShape)\n")
+                fh.write("A2 resolution (TestPerWindowShape)\n")
                 fh.write("===========================================\n")
                 fh.write(f"WindowResult fields: {sorted(field_names)}\n")
                 fh.write(f"has_oos_trades: {has_oos_trades}\n")
@@ -263,7 +263,7 @@ class _T:
 
 
 class TestMaxConsecutiveLosses:
-    """D-19: longest streak of consecutive negative-PnL closed trades."""
+    """Longest streak of consecutive negative-PnL closed trades."""
 
     def test_basic_streak(self):
         from poseidon.backtest.phase85_metrics import compute_max_consecutive_losses
@@ -295,7 +295,7 @@ class TestMaxConsecutiveLosses:
         assert compute_max_consecutive_losses(trades) == 4
 
     def test_open_position_skipped(self):
-        """D-19: open position (exit_time=None) does NOT extend or break the streak."""
+        """Open position (exit_time=None) does NOT extend or break the streak."""
         from poseidon.backtest.phase85_metrics import compute_max_consecutive_losses
 
         ts = pd.Timestamp("2026-01-01")
@@ -331,7 +331,7 @@ class TestMaxConsecutiveLosses:
 
 
 class TestWFEDegradationExcludesISNegative:
-    """D-16: mean(oos_sharpe / is_sharpe) over windows with IS > 0."""
+    """Mean(oos_sharpe / is_sharpe) over windows with IS > 0."""
 
     @staticmethod
     def _w(is_sh, oos_sh):
@@ -387,7 +387,7 @@ class TestWFEDegradationExcludesISNegative:
 
 
 class TestOOSAggregateSharpeZeroTrades:
-    """D-17: trade-count-weighted aggregate Sharpe."""
+    """Trade-count-weighted aggregate Sharpe."""
 
     @staticmethod
     def _w(sh, trades):
@@ -444,7 +444,7 @@ class TestOOSAggregateSharpeZeroTrades:
 
 
 class TestSharpe1mAnnualization:
-    """Pitfall 6: Phase 85 driver must pass bars_per_year=525_600 for 1m data."""
+    """Driver must pass bars_per_year=525_600 for 1m data (Pitfall 6)."""
 
     def test_525600_vs_252(self):
         from poseidon.backtest.metrics import compute_metrics
@@ -507,7 +507,7 @@ class TestToJsonable:
         assert json.loads(text)["v"] is None
 
     def test_inf_becomes_null(self):
-        """Inf floats must also become JSON null (Phase 86 verdict safety)."""
+        """Inf floats must also become JSON null (verdict safety)."""
         from poseidon.backtest.phase85_metrics import to_jsonable
 
         text = json.dumps({"v": np.float64("inf")}, default=to_jsonable)
@@ -528,9 +528,9 @@ class TestToJsonable:
 # Plan 85-03 — phase85_driver orchestrator
 # ---------------------------------------------------------------------------
 #
-# These tests exercise the Wave-3 driver. They use small ``n_trials`` and short
+# These tests exercise the driver. They use small ``n_trials`` and short
 # OHLCV slices to keep dev-machine runs fast; the full 100-trial × 270d × 2
-# symbols E2E lives in the Wave-5 stormtrooper plan (85-05).
+# symbols E2E lives in the stormtrooper integration plan.
 
 
 def _short_1m_ohlcv(periods: int = 4000, seed: int = 87) -> pd.DataFrame:
@@ -609,7 +609,7 @@ class TestRedactPassword:
 
 
 class TestBudgetMeasurement:
-    """D-12: per-trial budget callback samples wall + RSS every N trials."""
+    """Per-trial budget callback samples wall + RSS every N trials."""
 
     def test_sample_budget_returns_dataclass(self):
         import time as _time
@@ -746,11 +746,11 @@ class TestOptunaSmoke5Trials:
             wf_config=cfg,
         )
 
-        # Schema invariants — Phase 86 reads these fields.
+        # Schema invariants — downstream verdict reads these fields.
         assert result.symbol == "BTCUSDT"
         assert result.study_name == "phase85_btcusdt_smoke"
         assert isinstance(result.best_params, dict)
-        assert len(result.best_params) == 9  # D-01 9-dim
+        assert len(result.best_params) == 9  # 9-dim param space
         assert isinstance(result.factory_params_resolved, dict)
         assert math.isfinite(result.best_value)
         assert result.n_trials_completed >= 1
@@ -760,7 +760,7 @@ class TestOptunaSmoke5Trials:
 
 
 class TestTrialFailureIsolation:
-    """D-18: study.optimize(catch=(ValueError,)) — one bad trial must not kill study."""
+    """study.optimize(catch=(ValueError,)) — one bad trial must not kill study."""
 
     def test_optimize_passes_catch_kwarg(self):
         """Driver source must pass ``catch=(ValueError,)`` to study.optimize."""
@@ -769,8 +769,7 @@ class TestTrialFailureIsolation:
         driver_path = Path(__file__).resolve().parents[2] / "src" / "poseidon" / "backtest" / "phase85_driver.py"
         text = driver_path.read_text()
         assert "catch=(ValueError" in text, (
-            "D-18: study.optimize must pass catch=(ValueError,) so trial-level "
-            "constraint failures don't terminate the study"
+            "study.optimize must pass catch=(ValueError,) so trial-level constraint failures don't terminate the study"
         )
 
 
@@ -784,7 +783,7 @@ class TestOosTradesPipeline:
         from poseidon.backtest.phase85_strategy_factory import resolve_factory_params
 
         ohlcv = _short_1m_ohlcv(periods=2000)
-        # Use a resolved 17-key dict (factory accepts this directly via D-01)
+        # Use a resolved 17-key dict (factory accepts the 9-dim space directly)
         sample_d01 = {
             "lookback_bars": 1440,
             "cooldown_bars": 240,
@@ -832,25 +831,25 @@ class TestOosTradesPipeline:
         )
 
     def test_no_pass_fail_logic_in_driver(self):
-        """Driver is library-only — verdict math lives in Phase 86, NOT here."""
+        """Driver is library-only — verdict math lives downstream, NOT here."""
         from pathlib import Path
 
         driver_path = Path(__file__).resolve().parents[2] / "src" / "poseidon" / "backtest" / "phase85_driver.py"
         text = driver_path.read_text()
-        # Forbidden tokens — these belong to Phase 86 verdict layer.
+        # Forbidden tokens — these belong to the verdict layer.
         forbidden = ["PASS", "FAIL", "verdict", "GATE_PASSED", "VERDICT"]
         for token in forbidden:
-            # Allow incidental occurrences inside docstrings (Phase 85 docs
+            # Allow incidental occurrences inside docstrings (driver docs
             # mention "no PASS/FAIL"). The strict-check rule: token must not
             # appear as a string literal that would be returned as data.
             # Heuristic: forbid `"PASS"`, `"FAIL"`, `'verdict'` literals.
             assert f'"{token}"' not in text, (
                 f"phase85_driver.py contains '{token}' string literal — "
-                "verdict logic must live in Phase 86, not the driver"
+                "verdict logic must live in the verdict layer, not the driver"
             )
             assert f"'{token}'" not in text, (
                 f"phase85_driver.py contains '{token}' string literal — "
-                "verdict logic must live in Phase 86, not the driver"
+                "verdict logic must live in the verdict layer, not the driver"
             )
 
     def test_no_metrics_kwargs_alias_path(self):
@@ -967,7 +966,7 @@ _WF_CFG = {
 
 
 class TestArtifactSchema:
-    """D-14 / D-15 schema contracts pinned via REQUIRED_*_KEYS sets."""
+    """Schema contracts pinned via REQUIRED_*_KEYS sets."""
 
     def test_optuna_payload_has_all_d14_keys(self):
         r = _synthetic_result()
@@ -982,7 +981,7 @@ class TestArtifactSchema:
         assert payload["frozen_gate_anchor"] == "5a1ecc9"
         assert payload["bars_per_year"] == 525_600
         assert payload["schema_version"] == ARTIFACT_SCHEMA_VERSION
-        assert len(payload["best_params"]) == 9  # D-01 9-dim
+        assert len(payload["best_params"]) == 9  # 9-dim param space
         assert payload["verdict_inputs"]["n_trials_completed"] == 87
         assert payload["verdict_inputs"]["n_trials_failed"] == 13
         assert payload["verdict_inputs"]["best_value_is_sharpe"] == pytest.approx(1.42)
@@ -1002,12 +1001,12 @@ class TestArtifactSchema:
           gate_02.metric == 'wfe_degradation'        (op '<',  threshold 0.40)
           gate_03.metric == 'oos_total_trades'       (op '>=', threshold 100)
           gate_04.metric == 'max_consecutive_losses' (op '<=', threshold 8)
-        Thresholds are Phase 86's domain — Phase 85 only emits raw values.
+        Thresholds belong to the verdict layer — the driver only emits raw values.
         """
         r = _synthetic_result()
         payload = build_wfe_payload(r, wf_config_dict=_WF_CFG)
         vi = payload["verdict_inputs"]
-        # Phase 86 will read these EXACT names from GATE.yaml.
+        # The verdict layer will read these EXACT names from GATE.yaml.
         assert "oos_aggregate_sharpe" in vi
         assert "wfe_degradation" in vi
         assert "oos_total_trades" in vi
@@ -1054,7 +1053,7 @@ class TestArtifactSchema:
     def test_wfe_degradation_none_serializes(self):
         """All-IS-negative degenerate case → wfe_degradation=None → JSON null."""
         r = _synthetic_result()
-        # Force all IS sharpe negative so D-16 returns None.
+        # Force all IS sharpe negative so wfe_degradation returns None.
         for w in r.wfe_per_window:
             w["is_metrics"]["sharpe_ratio"] = -0.5
         payload = build_wfe_payload(r, wf_config_dict=_WF_CFG)
@@ -1133,7 +1132,7 @@ class TestVerdictInputsRegression:
     85-03 driver re-runs per-window OOS backtests to attach `oos_trades`.
     If `_flatten_oos_trades` silently returns [] on missing/empty windows,
     compute_max_consecutive_losses([]) → 0, and gate_04 (<= 8) silently
-    passes for every run regardless of true streak — corrupts Phase 86.
+    passes for every run regardless of true streak — corrupts the verdict layer.
     """
 
     def test_max_consecutive_losses_nonzero(self):
@@ -1243,7 +1242,7 @@ class TestVerdictInputsRegression:
             _flatten_oos_trades(per_window_missing)
 
     def test_flatten_raises_when_per_window_empty(self):
-        """Empty per_window list → ValueError (Phase 86 cannot proceed)."""
+        """Empty per_window list → ValueError (verdict layer cannot proceed)."""
         with pytest.raises(ValueError, match="per_window is empty"):
             _flatten_oos_trades([])
 
@@ -1252,7 +1251,7 @@ class TestVerdictInputsRegression:
         artifact emitted with wfe_flag 'zero_oos_trades' AND
         max_consecutive_losses=None (NOT silent 0).
 
-        Phase 86 reads max_consecutive_losses=None as a signal that gate_04
+        The verdict layer reads max_consecutive_losses=None as a signal that gate_04
         cannot be evaluated for this run — surfaces the truth instead of
         spuriously passing the gate (which '<= 8' would do for 0).
         """

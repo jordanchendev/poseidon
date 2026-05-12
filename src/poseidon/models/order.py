@@ -27,24 +27,24 @@ class OrderRecord(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="'pending'")
     broker_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     broker_mode: Mapped[str] = mapped_column(String(16), nullable=False)  # paper / live
-    # TRUTH-03 (D-13): structured 4-key dict {check_name, rule, shortfall, details}
+    # TRUTH-03: structured 4-key dict {check_name, rule, shortfall, details}
     # built via poseidon.risk.reject_reason.build_reject_reason. NULL when not rejected.
     reject_reason: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    # Phase 89-01 (D-04, F8 wiring fix): FK to signals(id) so we can audit
-    # whether this Order was driven by an upstream PASSED signal. Indexed for
-    # the Phase 88 mini-audit join (signals.status='passed' -> orders.signal_id).
-    # NULL for portfolio rebalance / protective close paths.
+    # FK to signals(id) so we can audit whether this Order was driven by
+    # an upstream PASSED signal. Indexed for the mini-audit join
+    # (signals.status='passed' -> orders.signal_id). NULL for portfolio
+    # rebalance / protective close paths.
     signal_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("signals.id"),
         nullable=True,
         index=True,
     )
-    # Phase 89-02 (W4 audit whitelist): origin tag distinguishes
-    # signal-driven flows from protective close paths. Combined with
-    # signal_id NULL it lets the mini-audit reject false positives:
-    # NULL + origin=signal           -> wiring breach (must be 0 post-89)
-    # NULL + origin=stop_loss/liquidation/manual -> legitimate Cat-B
+    # Audit whitelist: origin tag distinguishes signal-driven flows from
+    # protective close paths. Combined with signal_id NULL it lets the
+    # mini-audit reject false positives:
+    # NULL + origin=signal           -> wiring breach (must be 0)
+    # NULL + origin=stop_loss/liquidation/manual -> legitimate protective exit
     order_origin: Mapped[str] = mapped_column(
         String(32),
         nullable=False,

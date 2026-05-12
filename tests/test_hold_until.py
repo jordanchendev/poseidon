@@ -1,7 +1,7 @@
 """RED phase: Tests for check_hold_until -- revenue trigger, missing data guard, publication lag.
 
 These tests verify the HoldUntilConfig models and check_hold_until method
-on FundamentalSelectionStrategy (Phase 72 D-05/D-06/D-07/D-14/D-15/D-18).
+on FundamentalSelectionStrategy.
 """
 
 from datetime import date, datetime
@@ -125,15 +125,15 @@ class TestRevenueYoYPositive:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Missing Data Guard (D-07)
+# Tests: Missing Data Guard
 # ---------------------------------------------------------------------------
 
 
 class TestMissingDataGuard:
-    """Tests for D-07: missing revenue data should NOT trigger sell."""
+    """Tests: missing revenue data should NOT trigger sell."""
 
     def test_empty_dataframe_returns_true(self):
-        """Empty DataFrame (no revenue data) -> hold per D-07."""
+        """Empty DataFrame (no revenue data) -> hold."""
         hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="revenue_yoy_positive")])
         strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
         repo.read_monthly_revenue = MagicMock(return_value=pd.DataFrame())
@@ -142,7 +142,7 @@ class TestMissingDataGuard:
         assert result is True
 
     def test_nan_yoy_value_returns_true(self):
-        """NaN YoY value -> hold per D-07."""
+        """NaN YoY value -> hold."""
         hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="revenue_yoy_positive")])
         strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
         nan_df = pd.DataFrame(
@@ -155,7 +155,7 @@ class TestMissingDataGuard:
         assert result is True
 
     def test_no_yoy_column_returns_true(self):
-        """DataFrame without YoY column -> hold per D-07."""
+        """DataFrame without YoY column -> hold."""
         hu_cfg = HoldUntilConfig(conditions=[HoldUntilCondition(type="revenue_yoy_positive")])
         strategy, repo = _make_strategy(hold_until_cfg=hu_cfg)
         no_col_df = pd.DataFrame(
@@ -169,12 +169,12 @@ class TestMissingDataGuard:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Publication Lag (D-06)
+# Tests: Publication Lag
 # ---------------------------------------------------------------------------
 
 
 class TestPublicationLag:
-    """Tests for D-06: publication_lag_days applied to revenue reads."""
+    """Tests: publication_lag_days applied to revenue reads."""
 
     def test_publication_lag_offset(self):
         """as_of=2025-06-15, lag=10 -> read_monthly_revenue called with as_of_date='2025-06-05'."""
@@ -227,7 +227,7 @@ class TestMaxHoldingDays:
 
 
 # ---------------------------------------------------------------------------
-# Tests: AND Logic (D-03)
+# Tests: AND Logic
 # ---------------------------------------------------------------------------
 
 

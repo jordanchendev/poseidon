@@ -1,6 +1,6 @@
 # v15.0 Decision Gate -- Frozen Criteria
-# Committed BEFORE any optimization work (RES-03).
-# Phase 78 evaluates against these criteria. Do NOT modify after commit.
+# Committed BEFORE any optimization work. Evaluation reads these criteria.
+# Do NOT modify after commit.
 version: "v15.0"
 frozen_date: "2026-04-21"
 criteria:
@@ -11,7 +11,7 @@ criteria:
   max_strategy_variations: 3        # Max 3 variations tested (GATE-04)
   beat_random_baseline: true        # Must beat random-date entry baseline (GATE-05)
 data:
-  start_date: "2024-01-01"          # Post-ETF only (D-01)
+  start_date: "2024-01-01"          # Post-ETF only
   end_date: null                    # null = current date at runtime
   symbols: ["BTCUSDT", "ETHUSDT"]
   interval: "4h"

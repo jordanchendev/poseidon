@@ -1,12 +1,12 @@
-"""Seed $9,870,000.00 cash deposit on 2026-04-28 (TRUTH-04, D-07).
+"""Seed $9,870,000.00 cash deposit on 2026-04-28.
 
 Revision ID: 033
 Revises: 032
 Create Date: 2026-04-29
 
 The 2026-04-28 health check identified a $9.87M cash deposit that
-contaminated total_return_pct (98.70% bug). Per CONTEXT D-07, seed the
-deposit into the cash_flow column on the corresponding NAV snapshot row.
+contaminated total_return_pct (98.70% bug). Seed the deposit into the
+cash_flow column on the corresponding NAV snapshot row.
 
 Audit (2026-04-29) found exactly one nav_snapshot on 2026-04-28 with
 market='crypto_perp' (total_nav=$9,970,236.89, holdings_value=0.0,

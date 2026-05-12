@@ -4,10 +4,10 @@ Revision ID: 020
 Revises: 019
 Create Date: 2026-04-08
 
-Phase 38 data-foundation (D-01, D-10):
+Data-foundation substrate:
 - CREATE TABLE ingest_state — cursor state per (symbol, market, interval)
 - CREATE TABLE backfill_jobs — job_id/status/cursor/progress (replaces backfill_progress)
-- DROP TABLE backfill_progress — clean slate per decision D-10
+- DROP TABLE backfill_progress — clean slate, no rollback path required
 """
 
 import sqlalchemy as sa
@@ -53,7 +53,7 @@ def upgrade():
         sa.PrimaryKeyConstraint("symbol", "market", "interval", name="pk_ingest_state"),
     )
 
-    # backfill_jobs: replaces backfill_progress (Phase 38 D-10)
+    # backfill_jobs: replaces backfill_progress
     op.create_table(
         "backfill_jobs",
         sa.Column(
@@ -95,7 +95,7 @@ def upgrade():
     )
     op.create_index("ix_backfill_jobs_status", "backfill_jobs", ["status"])
 
-    # Drop legacy backfill_progress table (D-10 clean slate)
+    # Drop legacy backfill_progress table — clean slate, no rollback path
     op.drop_table("backfill_progress")
 
 

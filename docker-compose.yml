@@ -13,13 +13,13 @@ services:
       - POSEIDON_API_KEY=${POSEIDON_API_KEY}
       - POSEIDON_THALASSA_BASE_URL=${POSEIDON_THALASSA_BASE_URL:-}
       - POSEIDON_THALASSA_API_KEY=${POSEIDON_THALASSA_API_KEY:-}
-      # Phase 90-05b: /research/rl-execution/runs/{id}/results streams parquet
-      # written by qlib-research's rl_execute task. Same env var keeps both
-      # sides reading/writing under the same /app/local_dev tree.
+      # /research/rl-execution/runs/{id}/results streams parquet written by
+      # qlib-research's rl_execute task. Same env var keeps both sides
+      # reading/writing under the same /app/local_dev tree.
       - POSEIDON_AQUARIUM_ROOT=/app
     volumes:
       - model-artifacts:/data/models
-      # Phase 90-05b: read-only access to the rl_execute output directory so
+      # Read-only access to the rl_execute output directory so
       # /research/rl-execution/runs/{id}/results can stream parquet files.
       - ./local_dev:/app/local_dev:ro
     extra_hosts:
@@ -104,10 +104,9 @@ services:
 
   qlib-research:
     # Python 3.12 Qlib training worker — subscribes to qlib_queue.
-    # Runs as a long-lived Celery worker (Phase 41 D-10), replacing the
-    # previous one-shot `profiles: ["research"]` approach. concurrency=1
-    # and pool=solo are mandatory: pyqlib is not thread-safe and CUDA
-    # ops need exclusive GPU access (D-13).
+    # Runs as a long-lived Celery worker. concurrency=1 and pool=solo are
+    # mandatory: pyqlib is not thread-safe and CUDA ops need exclusive
+    # GPU access.
     build:
       context: .
       dockerfile: Dockerfile.qlib
@@ -122,16 +121,16 @@ services:
       - POSEIDON_THALASSA_BASE_URL=${POSEIDON_THALASSA_BASE_URL:-}
       - POSEIDON_THALASSA_API_KEY=${POSEIDON_THALASSA_API_KEY:-}
       - MLFLOW_TRACKING_URI=postgresql+psycopg2://poseidon:poseidon@host.docker.internal:5433/poseidon?options=-csearch_path%3Dmlflow,public
-      # Phase 90-05a path-resolution fix: Dockerfile.qlib uses
-      # `uv sync --no-editable` so __file__ resolves inside .venv/site-packages,
-      # making `parents[4]` point at .venv. Pin the project root explicitly.
+      # Path-resolution fix: Dockerfile.qlib uses `uv sync --no-editable`
+      # so __file__ resolves inside .venv/site-packages, making `parents[4]`
+      # point at .venv. Pin the project root explicitly.
       - POSEIDON_AQUARIUM_ROOT=/app
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - model-artifacts:/data/models
-      # Phase 90-05a result persistence: rl_execute writes
-      # fills.parquet + comparison.parquet + summary.json under
+      # rl_execute result persistence: writes fills.parquet +
+      # comparison.parquet + summary.json under
       # /app/local_dev/rl-execution/runs/<run_id>/. Bind-mount keeps the
       # output durable on the host and visible to the api service so the
       # /research/rl-execution/runs/{id}/results endpoint can stream it.
@@ -139,20 +138,20 @@ services:
       # Mount source for live edits during research sessions
       - ./src:/app/src
       - ./tests:/app/tests
-      # Phase 95 ACTIVATE-01: scripts/run_alpha158_eval.py + future Phase 95
-      # driver scripts (run_signal_analysis.py, run_portfolio_report.py) live
-      # under scripts/ alongside the existing v18 hand-written drivers. Mount
+      # scripts/run_alpha158_eval.py and other driver scripts
+      # (run_signal_analysis.py, run_portfolio_report.py) live under
+      # scripts/ alongside the existing v18 hand-written drivers. Mount
       # read-only so the qlib-research container can import them via PYTHONPATH.
       - ./scripts:/app/scripts:ro
-      # Phase 95 ACTIVATE-02: qrun_configs/v18/tx_basis_vol.yml — declarative
-      # qrun YAML pipeline. Mounted read-only so run_qrun_basis_vol.py can
-      # resolve the YAML path at /app/qrun_configs/v18/tx_basis_vol.yml.
+      # qrun_configs/v18/tx_basis_vol.yml — declarative qrun YAML pipeline.
+      # Mounted read-only so run_qrun_basis_vol.py can resolve the YAML
+      # path at /app/qrun_configs/v18/tx_basis_vol.yml.
       - ./qrun_configs:/app/qrun_configs:ro
       - ./docker-compose.yml:/app/docker-compose.yml:ro
-      # Phase 39-03 Task 1: expose alembic/ read-only so migration shape
-      # tests (e.g. data_coverage_mv DDL assertions) can read migration
-      # files from inside the container without requiring a full image
-      # rebuild on every migration change.
+      # Expose alembic/ read-only so migration shape tests
+      # (e.g. data_coverage_mv DDL assertions) can read migration files
+      # from inside the container without requiring a full image rebuild
+      # on every migration change.
       - ./alembic:/app/alembic:ro
     depends_on:
       api:

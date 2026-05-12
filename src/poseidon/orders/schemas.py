@@ -25,17 +25,17 @@ class Order:
     price: float | None = None  # limit price, None for market
     status: OrderStatus = OrderStatus.PENDING
     broker_order_id: str | None = None
-    # TRUTH-03 (D-13/D-17): structured 4-key dict, not free text.
+    # TRUTH-03: structured 4-key dict, not free text.
     reject_reason: dict[str, Any] | None = None
-    # Phase 89-01 (D-04, F8 wiring fix): FK to signals.id when this Order
-    # was triggered by an upstream PASSED signal. NULL for portfolio-level
-    # rebalances, protective close-outs, and other non-signal-driven flows
-    # (those carry order_origin tags instead — see Plan 89-02).
+    # FK to signals.id when this Order was triggered by an upstream PASSED
+    # signal. NULL for portfolio-level rebalances, protective close-outs,
+    # and other non-signal-driven flows (those carry order_origin tags
+    # instead).
     signal_id: uuid.UUID | None = None
-    # Phase 89-02 (W4 audit whitelist): tags how this order was triggered so
-    # the mini-audit can distinguish "missing wiring" (origin=signal +
-    # signal_id IS NULL → breach) from "by-design protective close"
-    # (origin=stop_loss/liquidation + signal_id IS NULL → legitimate Cat-B).
+    # Audit whitelist: tags how this order was triggered so the mini-audit
+    # can distinguish "missing wiring" (origin=signal + signal_id IS NULL →
+    # breach) from "by-design protective close" (origin=stop_loss/
+    # liquidation + signal_id IS NULL → legitimate protective exit).
     order_origin: Literal["signal", "stop_loss", "liquidation", "manual"] = "signal"
     id: str = field(default_factory=lambda: _uuid.uuid4().hex)
 
@@ -64,7 +64,7 @@ class OrderResult:
 class RiskCheckResult:
     """Result of a pre-order risk check.
 
-    TRUTH-03 (D-13/D-14, RES-Q2): extended with check_name and shortfall so
+    TRUTH-03: extended with check_name and shortfall so
     the OrderManager can build a structured reject_reason without inspecting
     the human-readable `reason` string.
     """

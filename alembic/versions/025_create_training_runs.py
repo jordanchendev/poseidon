@@ -1,17 +1,17 @@
-"""Create training_runs table + mlflow schema (Phase 41 D-04, D-15).
+"""Create training_runs table + mlflow schema.
 
 Revision ID: 025
 Revises: 024
 Create Date: 2026-04-09
 
-Phase 41 decisions (.planning/phases/41-research-api/41-CONTEXT.md):
+Design:
 
-- D-04: training_runs schema — UUID PK, handler/model class + params,
+- training_runs schema — UUID PK, handler/model class + params,
   market/symbols/interval/segments, status lifecycle, metrics JSONB,
   FK to model_versions, mlflow_run_id, error, requested_by, timestamps.
-- D-05: Status enum — pending / running / succeeded / failed / cancelled.
-  Enforced by a CHECK constraint (same pattern as backfill_jobs).
-- D-15: MLflow schema — ``CREATE SCHEMA IF NOT EXISTS mlflow``. MLflow
+- Status enum — pending / running / succeeded / failed / cancelled,
+  enforced by a CHECK constraint (same pattern as backfill_jobs).
+- MLflow schema — ``CREATE SCHEMA IF NOT EXISTS mlflow``. MLflow
   auto-creates its own internal tables on first use; Poseidon does NOT
   manage MLflow's internal tables.
 """
@@ -28,11 +28,11 @@ depends_on = None
 
 
 def upgrade():
-    # D-15: MLflow stores its metadata in the ``mlflow`` schema.
+    # MLflow stores its metadata in the ``mlflow`` schema.
     # We create the schema; MLflow auto-creates its tables on first use.
     op.execute("CREATE SCHEMA IF NOT EXISTS mlflow")
 
-    # D-04: training_runs table
+    # training_runs table
     op.create_table(
         "training_runs",
         sa.Column(
@@ -102,7 +102,7 @@ def upgrade():
         ),
     )
 
-    # D-05: Status CHECK constraint
+    # Status CHECK constraint
     op.create_check_constraint(
         "ck_training_runs_status",
         "training_runs",

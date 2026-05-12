@@ -39,7 +39,7 @@ class RegimeRouter(BaseStrategy):
     Wraps a single VotingStrategy instance created from base_config.
     On each evaluate() call, queries the regime model for the current regime
     and mutates the underlying strategy's _min_votes and _position_pct
-    attributes accordingly. This preserves trailing stop state (D-05).
+    attributes accordingly. This preserves trailing stop state.
 
     When enabled=False, resets to base config values on every call.
     """
@@ -62,7 +62,7 @@ class RegimeRouter(BaseStrategy):
         self._regime_configs = regime_configs or dict(DEFAULT_REGIME_CONFIGS)
         self.enabled = enabled
 
-        # Single instance -- state preserved across regime changes (D-05)
+        # Single instance -- state preserved across regime changes
         self._strategy = VotingStrategyFactory.from_config(base_config)
 
         # Copy identity from inner strategy

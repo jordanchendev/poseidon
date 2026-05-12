@@ -1,7 +1,7 @@
 """AutoResearchRunner -- orchestrates per-market parameter search runs.
 
-Per D-09: single orchestration class, NOT one run per experiment.
-Per D-10: receives SearchConfig + market list, loops ParameterSearchPipeline.run() per market.
+Single orchestration class, NOT one run per experiment.
+Receives SearchConfig + market list, loops ParameterSearchPipeline.run() per market.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ class MarketResult:
     spec: MarketSpec
     search_result: SearchResult | None = None
     error: str | None = None
-    ddg_da_result: dict | None = None  # Phase 92 D-03: populated when use_ddg_da=True
+    ddg_da_result: dict | None = None  # populated when use_ddg_da=True
 
 
 class AutoResearchRunner:
@@ -70,8 +70,8 @@ class AutoResearchRunner:
         stop_check: Callable[[], bool] | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
         model_version_id: int | None = None,
-        strategy_factory: Any | None = None,  # D-15: injectable strategy factory
-        # Phase 92 D-03: DDG-DA integration kwargs (keyword-only, backwards-compat default).
+        strategy_factory: Any | None = None,  # injectable strategy factory
+        # DDG-DA integration kwargs (keyword-only, backwards-compat default).
         use_ddg_da: bool = False,
         ddg_da_working_dir: Path | None = None,
         ddg_da_handler_class: str = "Alpha158Handler",
@@ -87,7 +87,7 @@ class AutoResearchRunner:
         self.progress_callback = progress_callback
         self.model_version_id = model_version_id
         self.strategy_factory = strategy_factory  # None = VotingStrategyFactory (backward compat)
-        # Phase 92 D-03 fields.
+        # DDG-DA fields.
         self.use_ddg_da = use_ddg_da
         self.ddg_da_working_dir = ddg_da_working_dir
         self.ddg_da_handler_class = ddg_da_handler_class
@@ -97,14 +97,14 @@ class AutoResearchRunner:
     def run(self, markets: list[MarketSpec]) -> list[MarketResult]:
         """Run parameter search across all markets with immutability guard active.
 
-        Per D-13: per-market failure isolation -- catch exception + log + continue.
+        Per-market failure isolation -- catch exception + log + continue.
 
-        Phase 92 D-03/D-05: when ``use_ddg_da=True``, dispatch to the DDG-DA path
-        BEFORE entering ``autoresearch_context()`` — DDG-DA's internal mutations
-        would trip ``ImmutabilityViolationError`` if the guard were active.
+        When ``use_ddg_da=True``, dispatch to the DDG-DA path BEFORE entering
+        ``autoresearch_context()`` — DDG-DA's internal mutations would trip
+        ``ImmutabilityViolationError`` if the guard were active.
         """
         if self.use_ddg_da:
-            # Phase 92 D-03/D-05 dispatch BEFORE autoresearch_context.
+            # Dispatch BEFORE autoresearch_context.
             return self._run_ddg_da(markets)
 
         results: list[MarketResult] = []
@@ -117,12 +117,12 @@ class AutoResearchRunner:
             repo = RemoteDataRepository.from_settings()
 
             for i, spec in enumerate(markets):
-                # D-12: graceful stop check
+                # graceful stop check
                 if self.stop_check and self.stop_check():
                     logger.info("Graceful stop requested, stopping after %d markets", i)
                     break
 
-                # D-11: heartbeat
+                # heartbeat
                 if self.progress_callback:
                     self.progress_callback(i, len(markets), spec.symbol)
 
@@ -183,7 +183,7 @@ class AutoResearchRunner:
                         # the pre-computation returns NaN for that column because
                         # prediction_data is not injected here. BacktestRunner._run_loop
                         # re-computes with real prediction data via extra_nonprice_data.
-                        # Phase 45 (MLVOTE-05) will add batch pre-loading here.
+                        # TODO: batch pre-loading for ML vote.
 
                     pipeline = ParameterSearchPipeline(
                         feature_engine=feature_engine,
@@ -232,14 +232,14 @@ class AutoResearchRunner:
         return results
 
     def _run_ddg_da(self, markets: list[MarketSpec]) -> list[MarketResult]:
-        """Phase 92 D-03 DDG-DA dispatch path.
+        """DDG-DA dispatch path.
 
-        D-05 invariant: this method does NOT enter ``autoresearch_context()``.
+        Invariant: this method does NOT enter ``autoresearch_context()``.
         ``PoseidonDDGDA.__init__`` + ``run()`` both execute with
         ``_AUTORESEARCH_ACTIVE`` False — DDG-DA's internal dataset/model mutations
         would otherwise trip ``ImmutabilityViolationError``.
 
-        Per D-13: per-market failure isolation — catch exception + log + continue.
+        Per-market failure isolation — catch exception + log + continue.
         """
         # Deferred import — keeps cp313 containers importable even when ddg_da
         # itself triggers a downstream qlib import path.
@@ -248,7 +248,7 @@ class AutoResearchRunner:
         results: list[MarketResult] = []
         base_wd = self.ddg_da_working_dir or Path("local_dev/ddg-da/runs/_runner_default")
         # Default segments: caller can override via ddg_da_segments. If None,
-        # fall back to the v18-era TX window CONTEXT D-09 references.
+        # fall back to the v18-era TX window.
         default_segments = self.ddg_da_segments or {
             "train": ("2021-03-22", "2024-12-31"),
             "valid": ("2025-01-01", "2025-06-30"),
@@ -256,12 +256,12 @@ class AutoResearchRunner:
         }
 
         for i, spec in enumerate(markets):
-            # D-12: graceful stop check
+            # graceful stop check
             if self.stop_check and self.stop_check():
                 logger.info("Graceful stop requested in DDG-DA path, stopping after %d markets", i)
                 break
 
-            # D-11: heartbeat
+            # heartbeat
             if self.progress_callback:
                 self.progress_callback(i, len(markets), spec.symbol)
 

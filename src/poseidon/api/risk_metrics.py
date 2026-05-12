@@ -89,7 +89,7 @@ def _get_redis_client() -> redis_lib.Redis:
 
 @router.get("/var", response_model=VaRResponse)
 def get_var():
-    """Return current VaR snapshots from all methods (per D-13)."""
+    """Return current VaR snapshots from all methods."""
     r = _get_redis_client()
     methods = ["parametric", "historical", "cornish_fisher", "monte_carlo"]
     snapshots = []
@@ -106,7 +106,7 @@ def get_var():
 
 @router.get("/exposure", response_model=ExposureResponse)
 def get_exposure(db: Session = Depends(get_db)):
-    """Return portfolio exposure breakdown by market and total (per D-13).
+    """Return portfolio exposure breakdown by market and total.
 
     Rebuilds VirtualPortfolio from DB signals, then aggregates
     quantity_pct by market.
@@ -134,7 +134,7 @@ def get_exposure(db: Session = Depends(get_db)):
 
 @router.post("/stress-test/run", response_model=StressTestTriggerResponse)
 def trigger_stress_test(body: StressTestRequest):
-    """Trigger async stress test (per D-12). Returns task_id for polling."""
+    """Trigger async stress test. Returns task_id for polling."""
     from poseidon.workers.cpu_tasks import run_stress_test
 
     task = run_stress_test.delay(body.scenario_name, body.custom_shocks)
@@ -143,7 +143,7 @@ def trigger_stress_test(body: StressTestRequest):
 
 @router.get("/stress-test/{task_id}", response_model=StressTestStatusResponse)
 def get_stress_test_result(task_id: str):
-    """Poll stress test result by task_id (per D-12)."""
+    """Poll stress test result by task_id."""
     result = celery_app.AsyncResult(task_id)
     if result.state == "PENDING":
         return StressTestStatusResponse(status="pending")
@@ -163,7 +163,7 @@ def get_alerts(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    """Return risk alert history from Redis Stream with limit/offset pagination (per D-14).
+    """Return risk alert history from Redis Stream with limit/offset pagination.
 
     Reads from poseidon:alerts:risk stream using XREVRANGE (newest first).
     Offset implemented by skipping first ``offset`` entries from the reversed stream.

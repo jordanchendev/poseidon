@@ -43,10 +43,10 @@ class FetchRequest(BaseModel):
 
 
 class BackfillRequest(BaseModel):
-    """Request body for triggering a multi-symbol/interval backfill (Phase 39).
+    """Request body for triggering a multi-symbol/interval backfill.
 
-    Per 39-CONTEXT.md D-03: the public API requires explicit ``symbols`` and
-    ``intervals`` — silent YAML expansion stays on the dispatcher path.
+    The public API requires explicit ``symbols`` and ``intervals`` — silent
+    YAML expansion stays on the dispatcher path.
     """
 
     market: str = Field(..., examples=["crypto_perp"])
@@ -59,7 +59,7 @@ class BackfillRequest(BaseModel):
 class BackfillStatusResponse(BaseModel):
     """Response body for backfill status list (dashboard compatibility).
 
-    Phase 39 allows ``symbol``/``interval`` to be null for multi-tuple jobs.
+    Multi-tuple jobs allow ``symbol``/``interval`` to be null.
     """
 
     job_id: UUID
@@ -77,7 +77,7 @@ class BackfillStatusResponse(BaseModel):
 
 
 class BackfillJobDetailResponse(BaseModel):
-    """Single-row detail response for GET /api/data/backfill/{job_id} (Phase 39)."""
+    """Single-row detail response for GET /api/data/backfill/{job_id}."""
 
     job_id: UUID
     market: str
@@ -96,13 +96,13 @@ class BackfillJobDetailResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# --- Data Coverage (Phase 39 plan 39-03) ---
+# --- Data Coverage ---
 
 
 class DataCoverageResponse(BaseModel):
-    """Per-tuple data coverage response for GET /api/data/coverage (Phase 39).
+    """Per-tuple data coverage response for GET /api/data/coverage.
 
-    Fields follow 39-CONTEXT.md D-10..D-12 and 39-03-PLAN.md Task 2:
+    Fields:
 
     * ``market`` / ``symbol`` / ``interval`` — the tuple key
     * ``first_ts`` / ``last_ts`` — MIN/MAX(time) from ``data_coverage_mv``
@@ -127,15 +127,15 @@ class DataCoverageResponse(BaseModel):
     health: str
 
 
-# --- Phase 40: Data Gaps + Freshness (plan 40-01 D-02..D-04, D-11, D-16) ---
+# --- Data Gaps + Freshness ---
 
 
 class DataGapResponse(BaseModel):
-    """Per-gap response for GET /api/data/gaps (Phase 40 D-02, D-04).
+    """Per-gap response for GET /api/data/gaps.
 
     One row per detected gap window. ``healed_at`` is non-null when a later
-    audit run has confirmed the window is now fully populated (D-07). The
-    default dashboard query (``?open_only=true``) returns only rows where
+    audit run has confirmed the window is now fully populated. The default
+    dashboard query (``?open_only=true``) returns only rows where
     ``healed_at IS NULL``.
     """
 
@@ -190,11 +190,11 @@ class MessageResponse(BaseModel):
     task_id: str | None = None
 
 
-# --- Training Runs (Phase 41) ---
+# --- Training Runs ---
 
 
 class TrainRequest(BaseModel):
-    """Request body for POST /api/v1/models/train (per D-01, RESEARCH-API-01)."""
+    """Request body for POST /api/v1/models/train."""
 
     handler_class: str = Field(..., examples=["Alpha158Handler"])
     handler_params: dict = Field(default_factory=dict, examples=[{}])
@@ -237,7 +237,7 @@ class TrainingRunResponse(BaseModel):
 
 
 class TrainingRunDetailResponse(BaseModel):
-    """Full detail response for GET /runs/{run_id} (per RESEARCH-API-04)."""
+    """Full detail response for GET /runs/{run_id}."""
 
     run_id: UUID
     handler_class: str
@@ -264,7 +264,7 @@ class TrainingRunDetailResponse(BaseModel):
 
 
 class TrainingRunListResponse(BaseModel):
-    """Paginated list response for GET /runs (per D-23)."""
+    """Paginated list response for GET /runs."""
 
     runs: list[TrainingRunResponse]
     total: int
@@ -273,7 +273,7 @@ class TrainingRunListResponse(BaseModel):
 
 
 class ModelMetricsResponse(BaseModel):
-    """Full metrics response for GET /models/{id} (per RESEARCH-API-08)."""
+    """Full metrics response for GET /models/{id}."""
 
     id: UUID
     name: str
@@ -291,7 +291,7 @@ class ModelMetricsResponse(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    """Response for GET /models/{id}/predictions with range query (per D-04, D-06, PRED-03).
+    """Response for GET /models/{id}/predictions with range query.
 
     Includes training period metadata alongside prediction data so consumers
     know the model's temporal boundary.
@@ -301,7 +301,7 @@ class PredictionResponse(BaseModel):
     segment: str | None = None  # Set when querying by segment; None for range query
     count: int
     predictions: list[dict]
-    # Training period metadata (per D-06)
+    # Training period metadata
     train_start: datetime | None = None
     train_end: datetime | None = None
     valid_start: datetime | None = None
@@ -310,11 +310,11 @@ class PredictionResponse(BaseModel):
     test_end: datetime | None = None
 
 
-# --- Factor Analysis (Phase 47) ---
+# --- Factor Analysis ---
 
 
 class ICAnalysisRequest(BaseModel):
-    """Request body for triggering IC analysis (D-20)."""
+    """Request body for triggering IC analysis."""
 
     market: str = Field(..., min_length=1, max_length=32, examples=["tw_stock"])
     symbols: list[str] | None = Field(None, description="Optional symbol subset; None = all symbols in market")
@@ -322,16 +322,16 @@ class ICAnalysisRequest(BaseModel):
     end_date: str = Field(..., examples=["2025-12-31"], description="End date YYYY-MM-DD")
     horizons: list[int] = Field(
         default_factory=lambda: [1, 5, 20],
-        description="Forward return horizons in days (D-02)",
+        description="Forward return horizons in days",
     )
     features: list[str] | None = Field(None, description="Feature subset; None = all DEFAULT_FEATURES")
     interval: str = Field(default="1d", max_length=8)
 
 
 class ShapleyAnalysisRequest(BaseModel):
-    """Request body for triggering Shapley analysis (D-21)."""
+    """Request body for triggering Shapley analysis."""
 
-    model_version_id: str = Field(..., description="UUID of trained ModelVersion (D-07)")
+    model_version_id: str = Field(..., description="UUID of trained ModelVersion")
     max_samples: int | None = Field(
         None,
         ge=100,
@@ -347,10 +347,10 @@ class ShapleyAnalysisRequest(BaseModel):
 
 
 class CentralityAnalysisRequest(BaseModel):
-    """Request body for triggering centrality analysis (D-22)."""
+    """Request body for triggering centrality analysis."""
 
     market: str = Field(..., min_length=1, max_length=32, examples=["tw_stock"])
-    sub_signals: list[dict] = Field(..., description="VotingStrategy sub-signal configs to evaluate (D-11)")
+    sub_signals: list[dict] = Field(..., description="VotingStrategy sub-signal configs to evaluate")
     symbols: list[str] | None = Field(None, description="Optional symbol subset")
     start_date: str = Field(..., examples=["2025-01-01"])
     end_date: str = Field(..., examples=["2025-12-31"])
@@ -359,7 +359,7 @@ class CentralityAnalysisRequest(BaseModel):
         default=0.7,
         ge=0.1,
         le=1.0,
-        description="Clustering distance threshold (D-10)",
+        description="Clustering distance threshold",
     )
 
 
@@ -378,7 +378,7 @@ class FactorAnalysisRunResponse(BaseModel):
 
 
 class FactorAnalysisRunListResponse(BaseModel):
-    """Paginated list response for factor analysis runs (D-23)."""
+    """Paginated list response for factor analysis runs."""
 
     runs: list[FactorAnalysisRunResponse]
     total: int
@@ -387,19 +387,19 @@ class FactorAnalysisRunListResponse(BaseModel):
 
 
 class FactorAnalysisTriggerResponse(BaseModel):
-    """Response for POST trigger endpoints (D-20, D-21, D-22)."""
+    """Response for POST trigger endpoints."""
 
     id: str
     status: str
 
 
-# --- Phase 90 RL Order Execution (Plan 90-05b) ---
+# --- RL Order Execution ---
 
 
 class RLExecutionRequest(BaseModel):
-    """Request body for POST /research/rl-execution/run (D-22, EXEC-01).
+    """Request body for POST /research/rl-execution/run.
 
-    Pydantic Literal allowlist enforces algo names (T-90-03 input validation).
+    Pydantic Literal allowlist enforces algo names (input validation).
     Defense-in-depth: ``poseidon.api.rl_execution`` re-validates against
     ``_ALLOWED_ALGOS`` set inside the endpoint body.
     """
@@ -430,7 +430,7 @@ class RLExecutionRunResponse(BaseModel):
 
 
 class RLExecutionRunDetailResponse(BaseModel):
-    """Full detail response for GET /runs/{run_id} (D-22)."""
+    """Full detail response for GET /runs/{run_id}."""
 
     run_id: UUID
     algos: list[str]

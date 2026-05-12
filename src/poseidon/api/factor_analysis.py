@@ -1,4 +1,4 @@
-"""Factor analysis API endpoints (Phase 47)."""
+"""Factor analysis API endpoints."""
 
 from __future__ import annotations
 

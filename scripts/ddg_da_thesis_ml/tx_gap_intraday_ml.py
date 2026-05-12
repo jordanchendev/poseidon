@@ -1,4 +1,4 @@
-"""Phase 92 Wave 2 — ML re-implementation of test_tx_gap_intraday.py v1.
+"""ML re-implementation of test_tx_gap_intraday.py v1.
 
 Why exists: DDG-DA wraps model.fit() — it cannot wrap rule-based filters.
 The v18 driver `test_tx_gap_intraday.py` is rule-based (gap_z>+1 → SHORT,
@@ -13,19 +13,18 @@ DDG-DA wrap operates on top of LGBModel's training samples (meta-model
 weights training-window samples by predicted future similarity). The
 trigger logic stays in this driver — DDG-DA does NOT touch it.
 
-PATTERNS.md §tx_gap_intraday_ml.py compose 2 analogs:
+Composes two analogs:
   (1) qlib_train_demo.py for DatasetBuilder → DataHandlerLP → DatasetH
       → LGBModel pipeline shape
   (2) test_tx_gap_intraday.py:38-77 for window constants + perf() helper
 
-RESEARCH §Pattern 3 (lines 419-447): label = (close - open_) / open_ —
-intraday return, NOT close.shift(-1)/close. This is the only nontrivial
-new code vs the demo.
+Label = (close - open_) / open_ — intraday return, NOT close.shift(-1)/close.
+This is the only nontrivial new code vs the demo.
 
-Cost model: ROUND_TRIP_COST = 0.00032 (32bps) — pessimistic per v10.0
-standing rule (D-30) and Phase 95 ACTIVATE-01 baseline.
+Cost model: ROUND_TRIP_COST = 0.00032 (32bps) — pessimistic per the v10.0
+standing rule and the Alpha158 baseline.
 
-Train/test split (Plan 92-2.5 Option B decision):
+Train/test split:
     Train: 2021-03-22..2023-12-31  (33mo, 3 regimes)
     Test:  2024-01-01..2026-05-04  (~28 walk-forward folds at step=20)
 

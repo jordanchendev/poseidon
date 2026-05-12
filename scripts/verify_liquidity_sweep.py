@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Phase 65 FIX-02: LiquiditySweepStrategy Optuna validation.
+"""LiquiditySweepStrategy Optuna validation.
 
 Runs 100-trial Optuna search per symbol (BTCUSDT, ETHUSDT) under
 FillModel.PESSIMISTIC with WFE >= 50% as the pass gate.
 
-Per D-05: Uses LiquiditySweepStrategyFactory + ParameterSearchPipeline.
-Per D-06: WFE < 50% marks strategy as experimental, does not block v13.0.
+Uses LiquiditySweepStrategyFactory + ParameterSearchPipeline. WFE < 50%
+marks strategy as experimental, does not block v13.0.
 
 Run inside stormtrooper docker:
   docker compose exec -T cpu-worker python scripts/verify_liquidity_sweep.py

@@ -1,21 +1,21 @@
 #!/usr/bin/env python
-"""Phase 92 Wave 2 — DDG-DA comparison CLI driver (D-22 standalone entry).
+"""DDG-DA comparison CLI driver (standalone entry).
 
 Single CLI driver that runs a with-DDG-DA vs without-DDG-DA comparison
-on the configured thesis. D-22: standalone CLI as the primary entry
-point — no REST endpoint (DDG-DA is a research tool, not user-facing
-API). The Celery task `qlib_ddg_da_compare` (Plan 92-03 Task 2) remains
-importable for future RD-Agent integration but is not the primary entry.
+on the configured thesis. Standalone CLI is the primary entry point —
+no REST endpoint (DDG-DA is a research tool, not user-facing API). The
+Celery task `qlib_ddg_da_compare` remains importable for future
+RD-Agent integration but is not the primary entry.
 
-Run output layout (D-19/D-20):
+Run output layout:
     local_dev/ddg-da/runs/<run_id>/
       comparison_metadata.json
       with_ddg_da/{predictions.parquet, per_window_sharpe.parquet, ic.json}
       without_ddg_da/{predictions.parquet, per_window_sharpe.parquet, ic.json}
       comparison_summary.parquet
-      run.lock                # file-lock per D-23 (released on exit)
+      run.lock                # file-lock (released on exit)
       summary.json            # n_folds + bootstrap result
-      # Plan 92-04 writes verdict.md AFTER this completes.
+      # A downstream step writes verdict.md AFTER this completes.
 
 Designed to run INSIDE poseidon-qlib-research container on stormtrooper:
     docker compose exec -T qlib-research \\
@@ -43,44 +43,41 @@ def main(argv: list[str] | None = None) -> int:
     """Parse args, generate run_id, dispatch in-process to run_comparison."""
     parser = argparse.ArgumentParser(
         prog="run_ddg_da_comparison.py",
-        description=(
-            "Run a with-DDG-DA vs without-DDG-DA comparison on a v18-era OOS-failed thesis. D-22 standalone CLI."
-        ),
+        description=("Run a with-DDG-DA vs without-DDG-DA comparison on a v18-era OOS-failed thesis (standalone CLI)."),
     )
     parser.add_argument(
         "--thesis",
         default="tx_gap_intraday",
-        help="Thesis name (D-09 default: tx_gap_intraday).",
+        help="Thesis name (default: tx_gap_intraday).",
     )
     parser.add_argument(
         "--model-class",
         default="LGBModel",
-        help="Allowlisted model class (D-11 default: LGBModel).",
+        help="Allowlisted model class (default: LGBModel).",
     )
     parser.add_argument(
         "--window",
         default="2021-03-22:2026-04-30",
         help=(
-            "Data window as 'YYYY-MM-DD:YYYY-MM-DD'. Default matches Plan "
-            "92-2.5 Option B span. Plan 92-04.2 BUG-7 fix: trimmed end-date "
-            "from 2026-05-04 to 2026-04-30 to stay inside the TX qlib_data "
-            "tree boundary (data tail at 2026-05-01)."
+            "Data window as 'YYYY-MM-DD:YYYY-MM-DD'. The end-date is trimmed "
+            "to 2026-04-30 to stay inside the TX qlib_data tree boundary "
+            "(data tail at 2026-05-01)."
         ),
     )
     parser.add_argument(
         "--train-end",
         default="2023-12-31",
-        help=("Train segment end date (D-10/D-14). Plan 92-2.5 Option B default 2023-12-31."),
+        help="Train segment end date (default: 2023-12-31).",
     )
     parser.add_argument(
         "--valid-end",
         default="2024-06-30",
-        help=("Valid segment end (test segment starts the day after). Default 2024-06-30."),
+        help="Valid segment end (test segment starts the day after). Default 2024-06-30.",
     )
     parser.add_argument(
         "--smoke",
         action="store_true",
-        help=("D-25 smoke mode: only the last 2 walk-forward folds are kept. Used by Plan 92-04 stormtrooper smoke."),
+        help="Smoke mode: only the last 2 walk-forward folds are kept.",
     )
     parser.add_argument(
         "--run-id",
@@ -88,14 +85,14 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "Optional run identifier. If a UUID, used directly. If a "
             "non-UUID string, synthesized via uuid5(NAMESPACE_DNS, ...) "
-            "for canonical 36-char path safety (T-92-02). If omitted, a "
-            "fresh uuid4() is generated."
+            "for canonical 36-char path safety. If omitted, a fresh uuid4() "
+            "is generated."
         ),
     )
     parser.add_argument(
         "--run-root",
         default="local_dev/ddg-da/runs",
-        help="Run artifact root (D-19 default: local_dev/ddg-da/runs).",
+        help="Run artifact root (default: local_dev/ddg-da/runs).",
     )
     args = parser.parse_args(argv)
 

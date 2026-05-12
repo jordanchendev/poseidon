@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Phase 82: Walk-Forward Efficiency validation for TrendFollowing TX daily.
+"""Walk-Forward Efficiency validation for TrendFollowing TX daily.
 
-Reads best parameters from optuna_82_results.json (Plan 01 output).
+Reads best parameters from optuna_82_results.json (upstream output).
 Runs quarterly rolling WFE with train_days=252, test_days=63, step_days=63.
 Computes per-window IS/OOS metrics, aggregate WFE, and OOS-matched B&H Sharpe.
 
@@ -44,9 +44,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Configuration (same data range as optuna_82)
+# Configuration (same data range as the upstream optuna pass)
 # ---------------------------------------------------------------------------
-START = datetime(2021, 3, 22)  # Earliest TX daily data (D-02)
+START = datetime(2021, 3, 22)  # Earliest TX daily data
 END = datetime.now()
 SYMBOL = "TX"
 MARKET = "tw_futures"
@@ -56,13 +56,13 @@ BARS_PER_YEAR = 252
 COST_MODEL = COST_MODELS["tw_futures"]
 SIZING = SizingConfig(mode=SizingMode.FIXED_NOTIONAL, notional_pct=0.03)
 
-# Walk-forward configuration (D-04, D-05, D-06)
+# Walk-forward configuration
 WF_CONFIG = WalkForwardConfig(
-    train_days=252,  # D-04: 1 year IS
-    test_days=63,  # D-04: 1 quarter OOS
-    step_days=63,  # D-04: roll by 1 quarter
-    min_trades_per_oos=5,  # D-05
-    min_wfe=0.50,  # D-06
+    train_days=252,  # 1 year IS
+    test_days=63,  # 1 quarter OOS
+    step_days=63,  # roll by 1 quarter
+    min_trades_per_oos=5,
+    min_wfe=0.50,
 )
 
 OPTUNA_JSON = Path(__file__).parent / "output" / "optuna_82_results.json"
@@ -76,7 +76,7 @@ OUTPUT_JSON = OUTPUT_DIR / "wfe_82_results.json"
 def fetch_ohlcv(repo: RemoteDataRepository) -> pd.DataFrame:
     """Fetch TX 1d OHLCV from Thalassa via RemoteDataRepository.
 
-    Strips timezone from index for BacktestRunner compatibility (Pitfall 8).
+    Strips timezone from index for BacktestRunner compatibility.
     Raises RuntimeError if no data returned.
     """
     logger.info("Fetching TX %s OHLCV from %s to %s ...", INTERVAL, START.date(), END.date())
@@ -91,7 +91,7 @@ def fetch_ohlcv(repo: RemoteDataRepository) -> pd.DataFrame:
     if df.empty:
         raise RuntimeError(f"No OHLCV data for {SYMBOL} {MARKET} {INTERVAL}")
 
-    # Strip timezone from index (Pitfall 8)
+    # Strip timezone from index.
     if hasattr(df.index, "tz") and df.index.tz is not None:
         df = df.tz_localize(None)
 
@@ -112,7 +112,7 @@ def _run_single_backtest(
     config: TrendFollowingConfig,
     ohlcv: pd.DataFrame,
 ) -> dict:
-    """Run a single backtest with a FRESH strategy instance (Pitfall 3).
+    """Run a single backtest with a FRESH strategy instance.
 
     Creates a new TrendFollowingStrategy each call to prevent state leakage
     between IS and OOS runs.
@@ -153,7 +153,7 @@ def _run_single_backtest(
 
 
 # ---------------------------------------------------------------------------
-# OOS-matched B&H Sharpe (Pitfall 4 fix)
+# OOS-matched B&H Sharpe
 # ---------------------------------------------------------------------------
 def compute_bh_oos_sharpe(
     ohlcv: pd.DataFrame,
@@ -196,9 +196,9 @@ def run_wfe(
 ) -> dict:
     """Run walk-forward efficiency validation with quarterly rolling windows.
 
-    Uses generate_windows() + manual loop pattern (NOT analyzer.analyze()).
-    Pitfall 1: analyzer.analyze() requires a factory, manual loop is simpler.
-    Pitfall 3: FRESH strategy instance per IS and OOS run.
+    Uses generate_windows() + manual loop pattern (NOT analyzer.analyze())
+    because analyzer.analyze() requires a factory and the manual loop is
+    simpler.  Uses a FRESH strategy instance per IS and OOS run.
     """
     analyzer = WalkForwardAnalyzer(
         feature_engine=FeatureEngine(),
@@ -279,7 +279,7 @@ def run_wfe(
     oos_aggregate_max_drawdown = max(oos_max_dds) if oos_max_dds else 0.0
     total_oos_trades = sum(oos_trades)
 
-    # Check insufficient windows (D-05)
+    # Check insufficient windows.
     n_insufficient = sum(1 for t in oos_trades if t < WF_CONFIG.min_trades_per_oos)
     insufficient_ratio = n_insufficient / len(windows) if windows else 0.0
     insufficient_flagged = insufficient_ratio > WF_CONFIG.max_insufficient_ratio
@@ -334,9 +334,9 @@ def _sanitize(obj):
 # Main
 # ---------------------------------------------------------------------------
 def main() -> int:
-    """Run Phase 82 WFE validation for TrendFollowing TX daily."""
-    # Step 1: Load best params from Optuna results
-    print("Phase 82: WFE Validation for TrendFollowing TX Daily")
+    """Run WFE validation for TrendFollowing TX daily."""
+    # 1. Load best params from Optuna results
+    print("WFE Validation for TrendFollowing TX Daily")
     print(f"{'=' * 60}")
 
     if not OPTUNA_JSON.exists():
@@ -363,19 +363,19 @@ def main() -> int:
         atr_multiplier=best_params["atr_multiplier"],
     )
 
-    # Step 2: Fetch OHLCV
+    # 2. Fetch OHLCV
     repo = RemoteDataRepository.from_settings()
     ohlcv = fetch_ohlcv(repo)
     print(f"OHLCV loaded: {len(ohlcv)} bars ({ohlcv.index[0]} to {ohlcv.index[-1]})")
     print()
 
-    # Step 3: Run WFE validation
+    # 3. Run WFE validation
     print(f"{'=' * 60}")
     print("Running Walk-Forward Efficiency Validation")
     print(f"{'=' * 60}")
     wfe_results = run_wfe(ohlcv, best_config)
 
-    # Step 4: Compute B&H OOS Sharpe (Pitfall 4: over same OOS windows)
+    # 4. Compute B&H OOS Sharpe (over same OOS windows).
     print(f"\n{'=' * 60}")
     print("Computing B&H OOS Sharpe (OOS-matched windows)")
     print(f"{'=' * 60}")
@@ -393,9 +393,8 @@ def main() -> int:
     for i, s in enumerate(bh_per_window_sharpes):
         print(f"    Window {i}: B&H Sharpe={s:.4f}")
 
-    # Step 5: Build output JSON
+    # 5. Build output JSON
     output = {
-        "phase": "82",
         "script": "wfe_82_tw_futures.py",
         "best_params": _sanitize(best_params),
         "wfe_config": {
@@ -418,9 +417,9 @@ def main() -> int:
     with open(OUTPUT_JSON, "w") as f:
         json.dump(output, f, indent=2, default=str)
 
-    # Step 6: Print summary
+    # 6. Print summary
     print(f"\n{'=' * 60}")
-    print("Phase 82 WFE Validation Summary")
+    print("WFE Validation Summary")
     print(f"{'=' * 60}")
     print(f"  Aggregate WFE:        {wfe_results['avg_wfe']:.4f}")
     print(f"  OOS Aggregate Sharpe: {wfe_results['oos_aggregate_sharpe']:.4f}")

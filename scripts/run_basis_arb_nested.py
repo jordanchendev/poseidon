@@ -1,14 +1,14 @@
 #!/usr/bin/env python
-"""Phase 93 NESTEXEC-01..03 — driver script.
+"""NestedExecutor TWAP basis-arb backtest driver.
 
 Runs the end-to-end NestedExecutor TWAP basis-arb backtest:
 
 1. Fetches TX + 0050 1-min OHLCV from Thalassa REST API for the requested
    evaluation window (verbatim ``fetch_ohlcv_1min`` from
-   ``run_phase90_train.py:61-125``; honours TWSE 09:00..13:29 day-session
-   filter per RESEARCH §Pitfall 3).
+   ``run_phase90_train.py``; honours the TWSE 09:00..13:29 day-session
+   filter to keep TX night-session bars out of the daily aggregation).
 2. Aggregates 1m → daily and computes basis-z + R2 trigger days
-   (``basis_z<-1`` — D-08 verbatim from ``poseidon.research.tx_basis_signal``).
+   (``basis_z<-1`` reusing ``poseidon.research.tx_basis_signal``).
 3. Materialises 1m TX/0050 to qlib bin+pickle (``rl_data_adapter
    .write_qlib_data_dir``).
 4. Builds multi-leg parent-orders pickle (``rl_order_builder
@@ -19,12 +19,11 @@ Runs the end-to-end NestedExecutor TWAP basis-arb backtest:
 6. Persists ``fill_log.parquet``, ``comparison.parquet``,
    ``comparison_summary.md``, ``delta_breakdown.json``, ``summary.json``
    to ``run_dir``.
-7. Optionally appends the D-19 single-sentence "cost delta" write-up to
-   ``93-RESEARCH.md`` (only when ``.planning/`` is reachable from the
-   current process — i.e. running on host Mac; inside the qlib-research
-   container ``.planning/`` is NOT mounted, so this step gracefully
-   no-ops and writes the breakdown JSON for a host-side post-processing
-   step to consume).
+7. Optionally appends the single-sentence "cost delta" write-up to the
+   research log (only when reachable from the current process — i.e.
+   running on host Mac; inside the qlib-research container the research
+   directory is NOT mounted, so this step gracefully no-ops and writes
+   the breakdown JSON for a host-side post-processor to consume).
 
 Designed to run INSIDE the poseidon-qlib-research container::
 
@@ -34,21 +33,21 @@ Designed to run INSIDE the poseidon-qlib-research container::
             --twap-window 5min --full \\
             --phase90-baseline /app/local_dev/nested-executor/baseline-cache/wave2-full-002/comparison.csv
 
-Smoke (1-2 max-|basis_z| trigger days, D-32) on stormtrooper::
+Smoke (1-2 max-|basis_z| trigger days) on stormtrooper::
 
     docker compose exec -T qlib-research \\
         python scripts/run_basis_arb_nested.py --smoke
 
-Run-output layout (D-20/D-22 — bind-mounted from container ``/app/local_dev/``
-to host ``aquarium/local_dev/``)::
+Run-output layout (bind-mounted from container ``/app/local_dev/`` to host
+``aquarium/local_dev/``)::
 
     local_dev/nested-executor/runs/<run_id>/
       qlib-data/{bin,pickle}/        # rl_data_adapter output
       orders.pkl                     # multi-leg parent orders
-      fill_log.parquet               # D-21 schema (per-fill rows)
-      comparison.parquet             # D-17 schema (per-trigger-day)
+      fill_log.parquet               # per-fill rows
+      comparison.parquet             # per-trigger-day rows
       comparison_summary.md          # human-readable digest
-      delta_breakdown.json           # D-18 + D-19 dict (machine-readable)
+      delta_breakdown.json           # cost-delta dict (machine-readable)
       summary.json                   # run metadata
 """
 
@@ -71,28 +70,28 @@ logger = logging.getLogger(__name__)
 
 THALASSA_BASE_URL = os.environ.get("POSEIDON_THALASSA_BASE_URL", "http://192.168.31.241:8001")
 THALASSA_API_KEY = os.environ.get("POSEIDON_THALASSA_API_KEY", "")
-DEFAULT_WINDOW = "2020-04-01:2026-04-30"  # 6yr TX×0050 1m overlap (Phase 90 D-24)
+DEFAULT_WINDOW = "2020-04-01:2026-04-30"  # 6yr TX×0050 1m overlap
 DEFAULT_NOTIONAL_TX = 1_000_000.0
 DEFAULT_NOTIONAL_ETF = 1_000_000.0
-DEFAULT_TWAP_WINDOW_MIN = 5  # D-13 default
+DEFAULT_TWAP_WINDOW_MIN = 5
 
 # v18 cost-model commission floor used by ``_build_path_c_per_day_baseline``
-# Path C reconstruction (WR-03).  Source: Phase 90 90-VERDICT.md uses a
-# decimal commission rate of 0.00032 (≡ 3.2 bps after × 10_000).  The
-# baseline formula is ``max(_V18_GAP4_FLOOR_BPS, |gap|/4)`` per leg.  Keep
-# this in sync with ``cost_model.py::tw_futures`` if commission changes.
+# Path C reconstruction.  The v18 verdict uses a decimal commission rate of
+# 0.00032 (≡ 3.2 bps after × 10_000).  The baseline formula is
+# ``max(_V18_GAP4_FLOOR_BPS, |gap|/4)`` per leg.  Keep this in sync with
+# ``cost_model.py::tw_futures`` if commission changes.
 _V18_GAP4_FLOOR_BPS = 3.2
 
 # Cost-delta sentence is written to this file ONLY when run on host (Mac),
-# never from inside the qlib-research container (where .planning/ is not
-# mounted).
+# never from inside the qlib-research container (where the research
+# directory is not mounted).
 _RESEARCH_RELPATH = ".planning/phases/93-nestedexecutor-multi-level-backtest/93-RESEARCH.md"
 
 
 # ---------------------------------------------------------------------------
-# Thalassa data fetch — Source: poseidon/scripts/run_phase90_train.py:61-125
-# (verbatim copy with attribution; RESEARCH §Pitfall 3 mandates the
-# between_time("09:00", "13:29") TWSE day-session filter)
+# Thalassa data fetch — verbatim copy from poseidon/scripts/run_phase90_train.py
+# with attribution. The between_time("09:00", "13:29") TWSE day-session filter
+# is required to keep TX night-session bars out of the daily aggregation.
 # ---------------------------------------------------------------------------
 
 
@@ -154,13 +153,13 @@ def fetch_ohlcv_1min(
     df.index = df.index.tz_convert("Asia/Taipei").tz_localize(None)
 
     # CRITICAL — TWSE day-session filter; without this TX night-session bars
-    # contaminate the daily aggregation (RESEARCH §Pitfall 3).
+    # contaminate the daily aggregation.
     df = df.between_time("09:00", "13:29")
     return df
 
 
 # ---------------------------------------------------------------------------
-# Daily aggregation — Source: poseidon/scripts/run_phase90_train.py:133-152
+# Daily aggregation — verbatim from poseidon/scripts/run_phase90_train.py
 # ---------------------------------------------------------------------------
 
 
@@ -183,9 +182,8 @@ def aggregate_to_daily(ohlcv_1m: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Trigger extraction — Source: poseidon/scripts/run_phase90_train.py:155-176
-# (verbatim with optional max_triggers cap; D-08 mandates verbatim reuse of
-# poseidon.research.tx_basis_signal)
+# Trigger extraction — verbatim from poseidon/scripts/run_phase90_train.py
+# with an optional max_triggers cap; reuses poseidon.research.tx_basis_signal.
 # ---------------------------------------------------------------------------
 
 
@@ -194,7 +192,7 @@ def compute_triggers(
     etf_1m: pd.DataFrame,
     max_triggers: int | None = None,
 ) -> list[pd.Timestamp]:
-    """basis_z<-1 trigger days from D-08.
+    """Extract ``basis_z<-1`` trigger days.
 
     Drops the trigger on the last calendar day of available data — qlib's
     backtest calendar manager reads t+1 internally and crashes with
@@ -205,8 +203,8 @@ def compute_triggers(
         etf_1m: 0050 1-min OHLCV DataFrame.
         max_triggers: Optional cap on returned trigger count.  When set, the
             top-K trigger days by ``abs(basis_z)`` are returned (largest |z|
-            first), matching the smoke contract D-32 (``--smoke`` selects
-            the 1-2 most-extreme trigger days).
+            first), matching the smoke contract where ``--smoke`` selects
+            the 1-2 most-extreme trigger days.
     """
     from poseidon.research.tx_basis_signal import (
         compute_basis_z,
@@ -220,9 +218,8 @@ def compute_triggers(
 
     # Drop triggers near the calendar tail — qlib's NestedExecutor t+1 lookup
     # panics with ``IndexError: index N out of bounds`` when the trigger sits
-    # within ~3 trading days of the calendar's last index.  Plan 93-04
-    # [Rule 3] auto-fix: trim 5 trading days from both edges so qlib has
-    # plenty of headroom.
+    # within ~3 trading days of the calendar's last index.  Trim 5 trading
+    # days from both edges so qlib has plenty of headroom.
     last_day = max(tx_d.index.max(), etf_d.index.max()).normalize()
     first_day = min(tx_d.index.min(), etf_d.index.min()).normalize()
     edge_buffer = pd.Timedelta(days=5)
@@ -234,7 +231,7 @@ def compute_triggers(
     ]
 
     if max_triggers is not None and len(triggers) > max_triggers:
-        # D-32: smoke run — pick the K most extreme |basis_z| trigger days.
+        # Smoke run — pick the K most extreme |basis_z| trigger days.
         # extract_r2_trigger_days returns sorted ascending; resort by |basis_z|.
         z_at_trigger = basis_z.loc[triggers].dropna()
         # Sort by |z| descending, take top K, then re-sort chronologically so
@@ -246,21 +243,20 @@ def compute_triggers(
 
 
 # ---------------------------------------------------------------------------
-# Cost-delta sentence emit (D-19; idempotent section replace in 93-RESEARCH.md)
+# Cost-delta sentence emit (idempotent section replace in the research log)
 # ---------------------------------------------------------------------------
 
 
 def _resolve_research_md_path() -> Path | None:
-    """Find ``93-RESEARCH.md`` relative to this script.
+    """Find the research log relative to this script.
 
     Returns ``None`` when the file is not reachable — typically inside the
-    qlib-research container where ``.planning/`` is NOT mounted (only
-    ``./local_dev`` and ``./scripts`` are).  In that case the driver still
-    writes ``delta_breakdown.json`` to ``run_dir`` so a host-side
-    post-processing step can complete the RESEARCH.md write.
+    qlib-research container where the research directory is NOT mounted
+    (only ``./local_dev`` and ``./scripts`` are).  In that case the driver
+    still writes ``delta_breakdown.json`` to ``run_dir`` so a host-side
+    post-processing step can complete the research log write.
 
-    Pattern P7 (container/host path resolution): walk parents until a
-    ``.planning`` directory is found.
+    Walks parents until the configured relative path is found.
     """
     here = Path(__file__).resolve()
     for ancestor in here.parents:
@@ -279,18 +275,18 @@ def _append_cost_delta_to_research(
     twap_window_minutes: int,
     research_path: Path,
 ) -> None:
-    """Append/replace the ``## Cost Delta`` section in 93-RESEARCH.md (D-19).
+    """Append/replace the ``## Cost Delta`` section in the research log.
 
     Idempotent — if the section exists, replace its content up to the next
     ``## `` header (or EOF); otherwise append at end of file.
 
-    Section content (RESEARCH §Cost-Delta Sentence Schema):
+    Section content schema:
 
         ## Cost Delta
 
-        > Phase 90 KILL framing reminder: Phase 90 verdict (TX×0050 basis arb
-        > 6yr OOS pair Sharpe -1.42) STANDS — Phase 93 is a framework /
-        > cost-delta documentation phase, NOT a deploy decision (D-39/D-40).
+        > KILL framing reminder: the prior verdict on TX×0050 basis arb
+        > (6yr OOS pair Sharpe -1.42) STANDS — this phase is a framework /
+        > cost-delta documentation step, NOT a deploy decision.
 
         {single sentence from delta_breakdown["cost_delta_sentence"]}
 
@@ -312,8 +308,8 @@ def _append_cost_delta_to_research(
         run_dir: Run output directory (used in metadata block).
         window_start: Backtest start timestamp.
         window_end: Backtest end timestamp.
-        twap_window_minutes: TWAP window length (D-13).
-        research_path: Path to ``93-RESEARCH.md``.
+        twap_window_minutes: TWAP window length.
+        research_path: Path to the research log file.
     """
     sentence = delta_breakdown["cost_delta_sentence"]
     n_trigger_days = int(delta_breakdown.get("n_trigger_days", 0))
@@ -384,7 +380,7 @@ def _append_cost_delta_to_research(
 
 
 # ---------------------------------------------------------------------------
-# Driver-side path C reconstruction (Pitfall 5 — when baseline is rollup-only)
+# Driver-side path C reconstruction (when baseline is rollup-only)
 # ---------------------------------------------------------------------------
 
 
@@ -396,22 +392,22 @@ def _build_path_c_per_day_baseline(
 ) -> pd.DataFrame:
     """Reconstruct a per-trigger-day baseline frame for compare_to_baseline.
 
-    Plan 93-03 ``compare_to_baseline()`` raises ``ValueError`` matching
-    "schema" when the supplied baseline path is the rollup CSV
-    (``verdict-artifacts/comparison.csv``).  Per Plan 93-03 SUMMARY, the
-    Wave 3 driver is responsible for algorithmically reconstructing the
-    per-trigger-day naive single-fill + v18 |gap|/4 rows from input data.
+    ``compare_to_baseline()`` raises ``ValueError`` matching "schema" when
+    the supplied baseline path is the rollup CSV
+    (``verdict-artifacts/comparison.csv``).  The driver is responsible for
+    algorithmically reconstructing the per-trigger-day naive single-fill +
+    v18 |gap|/4 rows from input data.
 
     This helper produces a minimal frame with a ``trigger_date`` column and
     the per-algo cost / slippage / fill_failure columns ``compare_to_baseline``
     expects when the parquet path is taken.  The naive single-fill cost is
     set to 0 (slippage=0, no fees in baseline) and v18 |gap|/4 cost is the
-    same blanket bps assumption used by Phase 90 (~22.3 bps per leg, derived
-    from Phase 90 90-VERDICT.md row "TX leg avg slippage (bps)").
+    same blanket bps assumption used by the prior verdict (~22.3 bps per leg,
+    derived from the TX leg avg slippage row).
 
     Args:
         triggers: Trigger-day timestamps (length K).
-        fill_log: Per-fill DataFrame (D-21) — used to derive per-day pair_pnl.
+        fill_log: Per-fill DataFrame — used to derive per-day pair_pnl.
         tx_1m: TX 1-min OHLCV (used for daily gap computation).
         etf_1m: 0050 1-min OHLCV.
 
@@ -443,8 +439,8 @@ def _build_path_c_per_day_baseline(
             etf_next = None
             have_next_bars = False
 
-        # v18 cost model: max(_V18_GAP4_FLOOR_BPS, |gap|/4) per Phase 90
-        # 90-VERDICT.md.  Floor promoted to module-level constant (WR-03).
+        # v18 cost model: max(_V18_GAP4_FLOOR_BPS, |gap|/4) per the prior
+        # verdict.  Floor promoted to module-level constant.
         v18_cost_bps_per_leg = 0.5 * (
             max(_V18_GAP4_FLOOR_BPS, abs(tx_gap_bps) / 4.0) + max(_V18_GAP4_FLOOR_BPS, abs(etf_gap_bps) / 4.0)
         )
@@ -492,7 +488,7 @@ def _build_path_c_per_day_baseline(
                 "v18_gap4_cost_bps": v18_cost_bps_per_leg,
                 "v18_gap4_fill_failure": False,
                 "phase90_twap_pair_pnl_bps": pair_pnl_bps,
-                "phase90_twap_slippage_bps_per_leg": 1.3,  # Phase 90 90-VERDICT.md observed
+                "phase90_twap_slippage_bps_per_leg": 1.3,  # observed in the prior verdict
                 "phase90_twap_cost_bps": 1.3,
                 "phase90_twap_fill_failure": False,
             }
@@ -547,12 +543,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--smoke",
         action="store_true",
-        help="smoke run: limits to 2 max-|basis_z| trigger days (D-32)",
+        help="smoke run: limits to 2 max-|basis_z| trigger days",
     )
     parser.add_argument(
         "--full",
         action="store_true",
-        help="full run: all ~67 trigger days for 6yr window (D-24)",
+        help="full run: all ~67 trigger days for 6yr window",
     )
     parser.add_argument(
         "--max-triggers",
@@ -563,7 +559,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--phase90-baseline",
         default=".planning/phases/90-rl-order-execution/verdict-artifacts/comparison.csv",
-        help="Phase 90 baseline file (parquet preferred, CSV fallback per Pitfall 5)",
+        help="baseline file (parquet preferred, CSV fallback)",
     )
     parser.add_argument(
         "--notional-tx",
@@ -589,7 +585,7 @@ def main(argv: list[str] | None = None) -> int:
     window_start = pd.Timestamp(start_str)
     window_end = pd.Timestamp(end_str)
 
-    # twap-window string → minutes int (D-28 default '5min')
+    # twap-window string → minutes int (default '5min')
     twap_str = args.twap_window.strip().lower()
     if twap_str.endswith("min"):
         twap_window_minutes = int(twap_str[:-3])
@@ -611,7 +607,7 @@ def main(argv: list[str] | None = None) -> int:
         run_dir = out_root
     elif out_root.parent.name == "runs":
         # Caller supplied a complete run_dir path
-        # (e.g., ``runs/<uuid4>`` from the W0 smoke test).
+        # (e.g., ``runs/<uuid4>`` from a smoke test).
         run_dir = out_root
         run_id = out_root.name
     elif out_root.name.startswith("phase93-"):
@@ -622,7 +618,7 @@ def main(argv: list[str] | None = None) -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 60)
-    logger.info("Phase 93 driver — run_id=%s", run_id)
+    logger.info("nested-executor driver — run_id=%s", run_id)
     logger.info("Window: %s → %s", window_start.date(), window_end.date())
     logger.info(
         "Inner level: %s | Outer level: %s | TWAP: %dmin", args.inner_level, args.outer_level, twap_window_minutes
@@ -635,9 +631,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.max_triggers is not None:
         max_triggers: int | None = int(args.max_triggers)
     elif args.smoke:
-        max_triggers = 2  # D-32 smoke target
+        max_triggers = 2  # smoke target
     else:
-        max_triggers = None  # all triggers (full run, D-24)
+        max_triggers = None  # all triggers (full run)
 
     # 1-3. Fetch + trigger extraction
     t0 = time.monotonic()
@@ -667,14 +663,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     logger.info("qlib-data materialised at %s", qlib_paths["bin_dir"])
 
-    # Plan 93-04 [Rule 3] auto-fix — write a day-level calendar.
+    # Write a day-level calendar.
     #
     # ``rl_data_adapter.write_qlib_data_dir`` only emits the 1min calendar,
     # but NestedExecutor with outer ``time_per_step="day"`` calls
     # ``Cal.calendar(freq="day")`` and crashes with ``ValueError: calendar
     # not exists: .../bin/calendars/day.txt`` (verified live on
-    # stormtrooper smoke 2026-05-09).  Derive day.txt from the unique
-    # normalised dates in the 1min calendar.
+    # stormtrooper smoke).  Derive day.txt from the unique normalised
+    # dates in the 1min calendar.
     cal_dir = qlib_paths["bin_dir"] / "calendars"
     cal_1min_path = cal_dir / "1min.txt"
     cal_day_path = cal_dir / "day.txt"
@@ -689,14 +685,14 @@ def main(argv: list[str] | None = None) -> int:
     #
     # Two output files written to run_dir:
     # - orders.pkl  — qlib-RL-pipeline schema (MultiIndex [date, instrument],
-    #   columns [amount, order_type:int]).  Retained for parity with Phase 90
-    #   layout; not consumed by FileOrderStrategy in this run.
+    #   columns [amount, order_type:int]).  Retained for parity with the
+    #   prior verdict layout; not consumed by FileOrderStrategy in this run.
     # - orders.csv  — qlib.contrib.strategy.rule_strategy.FileOrderStrategy
     #   schema (CSV with columns datetime, instrument, amount, direction).
     #   This is what NestedBacktestRunner._build_strategy_config points at
-    #   (Plan 93-04 [Rule 1] auto-fix — qlib FileOrderStrategy reads the
-    #   file via pd.read_csv at line 639, so the pickle path errors with
-    #   UnicodeDecodeError on first byte 0x80).  D-25 long TX + short 0050.
+    #   (qlib FileOrderStrategy reads the file via pd.read_csv at line 639,
+    #   so the pickle path errors with UnicodeDecodeError on first byte
+    #   0x80).  Long TX + short 0050.
     orders_pkl = build_orders_multileg(
         trigger_dates=triggers,
         legs={"TX": args.notional_tx, "0050": args.notional_etf},
@@ -719,9 +715,9 @@ def main(argv: list[str] | None = None) -> int:
     # (verified via qlib v0.9.7 docstring example
     # ``datetime, instrument, amount, direction / 20200102, SH600519, 1000, sell``).
     # Convert per-leg notional to shares using the close price on the trigger
-    # day (Plan 93-04 [Rule 3] auto-fix — smoke run #9 produced
-    # ``fill_log_rows=0`` because qlib treated 1_000_000 as 1M shares which
-    # cannot fit in a single 1m bar's volume so the fill was truncated to 0).
+    # day (smoke run #9 produced ``fill_log_rows=0`` because qlib treated
+    # 1_000_000 as 1M shares which cannot fit in a single 1m bar's volume so
+    # the fill was truncated to 0).
     tx_d = aggregate_to_daily(tx_1m)
     etf_d = aggregate_to_daily(etf_1m)
 
@@ -796,8 +792,9 @@ def main(argv: list[str] | None = None) -> int:
 
     phase90_baseline_path = Path(args.phase90_baseline) if args.phase90_baseline else None
     if phase90_baseline_path is not None and not phase90_baseline_path.exists():
-        # Try resolving relative to current working dir (cwd inside container
-        # is /app, so .planning/... resolves correctly when bind-mounted).
+        # Try resolving relative to current working dir (cwd inside the
+        # container is /app, so the bind-mounted baseline path resolves
+        # correctly).
         alt = Path.cwd() / phase90_baseline_path
         if alt.exists():
             phase90_baseline_path = alt
@@ -807,7 +804,7 @@ def main(argv: list[str] | None = None) -> int:
                 phase90_baseline_path,
             )
 
-    # Tight backtest window — Plan 93-04 [Rule 3] auto-fix.  qlib's
+    # Tight backtest window.  qlib's
     # NestedExecutor walks every day in the calendar between
     # ``start_time`` and ``end_time``.  At outer "day" frequency over
     # the 6yr (2020-04..2026-04) overlap window that's 1485 days; on
@@ -863,9 +860,9 @@ def main(argv: list[str] | None = None) -> int:
     comparison_df = getattr(result, "comparison", None)
     delta = getattr(result, "delta_breakdown", None)
 
-    # 6b. Driver-side fill_log synthesis (Plan 93-04 [Rule 3] auto-fix).
+    # 6b. Driver-side fill_log synthesis.
     #
-    # The Wave 0 ``harvest_fill_log`` helper assumes ``indicator_dict[freq]``
+    # The ``harvest_fill_log`` helper assumes ``indicator_dict[freq]``
     # contains a flat dict with ``deal_amount`` indexed by ``(fill_ts,
     # instrument)``.  qlib v0.9.7 instead returns
     # ``Tuple[pd.DataFrame, Indicator]`` where the DataFrame is aggregated
@@ -873,15 +870,15 @@ def main(argv: list[str] | None = None) -> int:
     # count`` columns indexed by ``Timestamp`` (no per-instrument
     # breakdown).  Per-instrument fills are inside the
     # ``Indicator.order_indicator_his`` qlib-internal structure, but
-    # extracting them is brittle.  Instead, synthesise the D-21 fill log
+    # extracting them is brittle.  Instead, synthesise the fill log
     # from the aggregated DataFrame + the orders.csv + the 1m bar data:
     # for each (trigger_date, leg) we know the leg's total share amount,
     # the TWAP splits it evenly across N=twap_window_minutes bars, and the
     # fill price for each bar is its $close (qlib's ``deal_price="close"``).
     if fill_log is None or len(fill_log) == 0:
         logger.info("harvest_fill_log returned empty — synthesising fill_log from orders + 1m bars")
-        # Import D-21 column schema OUTSIDE the synthesis try/except so that
-        # the WR-06 fallback `pd.DataFrame(columns=list(_D21_COLUMNS))` is
+        # Import column schema OUTSIDE the synthesis try/except so that
+        # the fallback `pd.DataFrame(columns=list(_D21_COLUMNS))` is
         # always reachable even if the cost-model imports below fail.
         from poseidon.backtest.nested_runner import _D21_COLUMNS
 
@@ -965,21 +962,21 @@ def main(argv: list[str] | None = None) -> int:
             except OSError as exc:
                 logger.warning("Could not persist synthesised fill_log: %s", exc)
         except (KeyError, ValueError, AttributeError, ImportError) as exc:
-            # Narrow synthesis exception (WR-06): catch only expected
-            # synthesis-logic errors (missing CSV columns, bad cost-model
-            # configuration, attribute lookup on unexpected order shape,
-            # import failures inside the qlib-research container).  OSError
-            # is handled separately by the inner try at parquet write time.
-            # Other exception types (e.g. KeyboardInterrupt, SystemExit)
-            # should propagate.  Preserve D-21 column schema so downstream
+            # Narrow synthesis exception: catch only expected synthesis-logic
+            # errors (missing CSV columns, bad cost-model configuration,
+            # attribute lookup on unexpected order shape, import failures
+            # inside the qlib-research container).  OSError is handled
+            # separately by the inner try at parquet write time.  Other
+            # exception types (e.g. KeyboardInterrupt, SystemExit) should
+            # propagate.  Preserve column schema so downstream
             # ``compare_to_baseline`` raises a meaningful schema error
             # rather than a confusing column-mismatch error.
             logger.exception("fill_log synthesis failed: %s", exc)
             fill_log = pd.DataFrame(columns=list(_D21_COLUMNS))
 
-    # 7. Path C reconstruction (Pitfall 5) — if comparison_df is None and the
-    # baseline was the rollup CSV, reconstruct per-trigger-day frame and
-    # re-invoke compare_to_baseline + compute_delta_breakdown.
+    # 7. Path C reconstruction — if comparison_df is None and the baseline
+    # was the rollup CSV, reconstruct per-trigger-day frame and re-invoke
+    # compare_to_baseline + compute_delta_breakdown.
     if (
         comparison_df is None
         and fill_log is not None
@@ -1012,11 +1009,11 @@ def main(argv: list[str] | None = None) -> int:
             nested_per_day["trigger_date"] = pd.to_datetime(nested_per_day["trigger_date"])
             comparison_df = path_c_baseline.merge(nested_per_day, on="trigger_date", how="left")
             # ``_aggregate_nested_fill_log`` leaves nested_twap_pair_pnl_bps
-            # as NaN by design (W2 unit tests don't exercise PnL math).  Wave 3
+            # as NaN by design (unit tests don't exercise PnL math).  The
             # driver fills it from path_c_baseline.naive_pair_pnl_bps minus
             # nested_twap cost — same pair_pnl as the naive baseline less the
-            # realistic NestedExecutor TWAP fees / slippage (Plan 93-04 [Rule
-            # 1] auto-fix; numerics smoke test depends on this being non-NaN).
+            # realistic NestedExecutor TWAP fees / slippage; the numerics
+            # smoke test depends on this being non-NaN.
             comparison_df["nested_twap_pair_pnl_bps"] = (
                 comparison_df["naive_pair_pnl_bps"]
                 - comparison_df["nested_twap_cost_bps"] * 2
@@ -1049,7 +1046,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             logger.exception("Path C reconstruction failed: %s", exc)
 
-    # 8. Persist delta_breakdown.json (always, machine-readable; D-19 sidecar)
+    # 8. Persist delta_breakdown.json (always, machine-readable sidecar)
     if delta is not None:
         try:
             (run_dir / "delta_breakdown.json").write_text(
@@ -1066,7 +1063,7 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as exc:
             logger.warning("Could not write delta_breakdown.json: %s", exc)
 
-    # 9. Append cost-delta to 93-RESEARCH.md (D-19) — only when --full and
+    # 9. Append cost-delta to the research log — only when --full and
     # NOT --smoke and delta is non-None and the file is reachable from this
     # process (i.e., running on host, NOT inside the qlib-research container).
     do_research_append = delta is not None and not args.smoke and (args.full or args.max_triggers is None)

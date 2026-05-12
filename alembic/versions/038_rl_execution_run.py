@@ -1,23 +1,20 @@
-"""Create rl_execution_runs table (Phase 90 D-25 — Wave 4a).
+"""Create the rl_execution_runs table for tracking RL order-execution runs.
 
 Revision ID: 038
 Revises: 037
 Create Date: 2026-05-03
 
-Phase 90 decisions (.planning/phases/90-rl-order-execution/90-CONTEXT.md):
-
-- D-25: Run lifecycle adopts the v8.0 Phase 41 ``training_runs`` pattern
-  (pending -> running -> succeeded / failed / cancelled, durable Postgres
-  row, cooperative cancel via row re-read). Schema mirrors
-  ``025_create_training_runs.py`` with the column drift documented in
-  ``.planning/phases/90-rl-order-execution/90-PATTERNS.md``:
+Run lifecycle adopts the v8.0 ``training_runs`` pattern (pending -> running
+-> succeeded / failed / cancelled, durable Postgres row, cooperative cancel
+via row re-read). Schema mirrors ``025_create_training_runs.py`` with the
+following column drift:
 
   Dropped (RL has no model registry link):
     handler_class, handler_params, model_class, model_params,
     market, symbols, interval, segments, lookback, mlflow_run_id,
     model_version_id, metrics
 
-  Added (Phase 90 specific):
+  Added (RL-specific):
     algos       JSONB list of requested algos (twap/vwap/ppo/opds)
     dates       JSONB explicit trigger-day list (null = full window)
     mode        full | preflight
@@ -47,7 +44,7 @@ depends_on = None
 
 
 def upgrade():
-    # D-25: rl_execution_runs table (Phase 41 lifecycle pattern).
+    # rl_execution_runs table (training_runs lifecycle pattern).
     op.create_table(
         "rl_execution_runs",
         sa.Column(
@@ -91,15 +88,14 @@ def upgrade():
         ),
     )
 
-    # D-25: Status CHECK constraint — same five lifecycle states as
-    # training_runs (Phase 41 D-05 verbatim).
+    # Status CHECK constraint — same five lifecycle states as training_runs.
     op.create_check_constraint(
         "ck_rl_execution_runs_status",
         "rl_execution_runs",
         "status IN ('pending','running','succeeded','failed','cancelled')",
     )
 
-    # Indexes for GET /runs filtering and pagination (mirror Phase 41).
+    # Indexes for GET /runs filtering and pagination (mirror training_runs).
     op.create_index("ix_rl_execution_runs_status", "rl_execution_runs", ["status"])
     op.create_index(
         "ix_rl_execution_runs_created_at",

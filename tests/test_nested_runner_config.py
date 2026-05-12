@@ -1,10 +1,10 @@
 # Source: poseidon/tests/test_qlib_rl_runner.py:17-30 (monkeypatch.setitem(sys.modules) pattern for qlib stubs)
-"""Phase 93 W0 — NestedBacktestRunner executor/strategy config dict shape unit test.
+"""NestedBacktestRunner executor/strategy config dict shape unit test.
 
-Wave 0 deliverable. Mocks ``qlib.backtest.backtest()`` via
+Mocks ``qlib.backtest.backtest()`` via
 ``monkeypatch.setitem(sys.modules, ...)`` to capture the executor_config /
 strategy_config dicts that NestedBacktestRunner builds; verifies they match
-RESEARCH §Pattern 1 shape (outer "day" / inner "1min", FileOrderStrategy at outer
+prior pattern shape (outer "day" / inner "1min", FileOrderStrategy at outer
 level, TWAPStrategy at inner level, TradeRangeByTime[09:00, 09:0N]).
 
 Mac-collectable. NO ``import qlib`` at module top — the test substitutes a stub
@@ -16,7 +16,7 @@ NESTEXEC-01 acceptance:
 - inner_strategy.class == "TWAPStrategy"
 - strategy.class == "FileOrderStrategy"
 - strategy.kwargs.trade_range starts at "09:00", ends at "09:05" (matches
-  twap_window_minutes=5 default per D-13)
+  twap_window_minutes=5 default)
 """
 
 from __future__ import annotations
@@ -28,9 +28,9 @@ import pandas as pd
 
 
 def test_nested_runner_builds_correct_executor_config(monkeypatch, tmp_path):
-    """NESTEXEC-01: NestedBacktestRunner.run(...) constructs valid executor_config dict.
+    """NestedBacktestRunner.run(...) constructs valid executor_config dict.
 
-    Per RESEARCH §Pattern 1 shape:
+    Per the prior pattern shape:
 
       executor_config = {
           "class": "NestedExecutor",
@@ -56,7 +56,7 @@ def test_nested_runner_builds_correct_executor_config(monkeypatch, tmp_path):
               "file": <orders.pkl>,
               "trade_range": {
                   "class": "TradeRangeByTime",
-                  "module_path": "qlib.backtest.decision",  # W0 probe locked path
+                  "module_path": "qlib.backtest.decision",  # locked path
                   "kwargs": {"start_time": "09:00", "end_time": "09:05"},
               },
           },
@@ -81,7 +81,7 @@ def test_nested_runner_builds_correct_executor_config(monkeypatch, tmp_path):
 
     # Inject stub `qlib.backtest` module before NestedBacktestRunner.run() can
     # `from qlib.backtest import backtest as qlib_backtest`. Same shape as
-    # Phase 90 test_qlib_rl_runner.py monkeypatching of qlib.rl.contrib.backtest.
+    # the test_qlib_rl_runner.py monkeypatching of qlib.rl.contrib.backtest.
     mock_qlib_backtest_mod = types.ModuleType("qlib.backtest")
     mock_qlib_backtest_mod.backtest = _fake_qlib_backtest
     monkeypatch.setitem(sys.modules, "qlib.backtest", mock_qlib_backtest_mod)
@@ -126,7 +126,7 @@ def test_nested_runner_builds_correct_executor_config(monkeypatch, tmp_path):
     strat_cfg = captured["strategy_config"]
     assert strat_cfg["class"] == "FileOrderStrategy"
 
-    # ── TradeRangeByTime kwargs (W0 probe locked path qlib.backtest.decision) ──
+    # ── TradeRangeByTime kwargs (qlib.backtest.decision) ──
     trade_range = strat_cfg["kwargs"]["trade_range"]
     assert trade_range["kwargs"]["start_time"] == "09:00"
     assert trade_range["kwargs"]["end_time"] == "09:05"

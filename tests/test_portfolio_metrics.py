@@ -1,4 +1,4 @@
-"""Unit tests for poseidon.services.portfolio_metrics (Phase 87 / TRUTH-01).
+"""Unit tests for poseidon.services.portfolio_metrics.
 
 Covers Modified Dietz daily return, geometric TWR linking, Sharpe ratio,
 and max-drawdown helpers. Pure-function tests, no DB / no fixtures.
@@ -29,7 +29,7 @@ class TestModifiedDietzDailyReturn:
         assert r == pytest.approx(0.10)
 
     def test_positive_cash_flow_isolated_from_return(self):
-        """D-01 core invariant: a deposit must NOT inflate the return.
+        """Core invariant: a deposit must NOT inflate the return.
 
         V_begin=1M, V_end=11M, CF=+9.87M (the 2026-04-28 deposit case
         scaled down). Naive (V_end - V_begin) / V_begin = 1000% would be

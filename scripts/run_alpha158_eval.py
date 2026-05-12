@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""ACTIVATE-01: Alpha158 features for v18 basis arb anchor signal.
+"""Alpha158 features for the v18 basis-arb anchor signal.
 
-Phase 95 Wave 1 driver. Per CONTEXT D-04..D-08:
+Behaviour:
 
-* D-04 — Alpha158 (full 158-feature config), not Alpha360.
-* D-05 — Reuse the StaticDataLoader bridge already proven in
-  ``poseidon.qlib.data_handler.PoseidonDataHandler.to_qlib_handler`` (Pitfall 1
-  path b — no qlib provider data required).
-* D-06 — All 158 features, no cherry-picking.
-* D-07 — Output: ``local_dev/qlib-activations/alpha158/basis_arb/{features.parquet,
+* Alpha158 (full 158-feature config), not Alpha360.
+* Reuse the StaticDataLoader bridge already proven in
+  ``poseidon.qlib.data_handler.PoseidonDataHandler.to_qlib_handler`` (path b
+  — no qlib provider data required).
+* All 158 features, no cherry-picking.
+* Output: ``local_dev/qlib-activations/alpha158/basis_arb/{features.parquet,
   performance.json, summary.json}``.
-* D-08 — Production-candidate evaluation = real anchor signal (basis_z<-1 trigger
-  per ``poseidon.research.tx_basis_signal``), real forward returns, sample size
-  recorded, top features by |IC| persisted.
+* Production-candidate evaluation = real anchor signal (basis_z<-1 trigger
+  per ``poseidon.research.tx_basis_signal``), real forward returns, sample
+  size recorded, top features by |IC| persisted.
 
 The driver is factored as a library + main:
 
@@ -541,7 +541,7 @@ def run_alpha158_eval(
             ``$open/$high/$low/$close/$volume/$factor``. If None, loads via
             ``RemoteDataRepository`` (production path).
         out_dir: Output directory for the artifact triplet. Defaults to
-            ``/app/local_dev/qlib-activations/alpha158/basis_arb`` (D-07).
+            ``/app/local_dev/qlib-activations/alpha158/basis_arb``.
         real_etf: Optional 0050 OHLCV DataFrame for the real basis_z path.
             When None and ``panel`` is None, real_etf is also loaded from
             Thalassa. When ``panel`` is supplied (test path) and real_etf is
@@ -571,11 +571,11 @@ def run_alpha158_eval(
 
     per_feat_ic = _per_feature_ic(features_flat, fwd_ret)
 
-    # D-07 — persist artifacts.
+    # Persist artifacts.
     df_features.to_parquet(out_path / "features.parquet")
     per_feat_ic.to_json(out_path / "performance.json", orient="records", indent=2)
 
-    # D-08 — top-5 features by |IC|.
+    # Top-5 features by |IC|.
     abs_ic = per_feat_ic["ic"].abs()
     top5_idx = abs_ic.sort_values(ascending=False, na_position="last").index[:5]
     top5 = per_feat_ic.loc[top5_idx].to_dict(orient="records")

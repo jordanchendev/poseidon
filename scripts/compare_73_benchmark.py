@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Phase 73 D-19: Expanded universe + weekly rebalance + 0050 benchmark comparison.
+"""Expanded universe + weekly rebalance + 0050 benchmark comparison.
 
 Compares 4 variants:
-  1. Phase 72 baseline (monthly rebalance, 22 symbols, hold_until)
-  2. Phase 73a (weekly rebalance, ~50 symbols, hold_until)
-  3. Phase 73b (monthly rebalance, ~50 symbols, hold_until)
+  1. Baseline (monthly rebalance, 22 symbols, hold_until)
+  2. Weekly (weekly rebalance, ~50 symbols, hold_until)
+  3. Monthly+50 (monthly rebalance, ~50 symbols, hold_until)
   4. 0050 ETF buy-and-hold benchmark
 
 Run on stormtrooper inside cpu-worker container:
@@ -26,7 +26,7 @@ from poseidon.strategies.portfolio.fundamental_selection import (
     FundamentalSelectionStrategy,
 )
 
-# Phase 72 baseline universe (22 symbols)
+# Prior baseline universe (22 symbols)
 TW_STOCK_22 = [
     "2330",
     "2317",
@@ -95,7 +95,7 @@ START = date(2023, 1, 1)
 END = date(2026, 4, 15)
 
 
-# Shared config for all 3 strategy variants (Phase 72 winner: 4D + market_cap_weight + hold_until)
+# Shared config for all 3 strategy variants (4D + market_cap_weight + hold_until)
 SHARED_CONFIG = {
     "strategy": "fundamental_selection",
     "name": "Fundamental Selection",
@@ -123,7 +123,7 @@ SHARED_CONFIG = {
 
 CONFIGS = [
     {
-        "label": "Phase 72 baseline (monthly/22sym/hold_until)",
+        "label": "baseline (monthly/22sym/hold_until)",
         "config": {
             **SHARED_CONFIG,
             "symbols": TW_STOCK_22,
@@ -131,7 +131,7 @@ CONFIGS = [
         },
     },
     {
-        "label": "Phase 73a (weekly/50sym/hold_until)",
+        "label": "weekly (weekly/50sym/hold_until)",
         "config": {
             **SHARED_CONFIG,
             "symbols": TW_STOCK_50,
@@ -140,7 +140,7 @@ CONFIGS = [
         },
     },
     {
-        "label": "Phase 73b (monthly/50sym/hold_until)",
+        "label": "monthly+50 (monthly/50sym/hold_until)",
         "config": {
             **SHARED_CONFIG,
             "symbols": TW_STOCK_50,
@@ -151,10 +151,10 @@ CONFIGS = [
 
 
 def compute_benchmark_metrics(ohlcv_0050: pd.DataFrame, start: date, end: date) -> dict:
-    """Compute buy-and-hold metrics for 0050 ETF (D-10, D-11: adj_close)."""
+    """Compute buy-and-hold metrics for 0050 ETF (uses adj_close when available)."""
     if ohlcv_0050.empty:
         return {"label": "0050 buy-and-hold benchmark", "error": "No 0050 OHLCV data"}
-    # Phase 74 D-11: use adj_close for benchmark (split/dividend adjusted)
+    # Use adj_close for benchmark (split/dividend adjusted).
     price_col = "adj_close" if "adj_close" in ohlcv_0050.columns else "close"
     start_price = float(ohlcv_0050.iloc[0][price_col])
     end_price = float(ohlcv_0050.iloc[-1][price_col])
@@ -186,7 +186,7 @@ def compute_benchmark_metrics(ohlcv_0050: pd.DataFrame, start: date, end: date) 
 
 
 def compute_excess_metrics(strategy_equity: pd.Series, benchmark_equity: pd.Series) -> dict:
-    """Compute strategy vs benchmark comparison metrics (D-11)."""
+    """Compute strategy vs benchmark comparison metrics."""
     strat_returns = strategy_equity.pct_change().dropna()
     bench_returns = benchmark_equity.pct_change().dropna()
 
@@ -214,7 +214,7 @@ def compute_excess_metrics(strategy_equity: pd.Series, benchmark_equity: pd.Seri
 
 
 def run_comparison() -> int:
-    """Run Phase 73 4-variant portfolio backtest comparison and print results."""
+    """Run 4-variant portfolio backtest comparison and print results."""
     repo = RemoteDataRepository.from_settings()
     cost_model = COST_MODELS["tw_stock"]
     results = []
@@ -245,7 +245,7 @@ def run_comparison() -> int:
     if benchmark_ohlcv.empty:
         print("WARNING: No 0050 OHLCV data -- benchmark metrics will be empty")
 
-    # Build benchmark equity series for excess metrics (Phase 74 D-11: adj_close)
+    # Build benchmark equity series for excess metrics (adj_close).
     if not benchmark_ohlcv.empty:
         price_col = "adj_close" if "adj_close" in benchmark_ohlcv.columns else "close"
         bench_start_price = float(benchmark_ohlcv.iloc[0][price_col])
@@ -302,7 +302,7 @@ def run_comparison() -> int:
                 "num_rebalances": len(result.rebalance_log),
             }
 
-            # Compute excess metrics vs 0050 (D-11)
+            # Compute excess metrics vs 0050.
             if result.equity_curve and not benchmark_equity.empty:
                 strat_equity = pd.Series(
                     {d: v for d, v in result.equity_curve},
@@ -347,13 +347,13 @@ def run_comparison() -> int:
             print(f"  ERROR: {exc}")
             results.append({"label": label, "error": str(exc)})
 
-    # Compute 0050 benchmark metrics (D-10)
+    # Compute 0050 benchmark metrics.
     benchmark_row = compute_benchmark_metrics(benchmark_ohlcv, START, END)
     results.append(benchmark_row)
 
     # Summary table
     print(f"\n{'=' * 80}")
-    print("Phase 73: Expanded Universe + Weekly Rebalance + 0050 Benchmark")
+    print("Expanded Universe + Weekly Rebalance + 0050 Benchmark")
     print(f"{'=' * 80}")
     print(f"Period: {START} to {END}")
     print(f"Universe: 22 (baseline) / {len(TW_STOCK_50)} (expanded) symbols")
@@ -380,9 +380,9 @@ def run_comparison() -> int:
         rebals = f"{r.get('num_rebalances', 0):>6d}"
         print(f"{r['label']:<45} | {sharpe:>8} | {ann_ret:>8} | {max_dd:>8} | {tot_ret:>8} | {trades} | {rebals}")
 
-    # Excess metrics section (D-11)
+    # Excess metrics section.
     print(f"\n{'=' * 80}")
-    print("Excess Metrics vs 0050 Benchmark (D-11)")
+    print("Excess Metrics vs 0050 Benchmark")
     print(f"{'=' * 80}")
     ex_header = f"{'Label':<45} | {'ExRtn/yr':>8} | {'TrkErr':>8} | {'Alpha':>8} | {'Beta':>8}"
     print(ex_header)
@@ -397,16 +397,16 @@ def run_comparison() -> int:
         beta = f"{r['beta']:.4f}" if r.get("beta") is not None else "N/A"
         print(f"{r['label']:<45} | {ex_ret:>8} | {trk_err:>8} | {alpha:>8} | {beta:>8}")
 
-    # Look-ahead bias gate (D-18): flag Sharpe > 3.0
+    # Look-ahead bias gate: flag Sharpe > 3.0
     print()
     bias_warning = False
     for r in results:
         if "error" not in r and r.get("sharpe_ratio") is not None and r["sharpe_ratio"] > 3.0:
-            print(f"  WARNING (D-18): {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0 -- possible look-ahead bias!")
+            print(f"  WARNING: {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0 -- possible look-ahead bias!")
             bias_warning = True
 
     if not bias_warning:
-        print("  Look-ahead bias gate (D-18): PASSED (all Sharpe <= 3.0)")
+        print("  Look-ahead bias gate: PASSED (all Sharpe <= 3.0)")
 
     # JSON summary for easy parsing
     print(f"\n{'=' * 80}")

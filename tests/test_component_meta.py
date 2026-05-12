@@ -1,4 +1,4 @@
-"""Tests for component capability metadata (Phase 34, COMP-01 through COMP-04).
+"""Tests for component capability metadata (COMP-01 through COMP-04).
 
 Verifies:
 - All 5 base classes carry capability metadata with conservative defaults

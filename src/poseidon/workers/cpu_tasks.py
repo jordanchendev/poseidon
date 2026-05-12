@@ -1,6 +1,6 @@
 """CPU worker Celery tasks for backtest, optimization, trading, and research.
 
-Phase 61: All data-fetching / ingest / backfill tasks removed.
+All data-fetching / ingest / backfill tasks have been removed.
 Poseidon reads data exclusively via Thalassa RemoteDataRepository.
 """
 
@@ -146,12 +146,12 @@ def _build_tw_stock_broker(broker_cfg):
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.fetch_market_data")
 def fetch_market_data(market: str, interval: str, symbol: str | None = None) -> dict:
-    """Removed in Phase 61 -- data fetching moved to Thalassa.
+    """Deprecated — data fetching moved to Thalassa.
 
     Task name kept so any stale Beat schedule entry does not crash the worker.
     """
-    logger.warning("fetch_market_data: removed in Phase 61 — data fetching is now handled by Thalassa")
-    return {"skipped": "removed_phase_61", "market": market, "interval": interval}
+    logger.warning("fetch_market_data: removed — data fetching is now handled by Thalassa")
+    return {"skipped": "removed", "market": market, "interval": interval}
 
 
 @celery_app.task(
@@ -333,12 +333,12 @@ def run_backtest_task(
                 **(sizing_params or {}),
             )
 
-            # Resolve fill model enum (Phase 53 API-01)
+            # Resolve fill model enum
             from poseidon.backtest.pending_orders import FillModel
 
             fill_model_enum = FillModel(fill_model) if fill_model else None
 
-            # Load funding rates if requested and market is crypto_perp (Phase 53 API-01)
+            # Load funding rates if requested and market is crypto_perp
             funding_df = None
             if include_funding and record.market == "crypto_perp":
                 from poseidon.models.funding_rate import FundingRateRecord
@@ -443,7 +443,7 @@ def run_dual_mode_task(
     sizing_mode: str = "fixed_notional",
     sizing_params: dict | None = None,
 ) -> dict:
-    """Run dual-mode fill comparison for a strategy (Phase 53 API-03).
+    """Run dual-mode fill comparison for a strategy.
 
     Runs the same strategy with both OPTIMISTIC and PESSIMISTIC fill models
     via run_dual_mode_comparison(), returns serialized DualModeResult.
@@ -472,7 +472,7 @@ def run_dual_mode_task(
             if not record:
                 raise ValueError(f"Strategy {strategy_id} not found")
 
-            # Build strategy factory based on strategy_type (Phase 53 API-03)
+            # Build strategy factory based on strategy_type
             if record.strategy_type == "voting":
                 strategy_factory = lambda: VotingStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
             elif record.strategy_type == "liquidity_sweep":
@@ -510,7 +510,7 @@ def run_dual_mode_task(
                 **(sizing_params or {}),
             )
 
-            # Load funding rates if requested (Phase 53 API-03)
+            # Load funding rates if requested
             funding_df = None
             if include_funding and record.market == "crypto_perp":
                 from poseidon.models.funding_rate import FundingRateRecord
@@ -875,7 +875,7 @@ def compute_var_snapshot(method: str = "all") -> dict:
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.compute_mc_var")
 def compute_mc_var() -> dict:
-    """Compute Monte Carlo VaR using Cholesky decomposition (per D-05, D-06, D-07).
+    """Compute Monte Carlo VaR using Cholesky decomposition.
 
     Uses cached covariance matrix (never recomputes), rebuilds portfolio for
     weights, and stores result in VaR snapshot table + Redis cache.
@@ -892,7 +892,7 @@ def compute_mc_var() -> dict:
 
     redis_client = get_redis("cache")
     with db_session() as db:
-        # 1. Load cached covariance (per D-06: never recompute inline)
+        # 1. Load cached covariance (never recompute inline)
         cached = load_cached_covariance(redis_client)
         if cached is None:
             logger.warning("No cached covariance matrix, skipping MC VaR")
@@ -1035,7 +1035,7 @@ def update_covariance_matrix() -> dict:
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.autoresearch_run", bind=True)
 def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
-    """Run autonomous parameter search across markets (D-09).
+    """Run autonomous parameter search across markets.
 
     Single long-running task. Internally loops per-market calling
     ParameterSearchPipeline.run() via AutoResearchRunner.
@@ -1078,11 +1078,11 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
 
             market_specs = [MarketSpec(**m) for m in markets]
 
-            # D-12: graceful stop check via Redis flag
+            # graceful stop check via Redis flag
             def check_stop() -> bool:
                 return bool(redis_client.get(f"autoresearch:stop:{task_id}"))
 
-            # D-11: heartbeat via Celery task state update
+            # heartbeat via Celery task state update
             def update_progress(current: int, total: int, symbol: str) -> None:
                 self.update_state(
                     state="PROGRESS",
@@ -1093,15 +1093,15 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
                     },
                 )
 
-            # Phase 45: optional ML model for sub-signal search (D-20)
+            # optional ML model for sub-signal search
             mv_id = search_config.get("model_version_id")
 
-            # Phase 69: extract new dispatch fields from search_config
+            # extract dispatch fields from search_config
             strategy_type = search_config.get("strategy_type", "voting")
             feature_names = search_config.get("feature_names")
             base_config_json = search_config.get("base_config_json")
 
-            # D-11: regime_router special path -- does NOT use AutoResearchRunner
+            # regime_router special path -- does NOT use AutoResearchRunner
             if strategy_type == "regime_router":
                 from poseidon.backtest.cost_model import COST_MODELS
                 from poseidon.backtest.experiment_tracker import ExperimentTracker as ET
@@ -1184,11 +1184,11 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
                     "report": {"regime_results": regime_results_all},
                 }
 
-            # D-15: FACTORY_REGISTRY dict for standard AutoResearchRunner path.
+            # FACTORY_REGISTRY dict for standard AutoResearchRunner path.
             # voting maps to None (VotingStrategyFactory is the default when strategy_factory=None).
             # rule uses a lambda to capture feature_names at dispatch time (constructor arg).
             # model is initialised with available_models=None; AutoResearchRunner's per-market loop
-            #   (runner.py:164-173, Phase 46 pattern) calls list_ready_models(market) and passes
+            #   (runner.py:164-173) calls list_ready_models(market) and passes
             #   available_models into the pipeline, which reaches build_trial_factory() dynamically.
             from poseidon.backtest.model_strategy_factory import ModelStrategyFactory
             from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory
@@ -1218,7 +1218,7 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
             )
             results = runner.run(market_specs)
 
-            # Generate report (D-15, D-16)
+            # Generate report
             completed_at = datetime.now(UTC)
             tracker = ExperimentTracker(db)
             study_names = [r.search_result.study_name for r in results if r.search_result is not None]
@@ -1238,14 +1238,14 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
                 "report": report,
             }
         finally:
-            # D-12: clean up stop flag
+            # clean up stop flag
             with contextlib.suppress(Exception):
                 redis_client.delete(f"autoresearch:stop:{task_id}")
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.run_stress_test")
 def run_stress_test(scenario_name: str, custom_shocks: dict | None = None) -> dict:
-    """Run stress test scenario asynchronously (per D-12).
+    """Run stress test scenario asynchronously.
 
     Supports both named scenarios (from JSON config) and ad-hoc hypothetical
     scenarios (custom_shocks dict). Results are returned as JSON-serializable
@@ -1479,7 +1479,7 @@ def trigger_risk_update(eval_result: dict | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Phase 24: Portfolio scheduling tasks
+# Portfolio scheduling tasks
 # ---------------------------------------------------------------------------
 
 
@@ -1487,21 +1487,21 @@ def trigger_risk_update(eval_result: dict | None = None) -> dict:
 def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
     """Monthly TW stock rebalance -- driven by PASSED signals in DB.
 
-    Phase 89-02 W3 un-noop: instead of running RevenueBreakoutStrategy inline
-    (removed in Phase 61, FinLab data not available via Thalassa), this task
-    now consumes whatever PASSED tw_stock signals exist in SignalRepository
-    within the last 7 days and dispatches RebalanceOrders accordingly (D-08:
-    no new strategy logic; we only consume existing PASSED signals).
+    Instead of running RevenueBreakoutStrategy inline (FinLab data not
+    available via Thalassa), this task consumes whatever PASSED tw_stock
+    signals exist in SignalRepository within the last 7 days and dispatches
+    RebalanceOrders accordingly (no new strategy logic; we only consume
+    existing PASSED signals).
 
-    The 7-day freshness filter mechanically excludes the 13 legacy frozen
-    signals dated 2026-03-19 (CONTEXT D-15), which is the desired behaviour:
-    legacy signals stay legacy; new strategies (when registered) drive new
-    monthly rebalances via the standard signal pipeline.
+    The 7-day freshness filter mechanically excludes legacy frozen signals
+    dated 2026-03-19, which is the desired behaviour: legacy signals stay
+    legacy; new strategies (when registered) drive new monthly rebalances
+    via the standard signal pipeline.
 
     Args:
         signal_id: Optional incoming signal UUID — preserved for API
-            compatibility with Phase 61-era beat-trigger contracts. Not
-            currently used (multi-symbol rebalance reads its own batch).
+            compatibility with legacy beat-trigger contracts. Not currently
+            used (multi-symbol rebalance reads its own batch).
     """
     import yaml
 
@@ -1669,11 +1669,11 @@ def portfolio_stop_loss_monitor() -> dict:
             prices=prices,
             market="tw_stock",
             signal_ids=None,
-            # Phase 89-02 W4 audit whitelist: stop-loss exits are by-design
-            # protective closes, not signal-driven. Tagging the orders with
-            # order_origin="stop_loss" lets the 89-03 mini-audit classify
-            # signal_id-NULL orders as legitimate Cat-B instead of a wiring
-            # breach.
+            # Audit whitelist: stop-loss exits are by-design protective
+            # closes, not signal-driven. Tagging the orders with
+            # order_origin="stop_loss" lets the mini-audit classify
+            # signal_id-NULL orders as legitimate protective exits instead
+            # of a wiring breach.
             order_origin="stop_loss",
         )
 
@@ -1776,7 +1776,7 @@ def portfolio_nav_snapshot() -> dict:
                 holdings_value=holdings_value,
                 cash=cash,
                 holdings_count=len(holdings),
-                # TRUTH-04 (D-08): EOD writer defaults cash_flow=0; deposits/withdrawals
+                # EOD writer defaults cash_flow=0; deposits/withdrawals
                 # are seeded post-hoc via admin scripts/migrations on the snapshot row.
                 cash_flow=0,
             )
@@ -1793,7 +1793,7 @@ def portfolio_nav_snapshot() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Phase 24: Helper functions for portfolio tasks
+# Helper functions for portfolio tasks
 # ---------------------------------------------------------------------------
 
 
@@ -1824,7 +1824,7 @@ def _get_latest_prices(symbols: list[str]) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
-# Phase 27: Perpetual contract task helpers
+# Perpetual contract task helpers
 # ---------------------------------------------------------------------------
 
 
@@ -1880,17 +1880,17 @@ def _get_perp_mark_prices(symbols: list[str]) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
-# Phase 27: Perpetual contract Celery tasks
+# Perpetual contract Celery tasks
 # ---------------------------------------------------------------------------
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.perp_liquidation_monitor")
 def perp_liquidation_monitor() -> dict:
-    """Every 1 min: check perp margin ratios, close all on breach (D-01, D-02, D-03).
+    """Every 1 min: check perp margin ratios, close all on breach.
 
     24/7 -- NO weekend/holiday skip. Checks margin ratio for all open perp
     positions. If any position has marginRatio < 0.15, closes ALL perp positions
-    (full close, not partial -- per D-03, same as stop-loss monitor pattern).
+    (full close, not partial -- same as stop-loss monitor pattern).
     """
     import yaml
 
@@ -1900,7 +1900,7 @@ def perp_liquidation_monitor() -> dict:
     from poseidon.orders.risk_checker import OrderRiskChecker
     from poseidon.strategies.portfolio.schemas import RebalanceOrder
 
-    MARGIN_THRESHOLD = 0.15  # D-02: 15% threshold
+    MARGIN_THRESHOLD = 0.15  # 15% threshold
 
     # 1. Rebuild perp adapter from DB
     adapter = _build_perp_adapter_from_db()
@@ -1928,7 +1928,7 @@ def perp_liquidation_monitor() -> dict:
     if not breach_detected:
         return {"checked": len(positions), "closed": []}
 
-    # 4. Full close ALL perp positions (D-03: close all, not partial)
+    # 4. Full close ALL perp positions (close all, not partial)
     position_tracker = _build_position_tracker()
     perp_holdings = {sym: h for sym, h in position_tracker.current_holdings().items() if h.market == "crypto_perp"}
 
@@ -1987,10 +1987,10 @@ def perp_liquidation_monitor() -> dict:
         prices=mark_prices,
         market="crypto_perp",
         signal_ids=None,
-        # Phase 89-02 W4 audit whitelist: liquidation-distance close-outs
-        # are by-design protective closes, not signal-driven. The
-        # order_origin="liquidation" tag lets the 89-03 mini-audit
-        # classify these signal_id-NULL orders as legitimate Cat-B.
+        # Audit whitelist: liquidation-distance close-outs are by-design
+        # protective closes, not signal-driven. The order_origin="liquidation"
+        # tag lets the mini-audit classify these signal_id-NULL orders as
+        # legitimate protective exits.
         order_origin="liquidation",
     )
 
@@ -2033,9 +2033,9 @@ def perp_liquidation_monitor() -> dict:
 def _signals_to_targets(signals) -> tuple[dict[str, float], dict[str, "uuid.UUID"]]:
     """Translate a list of PASSED SignalRecords into (targets, signal_ids).
 
-    Phase 89-02 (W2): perp_rebalance / portfolio_monthly_rebalance consume
-    PASSED signals via SignalRepository.latest_passed and feed them into
-    PortfolioRebalancer + OrderManager.execute_rebalance(signal_ids=...).
+    perp_rebalance / portfolio_monthly_rebalance consume PASSED signals via
+    SignalRepository.latest_passed and feed them into PortfolioRebalancer +
+    OrderManager.execute_rebalance(signal_ids=...).
 
     Mapping (poseidon.signals.contract.SignalAction values are lowercase
     strings persisted as ``action`` on SignalRecord):
@@ -2119,16 +2119,16 @@ def _signals_to_target_positions(signals) -> tuple[list, dict[str, "uuid.UUID"]]
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.perp_rebalance")
 def perp_rebalance(signal_id: str | None = None) -> dict:
-    """Every 4h: read PASSED crypto_perp signals from DB, rebalance, dispatch (D-04, D-05).
+    """Every 4h: read PASSED crypto_perp signals from DB, rebalance, dispatch.
 
-    Phase 89-02 (W2): F8 wiring fix — replaces inline CryptoTrendStrategy with
+    F8 wiring fix — replaces inline CryptoTrendStrategy with
     SignalRepository.latest_passed("crypto_perp", since=now-8h) so live orders
     are produced from PASSED signals (closing the 25-orders-zero-signals
-    breach found in Phase 88). signal_ids dict propagates to OrderManager so
-    each Order is auditably traceable to its upstream PASSED signal.
+    breach). signal_ids dict propagates to OrderManager so each Order is
+    auditably traceable to its upstream PASSED signal.
 
     24/7 -- NO weekend/holiday skip. Triggered 5 min after 4h OHLCV fetch.
-    Uses leverage_limits from crypto_trend.yaml risk section (PRSK-03).
+    Uses leverage_limits from crypto_trend.yaml risk section.
 
     Args:
         signal_id: Optional signal UUID that triggered this rebalance (legacy).
@@ -2153,7 +2153,7 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
         raw_cfg = yaml.safe_load(f)
     strategy_cfg = CryptoTrendConfig(**raw_cfg)
 
-    # Extract leverage limits from risk section (Plan 01)
+    # Extract leverage limits from risk section
     leverage_limits = {}
     if raw_cfg.get("risk", {}).get("max_leverage"):
         leverage_limits = raw_cfg["risk"]["max_leverage"]
@@ -2199,7 +2199,7 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
     )
     rebalancer = PortfolioRebalancer()
 
-    # --- Protection checks (D-11, D-12, D-13) ---
+    # --- Protection checks ---
     from poseidon.protections.manager import ProtectionManager
 
     protection_mgr = ProtectionManager.from_defaults()
@@ -2213,16 +2213,16 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
             logger.warning("perp_rebalance: portfolio locked by daily_loss protection — %s", reason)
             return {"skipped": "protection_locked", "reason": reason}
 
-    # Phase 89-02 (W2): consume PASSED signals from SignalRepository instead
-    # of running CryptoTrendStrategy inline. since=now-8h covers the 4h
-    # cadence with one missed-tick safety margin.
+    # Consume PASSED signals from SignalRepository instead of running
+    # CryptoTrendStrategy inline. since=now-8h covers the 4h cadence with
+    # one missed-tick safety margin.
     signals_window = now - timedelta(hours=8)
     with db_session() as sig_db:
         repo = SignalRepository(sig_db)
         recent_signals = repo.latest_passed(strategy_cfg.market, since=signals_window, limit=100)
 
     if not recent_signals:
-        logger.info("perp_rebalance: no PASSED signals in last 8h — skipping (W2)")
+        logger.info("perp_rebalance: no PASSED signals in last 8h — skipping")
         return {"rebalanced": True, "orders": 0, "sells": 0, "skipped": "no_recent_signals"}
 
     targets, signal_ids = _signals_to_target_positions(recent_signals)
@@ -2238,7 +2238,7 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
         logger.info("perp_rebalance: no rebalance orders")
         return {"rebalanced": True, "orders": 0, "sells": 0}
 
-    # Filter out locked symbols (per D-12)
+    # Filter out locked symbols
     with db_session() as prot_db:
         unlocked_orders = []
         for ro in rebalance_orders:
@@ -2274,9 +2274,9 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
                     "side": h.side,
                 }
 
-    # Execute rebalance (with leverage enforcement from Plan 01)
-    # Phase 89-02 (W2): pass signal_ids so each Order is auditably traceable
-    # to its upstream PASSED signal (closes F8 wiring breach).
+    # Execute rebalance (with leverage enforcement). Pass signal_ids so each
+    # Order is auditably traceable to its upstream PASSED signal (closes F8
+    # wiring breach).
     results = order_manager.execute_rebalance(
         rebalance_orders,
         strategy_name=strategy_cfg.name,
@@ -2325,10 +2325,10 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.perp_funding_settlement")
 def perp_funding_settlement() -> dict:
-    """Every 8h: settle funding rates for open perp positions (D-06).
+    """Every 8h: settle funding rates for open perp positions.
 
     24/7 -- NO weekend/holiday skip. Calls the existing
-    record_funding_settlement function (Phase 26) for each open perp position.
+    record_funding_settlement function for each open perp position.
     Funding rate retrieved from latest FundingRateRecord in DB.
     """
     import yaml
@@ -2404,7 +2404,7 @@ def perp_funding_settlement() -> dict:
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.perp_nav_snapshot")
 def perp_nav_snapshot() -> dict:
-    """Every 4h: record perp portfolio NAV snapshot (D-05).
+    """Every 4h: record perp portfolio NAV snapshot.
 
     24/7 -- NO weekend/holiday skip. Creates NavSnapshotRecord with
     market='crypto_perp' to distinguish from TW stock NAV snapshots.
@@ -2483,7 +2483,7 @@ def perp_nav_snapshot() -> dict:
                 cash=cash,
                 holdings_count=len(perp_holdings),
                 market="crypto_perp",
-                # TRUTH-04 (D-08): EOD writer defaults cash_flow=0; deposits/withdrawals
+                # EOD writer defaults cash_flow=0; deposits/withdrawals
                 # are seeded post-hoc via admin scripts/migrations on the snapshot row.
                 cash_flow=0,
             )
@@ -2499,7 +2499,7 @@ def perp_nav_snapshot() -> dict:
     return {"date": str(today), "total_nav": total_nav, "holdings_count": len(perp_holdings)}
 
 
-# --- Factor Analysis Tasks (Phase 47, D-13, D-15) ---
+# --- Factor Analysis Tasks ---
 
 
 @celery_app.task(

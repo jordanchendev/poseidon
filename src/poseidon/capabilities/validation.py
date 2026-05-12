@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def validate_live_components(components: list[Any]) -> None:
-    """Reject any component with supports_live=False. Per D-04.
+    """Reject any component with supports_live=False.
 
     Called by the Celery task or pipeline that assembles live components.
     Raises ValueError immediately on first rejection.
@@ -24,7 +24,7 @@ def validate_live_components(components: list[Any]) -> None:
 
 
 def validate_backtest_components(components: list[Any]) -> None:
-    """Reject any component with supports_backtest=False. Per D-06."""
+    """Reject any component with supports_backtest=False."""
     for comp in components:
         if not getattr(comp, "supports_backtest", True):
             name = getattr(comp, "name", type(comp).__name__)
@@ -32,7 +32,7 @@ def validate_backtest_components(components: list[Any]) -> None:
 
 
 def warn_bias_risks(components: list[Any]) -> None:
-    """Log warnings for components with non-empty bias_risk. Per D-05, D-10."""
+    """Log warnings for components with non-empty bias_risk."""
     for comp in components:
         risks = getattr(comp, "bias_risk", [])
         if risks:

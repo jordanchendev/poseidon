@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Phase 65 FIX-01: VotingStrategy Nunchi alignment verification.
+"""VotingStrategy Nunchi alignment verification.
 
 Runs BTCUSDT 1h backtest with nunchi_crypto_1h.json config and reports
-Sharpe/MaxDD/WFE/trade_count. Per D-01: these metrics ARE the aligned baseline
-(the config encodes all Nunchi 103 experiment parameters).
+Sharpe/MaxDD/WFE/trade_count.  These metrics ARE the aligned baseline (the
+config encodes all Nunchi 103 experiment parameters).
 
 Run inside stormtrooper docker:
   docker compose exec cpu-worker python scripts/verify_nunchi_alignment.py
@@ -83,8 +83,8 @@ def main() -> int:
     print(f"Composite Score:    {composite:.4f}")
     print(f"Status:             {result.status}")
 
-    # D-02 checklist
-    print("\n--- D-02 Nunchi Alignment Checklist ---")
+    # Alignment checklist
+    print("\n--- Nunchi Alignment Checklist ---")
     print(
         f"  ATR 5.5x:         {config.get('atr_multiplier')} == 5.5 -> {'PASS' if config.get('atr_multiplier') == 5.5 else 'FAIL'}"
     )
@@ -123,7 +123,7 @@ def main() -> int:
             f"IS trades={w.is_trade_count} OOS trades={w.oos_trade_count}"
         )
 
-    # Pass/fail (per D-01: non-degenerate results = pass)
+    # Pass/fail (non-degenerate results = pass)
     passed = sharpe > 0 and trade_count > 10
     status = "PASS" if passed else "FAIL"
     print(f"\n>>> FIX-01 Status: {status}")

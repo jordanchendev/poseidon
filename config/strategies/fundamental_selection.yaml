@@ -20,7 +20,7 @@ rebalance_day_of_week: 4
 rebalance_day_of_month: 15
 publication_lag_days: 10
 
-# Phase 72: hold_until exit conditions (D-03)
+# hold_until exit conditions
 hold_until:
   conditions:
     - type: revenue_yoy_positive

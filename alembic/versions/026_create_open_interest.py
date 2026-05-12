@@ -1,4 +1,4 @@
-"""Create open_interest hypertable (Phase 43.1 G-01).
+"""Create open_interest hypertable.
 
 Revision ID: 026
 Revises: 025

@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Phase 77-03: WFE + grid search + random baseline for StructuralReversal.
+"""WFE + grid search + random baseline for StructuralReversal.
 
-BTC+ETH combined walk-forward optimization with 3 grid search variations
-(GATE-04 max), random baseline comparison (GATE-05), and net_sharpe as
-optimization target (D-37).
+BTC+ETH combined walk-forward optimization with 3 grid-search variations
+(max-variation cap), random baseline comparison, and net_sharpe as the
+optimization target.
 
 Output: scripts/output/wfo_77_results.json
   - 3 variations grid-searched (v1_2cond, v2_3cond, v3_threshold)
-  - BTC+ETH combined WFE with generate_windows + manual loop (Pitfall 7 fix)
+  - BTC+ETH combined WFE with generate_windows + manual loop (multi-symbol
+    cannot use WalkForwardAnalyzer.analyze())
   - 100-seed random baseline Sharpe distribution
-  - Gate check indicators for Phase 78 decision gate
+  - Gate-check indicators for the downstream decision gate
 
 Run on stormtrooper inside cpu-worker container:
   docker compose exec cpu-worker python scripts/wfo_77_structural.py
@@ -47,38 +48,38 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Module-level constants (per CONTEXT.md decisions)
+# Module-level constants
 # ---------------------------------------------------------------------------
-BARS_PER_YEAR = 2190  # 365.25 * 24 / 4 for 4H crypto (Pitfall 1 fix)
+BARS_PER_YEAR = 2190  # 365.25 * 24 / 4 for 4H crypto
 BARS_PER_DAY = 6  # 24h / 4h
-START = datetime(2024, 1, 1)  # Post-ETF only (D-01)
+START = datetime(2024, 1, 1)  # Post-ETF only
 SYMBOLS = ["BTCUSDT", "ETHUSDT"]
 INTERVAL = "4h"
 INITIAL_CAPITAL = 100_000.0  # USDT per symbol
-FUNDING_RATE_ANNUAL = 0.1095  # D-22: 0.01%/8h * 3 * 365.25
+FUNDING_RATE_ANNUAL = 0.1095  # 0.01%/8h * 3 * 365.25
 BAR_DURATION_HOURS = 4  # 4H interval
-RANDOM_SEEDS = 100  # D-39: 100 random seeds for baseline
+RANDOM_SEEDS = 100  # 100 random seeds for baseline
 
-# CRITICAL: WalkForwardConfig uses BAR COUNTS not calendar days (Pitfall 2 fix)
+# CRITICAL: WalkForwardConfig uses BAR COUNTS not calendar days.
 WF_CONFIG = WalkForwardConfig(
-    train_days=180 * BARS_PER_DAY,  # 1080 bars (D-28)
-    test_days=90 * BARS_PER_DAY,  # 540 bars (D-28)
-    step_days=90 * BARS_PER_DAY,  # 540 bars (D-28)
-    min_trades_per_oos=30,  # D-30
-    min_wfe=0.60,  # = 1.0 - 0.40 degradation max (Pitfall 3 fix)
+    train_days=180 * BARS_PER_DAY,  # 1080 bars
+    test_days=90 * BARS_PER_DAY,  # 540 bars
+    step_days=90 * BARS_PER_DAY,  # 540 bars
+    min_trades_per_oos=30,
+    min_wfe=0.60,  # = 1.0 - 0.40 degradation max
 )
 
-# D-33: Variation 1 param grid (2-condition: oiwap + cascade)
+# Variation 1 param grid (2-condition: oiwap + cascade)
 PARAM_GRID_V1 = {
     "atr_multiplier": [0.5, 1.0, 1.5, 2.0],
     "stop_atr_multiplier": [2.0, 3.0, 4.0, 5.0],
 }
-# D-34: Variation 2 param grid (3-condition: + cvd_change)
+# Variation 2 param grid (3-condition: + cvd_change)
 PARAM_GRID_V2 = {
     "atr_multiplier": [0.5, 1.0, 1.5, 2.0],
     "stop_atr_multiplier": [2.0, 3.0, 4.0, 5.0],
 }
-# D-35: Variation 3 param grid (2-condition with variable oiwap_threshold)
+# Variation 3 param grid (2-condition with variable oiwap_threshold)
 PARAM_GRID_V3 = {
     "atr_multiplier": [0.5, 1.0, 1.5, 2.0],
     "stop_atr_multiplier": [2.0, 3.0, 4.0, 5.0],
@@ -87,7 +88,7 @@ PARAM_GRID_V3 = {
 
 
 # ---------------------------------------------------------------------------
-# Random entry strategy for baseline comparison (D-38)
+# Random entry strategy for baseline comparison
 # ---------------------------------------------------------------------------
 class RandomEntryStructuralStrategy(StructuralReversalStrategy):
     """Random entry variant: replaces structural entry with random coin flip.
@@ -125,7 +126,7 @@ class RandomEntryStructuralStrategy(StructuralReversalStrategy):
         # Random direction
         direction = "long" if self._rng.random() < 0.5 else "short"
 
-        # Same limit price derivation as real strategy (D-12)
+        # Same limit price derivation as real strategy.
         oiwap_val = float(oiwap)
         atr_val = float(atr)
         if direction == "long":
@@ -175,9 +176,9 @@ def _load_ohlcv(repo: RemoteDataRepository, symbol: str) -> pd.DataFrame:
 def _make_runner(strategy: StructuralReversalStrategy) -> BacktestRunner:
     """Create BacktestRunner with pessimistic fill model.
 
-    D-20: FillModel.PESSIMISTIC (strict penetration)
-    D-14: max_pending_bars=6 (order expiry 24h at 4H)
-    D-23: crypto_perp cost model (maker 0.02%, taker 0.05%, slippage 0.05%)
+    - FillModel.PESSIMISTIC (strict penetration)
+    - max_pending_bars=6 (order expiry 24h at 4H)
+    - crypto_perp cost model (maker 0.02%, taker 0.05%, slippage 0.05%)
     """
     return BacktestRunner(
         strategy=strategy,
@@ -226,7 +227,7 @@ def _recompute_metrics(runner: BacktestRunner) -> dict:
 
 
 def _compute_net_sharpe(metrics: dict, trades: list, total_bars: int) -> float:
-    """Compute net_sharpe after funding cost deduction (D-37 optimization target).
+    """Compute net_sharpe after funding cost deduction (optimization target).
 
     Returns just the net_sharpe value for use as optimization metric.
     """
@@ -246,7 +247,7 @@ def _compute_net_sharpe(metrics: dict, trades: list, total_bars: int) -> float:
     # Funding cost as annualized drag
     funding_cost_annual = FUNDING_RATE_ANNUAL * time_in_market_fraction
 
-    # Direct subtraction of annualised funding cost from gross Sharpe (D-24).
+    # Direct subtraction of annualised funding cost from gross Sharpe.
     # This matches the canonical formula validated in test_net_sharpe_deduction:
     #   net_sharpe = gross_sharpe - (funding_rate_annual * time_in_market_fraction)
     return gross_sharpe - funding_cost_annual
@@ -302,7 +303,7 @@ def _run_combined_window(
     params: dict,
     use_cvd: bool = False,
 ) -> dict:
-    """Run BTC+ETH combined backtest on a data slice (D-29 combined optimization).
+    """Run BTC+ETH combined backtest on a data slice.
 
     Runs _run_single_backtest for BTC and ETH separately with same params.
     Pools all trades. Merges equity curves (sum). Recomputes combined metrics.
@@ -387,7 +388,7 @@ def run_grid_search_variation(
     - Run combined window (full data) with those params
     - Record net_sharpe as the metric
 
-    Returns best params by net_sharpe (D-37: optimization target is net_sharpe).
+    Returns best params by net_sharpe (the optimization target).
     """
     keys = list(param_grid.keys())
     values = list(param_grid.values())
@@ -438,7 +439,7 @@ def run_grid_search_variation(
 
 
 # ---------------------------------------------------------------------------
-# Combined WFE (Pitfall 7 fix: manual loop for multi-symbol)
+# Combined WFE (manual loop is required for multi-symbol)
 # ---------------------------------------------------------------------------
 def run_combined_wfe(
     btc_ohlcv: pd.DataFrame,
@@ -448,7 +449,7 @@ def run_combined_wfe(
 ) -> list[dict]:
     """BTC+ETH combined WFE using generate_windows + manual loop.
 
-    Cannot use WalkForwardAnalyzer.analyze() for multi-symbol (Pitfall 7).
+    Cannot use WalkForwardAnalyzer.analyze() for multi-symbol.
     Instead: generate windows from data length, run combined backtest per window.
     """
     analyzer = WalkForwardAnalyzer(
@@ -510,10 +511,10 @@ def run_combined_wfe(
         }
         window_results.append(window_result)
 
-        # D-30: warn if OOS trade count < 30
+        # Warn if OOS trade count < min threshold
         if oos_combined["trade_count"] < WF_CONFIG.min_trades_per_oos:
             logger.warning(
-                "Window %d: OOS trade count %d < %d (D-30)",
+                "Window %d: OOS trade count %d < %d",
                 i,
                 oos_combined["trade_count"],
                 WF_CONFIG.min_trades_per_oos,
@@ -529,7 +530,7 @@ def run_combined_wfe(
 
 
 # ---------------------------------------------------------------------------
-# Random baseline (D-38, D-39)
+# Random baseline
 # ---------------------------------------------------------------------------
 def run_random_baseline(
     btc_ohlcv: pd.DataFrame,
@@ -538,10 +539,10 @@ def run_random_baseline(
     real_entry_count: int,
     n_seeds: int = RANDOM_SEEDS,
 ) -> dict:
-    """Random entry baseline: same exit logic, random entries (D-38).
+    """Random entry baseline: same exit logic, random entries.
 
     Calibrates entry probability from real strategy's signal count.
-    Returns median/p25/p75 net_sharpe distribution over n_seeds (D-39).
+    Returns median/p25/p75 net_sharpe distribution over n_seeds.
     """
     # Calibrate entry probability from real strategy's signal frequency
     total_bars = max(len(btc_ohlcv), len(eth_ohlcv))
@@ -628,7 +629,7 @@ def run_random_baseline(
 def run_wfo() -> int:
     """Run WFE + grid search + random baseline for StructuralReversal."""
     print("=" * 80)
-    print("Phase 77-03: StructuralReversal WFE + Grid Search + Random Baseline")
+    print("StructuralReversal WFE + Grid Search + Random Baseline")
     print("=" * 80)
     print(f"Period: {START.date()} to {datetime.now().date()}")
     print(f"Symbols: {', '.join(SYMBOLS)}")
@@ -643,7 +644,7 @@ def run_wfo() -> int:
     print(f"Random seeds: {RANDOM_SEEDS}")
     print()
 
-    # Step 1: Load data
+    # 1. Load data
     repo = RemoteDataRepository.from_settings()
     btc_ohlcv = _load_ohlcv(repo, "BTCUSDT")
     eth_ohlcv = _load_ohlcv(repo, "ETHUSDT")
@@ -654,9 +655,9 @@ def run_wfo() -> int:
 
     print(f"\nBTC: {len(btc_ohlcv)} bars, ETH: {len(eth_ohlcv)} bars")
 
-    # Step 2: Grid search - 3 variations (D-33, D-34, D-35)
+    # 2. Grid search - 3 variations
     print(f"\n{'=' * 80}")
-    print("GRID SEARCH (3 variations, GATE-04 max)")
+    print("GRID SEARCH (3 variations)")
     print(f"{'=' * 80}")
 
     # Variation 1: 2-condition (oiwap + cascade), no CVD
@@ -686,7 +687,7 @@ def run_wfo() -> int:
         eth_ohlcv,
     )
 
-    # Step 3: Select overall best variation by net_sharpe
+    # 3. Select overall best variation by net_sharpe
     variations = {
         "v1_2cond": v1_result,
         "v2_3cond": v2_result,
@@ -705,7 +706,7 @@ def run_wfo() -> int:
     print(f"  Params: {best_params}")
     print(f"{'=' * 80}")
 
-    # Step 4: Run combined WFE with best params
+    # 4. Run combined WFE with best params
     print(f"\n{'=' * 80}")
     print("COMBINED WFE (BTC + ETH)")
     print(f"{'=' * 80}")
@@ -743,9 +744,9 @@ def run_wfo() -> int:
     print(f"  Average OOS net_sharpe: {avg_oos_sharpe:.4f}")
     print(f"  Total OOS signals: {total_oos_signals}")
 
-    # Step 5: Random baseline (100 seeds)
+    # 5. Random baseline (100 seeds)
     print(f"\n{'=' * 80}")
-    print("RANDOM BASELINE (D-38, D-39)")
+    print("RANDOM BASELINE")
     print(f"{'=' * 80}")
 
     # Calibrate from best variation's trade count
@@ -757,7 +758,7 @@ def run_wfo() -> int:
         real_entry_count=real_entry_count,
     )
 
-    # Step 6: Gate check
+    # 6. Gate check
     beats_random = best_variation["net_sharpe"] > baseline_result["median"]
     oos_sharpe_positive = avg_oos_sharpe > 0.0
     wfe_below_40pct = degradation < 0.40
@@ -772,10 +773,8 @@ def run_wfo() -> int:
     print(f"  WFE degradation:     {degradation:.4f} (< 0.40 = {wfe_below_40pct})")
     print(f"  Total OOS signals:   {total_oos_signals}")
 
-    # Step 7: Write JSON output
+    # 7. Write JSON output
     output = {
-        "phase": "77",
-        "plan": "03",
         "description": "WFE + grid search + random baseline",
         "period": {
             "start": START.date().isoformat(),

@@ -1,14 +1,14 @@
-"""Phase 86 gate-verdict test fixtures.
+"""Gate-verdict test fixtures.
 
 Adds:
   - fixture_gate_yaml          : minimal valid GATE.yaml dict (4 criteria + min_pass=3)
-  - fixture_btc_wfe_actual     : BTC verdict_inputs from real Phase 85 artifact (echoed inline)
+  - fixture_btc_wfe_actual     : BTC verdict_inputs from real upstream artifact (echoed inline)
   - fixture_eth_wfe_actual     : ETH verdict_inputs (incl. max_consecutive_losses=None)
   - fixture_eth_wfe_null       : null-metric edge case (synthetic isolation)
   - fixture_anchor_mismatch    : artifacts dict where one anchor differs from frozen_commit
 
 Reference:
-  .planning/phases/86-decision-gate-evaluation-verdict/86-RESEARCH.md  Validation Architecture
+  Upstream validation architecture notes.
 """
 
 from __future__ import annotations
@@ -20,9 +20,9 @@ import pytest
 
 @pytest.fixture
 def fixture_gate_yaml() -> dict:
-    """Minimal valid GATE.yaml dict matching frozen Phase 84 schema.
+    """Minimal valid GATE.yaml dict matching the frozen schema.
 
-    Mirrors `.planning/phases/84-strategy-1m-adaptation-frozen-gate/GATE.yaml`
+    Mirrors the on-disk frozen GATE.yaml
     parsed by `yaml.safe_load`. Tests must `.copy()` first if mutating, but
     this fixture already returns a deepcopy for isolation safety.
     """
@@ -64,9 +64,9 @@ def fixture_gate_yaml() -> dict:
 
 @pytest.fixture
 def fixture_btc_wfe_actual() -> dict:
-    """BTC `*_wfe.json` echo — actual values from Phase 85 artifact.
+    """BTC `*_wfe.json` echo — actual values from the upstream artifact.
 
-    Source: .planning/phases/85-optuna-wfe-validation/artifacts/btcusdt_wfe.json:235-241
+    Source: the upstream btcusdt_wfe.json artifact (verdict_inputs block).
     Expected per-gate: gate_01 PASS, gate_02 FAIL, gate_03 FAIL, gate_04 PASS → 2/4 → FAIL.
     """
     data = {
@@ -88,9 +88,9 @@ def fixture_btc_wfe_actual() -> dict:
 
 @pytest.fixture
 def fixture_eth_wfe_actual() -> dict:
-    """ETH `*_wfe.json` echo — actual values from Phase 85 artifact.
+    """ETH `*_wfe.json` echo — actual values from the upstream artifact.
 
-    Source: .planning/phases/85-optuna-wfe-validation/artifacts/ethusdt_wfe.json:167-173
+    Source: the upstream ethusdt_wfe.json artifact (verdict_inputs block).
     `max_consecutive_losses` is None (Python None ⇒ JSON null) due to zero_oos_trades.
     Expected per-gate: gate_01 FAIL, gate_02 PASS, gate_03 FAIL, gate_04 FAIL → 1/4 → FAIL.
     """
@@ -118,7 +118,7 @@ def fixture_eth_wfe_null() -> dict:
 
     Same shape as fixture_eth_wfe_actual but with all-positive other metrics so
     ONLY gate_04 fails (because of None on `max_consecutive_losses`). Used to
-    prove gate_04 alone FAILs on null while gates 01-03 PASS — see D-06.
+    prove gate_04 alone FAILs on null while gates 01-03 PASS.
     """
     data = {
         "frozen_gate_anchor": "5a1ecc9",
@@ -138,10 +138,10 @@ def fixture_eth_wfe_null() -> dict:
 def fixture_anchor_mismatch() -> dict:
     """Artifacts dict (label → parsed_json) where ONE anchor differs from `5a1ecc9`.
 
-    Phase 86 must verify `frozen_gate_anchor` in every Phase 85 artifact equals
+    The verdict layer must verify `frozen_gate_anchor` in every upstream artifact equals
     `gate_yaml["frozen_commit"]`. This fixture's `eth_wfe` carries `"DEADBEEF"`
     so `assert_frozen_anchor` must SystemExit naming both `eth_wfe` and `DEADBEEF`.
-    See RESEARCH Pattern 2 + Pitfall 3.
+    See the anchor guard pattern + Pitfall 3.
     """
     data = {
         "btc_wfe": {"frozen_gate_anchor": "5a1ecc9"},

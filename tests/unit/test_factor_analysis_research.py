@@ -1,4 +1,4 @@
-"""Unit coverage for Phase 47 factor-analysis research helpers."""
+"""Unit coverage for factor-analysis research helpers."""
 
 from __future__ import annotations
 

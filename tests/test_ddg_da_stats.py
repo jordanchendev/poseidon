@@ -1,11 +1,11 @@
-"""Phase 92 Plan 92-03 — paired bootstrap on per-window ΔSharpe (D-16 stat test).
+"""Paired bootstrap on per-window ΔSharpe (stat test).
 
-Pattern C from 92-RESEARCH.md §Code Examples (lines 614-643). Pure numpy —
+Pattern C from prior research examples. Pure numpy —
 no qlib dependency, fully Mac-runnable.
 
 W-5 fix (per checker review, applied in Plan 92-03): Plan 92-01 shipped
 this file with an inline ``paired_bootstrap_delta_sharpe`` definition so
-the test passed immediately (no Plan 92-03 dependency in Wave 0). Plan
+the test passed immediately. The
 92-03 then promoted the canonical implementation into
 ``poseidon.autoresearch.ddg_da_compare`` and this file now imports from
 there — single source of truth, no drift. The two assertion tests below

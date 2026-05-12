@@ -1,4 +1,4 @@
-"""Structured reject_reason factory (Phase 87 / TRUTH-03, D-13/D-14).
+"""Structured reject_reason factory (TRUTH-03).
 
 Centralizes construction of the 4-key reject_reason payload so every
 write path produces the same shape:
@@ -20,7 +20,7 @@ from typing import Any, TypedDict
 
 
 class RejectReason(TypedDict):
-    """Canonical 4-key reject_reason shape (D-13)."""
+    """Canonical 4-key reject_reason shape."""
 
     check_name: str
     rule: str

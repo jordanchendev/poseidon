@@ -1,17 +1,17 @@
-"""Phase 84 STRAT-02: PESSIMISTIC fill model unit tests on 1m timeline.
+"""STRAT-02: PESSIMISTIC fill model unit tests on 1m timeline.
 
-Locks D-07 / D-08 semantics for v17.0 Crypto Liquidation Hunting Maker thesis:
+Locks the fill semantics for v17.0 Crypto Liquidation Hunting Maker thesis:
 
   - BUY  fills iff bar.low  <  limit_price  (strict less-than; equality => no fill)
   - SELL fills iff bar.high >  limit_price  (strict greater-than; equality => no fill)
   - fill_price == limit_price (NOT bar.open / bar.close)
 
-Bar internal walk per Phase 50-01 invariant: only the "worst-case extreme"
+Bar internal walk invariant: only the "worst-case extreme"
 (low for buy, high for sell) is consulted; we do NOT assume an
 open->high->low->close path order.
 
 This file exercises the production `PendingOrderBook.check_fills` path with 1m
-timestamps. D-08 cases:
+timestamps. Cases:
 
   1. Buy at exact bar.low  -> NO fill   (boundary equality, strict <)
   2. Buy below bar.low     -> NO fill
@@ -82,9 +82,9 @@ def _bar(
 
 
 class TestPessimisticFill1m:
-    """D-08 cases 1-7 covering PESSIMISTIC fill semantics on 1m bars."""
+    """Cases 1-7 covering PESSIMISTIC fill semantics on 1m bars."""
 
-    # ---------- D-08 cases 1-3: BUY-side ----------
+    # ---------- Cases 1-3: BUY-side ----------
 
     def test_buy_at_exact_low_no_fill(self):
         """Case 1: limit == bar.low -> strict-less-than -> NO fill.
@@ -138,7 +138,7 @@ class TestPessimisticFill1m:
         assert fill.is_maker is True
         assert book.pending_count == 0  # filled order removed
 
-    # ---------- D-08 case 4 mirrors: SELL-side ----------
+    # ---------- Case 4 mirrors: SELL-side ----------
 
     def test_sell_at_exact_high_no_fill(self):
         """Case 4 mirror: limit == bar.high -> strict-greater-than -> NO fill.
@@ -188,7 +188,7 @@ class TestPessimisticFill1m:
         assert fill.is_maker is True
         assert book.pending_count == 0
 
-    # ---------- D-08 cases 5-7: multi-bar / TTL / long+short independence ----------
+    # ---------- Cases 5-7: multi-bar / TTL / long+short independence ----------
 
     def test_pending_across_multiple_1m_bars_fills_on_bar_n(self):
         """Case 5: pending order across 3 consecutive 1m bars.

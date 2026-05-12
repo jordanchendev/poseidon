@@ -15,7 +15,7 @@ class UniverseSource(ABC):
     name: str = ""
     description: str = ""
 
-    # Phase 34 capability metadata
+    # capability metadata
     supports_backtest: bool = True
     supports_live: bool = False
     bias_risk: list[str] = []
@@ -38,7 +38,7 @@ class UniverseFilter(ABC):
     name: str = ""
     description: str = ""
 
-    # Phase 34 capability metadata
+    # capability metadata
     supports_backtest: bool = True
     supports_live: bool = True
     bias_risk: list[str] = []

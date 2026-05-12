@@ -1,6 +1,6 @@
 # v82 Decision Gate -- Frozen Criteria
-# Committed BEFORE any optimization work (same as v15.0 RES-03 pattern).
-# Phase 82 gate evaluation reads these criteria. Do NOT modify after commit.
+# Committed BEFORE any optimization work (same pattern as v15.0).
+# Gate evaluation reads these criteria. Do NOT modify after commit.
 version: "v82"
 frozen_date: "2026-04-24"
 description: "TW Futures TrendFollowing walk-forward decision gate"

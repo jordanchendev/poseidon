@@ -1,22 +1,22 @@
-"""Convert orders.reject_reason from Text to JSONB and wrap legacy values (TRUTH-03, D-13/D-15).
+"""Convert orders.reject_reason from Text to JSONB and wrap legacy values (TRUTH-03).
 
 Revision ID: 034
 Revises: 033
 Create Date: 2026-04-29
 
-Per CONTEXT D-13, reject_reason is restructured to a 4-key dict:
+reject_reason is restructured to a 4-key dict:
     {check_name, rule, shortfall, details}
 
 Migration strategy (avoids USING-cast type-incompat issues):
 1. Add new JSONB column reject_reason_new (nullable)
-2. Backfill: text values become {check_name='legacy', rule='pre_phase87',
+2. Backfill: text values become {check_name='legacy', rule='legacy',
    shortfall=null, details=<original text>}; NULLs stay NULL.
 3. Drop old reject_reason
 4. Rename reject_reason_new -> reject_reason
 
 Audit (2026-04-29): only 3 non-null reject_reason values exist (the same 3
 ETHUSDT 2026-03-31 rejected orders that migration 035 will overwrite),
-but D-15 still requires wrap-on-migrate semantics for any future re-runs.
+but wrap-on-migrate semantics are still applied for any future re-runs.
 """
 
 import sqlalchemy as sa
@@ -31,19 +31,19 @@ depends_on = None
 
 
 def upgrade():
-    # Step 1: Add new JSONB column
+    # Add new JSONB column
     op.add_column(
         "orders",
         sa.Column("reject_reason_new", postgresql.JSONB(), nullable=True),
     )
 
-    # Step 2: Wrap legacy text values into 4-key dict (D-15)
+    # Wrap legacy text values into 4-key dict
     op.execute(
         """
         UPDATE orders
         SET reject_reason_new = jsonb_build_object(
             'check_name', 'legacy',
-            'rule', 'pre_phase87',
+            'rule', 'legacy',
             'shortfall', NULL,
             'details', reject_reason
         )
@@ -51,10 +51,10 @@ def upgrade():
         """
     )
 
-    # Step 3: Drop old text column
+    # Drop old text column
     op.drop_column("orders", "reject_reason")
 
-    # Step 4: Rename new column to canonical name
+    # Rename new column to canonical name
     op.alter_column(
         "orders",
         "reject_reason_new",

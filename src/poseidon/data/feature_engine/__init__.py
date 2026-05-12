@@ -26,7 +26,7 @@ from poseidon.data.feature_engine.specs import (
     nonprice_data_key,
 )
 
-# Backward compatibility: FeatureEngine is an alias for FeatureOrchestrator (D-03)
+# Backward compatibility: FeatureEngine is an alias for FeatureOrchestrator
 FeatureEngine = FeatureOrchestrator
 
 __all__ = [

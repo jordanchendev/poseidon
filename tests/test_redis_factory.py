@@ -1,4 +1,4 @@
-"""Unit tests for the centralized Redis factory (Phase 54 REDIS-01, REDIS-02)."""
+"""Unit tests for the centralized Redis factory (REDIS-01, REDIS-02)."""
 
 import pytest
 

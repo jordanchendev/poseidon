@@ -1,4 +1,4 @@
-"""Dual-mode backtest comparison utility (LIMIT-06, D-04/D-05/D-06).
+"""Dual-mode backtest comparison utility.
 
 Runs the same strategy with both optimistic and pessimistic fill models,
 producing side-by-side metrics for viability assessment.
@@ -20,12 +20,12 @@ from poseidon.strategies.base import BaseStrategy
 
 @dataclass
 class DualModeResult:
-    """Side-by-side comparison of optimistic vs pessimistic fill results (D-05)."""
+    """Side-by-side comparison of optimistic vs pessimistic fill results."""
 
     optimistic_result: BacktestResult
     pessimistic_result: BacktestResult
     delta_metrics: dict = field(default_factory=dict)
-    is_viable: bool = False  # pessimistic Sharpe > 0 (D-06)
+    is_viable: bool = False  # pessimistic Sharpe > 0
 
 
 def run_dual_mode_comparison(
@@ -42,7 +42,7 @@ def run_dual_mode_comparison(
     db_session: Any = None,
     **runner_kwargs: Any,
 ) -> DualModeResult:
-    """Run same strategy config with both fill models and compare (D-04).
+    """Run same strategy config with both fill models and compare.
 
     Args:
         strategy_factory: Callable that returns a fresh strategy instance.
@@ -84,7 +84,7 @@ def run_dual_mode_comparison(
     opt_result = results[FillModel.OPTIMISTIC]
     pess_result = results[FillModel.PESSIMISTIC]
 
-    # Compute delta metrics (D-05)
+    # Compute delta metrics
     delta_keys = ["sharpe_ratio", "max_drawdown", "win_rate", "total_pnl"]
     delta: dict[str, float] = {}
     for key in delta_keys:
@@ -92,7 +92,7 @@ def run_dual_mode_comparison(
         pess_val = float(pess_result.metrics.get(key, 0.0) or 0.0)
         delta[key] = opt_val - pess_val
 
-    # Viability gate (D-06): pessimistic Sharpe > 0
+    # Viability gate: pessimistic Sharpe > 0
     pess_sharpe = float(pess_result.metrics.get("sharpe_ratio", 0.0) or 0.0)
     is_viable = pess_sharpe > 0
 
@@ -107,7 +107,7 @@ def run_dual_mode_comparison(
 def validate_cross_symbol(
     results: list[dict],
 ) -> tuple[bool, dict]:
-    """Cross-symbol validation gate (SWEEP-06, D-17).
+    """Cross-symbol validation gate.
 
     Each result dict must contain: symbol, pessimistic_sharpe, wfe.
     Returns (all_passed, per_symbol_report) where:

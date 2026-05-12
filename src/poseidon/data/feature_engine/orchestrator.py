@@ -275,7 +275,7 @@ class FeatureOrchestrator:
             if needs_macro:
                 nonprice_data["macro_data"] = repo.read_macro()
 
-            # Phase 66: Extended nonprice data categories
+            # Extended nonprice data categories
             needs_fundamental_extended = any(n in FUNDAMENTAL_EXTENDED_NAMES for n, _ in nonprice_specs)
             needs_quality = any(n in QUALITY_FACTOR_NAMES for n, _ in nonprice_specs)
             needs_monthly_revenue = any(n in MONTHLY_REVENUE_NAMES for n, _ in nonprice_specs)

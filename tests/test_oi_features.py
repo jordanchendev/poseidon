@@ -172,11 +172,11 @@ class TestOITimestampAlignment:
     """Verify OI timestamp alignment prevents look-ahead bias.
 
     Binance fetchOpenInterestHistory returns timestamps representing the
-    START of the measurement period (D-01). The _align_oi_to_index(method="ffill")
+    START of the measurement period. The _align_oi_to_index(method="ffill")
     ensures that at any bar time T, the OI value used is the most recent
     snapshot with timestamp <= T.
 
-    References: CONTEXT.md D-01, D-02.
+    References: alignment design notes.
     """
 
     def test_no_lookahead_with_gap(self):
@@ -260,7 +260,7 @@ class TestOITimestampAlignment:
 class TestOICostBasis:
     """Test OICostBasis (OIWAP) feature computation.
 
-    References: CONTEXT.md D-04, D-05, D-06, D-07, D-08, D-11.
+    References: design notes for OIWAP semantics.
     """
 
     def test_output_columns(self):
@@ -317,7 +317,7 @@ class TestOICostBasis:
             assert abs(val - 100.0) < 0.01, f"Expected OIWAP ~100.0, got {val}"
 
     def test_oi_decrease_ignored(self):
-        """OI decreases must NOT affect OIWAP computation (D-06).
+        """OI decreases must NOT affect OIWAP computation.
 
         Scenario: OI increases at close=100, then decreases at close=200.
         OIWAP should stay at ~100 because decreases are filtered out.
@@ -350,7 +350,7 @@ class TestOICostBasis:
         assert abs(last_oiwap - 100.0) < 0.01, f"OI decrease contaminated OIWAP: got {last_oiwap}, expected ~100.0"
 
     def test_none_oi_returns_nan(self):
-        """OICostBasis with no OI data should return NaN columns (D-11)."""
+        """OICostBasis with no OI data should return NaN columns."""
         ohlcv = _make_ohlcv()
         feature = OICostBasis()
         result = feature.compute(ohlcv, oi_data=None)
@@ -376,7 +376,7 @@ class TestOICostBasis:
         assert result["oiwap_168"].isna().all()
 
     def test_oiwap_distance_sign(self):
-        """oiwap_distance should be positive when close > OIWAP, negative otherwise (D-08).
+        """oiwap_distance should be positive when close > OIWAP, negative otherwise.
 
         Scenario: OI increases at close=100 (OIWAP anchors at 100).
         Then close jumps to 120 -> distance should be positive (~20%).

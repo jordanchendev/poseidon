@@ -94,7 +94,7 @@ def main():
 
     print(f"Merged: {len(df)} bars  {df.index.min().date()} → {df.index.max().date()}\n")
 
-    # D-06: trigger-day math comes from the shared module.
+    # Trigger-day math comes from the shared module.
     # `compute_basis_z` does its own date-index alignment and dedupe; we
     # re-derive the intermediate columns here only for diagnostics
     # (basis / basis_dev / basis_std60 still printed in the sanity block

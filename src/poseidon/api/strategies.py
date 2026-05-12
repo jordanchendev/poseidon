@@ -273,8 +273,8 @@ async def get_strategy_performance(
     """Get aggregated performance metrics for a strategy from its backtests.
 
     Returns both the 'best' backtest (highest composite score) and 'latest'
-    backtest (most recent completed_at). Per D-04: backtest-only aggregation,
-    live trade data deferred per D-06.
+    backtest (most recent completed_at). Backtest-only aggregation; live
+    trade data deferred.
     """
     backtests = (
         db.query(BacktestRecord)

@@ -1,4 +1,4 @@
-"""Add cash_flow column to nav_snapshots (TRUTH-04, D-05).
+"""Add cash_flow column to nav_snapshots.
 
 Revision ID: 032
 Revises: 031

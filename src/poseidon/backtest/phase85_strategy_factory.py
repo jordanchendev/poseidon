@@ -1,20 +1,20 @@
-"""Phase 85 — 9-dim D-01 PARAM_SPACE → 17-key liquidity_sweep_factory remapper.
+"""9-dim PARAM_SPACE → 17-key liquidity_sweep_factory remapper.
 
-Why this exists: D-01 freezes a 9-dim Optuna search space; the underlying
-``liquidity_sweep_factory`` exposes 17 ``PARAM_BOUNDS`` keys with regime-indexed
-ATR names. This wrapper bridges the two without mutating the factory.
+Why this exists: a frozen 9-dim Optuna search space drives this module;
+the underlying ``liquidity_sweep_factory`` exposes 17 ``PARAM_BOUNDS``
+keys with regime-indexed ATR names. This wrapper bridges the two without
+mutating the factory.
 
-Per D-01 locked decision (CONTEXT.md), 8 ``PARAM_BOUNDS`` keys (e.g.
-``confirmation_threshold``, ``w_oi_drop``, ``atr_mult_regime_3`` ...)
-intentionally take factory default values. The driver writes both
-``best_params`` (9-dim) AND ``factory_params_resolved`` (17-key with
-defaults) to the artifact for Phase 86 audit reproducibility
-(RESEARCH.md Pitfall 5).
+Eight ``PARAM_BOUNDS`` keys (e.g. ``confirmation_threshold``,
+``w_oi_drop``, ``atr_mult_regime_3`` ...) intentionally take factory
+default values. The driver writes both ``best_params`` (9-dim) AND
+``factory_params_resolved`` (17-key with defaults) to the artifact for
+downstream audit reproducibility.
 
-A1 note (BayesianOptimizer ``bars_per_year`` support): NOT resolved here —
-plan 85-03 will decide whether to extend ``BayesianOptimizer.optimize`` or
+A1 note (BayesianOptimizer ``bars_per_year`` support): unresolved here —
+follow-up will decide whether to extend ``BayesianOptimizer.optimize`` or
 post-recompute via ``compute_metrics(returns, bars_per_year=525_600)`` on
-trial user_attrs (RESEARCH.md Pitfall 6).
+trial user_attrs.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from poseidon.backtest.liquidity_sweep_factory import (
     _build_config_from_params,
 )
 
-# D-01 locked search space (CONTEXT.md). Phase 85 ONLY samples these 9 dims.
+# Locked search space — this module ONLY samples these 9 dims.
 PARAM_SPACE: dict[str, tuple[float, float, str]] = {
     "lookback_bars": (720, 10080, "int"),
     "cooldown_bars": (60, 1440, "int"),
@@ -41,7 +41,7 @@ PARAM_SPACE: dict[str, tuple[float, float, str]] = {
     "atr_multiplier_high": (2.0, 6.0, "float"),
 }
 
-# D-01 names → liquidity_sweep_factory PARAM_BOUNDS names (RESEARCH.md Pitfall 5).
+# 9-dim names → liquidity_sweep_factory PARAM_BOUNDS names.
 # Note: ``atr_mult_regime_3`` is intentionally absent — falls back to factory
 # default 2.0 (liquidity_sweep_factory.py line 78).
 D01_TO_FACTORY_NAME: dict[str, str] = {
@@ -58,7 +58,7 @@ D01_TO_FACTORY_NAME: dict[str, str] = {
 # ``liquidity_sweep_factory._build_config_from_params`` ``params.get(name, default)``
 # fallbacks. These are the values the factory uses when a key is absent from
 # the inbound params dict; mirroring them here lets the driver write a
-# faithful ``factory_params_resolved`` artefact for Phase 86 audit.
+# faithful ``factory_params_resolved`` artefact for downstream audit.
 #
 # IMPORTANT: keep in sync with liquidity_sweep_factory.py:60-87. If the
 # factory defaults move, an audit replay would diverge silently.
@@ -83,10 +83,10 @@ _FACTORY_DEFAULTS: dict[str, float | int] = {
 
 
 def remap_d01_to_factory(d01_params: dict[str, Any]) -> dict[str, Any]:
-    """Remap 9-dim D-01 keys to factory PARAM_BOUNDS namespace.
+    """Remap 9-dim source keys to factory PARAM_BOUNDS namespace.
 
     Pure rename; values pass through unchanged. Keys absent from
-    ``D01_TO_FACTORY_NAME`` (the 6 pass-through dims) keep their D-01 name
+    ``D01_TO_FACTORY_NAME`` (the 6 pass-through dims) keep their source name
     which already matches the factory PARAM_BOUNDS key.
     """
     return {D01_TO_FACTORY_NAME.get(k, k): v for k, v in d01_params.items()}
@@ -95,9 +95,9 @@ def remap_d01_to_factory(d01_params: dict[str, Any]) -> dict[str, Any]:
 def resolve_factory_params(d01_params: dict[str, Any]) -> dict[str, Any]:
     """Return the full 17-key dict with factory defaults applied.
 
-    Used by Phase 85 driver to write ``factory_params_resolved`` to the
-    artifact. Phase 86 replays it to reconstruct the exact strategy config
-    that produced the OOS metrics (RESEARCH.md Pitfall 5).
+    Used by the driver to write ``factory_params_resolved`` to the
+    artifact. Downstream consumers replay it to reconstruct the exact
+    strategy config that produced the OOS metrics.
     """
     remapped = remap_d01_to_factory(d01_params)
     resolved: dict[str, Any] = {}
@@ -124,11 +124,11 @@ def make_phase85_strategy_factory(
     *,
     direction_mode: str = "bidirectional",
 ) -> Callable[[dict[str, Any]], Any]:
-    """Return a callable: D-01 9-dim params dict → ``LiquiditySweepStrategy``.
+    """Return a callable: 9-dim params dict → ``LiquiditySweepStrategy``.
 
     Use as
     ``BayesianOptimizer(strategy_factory=make_phase85_strategy_factory("BTCUSDT"))``.
-    The returned callable accepts a flat 9-dim dict (D-01 names); it remaps
+    The returned callable accepts a flat 9-dim dict (source names); it remaps
     to factory namespace and delegates to ``LiquiditySweepStrategyFactory.from_config``.
     """
 

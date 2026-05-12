@@ -1,7 +1,7 @@
 """Tests for tw_futures Pydantic config models.
 
 Covers:
-- Default values match D-09/D-10/D-11 specs
+- Default values match specs
 - Construction from dict
 - YAML roundtrip
 - Strategy registry integration
@@ -18,7 +18,7 @@ from poseidon.strategies.tw_futures.configs import (
 
 class TestTrendFollowingConfig:
     def test_defaults(self):
-        """D-09: EMA(20)/EMA(60), ATR(14)*2.0, daily, 120d lookback."""
+        """EMA(20)/EMA(60), ATR(14)*2.0, daily, 120d lookback."""
         cfg = TrendFollowingConfig()
         assert cfg.strategy == "trend_following_tx"
         assert cfg.name == "Trend Following TX Daily"
@@ -76,7 +76,7 @@ class TestTrendFollowingConfig:
 
 class TestMeanReversionConfig:
     def test_defaults(self):
-        """D-10: BB(20, 2.0), RSI(14) 30/70, 1H, 30d lookback."""
+        """BB(20, 2.0), RSI(14) 30/70, 1H, 30d lookback."""
         cfg = MeanReversionConfig()
         assert cfg.strategy == "mean_reversion_tx"
         assert cfg.name == "Mean Reversion TX 1H"
@@ -93,7 +93,7 @@ class TestMeanReversionConfig:
 
 class TestVolatilityBreakoutConfig:
     def test_defaults(self):
-        """D-11: breakout(20), ATR(14), SMA(50), trail_r 1.5, 30M, 14d lookback."""
+        """breakout(20), ATR(14), SMA(50), trail_r 1.5, 30M, 14d lookback."""
         cfg = VolatilityBreakoutConfig()
         assert cfg.strategy == "volatility_breakout_tx"
         assert cfg.name == "Volatility Breakout TX 30M"

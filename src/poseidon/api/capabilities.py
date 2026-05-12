@@ -1,4 +1,4 @@
-"""Capabilities API -- component capability matrix endpoint (Phase 34 - COMP-06)."""
+"""Capabilities API -- component capability matrix endpoint."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 class ComponentCapabilityResponse(PydanticBaseModel):
-    """Single component capability entry. Per D-12."""
+    """Single component capability entry."""
 
     name: str
     component_type: str
@@ -22,7 +22,7 @@ class ComponentCapabilityResponse(PydanticBaseModel):
 
 
 class CapabilitiesResponse(PydanticBaseModel):
-    """Full capabilities matrix. Per D-11."""
+    """Full capabilities matrix."""
 
     components: list[ComponentCapabilityResponse]
     total: int
@@ -37,14 +37,14 @@ def get_capabilities(
 ) -> CapabilitiesResponse:
     """Return capability flags matrix for all registered components.
 
-    Per D-11: flat matrix grouped by component_type.
-    Per D-13: supports optional query params for filtering.
+    Returns a flat matrix grouped by component_type.
+    Supports optional query params for filtering.
     """
     caps = get_all_capabilities()
 
     results = []
     for cap in caps:
-        # Per D-13: filter by live_safe if specified
+        # filter by live_safe if specified
         if live_safe is True and not cap.supports_live:
             continue
         if live_safe is False and cap.supports_live:

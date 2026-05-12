@@ -1,19 +1,19 @@
 # Source: poseidon/tests/test_ddg_da_compare_smoke.py:1-87 (pytestmark.skipif STORMTROOPER + _smoke_dir/_runs_dir helpers)
-"""Phase 93 W0 — stormtrooper end-to-end smoke (D-32/D-33/D-34).
+"""NestedExecutor stormtrooper end-to-end smoke.
 
 Module-level pytestmark: skip on Mac collect; only runs inside qlib-research
-container with STORMTROOPER=1 env var (Pattern S4 from Phase 90/92/94/95).
+container with STORMTROOPER=1 env var (Pattern S4).
 
-Smoke target per CONTEXT D-32: NestedExecutor TWAP × 1-2 max-|basis_z| trigger
-days (NOT full 67-day run); D-33 pass conditions:
+Smoke target: NestedExecutor TWAP × 1-2 max-|basis_z| trigger
+days (NOT full 67-day run); pass conditions:
 - fill_log.parquet non-empty
 - each fill_price ∈ [bar_low, bar_high]  (sanity)
 - comparison.parquet has nested_twap_* columns
 - cost_delta_bps non-NaN/inf
 
-Phase 93 has NO verdict gate (per D-31 / Phase 92 D-31).
+This phase has NO verdict gate.
 
-This file is a STUB. Wave 3 (Plan 93-04) replaces it with the actual smoke body
+This file is a STUB. A later wave replaces it with the actual smoke body
 that drives ``scripts.run_basis_arb_nested.main([...])``.
 """
 
@@ -32,7 +32,7 @@ pytestmark = pytest.mark.skipif(
     reason="stormtrooper-only smoke — set STORMTROOPER=1 inside qlib-research container",
 )
 
-# Phase 93 D-32: 1-2 trigger days × ~10-15 min each → 30 min budget
+# 1-2 trigger days × ~10-15 min each → 30 min budget
 _BUDGET_SEC = 30 * 60.0
 
 
@@ -40,7 +40,7 @@ def _smoke_dir(prong: str) -> Path:
     """Container-or-host aware smoke artifact dir.
 
     Inside qlib-research (aquarium_root resolves to "/"): /app/local_dev/phase93_smoke/
-    On Mac host: aquarium/.planning/phases/93-nestedexecutor-multi-level-backtest/smoke/
+    On Mac host: the aquarium-side smoke output directory.
     """
     here = Path(__file__).resolve()
     aquarium_root = here.parents[2]
@@ -53,7 +53,7 @@ def _smoke_dir(prong: str) -> Path:
 
 
 def _runs_dir() -> Path:
-    """Container-or-host aware runs dir for NestedExecutor outputs (D-20)."""
+    """Container-or-host aware runs dir for NestedExecutor outputs."""
     here = Path(__file__).resolve()
     aquarium_root = here.parents[2]
     if aquarium_root == Path("/"):
@@ -66,16 +66,16 @@ def _runs_dir() -> Path:
 
 @pytest.mark.stormtrooper
 def test_nested_executor_basic_smoke():
-    """D-32/D-33: 1-2 trigger days × NestedExecutor TWAP, schema-only assertions.
+    """1-2 trigger days × NestedExecutor TWAP, schema-only assertions.
 
     Drives ``scripts.run_basis_arb_nested.main(["--smoke", "--max-triggers", "2",
     "--out-dir", str(run_dir)])`` and asserts:
     1. fill_log.parquet exists + non-empty
-    2. each fill_price ∈ [bar_low, bar_high]  (D-33 sanity)
+    2. each fill_price ∈ [bar_low, bar_high]  (sanity)
     3. comparison.parquet has `nested_twap_*` columns
     4. cost_delta_bps non-NaN/inf
 
-    Phase 93 has NO verdict gate (per D-33).
+    This phase has NO verdict gate.
     """
     pytest.importorskip("qlib")
 
@@ -85,10 +85,10 @@ def test_nested_executor_basic_smoke():
     run_dir = runs_dir / run_id
 
     t0 = time.time()
-    # Wave 3 will land scripts/run_basis_arb_nested.py — until then, this RED is expected
+    # A later wave lands scripts/run_basis_arb_nested.py — until then, RED is expected
     from scripts.run_basis_arb_nested import main as run_nested
 
-    # Inside qlib-research container, .planning/ is NOT bind-mounted but Phase
+    # Inside qlib-research container, the planning tree is NOT bind-mounted but the prior
     # 90 wave2-full-002/ is at /app/local_dev/rl-execution/runs/wave2-full-002/.
     # Pass it explicitly so Path C reconstruction can produce comparison.parquet.
     phase90_baseline = "/app/local_dev/rl-execution/runs/wave2-full-002/comparison.csv"
@@ -128,7 +128,7 @@ def test_nested_executor_basic_smoke():
     summary_path = run_dir / "comparison_summary.md"
     if summary_path.exists():
         # The summary references the cost_delta — but the canonical place is
-        # a sidecar JSON with the breakdown dict, written by Wave 2's
+        # a sidecar JSON with the breakdown dict, written by an earlier wave's
         # write_delta_breakdown helper.
         ...
     delta_path = run_dir / "delta_breakdown.json"
@@ -142,5 +142,5 @@ def test_nested_executor_basic_smoke():
         assert not math.isnan(float(cost_delta))
         assert not math.isinf(float(cost_delta))
 
-    # Persist smoke artifacts under .planning/.../smoke/NESTEXEC-SMOKE/
+    # Persist smoke artifacts under the smoke output directory
     (smoke_dir / "stdout.log").write_text(f"run_id={run_id}\nelapsed={elapsed:.1f}s\nrc={rc}\n")

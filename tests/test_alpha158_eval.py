@@ -1,6 +1,6 @@
-"""Phase 95 ACTIVATE-01 — Alpha158 production-signal smoke (stormtrooper-only).
+"""ACTIVATE-01 — Alpha158 production-signal smoke (stormtrooper-only).
 
-Wave 1 implementation. Pattern S4 (STORMTROOPER gate) + Pattern P9
+Pattern S4 (STORMTROOPER gate) + Pattern P9
 (``pytest.importorskip`` for qlib inside the test body) keep Mac-side
 ``pytest --collect-only`` healthy while the actual smoke runs in the
 qlib-research container.
@@ -8,17 +8,17 @@ qlib-research container.
 What this test exercises:
 
 * ``scripts.run_alpha158_eval.run_alpha158_eval`` end-to-end against the
-  Wave 0 ``make_synthetic_basis_arb_panel`` fixture (400 daily bars, single
+  the ``make_synthetic_basis_arb_panel`` fixture (400 daily bars, single
   instrument "TX").
-* Asserts the D-07 artifact triplet (features.parquet, performance.json,
-  summary.json) is persisted to ``.planning/phases/95-*/smoke/ACTIVATE-01/``.
-* Asserts D-08 summary keys: ``n_features >= 158``, ``n_trigger_days > 30``
+* Asserts the artifact triplet (features.parquet, performance.json,
+  summary.json) is persisted to the smoke output directory.
+* Asserts summary keys: ``n_features >= 158``, ``n_trigger_days > 30``
   (synthetic 400-day mask consistently yields ~50 triggers).
-* Wall-clock <300s budget (D-31).
+* Wall-clock <300s budget.
 
 Pattern P3 artifact triplet — ``output_summary.json`` mirrors the prong
-status / elapsed shape used by the Phase 94 zoo smoke and the eventual
-Phase 95 Wave 6 cross-prong roll-up.
+status / elapsed shape used by the zoo smoke and the eventual
+cross-prong roll-up.
 """
 
 from __future__ import annotations
@@ -37,16 +37,16 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-# Per-prong wall-clock budget per CONTEXT D-31 (5 minutes / 300 seconds).
+# Per-prong wall-clock budget (5 minutes / 300 seconds).
 _BUDGET_SEC = 300.0
 
 
 def _smoke_dir(prong: str) -> Path:
-    """Resolve .planning/phases/95-*/smoke/{prong}/ from this file's path.
+    """Resolve the smoke output directory for the given prong.
 
     poseidon/tests/test_alpha158_eval.py → parents[0]=tests/, parents[1]=poseidon/,
-    parents[2]=aquarium root (where .planning/ lives). NEVER take a path from
-    user input — D-13 + Pitfall 6.
+    parents[2]=aquarium root (where the output tree lives). NEVER take a path from
+    user input — Pitfall 6.
 
     Inside the qlib-research container the bind-mount maps
     aquarium/poseidon/tests → /app/tests, so parents[2] is "/" rather than the
@@ -65,7 +65,7 @@ def _smoke_dir(prong: str) -> Path:
 
 
 def _features_out_dir() -> Path:
-    """D-07 production output dir: local_dev/qlib-activations/alpha158/basis_arb/.
+    """Production output dir: local_dev/qlib-activations/alpha158/basis_arb/.
 
     Inside the qlib-research container this is bind-mounted to
     aquarium/poseidon/local_dev so the artifacts persist on the host.
@@ -88,7 +88,7 @@ def test_alpha158_eval_smoke() -> None:
     from tests.conftest import make_synthetic_basis_arb_panel
 
     smoke_dir = _smoke_dir("ACTIVATE-01")
-    out_dir = _features_out_dir()  # D-07 production target — host-visible
+    out_dir = _features_out_dir()  # production target — host-visible
     panel = make_synthetic_basis_arb_panel(n_days=400)
 
     status = "OK"
@@ -105,7 +105,7 @@ def test_alpha158_eval_smoke() -> None:
     elapsed = time.time() - t0
 
     # Pattern P3 — persist machine-readable per-prong summary in smoke_dir
-    # (separate from D-07 production output).
+    # (separate from the production output).
     (smoke_dir / "output_summary.json").write_text(
         json.dumps(
             {
@@ -134,7 +134,7 @@ def test_alpha158_eval_smoke() -> None:
     assert (out_dir / "performance.json").exists(), "performance.json missing"
     assert (out_dir / "summary.json").exists(), "summary.json missing"
 
-    # VALIDATION.md / CONTEXT D-08: ≥158 Alpha158 features.
+    # ≥158 Alpha158 features required.
     assert summary["n_features"] >= 158, f"expected ≥158 features, got {summary['n_features']}"
 
     # Synthetic 400-day panel + basis_z<-1 mask consistently yields ~50 triggers.
@@ -147,5 +147,5 @@ def test_alpha158_eval_smoke() -> None:
         f"expected ≥158 evaluated features, got {summary['n_evaluated_features']}"
     )
 
-    # D-31 wall-clock budget.
+    # Wall-clock budget.
     assert elapsed < _BUDGET_SEC, f"alpha158 smoke exceeded {_BUDGET_SEC}s budget: {elapsed:.1f}s"

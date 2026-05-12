@@ -1,6 +1,6 @@
 """Tests for autoresearch report generation and ExperimentTracker.query_passed_by_study.
 
-Covers D-15 (report from ExperimentTracker), D-16 (ranking by composite_score).
+Covers: report from ExperimentTracker, ranking by composite_score.
 """
 
 from __future__ import annotations

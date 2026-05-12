@@ -1,4 +1,4 @@
-"""Tests for GET /api/v1/capabilities endpoint (Phase 34 - COMP-06)."""
+"""Tests for GET /api/v1/capabilities endpoint (COMP-06)."""
 
 from unittest.mock import patch
 

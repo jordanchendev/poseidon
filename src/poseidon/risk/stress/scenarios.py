@@ -1,4 +1,4 @@
-"""Scenario configuration loader (per D-01, STRESS-05).
+"""Scenario configuration loader.
 
 Loads stress test scenarios from JSON config files in config/stress_scenarios/.
 """

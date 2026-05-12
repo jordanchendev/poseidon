@@ -1,14 +1,14 @@
 # Source: poseidon/tests/test_ddg_da_compare.py:30-49 (pd.read_parquet round-trip + column-set assertion)
-"""Phase 93 W0 — fill_log.parquet D-21 schema unit test.
+"""fill_log.parquet schema unit test.
 
-Wave 0 deliverable. Synthetic indicator_dict (via conftest fixture
+Synthetic indicator_dict (via conftest fixture
 ``make_synthetic_indicator_dict``) → ``harvest_fill_log()`` → parquet round-trip
-→ assert D-21 schema columns + fill_failure semantics.
+→ assert schema columns + fill_failure semantics.
 
 Mac-collectable. ``harvest_fill_log`` import deferred inside test bodies (RED
-until Wave 2 / Plan 93-03 lands the helper).
+until a later wave lands the helper).
 
-D-21 schema (one row per fill-event; ≤ N_triggers × twap_window × 2 legs):
+Schema (one row per fill-event; ≤ N_triggers × twap_window × 2 legs):
   run_id, trigger_date, decision_ts, leg, fill_ts,
   planned_qty, filled_qty, fill_price,
   bar_open, bar_high, bar_low, bar_close,
@@ -41,7 +41,7 @@ D21_COLUMNS = {
 
 
 def test_fill_log_schema_columns(tmp_path: Path, make_synthetic_indicator_dict):
-    """NESTEXEC-02 / D-21: fill_log.parquet has the D-21 byte-frozen columns."""
+    """NESTEXEC-02: fill_log.parquet has the byte-frozen columns."""
     from poseidon.backtest.nested_runner import harvest_fill_log
 
     indicator_dict, _expected_n_rows = make_synthetic_indicator_dict(
@@ -59,14 +59,14 @@ def test_fill_log_schema_columns(tmp_path: Path, make_synthetic_indicator_dict):
     assert out_path.exists()
 
     df = pd.read_parquet(out_path)
-    assert D21_COLUMNS.issubset(set(df.columns)), f"missing D-21 columns: {D21_COLUMNS - set(df.columns)}"
+    assert D21_COLUMNS.issubset(set(df.columns)), f"missing columns: {D21_COLUMNS - set(df.columns)}"
     # ≤ N_triggers × twap_window × 2 legs (some bars may collapse if synthetic
     # produces identical (fill_ts, leg) keys, hence ≤ not ==)
     assert len(df) <= 2 * 5 * 2
 
 
 def test_fill_failure_set_on_residual_qty(make_synthetic_indicator_dict):
-    """NESTEXEC-02 / D-21: ``fill_failure=True`` on rows where filled_qty < planned_qty.
+    """NESTEXEC-02: ``fill_failure=True`` on rows where filled_qty < planned_qty.
 
     Synthetic indicator_dict where one leg's deal_amount sums to less than the
     planned per-leg notional → harvest_fill_log produces residual rows with

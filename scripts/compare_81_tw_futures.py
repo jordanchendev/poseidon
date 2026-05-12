@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 81: Three TW Futures strategies comparison + TAIEX buy-and-hold benchmark.
+"""Three TW Futures strategies comparison + TAIEX buy-and-hold benchmark.
 
 Compares 3 strategies on TX data:
   1. TrendFollowing (EMA 20/60 Daily)
@@ -47,23 +47,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Configuration (per D-13 through D-19)
+# Configuration
 # ---------------------------------------------------------------------------
 START = datetime(2020, 1, 1)
 END = datetime.now()
 SYMBOL = "TX"
 MARKET = "tw_futures"
-INITIAL_CAPITAL = 1_000_000.0  # D-15: 1M TWD
+INITIAL_CAPITAL = 1_000_000.0  # 1M TWD
 COST_MODEL: CostModel = COST_MODELS["tw_futures"]
 
-# Bars per year for different intervals (Pitfall 4 / D-17)
+# Bars per year for different intervals
 BARS_PER_YEAR = {
     "1d": 252,
     "1h": 4788,  # 252 * ~19 bars/day (day + night session)
     "30m": 9576,  # 252 * ~38 bars/day
 }
 
-# Sizing: fixed 1 contract (D-16)
+# Sizing: fixed 1 contract
 # TX at ~22000, initial_capital=1M:
 # notional_pct = 0.03 -> raw_quantity = 1M * 0.03 / 22000 = 1.36, int() = 1
 SIZING = SizingConfig(mode=SizingMode.FIXED_NOTIONAL, notional_pct=0.03)
@@ -131,7 +131,7 @@ def fetch_ohlcv_data(
 
 
 # ---------------------------------------------------------------------------
-# Buy-and-hold benchmark (D-18)
+# Buy-and-hold benchmark
 # ---------------------------------------------------------------------------
 def compute_bh_benchmark(
     ohlcv_1d: pd.DataFrame,
@@ -162,11 +162,11 @@ def compute_bh_benchmark(
 # Main comparison runner
 # ---------------------------------------------------------------------------
 def run_comparison() -> int:
-    """Run Phase 81 three-strategy comparison and print results."""
+    """Run three-strategy comparison and print results."""
     repo = RemoteDataRepository.from_settings()
     results: list[dict] = []
 
-    # Step 1: Fetch OHLCV for all required intervals
+    # 1. Fetch OHLCV for all required intervals
     required_intervals = ["1d", "1h", "30m"]
     print(f"Fetching TX OHLCV for intervals: {required_intervals}")
     print(f"Period: {START.date()} to {END.date()}")
@@ -183,7 +183,7 @@ def run_comparison() -> int:
 
     print(f"OHLCV loaded for {len(ohlcv_dict)}/{len(required_intervals)} intervals\n")
 
-    # Step 2: Define strategies with their configs and intervals
+    # 2. Define strategies with their configs and intervals
     strategies: list[tuple[str, object, str]] = [
         (
             "TrendFollowing (EMA20/60 Daily)",
@@ -202,7 +202,7 @@ def run_comparison() -> int:
         ),
     ]
 
-    # Step 3: Run each strategy
+    # 3. Run each strategy
     feature_engine = FeatureEngine()
     risk_engine = RiskEngine(rules=[])
 
@@ -274,7 +274,7 @@ def run_comparison() -> int:
             logger.exception("Strategy '%s' failed", label)
             results.append({"label": label, "interval": interval, "error": str(exc)})
 
-    # Step 4: Buy-and-hold benchmark (D-18)
+    # 4. Buy-and-hold benchmark
     ohlcv_1d = ohlcv_dict.get("1d")
     if ohlcv_1d is not None and not ohlcv_1d.empty:
         bh_row = compute_bh_benchmark(ohlcv_1d, COST_MODEL, INITIAL_CAPITAL)
@@ -282,9 +282,9 @@ def run_comparison() -> int:
     else:
         results.append({"label": "Buy & Hold TX", "error": "No daily data"})
 
-    # Step 5: Print comparison table (D-17)
+    # 5. Print comparison table
     print(f"\n{'=' * 100}")
-    print("Phase 81: TW Futures Strategy Comparison")
+    print("TW Futures Strategy Comparison")
     print(f"{'=' * 100}")
     print(f"Period: {START.date()} to {END.date()}")
     print(f"Symbol: {SYMBOL} | Market: {MARKET}")
@@ -325,7 +325,7 @@ def run_comparison() -> int:
     if not bias_warning:
         print("  Look-ahead bias gate: PASSED (all |Sharpe| <= 3.0)")
 
-    # Step 6: Identify winner
+    # 6. Identify winner
     strat_results = [r for r in results if "error" not in r and "Buy" not in r.get("label", "")]
     winner = None
     if strat_results:
@@ -334,7 +334,7 @@ def run_comparison() -> int:
     else:
         print("\n  WARNING: No successful strategy results to compare")
 
-    # Step 7: Save JSON artifact (D-19)
+    # 7. Save JSON artifact
     output_dir = Path("scripts/output")
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "compare_81_results.json"
@@ -366,7 +366,7 @@ def run_comparison() -> int:
     logger.info("Results saved to %s", output_path)
     print(f"\n  JSON summary saved to: {output_path}")
 
-    # Step 8: Print JSON for easy parsing
+    # 8. Print JSON for easy parsing
     print(f"\n{'=' * 100}")
     print("JSON SUMMARY")
     print(f"{'=' * 100}")

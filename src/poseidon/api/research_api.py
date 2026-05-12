@@ -1,4 +1,4 @@
-"""Research API endpoints for training run lifecycle + model queries (Phase 41).
+"""Research API endpoints for training run lifecycle + model queries.
 
 Exposes POST /train, GET /runs, GET /runs/{run_id}, POST /runs/{run_id}/cancel,
 GET /{model_id}, DELETE /{model_id}, GET /{model_id}/predictions.
@@ -56,7 +56,7 @@ async def create_training_run(
     """Create a training run and dispatch to qlib_queue (RESEARCH-API-01).
 
     Validates handler_class and model_class against the static allowlist
-    (D-08/D-09). Unknown classes are rejected with 422 before any DB write.
+    Unknown classes are rejected with 422 before any DB write.
     Uses ``send_task`` to dispatch -- the qlib_tasks module is NOT imported
     in this file to avoid pulling qlib/mlflow into the cp313 process.
     """
@@ -219,9 +219,9 @@ async def get_predictions(
     symbol: str | None = Query(None, examples=["BTCUSDT"]),
     db: Session = Depends(get_db),
 ):
-    """Return predictions with optional range filtering (per D-04, D-05, D-06, PRED-03).
+    """Return predictions with optional range filtering.
 
-    Query modes (backward compatible per D-04):
+    Query modes (backward compatible):
     - ``?segment=test`` -- return single segment Parquet (legacy behavior)
     - ``?start=...&end=...`` -- load all segments, concat, filter by date range
     - ``?symbol=...`` -- filter by instrument
@@ -230,7 +230,7 @@ async def get_predictions(
     When no segment and no range params provided, defaults to loading test segment
     for backward compatibility.
 
-    Response always includes training period metadata per D-06.
+    Response always includes training period metadata.
     """
     version = db.query(ModelVersion).filter(ModelVersion.id == model_id).first()
     if version is None:
@@ -241,7 +241,7 @@ async def get_predictions(
             detail="No artifact path for this model version",
         )
 
-    # Extract training period metadata from params JSONB (per D-06)
+    # Extract training period metadata from params JSONB
     params = version.params or {}
     train_period = params.get("train_period", {})
     valid_period = params.get("valid_period", {})
@@ -252,7 +252,7 @@ async def get_predictions(
         # Legacy mode: load single segment
         segments_to_load = [segment]
     elif start is not None or end is not None or symbol is not None:
-        # Range query mode: load all available segments (per D-05)
+        # Range query mode: load all available segments
         segments_to_load = []
         for seg in ["train", "valid", "test"]:
             pred_path = get_predictions_path(version.artifact_path, seg)
@@ -290,7 +290,7 @@ async def get_predictions(
 
     df = pd.concat(dfs)
 
-    # Apply date range filter (per D-05)
+    # Apply date range filter
     if start is not None or end is not None:
         # Reset index to access datetime column for filtering
         idx_names = df.index.names

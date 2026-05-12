@@ -43,7 +43,7 @@ class BaseProtection(ABC):
     name: str = ""
     enabled: bool = True
 
-    # Capability metadata (Phase 34 pattern)
+    # Capability metadata
     supports_backtest: bool = True
     supports_live: bool = True
     bias_risk: list[str] = []

@@ -1,4 +1,4 @@
-"""Tests for Phase 46 model discovery and ML param bounds."""
+"""Tests for model discovery and ML param bounds."""
 
 from __future__ import annotations
 

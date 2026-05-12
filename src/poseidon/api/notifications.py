@@ -1,6 +1,6 @@
 """Unified notifications endpoint -- aggregates alerts from multiple Redis streams.
 
-Mounted at /api/notifications in main.py (per D-09: separate from risk_metrics router).
+Mounted at /api/notifications in main.py (separate from risk_metrics router).
 """
 
 from __future__ import annotations

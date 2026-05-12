@@ -1,4 +1,4 @@
-"""Create factor_analysis_runs table (Phase 47 FACTOR-04)."""
+"""Create factor_analysis_runs table."""
 
 import sqlalchemy as sa
 

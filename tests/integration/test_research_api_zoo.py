@@ -1,15 +1,15 @@
-"""Phase 94 Wave 3 — Research API dispatch smoke for the expanded model zoo.
+"""Research API dispatch smoke for the expanded model zoo.
 
-Validates D-15: POST /api/v1/models/train with each new model_class
+Validates: POST /api/v1/models/train with each new model_class
 (LocalformerModel, TRAModel, ALSTM) returns 202 + run_id and dispatches
-exactly one Celery task to the ``poseidon_qlib`` queue. Per D-16 / OQ-3,
-this is dispatch-ONLY — does NOT wait for training. The standalone
-fit/predict on toy data is covered by tests/test_zoo_smoke.py (Wave 2).
+exactly one Celery task to the ``poseidon_qlib`` queue. This is
+dispatch-ONLY — does NOT wait for training. The standalone
+fit/predict on toy data is covered by tests/test_zoo_smoke.py.
 
 Pattern source (Pattern S3):
-- poseidon/tests/unit/test_research_api.py (Phase 41 anchor — SQLite shim +
+- poseidon/tests/unit/test_research_api.py (SQLite shim +
   TestClient + send_task stub)
-- poseidon/tests/test_rl_execution_api.py (Phase 90 Wave 4b parallel pattern)
+- poseidon/tests/test_rl_execution_api.py (parallel pattern)
 
 Verified at execute time against ``src/poseidon/api/research_api.py``:
 - Train route: ``/api/v1/models/train`` (router @post(``/train``) + main.py
@@ -30,12 +30,12 @@ pytestmark = pytest.mark.skipif(
     reason=(
         "stormtrooper-only integration — set STORMTROOPER=1 inside qlib-research "
         "container; mirrors the gate on tests/test_zoo_smoke.py for a uniform "
-        "phase-suite execution surface (VALIDATION.md §Test Infrastructure)"
+        "phase-suite execution surface"
     ),
 )
 
 # --- SQLite shim + FastAPI TestClient + send_task stub (Pattern S3) -----------
-# Verbatim from poseidon/tests/unit/test_research_api.py (Phase 41 anchor).
+# Verbatim from poseidon/tests/unit/test_research_api.py.
 
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.dialects.postgresql import JSONB  # noqa: E402
@@ -111,11 +111,11 @@ def client():
     return TestClient(_test_app)
 
 
-# --- Phase 94 dispatch tests (D-15 / D-16) ------------------------------------
+# --- Dispatch tests ------------------------------------
 
 # Payload shape aligned to TrainRequest schema (poseidon/src/poseidon/core/schemas.py:196)
-# and the existing Phase 41 anchor _VALID_TRAIN_PAYLOAD shape.
-_PHASE94_BASE_PAYLOAD = {
+# and the existing _VALID_TRAIN_PAYLOAD shape.
+_BASE_PAYLOAD = {
     "handler_class": "Alpha158Handler",
     "model_class": "LGBModel",  # overridden per-test
     "handler_params": {},
@@ -138,17 +138,17 @@ _EXPECTED_QUEUE = "poseidon_qlib"  # POSEIDON_QLIB_QUEUE constant
 
 def _post_train(client, celery_calls, model_class):
     """Helper: build payload, POST, verify 202 + dispatch contract."""
-    payload = {**_PHASE94_BASE_PAYLOAD, "model_class": model_class}
+    payload = {**_BASE_PAYLOAD, "model_class": model_class}
     resp = client.post(_TRAIN_ROUTE, json=payload)
     # Surface response body on failure: a 422 here means allowlist did NOT
-    # include the model_class (D-15 contract violation / Wave 1 regression).
+    # include the model_class (contract violation).
     assert resp.status_code == 202, (
         f"Expected 202 for model_class={model_class}, got {resp.status_code}; body={resp.text}"
     )
     body = resp.json()
     assert "run_id" in body, f"response missing run_id: {body}"
 
-    # D-16: dispatch-only — assert exactly one Celery task was sent.
+    # Dispatch-only — assert exactly one Celery task was sent.
     assert len(celery_calls) == 1, f"Expected 1 send_task call, got {len(celery_calls)}: {celery_calls}"
     call = celery_calls[0]
     assert call["task"] == _EXPECTED_TASK_NAME, call
@@ -159,14 +159,14 @@ def _post_train(client, celery_calls, model_class):
 
 
 def test_dispatch_localformer(client, celery_calls):
-    """D-15: POST /train with model_class='LocalformerModel' returns 202 + dispatches."""
+    """POST /train with model_class='LocalformerModel' returns 202 + dispatches."""
     _post_train(client, celery_calls, "LocalformerModel")
 
 
 def test_dispatch_tra(client, celery_calls):
-    """D-15 + OQ-3: POST /train with model_class='TRAModel' returns 202 (dispatch-only).
+    """POST /train with model_class='TRAModel' returns 202 (dispatch-only).
 
-    Per D-16, the actual TRA fit (which requires MTSDatasetH) is covered by
+    The actual TRA fit (which requires MTSDatasetH) is covered by
     tests/test_zoo_smoke.py::test_tra_smoke. This integration test stops at
     the dispatch boundary — it proves the allowlist accepts TRAModel without
     a 422.
@@ -175,5 +175,5 @@ def test_dispatch_tra(client, celery_calls):
 
 
 def test_dispatch_alstm(client, celery_calls):
-    """D-15: POST /train with model_class='ALSTM' returns 202 + dispatches."""
+    """POST /train with model_class='ALSTM' returns 202 + dispatches."""
     _post_train(client, celery_calls, "ALSTM")

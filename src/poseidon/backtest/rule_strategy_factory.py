@@ -1,10 +1,10 @@
-"""RuleStrategyFactory for Optuna parameter search (FACT-01).
+"""RuleStrategyFactory for Optuna parameter search.
 
 Mirrors LiquiditySweepStrategyFactory duck-type pattern with PARAM_BOUNDS,
 build_from_trial(), from_config(), to_config_dict(), and build_trial_factory()
 for integration with ParameterSearchPipeline.
 
-Key design decisions (D-01 ~ D-05):
+Key design decisions:
 - Fixed N feature_above conditions with Optuna-searched thresholds
 - feature_above condition type uses direct column name (no period param)
 - Composite voting via min_votes threshold
@@ -130,7 +130,7 @@ def _build_config_from_params(
         "rules": rules,
     }
 
-    # Validate against RuleConfig Pydantic model (D-05)
+    # Validate against RuleConfig Pydantic model
     RuleConfig(**config)
 
     return config
@@ -139,7 +139,7 @@ def _build_config_from_params(
 class RuleStrategyFactory:
     """Factory for building RuleStrategy from Optuna trials or config dicts.
 
-    Mirrors LiquiditySweepStrategyFactory interface (D-03):
+    Mirrors LiquiditySweepStrategyFactory interface:
     - from_config(config_dict) -> strategy instance
     - build_from_trial(trial, ...) -> strategy instance (with Optuna suggest)
     - to_config_dict(strategy) -> round-trippable config dict

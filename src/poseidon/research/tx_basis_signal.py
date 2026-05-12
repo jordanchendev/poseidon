@@ -1,9 +1,9 @@
-"""TX/0050 basis-z signal — Phase 90 D-06 verbatim source-of-truth.
+"""TX/0050 basis-z signal — verbatim source-of-truth.
 
 Lifts the basis_z computation and `basis_z < -1` trigger-day extraction
 from `poseidon/scripts/test_tx_basis_vol.py:96-108` into a single shared
-module so both the v18 driver script and Phase 90 RL-order-execution code
-import the same math (D-06 mandate: "literally identical math, no paraphrase").
+module so both the v18 driver script and the RL-order-execution code
+import the same math ("literally identical math, no paraphrase").
 
 Public API
 ----------
@@ -11,7 +11,7 @@ Public API
 * :data:`BASIS_THRESHOLD`  — trigger threshold for R2 entry (−1.0).
 * :func:`compute_basis_z`  — returns date-indexed Series of basis-z values.
 * :func:`extract_r2_trigger_days` — returns sorted list of timestamps where
-  ``basis_z < BASIS_THRESHOLD`` (strict ``<``, NOT ``≤`` — verbatim D-06 wording).
+  ``basis_z < BASIS_THRESHOLD`` (strict ``<``, NOT ``≤`` — verbatim wording).
 
 The math (verbatim from `test_tx_basis_vol.py:96-103`)::
 
@@ -29,7 +29,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-# --- Constants (frozen anchors for verbatim D-06 reproduction) ---
+# --- Constants (frozen anchors for verbatim reproduction) ---
 BASIS_WIN: int = 60
 BASIS_THRESHOLD: float = -1.0
 
@@ -44,8 +44,8 @@ def compute_basis_z(
     Aligns ``tx`` and ``etf`` on date index (TZ-naive, normalized), computes
     ``log(tx_close) - log(etf[adj_col])``, then z-scores against its own
     rolling-60d mean and rolling-60d std. Math is byte-identical to
-    ``test_tx_basis_vol.py:96-102`` so v18 driver and Phase 90 share exactly
-    one source of truth.
+    ``test_tx_basis_vol.py:96-102`` so v18 driver and downstream callers
+    share exactly one source of truth.
 
     Args:
         tx: Daily OHLCV DataFrame for TX. Must contain a ``close`` column.
@@ -84,7 +84,7 @@ def compute_basis_z(
         }
     ).dropna()
 
-    # --- VERBATIM lift from test_tx_basis_vol.py:96-102 (D-06 mandate) ---
+    # --- VERBATIM lift from test_tx_basis_vol.py:96-102 ---
     df["log_tx"] = np.log(df["tx_close"])
     df["log_etf"] = np.log(df["etf_adj"])
     df["basis"] = df["log_tx"] - df["log_etf"]
@@ -103,9 +103,9 @@ def extract_r2_trigger_days(
 ) -> list[pd.Timestamp]:
     """Extract sorted list of dates where ``basis_z < threshold``.
 
-    R2 entry rule per D-06 wording: ``basis_z<-1`` (strict less-than, NOT
-    ``<=``). Output is the timestamp index of the trigger-day rows, sorted
-    ascending, with NaN values automatically dropped.
+    R2 entry rule: ``basis_z<-1`` (strict less-than, NOT ``<=``). Output is
+    the timestamp index of the trigger-day rows, sorted ascending, with NaN
+    values automatically dropped.
 
     Args:
         basis_z: date-indexed Series of basis-z values (typically the output
@@ -117,7 +117,7 @@ def extract_r2_trigger_days(
         ``basis_z < threshold``.
     """
     s = basis_z.dropna()
-    mask = s < threshold  # strict < per D-06 verbatim wording
+    mask = s < threshold  # strict < per verbatim wording
     triggers = s.index[mask].tolist()
     triggers.sort()
     return triggers

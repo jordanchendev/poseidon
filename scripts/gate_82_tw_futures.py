@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Phase 82: Decision gate evaluation for TrendFollowing TX daily.
+"""Decision gate evaluation for TrendFollowing TX daily.
 
 Reads:
   - config/v82_decision_gate.yaml (frozen gate criteria)
   - scripts/output/wfe_82_results.json (WFE validation results)
-Evaluates 4 gate criteria (D-13 through D-16), requires min_pass=3 (D-17).
+Evaluates 4 gate criteria, requires min_pass=3.
 Produces PASS/FAIL verdict saved to scripts/output/gate_82_results.json.
 
 Run on stormtrooper inside cpu-worker container:
@@ -50,7 +50,7 @@ def evaluate_gate(gate_criteria: dict, wfe_data: dict) -> dict:
     # Evaluate each gate
     gates: dict[str, dict] = {}
 
-    # GATE-01 (D-13): OOS Sharpe > 0
+    # GATE-01: OOS Sharpe > 0
     gate_01 = criteria["gate_01"]
     gate_01_passed = oos_sharpe > gate_01["threshold"]
     gates["gate_01"] = {
@@ -61,7 +61,7 @@ def evaluate_gate(gate_criteria: dict, wfe_data: dict) -> dict:
         "passed": gate_01_passed,
     }
 
-    # GATE-02 (D-14): WFE >= 50%
+    # GATE-02: WFE >= 50%
     gate_02 = criteria["gate_02"]
     gate_02_passed = avg_wfe >= gate_02["threshold"]
     gates["gate_02"] = {
@@ -72,7 +72,7 @@ def evaluate_gate(gate_criteria: dict, wfe_data: dict) -> dict:
         "passed": gate_02_passed,
     }
 
-    # GATE-03 (D-15): OOS Sharpe beats B&H
+    # GATE-03: OOS Sharpe beats B&H
     gate_03 = criteria["gate_03"]
     gate_03_passed = oos_sharpe > bh_oos_sharpe
     gates["gate_03"] = {
@@ -83,7 +83,7 @@ def evaluate_gate(gate_criteria: dict, wfe_data: dict) -> dict:
         "passed": gate_03_passed,
     }
 
-    # GATE-04 (D-16): MaxDD < 50%
+    # GATE-04: MaxDD < 50%
     gate_04 = criteria["gate_04"]
     gate_04_passed = oos_max_dd < gate_04["threshold"]
     gates["gate_04"] = {
@@ -106,8 +106,8 @@ def evaluate_gate(gate_criteria: dict, wfe_data: dict) -> dict:
 
 
 def main() -> int:
-    """Run Phase 82 decision gate evaluation."""
-    print("Phase 82: Decision Gate Evaluation")
+    """Run decision gate evaluation."""
+    print("Decision Gate Evaluation")
     print("=" * 60)
 
     # Check input files exist
@@ -138,7 +138,7 @@ def main() -> int:
     # Print verdict table
     print()
     print("=" * 60)
-    print("Phase 82 Decision Gate Results")
+    print("Decision Gate Results")
     print("=" * 60)
 
     for gate_key in ["gate_01", "gate_02", "gate_03", "gate_04"]:
@@ -160,7 +160,6 @@ def main() -> int:
 
     # Build output JSON
     output = {
-        "phase": "82",
         "script": "gate_82_tw_futures.py",
         "gate_yaml_path": str(GATE_YAML),
         "wfe_json_path": str(WFE_JSON),

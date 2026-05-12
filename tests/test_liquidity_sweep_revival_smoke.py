@@ -1,10 +1,10 @@
-"""Phase 84 STRAT-01 smoke: revived LiquiditySweepStrategy with 1m baseline produces >=1 signal.
+"""STRAT-01 smoke: revived LiquiditySweepStrategy with 1m baseline produces >=1 signal.
 
-D-05 / STRAT-01 success criterion #1: revived strategy with 1m baseline parameters
-(lookback_bars=5760, cooldown_bars=960 per D-03; ratio params per D-04) consumes 1m
+STRAT-01 success criterion #1: revived strategy with 1m baseline parameters
+(lookback_bars=5760, cooldown_bars=960; ratio params from prior config) consumes 1m
 OHLCV input and emits >=1 non-HOLD Signal via evaluate().
 
-Synthetic 6-day in-memory fixture per RESEARCH Pitfall 3 + Pitfall 5. Hermetic,
+Synthetic 6-day in-memory fixture per Pitfall 3 + Pitfall 5. Hermetic,
 deterministic; the test does not touch any data-service or external I/O layer.
 """
 
@@ -17,12 +17,12 @@ from tests.conftest import make_synthetic_1m_ohlcv_with_sweep
 
 
 def _baseline_1m_config() -> dict:
-    """Phase 84 D-03 / D-04 baseline 1m parameters.
+    """Baseline 1m parameters.
 
     Mirrors LiquiditySweepStrategyFactory._build_config_from_params nested schema.
     Ratio params (wick_ratio_min, breakout_distance_min, oi_buildup_min, fib_level)
-    are unchanged from 4H archive per D-04. Window-bar params scaled 4H -> 1m
-    (multiplier 240) per D-03: lookback_bars 24->5760, cooldown_bars 4->960.
+    are unchanged from the 4H archive. Window-bar params scaled 4H -> 1m
+    (multiplier 240): lookback_bars 24->5760, cooldown_bars 4->960.
     """
     return {
         "name": "liquidity_sweep_smoke_1m",
@@ -31,21 +31,21 @@ def _baseline_1m_config() -> dict:
         "interval": "1m",
         "direction_mode": "long_only",
         "detection": {
-            "lookback_bars": 5760,  # D-03: 4H lookback (24 bars) * 240 = 1m equivalent
-            "wick_ratio_min": 0.15,  # D-04: ratio param unchanged
-            "breakout_distance_min": 0.1,  # D-04
-            "oi_buildup_min": 1.0,  # D-04
+            "lookback_bars": 5760,  # 4H lookback (24 bars) * 240 = 1m equivalent
+            "wick_ratio_min": 0.15,  # ratio param unchanged
+            "breakout_distance_min": 0.1,
+            "oi_buildup_min": 1.0,
             "confirmation_threshold": 0.5,  # archive default
             "w_oi_drop": 0.4,
             "w_volume": 0.3,
             "w_funding": 0.3,
         },
         "entry": {
-            "fib_level": 0.618,  # D-04
+            "fib_level": 0.618,
             "atr_multipliers": {0: 0.5, 1: 1.0, 2: 1.5, 3: 2.0},
         },
         "exit": {
-            "cooldown_bars": 960,  # D-03: 4H cooldown (4 bars) * 240 = 1m equivalent
+            "cooldown_bars": 960,  # 4H cooldown (4 bars) * 240 = 1m equivalent
         },
         "trailing": {
             "activation_r": 1.0,
@@ -87,9 +87,9 @@ def _build_features_for_smoke(ohlcv: pd.DataFrame) -> pd.DataFrame:
 
 
 def test_evaluate_1m_smoke():
-    """Phase 84 D-05 / STRAT-01 success criterion #1.
+    """STRAT-01 success criterion #1.
 
-    Revived LiquiditySweepStrategy loaded with D-03 baseline (lookback=5760,
+    Revived LiquiditySweepStrategy loaded with baseline (lookback=5760,
     cooldown=960) emits >=1 non-HOLD signal on synthetic 6-day fixture
     (clears 5760-bar warmup; engineered downward sweep at bar 7000).
     """
@@ -111,8 +111,7 @@ def test_evaluate_1m_smoke():
 
     assert isinstance(signals, list), f"evaluate must return list, got {type(signals)}"
     assert len(signals) >= 1, (
-        "Phase 84 STRAT-01: revived strategy must emit >=1 signal on 1m fixture; "
-        f"got {len(signals)} across bars 6990-7049"
+        f"STRAT-01: revived strategy must emit >=1 signal on 1m fixture; got {len(signals)} across bars 6990-7049"
     )
 
     non_hold = [s for s in signals if s.action != SignalAction.HOLD]

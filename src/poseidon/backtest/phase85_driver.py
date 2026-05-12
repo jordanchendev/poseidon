@@ -1,22 +1,22 @@
-"""Phase 85 — orchestrator. Runs Optuna search + WFE + per-window OOS re-backtest for ONE symbol.
+"""Orchestrator. Runs Optuna search + WFE + per-window OOS re-backtest for ONE symbol.
 
-Composition (D-10 serial, one symbol per process):
+Composition (serial, one symbol per process):
 
-  1. Build factory (phase85_strategy_factory.build_phase85_factory) — 9-dim D-01 PARAM_SPACE.
+  1. Build factory (phase85_strategy_factory.build_phase85_factory) — 9-dim PARAM_SPACE.
   2. ``Phase85BayesianOptimizer(BayesianOptimizer)`` overrides ``optimize`` to inject
-     ``bars_per_year=525_600`` into the IS Sharpe objective (A1 branch B; Pitfall 6).
-  3. Optuna study with persistent Postgres RDBStorage (D-05) +
-     per-trial budget callback (every 10 trials, D-12).
-  4. Walk-forward on best_params via ``WalkForwardAnalyzer`` (D-07, D-09).
+     ``bars_per_year=525_600`` into the IS Sharpe objective.
+  3. Optuna study with persistent Postgres RDBStorage +
+     per-trial budget callback (every 10 trials).
+  4. Walk-forward on best_params via ``WalkForwardAnalyzer``.
   5. Per-window OOS-only re-backtest to capture the trade ledger
-     (``WindowResult`` only stores ``oos_trade_count``; D-19 max_consecutive_losses
+     (``WindowResult`` only stores ``oos_trade_count``; max_consecutive_losses
      needs the actual pnl-bearing trade list).
-  6. Budget log: psutil RSS + perf_counter wall (D-12).
+  6. Budget log: psutil RSS + perf_counter wall.
 
 Returns ``Phase85SymbolResult`` — RAW evidence only. NO PASS/FAIL logic. Verdict
-math lives in ``phase85_metrics`` and Phase 86.
+math lives in ``phase85_metrics`` and the downstream verdict layer.
 
-A1 resolution — branch B (subclass), confirmed by grep:
+bars_per_year resolution — subclass branch (B), confirmed by grep:
 
   $ grep -n "bars_per_year\\|compute_metrics\\|annualiz" \\
       poseidon/src/poseidon/backtest/optimizer.py
@@ -28,10 +28,11 @@ re-derives metrics by calling ``compute_metrics(equity_series, trades,
 bars_per_year=BARS_PER_YEAR_1M)`` on the runner's cached equity series before
 returning the trial value to Optuna.
 
-D-19 / B-1 fix: ``WalkForwardAnalyzer`` discards ``BacktestResult.trades`` and
+Trade-ledger fix: ``WalkForwardAnalyzer`` discards ``BacktestResult.trades`` and
 only retains ``oos_metrics`` + ``oos_trade_count`` per window. We re-run the
 OOS slice with the same factory + best_params and attach ``oos_trades:
-list[dict]`` to each window dict so Phase 86 can compute D-19.
+list[dict]`` to each window dict so downstream consumers can compute
+max_consecutive_losses.
 """
 
 from __future__ import annotations
@@ -89,11 +90,11 @@ class BudgetSample:
 
 @dataclass
 class Phase85SymbolResult:
-    """Raw evidence for one symbol — Phase 86 reads this to compute verdict.
+    """Raw evidence for one symbol — downstream verdict layer reads this.
 
-    Driver writes ``best_params`` (9-dim D-01) AND ``factory_params_resolved``
-    (full 17-key dict with factory defaults applied) so Phase 86 can replay
-    the exact strategy config that produced ``wfe_per_window`` (Pitfall 5).
+    Driver writes ``best_params`` (9-dim) AND ``factory_params_resolved``
+    (full 17-key dict with factory defaults applied) so consumers can replay
+    the exact strategy config that produced ``wfe_per_window``.
     """
 
     symbol: str
@@ -103,8 +104,8 @@ class Phase85SymbolResult:
     factory_params_resolved: dict
     best_value: float  # IS Sharpe with bars_per_year=525_600
     n_trials_completed: int
-    n_trials_failed: int  # state==FAIL count (D-18 ValueError catch)
-    wfe_per_window: list[dict]  # each dict has 'oos_trades' key (B-1 fix)
+    n_trials_failed: int  # state==FAIL count (ValueError catch)
+    wfe_per_window: list[dict]  # each dict has 'oos_trades' key
     wfe_aggregate: dict
     wfe_flags: list[str]
     budget_samples: list[BudgetSample]
@@ -112,13 +113,13 @@ class Phase85SymbolResult:
 
 
 # --------------------------------------------------------------------------- #
-# A1 branch B — Phase85BayesianOptimizer subclass with bars_per_year=525_600
+# Phase85BayesianOptimizer subclass with bars_per_year=525_600
 # --------------------------------------------------------------------------- #
 
 
 class Phase85BayesianOptimizer(BayesianOptimizer):
-    """A1 resolution branch B (Pitfall 6): override ``optimize`` so the trial
-    objective uses ``bars_per_year=525_600`` in ``compute_metrics``.
+    """Override ``optimize`` so the trial objective uses
+    ``bars_per_year=525_600`` in ``compute_metrics``.
 
     Why a subclass: the parent ``BayesianOptimizer.optimize`` calls
     ``BacktestRunner.run`` whose internal ``compute_metrics`` defaults to
@@ -127,9 +128,9 @@ class Phase85BayesianOptimizer(BayesianOptimizer):
     runner's cached equity series + raw ``TradeRecord`` list with
     ``bars_per_year=BARS_PER_YEAR_1M``.
 
-    Branch (A) — passing ``bars_per_year`` as a kwarg to ``optimize`` — is dead
-    code. ``optimizer.py`` has zero references to ``bars_per_year``; verified
-    by grep.
+    The alternative — passing ``bars_per_year`` as a kwarg to ``optimize`` —
+    is dead code. ``optimizer.py`` has zero references to ``bars_per_year``;
+    verified by grep.
     """
 
     def optimize(
@@ -138,7 +139,7 @@ class Phase85BayesianOptimizer(BayesianOptimizer):
         ohlcv: pd.DataFrame,
         param_space: dict[str, tuple[Any, Any, str]],
         n_trials: int = 100,
-        metric: str = "sharpe_ratio",  # GATE.yaml objective per D-04
+        metric: str = "sharpe_ratio",  # GATE.yaml objective
         seed: int = 42,
         storage: str | None = None,
         study_name: str | None = None,
@@ -183,14 +184,14 @@ class Phase85BayesianOptimizer(BayesianOptimizer):
             # --- A1 RESOLUTION (branch B): re-compute metrics with 1m annualization ---
             # The parent's ``result.metrics`` was computed with bars_per_year=252.
             # Re-derive on the runner's cached equity_series + raw TradeRecord list
-            # (cached by 85-03 patch to runner.py:705 — ``self._equity_series_cached``,
+            # (cached by the runner patch — ``self._equity_series_cached``,
             # ``self._trade_records_cached``).
             equity_series = getattr(runner, "_equity_series_cached", None)
             trade_records = getattr(runner, "_trade_records_cached", None)
             if equity_series is None or trade_records is None:
                 raise RuntimeError(
                     "BacktestRunner is missing _equity_series_cached / "
-                    "_trade_records_cached attributes — Phase 85 patch (85-03) "
+                    "_trade_records_cached attributes — the runner patch "
                     "did not apply. Re-deploy poseidon."
                 )
             metrics_1m = compute_metrics(equity_series, trade_records, bars_per_year=BARS_PER_YEAR_1M)
@@ -202,7 +203,7 @@ class Phase85BayesianOptimizer(BayesianOptimizer):
         study.optimize(
             objective,
             n_trials=n_trials,
-            catch=(ValueError,),  # D-18: per-trial constraint failures don't kill study
+            catch=(ValueError,),  # per-trial constraint failures don't kill study
             callbacks=callbacks or [],
         )
 
@@ -260,13 +261,13 @@ def _make_budget_callback(
     budget_samples: list[BudgetSample],
     sample_every_n_trials: int = 10,
 ):
-    """Optuna trial callback (D-12): sample RSS every N trials.
+    """Optuna trial callback: sample RSS every N trials.
 
     Optuna fires callbacks AFTER each trial completes. We sample when
     ``trial.number % sample_every_n_trials == 0`` so we capture trial 0, 10,
     20, ... (in addition to the explicit optuna_start / optuna_end pair the
-    driver records). This gives Phase 86 an RSS growth curve usable for
-    OOM postmortem (D-12).
+    driver records). This produces an RSS growth curve usable for OOM
+    postmortem.
     """
 
     def _callback(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
@@ -293,8 +294,8 @@ def _slice_window_oos_trades(
 
     ``WalkForwardAnalyzer.analyze`` discards each window's
     ``BacktestResult.trades``; only ``oos_metrics`` + ``oos_trade_count``
-    survive on ``WindowResult``. To compute D-19 ``max_consecutive_losses``
-    we MUST re-run the OOS slice with the same factory + best_params and
+    survive on ``WindowResult``. To compute ``max_consecutive_losses`` we
+    MUST re-run the OOS slice with the same factory + best_params and
     pull ``result.trades`` ourselves.
     """
     # Preserve tz-aware datetime index (Rule 1 fix): companion features like
@@ -336,13 +337,13 @@ def run_phase85_for_symbol(
     study_name: str | None = None,
     wf_config: WalkForwardConfig | None = None,
     budget_sample_every_n_trials: int = 10,
-    initial_capital: float = 100_000.0,  # GATE.yaml frozen value (Phase 84)
+    initial_capital: float = 100_000.0,  # GATE.yaml frozen value
 ) -> Phase85SymbolResult:
     """Run Optuna search + WFE + per-window OOS re-backtest for ONE symbol.
 
-    D-10: serial per-symbol execution. The 85-05 stormtrooper E2E run calls
-    this twice (BTC then ETH); cross-symbol parallelism is forbidden because
-    distinct symbols share study storage paths only via the symbol-stamped
+    Serial per-symbol execution. The stormtrooper E2E run calls this twice
+    (BTC then ETH); cross-symbol parallelism is forbidden because distinct
+    symbols share study storage paths only via the symbol-stamped
     ``study_name``.
     """
     run_start = time.perf_counter()
@@ -350,8 +351,8 @@ def run_phase85_for_symbol(
 
     study_name = study_name or f"phase85_{symbol.lower()}_seed{seed}"
     if wf_config is None:
-        # D-07 + D-09: 90/0/90 quarterly with 30d step → 4 OOS windows on 270d.
-        # Calendar days × 1440 minutes (Pitfall 4 — DO NOT pass literal 90).
+        # 90/0/90 quarterly with 30d step → 4 OOS windows on 270d.
+        # Calendar days × 1440 minutes (DO NOT pass literal 90).
         wf_config = WalkForwardConfig(
             train_days=90 * 1440,
             validate_days=0,
@@ -369,7 +370,7 @@ def run_phase85_for_symbol(
 
     factory_callable, param_space = build_phase85_factory(symbol)
 
-    # A1 BRANCH B: Phase85BayesianOptimizer subclass injects bars_per_year=525_600.
+    # Phase85BayesianOptimizer subclass injects bars_per_year=525_600.
     optimizer = Phase85BayesianOptimizer(
         feature_engine=feature_engine,
         risk_engine=risk_engine,
@@ -378,14 +379,14 @@ def run_phase85_for_symbol(
         fill_model=fill_model,
     )
 
-    # D-12: per-trial budget callback (every 10 trials).
+    # Per-trial budget callback (every 10 trials).
     budget_callback = _make_budget_callback(
         run_start,
         budget_samples,
         sample_every_n_trials=budget_sample_every_n_trials,
     )
 
-    # D-18: catch=(ValueError,) is applied inside Phase85BayesianOptimizer.optimize.
+    # catch=(ValueError,) is applied inside Phase85BayesianOptimizer.optimize.
     trials = optimizer.optimize(
         strategy_factory=factory_callable,
         ohlcv=ohlcv,
@@ -412,7 +413,7 @@ def run_phase85_for_symbol(
     best_value = float(best_trial.metric_value)
     factory_params_resolved = resolve_factory_params(best_params)
 
-    # ---- Walk-forward on best params (D-07, D-09) ----
+    # ---- Walk-forward on best params ----
     budget_samples.append(_sample_budget("wfe_start", run_start))
     analyzer = WalkForwardAnalyzer(
         feature_engine=feature_engine,
@@ -437,8 +438,9 @@ def run_phase85_for_symbol(
     )
     budget_samples.append(_sample_budget("wfe_end", run_start))
 
-    # ---- Per-window OOS re-backtest to capture trade ledger (B-1 fix) ----
-    # WindowResult only carries oos_trade_count; D-19 needs the actual trades.
+    # ---- Per-window OOS re-backtest to capture trade ledger ----
+    # WindowResult only carries oos_trade_count; we need the actual trades
+    # for max_consecutive_losses.
     windows_indices = analyzer.generate_windows(len(ohlcv), wf_config)
     per_window_dicts: list[dict] = []
     for w, ((train_start, train_end), (test_start, test_end)) in zip(

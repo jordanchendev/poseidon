@@ -1,10 +1,10 @@
-"""Phase 92 Plan 92-02 — PoseidonDDGDA wrapper unit tests.
+"""PoseidonDDGDA wrapper unit tests.
 
-Tests cover DDGDA-01 wrapper construction, allowlist-routed YAML emission,
-RCE rejection (T-92-01), path-traversal rejection (T-92-02), and D-05
+Tests cover wrapper construction, allowlist-routed YAML emission,
+RCE rejection, path-traversal rejection, and
 immutability invariant.
 
-Module-level qlib import is FORBIDDEN (RESEARCH Pitfall 2 / PATTERNS.md
+Module-level qlib import is FORBIDDEN (Pitfall 2 / PATTERNS.md
 §Deferred qlib import) — `poseidon.autoresearch.ddg_da` itself defers all
 qlib imports inside method bodies, so the unittest.mock patch path below is
 safe to import at module level on Mac.
@@ -34,7 +34,7 @@ class TestPoseidonDDGDA:
     """DDGDA-01: PoseidonDDGDA wrapper unit tests."""
 
     def test_constructs(self, tmp_path: Path) -> None:
-        """DDGDA-01: PoseidonDDGDA instantiable with valid args (D-02, D-03)."""
+        """PoseidonDDGDA instantiable with valid args."""
         wrapper = PoseidonDDGDA(
             working_dir=tmp_path / "test_phase92_w1",
             handler_class="Alpha158Handler",
@@ -45,7 +45,7 @@ class TestPoseidonDDGDA:
         )
         assert wrapper.handler_class == "Alpha158Handler"
         assert wrapper.model_class == "LGBModel"
-        assert wrapper.sim_task_model == "gbdt"  # default per D-11
+        assert wrapper.sim_task_model == "gbdt"  # default
         assert wrapper.horizon == 20
         assert wrapper.step == 20
         assert wrapper.working_dir.exists() is True
@@ -53,7 +53,7 @@ class TestPoseidonDDGDA:
         assert wrapper.interval == "1d"
 
     def test_emit_yaml_uses_allowlist(self, tmp_path: Path) -> None:
-        """DDGDA-01 / T-92-01: _emit_yaml() routes through allowlist.resolve_handler/resolve_model."""
+        """_emit_yaml() routes through allowlist.resolve_handler/resolve_model."""
         wrapper = PoseidonDDGDA(
             working_dir=tmp_path / "yaml_test",
             handler_class="Alpha158Handler",
@@ -77,7 +77,7 @@ class TestPoseidonDDGDA:
         assert cfg["task"]["dataset"]["kwargs"]["segments"]["test"] == ["2025-07-01", "2026-05-04"]
 
     def test_emit_yaml_rejects_non_allowlisted_handler(self, tmp_path: Path) -> None:
-        """T-92-01: passing non-allowlisted handler_class raises ValueError listing allowed options."""
+        """Passing non-allowlisted handler_class raises ValueError listing allowed options."""
         with pytest.raises(ValueError, match="Unknown handler_class"):
             PoseidonDDGDA(
                 working_dir=tmp_path / "evil_handler",
@@ -89,7 +89,7 @@ class TestPoseidonDDGDA:
             )
 
     def test_emit_yaml_rejects_non_allowlisted_model(self, tmp_path: Path) -> None:
-        """T-92-01: passing non-allowlisted model_class raises ValueError listing allowed options."""
+        """Passing non-allowlisted model_class raises ValueError listing allowed options."""
         with pytest.raises(ValueError, match="Unknown model_class"):
             PoseidonDDGDA(
                 working_dir=tmp_path / "evil_model",
@@ -101,7 +101,7 @@ class TestPoseidonDDGDA:
             )
 
     def test_run_does_not_enter_autoresearch_context(self, tmp_path: Path) -> None:
-        """D-05 invariant: PoseidonDDGDA.run() asserts _AUTORESEARCH_ACTIVE False at entry.
+        """Invariant: PoseidonDDGDA.run() asserts _AUTORESEARCH_ACTIVE False at entry.
 
         Patches qlib.contrib.rolling.ddgda.DDGDA via the deferred-import attribute
         path, captures the ContextVar state during the wrapped run, and asserts
@@ -138,7 +138,7 @@ class TestPoseidonDDGDA:
 
         fake_ddgda_mod.DDGDA = _FakeDDGDA
         # Inject ancestor modules so `from qlib.contrib.rolling.ddgda import DDGDA` resolves.
-        # Plan 92-04.1 Rule-1 fix: qlib parent module must expose `init` because
+        # qlib parent module must expose `init` because
         # PoseidonDDGDA.run() now calls qlib.init() before instantiating DDGDA
         # (qlib's Rolling explicitly ignores qlib_init YAML section, see
         # qlib/contrib/rolling/base.py:115). Provide a no-op init for the fake.
@@ -155,17 +155,17 @@ class TestPoseidonDDGDA:
             # tests already set them up.
             sys.modules.pop("qlib.contrib.rolling.ddgda", None)
 
-        # D-05 invariant: ContextVar was False at every observation point.
+        # Invariant: ContextVar was False at every observation point.
         assert active_during_run, "fake DDGDA was never instantiated"
         assert all(state is False for state in active_during_run), (
-            f"D-05 violated: _AUTORESEARCH_ACTIVE was True during run; observations={active_during_run}"
+            f"Invariant violated: _AUTORESEARCH_ACTIVE was True during run; observations={active_during_run}"
         )
         assert result["rolling_exp_name"] == "rolling_test"
         assert result["meta_exp_name"] == "DDG-DA"
         assert result["working_dir"] == str(wrapper.working_dir)
 
     def test_run_raises_when_called_inside_autoresearch_context(self, tmp_path: Path) -> None:
-        """D-05 invariant fail-fast: assert error raised if caller wraps run() in autoresearch_context()."""
+        """Invariant fail-fast: assert error raised if caller wraps run() in autoresearch_context()."""
         wrapper = PoseidonDDGDA(
             working_dir=tmp_path / "ctx_violation",
             handler_class="Alpha158Handler",
@@ -181,7 +181,7 @@ class TestPoseidonDDGDA:
             wrapper.run()
 
     def test_path_traversal_blocked(self, tmp_path: Path) -> None:
-        """T-92-02: working_dir outside allowed prefixes raises ValueError."""
+        """working_dir outside allowed prefixes raises ValueError."""
         # /etc is not in _ALLOWED_WORKING_DIR_PREFIXES.
         with pytest.raises(ValueError, match="T-92-02"):
             PoseidonDDGDA(
@@ -194,7 +194,7 @@ class TestPoseidonDDGDA:
             )
 
     def test_invalid_sim_task_model(self, tmp_path: Path) -> None:
-        """T-92-01 adjacent: sim_task_model is also validated (only 'gbdt'/'linear' allowed)."""
+        """sim_task_model is also validated (only 'gbdt'/'linear' allowed)."""
         with pytest.raises(ValueError, match=r"sim_task_model must be 'gbdt' or 'linear'"):
             PoseidonDDGDA(
                 working_dir=tmp_path / "evil_sim_model",
@@ -222,11 +222,11 @@ class TestPoseidonDDGDA:
             )
 
     def test_emit_yaml_uses_provided_instruments_and_provider_uri(self, tmp_path: Path) -> None:
-        """Plan 92-04.1 BUG-1 fix: PoseidonDDGDA threads instruments + provider_uri to YAML.
+        """BUG-1 fix: PoseidonDDGDA threads instruments + provider_uri to YAML.
 
-        Pre-92-04.1 the wrapper hardcoded ``instruments='csi300'`` and
+        Previously the wrapper hardcoded ``instruments='csi300'`` and
         ``provider_uri='~/.qlib/qlib_data/cn_data'`` (qlib's default cn_data
-        toy scenario), which broke Plan 92-2.5 TX runs against
+        toy scenario), which broke TX runs against
         ``/root/.qlib/qlib_data/poseidon_tw_futures``. This test asserts the
         constructor params propagate through to the emitted YAML config.
         """
@@ -250,13 +250,13 @@ class TestPoseidonDDGDA:
         assert handler_kwargs["instruments"] == "TX"
 
     def test_emit_yaml_uses_alpha158_class_for_bug2_fix(self, tmp_path: Path) -> None:
-        """Plan 92-04.1 BUG-2 fix: handler_class='Alpha158' → qlib stock Alpha158.
+        """BUG-2 fix: handler_class='Alpha158' → qlib stock Alpha158.
 
-        Pre-92-04.1 the only ``Alpha158`` allowlist key was
+        Previously the only ``Alpha158`` allowlist key was
         ``Alpha158Handler → poseidon.qlib.data_handler.PoseidonDataHandler``,
         whose ``__init__`` does not accept the ``start_time/end_time/...``
         kwargs that qlib's Rolling driver injects (``TypeError: unexpected
-        keyword argument 'end_time'``). Plan 92-04.1 adds an ``Alpha158`` key
+        keyword argument 'end_time'``). The fix adds an ``Alpha158`` key
         pointing at qlib's stock handler which DOES accept them. This test
         asserts the YAML emitter resolves the new key to the correct FQN.
         """

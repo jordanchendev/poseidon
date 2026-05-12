@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Phase 75 Plan 03: IC analysis of 16 crypto micro-structure features.
+"""IC analysis of 16 crypto micro-structure features.
 
 Covers:
-- RES-01: IC analysis of all crypto features on post-ETF data
-- RES-02: Event counts alongside IC; <100 flagged insufficient
-- RES-04: Pattern catalog with structure/direction/IC/event count/confidence
-- RES-05: 4H vs 1H IC comparison
-- RES-06: OI/funding timestamp validation (no pre-ETF contamination)
+- IC analysis of all crypto features on post-ETF data
+- Event counts alongside IC; <100 flagged insufficient
+- Pattern catalog with structure/direction/IC/event count/confidence
+- 4H vs 1H IC comparison
+- OI/funding timestamp validation (no pre-ETF contamination)
 
 Run on stormtrooper inside cpu-worker container:
   docker compose exec cpu-worker python scripts/ic_75_crypto_features.py
@@ -27,13 +27,13 @@ from scipy.stats import spearmanr
 SYMBOLS = ["BTCUSDT", "ETHUSDT"]
 MARKET = "crypto_perp"
 INTERVALS = ["4h", "1h"]
-HORIZONS = [1, 5, 10, 20]  # D-14
+HORIZONS = [1, 5, 10, 20]
 START_DATE = "2024-01-01"  # Post-ETF only
 END_DATE = "2026-04-21"
-MIN_OBSERVATIONS = 100  # D-15: raised from default 30
+MIN_OBSERVATIONS = 100  # raised from default 30
 
-# D-11: All 16 expected crypto features.
-# NOTE: Some D-11 names are abstract; actual column names may differ.
+# All 16 expected crypto features.
+# NOTE: Some names are abstract; actual column names may differ.
 # The discovery step will map these to real columns.
 CRYPTO_FEATURES_EXPECTED = [
     "funding_rate_daily",
@@ -90,14 +90,14 @@ def compute_rank_ic_with_counts(
     """Enhanced IC computation with per-feature observation counts.
 
     Unlike compute_rank_ic() from ic_analysis.py, this returns event
-    counts alongside IC values. Pitfall 3: run_ic_analysis() does NOT
-    return per-feature event counts.
+    counts alongside IC values.  run_ic_analysis() does NOT return
+    per-feature event counts.
 
     Args:
         features_df: DataFrame with feature columns.
         forward_returns: Series of forward returns (same index as features_df).
         feature_columns: List of feature column names to analyze.
-        min_observations: Minimum paired observations for "sufficient" flag (D-15).
+        min_observations: Minimum paired observations for "sufficient" flag.
 
     Returns:
         Dict of {feature_name: {ic, n, p_value, sufficient}}.
@@ -146,9 +146,9 @@ def compute_rank_ic_with_counts(
 
 # ── Data timestamp validation (RES-06) ──────────────────────────────
 def validate_data_timestamps(repo, symbols: list[str], start_date: str) -> None:
-    """RES-06: Verify OI/funding data has no pre-ETF contamination."""
+    """Verify OI/funding data has no pre-ETF contamination."""
     print("=" * 70)
-    print("DATA TIMESTAMP VALIDATION (RES-06)")
+    print("DATA TIMESTAMP VALIDATION")
     print("=" * 70)
     etf_cutoff = pd.Timestamp("2024-01-01")
 
@@ -188,8 +188,8 @@ def validate_data_timestamps(repo, symbols: list[str], start_date: str) -> None:
 def discover_feature_columns(engine, repo, symbol: str, interval: str) -> tuple[list[str], list[str]]:
     """Discover actual feature column names from compute_with_companions output.
 
-    D-11 names are abstract; actual columns may have period suffixes
-    (e.g., wick_ratio -> wick_ratio_upper/lower/total).
+    Abstract names may have period suffixes (e.g., wick_ratio ->
+    wick_ratio_upper/lower/total).
 
     Returns:
         (actual_features, missing_features)
@@ -226,7 +226,7 @@ def discover_feature_columns(engine, repo, symbol: str, interval: str) -> tuple[
     for col in available_columns:
         print(f"    - {col}")
 
-    # Map D-11 abstract names to actual columns
+    # Map abstract names to actual columns
     actual_features: list[str] = []
     missing_features: list[str] = []
     expanded_mapping: dict[str, list[str]] = {}
@@ -269,7 +269,7 @@ def run_ic_analysis_with_counts(engine, repo, feature_columns: list[str]) -> dic
     """Run pooled IC analysis for both 4H and 1H intervals with event counts.
 
     Mirrors run_ic_analysis() from ic_analysis.py but tracks per-feature
-    observation counts (pitfall 3: run_ic_analysis doesn't return these).
+    observation counts (the upstream helper doesn't return these).
 
     Returns:
         {interval: {feature: {horizon: {ic, n, p_value, sufficient}}}}
@@ -395,7 +395,7 @@ def print_ic_table(results: dict[str, dict], feature_columns: list[str]) -> None
 
 
 def print_event_count_table(results: dict[str, dict], feature_columns: list[str]) -> None:
-    """Print event count table for transparency (RES-02)."""
+    """Print event count table for transparency."""
     print(f"\n{'=' * 100}")
     print("EVENT COUNT TABLE (paired observations per feature-horizon)")
     print(f"{'=' * 100}")
@@ -423,7 +423,7 @@ def print_event_count_table(results: dict[str, dict], feature_columns: list[str]
 
 
 def print_4h_vs_1h_comparison(results: dict[str, dict], feature_columns: list[str]) -> dict:
-    """RES-05: 4H vs 1H IC comparison at reference horizon h=5."""
+    """4H vs 1H IC comparison at reference horizon h=5."""
     print(f"\n{'=' * 70}")
     print("4H vs 1H IC COMPARISON (reference horizon h=5)")
     print(f"{'=' * 70}")
@@ -496,7 +496,7 @@ def print_4h_vs_1h_comparison(results: dict[str, dict], feature_columns: list[st
 
 
 def generate_pattern_catalog(results: dict[str, dict], feature_columns: list[str]) -> list[dict]:
-    """RES-04: Pattern catalog from IC results.
+    """Pattern catalog from IC results.
 
     Confidence levels:
     - High: |IC| > 0.03 AND n >= 500
@@ -604,7 +604,7 @@ def save_json_artifact(
     features_above: list[str],
     feature_columns: list[str],
 ) -> None:
-    """Save machine-parseable JSON artifact for Phase 76 automated gating."""
+    """Save machine-parseable JSON artifact for downstream automated gating."""
     # Convert results to JSON-serializable format
     results_json: dict[str, dict] = {}
     for interval in INTERVALS:
@@ -654,7 +654,7 @@ def main() -> None:
     from poseidon.data.feature_engine import FeatureEngine
     from poseidon.data.remote_repository import RemoteDataRepository
 
-    print("Phase 75 Plan 03: IC Analysis of Crypto Micro-Structure Features")
+    print("IC Analysis of Crypto Micro-Structure Features")
     print(f"Symbols: {SYMBOLS}")
     print(f"Market: {MARKET}")
     print(f"Intervals: {INTERVALS}")
@@ -666,10 +666,10 @@ def main() -> None:
     repo = RemoteDataRepository.from_settings()
     engine = FeatureEngine()
 
-    # ── Step 1: Data timestamp validation (RES-06) ──
+    # ── 1: Data timestamp validation ──
     validate_data_timestamps(repo, SYMBOLS, START_DATE)
 
-    # ── Step 2: Feature column discovery ──
+    # ── 2: Feature column discovery ──
     print("=" * 70)
     print("FEATURE COLUMN DISCOVERY")
     print("=" * 70)
@@ -678,17 +678,17 @@ def main() -> None:
         print("ERROR: No feature columns discovered. Exiting.")
         sys.exit(1)
 
-    # ── Step 3: IC analysis with event counts (RES-01, RES-02) ──
+    # ── 3: IC analysis with event counts ──
     results = run_ic_analysis_with_counts(engine, repo, feature_columns)
 
-    # ── Step 4: Output ──
+    # ── 4: Output ──
     print_ic_table(results, feature_columns)
     print_event_count_table(results, feature_columns)
     comparison = print_4h_vs_1h_comparison(results, feature_columns)
     catalog = generate_pattern_catalog(results, feature_columns)
     features_above = identify_features_above_threshold(results, feature_columns)
 
-    # ── Step 5: Save JSON artifact ──
+    # ── 5: Save JSON artifact ──
     save_json_artifact(results, catalog, comparison, features_above, feature_columns)
 
     # ── Summary ──
@@ -698,9 +698,9 @@ def main() -> None:
     print(f"  Total features analyzed: {len(feature_columns)}")
     print(f"  Features above IC > 0.015 threshold: {len(features_above)}")
     if features_above:
-        print(f"  Candidates for Phase 76: {features_above}")
+        print(f"  Candidates for next pass: {features_above}")
     else:
-        print("  No features passed threshold -- gate failure path (GATE-06)")
+        print("  No features passed threshold -- gate failure path")
     print(f"  Recommended interval: {comparison.get('better_interval', 'N/A')}")
     print(f"  JSON artifact: {OUTPUT_JSON}")
     print()

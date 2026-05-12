@@ -1,22 +1,22 @@
-"""Phase 84 STRAT-03: OI staleness cap (D-09).
+"""STRAT-03: OI staleness cap.
 
 ``_align_oi_to_index`` forward-fills OI snapshots (~5 min cadence) onto the
 target bar timeline.  On the 1-minute timeline, callers must pass
 ``staleness_limit_bars=15`` (= 15 minutes = 3 OI snapshot cycles).  Past the
 cap → NaN; the strategy must skip zone identification on stale OI.
 
-These tests lock the contract for Phase 85 / Phase 86 consumers:
+These tests lock the contract for downstream consumers:
   1. Default ``staleness_limit_bars=None`` preserves the legacy unbounded
      forward-fill semantics — existing 4H / non-1m callers must remain
-     completely unaffected by the Phase 84 helper extension.
+     completely unaffected by the helper extension.
   2. With ``staleness_limit_bars=15``, bars more than 15 minutes after the
-     last OI snapshot are NaN (D-09 staleness cap).
+     last OI snapshot are NaN (staleness cap).
   3. With ``staleness_limit_bars=15``, bars within 15 minutes of the last
      snapshot inherit the snapshot value (no false NaN inside the window).
 
 References:
-  - Phase 84 CONTEXT §"OI forward-fill alignment (5min → 1m)" (D-09, D-10, D-11)
-  - Phase 84 RESEARCH §"Pattern 2: Capped forward-fill via ffill(limit=N)"
+  - "OI forward-fill alignment (5min → 1m)"
+  - "Pattern 2: Capped forward-fill via ffill(limit=N)"
   - poseidon/src/poseidon/data/features/open_interest.py — helper definition
 """
 
@@ -59,9 +59,9 @@ def one_minute_target_60_min() -> pd.DatetimeIndex:
 
 
 def test_staleness_limit_bars_kwarg_signature_default_none() -> None:
-    """Phase 84 STRAT-03 contract: kwarg must exist with default ``None``.
+    """STRAT-03 contract: kwarg must exist with default ``None``.
 
-    Locks the additive Phase 84 extension so a future regression that drops
+    Locks the additive extension so a future regression that drops
     the kwarg (or changes its default) fails loudly here rather than silently
     breaking the 1m strategy pipeline.
     """
@@ -76,7 +76,7 @@ def test_staleness_limit_bars_kwarg_signature_default_none() -> None:
 
 
 # ---------------------------------------------------------------------------
-# D-09 behavioral cases (3 mandated by plan §test_staleness_limit)
+# Behavioral cases (3 cases)
 # ---------------------------------------------------------------------------
 
 
@@ -102,7 +102,7 @@ def test_staleness_limit_15_caps_at_nan(
     two_oi_snapshots_5min_apart: pd.Series,
     one_minute_target_60_min: pd.DatetimeIndex,
 ) -> None:
-    """D-09: with cap=15, bars more than 15 minutes past last snapshot are NaN.
+    """With cap=15, bars more than 15 minutes past last snapshot are NaN.
 
     Last snapshot lands at 00:05.  pandas ``reindex(method='ffill', limit=15)``
     forward-fills at most 15 NaN slots → bars 00:06 .. 00:20 inherit 2000,
@@ -115,7 +115,7 @@ def test_staleness_limit_15_caps_at_nan(
     )
 
     # Bar at +16min past last snapshot → NaN (cap exceeded)
-    assert pd.isna(aligned.loc["2026-01-01 00:21"]), "bar at last_snapshot + 16min must be NaN under D-09 staleness cap"
+    assert pd.isna(aligned.loc["2026-01-01 00:21"]), "bar at last_snapshot + 16min must be NaN under staleness cap"
     # Far past the cap → still NaN
     assert pd.isna(aligned.iloc[-1]), "bar at +54min past last snapshot must be NaN"
     # Sanity: at least one NaN exists in the tail (cap engaged)
@@ -126,7 +126,7 @@ def test_staleness_limit_15_within_window(
     two_oi_snapshots_5min_apart: pd.Series,
     one_minute_target_60_min: pd.DatetimeIndex,
 ) -> None:
-    """D-09: with cap=15, bars within 15 minutes of last snapshot inherit value.
+    """With cap=15, bars within 15 minutes of last snapshot inherit value.
 
     The cap must not introduce false NaN inside the staleness window — that
     would silently kill valid signals on the 1m timeline.

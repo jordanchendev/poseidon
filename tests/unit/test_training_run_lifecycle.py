@@ -1,4 +1,4 @@
-"""Tests for the Phase 41 foundation slice (plan 41-01).
+"""Tests for the research-API foundation slice.
 
 Covers RESEARCH-API-03 (training_runs table, status transitions, promotion)
 and basic Pydantic schema validation.
@@ -6,7 +6,7 @@ and basic Pydantic schema validation.
 The unit suite runs against an in-memory SQLite harness that uses the
 Postgres-only types via ``@compiles`` shims (same pattern as
 ``tests/unit/test_phase40_foundation.py``). Real DDL execution runs
-end-to-end on stormtrooper via the Phase 41 smoke runbook.
+end-to-end on stormtrooper via the foundation smoke runbook.
 
 NOTE: The ORM fixture tests (db_session) require psycopg2 and run on
 stormtrooper. Migration file assertions and Pydantic schema tests run
@@ -59,7 +59,7 @@ def test_migration_025_exists_with_correct_revision():
 
 
 def test_migration_025_has_all_d04_columns():
-    """D-04: All training_runs columns must be present in the migration."""
+    """All training_runs columns must be present in the migration."""
     content = MIGRATION_025_PATH.read_text()
 
     for col in (
@@ -88,7 +88,7 @@ def test_migration_025_has_all_d04_columns():
 
 
 def test_migration_025_has_check_constraint_and_indexes():
-    """D-05: Status CHECK constraint + filtering/pagination indexes."""
+    """Status CHECK constraint + filtering/pagination indexes."""
     content = MIGRATION_025_PATH.read_text()
 
     assert "ck_training_runs_status" in content
@@ -216,7 +216,7 @@ def test_training_run_default_status_is_pending(db_session: Session):
 
 
 def test_training_run_all_d04_columns_exist():
-    """TrainingRun must expose every column from the D-04 schema."""
+    """TrainingRun must expose every column from the schema."""
     columns = {c.name for c in TrainingRunTest.__table__.columns}
     expected = {
         "run_id",
@@ -244,7 +244,7 @@ def test_training_run_all_d04_columns_exist():
 
 
 def test_training_run_all_d04_columns_in_source():
-    """Cross-check: the actual TrainingRun source file must contain all D-04 columns."""
+    """Cross-check: the actual TrainingRun source file must contain all expected columns."""
     source_path = Path(__file__).resolve().parents[2] / "src" / "poseidon" / "models" / "training_run.py"
     content = source_path.read_text()
     for col in (
@@ -305,7 +305,7 @@ def test_training_run_status_transitions(db_session: Session):
 
 
 def test_training_run_failed_preserves_error(db_session: Session):
-    """D-07: A failed run must preserve the error text."""
+    """A failed run must preserve the error text."""
     run = TrainingRunTest(
         run_id=uuid.uuid4(),
         handler_class="Alpha158Handler",
@@ -327,7 +327,7 @@ def test_training_run_failed_preserves_error(db_session: Session):
 
 
 def test_training_run_model_version_id_nullable(db_session: Session):
-    """D-06: model_version_id is NULL until a succeeded run is promoted."""
+    """model_version_id is NULL until a succeeded run is promoted."""
     run = TrainingRunTest(
         run_id=uuid.uuid4(),
         handler_class="Alpha158Handler",

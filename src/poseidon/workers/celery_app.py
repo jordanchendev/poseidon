@@ -35,14 +35,14 @@ celery_app.conf.update(
     redbeat_key_prefix="poseidon:redbeat:",
     # Beat schedule — trading/risk/portfolio/perp tasks ONLY
     # Data ingest tasks (fetch, refresh-universe, ingest, quality, backfill,
-    # coverage, gap-audit, freshness) moved to Thalassa in Phase 60.
+    # coverage, gap-audit, freshness) moved to Thalassa.
     beat_schedule={
-        # VaR computation: covariance matrix update daily at 00:30 UTC (per D-05)
+        # VaR computation: covariance matrix update daily at 00:30 UTC
         "update-covariance-matrix": {
             "task": "poseidon.workers.cpu_tasks.update_covariance_matrix",
             "schedule": crontab(hour=0, minute=30),
         },
-        # VaR Historical Simulation: hourly at :15 past the hour (per D-03)
+        # VaR Historical Simulation: hourly at :15 past the hour
         "compute-var-historical": {
             "task": "poseidon.workers.cpu_tasks.compute_var_snapshot",
             "schedule": crontab(minute=15),
@@ -54,7 +54,7 @@ celery_app.conf.update(
             "schedule": crontab(hour=1, minute=0),
             "args": ["all"],
         },
-        # Monte Carlo VaR: daily at 01:30 UTC (30 min after covariance update, per D-07)
+        # Monte Carlo VaR: daily at 01:30 UTC (30 min after covariance update)
         "compute-mc-var-daily": {
             "task": "poseidon.workers.cpu_tasks.compute_mc_var",
             "schedule": crontab(hour=1, minute=30),
@@ -106,18 +106,18 @@ celery_app.conf.update(
             "task": "poseidon.workers.cpu_tasks.portfolio_nav_snapshot",
             "schedule": crontab(hour=6, minute=0),
         },
-        # --- Phase 27: Perpetual contract 24/7 scheduling ---
-        # 1. Liquidation monitor: every 1 minute, 24/7 (PRSK-01, D-01)
+        # --- Perpetual contract 24/7 scheduling ---
+        # 1. Liquidation monitor: every 1 minute, 24/7
         "perp-liquidation-monitor": {
             "task": "poseidon.workers.cpu_tasks.perp_liquidation_monitor",
             "schedule": crontab(minute="*"),
         },
-        # 3. Perp 4h rebalance: 5 min after fetch (D-04, D-05, PRSK-02)
+        # 3. Perp 4h rebalance: 5 min after fetch
         "perp-rebalance-4h": {
             "task": "poseidon.workers.cpu_tasks.perp_rebalance",
             "schedule": crontab(hour="0,4,8,12,16,20", minute=5),
         },
-        # 4. Funding settlement: every 8h (D-06)
+        # 4. Funding settlement: every 8h
         "perp-funding-settlement": {
             "task": "poseidon.workers.cpu_tasks.perp_funding_settlement",
             "schedule": crontab(hour="0,8,16", minute=10),
@@ -134,7 +134,7 @@ celery_app.conf.update(
     # api / cpu-worker / gpu-worker run on cp313 and would crash on a
     # module-level ``import qlib`` — both modules defer their qlib imports
     # to inside the task body so adding them here is safe (PATTERNS.md
-    # §Deferred Qlib Import). Phase 90 Wave 4a (Plan 90-05a) Task 3.
+    # §Deferred Qlib Import).
     imports=[
         "poseidon.workers.cpu_tasks",
         "poseidon.workers.gpu_tasks",

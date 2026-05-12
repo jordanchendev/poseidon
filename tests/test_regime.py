@@ -196,17 +196,17 @@ class TestRegimeRouterBear:
             assert "bear_position_pct" in cfg, f"{regime_name} missing bear_position_pct"
 
     def test_high_vol_regime_config(self):
-        """High vol regime config per D-20."""
+        """High vol regime config."""
         expected = {"min_votes": 5, "position_pct": 0.05, "bear_min_votes": 4, "bear_position_pct": 0.04}
         assert DEFAULT_REGIME_CONFIGS["high_vol"] == expected
 
     def test_medium_vol_regime_config(self):
-        """Medium vol regime config per D-20."""
+        """Medium vol regime config."""
         expected = {"min_votes": 4, "position_pct": 0.08, "bear_min_votes": 4, "bear_position_pct": 0.06}
         assert DEFAULT_REGIME_CONFIGS["medium_vol"] == expected
 
     def test_low_vol_regime_config(self):
-        """Low vol regime config per D-20."""
+        """Low vol regime config."""
         expected = {"min_votes": 3, "position_pct": 0.10, "bear_min_votes": 5, "bear_position_pct": 0.05}
         assert DEFAULT_REGIME_CONFIGS["low_vol"] == expected
 

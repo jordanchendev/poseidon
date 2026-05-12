@@ -1,4 +1,4 @@
-"""Unit tests for poseidon.risk.reject_reason (Phase 87 / TRUTH-03, D-13/D-14).
+"""Unit tests for poseidon.risk.reject_reason.
 
 Validates the canonical 4-key reject_reason TypedDict shape and the
 build_reject_reason factory that every write callsite must use.
@@ -10,7 +10,7 @@ from poseidon.risk.reject_reason import RejectReason, build_reject_reason
 
 
 def test_typeddict_shape_has_four_keys():
-    """RejectReason TypedDict must define exactly 4 keys (D-13)."""
+    """RejectReason TypedDict must define exactly 4 keys."""
     annotations = RejectReason.__annotations__
     assert set(annotations.keys()) == {"check_name", "rule", "shortfall", "details"}
 

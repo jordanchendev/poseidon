@@ -1,6 +1,6 @@
 """VolatilityBreakoutStrategy -- N-bar breakout + ATR expansion for TX 30m.
 
-Signal logic (D-11):
+Signal logic:
   - close > highest_high(prev N bars) AND ATR > ATR_SMA -> LONG entry
   - close < lowest_low(prev N bars) AND ATR > ATR_SMA -> SHORT entry
   - R-multiple trailing stop via HOLD signal with updated_stop_loss metadata
@@ -157,7 +157,7 @@ class VolatilityBreakoutStrategy(BaseStrategy):
             )
             return signals
 
-        # --- Entry logic: N-bar breakout + ATR expansion (D-11) ---
+        # --- Entry logic: N-bar breakout + ATR expansion ---
         if close > high_n and atr_expanding and self._position_side != "long":
             stop_loss = close - self.config.trail_r * atr
             signals.append(self._make_signal(SignalAction.LONG, close, signal_time, stop_loss_price=stop_loss))

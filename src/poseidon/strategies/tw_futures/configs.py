@@ -1,9 +1,9 @@
 """Pydantic config models for TW Futures strategies.
 
 Three strategies share this config module:
-- TrendFollowingConfig: EMA crossover + ATR trailing stop (D-09)
-- MeanReversionConfig: Bollinger Band + RSI (D-10)
-- VolatilityBreakoutConfig: Range breakout + ATR filter (D-11)
+- TrendFollowingConfig: EMA crossover + ATR trailing stop
+- MeanReversionConfig: Bollinger Band + RSI
+- VolatilityBreakoutConfig: Range breakout + ATR filter
 
 Config values loaded from YAML via yaml.safe_load -> Pydantic validation.
 """
@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 
 class TrendFollowingConfig(BaseModel):
-    """EMA crossover trend following on TX daily bars (D-09)."""
+    """EMA crossover trend following on TX daily bars."""
 
     strategy: str = "trend_following_tx"
     name: str = "Trend Following TX Daily"
@@ -27,7 +27,7 @@ class TrendFollowingConfig(BaseModel):
 
 
 class MeanReversionConfig(BaseModel):
-    """Bollinger Band + RSI mean reversion on TX 1H bars (D-10)."""
+    """Bollinger Band + RSI mean reversion on TX 1H bars."""
 
     strategy: str = "mean_reversion_tx"
     name: str = "Mean Reversion TX 1H"
@@ -43,7 +43,7 @@ class MeanReversionConfig(BaseModel):
 
 
 class VolatilityBreakoutConfig(BaseModel):
-    """Range breakout with ATR expansion filter on TX 30M bars (D-11)."""
+    """Range breakout with ATR expansion filter on TX 30M bars."""
 
     strategy: str = "volatility_breakout_tx"
     name: str = "Volatility Breakout TX 30M"

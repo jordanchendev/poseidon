@@ -1,4 +1,4 @@
-"""Tests for PatchTST Transformer model — Phase 9.
+"""Tests for PatchTST Transformer model.
 
 Tests cover: PatchTST forward pass shapes, TimeSeriesDataset sliding windows,
 TransformerModel BaseModel contract (train/predict/validate/save/load),

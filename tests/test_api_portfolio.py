@@ -159,7 +159,7 @@ def test_get_perp_holdings_uses_remote_latest_price(mock_from_settings):
 
 
 # ---------------------------------------------------------------------------
-# Phase 87 integration tests
+# Integration tests
 # ---------------------------------------------------------------------------
 
 
@@ -227,7 +227,7 @@ def _seed_order(
 
 
 def test_performance_modified_dietz_isolates_cash_flow():
-    """TRUTH-01 (D-01): a $9.87M deposit must not inflate total_return_pct.
+    """A $9.87M deposit must not inflate total_return_pct.
 
     Day 1: NAV=1M, cf=0
     Day 2: NAV=11M, cf=+9.87M deposit
@@ -242,7 +242,7 @@ def test_performance_modified_dietz_isolates_cash_flow():
     assert resp.status_code == 200
     payload = resp.json()
 
-    # Sanity: NAV curve preserves cash_flow column (TRUTH-04, D-05).
+    # Sanity: NAV curve preserves cash_flow column.
     assert len(payload["nav_curve"]) == 2
     assert payload["nav_curve"][1]["cash_flow"] == 9_870_000.0
 
@@ -253,7 +253,7 @@ def test_performance_modified_dietz_isolates_cash_flow():
 
 @patch("poseidon.data.remote_repository.RemoteDataRepository.from_settings")
 def test_holdings_excludes_crypto_perp(mock_from_settings):
-    """TRUTH-02 (D-09): /holdings allowlist = {tw_stock, us_stock}.
+    """/holdings allowlist = {tw_stock, us_stock}.
 
     Seed an ETHUSDT crypto_perp holding alongside a tw_stock holding.
     Only the tw_stock entry should surface; crypto_perp must be excluded.
@@ -280,7 +280,7 @@ def test_holdings_excludes_crypto_perp(mock_from_settings):
 
 
 def test_orders_returns_structured_reject_reason_dict():
-    """TRUTH-03 (D-13/D-17): rejected orders must surface as dict with 4 keys."""
+    """Rejected orders must surface as dict with 4 keys."""
     payload = {
         "check_name": "max_exposure",
         "rule": "Total exposure 110% exceeds 100% limit",
@@ -301,7 +301,7 @@ def test_orders_returns_structured_reject_reason_dict():
 
 
 def test_orders_legacy_text_wrapped_payload():
-    """D-15: legacy free-text reject_reason from migration 034 must surface
+    """Legacy free-text reject_reason from migration 034 must surface
     as a structured dict with check_name='legacy', rule='pre_phase87',
     shortfall=None, details=<original text>.
 

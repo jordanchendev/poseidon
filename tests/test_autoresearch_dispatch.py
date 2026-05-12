@@ -1,9 +1,9 @@
-"""Tests for AutoResearch API dispatch expansion (Phase 69 Plan 02).
+"""Tests for AutoResearch API dispatch expansion.
 
 Covers:
-- FACT-04: API schema validation for 5 strategy types + new optional fields
-- FACT-03: RegimeSearch experiment tracking (tracker.save calls)
-- D-15: FACTORY_REGISTRY isolation tests (voting/rule/model factories)
+- API schema validation for 5 strategy types + new optional fields
+- RegimeSearch experiment tracking (tracker.save calls)
+- FACTORY_REGISTRY isolation tests (voting/rule/model factories)
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import pydantic
 import pytest
 
 # ---------------------------------------------------------------------------
-# Section 1: API Schema Tests (FACT-04)
+# Section 1: API Schema Tests
 # ---------------------------------------------------------------------------
 
 
@@ -42,19 +42,19 @@ def test_autoresearch_request_accepts_liquidity_sweep():
 
 
 def test_autoresearch_request_accepts_rule():
-    """AutoResearchRequest accepts strategy_type='rule' (D-14)."""
+    """AutoResearchRequest accepts strategy_type='rule'."""
     req = _make_request(strategy_type="rule")
     assert req.strategy_type == "rule"
 
 
 def test_autoresearch_request_accepts_model():
-    """AutoResearchRequest accepts strategy_type='model' (D-14)."""
+    """AutoResearchRequest accepts strategy_type='model'."""
     req = _make_request(strategy_type="model")
     assert req.strategy_type == "model"
 
 
 def test_autoresearch_request_accepts_regime_router():
-    """AutoResearchRequest accepts strategy_type='regime_router' (D-14)."""
+    """AutoResearchRequest accepts strategy_type='regime_router'."""
     req = _make_request(strategy_type="regime_router")
     assert req.strategy_type == "regime_router"
 
@@ -96,7 +96,7 @@ def test_autoresearch_request_base_config_json_accepted():
 
 
 # ---------------------------------------------------------------------------
-# Section 2: RegimeSearch Experiment Tracking Tests (FACT-03)
+# Section 2: RegimeSearch Experiment Tracking Tests
 # ---------------------------------------------------------------------------
 
 
@@ -289,7 +289,7 @@ def test_regime_search_run_accepts_market_symbol_interval_kwargs():
 
 
 # ---------------------------------------------------------------------------
-# Section 3: FACTORY_REGISTRY Tests (FACT-04, D-15)
+# Section 3: FACTORY_REGISTRY Tests
 # ---------------------------------------------------------------------------
 
 

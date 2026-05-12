@@ -1,6 +1,6 @@
-"""Phase 90 / Wave 5 — qlib RL real-environment smoke test.
+"""qlib RL real-environment smoke test.
 
-Wave 0 scaffold (Plan 90-01 Task 3). Wave 5 implements the single-trigger-day
+Scaffolded with placeholders; later wave implements the single-trigger-day
 smoke that runs PPO + TWAP through the simulator on real Thalassa 1-min
 data and emits PA(bps) without crashing.
 
@@ -21,4 +21,4 @@ pytestmark = pytest.mark.skipif(
 
 def test_run_one_trigger_day():
     """Smoke: single basis-arb trigger day end-to-end through PPO + TWAP."""
-    pytest.skip("Wave 5 implements")
+    pytest.skip("implementation pending")

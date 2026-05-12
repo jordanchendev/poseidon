@@ -1,4 +1,4 @@
-"""RL Order Execution API endpoints (Phase 90 Wave 4b, Plan 90-05b).
+"""RL Order Execution API endpoints.
 
 Exposes 5 endpoints under the ``/research/rl-execution`` namespace:
 
@@ -127,7 +127,7 @@ async def get_rl_execution_run(
     run_id: UUID,
     db: Session = Depends(get_db),
 ):
-    """Get full detail for a single RL execution run (D-22)."""
+    """Get full detail for a single RL execution run."""
     run = db.query(RLExecutionRun).filter(RLExecutionRun.run_id == run_id).first()
     if run is None:
         raise HTTPException(status_code=404, detail=f"RL execution run {run_id} not found")
@@ -163,7 +163,7 @@ async def get_rl_execution_run_results(
     run_id: UUID,
     db: Session = Depends(get_db),
 ):
-    """Stream fills.parquet for a succeeded run (D-22, T-90-04 mitigated).
+    """Stream fills.parquet for a succeeded run (path-traversal mitigated).
 
     ``run_id: UUID`` FastAPI path type validates the canonical UUID form
     BEFORE the path is constructed; ``str(run_id)`` is a 36-char hex string

@@ -1,4 +1,4 @@
-"""Unit coverage for Phase 47 factor analysis ORM and schemas."""
+"""Unit coverage for factor analysis ORM and schemas."""
 
 from __future__ import annotations
 

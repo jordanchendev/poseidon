@@ -73,7 +73,7 @@ def make_sweep_features(n_rows: int = 200, **overrides) -> pd.DataFrame:
 
 
 def make_default_config(**overrides) -> dict:
-    """Return a config dict matching D-02 structure for LiquiditySweepStrategy."""
+    """Return a config dict matching the schema for LiquiditySweepStrategy."""
     config = {
         "name": "liquidity_sweep_strategy",
         "symbol": "BTCUSDT",

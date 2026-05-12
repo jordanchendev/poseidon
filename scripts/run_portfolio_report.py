@@ -1,28 +1,27 @@
 #!/usr/bin/env python3
-"""ACTIVATE-05: emit qlib graphical reports from anchor signal qrun output.
+"""Emit qlib graphical reports from anchor signal qrun output.
 
-Per Phase 95 CONTEXT D-26..D-29. Reuses Wave 1 (Plan 95-03) qrun
-SignalRecord pickles emitted at::
+Reuses the upstream qrun SignalRecord pickles emitted at::
 
     local_dev/qlib-activations/qrun-runs/v18-tx_basis_vol/mlruns/
 
-**Wave 1 amendment (95-03 SUMMARY):** PortAnaRecord pickles are deliberately
-absent — qlib's ``PortfolioMetrics.init_bench`` requires ``qlib.data.D``
-provider data which Pitfall 1 bypasses (``provider_uri=""`` so the
-``PoseidonDataHandlerForQrun.StaticDataLoader`` path can serve the basis arb
-panel without a qlib ``.bin`` calendar). The four PortAnaRecord-dependent
-graphs in qlib's ``GRAPH_NAME_LIST`` (``cumulative_return_graph``,
+**Note:** PortAnaRecord pickles are deliberately absent — qlib's
+``PortfolioMetrics.init_bench`` requires ``qlib.data.D`` provider data
+which the upstream pipeline bypasses (``provider_uri=""`` so the
+``PoseidonDataHandlerForQrun.StaticDataLoader`` path can serve the basis
+arb panel without a qlib ``.bin`` calendar). The four PortAnaRecord-
+dependent graphs in qlib's ``GRAPH_NAME_LIST`` (``cumulative_return_graph``,
 ``risk_analysis_graph``, ``report_graph``, ``rank_label_graph``) therefore
 SKIP with a structured PARTIAL note. The two SignalRecord-only graphs
 (``score_ic_graph`` and ``model_performance_graph``) run end-to-end and
-emit HTML — sufficient for ROADMAP success criterion 5 ("at least one
-backtest run output").
+emit HTML — sufficient for the "at least one backtest run output"
+criterion.
 
 Run on stormtrooper::
 
     docker compose exec -T qlib-research uv run python scripts/run_portfolio_report.py
 
-The Wave 5 pytest smoke (``tests/test_portfolio_report.py``) imports
+The pytest smoke (``tests/test_portfolio_report.py``) imports
 ``run_portfolio_report`` and invokes it programmatically.
 """
 
@@ -35,7 +34,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 # Bind-mounted at /app/local_dev → host poseidon/local_dev/.
-# Wave 1 (Plan 95-03) writes recorder pickles under
+# The upstream qrun writes recorder pickles under
 # {DEFAULT_RECORDER_DIR}/mlruns/{exp_id}/{run_id}/artifacts/.
 DEFAULT_RECORDER_DIR = Path("/app/local_dev/qlib-activations/qrun-runs/v18-tx_basis_vol")
 DEFAULT_OUT_DIR = Path("/app/local_dev/backtests/phase95_basis_vol/reports")
@@ -43,8 +42,8 @@ EXPERIMENT_NAME = "phase95_tx_basis_vol"
 
 # qlib's GRAPH_NAME_LIST in pyqlib v0.9.7 — used to compute SKIPPED count for
 # the SUMMARY / smoke output. The four below require PortAnaRecord pickles
-# (position / report_normal / port_analysis) and are skipped per the Wave 1
-# amendment described in the module docstring.
+# (position / report_normal / port_analysis) and are skipped per the
+# upstream-amendment described in the module docstring.
 PORTANARECORD_DEPENDENT_GRAPHS = (
     "analysis_position.cumulative_return_graph",
     "analysis_position.risk_analysis_graph",
@@ -58,32 +57,28 @@ SIGNALRECORD_ONLY_GRAPHS = (
 
 
 def _load_signal_record(recorder_dir: Path) -> dict:
-    """Load pred.pkl + label.pkl from the Wave 1 qrun mlruns directory.
+    """Load pred.pkl + label.pkl from the upstream qrun mlruns directory.
 
     Walks the mlruns tree to find a recorder dir that contains BOTH pred.pkl
     and label.pkl. The qrun SignalRecord stage runs before PortAnaRecord, so
-    pred + label are guaranteed even when PortAnaRecord aborts (95-03 SUMMARY
-    Deviation #4).
+    pred + label are guaranteed even when PortAnaRecord aborts.
 
     Raises FileNotFoundError naming the missing pickle if no recorder has both.
     """
     mlruns = recorder_dir / "mlruns"
     if not mlruns.exists():
-        raise FileNotFoundError(
-            f"Wave 1 mlruns directory missing at {mlruns}; run scripts/run_qrun_basis_vol.py first (Plan 95-03)"
-        )
+        raise FileNotFoundError(f"mlruns directory missing at {mlruns}; run scripts/run_qrun_basis_vol.py first")
 
     # Walk the mlruns tree explicitly so we don't depend on a working
-    # qlib.workflow.R URI (which can hit Pitfall 1 / Postgres MLflow leak when
-    # the tracking URI env var isn't pinned). pred.pkl + label.pkl are plain
+    # qlib.workflow.R URI (which can hit a Postgres MLflow leak when the
+    # tracking URI env var isn't pinned). pred.pkl + label.pkl are plain
     # pickles — load them directly.
     import pickle
 
     candidate_dirs = sorted(mlruns.glob("*/*/artifacts"))
     if not candidate_dirs:
         raise FileNotFoundError(
-            f"No recorder artifacts/ subdir under {mlruns} — "
-            f"Wave 1 qrun has not run yet (no '<exp_id>/<run_id>/artifacts/')"
+            f"No recorder artifacts/ subdir under {mlruns} — qrun has not run yet (no '<exp_id>/<run_id>/artifacts/')"
         )
 
     last_error: str | None = None
@@ -143,15 +138,15 @@ def run_portfolio_report(
     recorder_dir: Path | None = None,
     out_dir: Path | None = None,
 ) -> dict:
-    """Library entry — emit qlib graphical reports from the Wave 1 qrun pickles.
+    """Library entry — emit qlib graphical reports from the qrun pickles.
 
     Returns a summary dict with per-graph status (OK / SKIPPED / PARTIAL), HTML
     paths, and the GRAPH_NAME_LIST coverage. Tested via
-    tests/test_portfolio_report.py::test_portfolio_report_smoke (Pattern S4).
+    tests/test_portfolio_report.py::test_portfolio_report_smoke.
     """
     # Lazy import — qlib + plotly only available inside the qlib-research
-    # container. Module-level imports would break Mac-side `pytest --collect-only`
-    # (Pitfall 2 carry-over from Plan 95-03).
+    # container. Module-level imports would break Mac-side
+    # `pytest --collect-only`.
     from qlib.contrib.report.analysis_model.analysis_model_performance import (
         model_performance_graph,
     )
@@ -232,13 +227,13 @@ def run_portfolio_report(
         )
 
     # Graphs 3-6: PortAnaRecord-dependent — SKIP with structured note.
-    # Wave 1 (95-03 SUMMARY Deviation #4): PortAnaRecord pickles absent by
-    # design because qlib's PortfolioMetrics.init_bench requires provider data
-    # bypassed via Pitfall 1 (provider_uri=""). Skipping is documented behaviour.
+    # PortAnaRecord pickles absent by design because qlib's
+    # PortfolioMetrics.init_bench requires provider data bypassed via
+    # provider_uri="".  Skipping is documented behaviour.
     skip_reason = (
-        "PortAnaRecord pickles absent — Wave 1 (95-03) deliberately bypasses "
-        "qlib provider data via Pitfall 1, so PortfolioMetrics.init_bench "
-        "cannot run. Skip is by design per 95-03 SUMMARY Deviation #4."
+        "PortAnaRecord pickles absent — the upstream pipeline deliberately "
+        'bypasses qlib provider data via provider_uri="", so '
+        "PortfolioMetrics.init_bench cannot run. Skip is by design."
     )
     for graph_name in PORTANARECORD_DEPENDENT_GRAPHS:
         graph_results.append({"graph": graph_name, "status": "SKIPPED", "reason": skip_reason})

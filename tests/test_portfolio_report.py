@@ -1,12 +1,12 @@
-"""Phase 95 ACTIVATE-05 — Portfolio attribution / plotly report smoke.
+"""ACTIVATE-05 — Portfolio attribution / plotly report smoke.
 
-Stormtrooper-only (Pattern S4). Loads the Wave 1 (Plan 95-03) qrun
+Stormtrooper-only (Pattern S4). Loads the qrun
 SignalRecord pickles (pred.pkl + label.pkl) and renders the qlib + plotly
 graphs that don't require PortAnaRecord — see run_portfolio_report.py
-docstring for the full Wave 5 contract amendment.
+docstring for the full contract amendment.
 
-Skip-with-reason if Wave 1 mlruns directory missing — that's acceptable
-(test isolation per CONTEXT D-33).
+Skip-with-reason if the qrun mlruns directory missing — that's acceptable
+(test isolation).
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ _RECORDER_DIR = Path("/app/local_dev/qlib-activations/qrun-runs/v18-tx_basis_vol
 
 
 def _smoke_dir(prong: str) -> Path:
-    """Resolve .planning/phases/95-*/smoke/{prong}/ from this file's path.
+    """Resolve the smoke output directory for the given prong.
 
     Inside the qlib-research container the bind-mount maps
     aquarium/poseidon/tests → /app/tests, so parents[2] is "/" rather than the
@@ -48,9 +48,9 @@ def _smoke_dir(prong: str) -> Path:
 
 
 def test_portfolio_report_smoke() -> None:
-    """End-to-end driver smoke: loads Wave 1 pickles, emits HTMLs, asserts size.
+    """End-to-end driver smoke: loads qrun pickles, emits HTMLs, asserts size.
 
-    Per the Wave 5 contract amendment (95-03 SUMMARY Deviation #4), this only
+    Per the contract amendment (prior SUMMARY Deviation #4), this only
     asserts on SignalRecord-derived graphs (score_ic_graph,
     model_performance_graph). PortAnaRecord-dependent graphs are SKIPPED in
     the driver — counted in summary.n_skipped, not asserted on.
@@ -61,10 +61,10 @@ def test_portfolio_report_smoke() -> None:
     out_dir = _smoke_dir("ACTIVATE-05")
     recorder_dir = _RECORDER_DIR
 
-    # Wave 1 dependency — skip-with-reason if pickles missing (Pitfall 5)
+    # qrun dependency — skip-with-reason if pickles missing (Pitfall 5)
     mlruns = recorder_dir / "mlruns"
     if not mlruns.exists():
-        pytest.skip(f"Wave 1 qrun mlruns missing at {mlruns} — run scripts/run_qrun_basis_vol.py first (Plan 95-03)")
+        pytest.skip(f"qrun mlruns missing at {mlruns} — run scripts/run_qrun_basis_vol.py first")
 
     backtest_out = Path("/app/local_dev/backtests/phase95_basis_vol/reports")
     backtest_out.mkdir(parents=True, exist_ok=True)
@@ -108,7 +108,7 @@ def test_portfolio_report_smoke() -> None:
         size = html.stat().st_size
         assert size > 1024, f"{html.name} size {size}B is below 1KB threshold"
 
-    # Wave 5 contract amendment: PARTIAL count (PortAnaRecord-dependent SKIPS)
+    # Contract amendment: PARTIAL count (PortAnaRecord-dependent SKIPS)
     # ≤ 4 of GRAPH_NAME_LIST (6 entries). The four SKIPPED graphs are
     # cumulative_return / risk_analysis / report / rank_label.
     assert summary["n_skipped"] <= 4, (

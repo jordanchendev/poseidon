@@ -1,14 +1,14 @@
-"""Phase 92 — DDG-DA comparison orchestration library.
+"""DDG-DA comparison orchestration library.
 
 Exports:
     extract_per_fold_sharpe(rolling_exp_name, *, recorders_iter=None)
-        Pattern B from RESEARCH 575-610; B-1 fix injection of recorder iter.
+        Pattern B with injection of recorder iter.
     _default_recorders_iter(experiment_name)
         Internal — deferred-qlib-import boundary for tests.
     write_comparison_summary(with_df, without_df, out_path)
-        D-20 parquet. Aligns with/without by fold_start; emits delta_sharpe.
+        Writes parquet. Aligns with/without by fold_start; emits delta_sharpe.
     paired_bootstrap_delta_sharpe(...)
-        Canonical (W-5); tests/test_ddg_da_stats.py imports from here.
+        Canonical implementation; tests/test_ddg_da_stats.py imports from here.
     run_comparison(thesis_name, model_class, segments, run_dir, smoke=False)
         End-to-end orchestration entry point.
 
@@ -55,14 +55,14 @@ def extract_per_fold_sharpe(
 ) -> pd.DataFrame:
     """Walk qlib mlflow experiment, compute per-fold OOS Sharpe.
 
-    Pattern B from 92-RESEARCH.md §Code Examples lines 575-610.
+    Pattern B walks the qlib mlflow experiment, computes per-fold Sharpe.
 
     Args:
         rolling_exp_name: qlib mlflow experiment name. Used only when
             ``recorders_iter`` is None (default).
         threshold: trigger threshold; abs(pred) > threshold engages a position.
         round_trip_cost: cost per engaged-day (32bps default per v10.0
-            standing rule and Phase 95 ACTIVATE-01 baseline).
+            standing rule and ACTIVATE-01 baseline).
         bars_per_year: annualisation factor for Sharpe.
         recorders_iter: optional iterator yielding ``(rec_id, recorder)``
             pairs. Default = None → falls back to ``_default_recorders_iter``
@@ -122,7 +122,7 @@ def extract_per_fold_sharpe(
 def write_comparison_summary(with_df: pd.DataFrame, without_df: pd.DataFrame, out_path: Path) -> Path:
     """Align with/without by fold_start; write parquet with delta_sharpe.
 
-    D-20: comparison_summary.parquet shape per RESEARCH §Persistence content.
+    Writes the comparison_summary.parquet.
 
     Args:
         with_df: per-fold Sharpe DataFrame from the with-DDG-DA leg.
@@ -220,25 +220,25 @@ def run_comparison(
 ) -> dict:
     """End-to-end comparison: with-DDG-DA vs without-DDG-DA on the same dataset.
 
-    D-20 layout:
+    Layout:
         run_dir/
           comparison_metadata.json
           with_ddg_da/{predictions.parquet, per_window_sharpe.parquet, ic.json}
           without_ddg_da/{...}
           comparison_summary.parquet
-          run.lock (file-lock per D-23)
+          run.lock (file-lock)
           summary.json
 
-    Plan 92-04 writes ``verdict.md`` AFTER this function returns.
+    The verdict.md file is written by the caller AFTER this function returns.
 
     Args:
-        thesis_name: e.g. "tx_gap_intraday" (D-09 default; only thesis
-            supported in v1).
-        model_class: e.g. "LGBModel" (D-11 default).
+        thesis_name: e.g. "tx_gap_intraday" (default; only thesis supported
+            in v1).
+        model_class: e.g. "LGBModel" (default).
         segments: walk-forward train/valid/test segment dict
             ``{"train": (start, end), "valid": (...), "test": (...)}``.
-        run_dir: artifact root (D-19).
-        smoke: when True, only the last 2 walk-forward folds are kept (D-25).
+        run_dir: artifact root.
+        smoke: when True, only the last 2 walk-forward folds are kept.
 
     Returns:
         dict with keys ``run_dir``, ``comparison_summary_parquet``,
@@ -247,7 +247,7 @@ def run_comparison(
     run_dir = Path(run_dir).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Plan 92-04.2 BUG-6 fix: per-run isolated mlruns directory.
+    # Per-run isolated mlruns directory.
     # qlib reads MLFLOW_TRACKING_URI on import; this MUST be set before ANY
     # qlib import in this function or anywhere downstream. Without isolation,
     # qlib's DDGDA InternalData.setup() assertion ("An empty experiment is
@@ -259,7 +259,7 @@ def run_comparison(
     mlruns_dir.mkdir(parents=True, exist_ok=True)
     os.environ["MLFLOW_TRACKING_URI"] = f"file://{mlruns_dir}"
 
-    # File-lock (D-23 simplification of Phase 90/91 durable-row lifecycle).
+    # File-lock (simplification of durable-row lifecycle).
     lock_path = run_dir / "run.lock"
     if lock_path.exists():
         raise RuntimeError(f"run already in progress: {lock_path}")
@@ -275,14 +275,14 @@ def run_comparison(
         without_dir.mkdir(parents=True, exist_ok=True)
 
         # WITH DDG-DA leg
-        # Plan 92-04.1 BUG-2 fix: handler_class="Alpha158" → qlib.contrib.data.handler.Alpha158
+        # handler_class="Alpha158" → qlib.contrib.data.handler.Alpha158
         # (qlib stock handler accepts the start_time/end_time/fit_start_time/fit_end_time/
         # instruments/label kwargs that qlib's Rolling driver injects). The previous
         # "Alpha158Handler" entry maps to PoseidonDataHandler whose __init__ rejects those
-        # kwargs (TypeError: unexpected keyword argument 'end_time'). Plan 95 qrun work
+        # kwargs (TypeError: unexpected keyword argument 'end_time'). The qrun work path
         # continues to use "Alpha158Handler" → PoseidonDataHandler for backward compat.
-        # Plan 92-04.1 BUG-1 fix: explicit instruments + provider_uri at call site for
-        # audit clarity (defaults already point at TX / poseidon_tw_futures).
+        # Explicit instruments + provider_uri at call site for audit clarity (defaults
+        # already point at TX / poseidon_tw_futures).
         wrapper = PoseidonDDGDA(
             working_dir=with_dir,
             handler_class="Alpha158",
@@ -290,11 +290,11 @@ def run_comparison(
             market="tw_futures",
             interval="1d",
             segments=segments,
-            # Plan 92-04.1 BUG-4 fix: qlib treats `instruments` (string) as a
-            # market-group filename — looks up `<provider_uri>/instruments/{name}.txt`
-            # after lowercasing. Plan 92-2.5 ingest writes ONLY `all.txt`
-            # containing TX, so "all" is the only valid key. "TX" → tries `tx.txt`
-            # which doesn't exist → ValueError "instrument not exists".
+            # qlib treats `instruments` (string) as a market-group filename
+            # — looks up `<provider_uri>/instruments/{name}.txt` after
+            # lowercasing. The ingest writes ONLY `all.txt` containing TX,
+            # so "all" is the only valid key. "TX" → tries `tx.txt` which
+            # doesn't exist → ValueError "instrument not exists".
             instruments="all",
             provider_uri="/root/.qlib/qlib_data/poseidon_tw_futures",
         )

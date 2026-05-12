@@ -3,11 +3,11 @@
 Covers SWEEP-05 factory requirements:
 - PARAM_BOUNDS contains all expected keys
 - from_config() builds valid LiquiditySweepStrategy
-- build_from_trial() suggests parameters from PARAM_BOUNDS (per D-01)
+- build_from_trial() suggests parameters from PARAM_BOUNDS
 - to_config_dict() round-trips through from_config()
 - Flat PARAM_BOUNDS names correctly map to nested config structure
 - All PARAM_BOUNDS values have valid (low, high, type) tuples
-- build_trial_factory() returns (callable, param_bounds) for polymorphic injection (per D-02)
+- build_trial_factory() returns (callable, param_bounds) for polymorphic injection
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ def test_from_config_returns_valid_strategy():
 
 
 # ---------------------------------------------------------------------------
-# Test 3: build_from_trial suggests parameters from PARAM_BOUNDS (per D-01)
+# Test 3: build_from_trial suggests parameters from PARAM_BOUNDS
 # ---------------------------------------------------------------------------
 
 
@@ -223,7 +223,7 @@ def test_param_bounds_values_are_valid():
 
 
 # ---------------------------------------------------------------------------
-# Test 7: build_trial_factory returns callable + bounds (per D-02)
+# Test 7: build_trial_factory returns callable + bounds
 # ---------------------------------------------------------------------------
 
 

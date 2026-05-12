@@ -17,7 +17,7 @@ class PortfolioRebalancer:
     """Compares target portfolio vs current holdings, produces differential orders.
 
     The rebalancer works with weights only (0.0-1.0).
-    Share quantity calculation is deferred to Phase 23 (OrderManager).
+    Share quantity calculation is deferred to OrderManager.
     """
 
     def __init__(self, adjust_threshold: float = 0.01):

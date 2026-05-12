@@ -1,9 +1,9 @@
 """Holdout data enforcement for experiment integrity.
 
-Per D-08: Percentage-based split (last 20%) ensures holdout data is never
-touched during optimization.
-Per D-09: HoldoutConfig dataclass with holdout_pct=0.20 and locked=True.
-Per D-10: Raises HoldoutViolationError when optimization data touches holdout range.
+Percentage-based split (last 20%) ensures holdout data is never
+touched during optimization. HoldoutConfig dataclass with holdout_pct=0.20
+and locked=True. Raises HoldoutViolationError when optimization data touches
+holdout range.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ class HoldoutConfig:
     def validate_data_range(self, ohlcv: pd.DataFrame, holdout_boundary: datetime) -> None:
         """Raise HoldoutViolationError if ohlcv data extends past holdout_boundary.
 
-        Per D-10: optimization must not touch holdout range.
+        Optimization must not touch holdout range.
 
         Args:
             ohlcv: DataFrame with datetime index to validate.

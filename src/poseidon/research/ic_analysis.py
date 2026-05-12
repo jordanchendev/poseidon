@@ -1,8 +1,8 @@
 """IC (Information Coefficient) analysis using Rank IC (Spearman correlation).
 
-Per D-01: Spearman correlation as primary metric.
-Per D-02: Configurable forward return horizons defaulting to [1, 5, 20].
-Per D-03: IC calculated per-feature against forward returns.
+- Spearman correlation as primary metric.
+- Configurable forward return horizons defaulting to [1, 5, 20].
+- IC calculated per-feature against forward returns.
 """
 
 from __future__ import annotations

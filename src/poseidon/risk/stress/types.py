@@ -10,16 +10,16 @@ from poseidon.risk.var.types import VaRResult
 
 @dataclass
 class ScenarioConfig:
-    """Loaded from JSON config files (per D-01)."""
+    """Loaded from JSON config files."""
 
     name: str
     type: str  # "historical" | "hypothetical" | "correlation_stress"
     description: str
-    # Historical scenario fields (D-02)
+    # Historical scenario fields
     date_range: dict | None = None  # {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}
-    # Hypothetical scenario fields (D-03)
+    # Hypothetical scenario fields
     shocks: dict[str, float] | None = None  # market -> shock factor
-    # Correlation stress fields (D-04)
+    # Correlation stress fields
     target_correlation: float | None = None
 
 

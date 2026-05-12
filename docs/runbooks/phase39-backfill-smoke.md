@@ -1,13 +1,13 @@
-# Phase 39 Backfill API + Coverage + Live-Isolation Smoke Runbook
+# Backfill API + Coverage + Live-Isolation Smoke Runbook
 
-Operator-facing runbook proving the Phase 39 (`backfill-api-coverage`) work
-ships end-to-end on stormtrooper. Satisfies Phase 39 ROADMAP success
-criteria 4 (real backfill via API), 5 (data_coverage_mv read), and 6
-(live-trading worker isolation).
+Operator-facing runbook proving the `backfill-api-coverage` work ships
+end-to-end on stormtrooper. Satisfies ROADMAP success criteria 4 (real
+backfill via API), 5 (data_coverage_mv read), and 6 (live-trading worker
+isolation).
 
-This is the canonical "did Phase 39 actually work in production" smoke
-test. Run it after every Phase 39 plan deploy and any time a backfill
-regression is suspected.
+This is the canonical "did the backfill API actually work in production"
+smoke test. Run it after every backfill-API deploy and any time a
+backfill regression is suspected.
 
 All commands run on stormtrooper unless explicitly noted.
 
@@ -15,18 +15,18 @@ All commands run on stormtrooper unless explicitly noted.
 
 Before starting, confirm ALL of the following:
 
-- [ ] Phase 39 plans 39-01, 39-02, 39-03, and 39-04 merged into `poseidon`
-      `main` and pulled onto `~/Projects/poseidon`.
-- [ ] Containers rebuilt with the Phase 39 migration files baked in:
+- [ ] Backfill API plans merged into `poseidon` `main` and pulled onto
+      `~/Projects/poseidon`.
+- [ ] Containers rebuilt with the migration files baked in:
       `docker compose build api beat backfill-worker cpu-worker`.
-- [ ] Database is at the Phase 39 head:
+- [ ] Database is at the current head:
 
       ```bash
       docker compose exec api uv run alembic current
       # Expected: 022 (head)
       ```
 
-      If you see `020 (head)` or `021 (head)` you are running pre-Phase 39
+      If you see `020 (head)` or `021 (head)` you are running an older
       schema. Run:
 
       ```bash
@@ -63,7 +63,7 @@ Before starting, confirm ALL of the following:
 Trigger a real two-year backfill of `crypto_perp BTCUSDT 4h`. Plain HTTP
 POST against the live FastAPI on port 8001 (host port mapping in
 `docker-compose.yml`). The endpoint requires explicit `symbols[]` and
-`intervals[]` per Phase 39 D-03.
+`intervals[]`.
 
 ```bash
 curl -X POST http://localhost:8001/api/data/backfill \
@@ -99,9 +99,9 @@ JOB_ID="<paste uuid here>"
 
 Watch the job tick from `pending` → `running` → `succeeded` (or
 `cancelled` if you abort it). The detail endpoint reads the durable
-BackfillJob row directly from Postgres (Phase 39 D-04), not the Celery
-result backend, so restarts of `backfill-worker` mid-job will not erase
-state.
+BackfillJob row directly from Postgres, not the Celery result backend,
+so restarts of `backfill-worker`
+mid-job will not erase state.
 
 ```bash
 watch -n 5 "curl -s -H 'X-API-Key: ${POSEIDON_API_KEY}' \
@@ -122,7 +122,7 @@ Notes:
 
 - If the job sits in `running` for a long time and `cursor.next_ts` does
   not move, check `backfill-worker` logs for rate-limit backoff or
-  circuit-breaker open events. Phase 39-02 is designed to self-reschedule
+  circuit-breaker open events. The backfill worker is designed to self-reschedule
   via `backfill_chunk.delay(job_id)` rather than fail the job.
 - If you need to stop the job early (e.g. wrong window), POST to the
   cancel endpoint — it cooperatively flips the row to `cancelled` and
@@ -177,7 +177,7 @@ Acceptable degraded states (still a passing smoke):
 
 ## 3. Live-trading worker isolation checks
 
-Phase 39 success criterion 6: a long-running backfill must NOT delay the
+Live-isolation criterion: a long-running backfill must NOT delay the
 live perpetual trading workers. While the backfill is still running,
 verify both of the following.
 
@@ -206,11 +206,11 @@ docker compose logs --since 1h cpu-worker \
 ```
 
 Expected: `perp_rebalance` `received` and `succeeded` lines with normal
-duration (no >5x latency vs the Phase 27 baseline).
+duration (no >5x latency vs the standard baseline).
 
 ### 3c. Backfill task lives on the dedicated worker, not cpu-worker
 
-The whole point of Phase 39-02 is that `backfill_chunk` runs on
+The whole point of the dedicated worker is that `backfill_chunk` runs on
 `backfill-worker` and never on `cpu-worker`. Verify with two greps:
 
 ```bash
@@ -229,9 +229,9 @@ If `cpu-worker` shows any `backfill_chunk` line during the window the
 queue routing in `celery_app.task_routes` has regressed and the
 isolation contract is broken.
 
-## 4. Dispatcher (Plan 39-04 BACKFILL-05) sanity check
+## 4. Dispatcher sanity check
 
-Phase 39-04 ships `historical_backfill_dispatcher` on the cpu queue,
+The dispatcher ships `historical_backfill_dispatcher` on the cpu queue,
 scheduled hourly via Beat. After the first hourly tick (or by manually
 firing the task), the dispatcher should create one BackfillJob row per
 `(market, symbol, interval)` tuple in `symbols.yaml` that does not yet
@@ -291,7 +291,7 @@ chewing through them on its own cadence.
 
 ## 5. Success Checklist
 
-A passing Phase 39 smoke requires ALL of the following:
+A passing smoke requires ALL of the following:
 
 - [ ] Section 1 POST returned HTTP 202 with a UUID job_id.
 - [ ] Section 2a job reached `status="succeeded"` with `finished_at`
@@ -310,9 +310,8 @@ A passing Phase 39 smoke requires ALL of the following:
 - [ ] Section 4 dispatcher created one row per uncovered tuple, and the
       second invocation skipped them all as duplicates.
 
-If any item fails, stop the smoke and file a finding in
-`.planning/STATE.md` Blockers with the failing section and the exact
-log lines.
+If any item fails, stop the smoke and file a finding with the failing
+section and the exact log lines.
 
 ## 6. Cleanup
 

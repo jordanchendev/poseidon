@@ -1,6 +1,6 @@
-"""Tests for Phase 89-01: signal_id propagation through Order/OrderRecord/OrderManager.
+"""Signal_id propagation through Order/OrderRecord/OrderManager.
 
-Covers (per .planning/phases/89-decision-fix/89-01-PLAN.md):
+Covers:
 
 Task 1 -- TestOrderRecordSchema:
     - signal_id Mapped column exists on OrderRecord (nullable=True)
@@ -267,7 +267,7 @@ class TestOrderManagerSignalIdsPropagation:
         assert captured[0].signal_id is None
 
     def test_signal_ids_must_be_keyword_only(self):
-        """signal_ids must be keyword-only (D-04 API contract)."""
+        """signal_ids must be keyword-only (API contract)."""
         import inspect as py_inspect
 
         sig = py_inspect.signature(OrderManager.execute_rebalance)

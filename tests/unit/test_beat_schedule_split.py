@@ -1,7 +1,7 @@
 """Verify Poseidon Beat schedule contains only trading/research tasks.
 
-After Phase 60 Beat split, data ingest tasks live in Thalassa.
-No task should run on both services (per D-24).
+After the Beat split, data ingest tasks live in Thalassa.
+No task should run on both services.
 """
 
 

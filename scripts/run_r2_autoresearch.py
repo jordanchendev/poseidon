@@ -1,4 +1,4 @@
-"""Phase 21 SIG2-05 validation: AutoResearch with R2 sub_signals.
+"""AutoResearch with R2 sub_signals validation.
 
 Run Optuna search with R2 features enabled across multiple markets/intervals.
 Target: at least one strategy with sharpe > 0.5 and profit factor > 1.5.

@@ -1,11 +1,11 @@
 """Cross-market return alignment with point-in-time semantics.
 
 Handles TW/US/crypto timezone differences by aligning on calendar date
-with forward-fill for non-trading days (per D-07). The T+1 lag for
-non-overlapping sessions means TW Monday close aligns with US Monday close
-even though US Monday close happens ~15h later.
+with forward-fill for non-trading days. The T+1 lag for non-overlapping
+sessions means TW Monday close aligns with US Monday close even though
+US Monday close happens ~15h later.
 
-All functions enforce ``as_of`` filtering to prevent look-ahead bias (D-08).
+All functions enforce ``as_of`` filtering to prevent look-ahead bias.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 # ---------------------------------------------------------------------------
-# Market calendar metadata (D-06)
+# Market calendar metadata
 # ---------------------------------------------------------------------------
 # freq: "B" = standard business day (weekends excluded), "D" = every calendar day
 # tz: canonical timezone for the market's trading session
@@ -76,12 +76,12 @@ def align_returns(
         Mapping of asset name -> return Series. Each Series has a
         DatetimeIndex (timezone-naive or normalized to date level).
     as_of:
-        Point-in-time cutoff (D-08). Only data on or before this date is kept.
+        Point-in-time cutoff. Only data on or before this date is kept.
 
     Returns
     -------
     pd.DataFrame
-        Columns = asset names, index = aligned dates, forward-filled (D-07).
+        Columns = asset names, index = aligned dates, forward-filled.
         Empty DataFrame if no overlapping data within the as_of window.
     """
     as_of_ts_raw = pd.Timestamp(as_of)
@@ -105,7 +105,7 @@ def align_returns(
     # Combine into DataFrame (auto-aligns on index union)
     df = pd.DataFrame(filtered)
 
-    # Forward-fill missing values (D-07): a non-trading day inherits
+    # Forward-fill missing values: a non-trading day inherits
     # the most recent close's return
     df = df.ffill()
 

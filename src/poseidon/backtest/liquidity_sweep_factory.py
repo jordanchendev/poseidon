@@ -1,9 +1,9 @@
-"""LiquiditySweepStrategy factory for Optuna parameter search (SWEEP-05, D-01).
+"""LiquiditySweepStrategy factory for Optuna parameter search.
 
 Mirrors VotingStrategyFactory pattern with PARAM_BOUNDS, build_from_trial(), from_config(),
 to_config_dict(), and build_trial_factory() for integration with ParameterSearchPipeline.
 
-IMPORTANT: Method is named build_from_trial() per D-01 (not from_trial()).
+IMPORTANT: Method is named build_from_trial() (not from_trial()).
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "atr_mult_regime_3": (1.5, 3.0, "float"),  # Extreme vol
     # Exit parameters
     "cooldown_bars": (2, 12, "int"),
-    # Trailing stop parameters (D-09)
+    # Trailing stop parameters
     "trailing_activation_r": (0.5, 2.0, "float"),
     "trail_atr_multiplier": (1.0, 3.0, "float"),
 }
@@ -91,11 +91,11 @@ def _build_config_from_params(
 class LiquiditySweepStrategyFactory:
     """Factory for building LiquiditySweepStrategy from Optuna trials or config dicts.
 
-    Mirrors VotingStrategyFactory interface (D-01):
+    Mirrors VotingStrategyFactory interface:
     - from_config(config_dict) -> strategy instance
-    - build_from_trial(trial, ...) -> strategy instance (with Optuna suggest) -- named per D-01
+    - build_from_trial(trial, ...) -> strategy instance (with Optuna suggest)
     - to_config_dict(strategy) -> round-trippable config dict
-    - build_trial_factory(symbol, market, interval) -> (callable, param_bounds) for pipeline injection (D-02)
+    - build_trial_factory(symbol, market, interval) -> (callable, param_bounds) for pipeline injection
     """
 
     @staticmethod
@@ -119,10 +119,9 @@ class LiquiditySweepStrategyFactory:
         interval: str,
         direction_mode: str = "bidirectional",
     ) -> LiquiditySweepStrategy:
-        """Build strategy by suggesting parameters from Optuna trial (D-01).
+        """Build strategy by suggesting parameters from Optuna trial.
 
         Uses PARAM_BOUNDS for suggest_int/suggest_float ranges.
-        Named build_from_trial() per D-01 locked decision.
         """
         params = {}
         for name, (low, high, ptype) in PARAM_BOUNDS.items():
@@ -181,7 +180,7 @@ class LiquiditySweepStrategyFactory:
         interval: str,
         direction_mode: str = "bidirectional",
     ) -> tuple[Callable[[dict], LiquiditySweepStrategy], dict]:
-        """Return (trial_strategy_factory, param_bounds) for ParameterSearchPipeline (D-02).
+        """Return (trial_strategy_factory, param_bounds) for ParameterSearchPipeline.
 
         The returned callable accepts a flat params dict and returns a strategy instance.
         The returned param_bounds dict is PARAM_BOUNDS for Optuna suggest calls.

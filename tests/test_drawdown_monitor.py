@@ -6,7 +6,7 @@ Covers:
 - Only highest-severity alert per update (no spam)
 - Alert payload correctness
 - Alert publishing to Redis Streams poseidon:alerts:risk
-- VaR limit breach alert publishing (D-12)
+- VaR limit breach alert publishing
 - Consumer group creation
 - Edge cases (equity=0, first call)
 """
@@ -169,7 +169,7 @@ class TestRedisStreamPublishing:
 
 
 class TestVaRBreachAlert:
-    """VaR limit breach alert tests (D-12)."""
+    """VaR limit breach alert tests."""
 
     def test_var_breach_alert_published(self, monitor, redis_client):
         """publish_var_breach_alert() publishes to same stream."""

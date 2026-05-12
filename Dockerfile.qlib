@@ -4,13 +4,12 @@
 # - pyqlib 0.9.7 only ships cp312 wheels (no cp313 support).
 # - Production containers (api, cpu-worker, gpu-worker, beat) run on Python 3.13
 #   per the main Dockerfile, so pyqlib cannot be installed alongside them.
-# - Per design D-19 (Phase 37), Qlib is an optional research dependency and
-#   intentionally excluded from production containers.
+# - Qlib is an optional research dependency and intentionally excluded from
+#   production containers.
 #
-# Phase 41 D-10: This image now runs as a long-lived Celery worker subscribing
-# to qlib_queue (concurrency=1, pool=solo). The previous one-shot "research"
-# profile approach has been replaced. MLflow is included as a direct dependency
-# (D-14) for the metrics bridge — mlflow.get_run() metrics are scraped into
+# This image runs as a long-lived Celery worker subscribing to qlib_queue
+# (concurrency=1, pool=solo). MLflow is included as a direct dependency for
+# the metrics bridge — mlflow.get_run() metrics are scraped into
 # training_runs.metrics JSONB after each training run.
 #
 # This image shares the same TimescaleDB connection as production containers,

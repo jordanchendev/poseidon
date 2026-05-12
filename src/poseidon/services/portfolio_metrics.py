@@ -1,10 +1,9 @@
-"""Portfolio performance metrics — Modified Dietz TWR + Sharpe (Phase 87 / TRUTH-01).
+"""Portfolio performance metrics — Modified Dietz TWR + Sharpe.
 
-Per CONTEXT D-01..D-04:
-- D-01: Modified Dietz daily return; cash_flow weighted at 0.5 (mid-day assumption)
-- D-02: Sharpe annualized via sqrt(252), risk-free rate = 0
-- D-03: Old (last_nav / first_nav) - 1 total return removed (no deprecated alias)
-- D-04: Inception = first NAV snapshot in queried range (no back-extrapolation)
+- Modified Dietz daily return; cash_flow weighted at 0.5 (mid-day assumption)
+- Sharpe annualized via sqrt(252), risk-free rate = 0
+- Old (last_nav / first_nav) - 1 total return removed (no deprecated alias)
+- Inception = first NAV snapshot in queried range (no back-extrapolation)
 
 All functions are pure (no DB access) so they're trivially unit-testable.
 The API layer is responsible for fetching ordered NAV snapshots and feeding
@@ -34,7 +33,7 @@ def modified_dietz_daily_return(
         v_end: NAV at end of period (today's snapshot total_nav).
         cash_flow: Net deposit (>0) or withdrawal (<0) during the period.
         weight: Time-weight of the cash flow within the period.
-            Default 0.5 = mid-day assumption per D-01.
+            Default 0.5 = mid-day assumption.
 
     Returns:
         Daily return as a ratio (0.05 = 5%). Returns 0.0 if denominator
@@ -73,7 +72,7 @@ def sharpe_from_returns(
 ) -> float | None:
     """Annualized Sharpe ratio from a sequence of daily returns.
 
-    Per D-02: risk_free=0, periods_per_year=252 (cross-asset convention,
+    risk_free=0, periods_per_year=252 (cross-asset convention,
     accepted approximation for mixed TW + crypto book).
 
     Args:

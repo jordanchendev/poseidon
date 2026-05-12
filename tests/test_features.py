@@ -49,7 +49,7 @@ def empty_ohlcv() -> pd.DataFrame:
 
 
 def test_all_features_registered():
-    """Core features + Phase 76 micro-structure features should all be registered."""
+    """Core features + micro-structure features should all be registered."""
     names = list_features()
     # Core TA features (original 14)
     core_expected = {
@@ -68,7 +68,7 @@ def test_all_features_registered():
         "volume_ratio",
         "obv",
     }
-    # Phase 76: micro-structure features
+    # Micro-structure features
     phase76_expected = {"cvd", "ofi", "vpin", "cascade"}
     all_expected = core_expected | phase76_expected
     registered = set(names)

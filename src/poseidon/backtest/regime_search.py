@@ -2,8 +2,8 @@
 
 Runs separate Optuna studies for each regime (low_vol, medium_vol, high_vol),
 varying 4 params per regime: min_votes, position_pct, bear_min_votes,
-bear_position_pct (D-04, D-06, D-21).
-Regime model is trained once and predictions reused across all trials (D-10).
+bear_position_pct.
+Regime model is trained once and predictions reused across all trials.
 """
 
 from __future__ import annotations
@@ -41,8 +41,8 @@ class RegimeSearchConfig:
     n_trials_per_regime: int = 30  # 30 trials * 3 regimes = 90 total
     min_votes_range: tuple[int, int] = (2, 6)
     position_pct_range: tuple[float, float] = (0.03, 0.15)
-    bear_min_votes_range: tuple[int, int] = (2, 6)  # D-21: new
-    bear_position_pct_range: tuple[float, float] = (0.03, 0.12)  # D-21: new
+    bear_min_votes_range: tuple[int, int] = (2, 6)
+    bear_position_pct_range: tuple[float, float] = (0.03, 0.12)
     holdout: HoldoutConfig = field(default_factory=HoldoutConfig)
     seed: int = 42
 
@@ -54,7 +54,7 @@ class RegimeSearchPipeline:
     1. Compute holdout boundary, trim OHLCV to train portion
     2. Compute features on training data
     3. Generate regime labels from features
-    4. Get regime predictions ONCE (D-10)
+    4. Get regime predictions ONCE
     5. For each regime: run Optuna study with 4-param objective
     6. Return {regime_name: {min_votes, position_pct, bear_min_votes, bear_position_pct}} dict
     """
@@ -113,7 +113,7 @@ class RegimeSearchPipeline:
         # Step 3: Generate regime labels
         _labels, _thresholds = generate_regime_labels(features)
 
-        # Step 4: Regime predictions computed ONCE before search (D-10)
+        # Step 4: Regime predictions computed ONCE before search
         _regime_preds = regime_model.predict(features)
 
         # Step 5: Per-regime Optuna search
@@ -135,7 +135,7 @@ class RegimeSearchPipeline:
                 best_params["bear_position_pct"],
             )
 
-        # FACT-03: persist per-regime results to experiments table
+        # Persist per-regime results to experiments table
         if self._tracker is not None:
             for regime_name, best_params in result.items():
                 self._tracker.save(
@@ -161,7 +161,7 @@ class RegimeSearchPipeline:
         """Run Optuna study for a single regime.
 
         Varies 4 params per regime: min_votes, position_pct, bear_min_votes,
-        bear_position_pct (D-21). All other strategy params come from base_config.
+        bear_position_pct. All other strategy params come from base_config.
         """
         study_name = f"regime_{regime_name}_{base_config.get('symbol', 'unknown')}"
         sampler = optuna.samplers.TPESampler(seed=config.seed)

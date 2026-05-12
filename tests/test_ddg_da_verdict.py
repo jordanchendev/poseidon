@@ -1,8 +1,8 @@
-"""Phase 92 Plan 92-04 — verdict library unit tests.
+"""DDG-DA verdict library unit tests.
 
-Replaces the Plan 92-01 single-test scaffold with 4 real PASS tests covering:
+Covers:
     1. no-effect when bootstrap CI brackets 0 + tight ΔSharpe
-    2. rescue when all 3 D-16 conditions met
+    2. rescue when all 3 conditions met
     3. no-effect (insufficient power) when n_folds < 10 (Pitfall 7 gate)
     4. write_verdict_md emits one of the 3 allowed keywords in `# Verdict:` heading
 
@@ -53,7 +53,7 @@ def _mk_bootstrap(deltas: np.ndarray) -> dict:
 
 
 def test_verdict_no_effect_when_ci_brackets_zero():
-    """D-15: 12 folds, ΔSharpe ~0, CI brackets 0 → no-effect."""
+    """12 folds, ΔSharpe ~0, CI brackets 0 → no-effect."""
     from poseidon.autoresearch.ddg_da_verdict import choose_verdict
 
     starts = [f"2024-{m:02d}-01" for m in range(1, 13)]
@@ -65,12 +65,12 @@ def test_verdict_no_effect_when_ci_brackets_zero():
     v = choose_verdict(df, bs)
     assert v["verdict"] == "no-effect", f"expected no-effect, got {v['verdict']}"
     assert v["n_folds"] == 12
-    # Mean delta is zero — first D-16 condition not met.
+    # Mean delta is zero — first condition not met.
     assert v["mean_delta_sharpe"] == 0.0
 
 
 def test_verdict_rescue_when_all_3_conditions_met():
-    """D-15/D-16: 12 folds, ΔSharpe > 0.30, std-with much smaller, ≥60% improved → rescue."""
+    """12 folds, ΔSharpe > 0.30, std-with much smaller, ≥60% improved → rescue."""
     from poseidon.autoresearch.ddg_da_verdict import (
         RESCUE_DELTA_SHARPE,
         RESCUE_MIN_IMPROVED_PCT,
@@ -140,7 +140,7 @@ def test_write_verdict_md_contains_keyword(tmp_path: Path):
     )
     assert has_keyword, f"no valid `# Verdict: <keyword>` heading found in body:\n{body[:500]}"
 
-    # Body cites D-16 thresholds (literal strings).
-    assert "0.30" in body, "D-16 RESCUE_DELTA_SHARPE not cited in body"
+    # Body cites the thresholds (literal strings).
+    assert "0.30" in body, "RESCUE_DELTA_SHARPE not cited in body"
     # The MIN_IMPROVED_PCT threshold renders as ``60.0`` or ``60.0%``.
-    assert "60.0" in body, "D-16 RESCUE_MIN_IMPROVED_PCT not cited in body"
+    assert "60.0" in body, "RESCUE_MIN_IMPROVED_PCT not cited in body"

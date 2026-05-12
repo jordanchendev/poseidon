@@ -1,4 +1,4 @@
-"""Create macro_index and nonprice_timeseries tables (Phase 57 FEAT-02).
+"""Create macro_index and nonprice_timeseries tables.
 
 Revision ID: 029
 Revises: 028

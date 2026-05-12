@@ -98,7 +98,7 @@ def dump_qlib_bin(daily: pd.DataFrame, symbols: list[str]) -> None:
 
 
 def main() -> None:
-    # Step 1: fetch 4h bars
+    # 1. Fetch 4h bars
     end = datetime.now(UTC)
     start = end - timedelta(days=820)
     symbols = ["BTCUSDT", "ETHUSDT"]
@@ -110,7 +110,7 @@ def main() -> None:
     if df.empty:
         raise SystemExit("no data returned")
 
-    # Step 2: resample 4h → daily per instrument
+    # 2. Resample 4h → daily per instrument
     df = df.sort_index()
     daily_parts = []
     for sym in symbols:
@@ -134,10 +134,10 @@ def main() -> None:
     daily.index = daily.index.set_levels(daily.index.levels[0].tz_localize(None), level=0)
     log.info("daily: %d rows, %d symbols", len(daily), daily.index.get_level_values("instrument").nunique())
 
-    # Step 3: dump to qlib bin
+    # 3. Dump to qlib bin
     dump_qlib_bin(daily, symbols)
 
-    # Step 4: init qlib pointed at our bin dir
+    # 4. Init qlib pointed at our bin dir
     import qlib
     from qlib.constant import REG_CN
 
@@ -153,7 +153,7 @@ def main() -> None:
     df_check = D.features(insts, ["$close", "$volume"], freq="day")
     log.info("qlib sanity: D.features returned %d rows", len(df_check))
 
-    # Step 5: Alpha158 handler
+    # 5. Alpha158 handler
     from qlib.contrib.data.handler import Alpha158
 
     handler = Alpha158(
@@ -169,7 +169,7 @@ def main() -> None:
     log.info("Alpha158 produced: shape=%s", raw.shape)
     log.info("Alpha158 columns sample: %s", list(raw.columns[:10]))
 
-    # Step 6: DatasetH with time split
+    # 6. DatasetH with time split
     from qlib.data.dataset import DatasetH
 
     all_d = sorted(raw.index.get_level_values("datetime").unique())
@@ -184,7 +184,7 @@ def main() -> None:
     log.info("segments: train=%s→%s valid=%s→%s test=%s→%s", *[str(x) for seg in segments.values() for x in seg])
     dataset = DatasetH(handler=handler, segments=segments)
 
-    # Step 7: LGBModel
+    # 7. LGBModel
     from qlib.contrib.model.gbdt import LGBModel
 
     model_params = {
@@ -203,7 +203,7 @@ def main() -> None:
     log.info("test predictions: %d rows", len(preds))
     log.info("head:\n%s", preds.head().to_string())
 
-    # Step 8: export
+    # 8. Export
     with SessionLocal() as db:
         exporter = QlibModelExporter(session=db)
         mv = exporter.export(

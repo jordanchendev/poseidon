@@ -92,19 +92,19 @@ class OrderManager:
             signal_ids: Optional {symbol: signal_uuid} mapping. When provided,
                 each Order gets ``signal_id`` populated from this dict so the
                 order is auditably traceable to the upstream PASSED signal
-                (Phase 89-01 D-04, F8 wiring fix). Symbols missing from the
-                dict (or when signal_ids is None) yield Order.signal_id=None,
-                which is the correct semantic for protective close-outs and
-                portfolio-level rebalances that aren't signal-driven.
+                (F8 wiring fix). Symbols missing from the dict (or when
+                signal_ids is None) yield Order.signal_id=None, which is the
+                correct semantic for protective close-outs and portfolio-level
+                rebalances that aren't signal-driven.
             order_origin: Tag stamped on every produced Order (and persisted
-                OrderRecord) so the 89-03 mini-audit can distinguish
-                signal-driven orders ("signal") from by-design protective
-                closes ("stop_loss", "liquidation", "manual"). Combined with
+                OrderRecord) so the mini-audit can distinguish signal-driven
+                orders ("signal") from by-design protective closes
+                ("stop_loss", "liquidation", "manual"). Combined with
                 signal_id NULL, "signal" indicates a wiring breach while the
-                other tags whitelist legitimate Cat-B orphan orders. Defaults
-                to "signal" since perp_rebalance / portfolio_monthly_rebalance
+                other tags whitelist legitimate orphan orders. Defaults to
+                "signal" since perp_rebalance / portfolio_monthly_rebalance
                 are signal-driven; protective close-outs MUST pass an explicit
-                non-signal tag (Phase 89-02 W4 audit whitelist, D-04).
+                non-signal tag (audit whitelist).
 
         Returns:
             List of OrderResult (one per processed RebalanceOrder, excludes qty==0 skips)
@@ -135,9 +135,9 @@ class OrderManager:
                 logger.info("Skipping %s %s: quantity rounds to 0 shares", action, rorder.symbol)
                 continue
 
-            # Phase 89-01 (D-04): attach signal_id when this rebalance order
-            # was triggered by a PASSED signal. Falls back to None for
-            # non-signal-driven flows (protective close, portfolio rebalance).
+            # Attach signal_id when this rebalance order was triggered by a
+            # PASSED signal. Falls back to None for non-signal-driven flows
+            # (protective close, portfolio rebalance).
             sid = signal_ids.get(rorder.symbol) if signal_ids else None
 
             # Create Order object
@@ -152,8 +152,8 @@ class OrderManager:
                 broker_mode=self._config.mode,
                 side=rorder.side,
                 signal_id=sid,
-                # Phase 89-02 (W4 audit whitelist): stamp origin so the
-                # mini-audit can classify orphan orders correctly.
+                # Stamp origin (audit whitelist) so the mini-audit can
+                # classify orphan orders correctly.
                 order_origin=order_origin,
             )
 
@@ -161,7 +161,7 @@ class OrderManager:
             check = self._risk_checker.check(order, current_holdings, self._config.paper_initial_nav)
             if not check.passed:
                 order.status = OrderStatus.REJECTED
-                # TRUTH-03 (D-13/D-14): structured 4-key reject_reason via factory.
+                # TRUTH-03: structured 4-key reject_reason via factory.
                 order.reject_reason = build_reject_reason(
                     check_name=check.check_name or "unknown",
                     rule=check.reason,
@@ -173,7 +173,7 @@ class OrderManager:
                 logger.warning("Order rejected: %s %s -- %s", action, rorder.symbol, check.reason)
                 continue
 
-            # Leverage enforcement (PRSK-03, D-07)
+            # Leverage enforcement
             if market == "crypto_perp" and self._leverage_limits:
                 max_lev = self._leverage_limits.get(order.symbol)
                 if max_lev is not None:
@@ -185,7 +185,7 @@ class OrderManager:
                     if actual_leverage > max_lev:
                         order.status = OrderStatus.REJECTED
                         rule_text = f"leverage_limit: {order.symbol} leverage {actual_leverage}x exceeds max {max_lev}x"
-                        # TRUTH-03 (D-13/D-14): structured payload with leverage shortfall.
+                        # TRUTH-03: structured payload with leverage shortfall.
                         order.reject_reason = build_reject_reason(
                             check_name="leverage_limit",
                             rule=rule_text,
@@ -213,7 +213,7 @@ class OrderManager:
                     order.status = transition_order(order.status, OrderStatus.FILLED)
             except Exception as e:
                 order.status = OrderStatus.REJECTED
-                # TRUTH-03 (D-13/D-14): wrap broker exceptions in structured payload.
+                # TRUTH-03: wrap broker exceptions in structured payload.
                 order.reject_reason = build_reject_reason(
                     check_name="broker_error",
                     rule=f"broker_error: {type(e).__name__}",
@@ -251,7 +251,7 @@ class OrderManager:
         if filled_count:
             logger.info("Updated positions: %d filled orders", filled_count)
 
-        # Create cooldown protection locks for filled orders (D-14)
+        # Create cooldown protection locks for filled orders
         for _rorder, result in zip(processed_rorders, results, strict=False):
             if result.success:
                 try:
@@ -295,10 +295,10 @@ class OrderManager:
                 broker_mode=order.broker_mode,
                 reject_reason=order.reject_reason,
                 side=order.side,
-                # Phase 89-01 (D-04, F8 wiring fix): persist FK to upstream signal.
+                # Persist FK to upstream signal (F8 wiring fix).
                 signal_id=order.signal_id,
-                # Phase 89-02 (W4 audit whitelist): persist origin tag so the
-                # mini-audit can classify orphan orders.
+                # Persist origin tag (audit whitelist) so the mini-audit can
+                # classify orphan orders.
                 order_origin=order.order_origin,
             )
             session.add(record)

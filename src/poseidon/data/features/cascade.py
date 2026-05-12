@@ -3,13 +3,13 @@
 Detects confluence of multiple micro-structure signals as a single composite
 indicator. Fires when N of M conditions are met (configurable threshold).
 
-Conditions checked (D-12):
+Conditions checked:
 1. oi_extreme: |oiwap_distance_168| > 5.0
 2. oi_divergence: |oi_price_divergence_24| > 10.0
 3. wick_extreme: wick_ratio_upper > 0.4 OR wick_ratio_lower > 0.4
 4. vol_spike: volume_ratio_20 > 2.0
 
-Direction from oiwap_distance sign (D-13):
+Direction from oiwap_distance sign:
 - Negative distance (below cost basis) -> bullish reversal (1.0)
 - Positive distance (above cost basis) -> bearish reversal (-1.0)
 - NaN or zero -> no direction (0.0)
@@ -17,7 +17,6 @@ Direction from oiwap_distance sign (D-13):
 When oi_data is None, only wick+volume conditions are available (2 of 4).
 OI-based conditions are treated as False (not met).
 
-References: CONTEXT.md D-10, D-11, D-12, D-13.
 Pitfall 2: Re-computes component features inline -- no cross-feature dependency.
 """
 
@@ -80,7 +79,7 @@ class CascadeComposite(BaseFeature):
         # Volume features
         vol_result = VolumeRatio().compute(ohlcv, period=20)
 
-        # ── Build conditions DataFrame (D-12) ─────────────────────────
+        # ── Build conditions DataFrame ────────────────────────────────
 
         conditions = pd.DataFrame(index=ohlcv.index, dtype=float)
 
@@ -113,11 +112,11 @@ class CascadeComposite(BaseFeature):
         # ── NaN handling: NaN conditions treated as False ─────────────
         conditions = conditions.fillna(False).astype(float)
 
-        # ── N-of-M threshold logic (D-11) ─────────────────────────────
+        # ── N-of-M threshold logic ────────────────────────────────────
         n_conditions_met = conditions.sum(axis=1)
         signal = (n_conditions_met >= threshold).astype(float)
 
-        # ── Direction from oiwap_distance sign (D-13) ─────────────────
+        # ── Direction from oiwap_distance sign ────────────────────────
         if isinstance(oiwap_result, pd.DataFrame) and "oiwap_distance_168" in oiwap_result.columns:
             oiwap_dist = oiwap_result["oiwap_distance_168"]
             direction = pd.Series(

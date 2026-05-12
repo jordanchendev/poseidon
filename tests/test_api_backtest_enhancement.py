@@ -1,4 +1,4 @@
-"""Tests for Phase 53 API backtest enhancements (API-01, API-02, API-03).
+"""Tests for API backtest enhancements (API-01, API-02, API-03).
 
 Verifies:
 - BacktestRunRequest accepts fill_model, include_funding, sizing_mode, sizing_params

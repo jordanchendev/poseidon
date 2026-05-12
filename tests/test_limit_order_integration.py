@@ -1,6 +1,6 @@
 """End-to-end integration tests for limit order backtest pipeline.
 
-Phase 50-02 Task 2: Validates the complete pipeline --
+Validates the complete pipeline --
 PendingOrderBook + four-phase loop + SL/TP + FIXED_RISK sizing + maker fees.
 
 All tests run without DB/GPU dependencies (synthetic data only).

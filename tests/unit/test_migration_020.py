@@ -1,10 +1,10 @@
-"""Migration 020 schema assertions (Phase 38 plan 38-01 Task 2).
+"""Migration 020 schema assertions.
 
 Runs against the live test database (assumes ``alembic upgrade head`` has been
 applied). Verifies:
 - ingest_state table shape (DATA-FOUND-02)
 - backfill_jobs table shape (DATA-FOUND-04)
-- backfill_progress table has been dropped (D-10)
+- backfill_progress table has been dropped
 """
 
 from __future__ import annotations
@@ -90,4 +90,4 @@ def test_backfill_jobs_shape(inspector):
 
 
 def test_backfill_progress_dropped(inspector):
-    assert "backfill_progress" not in inspector.get_table_names(), "backfill_progress must be dropped per Phase 38 D-10"
+    assert "backfill_progress" not in inspector.get_table_names(), "backfill_progress must be dropped"

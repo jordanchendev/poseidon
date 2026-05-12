@@ -1,14 +1,14 @@
-# Phase 40 Data Health Observability Smoke Runbook
+# Data Health Observability Smoke Runbook
 
-Operator-facing runbook proving the Phase 40 (`data-health-observability`)
-work ships end-to-end on stormtrooper. Satisfies Phase 40 ROADMAP success
-criteria 1 (gap audit), 2 (Uptime Kuma dead-man's-switch), 3 (Uptime Kuma violation
+Operator-facing runbook proving the `data-health-observability` work
+ships end-to-end on stormtrooper. Satisfies ROADMAP success criteria 1
+(gap audit), 2 (Uptime Kuma dead-man's-switch), 3 (Uptime Kuma violation
 alert), 4 (CAGG transparency), 5 (Kairos data-health view), and 6 (this
 runbook itself).
 
-This is the canonical "did Phase 40 actually work in production" smoke
-test. Run it after every Phase 40 plan deploy and any time a freshness or
-gap regression is suspected.
+This is the canonical "did data-health observability actually work in
+production" smoke test. Run it after every related deploy and any time
+a freshness or gap regression is suspected.
 
 All commands run on stormtrooper unless explicitly noted.
 
@@ -16,23 +16,23 @@ All commands run on stormtrooper unless explicitly noted.
 
 Before starting, confirm ALL of the following:
 
-- [ ] Phase 40 plans 40-01..05 merged into `poseidon` `main` and pulled
-      onto `~/Projects/poseidon`.
-- [ ] Containers rebuilt with the Phase 40 migration files baked in:
+- [ ] Data-health observability plans merged into `poseidon` `main` and
+      pulled onto `~/Projects/poseidon`.
+- [ ] Containers rebuilt with the migration files baked in:
 
       ```bash
       cd ~/Projects/poseidon
       docker compose build api beat backfill-worker cpu-worker
       ```
 
-- [ ] Database is at the Phase 40 head:
+- [ ] Database is at the current head:
 
       ```bash
       docker compose exec api uv run alembic current
       # Expected: 024 (head)
       ```
 
-      If you see `022 (head)` or `023 (head)` you are running pre-Phase 40
+      If you see `022 (head)` or `023 (head)` you are running an older
       schema. Run:
 
       ```bash
@@ -46,7 +46,7 @@ Before starting, confirm ALL of the following:
 - [ ] `docker compose ps` shows ALL of the following containers `Up`:
       `api`, `cpu-worker`, `gpu-worker`, `beat`, `backfill-worker`.
 
-- [ ] Phase 40 beat schedule entries are registered:
+- [ ] Data-health beat schedule entries are registered:
 
       ```bash
       docker compose exec api celery -A poseidon.workers.celery_app inspect registered \
@@ -298,7 +298,7 @@ Restore the deleted rows from /tmp/phase40-deleted-rows.txt (use a
 one-shot Python script: `INSERT INTO ohlcv ... ON CONFLICT DO NOTHING`).
 Re-fire `coverage_view_refresh.apply()` and `data_gap_audit.apply()`
 and confirm the gap is now `healed_at IS NOT NULL` (the heal lifecycle
-from D-07).
+from the heal lifecycle).
 
 ## 5. Verify CAGG transparency (CAGG-03 reference parity)
 
@@ -357,7 +357,7 @@ open https://stormtrooper.example/data-health
 
 Confirm visually:
 
-- [ ] Page header reads "Data Health" with the "Risk Route · Phase 40"
+- [ ] Page header reads "Data Health" with the "Risk Route"
       eyebrow
 - [ ] Freshness panel renders at the top with green/yellow/red totals
       and per-(market, interval) tiles
@@ -371,7 +371,7 @@ Confirm visually:
 
 ## 7. Pass / fail checklist
 
-Phase 40 is shippable iff ALL of the following are true:
+The data-health observability work is shippable iff ALL of the following are true:
 
 - [ ] Section 1: Uptime Kuma heartbeat baseline is `success`
 - [ ] Section 2: Forced stale ts produced a `/fail` ping AND a Telegram

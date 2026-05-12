@@ -1,13 +1,10 @@
-"""DataGap ORM model — Phase 40 D-04 audit substrate.
+"""DataGap ORM model — audit substrate.
 
 One row per detected gap window. The daily ``data_gap_audit`` beat task
-(plan 40-02) INSERTs with ``ON CONFLICT (market, symbol, interval,
-gap_start) DO NOTHING`` against the unique index installed by migration
-023. A later audit pass that confirms the window is now fully populated
-updates ``healed_at = now()`` (D-07). Rows are never deleted — history is
-the whole point.
-
-See .planning/phases/40-data-health-observability/40-CONTEXT.md D-04..D-09.
+INSERTs with ``ON CONFLICT (market, symbol, interval, gap_start) DO
+NOTHING`` against the unique index installed by migration 023. A later
+audit pass that confirms the window is now fully populated updates
+``healed_at = now()``. Rows are never deleted — history is the whole point.
 """
 
 import uuid
@@ -21,7 +18,7 @@ from poseidon.models.base import Base
 class DataGap(Base):
     """Per-gap-window audit row.
 
-    Columns follow 40-CONTEXT.md D-04 exactly:
+    Columns:
 
     * ``gap_id``       — UUID primary key
     * ``market`` / ``symbol`` / ``interval`` — tuple key (joins against
@@ -30,7 +27,7 @@ class DataGap(Base):
     * ``missing_bars`` — integer count, drives the dashboard heatmap color
     * ``detected_at`` — when the audit first recorded this row
     * ``healed_at`` — non-null after a later audit confirms the window is
-      now fully populated (D-07); NULL = still open
+      now fully populated; NULL = still open
     """
 
     __tablename__ = "data_gaps"

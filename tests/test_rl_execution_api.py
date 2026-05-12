@@ -1,4 +1,4 @@
-"""Phase 90 / Wave 4b — RL Execution REST API tests (Plan 90-05b).
+"""RL Execution REST API tests.
 
 Mirrors ``poseidon/tests/unit/test_research_api.py:1-83`` SQLite shim +
 send_task stub harness with the router import + endpoint paths swapped.

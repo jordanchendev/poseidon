@@ -1,7 +1,7 @@
-"""Phase 90 Wave 1 — tx_basis_signal unit tests (D-06 verbatim anchor).
+"""tx_basis_signal unit tests.
 
 Three golden tests pin the shared trigger-day extractor against the v18
-driver behaviour so any later edit that drifts from D-06 fails the suite.
+driver behaviour so any later edit that drifts fails the suite.
 
   * ``test_basis_z_known_input``               — hand-computed reference.
   * ``test_extract_trigger_days_threshold_inclusive`` — strict-< vs <= guard.
@@ -22,7 +22,7 @@ from poseidon.research.tx_basis_signal import (
 
 
 def test_constants_match_v18_driver():
-    """Frozen anchor — these constants are the verbatim D-06 contract."""
+    """Frozen anchor — these constants are the verbatim driver contract."""
     assert BASIS_WIN == 60
     assert BASIS_THRESHOLD == -1.0
 
@@ -62,7 +62,7 @@ def test_basis_z_known_input():
 
 
 def test_extract_trigger_days_threshold_inclusive():
-    """Strict-< per D-06 wording — value exactly equal to threshold is
+    """Strict-< — value exactly equal to threshold is
     NOT a trigger.
     """
     dates = pd.date_range("2020-01-01", periods=5, freq="B")

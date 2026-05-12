@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Phase 80: Optuna CryptoTrend parameter optimization + WFE validation.
+"""Optuna CryptoTrend parameter optimization + WFE validation.
 
 Searches EMA fast/slow periods and funding filter thresholds using
 PortfolioBacktester with market-order cost model (crypto_perp).
 Extends BacktestCryptoTrend wrapper to apply funding filter point-in-time
 using historical funding data. Validates top-3 parameter sets via
-walk-forward efficiency (WFE). Produces a decision recommendation per D-19.
+walk-forward efficiency (WFE). Produces a decision recommendation.
 
 4 optimized parameters:
   - ema_fast_period (6-20)
@@ -13,7 +13,7 @@ walk-forward efficiency (WFE). Produces a decision recommendation per D-19.
   - max_funding_rate_long (0.0005-0.003)
   - max_funding_rate_short (-0.003 to -0.0005)
 
-Fixed parameters (D-09):
+Fixed parameters:
   - leverage=3, allocation=equal_weight, position_limit_pct=0.5
   - symbols=[BTCUSDT, ETHUSDT]
 
@@ -79,31 +79,31 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Section 1: Configuration (per D-08, D-09, D-15)
+# Configuration
 # ---------------------------------------------------------------------------
 START = datetime(2024, 1, 1)  # Post-ETF only
 END = datetime.now()
 SYMBOLS = ["BTCUSDT", "ETHUSDT"]
 INITIAL_CAPITAL = 100_000.0  # 100K USDT
 INTERVAL = "4h"
-BARS_PER_YEAR = 2190  # 365.25 * 24 / 4 -- NOT 252 (Pitfall 1)
+BARS_PER_YEAR = 2190  # 365.25 * 24 / 4 -- NOT 252
 BARS_PER_DAY = 6  # 24 / 4
-COST_MODEL = COST_MODELS["crypto_perp"]  # taker 0.05%, slippage 0.05% (D-15)
+COST_MODEL = COST_MODELS["crypto_perp"]  # taker 0.05%, slippage 0.05%
 N_TRIALS = 100
-BASELINE_SHARPE = 1.30  # Phase 75 baseline (D-14)
+BASELINE_SHARPE = 1.30  # prior-pass baseline
 
-# D-09: Fixed params (NOT optimized)
+# Fixed params (NOT optimized)
 FIXED_LEVERAGE = 3
 FIXED_ALLOCATION = "equal_weight"
 FIXED_POSITION_LIMIT = 0.5
 
-# WFE config: IN BARS not calendar days (Pitfall 8)
+# WFE config: IN BARS not calendar days.
 WF_CONFIG = WalkForwardConfig(
     train_days=180 * BARS_PER_DAY,  # 1080 bars
     test_days=90 * BARS_PER_DAY,  # 540 bars
     step_days=90 * BARS_PER_DAY,  # 540 bars
     min_trades_per_oos=10,
-    min_wfe=0.60,  # D-19
+    min_wfe=0.60,
 )
 
 OUTPUT_DIR = Path(__file__).parent / "output"
@@ -140,15 +140,15 @@ def compute_ema_signal(close: pd.Series, fast: int, slow: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Section 2: Extended BacktestCryptoTrend with funding filter
+# Extended BacktestCryptoTrend with funding filter
 # ---------------------------------------------------------------------------
 class BacktestCryptoTrend:
     """CryptoTrend strategy with point-in-time funding filter for backtest.
 
-    Extends the Phase 75 BacktestCryptoTrend wrapper (compare_75_cryptotrend.py
-    lines 107-181) with historical funding data support. Uses pre-fetched
-    funding rate DataFrames to apply funding filter point-in-time, matching
-    what the live CryptoTrendStrategy would have seen at each as_of date.
+    Extends the prior BacktestCryptoTrend wrapper (compare_75_cryptotrend.py)
+    with historical funding data support. Uses pre-fetched funding rate
+    DataFrames to apply funding filter point-in-time, matching what the live
+    CryptoTrendStrategy would have seen at each as_of date.
     """
 
     name = "crypto_trend_backtest"
@@ -235,7 +235,7 @@ class BacktestCryptoTrend:
 
 
 # ---------------------------------------------------------------------------
-# Section 3: Optuna objective function (per D-08, D-11, D-12)
+# Optuna objective function
 # ---------------------------------------------------------------------------
 def create_objective(
     ohlcv_dict: dict[str, pd.DataFrame],
@@ -250,17 +250,17 @@ def create_objective(
     """
 
     def objective(trial: optuna.Trial) -> float:
-        # D-08: 4 optimized parameters
+        # 4 optimized parameters
         ema_fast = trial.suggest_int("ema_fast_period", 6, 20)
         ema_slow = trial.suggest_int("ema_slow_period", 20, 50)
         max_f_long = trial.suggest_float("max_funding_rate_long", 0.0005, 0.003)
         max_f_short = trial.suggest_float("max_funding_rate_short", -0.003, -0.0005)
 
-        # Pitfall 3: fast must be strictly less than slow
+        # fast must be strictly less than slow
         if ema_fast >= ema_slow:
             return -999.0
 
-        # Construct CryptoTrendConfig with suggested params + fixed params (D-09)
+        # Construct CryptoTrendConfig with suggested params + fixed params.
         config = CryptoTrendConfig(
             symbols=SYMBOLS,
             momentum=MomentumConfig(
@@ -287,7 +287,7 @@ def create_objective(
             funding_df=funding_dict,
         )
 
-        # Run backtest with PortfolioBacktester (D-15: crypto_perp cost model)
+        # Run backtest with PortfolioBacktester (crypto_perp cost model).
         backtester = PortfolioBacktester(
             cost_model=COST_MODEL,
             initial_capital=INITIAL_CAPITAL,
@@ -302,7 +302,7 @@ def create_objective(
         if result.status == "failed" or not result.equity_curve:
             return -999.0
 
-        # D-12 constraint: minimum trade count
+        # Minimum trade count constraint
         if len(result.trades) < 50:
             return -999.0
 
@@ -312,11 +312,11 @@ def create_objective(
             index=pd.DatetimeIndex([pd.Timestamp(d) for d, _ in result.equity_curve]),
         )
 
-        # CRITICAL (Pitfall 1): Recompute metrics with bars_per_year=2190
-        # PortfolioBacktester hardcodes bars_per_year=252 internally
+        # CRITICAL: Recompute metrics with bars_per_year=2190.
+        # PortfolioBacktester hardcodes bars_per_year=252 internally.
         metrics = compute_metrics(equity_series, trades=[], bars_per_year=BARS_PER_YEAR)
 
-        # D-12 constraint: positive total return
+        # Positive total return constraint
         if metrics.get("total_return", 0) <= 0:
             return -999.0
 
@@ -331,7 +331,7 @@ def create_objective(
 
 
 # ---------------------------------------------------------------------------
-# Section 4: WFE validation (per D-13)
+# WFE validation
 # ---------------------------------------------------------------------------
 def run_wfe_validation(
     ohlcv_dict: dict[str, pd.DataFrame],
@@ -400,8 +400,7 @@ def run_wfe_validation(
         # OOS backtest
         oos_metrics = _run_portfolio_backtest(config, oos_ohlcv, oos_funding)
 
-        # CRITICAL: compute_wfe uses annualized_return, NOT Sharpe ratio
-        # (confirmed by wfo_77_structural.py lines 499-501)
+        # CRITICAL: compute_wfe uses annualized_return, NOT Sharpe ratio.
         wfe = compute_wfe(
             is_metrics.get("annualized_return", 0.0),
             oos_metrics.get("annualized_return", 0.0),
@@ -427,7 +426,7 @@ def run_wfe_validation(
     # Compute average WFE
     wfe_values = [w["wfe"] for w in window_results]
     avg_wfe = sum(wfe_values) / len(wfe_values) if wfe_values else 0.0
-    passed = avg_wfe >= 0.60  # D-19 threshold
+    passed = avg_wfe >= 0.60
 
     print(f"  Avg WFE: {avg_wfe:.4f} ({'PASSED' if passed else 'FAILED'})")
 
@@ -497,7 +496,7 @@ def _run_portfolio_backtest(
     if result.status == "failed" or not result.equity_curve:
         return {"sharpe_ratio": 0.0, "annualized_return": 0.0, "total_return": 0.0}
 
-    # Recompute metrics with bars_per_year=2190 (Pitfall 1 fix)
+    # Recompute metrics with bars_per_year=2190.
     equity_series = pd.Series(
         [nav for _, nav in result.equity_curve],
         index=pd.DatetimeIndex([pd.Timestamp(d) for d, _ in result.equity_curve]),
@@ -506,13 +505,13 @@ def _run_portfolio_backtest(
 
 
 # ---------------------------------------------------------------------------
-# Section 5: Main function and output (per D-18, D-19)
+# Main function and output
 # ---------------------------------------------------------------------------
 def main() -> int:
     """Run Optuna CryptoTrend optimization + WFE validation."""
     repo = RemoteDataRepository.from_settings()
 
-    # Step 1: Pre-fetch OHLCV for all symbols
+    # 1. Pre-fetch OHLCV for all symbols
     print(f"Fetching OHLCV data for {len(SYMBOLS)} symbols ({INTERVAL})...")
     print(f"Period: {START.date()} to {END.date()}")
     ohlcv_dict: dict[str, pd.DataFrame] = {}
@@ -535,14 +534,14 @@ def main() -> int:
         print("ERROR: No OHLCV data loaded. Aborting.")
         return 1
 
-    # Strip timezone from OHLCV indices (Pitfall 7 fix)
+    # Strip timezone from OHLCV indices.
     # PortfolioBacktester uses pd.Timestamp(date) for comparison, needs naive TZ
     for symbol in list(ohlcv_dict):
         df = ohlcv_dict[symbol]
         if hasattr(df.index, "tz") and df.index.tz is not None:
             ohlcv_dict[symbol] = df.tz_localize(None)
 
-    # Step 2: Pre-fetch funding rates for all symbols (post-ETF period)
+    # 2. Pre-fetch funding rates for all symbols (post-ETF period)
     print(f"\nFetching funding rates for {len(SYMBOLS)} symbols...")
     funding_dict: dict[str, pd.DataFrame] = {}
 
@@ -568,10 +567,10 @@ def main() -> int:
     if not funding_dict:
         print("WARNING: No funding data loaded. Optimization will run without funding filter.")
 
-    # Step 3: Run Optuna search
+    # 3. Run Optuna search
     print(f"\n{'=' * 60}")
     print(f"Running Optuna TPE search: {N_TRIALS} trials")
-    print(f"Baseline Sharpe (Phase 75): {BASELINE_SHARPE}")
+    print(f"Prior baseline Sharpe: {BASELINE_SHARPE}")
     print(f"{'=' * 60}\n")
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -603,7 +602,7 @@ def main() -> int:
     )
     print("-" * 88)
 
-    # Step 4: Run WFE validation for each of top-3 parameter sets
+    # 4. Run WFE validation for each of top-3 parameter sets
     top3_results = []
     for rank, trial in enumerate(top3_trials, 1):
         params = dict(trial.params)
@@ -627,9 +626,9 @@ def main() -> int:
         }
         top3_results.append(entry)
 
-    # Step 5: Print comparison table (per D-18)
+    # 5. Print comparison table
     print(f"\n{'=' * 60}")
-    print("Final Comparison Table (D-18)")
+    print("Final Comparison Table")
     print(f"{'=' * 60}")
     print(
         f"{'Rank':<5} {'EMA_F':<6} {'EMA_S':<6} {'MaxF_L':<10} {'MaxF_S':<10} "
@@ -652,15 +651,15 @@ def main() -> int:
             f"{entry['wfe']['avg_wfe']:<8.3f}"
         )
 
-    print(f"\nBaseline (Phase 75): Sharpe {BASELINE_SHARPE}")
+    print(f"\nPrior baseline: Sharpe {BASELINE_SHARPE}")
 
-    # Step 6: Save JSON artifact (per D-19)
+    # 6. Save JSON artifact
     best = top3_results[0]
     best_sharpe = best["sharpe_ratio"]
     best_wfe = best["wfe"]["avg_wfe"]
     best_wfe_passed = best["wfe"]["passed"]
 
-    # D-19: recommendation logic
+    # Recommendation logic
     if best_sharpe > BASELINE_SHARPE and best_wfe_passed:
         recommendation = "UPDATE_CONFIG"
         rec_reason = f"Best Sharpe {best_sharpe:.3f} > baseline {BASELINE_SHARPE} AND WFE {best_wfe:.3f} >= 0.60"
@@ -678,9 +677,8 @@ def main() -> int:
 
     # Build output JSON
     output = {
-        "phase": "80",
         "script": "optuna_80_cryptotrend.py",
-        "baseline_sharpe_phase75": BASELINE_SHARPE,
+        "prior_baseline_sharpe": BASELINE_SHARPE,
         "n_trials": N_TRIALS,
         "n_completed": len(completed_trials),
         "bars_per_year": BARS_PER_YEAR,

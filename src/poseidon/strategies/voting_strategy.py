@@ -5,14 +5,14 @@ conditions are true, SHORT when >= bear_min_votes bear conditions are true.
 Tracks position state for ATR trailing stop exits, RSI mean-reversion exits,
 signal flip exits, and cooldown mechanism.
 
-Position sizing note (D-10):
+Position sizing note:
     VotingStrategy sets quantity_pct=0.08 on long entry signals and
     bear_position_pct on short entry signals as strategy-level sizing intent.
     However, BacktestRunner._compute_sizing() controls final sizing based
     on its SizingConfig:
       - FIXED_PCT mode: uses signal.quantity_pct directly
       - FIXED_NOTIONAL mode: overrides with SizingConfig.notional_pct
-    Per D-10, callers MUST instantiate BacktestRunner with
+    Callers MUST instantiate BacktestRunner with
     SizingConfig(mode=FIXED_NOTIONAL, notional_pct=0.08) for correct
     fixed 8% position sizing behavior.
 """
@@ -227,7 +227,7 @@ class VotingStrategy(BaseStrategy):
         atr_col = f"atr_{self._atr_period}"
         atr_val = float(features.iloc[row_idx][atr_col])
 
-        # Priority 1: ATR trailing stop (D-04)
+        # Priority 1: ATR trailing stop
         if self._position_direction == "long":
             self._position_high_watermark = max(
                 self._position_high_watermark,
@@ -255,7 +255,7 @@ class VotingStrategy(BaseStrategy):
                     stop_level=stop_level,
                 )
 
-        # Priority 2: RSI mean-reversion exit (D-01)
+        # Priority 2: RSI mean-reversion exit
         rsi_period = self._get_rsi_period()
         rsi_col = f"rsi_{rsi_period}"
         if rsi_col in features.columns:
@@ -265,7 +265,7 @@ class VotingStrategy(BaseStrategy):
             ):
                 return self._emit_exit("rsi_exit", signal_time, rsi=rsi_val)
 
-        # Priority 3: Signal flip (D-02)
+        # Priority 3: Signal flip
         if self._position_direction == "long" and self._bear_sub_signals:
             bear_votes = self._count_votes(self._bear_sub_signals, features, row_idx)
             if bear_votes >= self._bear_min_votes:
@@ -370,7 +370,7 @@ class VotingStrategy(BaseStrategy):
                 if col_name:
                     _add(col_name, {})
             elif cond_type == "ml_prediction":
-                # ML prediction condition reads from qlib_prediction column (D-06)
+                # ML prediction condition reads from qlib_prediction column
                 _add("qlib_prediction", {})
 
         # Always need ATR for trailing stop and returns

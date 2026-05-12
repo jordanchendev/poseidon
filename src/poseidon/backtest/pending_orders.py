@@ -2,8 +2,6 @@
 
 Tracks unfilled limit orders across bars, evaluates fill conditions using
 optimistic or pessimistic fill models, and expires timed-out orders.
-
-Phase 50-01: Core pending order infrastructure for limit order backtesting.
 """
 
 from __future__ import annotations

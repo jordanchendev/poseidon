@@ -43,7 +43,7 @@ class OrderRiskChecker:
     ) -> RiskCheckResult:
         """Check a single order against risk limits. Returns pass/reject.
 
-        Per TRUTH-03 (D-13/D-14, RES-Q2): on rejection, RiskCheckResult is
+        Per TRUTH-03: on rejection, RiskCheckResult is
         populated with `check_name` (stable id) and `shortfall` (numeric
         context) in addition to the human-readable `reason`.
         """

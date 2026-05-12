@@ -143,7 +143,7 @@ class BacktestRunner:
         self._funding_costs_by_trade: list[float] = []
         self._last_funding_settlement: pd.Timestamp | None = None
 
-        # Capability enforcement (Phase 34 - COMP-05)
+        # Capability enforcement
         from poseidon.capabilities.validation import (
             validate_backtest_components,
             warn_bias_risks,
@@ -158,7 +158,7 @@ class BacktestRunner:
         backtest_start: datetime | None,
         db_session: Session | None = None,
     ) -> tuple[datetime | None, UUID | None]:
-        """Validate no look-ahead bias when using a ModelVersion (per D-07, PRED-04).
+        """Validate no look-ahead bias when using a ModelVersion.
 
         Checks that model_version.train_end < backtest_start_date.
         Returns (active_model_timestamp, model_version_id) for audit trail.
@@ -319,13 +319,13 @@ class BacktestRunner:
     ) -> UUID | None:
         """Resolve model_version_id from strategy sub-signals or backtest config.
 
-        Per D-13: Scans strategy's sub_signals for type=='ml_prediction',
+        Scans strategy's sub_signals for type=='ml_prediction',
         extracts model_version_id from the FIRST such condition found.
 
-        Per D-14: Sub-signal model_version_id takes precedence over
-        config-level model_version_id (Phase 44 path).
+        Sub-signal model_version_id takes precedence over
+        config-level model_version_id.
         """
-        # Phase 45 path: scan sub-signals for ml_prediction condition
+        # Scan sub-signals for ml_prediction condition
         all_signals: list[dict] = []
         if hasattr(self.strategy, "_sub_signals"):
             all_signals.extend(self.strategy._sub_signals)
@@ -340,12 +340,12 @@ class BacktestRunner:
                     if not isinstance(sub_mv_id, UUID):
                         sub_mv_id = UUID(str(sub_mv_id))
                     logger.info(
-                        "Resolved model_version_id=%s from ml_prediction sub-signal (Phase 45 path)",
+                        "Resolved model_version_id=%s from ml_prediction sub-signal",
                         sub_mv_id,
                     )
                     return sub_mv_id
 
-        # Fallback: Phase 44 path (config-level model_version_id)
+        # Fallback: config-level model_version_id
         return config_model_version_id
 
     @property
@@ -372,7 +372,7 @@ class BacktestRunner:
         - SL triggers if bar_high >= stop_loss_price
         - TP triggers if bar_low <= take_profit_price
 
-        When both SL and TP trigger in the same bar, SL takes priority (D-12).
+        When both SL and TP trigger in the same bar, SL takes priority.
 
         Args:
             portfolio: The BacktestPortfolio to evaluate.
@@ -406,7 +406,7 @@ class BacktestRunner:
                 if tp_price is not None and bar_low <= tp_price:
                     tp_triggered = True
 
-            # D-12: SL takes priority when both trigger in same bar
+            # SL takes priority when both trigger in same bar
             if sl_triggered:
                 exits.append((key, sl_price, "sl"))
             elif tp_triggered:
@@ -534,22 +534,22 @@ class BacktestRunner:
         self._funding_costs_by_trade = []
         self._last_funding_settlement = None
 
-        # Step 0a: Resolve model_version_id from sub-signals or config (Phase 45)
+        # Step 0a: Resolve model_version_id from sub-signals or config
         resolved_mv_id = self._resolve_model_version_id(model_version_id)
 
-        # Step 0b: Look-ahead bias validation (per D-07, PRED-04)
+        # Step 0b: Look-ahead bias validation
         active_model_timestamp, validated_mv_id = self.validate_model_bias(
             resolved_mv_id,
             backtest_start,
             db_session,
         )
 
-        # Step 1: Compute features ONCE -- same code path as live prediction (BT-01)
+        # Step 1: Compute features ONCE -- same code path as live prediction
         # If no feature_specs given, ask the strategy for its required specs
         if feature_specs is None and hasattr(self.strategy, "get_feature_specs"):
             feature_specs = self.strategy.get_feature_specs()
 
-        # Check if we need prediction data injection (Phase 44/45 - ML vote)
+        # Check if we need prediction data injection (ML vote)
         extra_nonprice_data = None
         if resolved_mv_id is not None and feature_specs is not None:
             # Check if any spec references qlib_prediction
@@ -600,7 +600,7 @@ class BacktestRunner:
         self._ar_last_portfolio = portfolio
         adapter = _PortfolioAdapter(portfolio)
 
-        # Step 4: Bar-by-bar four-phase loop (Phase 50 refactor)
+        # Step 4: Bar-by-bar four-phase loop
         # Phase A: SL/TP evaluation on open positions
         # Phase B: Check pending limit order fills
         # Phase C: Strategy evaluate + signal routing (market vs limit)
@@ -629,7 +629,7 @@ class BacktestRunner:
                 portfolio.record_equity_point(bar.name, float(bar["close"]))
                 continue
 
-            # Phase A: SL/TP evaluation on open positions (D-02)
+            # Phase A: SL/TP evaluation on open positions
             self._evaluate_sl_tp(portfolio, bar, i)
 
             # Phase B: Check pending limit order fills
@@ -637,13 +637,13 @@ class BacktestRunner:
             for fe in fill_events:
                 portfolio.execute_limit_fill(fe, bar)
 
-            # Phase C: Strategy evaluate + signal routing (D-03)
+            # Phase C: Strategy evaluate + signal routing
             features_slice = features.iloc[: i + 1]
             signals = self.strategy.evaluate(features_slice)
 
             for signal in signals:
                 if signal.action == SignalAction.HOLD:
-                    # Check for trailing stop SL updates (ADV-01, D-10)
+                    # Check for trailing stop SL updates
                     if signal.metadata:
                         updated_sl = signal.metadata.get("updated_stop_loss")
                         if updated_sl is not None:
@@ -658,7 +658,7 @@ class BacktestRunner:
                     features_slice,
                 )
 
-                # Same risk engine code path as live (BT-01)
+                # Same risk engine code path as live
                 signal = self.risk_engine.evaluate(signal, adapter)
 
                 if signal.status == SignalStatus.PASSED:
@@ -671,7 +671,7 @@ class BacktestRunner:
             # Phase D: Record equity + expire timed-out orders
             pending_book.expire_orders(i, self._max_pending_bars)
 
-            # Funding rate settlement (ADV-02, D-12)
+            # Funding rate settlement
             if self._include_funding and self._funding_rates is not None:
                 bar_time = pd.Timestamp(bar.name)
                 if self._crosses_8h_boundary(bar_time):
@@ -702,11 +702,11 @@ class BacktestRunner:
 
         metrics = compute_metrics(equity_series, portfolio.trades)
 
-        # Phase 85 (85-03): expose equity_series + raw TradeRecord list so
-        # Phase85BayesianOptimizer can re-derive metrics with bars_per_year=525_600
-        # (Pitfall 6). The dict trade list on BacktestResult.trades is for
-        # serialization; re-computing metrics needs the dataclass form which
-        # carries datetime objects for avg_holding_period.
+        # Expose equity_series + raw TradeRecord list so the Phase85
+        # BayesianOptimizer can re-derive metrics with bars_per_year=525_600.
+        # The dict trade list on BacktestResult.trades is for serialization;
+        # re-computing metrics needs the dataclass form which carries
+        # datetime objects for avg_holding_period.
         self._equity_series_cached = equity_series
         self._trade_records_cached = list(portfolio.trades)
 
@@ -734,7 +734,7 @@ class BacktestRunner:
             for t in portfolio.trades
         ]
 
-        # Compute PnL with/without funding (D-13)
+        # Compute PnL with/without funding
         total_pnl = metrics.get("total_pnl", 0.0)
         pnl_with_funding = total_pnl - self._funding_costs_total if self._include_funding else None
         pnl_without_funding = total_pnl if self._include_funding else None
@@ -794,7 +794,7 @@ class BacktestRunner:
             return min(raw_pct, cfg.max_position_pct)
 
         if cfg.mode == SizingMode.FIXED_RISK:
-            # D-18: entry price = order_price for limit, bar close for market
+            # Entry price = order_price for limit, bar close for market
             entry_price = (
                 signal.order_price if signal.order_price is not None else float(features_slice.iloc[-1]["close"])
             )
@@ -812,7 +812,7 @@ class BacktestRunner:
                 )
                 return cfg.notional_pct
 
-            # D-17: qty = (equity * risk_pct) / distance
+            # qty = (equity * risk_pct) / distance
             # self._ar_last_portfolio is set in _run_loop (line ~526) BEFORE bar iteration.
             # It holds the BacktestPortfolio instance, giving access to .equity during sizing.
             # The autoresearch_guard decorator explicitly allows _ar_* prefixed attributes.

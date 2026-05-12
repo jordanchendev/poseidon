@@ -1,9 +1,9 @@
 """VotingStrategyFactory -- create VotingStrategy from config dict or Optuna trial.
 
 Bridges Optuna parameter search and VotingStrategy instantiation.
-PARAM_BOUNDS defines the searchable parameter space per D-13.
+PARAM_BOUNDS defines the searchable parameter space.
 
-Signal types (6 Nunchi signals) are fixed per D-14:
+Signal types (6 Nunchi signals) are fixed:
   1. cum_return short momentum
   2. cum_return long momentum
   3. EMA crossover (short vs long)
@@ -22,7 +22,7 @@ from poseidon.strategies.voting_strategy import VotingStrategy
 if TYPE_CHECKING:
     import optuna
 
-# D-13: Searchable parameter bounds (low, high, type)
+# Searchable parameter bounds (low, high, type)
 PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "rsi_period": (5, 20, "int"),
     "ema_short": (3, 15, "int"),
@@ -34,14 +34,14 @@ PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
     "momentum_short": (3, 10, "int"),
     "momentum_long": (8, 20, "int"),
     "min_votes": (3, 6, "int"),
-    "atr_multiplier": (3.0, 8.0, "float"),  # D-06: was (1.5, 3.0)
+    "atr_multiplier": (3.0, 8.0, "float"),  # was (1.5, 3.0)
     "position_pct": (0.05, 0.15, "float"),
-    "bear_min_votes": (3, 6, "int"),  # D-22: new
-    "bear_position_pct": (0.03, 0.12, "float"),  # D-22: new
+    "bear_min_votes": (3, 6, "int"),
+    "bear_position_pct": (0.03, 0.12, "float"),
     "cooldown_bars": (8, 48, "int"),  # global cooldown after any exit
     "conviction_gap": (2, 4, "int"),  # min net votes spread for entry
-    "qlib_prediction_threshold": (0.3, 0.8, "float"),  # D-08: ML prediction threshold, market-agnostic
-    "qlib_model_enabled": (0, 1, "int"),  # Phase 46: binary ML on/off search
+    "qlib_prediction_threshold": (0.3, 0.8, "float"),  # ML prediction threshold, market-agnostic
+    "qlib_model_enabled": (0, 1, "int"),  # binary ML on/off search
 }
 
 # R2 parameter bounds -- market-conditional, keyed by category
@@ -219,7 +219,7 @@ def _build_config_from_params(
             },
             "threshold": 0,
         },
-        # 6. Bollinger width percentile squeeze (D-14: threshold 0.85)
+        # 6. Bollinger width percentile squeeze (threshold 0.85)
         {
             "type": "bollinger_width_percentile",
             "params": {"period": params["bollinger_period"], "lookback": 168},
@@ -227,7 +227,7 @@ def _build_config_from_params(
         },
     ]
 
-    # D-23: Bear sub_signals with inverted conditions (D-08)
+    # Bear sub_signals with inverted conditions
     bear_sub_signals = [
         # 1. cum_return short momentum (BELOW zero -- price falling)
         {
@@ -282,7 +282,7 @@ def _build_config_from_params(
     sub_signals.extend(r2_bull)
     bear_sub_signals.extend(r2_bear)
 
-    # Append ML prediction sub-signals when model_version_id is available (D-09, D-10)
+    # Append ML prediction sub-signals when model_version_id is available
     if model_version_id is not None:
         ml_threshold = params.get("qlib_prediction_threshold", 0.5)
         sub_signals.append(
@@ -328,12 +328,12 @@ class VotingStrategyFactory:
     def from_config(config: dict) -> VotingStrategy:
         """Create VotingStrategy from a raw JSON config dict.
 
-        Per D-14: signal types (6 Nunchi signals) are fixed.
+        Signal types (6 Nunchi signals) are fixed.
         Extracts atr_multiplier and atr_period from config if present,
         passing them as constructor kwargs.
         """
         config = copy.deepcopy(config)
-        atr_multiplier = config.pop("atr_multiplier", 5.5)  # D-05: default 5.5
+        atr_multiplier = config.pop("atr_multiplier", 5.5)  # default 5.5
         atr_period = config.pop("atr_period", 14)
         strategy = VotingStrategy(
             config=config,
@@ -354,9 +354,9 @@ class VotingStrategyFactory:
     ) -> VotingStrategy:
         """Create VotingStrategy from an Optuna trial using suggest API.
 
-        Per D-12: uses trial.suggest_int/suggest_float within PARAM_BOUNDS.
-        Per D-13: searchable parameters listed in PARAM_BOUNDS.
-        Per D-14: signal types and scoring formula are NOT searchable.
+        Uses trial.suggest_int/suggest_float within PARAM_BOUNDS.
+        Searchable parameters are listed in PARAM_BOUNDS.
+        Signal types and scoring formula are NOT searchable.
         """
         params: dict = {}
         bounds = get_param_bounds(market)

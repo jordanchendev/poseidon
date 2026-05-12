@@ -1,11 +1,11 @@
-"""Phase 90 Wave 3.5 (Plan 90-04.1) — rl_data_adapter unit tests.
+"""rl_data_adapter unit tests.
 
 Two layers:
 
 * Mac-runnable: bin format + handler pickle round-trip (no qlib dep).
 * Stormtrooper-only: qlib loads the pickle and the bin files via its
   ``HandlerProcessedDataProvider`` + ``D.features``. Gated by
-  ``STORMTROOPER=1`` env var (consistent with other Phase 90 integration
+  ``STORMTROOPER=1`` env var (consistent with other integration
   tests).
 """
 

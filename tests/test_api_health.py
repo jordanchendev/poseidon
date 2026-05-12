@@ -1,13 +1,13 @@
 """Tests for the enhanced health check endpoint.
 
-After Phase 54 Redis isolation, health.py uses ``get_redis("celery")`` from
+After the Redis isolation refactor, health.py uses ``get_redis("celery")`` from
 ``poseidon.core.redis`` instead of the old ``redis.from_url(settings.redis_url)``.
 Tests mock ``poseidon.core.redis.get_redis`` to inject a fake Redis instance.
 
-After Phase 55-02 session unification, health.py uses ``db_session()`` context
+After the session unification refactor, health.py uses ``db_session()`` context
 manager from ``poseidon.core.database`` instead of direct ``SessionLocal()``.
 
-After Phase 61-02 Thalassa health integration, health.py uses ``httpx.get`` to
+After the Thalassa health integration, health.py uses ``httpx.get`` to
 probe Thalassa connectivity. Tests mock ``poseidon.api.health.httpx`` for
 isolation.
 """
@@ -297,7 +297,7 @@ def test_health_data_freshness_null_when_no_data(mock_db_session_fn, mock_get_re
     assert data["components"]["data_freshness"]["local_ohlcv_table"] == "removed"
 
 
-# --------------- Thalassa connectivity tests (Phase 61-02) ---------------
+# --------------- Thalassa connectivity tests ---------------
 
 
 @patch("poseidon.api.health.httpx")

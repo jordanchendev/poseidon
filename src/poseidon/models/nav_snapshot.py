@@ -21,7 +21,7 @@ class NavSnapshotRecord(Base):
     holdings_value: Mapped[float] = mapped_column(Float, nullable=False)
     cash: Mapped[float] = mapped_column(Float, nullable=False)
     holdings_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    # TRUTH-04 (D-05): cash flow audit trail. Positive=deposit, negative=withdrawal.
+    # TRUTH-04: cash flow audit trail. Positive=deposit, negative=withdrawal.
     # NUMERIC(18, 2) preserves cent-level precision. Default 0 for normal EOD writes.
     cash_flow: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, server_default="0", default=Decimal("0"))
     market: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)

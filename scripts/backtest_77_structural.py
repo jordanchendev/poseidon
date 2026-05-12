@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 77-02: Single-symbol StructuralReversal backtest with pessimistic fill.
+"""Single-symbol StructuralReversal backtest with pessimistic fill.
 
 Validates StructuralReversalStrategy under:
   - FillModel.PESSIMISTIC (strict penetration required)
@@ -45,15 +45,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Module-level constants (per CONTEXT.md decisions)
+# Module-level constants
 # ---------------------------------------------------------------------------
-BARS_PER_YEAR = 2190  # 365.25 * 24 / 4 for 4H crypto (Pitfall 1 fix)
-START = datetime(2024, 1, 1)  # Post-ETF only (D-01)
+BARS_PER_YEAR = 2190  # 365.25 * 24 / 4 for 4H crypto
+START = datetime(2024, 1, 1)  # Post-ETF only
 SYMBOLS = ["BTCUSDT", "ETHUSDT"]
 INTERVAL = "4h"
 INITIAL_CAPITAL = 100_000.0  # USDT
-FUNDING_RATE_ANNUAL = 0.1095  # D-22: 0.01%/8h * 3 * 365.25
-HAIRCUT_RANGE = [0.30, 0.40, 0.50]  # D-21: 30-50% Sharpe haircut sensitivity
+FUNDING_RATE_ANNUAL = 0.1095  # 0.01%/8h * 3 * 365.25
+HAIRCUT_RANGE = [0.30, 0.40, 0.50]  # 30-50% Sharpe haircut sensitivity
 BAR_DURATION_HOURS = 4  # 4H interval
 
 
@@ -101,9 +101,9 @@ def _make_runner(
 ) -> BacktestRunner:
     """Create BacktestRunner with pessimistic fill model for StructuralReversal.
 
-    D-20: FillModel.PESSIMISTIC (strict penetration)
-    D-14: max_pending_bars=6 (order expiry 24h at 4H)
-    D-23: crypto_perp cost model (maker 0.02%, taker 0.05%, slippage 0.05%)
+    - FillModel.PESSIMISTIC (strict penetration)
+    - max_pending_bars=6 (order expiry 24h at 4H)
+    - crypto_perp cost model (maker 0.02%, taker 0.05%, slippage 0.05%)
     """
     return BacktestRunner(
         strategy=strategy,
@@ -182,7 +182,7 @@ def _compute_funding_deduction(metrics: dict, trades: list, total_bars: int) -> 
     # Funding cost as annualized drag
     funding_cost_annual = FUNDING_RATE_ANNUAL * time_in_market_fraction
 
-    # Direct subtraction of annualised funding cost from gross Sharpe (D-24).
+    # Direct subtraction of annualised funding cost from gross Sharpe.
     # This matches the canonical formula validated in test_net_sharpe_deduction:
     #   net_sharpe = gross_sharpe - (funding_rate_annual * time_in_market_fraction)
     funding_sharpe_deduction = funding_cost_annual
@@ -199,7 +199,7 @@ def _compute_funding_deduction(metrics: dict, trades: list, total_bars: int) -> 
 
 
 def _compute_sharpe_haircuts(net_sharpe: float) -> dict:
-    """Compute Sharpe haircut sensitivity for 30-50% range (D-21).
+    """Compute Sharpe haircut sensitivity for 30-50% range.
 
     Each haircut represents the net Sharpe after applying that percentage
     reduction, simulating real-world degradation from IS to OOS.
@@ -257,7 +257,7 @@ def _combine_trades(runners: list[BacktestRunner]) -> list:
 def run_backtest() -> int:
     """Run StructuralReversal pessimistic fill backtest for BTC + ETH."""
     print("=" * 80)
-    print("Phase 77-02: StructuralReversal Pessimistic Fill Backtest")
+    print("StructuralReversal Pessimistic Fill Backtest")
     print("=" * 80)
     print(f"Period: {START.date()} to {datetime.now().date()}")
     print(f"Symbols: {', '.join(SYMBOLS)}")
@@ -268,7 +268,7 @@ def run_backtest() -> int:
     print(f"Haircut Range: {[f'{h:.0%}' for h in HAIRCUT_RANGE]}")
     print()
 
-    # Step 1: Load data
+    # 1. Load data
     repo = RemoteDataRepository.from_settings()
     ohlcv_dict: dict[str, pd.DataFrame] = {}
     for symbol in SYMBOLS:
@@ -282,7 +282,7 @@ def run_backtest() -> int:
         print("ERROR: No OHLCV data loaded. Aborting.")
         return 1
 
-    # Step 2: Run backtest per symbol
+    # 2. Run backtest per symbol
     per_symbol_results: dict[str, dict] = {}
     runners: list[BacktestRunner] = []
 
@@ -348,7 +348,7 @@ def run_backtest() -> int:
             key = f"haircut_{pct}pct"
             print(f"  Haircut {pct}%:       {sym_result[key]:.4f}")
 
-    # Step 3: Combined metrics (pool trades + merge equity curves)
+    # 3. Combined metrics (pool trades + merge equity curves)
     combined_result: dict = {}
     if runners:
         combined_equity = _combine_equity_curves(runners)
@@ -379,7 +379,7 @@ def run_backtest() -> int:
                 "calmar_ratio": round(combined_metrics.get("calmar_ratio", 0.0), 4),
             }
 
-    # Step 4: Print combined summary
+    # 4. Print combined summary
     print(f"\n{'=' * 80}")
     print("COMBINED (BTC + ETH)")
     print(f"{'=' * 80}")
@@ -398,7 +398,7 @@ def run_backtest() -> int:
     else:
         print("  No combined results (no successful per-symbol runs)")
 
-    # Step 5: Summary table
+    # 5. Summary table
     print(f"\n{'=' * 100}")
     print("SUMMARY TABLE")
     print(f"{'=' * 100}")
@@ -439,7 +439,7 @@ def run_backtest() -> int:
             f"{combined_result['win_rate']:>7.4f}"
         )
 
-    # Step 6: Write JSON output
+    # 6. Write JSON output
     end_date = datetime.now().date().isoformat()
     output = {
         "phase": "77",
@@ -465,7 +465,7 @@ def run_backtest() -> int:
     output_path.write_text(json.dumps(output, indent=2, default=str))
     print(f"\nJSON output saved to: {output_path}")
 
-    # Step 7: Print JSON for easy parsing
+    # 7. Print JSON for easy parsing
     print(f"\n{'=' * 100}")
     print("JSON OUTPUT")
     print(f"{'=' * 100}")

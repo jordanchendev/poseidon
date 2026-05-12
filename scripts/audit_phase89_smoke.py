@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Phase 89 Plan 03 -- end-to-end smoke driver.
+"""End-to-end smoke driver.
 
 Composes:
   Smoke-1 (mandatory) -- inject 1 PASSED crypto_perp signal, fire perp_rebalance
@@ -152,7 +152,7 @@ def smoke_1_perp_rebalance() -> dict:
             market="crypto_perp",
             instrument="perpetual",
             action="long",
-            quantity_pct=0.01,  # tiny — far below position_limit_pct (D-09)
+            quantity_pct=0.01,  # tiny — far below position_limit_pct
             interval="4h",
             age_minutes=5,
         )
@@ -325,8 +325,8 @@ def smoke_3_protective() -> dict:
     """Best-effort: read-only sweep of recent protective-origin orders.
 
     For any OrderRecord in the last hour with order_origin in
-    ('stop_loss', 'liquidation'), assert signal_id IS NULL (D-04: protective
-    paths are NOT signal-driven so they MUST NOT carry a signal_id).
+    ('stop_loss', 'liquidation'), assert signal_id IS NULL — protective
+    paths are NOT signal-driven so they MUST NOT carry a signal_id.
     If no protective rows in window, mark SKIP.
     """
     result: dict = {"name": "Smoke-3", "passed": False, "details": {}}

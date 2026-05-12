@@ -12,7 +12,7 @@ def make_synthetic_1m_ohlcv_with_sweep(
 ) -> pd.DataFrame:
     """Synthetic 1m OHLCV fixture with engineered liquidity sweep at ``sweep_bar``.
 
-    Sized per Phase 84 D-03 (lookback=5760 → ~4d warmup) + RESEARCH Pitfall 3:
+    Sized per the lookback=5760 (~4d warmup) + Pitfall 3:
     default 8640 bars (= 6 days) clears warmup and leaves 2 days post-warmup for
     signal emission.
 
@@ -98,11 +98,11 @@ def make_synthetic_1m_ohlcv(
     seed: int = 42,
     start_ts: str = "2026-01-01 09:00",
 ) -> pd.DataFrame:
-    """Synthetic 1-minute TWSE-shape OHLCV fixture (Phase 90 Wave 0).
+    """Synthetic 1-minute TWSE-shape OHLCV fixture.
 
     Default ``periods=270`` mirrors a single TWSE/TAIFEX session
     (09:00–13:30, RESEARCH A4 / Pitfall 4). No engineered sweep — pure
-    deterministic random walk, used by Wave 1+ RL simulator scaffolds.
+    deterministic random walk, used by downstream RL simulator scaffolds.
 
     Cloned from ``make_synthetic_1m_ohlcv_with_sweep`` minus the sweep
     candle injection, per Plan 90-01 Task 3.
@@ -149,9 +149,9 @@ def make_synthetic_alpha158_features(
     n_features: int = 20,
     seed: int = 42,
 ) -> tuple[pd.DataFrame, list[str]]:
-    """Synthetic Alpha158-shape feature matrix for Phase 94 smoke tests.
+    """Synthetic Alpha158-shape feature matrix for zoo smoke tests.
 
-    Per CONTEXT D-10: 6 instruments × 60 trading days × 20 representative
+    Sized as: 6 instruments × 60 trading days × 20 representative
     feature columns + 1 label column. Deterministic via numpy default_rng.
     Outer-keyed column scheme [(feature, *), (label, *)] matching
     DataHandlerLP convention (RESEARCH A5).
@@ -159,7 +159,7 @@ def make_synthetic_alpha158_features(
     Used by tests/test_zoo_smoke.py::test_localformer_smoke and
     tests/test_zoo_smoke.py::test_alstm_smoke. NOT for TRA — TRA's
     MTSDatasetH shape is provided by make_synthetic_mts_alpha158
-    (RESEARCH Pitfall 3 / D-20).
+    (Pitfall 3).
 
     Pure pandas/numpy — no qlib import at module top, preserving Mac-side
     ``pytest --collect-only`` health (RESEARCH Pitfall 2).
@@ -191,7 +191,7 @@ def make_synthetic_alpha158_features(
 
 def make_synthetic_anchor_signal(n_days: int = 400, seed: int = 42) -> tuple[pd.Series, pd.Series]:
     """Synthetic (pred, label) MultiIndex(datetime, instrument=['TX']) for
-    Phase 95 ACTIVATE-03 unit tests.
+    the ACTIVATE-03 unit tests.
 
     Pitfall 3: qlib's ``calc_ic`` / SignalRecord assume MultiIndex even for a
     single-instrument series. The label is mildly correlated with the pred so
@@ -248,9 +248,9 @@ def make_synthetic_mts_alpha158(
     seed: int = 43,  # different default seed from helper 1 to keep the
     # TRA smoke trace independent
 ) -> tuple[pd.DataFrame, list[str], int]:
-    """Synthetic MTSDatasetH-shape feature matrix for Phase 94 TRA smoke.
+    """Synthetic MTSDatasetH-shape feature matrix for the TRA zoo smoke.
 
-    Per CONTEXT D-20 / RESEARCH Pitfall 3: TRA's fit/predict require
+    Per Pitfall 3: TRA fit/predict require
     qlib.contrib.data.dataset.MTSDatasetH (multi-task sequential), not the
     standard DatasetH. The DataFrame shape is identical to
     make_synthetic_alpha158_features; the caller is responsible for
@@ -324,7 +324,7 @@ def fake_redis():
 
 def pytest_configure(config):
     """Register custom markers."""
-    config.addinivalue_line("markers", "phase38: Phase 38 data-foundation tests")
+    config.addinivalue_line("markers", "phase38: data-foundation tests")
     config.addinivalue_line(
         "markers",
         "stormtrooper: requires stormtrooper qlib-research container (set STORMTROOPER=1 inside docker compose exec)",
@@ -456,9 +456,9 @@ def db_session():
 
 @pytest.fixture
 def make_synthetic_indicator_dict():
-    """Phase 93 — produces a minimal qlib-shaped indicator_dict for unit tests.
+    """Produces a minimal qlib-shaped indicator_dict for unit tests.
 
-    No qlib import. Mirrors the structure documented in 93-RESEARCH.md §Pattern 2:
+    No qlib import. Mirrors the documented structure:
     a top-level dict keyed by inner-level frequency string (default ``"1min"`` —
     locked from the W0 import probe; alternative candidates were ``"minute"`` /
     ``"min"``), whose value is itself a dict of indicator name → pd.Series indexed
@@ -510,12 +510,12 @@ def make_synthetic_indicator_dict():
 
 @pytest.fixture
 def make_synthetic_phase90_baseline(tmp_path):
-    """Phase 93 — produces a minimal per-trigger-day Phase 90 baseline frame
+    """Produces a minimal per-trigger-day baseline frame
     matching ``compare_to_baseline()`` input schema. Returns (path, df).
 
-    Mirrors `.planning/phases/90-rl-order-execution/verdict-artifacts/comparison.csv`
-    rollup-row format extended to per-trigger-day rows (Phase 90 wave2-full-002
-    parquet shape). D-17 schema: per-trigger-day rows × {Naive, v18 |gap|/4,
+    Mirrors the prior RL-execution verdict-artifact comparison.csv
+    rollup-row format extended to per-trigger-day rows (the wave2-full-002
+    parquet shape). Schema: per-trigger-day rows × {Naive, v18 |gap|/4,
     NestedExecutor TWAP} columns; each cell {pair_pnl_bps, slippage_bps_per_leg,
     fill_failure}.
 

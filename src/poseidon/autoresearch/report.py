@@ -1,7 +1,7 @@
 """Report generation for autoresearch runs.
 
-Per D-16: rank by composite_score, produce report with top-N configs + summary stats.
-Per D-17: NO auto-deployment -- report is for human review.
+- Ranks by composite_score, producing report with top-N configs + summary stats.
+- NO auto-deployment -- report is for human review.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def generate_report(
     completed_at: datetime,
     top_n: int = 5,
 ) -> dict[str, Any]:
-    """Generate autoresearch_report from ExperimentTracker results (D-15, D-16).
+    """Generate autoresearch_report from ExperimentTracker results.
 
     Args:
         tracker: ExperimentTracker instance with active DB session.

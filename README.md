@@ -142,10 +142,10 @@ uv sync --extra gpu  # PyTorch + XGBoost
 
 v2.0 放棄 ML 方向預測，改用簡單信號投票 + 自動化迭代搜索。
 
-### VotingStrategy (Phase 10)
+### VotingStrategy
 6-signal 投票策略：Momentum×2, EMA crossover, RSI, MACD histogram, Bollinger squeeze。`min_votes` 多數決 + ATR trailing stop 出場。
 
-### AutoResearch (Phase 11-12)
+### AutoResearch
 自動化參數搜索框架：
 - **ParameterSearchPipeline** — Optuna TPE + holdout split + WFE validation
 - **AutoResearchRunner** — 跨市場批次搜索，per-market 失敗隔離
@@ -153,7 +153,7 @@ v2.0 放棄 ML 方向預測，改用簡單信號投票 + 自動化迭代搜索�
 - **ExperimentTracker** — 實驗結果持久化到 PostgreSQL
 - **Immutability Guard** — contextvar 保護 FeatureEngine/BacktestRunner 不被 autoresearch 修改
 
-### Regime Classification (Phase 13)
+### Regime Classification
 市場狀態分類系統（gated — 不贏就關）：
 - **RegimeRouter** — 包裝 VotingStrategy，根據 regime 動態調整 min_votes/position_pct
 - **Regime Labels** — 百分位 realized_vol_20 分 3 類 (low/medium/high vol)

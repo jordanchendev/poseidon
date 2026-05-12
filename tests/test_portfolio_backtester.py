@@ -260,7 +260,7 @@ class TestPortfolioBacktester:
         rebalance_days = [entry["date"] for entry in result.rebalance_log]
         assert rebalance_days[:3] == ["2023-01-05", "2023-02-06", "2023-03-06"]
 
-    # --- Phase 73: weekly rebalance tests ---
+    # --- Weekly rebalance tests ---
 
     def test_weekly_rebalance_dates(self, cost_model, ohlcv_dict):
         """Weekly rebalance should produce ~13 rebalances over 3 months, mostly on Fridays."""
@@ -388,7 +388,7 @@ class TestPortfolioBacktester:
         assert len(sell_trades) == 1
         assert sell_trades[0]["date"] == "2023-01-06"
 
-    # --- Phase 72: hold_until tests ---
+    # --- hold_until tests ---
 
     def test_hold_until_exit_triggers_sell(self, cost_model):
         """Strategy with check_hold_until returning False should trigger sell with reason=hold_until_exit."""
@@ -555,7 +555,7 @@ class TestPortfolioBacktester:
         hold_until_sells = [t for t in result.trades if t.get("reason") == "hold_until_exit"]
         assert len(hold_until_sells) == 0
 
-    # --- Phase 74: adj_close tests ---
+    # --- adj_close tests ---
 
     def test_compute_nav_uses_adj_close(self, cost_model):
         """NAV mark-to-market should use adj_close (continuous) not close (discontinuous)."""
@@ -608,7 +608,7 @@ class TestPortfolioBacktester:
         assert price == pytest.approx(100.0)
 
     def test_execute_orders_uses_close_not_adj_close(self, cost_model):
-        """Order fills should use close price, not adj_close (D-12)."""
+        """Order fills should use close price, not adj_close."""
         dates = pd.to_datetime(["2023-01-02"])
         ohlcv = pd.DataFrame(
             {
@@ -639,7 +639,7 @@ class TestPortfolioBacktester:
         assert buy_trades[0]["price"] == pytest.approx(100.0)
 
     def test_stop_loss_uses_adj_close(self, cost_model):
-        """Stop loss check should use adj_close, not close (D-09)."""
+        """Stop loss check should use adj_close, not close."""
         # adj_close stays above stop level (entry * 0.9 = 90), close drops below
         dates = pd.to_datetime(["2023-01-02", "2023-01-03", "2023-01-04"])
         ohlcv = pd.DataFrame(

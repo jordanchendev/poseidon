@@ -4,9 +4,9 @@ Revision ID: 007
 Revises: 006
 Create Date: 2026-03-26
 
-Per D-02: optuna schema created by migration; Optuna manages its own tables within it.
-Per D-04: ExperimentRecord fields match the CONTEXT spec exactly.
-Per D-05: optuna_study_name and optuna_trial_number provide optional linkage without FK.
+- Optuna schema is created by this migration; Optuna manages its own tables within it.
+- ExperimentRecord fields match the spec.
+- optuna_study_name and optuna_trial_number provide optional linkage without FK.
 """
 
 import sqlalchemy as sa

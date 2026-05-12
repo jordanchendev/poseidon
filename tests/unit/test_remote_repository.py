@@ -258,7 +258,7 @@ class TestRetryAndCircuitBreaker:
 
 
 class TestNonpriceExtendedEndpoints:
-    """Tests for Phase 66 nonprice reader methods."""
+    """Tests for nonprice reader methods."""
 
     def test_read_fundamentals_extended_df_returns_dataframe(self, repo):
         mock_resp = _mock_response(

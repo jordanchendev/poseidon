@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Phase 80: IC re-run with complete funding history + CVD/Cascade features.
+"""IC re-run with complete funding history + CVD/Cascade features.
 
 Two-regime IC comparison:
-- Post-ETF (2024-01-01 onwards): same as Phase 75 but with Phase 76 CVD/Cascade
-- Pre-ETF (2019-01-01 to 2023-12-31): funding rate history now available (Phase 79 backfill)
+- Post-ETF (2024-01-01 onwards): same as the prior IC pass but with CVD/Cascade
+- Pre-ETF (2019-01-01 to 2023-12-31): funding rate history now available after
+  the pre-ETF backfill.
 
 Purpose: Evaluate whether funding rate features have predictive power now that
-data exists (Phase 75 showed 0 observations for pre-ETF). Compare IC stability
-across market regimes. Provide input for D-10 decision (whether to add new
-filters to CryptoTrend).
+data exists (the prior IC pass showed 0 observations for pre-ETF). Compare IC
+stability across market regimes. Provide input for the downstream decision
+on whether to add new filters to CryptoTrend.
 
 Run on stormtrooper:
   docker compose exec cpu-worker python scripts/ic_80_rerun.py
@@ -50,16 +51,16 @@ def to_ccxt_symbol(symbol: str) -> str:
 # ── Configuration ───────────────────────────────────────────────────────
 SYMBOLS = ["BTCUSDT", "ETHUSDT"]
 MARKET = "crypto_perp"
-INTERVAL = "4h"  # D-07: single interval (Phase 75 confirmed 4H superior)
-HORIZONS = [1, 5, 10, 20]  # D-03
-MIN_OBSERVATIONS = 30  # D-02
+INTERVAL = "4h"  # single interval (prior IC pass confirmed 4H superior)
+HORIZONS = [1, 5, 10, 20]
+MIN_OBSERVATIONS = 30
 
 REGIMES = {
-    "post_etf": {"start": "2024-01-01", "end": "2026-04-24"},  # D-04
-    "pre_etf": {"start": "2019-01-01", "end": "2023-12-31"},  # D-05
+    "post_etf": {"start": "2024-01-01", "end": "2026-04-24"},
+    "pre_etf": {"start": "2019-01-01", "end": "2023-12-31"},
 }
 
-# D-01: All 18 abstract feature names (Phase 75 original 16 + Phase 76 CVD + Cascade)
+# All 18 abstract feature names (original 16 + CVD + Cascade)
 CRYPTO_FEATURES_EXPECTED = [
     "funding_rate_daily",
     "funding_zscore",
@@ -77,9 +78,9 @@ CRYPTO_FEATURES_EXPECTED = [
     "volume_sma_20",
     "volume_ratio_20",
     "obv",
-    "cvd_change_20",  # Phase 76: IC=-0.027 (PASS)
-    "cascade_signal",  # Phase 76: IC=0.034 (PASS)
-    "cascade_direction",  # Phase 76: companion to cascade_signal
+    "cvd_change_20",  # IC=-0.027 (PASS) in the upstream feature batch
+    "cascade_signal",  # IC=0.034 (PASS) in the upstream feature batch
+    "cascade_direction",  # companion to cascade_signal
 ]
 
 # Direction labels for comparison table context
@@ -107,7 +108,7 @@ FEATURE_DIRECTION_LABELS: dict[str, str] = {
     "cascade_direction": "Cascade directional bias",
 }
 
-# Phase 75 reference IC values at 4H h=5 (for comparison table)
+# Prior reference IC values at 4H h=5 (for comparison table)
 PHASE_75_IC_REFERENCE: dict[str, float | str] = {
     "funding_rate_daily": "Insufficient",
     "funding_zscore": "Insufficient",
@@ -127,9 +128,9 @@ PHASE_75_IC_REFERENCE: dict[str, float | str] = {
     "volume_sma_20": 0.0126,
     "volume_ratio_20": 0.0266,
     "obv": 0.0115,
-    "cvd_change_20": "N/A (Phase 76)",
-    "cascade_signal": "N/A (Phase 76)",
-    "cascade_direction": "N/A (Phase 76)",
+    "cvd_change_20": "N/A (added later)",
+    "cascade_signal": "N/A (added later)",
+    "cascade_direction": "N/A (added later)",
 }
 
 OUTPUT_DIR = Path(__file__).parent / "output"
@@ -147,7 +148,7 @@ def compute_rank_ic_with_counts(
 
     Uses scipy.stats.spearmanr with per-feature observation counts.
     Uses reset_index(drop=True) before Spearman to handle duplicate
-    timestamps from multi-symbol pooling (Phase 75 bug fix commit 249aa13).
+    timestamps from multi-symbol pooling (bug fix from commit 249aa13).
 
     Args:
         features_df: DataFrame with feature columns.
@@ -204,8 +205,8 @@ def compute_rank_ic_with_counts(
 def discover_feature_columns(engine, repo, symbol: str) -> tuple[list[str], list[str]]:
     """Discover actual feature column names from compute_with_companions output.
 
-    D-01 names are abstract; actual columns may have period suffixes
-    (e.g., wick_ratio -> wick_ratio_upper/lower/total).
+    Abstract feature names may have period suffixes (e.g., wick_ratio ->
+    wick_ratio_upper/lower/total).
 
     Returns:
         (actual_features, missing_features)
@@ -225,7 +226,7 @@ def discover_feature_columns(engine, repo, symbol: str) -> tuple[list[str], list
         print(f"  WARNING: No OHLCV for {symbol}/{INTERVAL}")
         return [], list(CRYPTO_FEATURES_EXPECTED)
 
-    # Pitfall 7: Strip timezone for consistency
+    # Strip timezone for consistency
     if hasattr(ohlcv.index, "tz") and ohlcv.index.tz is not None:
         ohlcv.index = ohlcv.index.tz_localize(None)
 
@@ -244,7 +245,7 @@ def discover_feature_columns(engine, repo, symbol: str) -> tuple[list[str], list
     for col in available_columns:
         print(f"    - {col}")
 
-    # Map D-01 abstract names to actual columns
+    # Map abstract names to actual columns
     actual_features: list[str] = []
     missing_features: list[str] = []
     expanded_mapping: dict[str, list[str]] = {}
@@ -286,10 +287,10 @@ def discover_feature_columns(engine, repo, symbol: str) -> tuple[list[str], list
 def run_two_regime_ic_analysis(engine, repo, feature_columns: list[str]) -> dict[str, dict]:
     """Run pooled IC analysis across two time regimes with event counts.
 
-    Key Phase 80 adaptation:
+    Key adaptation for the new regime split:
     - Loops over REGIMES dict (post_etf, pre_etf)
     - For pre_etf: manually pre-fetches funding data with start="2019-01-01"
-      and passes as extra_nonprice_data (Pitfall 5 fix)
+      and passes as extra_nonprice_data
     - For post_etf: uses default compute_with_companions (default funding
       start "2024-01-01" is correct)
 
@@ -327,7 +328,7 @@ def run_two_regime_ic_analysis(engine, repo, feature_columns: list[str]) -> dict
                 print(f"    SKIP: No OHLCV data for {regime_name}")
                 continue
 
-            # Pitfall 7: Strip timezone immediately after fetch
+            # Strip timezone immediately after fetch
             if hasattr(ohlcv.index, "tz") and ohlcv.index.tz is not None:
                 ohlcv.index = ohlcv.index.tz_localize(None)
 
@@ -335,8 +336,8 @@ def run_two_regime_ic_analysis(engine, repo, feature_columns: list[str]) -> dict
 
             specs = get_r2_specs(symbol, MARKET)
 
-            # Pitfall 5: For pre-ETF regime, manually pre-fetch funding data
-            # with start="2019-01-01". The default start="2024-01-01" in
+            # For pre-ETF regime, manually pre-fetch funding data with
+            # start="2019-01-01". The default start="2024-01-01" in
             # read_funding_rates returns NO pre-ETF funding data.
             if regime_name == "pre_etf":
                 print(f"    Pre-ETF: fetching funding data from {regime_start} ...")
@@ -394,7 +395,7 @@ def run_two_regime_ic_analysis(engine, repo, feature_columns: list[str]) -> dict
                 continue
 
             # Pool BTC+ETH features using pd.concat(axis=0)
-            # then reset_index(drop=True) (Phase 75 pattern)
+            # then reset_index(drop=True) (standard pooling pattern).
             combined = pd.concat(frames, axis=0)
             fwd = combined.pop("forward_return")
             cols_present = [c for c in feature_columns if c in combined.columns]
@@ -417,11 +418,11 @@ def run_two_regime_ic_analysis(engine, repo, feature_columns: list[str]) -> dict
     return all_results
 
 
-# ── Comparison table output (D-17) ───────────────────────────────────
+# ── Comparison table output ──────────────────────────────────────────
 def print_comparison_table(results: dict[str, dict], feature_columns: list[str]) -> None:
-    """Print markdown-style comparison table: Post-ETF vs Pre-ETF vs Phase 75.
+    """Print markdown-style comparison table: Post-ETF vs Pre-ETF vs prior IC reference.
 
-    Shows Feature | Post-ETF IC(h=5) | n | Pre-ETF IC(h=5) | n | Phase 75 IC(h=5)
+    Shows Feature | Post-ETF IC(h=5) | n | Pre-ETF IC(h=5) | n | prior IC(h=5)
     Highlights features where funding data changed from 'Insufficient' to actual IC.
     """
     print(f"\n{'=' * 110}")
@@ -430,7 +431,7 @@ def print_comparison_table(results: dict[str, dict], feature_columns: list[str])
 
     header = (
         f"{'Feature':<28} | {'Post-ETF IC':>11} | {'Post-ETF n':>10} "
-        f"| {'Pre-ETF IC':>11} | {'Pre-ETF n':>10} | {'Phase 75 IC':>12} | Note"
+        f"| {'Pre-ETF IC':>11} | {'Pre-ETF n':>10} | {'Prior IC':>12} | Note"
     )
     print(header)
     print("-" * len(header))
@@ -464,7 +465,7 @@ def print_comparison_table(results: dict[str, dict], feature_columns: list[str])
         print(f"{feature:<28} | {ic_post_str} | {n_post:>10} | {ic_pre_str} | {n_pre:>10} | {p75_str} | {note}")
 
     print()
-    print("  ** NEW DATA ** = funding feature now has pre-ETF IC (was 'Insufficient' in Phase 75)")
+    print("  ** NEW DATA ** = funding feature now has pre-ETF IC (was 'Insufficient' previously)")
 
 
 # ── Full IC table for all horizons ───────────────────────────────────
@@ -531,7 +532,7 @@ def print_event_count_table(results: dict[str, dict], feature_columns: list[str]
     print("  ! = insufficient (< 30 observations)")
 
 
-# ── JSON artifact output (D-06) ──────────────────────────────────────
+# ── JSON artifact output ─────────────────────────────────────────────
 def save_json_artifact(results: dict[str, dict], feature_columns: list[str]) -> None:
     """Save machine-parseable JSON artifact for downstream consumption.
 
@@ -539,7 +540,7 @@ def save_json_artifact(results: dict[str, dict], feature_columns: list[str]) -> 
     {
         "results_post_etf": {"h1": {...}, "h5": {...}, ...},
         "results_pre_etf": {"h1": {...}, "h5": {...}, ...},
-        "metadata": {regimes, symbols, horizons, interval, phase}
+        "metadata": {regimes, symbols, horizons, interval}
     }
     """
     artifact: dict = {}
@@ -566,7 +567,6 @@ def save_json_artifact(results: dict[str, dict], feature_columns: list[str]) -> 
         "horizons": HORIZONS,
         "interval": INTERVAL,
         "min_observations": MIN_OBSERVATIONS,
-        "phase": "80",
         "timestamp": datetime.utcnow().isoformat() + "Z",
     }
 
@@ -582,7 +582,7 @@ def main() -> None:
     from poseidon.data.feature_engine import FeatureEngine
     from poseidon.data.remote_repository import RemoteDataRepository
 
-    print("Phase 80: IC Re-run with Complete Funding History + CVD/Cascade")
+    print("IC Re-run with Complete Funding History + CVD/Cascade")
     print(f"Symbols: {SYMBOLS}")
     print(f"Market: {MARKET}")
     print(f"Interval: {INTERVAL}")
@@ -596,7 +596,7 @@ def main() -> None:
     repo = RemoteDataRepository.from_settings()
     engine = FeatureEngine()
 
-    # ── Step 1: Feature column discovery ──
+    # ── 1: Feature column discovery ──
     print("=" * 70)
     print("FEATURE COLUMN DISCOVERY")
     print("=" * 70)
@@ -605,15 +605,15 @@ def main() -> None:
         print("ERROR: No feature columns discovered. Exiting.")
         sys.exit(1)
 
-    # ── Step 2: Two-regime IC analysis ──
+    # ── 2: Two-regime IC analysis ──
     results = run_two_regime_ic_analysis(engine, repo, feature_columns)
 
-    # ── Step 3: Output tables ──
+    # ── 3: Output tables ──
     print_full_ic_table(results, feature_columns)
     print_event_count_table(results, feature_columns)
     print_comparison_table(results, feature_columns)
 
-    # ── Step 4: Save JSON artifact ──
+    # ── 4: Save JSON artifact ──
     save_json_artifact(results, feature_columns)
 
     # ── Summary ──
@@ -630,7 +630,7 @@ def main() -> None:
         "funding_extreme",
         "funding_direction",
     ]
-    print("\n  Funding feature status (was 'Insufficient' in Phase 75):")
+    print("\n  Funding feature status (was 'Insufficient' previously):")
     for f in funding_features:
         for regime_name in REGIMES:
             entry = results.get(regime_name, {}).get("h5", {}).get(f, {})

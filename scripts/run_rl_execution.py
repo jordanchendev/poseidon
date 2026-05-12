@@ -1,8 +1,8 @@
-"""Thin CLI client for /research/rl-execution/* (Phase 90 D-23 EXEC-04).
+"""Thin CLI client for /research/rl-execution/*.
 
 POSTs an RL execution run, polls until terminal, prints summary. NO qlib
 imports — this script must run on the cp313 host (or any environment with
-just `requests`) without crashing on missing qlib stack (D-23 invariant).
+just `requests`) without crashing on missing qlib stack.
 """
 
 from __future__ import annotations

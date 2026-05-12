@@ -1,8 +1,8 @@
 """Centrality (sub-signal overlap) analysis via pairwise Spearman + hierarchical clustering.
 
-Per D-09: Pairwise Spearman correlation matrix of sub-signal output series.
-Per D-10: Hierarchical clustering with configurable distance threshold.
-Per D-11: Input is strategy config with sub-signal list.
+- Pairwise Spearman correlation matrix of sub-signal output series.
+- Hierarchical clustering with configurable distance threshold.
+- Input is strategy config with sub-signal list.
 """
 
 from __future__ import annotations

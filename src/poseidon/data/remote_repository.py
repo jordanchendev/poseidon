@@ -9,13 +9,13 @@ Resilience:
   up to 3 times with exponential backoff + jitter
 
 Design decisions:
-- D-01: Same public method signatures as DataRepository
-- D-05: CB check -> retry -> HTTP request -> CB record
-- D-11: tenacity for retry with exponential backoff
-- D-12: CircuitBreaker thresholds configurable via Settings
-- D-13: httpx.Client (sync) -- Celery workers are sync
-- D-14: time.monotonic() in CircuitBreaker
-- D-15: Settings fields for all Thalassa connection params
+- Same public method signatures as DataRepository
+- CB check -> retry -> HTTP request -> CB record
+- tenacity for retry with exponential backoff
+- CircuitBreaker thresholds configurable via Settings
+- httpx.Client (sync) -- Celery workers are sync
+- time.monotonic() in CircuitBreaker
+- Settings fields for all Thalassa connection params
 """
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ class RemoteDataRepository:
     def _parse_ohlcv_response(self, data: dict) -> pd.DataFrame:
         """Parse OHLCVResponse JSON into a DataFrame with datetime index.
 
-        Includes adj_close column with NULL→close fallback (Phase 74 D-08).
+        Includes adj_close column with NULL→close fallback.
         """
         rows = data.get("data", [])
         if not rows:
@@ -127,7 +127,7 @@ class RemoteDataRepository:
         df = pd.DataFrame(rows)
         df["time"] = pd.to_datetime(df["time"])
         df = df.set_index("time")
-        # Phase 74 D-08: adj_close with fallback to close
+        # adj_close with fallback to close
         if "adj_close" in df.columns:
             df["adj_close"] = pd.to_numeric(df["adj_close"], errors="coerce")
             df["adj_close"] = df["adj_close"].fillna(df["close"])
@@ -288,7 +288,7 @@ class RemoteDataRepository:
         return self._parse_dataframe_response(resp.json())
 
     # ------------------------------------------------------------------
-    # Phase 66: Extended nonprice endpoints (6 methods)
+    # Extended nonprice endpoints (6 methods)
     # ------------------------------------------------------------------
 
     def read_fundamentals_extended_df(self, symbol: str, as_of_date: str | None = None) -> pd.DataFrame:
@@ -332,7 +332,7 @@ class RemoteDataRepository:
         return self._parse_dataframe_response(resp.json())
 
     def read_market_value(self, symbol: str, as_of_date: str | None = None) -> pd.DataFrame:
-        """Read daily market value (float shares * price) from Thalassa (Phase 71 D-06)."""
+        """Read daily market value (float shares * price) from Thalassa."""
         params: dict = {"symbol": symbol}
         if as_of_date is not None:
             params["as_of_date"] = as_of_date

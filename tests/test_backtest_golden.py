@@ -1,8 +1,8 @@
 """Golden reference tests for backtest engine — schema extension and regression.
 
-Phase 49: Signal schema golden reference tests.
-- Wave 1 (49-01/02): Schema extension + consumer integration tests
-- Wave 2 (49-03): Golden regression test locking _run_loop behavior before Phase 50
+Signal schema golden reference tests.
+- Schema extension + consumer integration tests
+- Golden regression test locking _run_loop behavior
 """
 
 from datetime import UTC
@@ -333,7 +333,7 @@ class TestSignalSchemaExtension:
 
 
 class TestBacktestGolden:
-    """Golden regression test — locks _run_loop behavior before Phase 50.
+    """Golden regression test — locks _run_loop behavior.
 
     DO NOT modify expected values unless intentionally changing backtest logic.
     If a test fails after a code change, that change broke backward compatibility.

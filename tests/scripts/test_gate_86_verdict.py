@@ -1,13 +1,13 @@
-"""Tests for Phase 86 decision-gate verdict script.
+"""Tests for the decision-gate verdict script.
 
-Covers (RESEARCH Validation Architecture → Test Map):
-- evaluate_symbol_gates returns correct PASS/FAIL per criterion (BTC actual values, D-04, D-13)
-- evaluate_symbol_gates returns correct PASS/FAIL per criterion (ETH actual values incl. null, D-04, D-06, D-13)
-- null metric → gate FAIL with reason (D-06)
-- Both-must-pass milestone aggregation truth table (D-05)
-- frozen_gate_anchor mismatch raises SystemExit (D-20 guard / RESEARCH Pattern 2)
-- CLI smoke against real Phase 85 artifacts → exit code 1 (D-13 expected FAIL)
-- Output files written with required sections/keys (D-08, D-09)
+Covers:
+- evaluate_symbol_gates returns correct PASS/FAIL per criterion (BTC actual values)
+- evaluate_symbol_gates returns correct PASS/FAIL per criterion (ETH actual values incl. null)
+- null metric → gate FAIL with reason
+- Both-must-pass milestone aggregation truth table
+- frozen_gate_anchor mismatch raises SystemExit (anchor guard)
+- CLI smoke against real artifacts → exit code 1 (expected FAIL)
+- Output files written with required sections/keys
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ import pytest
 # parents[0]=tests/scripts, parents[1]=tests, parents[2]=poseidon.
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "gate_86_verdict.py"
 
-# Aquarium root for locating real Phase 85 artifacts (parents[3] = aquarium/).
+# Aquarium root for locating real upstream artifacts (parents[3] = aquarium/).
 AQUARIUM_ROOT = Path(__file__).resolve().parents[3]
 REAL_BTC_WFE = AQUARIUM_ROOT / ".planning/phases/85-optuna-wfe-validation/artifacts/btcusdt_wfe.json"
 REAL_ETH_WFE = AQUARIUM_ROOT / ".planning/phases/85-optuna-wfe-validation/artifacts/ethusdt_wfe.json"
@@ -45,7 +45,7 @@ def _import_script():
 
 class TestEvaluateSymbolGates:
     def test_btc_actual_inputs(self, fixture_gate_yaml, fixture_btc_wfe_actual):
-        """D-04 + D-13: BTC actual verdict_inputs → gate_01 PASS, gate_02 FAIL, gate_03 FAIL, gate_04 PASS (passed_count=2, symbol FAIL)."""
+        """BTC actual verdict_inputs → gate_01 PASS, gate_02 FAIL, gate_03 FAIL, gate_04 PASS (passed_count=2, symbol FAIL)."""
         mod = _import_script()
         gates = mod.evaluate_symbol_gates(
             fixture_gate_yaml["criteria"],
@@ -58,7 +58,7 @@ class TestEvaluateSymbolGates:
         assert sum(1 for g in gates.values() if g["passed"]) == 2
 
     def test_eth_actual_inputs_with_null(self, fixture_gate_yaml, fixture_eth_wfe_actual):
-        """D-04 + D-06 + D-13: ETH actual verdict_inputs → gate_01 FAIL (0.0 not > 0), gate_02 PASS (0.0 < 0.40), gate_03 FAIL (0 < 100), gate_04 FAIL (null per D-06). passed_count=1."""
+        """ETH actual verdict_inputs → gate_01 FAIL (0.0 not > 0), gate_02 PASS (0.0 < 0.40), gate_03 FAIL (0 < 100), gate_04 FAIL (null). passed_count=1."""
         mod = _import_script()
         gates = mod.evaluate_symbol_gates(
             fixture_gate_yaml["criteria"],
@@ -67,13 +67,13 @@ class TestEvaluateSymbolGates:
         assert gates["gate_01"]["passed"] is False  # 0.0 > 0.0 is False (Pitfall 1)
         assert gates["gate_02"]["passed"] is True  # 0.0 < 0.40
         assert gates["gate_03"]["passed"] is False  # 0 < 100
-        assert gates["gate_04"]["passed"] is False  # null → FAIL per D-06
+        assert gates["gate_04"]["passed"] is False  # null → FAIL
         assert gates["gate_04"]["reason"] is not None  # null reason populated
         assert "null" in gates["gate_04"]["reason"].lower()
         assert sum(1 for g in gates.values() if g["passed"]) == 1
 
     def test_null_metric_fails_with_reason(self, fixture_gate_yaml, fixture_eth_wfe_null):
-        """D-06: synthetic isolation — null metric on gate_04 alone FAILs while gates 01-03 PASS."""
+        """Synthetic isolation — null metric on gate_04 alone FAILs while gates 01-03 PASS."""
         mod = _import_script()
         gates = mod.evaluate_symbol_gates(
             fixture_gate_yaml["criteria"],
@@ -90,7 +90,7 @@ class TestEvaluateSymbolGates:
 
 class TestMilestoneAggregation:
     def test_milestone_aggregation(self):
-        """D-05: both-must-pass — milestone PASS only when BOTH symbols passed_count >= min_pass.
+        """Both-must-pass — milestone PASS only when BOTH symbols passed_count >= min_pass.
         Truth table: PP=PASS, PF=FAIL, FP=FAIL, FF=FAIL.
         """
         mod = _import_script()
@@ -112,7 +112,7 @@ class TestMilestoneAggregation:
 
 class TestFrozenAnchor:
     def test_anchor_mismatch_fails_loud(self, fixture_gate_yaml, fixture_anchor_mismatch):
-        """RESEARCH Pattern 2 + Pitfall 3: artifact carrying anchor != gate_yaml['frozen_commit'] must SystemExit."""
+        """Artifact carrying anchor != gate_yaml['frozen_commit'] must SystemExit."""
         mod = _import_script()
         with pytest.raises(SystemExit) as excinfo:
             mod.assert_frozen_anchor(fixture_gate_yaml, fixture_anchor_mismatch)
@@ -124,7 +124,7 @@ class TestFrozenAnchor:
 
 class TestCLI:
     def test_cli_actual_artifacts(self, tmp_path):
-        """D-13: invoking the script with real Phase 85 artifacts must exit 1 (FAIL milestone)."""
+        """Invoking the script with real artifacts must exit 1 (FAIL milestone)."""
         if not SCRIPT_PATH.exists():
             pytest.skip(f"{SCRIPT_PATH} not yet implemented")
         proc = subprocess.run(
@@ -152,7 +152,7 @@ class TestCLI:
         )
 
     def test_outputs_written(self, tmp_path):
-        """D-08 + D-09: VERDICT.md and artifacts/gate_86_results.json must be created with required sections/keys."""
+        """VERDICT.md and artifacts/gate_86_results.json must be created with required sections/keys."""
         if not SCRIPT_PATH.exists():
             pytest.skip(f"{SCRIPT_PATH} not yet implemented")
         subprocess.run(
@@ -180,7 +180,7 @@ class TestCLI:
         assert verdict_md.exists()
         assert results_json.exists()
         md_text = verdict_md.read_text()
-        # All 6 D-08 sections must be present (header line + 5 ## sections)
+        # All 6 sections must be present (header line + 5 ## sections)
         assert "Frozen GATE commit" in md_text or "frozen GATE commit" in md_text.lower()
         assert "## Per-Gate Results" in md_text or "## Per-Symbol" in md_text
         assert "## Milestone Verdict" in md_text

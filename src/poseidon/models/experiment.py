@@ -17,9 +17,9 @@ from poseidon.models.base import Base
 class ExperimentRecord(Base):
     """Experiment run record for parameter search and optimization tracking.
 
-    Fields follow D-04 spec: id, study_name, config_json, metrics_json,
-    composite_score, wfe_score, status, market, interval, created_at, updated_at.
-    D-05: optuna_study_name and optuna_trial_number provide optional linkage
+    Fields: id, study_name, config_json, metrics_json, composite_score,
+    wfe_score, status, market, interval, created_at, updated_at.
+    optuna_study_name and optuna_trial_number provide optional linkage
     without foreign keys (Optuna manages its own tables in the optuna schema).
     """
 

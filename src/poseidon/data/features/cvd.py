@@ -21,7 +21,7 @@ class CVD(BaseFeature):
     """Cumulative Volume Delta -- net buying/selling pressure.
 
     Uses BVC to classify volume, then computes cumulative delta.
-    Exposes rolling change (not raw cumulative) for stationarity (D-09).
+    Exposes rolling change (not raw cumulative) for stationarity.
     """
 
     name = "cvd"
@@ -37,7 +37,7 @@ class CVD(BaseFeature):
         bvc = classify_volume(ohlcv)
         delta = bvc["buy_volume"] - bvc["sell_volume"]
         cvd = delta.cumsum()
-        # Rolling change for stationarity (D-09, Pitfall 4)
+        # Rolling change for stationarity (Pitfall 4)
         result = cvd - cvd.shift(period)
         result.name = col
         return result

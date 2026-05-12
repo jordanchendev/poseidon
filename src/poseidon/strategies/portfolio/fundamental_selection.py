@@ -4,14 +4,14 @@ Selects top N stocks monthly based on cross-sectional percentile ranking of:
   - Quality dimension: average of quality_profitability_z, quality_growth_z, quality_safety_z
   - Growth dimension: average of revenue_yoy rank + eps rank
   - Flow dimension: average of foreign_net_buy_ratio rank + foreign_holding_change rank
-  - Momentum dimension (Phase 71): average of 3M/6M/12M simple returns from OHLCV close
+  - Momentum dimension: average of 3M/6M/12M simple returns from OHLCV close
 
 Allocation methods:
   - equal_weight: 1/max_stocks capped by position_limit_pct (default)
   - market_cap_weight: market-value proportional with iterative position_limit_pct clamping
 
 Risk-filtered symbols (disposition, full_cash_delivery, attention) are excluded before scoring.
-All data reads use as_of_date for look-ahead bias prevention (D-03).
+All data reads use as_of_date for look-ahead bias prevention.
 """
 
 import contextlib
@@ -29,18 +29,18 @@ from poseidon.strategies.portfolio.schemas import Holding, TargetPosition
 logger = logging.getLogger(__name__)
 
 
-# --- Pydantic config models (per D-04) ---
+# --- Pydantic config models ---
 
 
 class HoldUntilCondition(BaseModel):
-    """Single hold_until exit condition (D-03)."""
+    """Single hold_until exit condition."""
 
     type: str  # "revenue_yoy_positive" | "score_above_threshold" | "max_holding_days"
     value: float | None = None  # threshold or max days
 
 
 class HoldUntilConfig(BaseModel):
-    """Configuration for hold_until exit conditions (D-03)."""
+    """Configuration for hold_until exit conditions."""
 
     conditions: list[HoldUntilCondition] = []
 
@@ -49,7 +49,7 @@ class ScoringWeightConfig(BaseModel):
     quality_weight: float = 0.333
     growth_weight: float = 0.333
     flow_weight: float = 0.334
-    momentum_weight: float = 0.0  # Phase 71 D-04: 4th dimension (0.25 when enabled)
+    momentum_weight: float = 0.0  # 4th dimension (0.25 when enabled)
 
 
 class FundamentalSelectionConfig(BaseModel):
@@ -61,19 +61,19 @@ class FundamentalSelectionConfig(BaseModel):
     scoring: ScoringWeightConfig = ScoringWeightConfig()
 
     # Selection parameters
-    max_stocks: int = 10  # D-05
+    max_stocks: int = 10
     min_score: float = 0.0  # minimum composite score
 
     # Allocation parameters
-    allocation_method: str = "equal_weight"  # D-06
+    allocation_method: str = "equal_weight"
     position_limit_pct: float = 0.10
     stop_loss_pct: float = 0.10
 
     # Rebalance parameters
     rebalance_frequency: str = "monthly"
-    rebalance_day_of_week: int = 4  # 0=Mon..4=Fri, only used when frequency=weekly (D-06)
-    rebalance_day_of_month: int = 15  # D-07
-    publication_lag_days: int = 10  # D-07
+    rebalance_day_of_week: int = 4  # 0=Mon..4=Fri, only used when frequency=weekly
+    rebalance_day_of_month: int = 15
+    publication_lag_days: int = 10
 
     @field_validator("rebalance_day_of_week")
     @classmethod
@@ -82,7 +82,7 @@ class FundamentalSelectionConfig(BaseModel):
             raise ValueError("rebalance_day_of_week must be 0-4 (Mon-Fri)")
         return v
 
-    # Phase 72: hold_until exit conditions
+    # Hold_until exit conditions
     hold_until: HoldUntilConfig | None = None
 
 
@@ -90,11 +90,11 @@ class FundamentalSelectionConfig(BaseModel):
 
 
 class MarketCapWeightedAllocator:
-    """Compute market-cap weighted allocations with position size caps (Phase 71 D-07).
+    """Compute market-cap weighted allocations with position size caps.
 
     Iterative clamping algorithm:
     1. Raw weights = market_value_i / sum(market_values)
-    2. Symbols missing market_value fall back to equal weight 1/N (D-08)
+    2. Symbols missing market_value fall back to equal weight 1/N
     3. Clamp any weight exceeding position_limit_pct
     4. Redistribute excess proportionally to unclamped symbols
     5. Repeat until convergence (at most N iterations)
@@ -131,7 +131,7 @@ class MarketCapWeightedAllocator:
             if s in known_mvs and total_mv > 0:
                 raw[s] = known_mvs[s] / total_mv
             else:
-                raw[s] = equal_w  # fallback per D-08
+                raw[s] = equal_w  # fallback to equal weight
 
         # Normalize so raw weights sum to 1.0 (mixed known/unknown case)
         raw_total = sum(raw.values())
@@ -164,16 +164,16 @@ class MarketCapWeightedAllocator:
 class FundamentalSelectionStrategy(PortfolioStrategy):
     """Quality+growth+flow composite scoring for TW stock selection.
 
-    Scoring dimensions (D-02):
+    Scoring dimensions:
       - Quality: percentile rank of avg(profitability_z, growth_z, safety_z)
       - Growth: avg of percentile rank(revenue_yoy) + percentile rank(eps)
       - Flow: avg of percentile rank(foreign_net_buy_ratio) + percentile rank(foreign_holding_change)
 
-    Risk filter (D-08, D-09 -- STRAT-02):
+    Risk filter:
       - Symbols under active risk flags (disposition, full_cash_delivery, attention)
         are excluded before scoring via read_risk_filters_active().
 
-    Look-ahead bias prevention (D-03):
+    Look-ahead bias prevention:
       - All data reads pass as_of_date=as_of.isoformat() to ensure
         only data available at the point-in-time is used.
     """
@@ -199,7 +199,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
         Args:
             universe_df: Not used directly -- symbols come from config.symbols.
                          Kept for PortfolioStrategy ABC compatibility.
-            as_of: Point-in-time date for look-ahead bias prevention (D-03).
+            as_of: Point-in-time date for look-ahead bias prevention.
 
         Returns:
             List of TargetPosition with equal weight allocation.
@@ -212,7 +212,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
         as_of_str = as_of.isoformat() if as_of else None
         lagged_as_of_str = (as_of - timedelta(days=cfg.publication_lag_days)).isoformat() if as_of else None
 
-        # Step 1: Risk filter (D-08, D-09 -- STRAT-02)
+        # Step 1: Risk filter
         excluded: set[str] = set()
         if as_of_str:
             excluded = set(self._repo.read_risk_filters_active(as_of_str))
@@ -237,7 +237,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
         fh_change_raw: dict[str, float] = {}
 
         for symbol in universe_symbols:
-            # Quality dimension: Thalassa quality_factor Z-score (D-02)
+            # Quality dimension: Thalassa quality_factor Z-score
             qf = self._repo.read_quality_factor(symbol, as_of_date=lagged_as_of_str)
             if not qf.empty:
                 last_row = qf.iloc[-1]
@@ -254,7 +254,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                 if q_vals:
                     quality_raw[symbol] = sum(q_vals) / len(q_vals)
 
-            # Growth dimension: revenue_yoy + eps (D-02)
+            # Growth dimension: revenue_yoy + eps
             # Thalassa returns monthly_rev_yoy; fall back to revenue_yoy for compatibility
             rev = self._repo.read_monthly_revenue(symbol, as_of_date=lagged_as_of_str)
             if not rev.empty:
@@ -270,7 +270,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                 if pd.notna(val):
                     eps_raw[symbol] = float(val)
 
-            # Flow dimension: institutional foreign buy + holding ratio change (D-02)
+            # Flow dimension: institutional foreign buy + holding ratio change
             # Use institutional_flow 'foreign' as net buy proxy,
             # and foreign_holding_ratio diff as holding change proxy
             try:
@@ -303,7 +303,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                         # Holding change = latest - previous (percentage point change)
                         fh_change_raw[symbol] = float(fh_series.iloc[-1] - fh_series.iloc[-2])
 
-        # Momentum dimension (Phase 71 D-01/D-03): 3M/6M/12M simple returns from adj_close
+        # Momentum dimension: 3M/6M/12M simple returns from adj_close
         momentum_raw: dict[str, float] = {}
         if cfg.scoring.momentum_weight > 0:
             for symbol in universe_symbols:
@@ -316,7 +316,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                     )
                     if ohlcv.empty or len(ohlcv) < 252:
                         continue
-                    # Phase 74 D-10: use adj_close for momentum (split/dividend adjusted)
+                    # Use adj_close for momentum (split/dividend adjusted)
                     price_col = "adj_close" if "adj_close" in ohlcv.columns else "close"
                     close = ohlcv[price_col]
                     rets = []
@@ -329,7 +329,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                 except Exception:
                     pass  # OHLCV may not be available for all symbols
 
-        # Step 4: Percentile rank each dimension (per D-02)
+        # Step 4: Percentile rank each dimension
         quality_rank = pd.Series(quality_raw).rank(pct=True)
         rev_rank = pd.Series(rev_yoy_raw).rank(pct=True)
         eps_rank = pd.Series(eps_raw).rank(pct=True)
@@ -345,7 +345,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
             if quality_score is None or pd.isna(quality_score):
                 continue
 
-            # Growth: average of revenue_yoy rank + eps rank (D-02)
+            # Growth: average of revenue_yoy rank + eps rank
             rev_r = rev_rank.get(symbol)
             eps_r = eps_rank.get(symbol)
             growth_parts = [v for v in [rev_r, eps_r] if v is not None and not pd.isna(v)]
@@ -353,7 +353,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                 continue
             growth_score = sum(growth_parts) / len(growth_parts)
 
-            # Flow: average of foreign_net_buy_ratio rank + foreign_holding_change rank (D-02)
+            # Flow: average of foreign_net_buy_ratio rank + foreign_holding_change rank
             nb_r = net_buy_rank.get(symbol)
             fhc_r = fh_change_rank.get(symbol)
             flow_parts = [v for v in [nb_r, fhc_r] if v is not None and not pd.isna(v)]
@@ -361,7 +361,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                 continue
             flow_score = sum(flow_parts) / len(flow_parts)
 
-            # Momentum dimension (Phase 71 D-04)
+            # Momentum dimension
             momentum_score = 0.0
             if cfg.scoring.momentum_weight > 0:
                 m_r = momentum_rank.get(symbol)
@@ -372,7 +372,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                     if cfg.scoring.momentum_weight > 0.1:
                         continue
 
-            # Composite (D-02/D-04): weighted average of dimensions
+            # Composite: weighted average of dimensions
             composite = (
                 cfg.scoring.quality_weight * quality_score
                 + cfg.scoring.growth_weight * growth_score
@@ -390,10 +390,10 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
             logger.info("No symbols passed composite scoring threshold")
             return []
 
-        # Step 7: Allocate weights (Phase 71 D-07)
+        # Step 7: Allocate weights
         selected_symbols = [sym for sym, _ in selected]
         if cfg.allocation_method == "market_cap_weight":
-            # Market-cap weighted allocation (D-07/D-08)
+            # Market-cap weighted allocation
             market_values: dict[str, float] = {}
             for sym in selected_symbols:
                 try:
@@ -403,7 +403,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                         if pd.notna(val) and float(val) > 0:
                             market_values[sym] = float(val)
                 except Exception:
-                    pass  # fallback to equal_weight for this symbol (D-08)
+                    pass  # fallback to equal_weight for this symbol
             allocator = MarketCapWeightedAllocator(position_limit_pct=cfg.position_limit_pct)
             weight_map = allocator.allocate(selected_symbols, market_values)
             targets = [
@@ -451,14 +451,14 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
             < 0.01
         )
 
-    # --- Phase 72: hold_until exit condition evaluation ---
+    # --- hold_until exit condition evaluation ---
 
     def check_hold_until(self, symbol: str, as_of: date, holding: Holding) -> bool:
         """Check if all hold_until conditions are still met for a position.
 
         Returns True if position should be kept, False if should be exited.
-        Missing data -> True (D-07: don't sell on missing data).
-        All conditions use AND logic (D-03): any condition failed -> exit.
+        Missing data -> True (don't sell on missing data).
+        All conditions use AND logic: any condition failed -> exit.
         """
         cfg = self.config
         if cfg.hold_until is None:
@@ -469,7 +469,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
                 if not self._check_revenue_yoy(symbol, as_of):
                     return False
             elif condition.type == "score_above_threshold":
-                pass  # reserved for future (RESEARCH.md open question #2)
+                pass  # reserved for future
             elif (
                 condition.type == "max_holding_days" and condition.value is not None and holding.entry_date is not None
             ):
@@ -480,7 +480,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
         return True  # all conditions met
 
     def _check_revenue_yoy(self, symbol: str, as_of: date) -> bool:
-        """Revenue YoY > 0 check with publication lag and missing data handling (D-05/D-06/D-07).
+        """Revenue YoY > 0 check with publication lag and missing data handling.
 
         Uses per-symbol monthly cache to avoid redundant Thalassa API calls in backtest.
         """
@@ -501,7 +501,7 @@ class FundamentalSelectionStrategy(PortfolioStrategy):
         rev = self._repo.read_monthly_revenue(symbol, as_of_date=lagged.isoformat())
         if rev.empty:
             self._revenue_cache[cache_key] = None  # None = missing -> hold
-            return True  # D-07: missing data -> hold
+            return True  # missing data -> hold
 
         yoy_col = "monthly_rev_yoy" if "monthly_rev_yoy" in rev.columns else "revenue_yoy"
         if yoy_col not in rev.columns:

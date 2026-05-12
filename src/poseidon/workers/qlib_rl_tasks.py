@@ -1,23 +1,23 @@
 """Qlib RL execution tasks -- runs in cp312 qlib-research container only.
 
-All qlib + Wave 1-3 imports are deferred to inside the task body to
-prevent ImportError in cp313 containers (api/cpu-worker/gpu-worker)
-that auto-discover this module via ``celery_app.conf.imports``.
+All qlib imports are deferred to inside the task body to prevent
+ImportError in cp313 containers (api/cpu-worker/gpu-worker) that
+auto-discover this module via ``celery_app.conf.imports``.
 
-Phase 90 Wave 4a (Plan 90-05a) Task 3 — drives Wave 1-3 modules end-to-end:
+Drives the RL execution modules end-to-end:
 
-  * Wave 1: ``poseidon.research.tx_basis_signal`` (basis_z + R2 trigger days)
-            ``poseidon.research.rl_aggregate`` (perf_full + naive baseline +
-            v18 |gap|/4 + aggregate_pair_metrics)
-  * Wave 2: ``poseidon.qlib.rl_dataset_adapter.write_pickle``
-            ``poseidon.qlib.rl_order_builder.build_orders``
-            ``poseidon.qlib.rl_runner.run_all_algos_legs`` (TWAP + VWAP;
-            PPO/OPDS raise NotImplementedError until Wave 3 / Plan 90-04
-            and surface as ``status="PARTIAL"``).
-  * Wave 2: ``poseidon.research.rl_comparison.build_comparison_table``
-            ``poseidon.research.rl_comparison.build_v18_gap_baseline``
+  * ``poseidon.research.tx_basis_signal`` (basis_z + R2 trigger days)
+    ``poseidon.research.rl_aggregate`` (perf_full + naive baseline +
+    v18 |gap|/4 + aggregate_pair_metrics)
+  * ``poseidon.qlib.rl_dataset_adapter.write_pickle``
+    ``poseidon.qlib.rl_order_builder.build_orders``
+    ``poseidon.qlib.rl_runner.run_all_algos_legs`` (TWAP + VWAP;
+    PPO/OPDS may raise NotImplementedError on older builds and surface
+    as ``status="PARTIAL"``).
+  * ``poseidon.research.rl_comparison.build_comparison_table``
+    ``poseidon.research.rl_comparison.build_v18_gap_baseline``
 
-Lifecycle (Phase 41 D-25, mirrored verbatim from
+Lifecycle (mirrored verbatim from
 ``poseidon.workers.qlib_tasks.qlib_train``):
 
     pending -> running -> succeeded | failed | cancelled
@@ -26,7 +26,7 @@ Cooperative cancel via :func:`_run_cancelled` — checked between every algo
 iteration AND between leg iterations (via the ``session`` + ``run_id``
 pass-through into ``run_all_algos_legs``).
 
-Result persistence (D-24 / T-90-04 path-traversal mitigation):
+Result persistence (path-traversal mitigation):
 
   * ``run_id`` is validated as a UUID via ``uuid.UUID(run_id)`` BEFORE any
     filesystem path is constructed.
@@ -34,10 +34,9 @@ Result persistence (D-24 / T-90-04 path-traversal mitigation):
     cannot escape AQUARIUM_ROOT because ``str(uuid.UUID(...))`` is a
     canonical 36-char hex / hyphen string.
 
-Q1 RESOLVED (RESEARCH §Open Questions, propagated via PATTERNS.md):
-  Naive intraday baseline is computed via the concrete helper
-  :func:`poseidon.research.rl_aggregate.compute_naive_intraday_ret` -- NOT
-  a pseudocode comment.
+Naive intraday baseline is computed via the concrete helper
+:func:`poseidon.research.rl_aggregate.compute_naive_intraday_ret` -- NOT
+a pseudocode comment.
 
 Pitfall 6 (qlib_tasks.py:286-287): exceptions are swallowed (status set to
 "failed"), NEVER re-raised. The qlib-research worker uses solo pool
@@ -103,15 +102,14 @@ def rl_execute(self, run_id: str) -> dict:
     row (or computed from the v18 evaluation window if ``run.dates`` is
     null).
 
-    All qlib + Wave 1-3 imports are inside the function body so cp313
-    containers that auto-discover this module via
-    ``celery_app.conf.imports`` do not crash on module load (PATTERNS.md
-    §Deferred Qlib Import).
+    All qlib imports are inside the function body so cp313 containers that
+    auto-discover this module via ``celery_app.conf.imports`` do not crash
+    on module load (PATTERNS.md §Deferred Qlib Import).
 
-    PPO / OPDS branches raise ``NotImplementedError`` until Wave 3 (Plan
-    90-04) lands; ``rl_runner.run_all_algos_legs`` surfaces those as
-    ``status="PARTIAL"`` per algo, so the run still completes and writes
-    TWAP/VWAP outputs successfully.
+    PPO / OPDS branches may raise ``NotImplementedError`` on older builds;
+    ``rl_runner.run_all_algos_legs`` surfaces those as ``status="PARTIAL"``
+    per algo, so the run still completes and writes TWAP/VWAP outputs
+    successfully.
 
     Args:
         run_id: UUID string identifying the RLExecutionRun row.
@@ -138,11 +136,10 @@ def rl_execute(self, run_id: str) -> dict:
                 )
                 return {"run_id": run_id, "status": run.status, "noop": True}
 
-            # 2. Resolve result_dir (T-90-04: validate run_id is UUID
-            # BEFORE constructing path — uuid.UUID(run_id) raises
-            # ValueError on malformed input; ``str(uuid.UUID(...))``
-            # canonicalizes to a 36-char hex string that cannot escape
-            # AQUARIUM_ROOT).
+            # 2. Resolve result_dir (validate run_id is UUID BEFORE
+            # constructing path — uuid.UUID(run_id) raises ValueError on
+            # malformed input; ``str(uuid.UUID(...))`` canonicalizes to a
+            # 36-char hex string that cannot escape AQUARIUM_ROOT).
             run_uuid = uuid.UUID(run_id)
             result_dir = AQUARIUM_ROOT / "local_dev" / "rl-execution" / "runs" / str(run_uuid)
             result_dir.mkdir(parents=True, exist_ok=True)
@@ -155,7 +152,7 @@ def rl_execute(self, run_id: str) -> dict:
             run.result_dir = str(result_dir)
             session.commit()
 
-            # 4. Defer-import qlib + Wave 1-3 modules (Pitfall 2).
+            # 4. Defer-import qlib modules (Pitfall 2).
             import pandas as pd
 
             from poseidon.data.remote_repository import RemoteDataRepository
@@ -237,8 +234,8 @@ def rl_execute(self, run_id: str) -> dict:
             etf_pkl = write_pickle(etf_1m, instrument="0050", out_path=result_dir / "etf_data.pkl")
 
             # 8. Build qlib Order pickles per leg (notional defaulted to
-            # 1M NTD per day per leg; Phase 90 verdict gate is
-            # scale-invariant in bps).
+            # 1M NTD per day per leg; verdict gate is scale-invariant in
+            # bps).
             notional = 1_000_000.0
             tx_orders = build_orders(
                 trigger_dates=list(trigger_dates),
@@ -285,7 +282,7 @@ def rl_execute(self, run_id: str) -> dict:
 
             # Naive PA = 0.0 bps for both legs by definition (the naive
             # baseline IS the open-to-close intraday TWAP, so per-leg PA
-            # vs that benchmark is zero by construction — D-13).
+            # vs that benchmark is zero by construction).
             naive_index = tx_naive_intraday_ret.index
             naive_zero_bps = pd.Series(0.0, index=naive_index)
             naive_pair_summary = aggregate_pair_metrics(
@@ -378,7 +375,7 @@ def rl_execute(self, run_id: str) -> dict:
             (result_dir / "summary.json").write_text(json.dumps(summary_payload, default=str, indent=2))
 
             # 15. Mark succeeded. Persist summary on the row for fast
-            # GET /runs/{id} reads (Wave 4b API consumes this).
+            # GET /runs/{id} reads (API consumes this).
             run = session.query(RLExecutionRun).filter_by(run_id=uuid.UUID(run_id)).one()
             run.summary = summary_payload
             run.status = "succeeded"
@@ -429,7 +426,7 @@ def _json_safe(d: dict) -> dict:
 # --- Re-export for celery_app autodiscovery sanity ---
 # Importing this module triggers the @celery_app.task decoration,
 # registering "poseidon.workers.qlib_tasks.rl_execute" on the
-# poseidon_qlib queue. Wave 4b's API will dispatch via:
+# poseidon_qlib queue. The API dispatches via:
 #   celery_app.send_task(
 #       "poseidon.workers.qlib_tasks.rl_execute",
 #       args=[str(run.run_id)],

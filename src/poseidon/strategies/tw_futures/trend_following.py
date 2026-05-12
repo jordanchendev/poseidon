@@ -1,6 +1,6 @@
 """TrendFollowingStrategy -- EMA crossover + ATR trailing stop for TX daily.
 
-Signal logic (D-09):
+Signal logic:
   - EMA(20) crosses above EMA(60) -> LONG entry
   - EMA(20) crosses below EMA(60) -> SHORT entry
   - ATR(14) * 2.0 trailing stop -> HOLD signal with updated_stop_loss metadata
@@ -91,7 +91,7 @@ class TrendFollowingStrategy(BaseStrategy):
         signal_time = self._extract_signal_time(features)
         signals: list[Signal] = []
 
-        # --- Entry logic: EMA crossover (D-09) ---
+        # --- Entry logic: EMA crossover ---
         if ema_fast > ema_slow and self._position_side != "long":
             # Close existing short position first
             if self._position_side == "short":
@@ -179,7 +179,7 @@ class TrendFollowingStrategy(BaseStrategy):
 
         Called by WalkForwardAnalyzer.analyze() between IS and OOS runs.
         Clears _position_side and _trailing_stop to prevent state leakage
-        across windows (Phase 82 WFE requirement).
+        across windows (WFE requirement).
         """
         self._reset_state()
 

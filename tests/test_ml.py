@@ -1,4 +1,4 @@
-"""Tests for Model Engine — Phase 3.
+"""Tests for Model Engine.
 
 Tests cover: BaseModel ABC, registry, lifecycle state machine,
 artifact storage, ModelManager, and XGBoost implementation.

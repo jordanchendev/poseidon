@@ -12,8 +12,8 @@ State transitions:
   HALF_OPEN --(failure)--> OPEN
 
 Design decisions:
-- D-12: threshold=5 default, recovery_timeout=60s default
-- D-14: Uses time.monotonic() for clock-immune timing
+- threshold=5 default, recovery_timeout=60s default
+- Uses time.monotonic() for clock-immune timing
 """
 
 from __future__ import annotations

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Phase 72 D-17: Phase 71 baseline vs Phase 72 (hold_until + revenue trigger) comparison.
+"""Baseline vs hold_until + revenue trigger comparison.
 
 Compares:
-  1. Phase 71 baseline (4D + market_cap_weight, no hold_until)
-  2. Phase 72 (4D + market_cap_weight + hold_until revenue trigger + max_holding_days=180)
+  1. Baseline (4D + market_cap_weight, no hold_until)
+  2. With hold_until (4D + market_cap_weight + hold_until revenue trigger + max_holding_days=180)
 
 Run on stormtrooper inside cpu-worker container:
   docker compose exec cpu-worker python scripts/compare_72_strategies.py
@@ -52,7 +52,7 @@ START = date(2023, 1, 1)
 END = date(2026, 4, 15)
 
 
-# Shared config for both variants (Phase 71 winner: 4D + market_cap_weight)
+# Shared config for both variants (prior winner: 4D + market_cap_weight)
 SHARED_CONFIG = {
     "strategy": "fundamental_selection",
     "name": "Fundamental Selection",
@@ -76,11 +76,11 @@ SHARED_CONFIG = {
 
 CONFIGS = [
     {
-        "label": "Phase 71 baseline (4D + market_cap_weight, no hold_until)",
+        "label": "Baseline (4D + market_cap_weight, no hold_until)",
         "config": {**SHARED_CONFIG},
     },
     {
-        "label": "Phase 72 (4D + market_cap_weight + hold_until revenue trigger)",
+        "label": "With hold_until (4D + market_cap_weight + revenue trigger)",
         "config": {
             **SHARED_CONFIG,
             "hold_until": {
@@ -95,7 +95,7 @@ CONFIGS = [
 
 
 def run_comparison():
-    """Run Phase 71 vs Phase 72 portfolio backtest comparison and print results."""
+    """Run baseline vs hold_until portfolio backtest comparison and print results."""
     repo = RemoteDataRepository.from_settings()
     cost_model = COST_MODELS["tw_stock"]
     results = []
@@ -188,7 +188,7 @@ def run_comparison():
 
     # Summary table
     print(f"\n{'=' * 60}")
-    print("COMPARISON SUMMARY (D-17: Phase 71 vs Phase 72)")
+    print("COMPARISON SUMMARY (baseline vs hold_until)")
     print(f"{'=' * 60}")
     print(f"Period: {START} to {END}")
     print(f"Universe: {len(TW_STOCK_SYMBOLS)} TW stock symbols")
@@ -196,7 +196,7 @@ def run_comparison():
     print()
 
     # Formatted comparison table
-    header = f"{'Metric':<25} | {'Phase 71 (baseline)':<25} | {'Phase 72 (hold_until)':<25}"
+    header = f"{'Metric':<25} | {'Baseline':<25} | {'With hold_until':<25}"
     print(header)
     print("-" * len(header))
 
@@ -223,15 +223,15 @@ def run_comparison():
 
     print()
 
-    # Look-ahead bias gate (D-18): flag Sharpe > 3.0
+    # Look-ahead bias gate: flag Sharpe > 3.0
     bias_warning = False
     for r in results:
         if "error" not in r and r.get("sharpe_ratio") is not None and r["sharpe_ratio"] > 3.0:
-            print(f"  WARNING (D-18): {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0 -- possible look-ahead bias!")
+            print(f"  WARNING: {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0 -- possible look-ahead bias!")
             bias_warning = True
 
     if not bias_warning:
-        print("  Look-ahead bias gate (D-18): PASSED (all Sharpe <= 3.0)")
+        print("  Look-ahead bias gate: PASSED (all Sharpe <= 3.0)")
 
     # JSON summary for easy parsing
     print(f"\n{'=' * 60}")

@@ -1,13 +1,13 @@
-"""Phase 90 / Wave 2 — RL comparison-table tests.
+"""RL comparison-table tests.
 
-Wave 2 (Plan 90-03) implements the 6-column × 9-row comparison-table
-emitter that Wave 5's verdict gate will consume. Tests cover:
+The comparison-table emitter (6-column × 9-row) is exercised here.
+Tests cover:
 
 * Shape (9 rows × 6 columns), column order, row order.
 * PARTIAL note handling for PPO / OPDS placeholders.
 * Sharpe Δ vs naive computation (Naive column = 0.0 by definition).
 * v18 baseline column routes through ``rl_aggregate.v18_gap_cost_per_leg``
-  (no formula re-implementation — D-16 single-source-of-truth invariant).
+  (no formula re-implementation — single-source-of-truth invariant).
 """
 
 from __future__ import annotations
@@ -62,11 +62,11 @@ def test_table_shape():
     per_algo = {
         "twap": _make_realistic_algo_dict(sh=2.0, cum=0.05, mdd=-0.02),
         "vwap": _make_realistic_algo_dict(sh=2.1, cum=0.06, mdd=-0.018),
-        "ppo": {"status": "PARTIAL", "error": "Wave 3 implements"},
-        "opds": {"status": "PARTIAL", "error": "Wave 3 implements"},
+        "ppo": {"status": "PARTIAL", "error": "implemented later"},
+        "opds": {"status": "PARTIAL", "error": "implemented later"},
     }
     naive = _make_realistic_algo_dict(sh=0.5, cum=0.05, mdd=-0.02)
-    # Naive baseline has zero leg-slippage by construction (D-13).
+    # Naive baseline has zero leg-slippage by construction.
     naive["mean_per_leg_slippage_tx_bps"] = 0.0
     naive["mean_per_leg_slippage_etf_bps"] = 0.0
     naive["mean_net_slippage_bps"] = 0.0
@@ -109,7 +109,7 @@ def test_table_shape():
     assert pd.isna(df.loc["Sharpe Δ vs naive", "PPO"])
     assert pd.isna(df.loc["Sharpe Δ vs naive", "OPDS"])
 
-    # Naive leg-slippage rows are 0.0 (D-13).
+    # Naive leg-slippage rows are 0.0.
     assert df.loc["TX leg avg slippage (bps)", "Naive"] == 0.0
     assert df.loc["0050 leg avg slippage (bps)", "Naive"] == 0.0
     assert df.loc["Net pair slippage (bps)", "Naive"] == 0.0
@@ -121,7 +121,7 @@ def test_v18_baseline_uses_aggregate():
     out = build_v18_gap_baseline(open_, prev_close, naive_ret, naive_ret)
 
     # Proves the dict came from aggregate_pair_metrics (which adds these keys
-    # on top of perf_full's 12-key contract — see Wave 1 SUMMARY).
+    # on top of perf_full's 12-key contract).
     assert "mean_net_slippage_bps" in out
     assert "mean_per_leg_slippage_tx_bps" in out
     assert "mean_per_leg_slippage_etf_bps" in out
@@ -170,5 +170,5 @@ def test_partial_algo_keeps_table_shape():
 
 
 def test_columns_constant_locked():
-    """Column-order constant matches the verdict-gate contract (D-16)."""
+    """Column-order constant matches the verdict-gate contract."""
     assert _COLUMNS == ["Naive", "TWAP", "VWAP", "PPO", "OPDS", "v18_gap_over_4"]

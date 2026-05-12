@@ -1,19 +1,19 @@
 #!/usr/bin/env python
 """TX TrendFollowingStrategy x NestedExecutor TWAP driver (ops re-run).
 
-Re-evaluates the v16 Phase 82 ``TrendFollowingStrategy`` (TX daily EMA(20/60)
+Re-evaluates the v16-era ``TrendFollowingStrategy`` (TX daily EMA(20/60)
 crossover + ATR(14) x 2.0 trailing stop) under the realistic execution-cost
-framework delivered in v19 Phase 93 (NestedExecutor outer=1d + inner=1m TWAP
-@ 09:00 集合競價 fill).
+framework delivered by NestedExecutor (outer=1d + inner=1m TWAP @ 09:00
+集合競價 fill).
 
 Context (NOT trying to find alpha)
 ==================================
-v16 Phase 82 already determined ``TrendFollowingStrategy`` failed Decision Gate
-2/4 under the simplified cost model (Phase 81 simplified-cost-model baseline:
-Sharpe **0.21** vs TX B&H Sharpe **0.88** on 2021-03-22..2026-04-24).  This
-re-run uses Phase 93's NestedExecutor framework to quantify the cost delta
-between the simplified Phase 82 cost model and a realistic 1-min TWAP fill at
-the next-day TWSE open (09:00..09:0N).  Expected outcomes:
+The v16-era evaluation already determined ``TrendFollowingStrategy`` failed
+Decision Gate 2/4 under the simplified cost model (simplified-cost-model
+baseline Sharpe **0.21** vs TX B&H Sharpe **0.88** on
+2021-03-22..2026-04-24).  This re-run uses the NestedExecutor framework to
+quantify the cost delta between the simplified cost model and a realistic
+1-min TWAP fill at the next-day TWSE open (09:00..09:0N).  Expected outcomes:
 
 * (b) ~70%: numerics slightly different, conclusion unchanged (still KILL).
 * (a) ~20%: realistic costs higher than simplified model, even worse.
@@ -22,13 +22,13 @@ the next-day TWSE open (09:00..09:0N).  Expected outcomes:
 The deliverable is **framework validation + a documented cost-delta on a real
 production-shape strategy**, not a deployable signal.
 
-Phase 90 KILL framing
-=====================
-Phase 90 KILLed the *basis-z* series (TX vs 0050 cross-asset basis arb) under
-6yr OOS pair Sharpe -1.42.  This driver targets the *daily EMA crossover*
-single-leg TX strategy from Phase 81/82, which is **a different strategy
-family** and NOT subject to the Phase 90 KILL framing.  The Phase 90 verdict
-stands independently.
+KILL framing
+============
+The basis-z series (TX vs 0050 cross-asset basis arb) was previously KILLed
+under 6yr OOS pair Sharpe -1.42.  This driver targets the daily EMA
+crossover single-leg TX strategy, which is **a different strategy family**
+and NOT subject to that KILL framing — the basis-arb verdict stands
+independently.
 
 Setup
 =====
@@ -43,24 +43,24 @@ Setup
   updates) are skipped — they do not create new fills.
 * Cost regimes compared (3-column comparison.parquet):
   - Naive: per-trade cost = 0, single-fill at 09:00 open price.
-  - Phase 82 simplified: ``CostModel("tw_futures")`` = ~2 bps round-trip
+  - Simplified: ``CostModel("tw_futures")`` = ~2 bps round-trip
     + 1 tick slippage (1 index point on TX ~= 22000 -> 0.45 bps).
   - NestedExecutor TWAP: realistic 1-min TWAP fills @ 09:00..09:0N with
-    qlib NestedExecutor + Phase 93 cost model.
+    qlib NestedExecutor + the production cost model.
 
 Default args (BYTE-FROZEN)
 ==========================
-* ``--window 2021-03-22:2026-04-30`` (matches Phase 81 baseline + Plan
-  92-2.5 TX qlib_data range).
+* ``--window 2021-03-22:2026-04-30`` (matches the prior simplified-cost
+  baseline + the TX qlib_data range).
 * ``--ema-fast 20 --ema-slow 60 --atr-period 14 --atr-multiplier 2.0``
   (TrendFollowingConfig defaults).
-* ``--inner-fill twap --twap-window 5min`` (Phase 93 D-13 default).
+* ``--inner-fill twap --twap-window 5min``.
 
 Usage
 =====
 Designed to run INSIDE the poseidon-qlib-research container on stormtrooper.
-Lazy qlib import via Pattern P9 means import + ``--help`` succeed on Mac dev
-host without qlib installed, but ``main()`` execution requires qlib.
+Lazy qlib import means import + ``--help`` succeed on Mac dev host without
+qlib installed, but ``main()`` execution requires qlib.
 
     # Smoke (recent 6 months, expect <10min)
     docker compose exec -T qlib-research \\
@@ -73,14 +73,14 @@ host without qlib installed, but ``main()`` execution requires qlib.
         python scripts/run_tx_trend_nested.py \\
             --out-dir /app/local_dev/nested-executor/runs/tx-trend-full
 
-Outputs (D-21 / D-17 / D-19 schemas)
-====================================
+Outputs
+=======
     local_dev/nested-executor/runs/<run_id>/
       qlib-data/{bin,pickle}/        # rl_data_adapter output (TX 1m only)
-      orders.csv                     # FileOrderStrategy schema (D-25 single-leg)
-      orders.pkl                     # qlib-RL-pipeline pickle (parity with Phase 90)
-      fill_log.parquet               # D-21 schema per-fill rows
-      comparison.parquet             # 3-cost comparison (Naive / Phase82-simplified / NestedExecutor TWAP)
+      orders.csv                     # FileOrderStrategy schema (single-leg)
+      orders.pkl                     # qlib-RL-pipeline pickle (parity with prior layout)
+      fill_log.parquet               # per-fill rows
+      comparison.parquet             # 3-cost comparison (Naive / Simplified / NestedExecutor TWAP)
       comparison_summary.md          # human-readable digest
       summary.json                   # run metadata + 3-regime metrics
 """
@@ -109,12 +109,12 @@ logger = logging.getLogger(__name__)
 THALASSA_BASE_URL = os.environ.get("POSEIDON_THALASSA_BASE_URL", "http://192.168.31.241:8001")
 THALASSA_API_KEY = os.environ.get("POSEIDON_THALASSA_API_KEY", "")
 
-DEFAULT_WINDOW = "2021-03-22:2026-04-30"  # Phase 81/82 + Plan 92-2.5 TX overlap
+DEFAULT_WINDOW = "2021-03-22:2026-04-30"  # prior-baseline + TX overlap
 DEFAULT_EMA_FAST = 20
 DEFAULT_EMA_SLOW = 60
 DEFAULT_ATR_PERIOD = 14
 DEFAULT_ATR_MULTIPLIER = 2.0
-DEFAULT_TWAP_WINDOW_MIN = 5  # Phase 93 D-13 default
+DEFAULT_TWAP_WINDOW_MIN = 5
 DEFAULT_NOTIONAL_TX = 1_000_000.0
 
 # Buffer days to load before window_start so EMA(60) + ATR(14) warm up before
@@ -139,7 +139,7 @@ def fetch_ohlcv_1min(
 
     Returns a DataFrame indexed by ``time`` with columns
     ``open / high / low / close / volume``.  TZ converted to Asia/Taipei
-    and filtered to TWSE day session 09:00..13:29 (Phase 93 RESEARCH §Pitfall 3).
+    and filtered to TWSE day session 09:00..13:29.
     """
     pieces: list[pd.DataFrame] = []
     cur = start
@@ -218,7 +218,7 @@ def compute_features(
     """Compute ema_{fast}, ema_{slow}, atr_{period} on daily OHLCV.
 
     Uses ``poseidon.data.features.technical.EMA / ATR`` for byte-identical
-    output to the v16 Phase 82 baseline (Phase 81/82 went through the same
+    output to the prior simplified-cost baseline (which went through the same
     FeatureEngine).
     """
     from poseidon.data.features.technical import ATR, EMA
@@ -345,8 +345,9 @@ def map_events_to_next_day_orders(
         # Close price on decision_date -> shares conversion (1 contract has
         # point_value=200 TWD, so for notional=1M, 1 contract suffices
         # when TX ~ 22000 and notional_pct=0.03 a la compare_81_tw_futures).
-        # Following Phase 93 convention: amount is "shares" but for TX futures
-        # 1 share == 1 contract.  Use notional/close to size, min 1 contract.
+        # Following NestedExecutor convention: amount is "shares" but for TX
+        # futures 1 share == 1 contract.  Use notional/close to size, min 1
+        # contract.
         close_price = float(daily.loc[decision_date, "close"])
         amount = max(1, int(notional_tx / max(close_price, 1.0)))
         direction = "buy" if ev["side"] == "BUY" else "sell"
@@ -365,23 +366,23 @@ def map_events_to_next_day_orders(
 
 
 # ---------------------------------------------------------------------------
-# Three-regime cost computation (Naive / Phase82-simplified / NestedExecutor TWAP)
+# Three-regime cost computation (Naive / Simplified / NestedExecutor TWAP)
 # ---------------------------------------------------------------------------
 
 
 def _compute_phase82_simplified_cost_bps(cost_model, fill_price: float, side: str) -> tuple[float, float]:
-    """Compute Phase 82 simplified-cost-model fee + slippage in bps for a TX fill.
+    """Compute the simplified-cost-model fee + slippage in bps for a TX fill.
 
     Returns (fee_bps, slippage_bps).
 
-    Phase 82 baseline used ``CostModel("tw_futures")``:
+    The simplified baseline used ``CostModel("tw_futures")``:
     * tax_rate = 0.00002 per round-trip leg (TX futures tax)
     * slippage_ticks = 1.0 (1 index point per fill)
     * point_value = 200 TWD/point, tick_size = 1 point
 
     Fee = (buy_commission + sell_commission + tax) per round-trip; for a
     single-side fill we apportion half here so the BUY and SELL fills sum to
-    the full round-trip cost — matches the BacktestRunner Phase 82 path which
+    the full round-trip cost — matches the BacktestRunner path which
     charges cost on entry only.
     """
     buy_rate = float(cost_model.buy_commission_rate)
@@ -403,8 +404,9 @@ def build_three_regime_comparison(
 ) -> pd.DataFrame:
     """Build the 3-cost-regime per-trigger-day comparison frame.
 
-    Columns (analogous to Phase 93 D-17 but adapted for single-leg TX trend
-    following — no v18 |gap|/4 column, replaced by Phase 82 simplified):
+    Columns are analogous to the multi-leg per-trigger-day schema but adapted
+    for single-leg TX trend following — no v18 |gap|/4 column, replaced by
+    the simplified baseline:
 
       trigger_date,
       naive_cost_bps,          naive_slippage_bps_per_leg,        naive_fill_failure,
@@ -461,12 +463,13 @@ def build_three_regime_comparison(
             bool(day_fills["fill_failure"].astype(bool).any()) if "fill_failure" in day_fills.columns else False
         )
 
-        # Avg fill price across TWAP window — used to compute Phase 82 1-tick slippage in bps.
+        # Avg fill price across TWAP window — used to compute the simplified
+        # 1-tick slippage in bps.
         avg_fill_price = float(day_fills["fill_price"].mean()) if "fill_price" in day_fills.columns else float("nan")
         if pd.isna(avg_fill_price) and "bar_close" in day_fills.columns:
             avg_fill_price = float(day_fills["bar_close"].mean())
 
-        # Phase 82 simplified — fee + 1-tick slippage at the avg fill price.
+        # Simplified — fee + 1-tick slippage at the avg fill price.
         phase82_fee_bps, phase82_slip_bps = _compute_phase82_simplified_cost_bps(cost_model, avg_fill_price, side)
 
         # Naive baseline: 0 cost, 0 slippage, single-fill at 09:00 open.
@@ -531,7 +534,7 @@ def compute_three_regime_summary(comparison: pd.DataFrame) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Single-leg orders pickle (parity with Phase 90 layout — not consumed by qlib)
+# Single-leg orders pickle (parity with multi-leg layout — not consumed by qlib)
 # ---------------------------------------------------------------------------
 
 
@@ -539,7 +542,7 @@ def _write_single_leg_orders_pkl(
     orders_csv_rows: list[dict],
     out_path: Path,
 ) -> Path:
-    """Write a single-leg orders pickle (parity with Phase 90 layout).
+    """Write a single-leg orders pickle (parity with the multi-leg layout).
 
     Schema mirrors ``rl_order_builder.build_orders_multileg`` output but for
     a single instrument (TX).  Not consumed by FileOrderStrategy — that
@@ -550,7 +553,7 @@ def _write_single_leg_orders_pkl(
     df_rows: list[dict] = []
     for r in orders_csv_rows:
         date = pd.Timestamp(r["datetime"]).normalize()
-        # OrderDir convention: 0 = SELL, 1 = BUY (Phase 90 rl_order_builder).
+        # OrderDir convention: 0 = SELL, 1 = BUY (from rl_order_builder).
         order_type = 1 if r["direction"] == "buy" else 0
         df_rows.append(
             {
@@ -588,12 +591,12 @@ def _detect_qlib_available() -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="TX TrendFollowing x NestedExecutor TWAP driver (v16 Phase 82 re-test under realistic execution).",
+        description="TX TrendFollowing x NestedExecutor TWAP driver — re-test under realistic execution.",
     )
     parser.add_argument(
         "--window",
         default=DEFAULT_WINDOW,
-        help=f"start:end (default {DEFAULT_WINDOW} — Phase 81/82 baseline + Plan 92-2.5 TX overlap)",
+        help=f"start:end (default {DEFAULT_WINDOW} — prior-baseline + TX overlap)",
     )
     parser.add_argument(
         "--ema-fast",
@@ -628,7 +631,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--twap-window",
         default=f"{DEFAULT_TWAP_WINDOW_MIN}min",
-        help=f"TWAP window length, e.g. '5min' (default '{DEFAULT_TWAP_WINDOW_MIN}min' — Phase 93 D-13)",
+        help=f"TWAP window length, e.g. '5min' (default '{DEFAULT_TWAP_WINDOW_MIN}min')",
     )
     parser.add_argument(
         "--out-dir",
@@ -799,7 +802,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     logger.info("qlib-data materialised at %s", qlib_paths["bin_dir"])
 
-    # Derive day calendar (Phase 93 [Rule 3] auto-fix).
+    # Derive day calendar — the rl_data_adapter emits only the 1min calendar.
     cal_dir = qlib_paths["bin_dir"] / "calendars"
     cal_1min_path = cal_dir / "1min.txt"
     cal_day_path = cal_dir / "day.txt"
@@ -866,10 +869,10 @@ def main(argv: list[str] | None = None) -> int:
 
     fill_log = getattr(result, "fill_log", None)
 
-    # 8. Driver-side fill_log synthesis fallback (Phase 93 [Rule 3] pattern).
+    # 8. Driver-side fill_log synthesis fallback.
     # qlib v0.9.7 indicator_dict aggregates across instruments, so the
-    # harvest_fill_log helper may return empty rows.  Synthesise D-21 rows
-    # from orders.csv + 1m bars when that happens.
+    # harvest_fill_log helper may return empty rows.  Synthesise the per-fill
+    # rows from orders.csv + 1m bars when that happens.
     if fill_log is None or len(fill_log) == 0:
         logger.info("harvest_fill_log returned empty — synthesising fill_log from orders + 1m bars")
         from poseidon.backtest.nested_runner import _D21_COLUMNS, _compute_fill_cost_bps
@@ -972,12 +975,12 @@ def main(argv: list[str] | None = None) -> int:
             "|---|---:|---:|\n"
             f"| Naive (single-fill, 0 cost) | {three_regime['naive_mean_cost_bps']:.3f} "
             f"| {three_regime['naive_mean_slippage_bps']:.3f} |\n"
-            f"| Phase 82 simplified (CostModel.tw_futures + 1-tick slip) "
+            f"| Simplified (CostModel.tw_futures + 1-tick slip) "
             f"| {three_regime['phase82_mean_cost_bps']:.3f} | {three_regime['phase82_mean_slippage_bps']:.3f} |\n"
             f"| NestedExecutor TWAP-{twap_window_minutes}min @ 09:00 "
             f"| {three_regime['nested_twap_mean_cost_bps']:.3f} | {three_regime['nested_twap_mean_slippage_bps']:.3f} |\n\n"
             "## Cost Deltas\n\n"
-            f"- NestedExecutor TWAP - Phase 82 simplified = "
+            f"- NestedExecutor TWAP - Simplified = "
             f"**{three_regime['cost_delta_nested_minus_phase82_bps']:+.3f} bps** per fill\n"
             f"- NestedExecutor TWAP - Naive = "
             f"**{three_regime['cost_delta_nested_minus_naive_bps']:+.3f} bps** per fill\n"

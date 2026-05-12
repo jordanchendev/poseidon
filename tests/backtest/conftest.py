@@ -1,4 +1,4 @@
-"""Phase 85 backtest test fixtures.
+"""Backtest test fixtures.
 
 Adds:
   - fixture_270d_1m_ohlcv : synthetic 270d 1m random walk (388_800 bars, seed=85)
@@ -9,8 +9,8 @@ minus the engineered sweep candle (driver tests are signal-agnostic per
 PATTERNS.md §5).
 
 Reference:
-  .planning/phases/85-optuna-wfe-validation/85-PATTERNS.md  §5
-  .planning/phases/85-optuna-wfe-validation/85-VALIDATION.md  Wave 0
+  Prior patterns and validation notes for this driver suite.
+
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ def _build_270d_1m_random_walk(
 ) -> pd.DataFrame:
     """Pure random-walk 1m OHLCV.
 
-    Uses seed=85 to avoid collision with the Phase 84 sweep fixture (seed=42).
+    Uses seed=85 to avoid collision with the prior sweep fixture (seed=42).
     No engineered sweep candle: driver tests verify orchestration behaviour
     (window count, param remap, schema), not signal detection counts.
     """
@@ -96,7 +96,7 @@ def fixture_postgres_url() -> str:
 def fixture_feature_engine():
     """Default ``FeatureOrchestrator`` (alias ``FeatureEngine``) with no DB repo.
 
-    Phase 85 driver tests run on synthetic in-memory OHLCV — no remote loads
+    Driver tests run on synthetic in-memory OHLCV — no remote loads
     required. ``compute_from_df`` is the only path the driver hits.
     """
     from poseidon.data.feature_engine import FeatureEngine

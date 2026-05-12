@@ -18,7 +18,7 @@ from poseidon.strategies.portfolio.schemas import TargetPosition
 logger = logging.getLogger(__name__)
 
 
-# --- Pydantic config models (per D-05) ---
+# --- Pydantic config models ---
 
 
 class MomentumConfig(BaseModel):
@@ -56,12 +56,12 @@ class CryptoTrendConfig(BaseModel):
 class CryptoTrendStrategy(PortfolioStrategy):
     """4h EMA crossover + funding rate filter for BTC/ETH perps.
 
-    Signal logic (per D-03):
+    Signal logic:
       - EMA(12) > EMA(26) on 4h close -> long
       - EMA(12) < EMA(26) on 4h close -> short
       - Neutral if equal (no position)
 
-    Funding filter (per D-04):
+    Funding filter:
       - Funding rate > max_funding_rate_long -> block long (too expensive to hold)
       - Funding rate < max_funding_rate_short -> block short (too expensive to hold)
     """
@@ -115,14 +115,14 @@ class CryptoTrendStrategy(PortfolioStrategy):
                 )
                 continue
 
-            # 2. Compute EMA crossover signal (per D-03)
+            # 2. Compute EMA crossover signal
             signal = self._compute_ema_signal(ohlcv, cfg.momentum.ema_fast_period, cfg.momentum.ema_slow_period)
 
             if signal == "neutral":
                 logger.info("Neutral EMA signal for %s, skipping", symbol)
                 continue
 
-            # 3. Funding rate filter (per D-04)
+            # 3. Funding rate filter
             funding_rate = self._repo.read_latest_funding_rate(symbol)
 
             if funding_rate is not None:

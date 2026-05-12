@@ -27,7 +27,7 @@ def save_snapshot(
     source_type: str,
     filter_config: dict | None = None,
 ) -> UniverseSnapshotRecord:
-    """Persist a full universe snapshot (D-10: full snapshot, not diffs).
+    """Persist a full universe snapshot (full snapshot, not diffs).
 
     Args:
         db: SQLAlchemy session.
@@ -70,7 +70,7 @@ def get_latest_snapshot(db: Session, market: str) -> UniverseSnapshotRecord | No
 
 
 def get_snapshot_at(db: Session, market: str, target_date: datetime) -> UniverseSnapshotRecord | None:
-    """Get latest snapshot at or before target_date for backtest reproducibility (D-11).
+    """Get latest snapshot at or before target_date for backtest reproducibility.
 
     Args:
         db: SQLAlchemy session.

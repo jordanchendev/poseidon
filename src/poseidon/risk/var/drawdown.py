@@ -1,9 +1,9 @@
 """Drawdown monitoring with high-water mark tracking and alert publishing.
 
-Per D-09: Portfolio-level HWM tracking.
-Per D-10: Three-tier progressive alerts at configurable thresholds.
-Per D-11: Alert events published to Redis Streams poseidon:alerts:risk.
-Per D-12: VaR limit breach also publishes alert event.
+- Portfolio-level HWM tracking.
+- Three-tier progressive alerts at configurable thresholds.
+- Alert events published to Redis Streams poseidon:alerts:risk.
+- VaR limit breach also publishes alert event.
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ class DrawdownMonitor:
         limit: float,
         method: str,
     ) -> dict:
-        """Publish VaR limit breach alert per D-12.
+        """Publish VaR limit breach alert.
 
         Called by VaR computation tasks when VaR exceeds the configured
         limit.  Uses a different ``event_type`` from drawdown alerts but

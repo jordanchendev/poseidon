@@ -1,10 +1,10 @@
-"""Phase 90 / Wave 1 — RL aggregator unit tests.
+"""RL aggregator unit tests.
 
-Wave 1 implementations (replacing Wave 0 stubs) of:
+Covers:
 
-  * ``test_pa_to_bps_correct``                — D-15 separate + net slippage.
-  * ``test_naive_baseline_matches_v18``       — D-16 |gap|/4 cost formula.
-  * ``test_naive_intraday_ret_first_to_last_bar`` — Q1 RESOLVED golden test.
+  * ``test_pa_to_bps_correct``                — separate + net slippage.
+  * ``test_naive_baseline_matches_v18``       — v18 |gap|/4 cost formula.
+  * ``test_naive_intraday_ret_first_to_last_bar`` — Q1 golden test.
   * ``test_pair_metrics_golden``              — perf_full Sharpe/cum/MDD.
 """
 
@@ -28,7 +28,7 @@ def _trigger_dates(n: int, start: str = "2020-01-01") -> pd.DatetimeIndex:
 
 
 def test_pa_to_bps_correct():
-    """PA(bps) → mean_per_leg + mean_net diagnostics; D-15 separate+net."""
+    """PA(bps) → mean_per_leg + mean_net diagnostics."""
     dates = _trigger_dates(3)
     tx_pa = pd.Series([5.0, 5.0, 5.0], index=dates)
     etf_pa = pd.Series([3.0, 3.0, 3.0], index=dates)
@@ -42,7 +42,7 @@ def test_pa_to_bps_correct():
 
 
 def test_naive_baseline_matches_v18():
-    """v18 |gap|/4 cost formula — D-16 verbatim ``np.maximum(0.00032, |gap|/4)``."""
+    """v18 |gap|/4 cost formula — verbatim ``np.maximum(0.00032, |gap|/4)``."""
     # Construct gap = (open - prev_close) / prev_close = [0.0, 0.02, -0.05]
     tx_open = pd.Series([100.0, 102.0, 95.0], index=_trigger_dates(3))
     prev_close = pd.Series([100.0, 100.0, 100.0], index=_trigger_dates(3))

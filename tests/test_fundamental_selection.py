@@ -486,7 +486,7 @@ class TestRiskFilter:
 
 
 class TestLookAheadPrevention:
-    """Tests for D-03 look-ahead bias prevention."""
+    """Tests for look-ahead bias prevention."""
 
     def test_as_of_date_passed_to_all_readers(self):
         """Lagged readers use publication lag; flow readers use current as_of date."""
@@ -535,12 +535,12 @@ class TestValidateConfig:
 
 
 # ---------------------------------------------------------------------------
-# TestFourDimensionScoring (Phase 71)
+# TestFourDimensionScoring
 # ---------------------------------------------------------------------------
 
 
 class TestFourDimensionScoring:
-    """Phase 71: 4-dimension scoring with momentum (D-04)."""
+    """4-dimension scoring with momentum."""
 
     def test_validate_config_4d_weights_sum_to_one(self):
         config = FundamentalSelectionConfig(

@@ -1,7 +1,7 @@
 """Parameter search pipeline with holdout, WFE gate, and experiment tracking.
 
 Orchestrates: holdout split -> Optuna search -> WFE validation -> experiment logging.
-Per D-15: each (market, interval) gets its own study. 50-100 trials per study.
+Each (market, interval) gets its own study. 50-100 trials per study.
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ class SearchConfig:
     """Configuration for a parameter search run."""
 
     n_trials: int = 50
-    max_trials: int = 100  # hard cap per D-05
-    min_wfe: float = 0.50  # WFE gate threshold per D-11
+    max_trials: int = 100  # hard cap
+    min_wfe: float = 0.50  # WFE gate threshold
     holdout: HoldoutConfig = field(default_factory=HoldoutConfig)
     walk_forward: WalkForwardConfig = field(default_factory=WalkForwardConfig)
     seed: int = 42
@@ -86,8 +86,8 @@ class ParameterSearchPipeline:
         initial_capital: float = 1_000_000.0,
         sizing_config: SizingConfig | None = None,
         db_session: Any | None = None,
-        strategy_factory: Any | None = None,  # D-02: injectable strategy factory
-        fill_model: FillModel | None = None,  # D-05: injectable fill model for PESSIMISTIC mode
+        strategy_factory: Any | None = None,  # injectable strategy factory
+        fill_model: FillModel | None = None,  # injectable fill model for PESSIMISTIC mode
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
@@ -166,11 +166,11 @@ class ParameterSearchPipeline:
             # Convert UUID to string for JSON serialization in experiment records
             return str(mv_id) if mv_id is not None else None
 
-        # Strategy factory for optimizer (D-02): polymorphic via build_trial_factory()
+        # Strategy factory for optimizer: polymorphic via build_trial_factory()
         if self.strategy_factory is not None:
             # Use injected factory -- call build_trial_factory() to get
             # (trial_strategy_factory_fn, param_bounds) without importing strategy internals.
-            # This keeps param_search.py truly polymorphic per D-02.
+            # This keeps param_search.py truly polymorphic.
             trial_strategy_factory, param_space = self.strategy_factory.build_trial_factory(
                 symbol=symbol,
                 market=market,

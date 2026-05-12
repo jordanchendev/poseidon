@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Phase 71 D-14: 4-way PortfolioBacktester comparison.
+"""4-way PortfolioBacktester comparison.
 
 Compares:
-  1. 3-dimension + equal_weight (Phase 67 baseline)
+  1. 3-dimension + equal_weight (prior baseline)
   2. 4-dimension + equal_weight (momentum added)
   3. 3-dimension + market_cap_weight (allocation changed)
-  4. 4-dimension + market_cap_weight (full Phase 71)
+  4. 4-dimension + market_cap_weight (full new variant)
 
 Run on stormtrooper inside cpu-worker container:
   docker compose exec cpu-worker python scripts/compare_71_strategies.py
@@ -54,10 +54,10 @@ START = date(2023, 1, 1)
 END = date(2026, 4, 15)
 
 
-# 4 config variants per D-14
+# 4 config variants
 CONFIGS = [
     {
-        "label": "3D + equal_weight (Phase 67 baseline)",
+        "label": "3D + equal_weight (prior baseline)",
         "config": {
             "strategy": "fundamental_selection",
             "name": "Fundamental Selection",
@@ -126,7 +126,7 @@ CONFIGS = [
         },
     },
     {
-        "label": "4D + market_cap_weight (full Phase 71)",
+        "label": "4D + market_cap_weight (full new variant)",
         "config": {
             "strategy": "fundamental_selection",
             "name": "Fundamental Selection",
@@ -231,13 +231,13 @@ def run_comparison():
 
     # Summary table
     print(f"\n{'=' * 60}")
-    print("COMPARISON SUMMARY (D-14)")
+    print("COMPARISON SUMMARY")
     print(f"{'=' * 60}")
     print(f"Period: {START} to {END}")
     print(f"Universe: {len(TW_STOCK_SYMBOLS)} TW stock symbols")
     print()
 
-    # Look-ahead bias gate (T-71-10): flag Sharpe > 3.0
+    # Look-ahead bias gate: flag Sharpe > 3.0
     for r in results:
         if "error" not in r and r.get("sharpe_ratio") is not None and r["sharpe_ratio"] > 3.0:
             print(f"  WARNING: {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0 -- possible look-ahead bias!")

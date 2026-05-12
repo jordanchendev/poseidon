@@ -238,7 +238,7 @@ class WalkForwardAnalyzer:
         logger.info("Walk-forward: %d windows, sequential execution", len(windows))
 
         for i, ((train_start, train_end), (test_start, test_end)) in enumerate(windows):
-            # Preserve tz-aware datetime index (Rule 3 fix for Phase 85): companion
+            # Preserve tz-aware datetime index: companion
             # features (open_interest, funding_rates) align via _align_*_to_index
             # against ohlcv.index using datetime-based reindex. .reset_index(drop=True)
             # converts the index to int64 and breaks companion feature alignment with

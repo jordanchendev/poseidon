@@ -1,4 +1,4 @@
-"""Tests for SignalRepository.latest_passed filter behaviour (Phase 89-01 Task 2).
+"""Tests for SignalRepository.latest_passed filter behaviour.
 
 Mirrored from test_orders_signal_id.py::TestSignalRepositoryLatestPassed and
 exists as a discrete artifact per the plan must_haves manifest. The shared

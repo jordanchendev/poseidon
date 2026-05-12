@@ -149,11 +149,11 @@ class PortfolioBacktester:
             )
 
         # Snap rebalance dates to nearest trading day
-        backward_snap = frequency == "weekly"  # D-05: weekly snaps to prior trading day
+        backward_snap = frequency == "weekly"  # weekly snaps to prior trading day
         rebalance_date_set = set()
         for rd in rebalance_dates:
             if backward_snap:
-                # D-05: snap to nearest prior trading day
+                # Snap to nearest prior trading day
                 candidates = [td for td in all_dates if td <= rd]
                 snap_date = candidates[-1] if candidates else all_dates[0]
             else:
@@ -180,7 +180,7 @@ class PortfolioBacktester:
             )
             trades.extend(stop_loss_trades)
 
-            # Step 4b: Hold_until exits (Phase 72 D-11: after stop_loss, before rebalance)
+            # Step 4b: Hold_until exits (after stop_loss, before rebalance)
             cash, current_holdings, hold_until_trades = self._apply_hold_until_exits(
                 cash,
                 current_holdings,
@@ -194,7 +194,7 @@ class PortfolioBacktester:
             if d in rebalance_date_set:
                 targets = strategy.select_stocks(universe_df=pd.DataFrame(), as_of=d)
 
-                # Phase 72 D-04/D-13: retain hold_until valid positions not in new targets
+                # Retain hold_until valid positions not in new targets
                 if hasattr(strategy, "check_hold_until") and current_holdings:
                     target_symbols = {t.symbol for t in targets}
                     for sym, h in list(current_holdings.items()):
@@ -264,7 +264,7 @@ class PortfolioBacktester:
     ) -> float:
         """Compute net asset value: cash + market value of all holdings.
 
-        Uses adj_close for mark-to-market valuation (D-09).
+        Uses adj_close for mark-to-market valuation.
         """
         nav = cash
         for sym, h in holdings.items():
@@ -279,7 +279,7 @@ class PortfolioBacktester:
         """Get close price for a date from an OHLCV DataFrame.
 
         Handles both Timestamp and date indices.
-        Used for order execution fill prices (D-12: close for fills).
+        Used for order execution fill prices (close for fills).
         """
         # Try direct lookup with Timestamp
         ts = pd.Timestamp(d)
@@ -295,7 +295,7 @@ class PortfolioBacktester:
         return None
 
     def _get_adj_close_price(self, df: pd.DataFrame, d: date) -> float | None:
-        """Get adj_close for return calculation, falling back to close (D-09).
+        """Get adj_close for return calculation, falling back to close.
 
         Used for ALL backtester price lookups: mark-to-market, order fills,
         stop loss, and hold_until exit valuation. Unified to avoid mixing
@@ -542,7 +542,7 @@ class PortfolioBacktester:
         d: date,
         ohlcv_dict: dict[str, pd.DataFrame],
     ) -> tuple[float, dict[str, Holding], list[dict]]:
-        """Liquidate holdings when daily adj_close breaches configured stop loss (D-09)."""
+        """Liquidate holdings when daily adj_close breaches configured stop loss."""
         trade_records: list[dict] = []
 
         for symbol, holding in list(holdings.items()):
@@ -587,10 +587,10 @@ class PortfolioBacktester:
         ohlcv_dict: dict[str, pd.DataFrame],
         strategy: PortfolioStrategy,
     ) -> tuple[float, dict[str, Holding], list[dict]]:
-        """Exit holdings whose hold_until conditions are no longer met (D-02/D-09)."""
+        """Exit holdings whose hold_until conditions are no longer met."""
         trade_records: list[dict] = []
 
-        # Duck-typing: only check if strategy supports hold_until (D-12: don't modify ABC)
+        # Duck-typing: only check if strategy supports hold_until (don't modify ABC)
         if not hasattr(strategy, "check_hold_until"):
             return cash, holdings, trade_records
 
@@ -602,7 +602,7 @@ class PortfolioBacktester:
             if strategy.check_hold_until(symbol, d, holding):
                 continue  # conditions still met, keep holding
 
-            # Hold_until condition failed -> exit at adj_close price (D-09)
+            # Hold_until condition failed -> exit at adj_close price
             price = self._get_adj_close_price(ohlcv_dict.get(symbol, pd.DataFrame()), d)
             if price is None:
                 continue

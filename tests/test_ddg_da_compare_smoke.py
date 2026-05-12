@@ -1,26 +1,26 @@
-"""Phase 92 Plan 92-04 — stormtrooper end-to-end smoke (D-25/D-26/D-28).
+"""DDG-DA comparison stormtrooper end-to-end smoke.
 
 Module-level pytestmark: skip on Mac collect; only runs inside qlib-research
-container with STORMTROOPER=1 env var (Pattern S4 from Phase 94/95 PATTERNS.md).
+container with STORMTROOPER=1 env var (Pattern S4).
 
 What this exercises:
   - poseidon.autoresearch.ddg_da_compare.run_comparison(...) end-to-end with
-    smoke=True (last 2 walk-forward folds only per D-25)
-  - PoseidonDDGDA wrapper (Plan 92-02) actually loads + emits YAML +
+    smoke=True (last 2 walk-forward folds only)
+  - PoseidonDDGDA wrapper actually loads + emits YAML +
     Rolling.run() against the qlib_data tree at
-    /root/.qlib/qlib_data/poseidon_tw_futures/ (Plan 92-2.5)
+    /root/.qlib/qlib_data/poseidon_tw_futures/
   - poseidon.autoresearch.ddg_da_verdict.choose_verdict + write_verdict_md
-    (Plan 92-04 T1) consume the smoke output
+    consume the smoke output
 
-Pass conditions (D-26):
+Pass conditions:
   - run_dir/with_ddg_da/, run_dir/without_ddg_da/, comparison_summary.parquet,
     verdict.md all exist
   - Per-window Sharpe values in comparison_summary are non-NaN
   - verdict.md contains one of {rescue, partial-help, no-effect,
     no-effect (insufficient power)} keyword
-  - Wall-clock <= 45 minutes (RESEARCH §Pitfall 5 / VALIDATION.md feedback
+  - Wall-clock <= 45 minutes (per Pitfall 5 / feedback
     latency budget; smoke uses last-2-fold so should be far under)
-  - Smoke verdict can be ANY of the four legal keywords (D-26 explicitly
+  - Smoke verdict can be ANY of the four legal keywords (explicitly
     does NOT require rescue — pipeline-pass is the goal)
 """
 
@@ -42,17 +42,17 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-# Per-prong wall-clock budget — RESEARCH §Pitfall 5 / VALIDATION.md feedback
+# Per-prong wall-clock budget — Pitfall 5 / feedback
 # latency.
 _BUDGET_SEC = 45 * 60.0  # 45 minutes
 
 
 def _smoke_dir(prong: str) -> Path:
-    """Resolve .planning/phases/92-*/smoke/{prong}/ from this file's path.
+    """Resolve the smoke output directory for the given prong.
 
     poseidon/tests/test_ddg_da_compare_smoke.py → parents[0]=tests/,
-    parents[1]=poseidon/, parents[2]=aquarium root (where .planning/ lives).
-    NEVER take a path from user input — T-92-02 Pitfall 6.
+    parents[1]=poseidon/, parents[2]=aquarium root (where the planning tree lives).
+    NEVER take a path from user input — Pitfall 6.
 
     Inside the qlib-research container the bind-mount maps
     aquarium/poseidon/tests → /app/tests, so parents[2] is "/" rather than the
@@ -72,7 +72,7 @@ def _smoke_dir(prong: str) -> Path:
 def _runs_dir() -> Path:
     """Resolve local_dev/ddg-da/runs/ host-visible bind-mounted location.
 
-    D-19 / RESEARCH §Persistence layout. Inside qlib-research container this
+    Per the persistence layout. Inside qlib-research container this
     is /app/local_dev/ddg-da/runs/ (bind-mounted to host
     aquarium/local_dev/ddg-da/runs/).
     """
@@ -88,13 +88,13 @@ def _runs_dir() -> Path:
 
 @pytest.mark.stormtrooper
 def test_ddg_da_compare_smoke():
-    """D-25/D-26/D-28: end-to-end with last 2 walk-forward folds only."""
+    """End-to-end with last 2 walk-forward folds only."""
     pytest.importorskip("qlib")
 
     smoke_dir = _smoke_dir("DDGDA-SMOKE")
     runs_dir = _runs_dir()
 
-    # T-92-02: full UUID4 for path-traversal safety; never accept caller-
+    # Full UUID4 for path-traversal safety; never accept caller-
     # supplied id.
     run_id = str(uuid.uuid4())
     run_dir = runs_dir / run_id
@@ -110,12 +110,12 @@ def test_ddg_da_compare_smoke():
             write_verdict_md,
         )
 
-        # Plan 92-2.5 Option B segments — train 33mo / test 28-fold
+        # Option B segments — train 33mo / test 28-fold
         # (2024-01-01..2026-04-30). Smoke trims to last 2 folds via
         # smoke=True flag in run_comparison.
-        # Plan 92-04.2 BUG-7 fix: trimmed test end_time from 2026-05-04 to
+        # BUG-7 fix: trimmed test end_time from 2026-05-04 to
         # 2026-04-30 to stay inside the TX qlib_data tree boundary
-        # (Plan 92-2.5 ingest produced data through 2026-05-01 per
+        # (ingest produced data through 2026-05-01 per
         # instruments/all.txt: "TX 2021-03-22 2026-05-01"). The previous
         # 2026-05-04 end caused the last walk-forward fold to slice past
         # the data tail → empty dataset → lightgbm refuses to train with
@@ -134,7 +134,7 @@ def test_ddg_da_compare_smoke():
         )
 
         # Read the comparison summary back; choose a verdict (smoke verdict
-        # acceptable as ANY of the legal keywords per D-26).
+        # acceptable as ANY of the legal keywords).
         df = pd.read_parquet(result["comparison_summary_parquet"])
         bs = result["bootstrap_result"]
         v = choose_verdict(df, bs)
@@ -174,26 +174,26 @@ def test_ddg_da_compare_smoke():
         )
     )
 
-    # Hard assertions — D-26.
+    # Hard assertions.
     assert status == "OK", f"DDG-DA smoke {status}: {error}"
 
-    # D-26 artifact existence.
+    # Artifact existence.
     assert (run_dir / "with_ddg_da").is_dir(), "with_ddg_da/ missing"
     assert (run_dir / "without_ddg_da").is_dir(), "without_ddg_da/ missing"
     assert (run_dir / "comparison_summary.parquet").exists(), "comparison_summary.parquet missing"
     assert (run_dir / "verdict.md").exists(), "verdict.md missing"
 
-    # D-26 non-NaN windows-Sharpe.
+    # Non-NaN windows-Sharpe.
     df = pd.read_parquet(run_dir / "comparison_summary.parquet")
     assert len(df) >= 1, f"comparison_summary.parquet empty (rows={len(df)})"
     assert not df["sharpe_with"].isna().all(), "all sharpe_with NaN"
     assert not df["sharpe_without"].isna().all(), "all sharpe_without NaN"
 
-    # D-26 verdict keyword check.
+    # Verdict keyword check.
     body = (run_dir / "verdict.md").read_text()
     assert any(f"# Verdict: {kw}" in body for kw in ("rescue", "partial-help", "no-effect")), (
         "no verdict keyword in verdict.md heading"
     )
 
-    # Wall-clock budget (RESEARCH Pitfall 5 / VALIDATION.md feedback latency).
+    # Wall-clock budget (Pitfall 5 / feedback latency).
     assert elapsed < _BUDGET_SEC, f"smoke exceeded {_BUDGET_SEC}s budget: {elapsed:.1f}s"

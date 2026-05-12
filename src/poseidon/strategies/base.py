@@ -42,7 +42,7 @@ class BaseStrategy(ABC):
     market: str = ""
     interval: str = "1d"
 
-    # Capability metadata (Phase 34)
+    # Capability metadata
     supports_backtest: bool = True
     supports_live: bool = False
     bias_risk: list[str] = []

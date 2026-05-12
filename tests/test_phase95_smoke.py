@@ -1,23 +1,23 @@
-"""Phase 95 Wave 3 — cross-prong E2E smoke (stormtrooper-only).
+"""Cross-prong E2E smoke (stormtrooper-only).
 
-Wall-clock budget per CONTEXT D-31 / D-33:
+Wall-clock budget:
   * Total budget:  ≤ 30 minutes for the full suite (1800s).
   * Per-prong budget: ≤ 6 minutes per prong (5 prongs × 6 min = 30 min ceiling).
-  * Failure tolerance: ≤ 1 PARTIAL acceptable per D-33;
-    2+ failures → aggregator assertion fails → CHECKPOINT REACHED for human review.
+  * Failure tolerance: ≤ 1 PARTIAL acceptable;
+    2+ failures → aggregator assertion fails for human review.
 
 Five prongs covered, plus a final aggregator (collected last):
-  1. ``test_e2e_prong_alpha158``               — ACTIVATE-01 (Wave 1 95-02)
-  2. ``test_e2e_prong_qrun``                   — ACTIVATE-02 (Wave 1 95-03)
-  3. ``test_e2e_prong_signal_analysis``        — ACTIVATE-03 (Wave 1 95-04)
-  4. ``test_e2e_prong_portfolio_report``       — ACTIVATE-05 (Wave 2 95-06)
-  5. ``test_e2e_prong_data_health_macminim4``  — ACTIVATE-04 (Wave 1 95-05)
+  1. ``test_e2e_prong_alpha158``               — ACTIVATE-01
+  2. ``test_e2e_prong_qrun``                   — ACTIVATE-02
+  3. ``test_e2e_prong_signal_analysis``        — ACTIVATE-03
+  4. ``test_e2e_prong_portfolio_report``       — ACTIVATE-05
+  5. ``test_e2e_prong_data_health_macminim4``  — ACTIVATE-04
                                                   cross-node via SSH macminim4-lan
-  6. ``test_phase95_aggregate_results``        — D-33 verdict + phase_summary.json
+  6. ``test_phase95_aggregate_results``        — verdict + phase_summary.json
 
-Pattern S4 STORMTROOPER gate at module level (D-30 amended). Cross-node prong (#5)
+Pattern S4 STORMTROOPER gate at module level. Cross-node prong (#5)
 shells out to ``ssh macminim4-lan`` per Pattern P7; SSH/network failure → pytest.skip
-with ``cross-node-error: ...`` reason (PARTIAL per D-33 — failure isolation).
+with ``cross-node-error: ...`` reason (PARTIAL — failure isolation).
 
 The aggregator is collected last (per pytest's default in-file order) so it can
 read every prong's ``output_summary.json`` after the prong tests finish writing.
@@ -40,7 +40,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-# D-31: per-prong wall-clock budget (≤6 min each; total ≤30 min).
+# Per-prong wall-clock budget (≤6 min each; total ≤30 min).
 _PRONG_BUDGET_SEC = 360.0
 _PHASE_BUDGET_SEC = 1800.0
 
@@ -48,7 +48,7 @@ _SMOKE_ROOT_NAME = "95-activate-underutilised-qlib-surface"
 
 
 def _smoke_dir(prong: str) -> Path:
-    """Resolve .planning/phases/95-*/smoke/{prong}/ from this file's path.
+    """Resolve the smoke directory for the given prong from this file's path.
 
     Inside the qlib-research container the bind-mount maps
     aquarium/poseidon/tests → /app/tests, so ``parents[2]`` becomes ``/`` rather
@@ -85,7 +85,7 @@ def _persist_prong_summary(
     metrics: dict | None,
     error: str | None,
 ) -> Path:
-    """Persist per-prong output_summary.json under the E2E smoke tree (D-32)."""
+    """Persist per-prong output_summary.json under the E2E smoke tree."""
     d = _smoke_dir(prong)
     payload = {
         "prong": prong,
@@ -100,7 +100,7 @@ def _persist_prong_summary(
 
 
 # =============================================================================
-# Prong 1 — ACTIVATE-01: Alpha158 production-signal evaluation (Wave 1 95-02).
+# Prong 1 — ACTIVATE-01: Alpha158 production-signal evaluation.
 # =============================================================================
 def test_e2e_prong_alpha158() -> None:
     """ACTIVATE-01 prong — invoke run_alpha158_eval against synthetic basis arb.
@@ -133,20 +133,20 @@ def test_e2e_prong_alpha158() -> None:
 
 
 # =============================================================================
-# Prong 2 — ACTIVATE-02: qrun YAML pipeline + parity check (Wave 1 95-03).
+# Prong 2 — ACTIVATE-02: qrun YAML pipeline + parity check.
 # =============================================================================
 def test_e2e_prong_qrun() -> None:
     """ACTIVATE-02 prong — invoke run_qrun_basis_vol then parity_check.
 
-    Per Wave 1 95-03 SUMMARY (Pitfall 1 + Deviation #4), the qrun PortAnaRecord
+    Per prior recorded behaviour (Pitfall 1 + Deviation #4), the qrun PortAnaRecord
     chain crashes on benchmark calendar lookup (provider_uri="" bypass) — that
-    is *documented expected behaviour*, not a regression. The Wave 3 prong
+    is *documented expected behaviour*, not a regression. The cross-prong wrapper
     therefore wraps ``run_qrun_basis_vol()`` in its own except so the
     structural crash doesn't prevent post-condition validation against
     pre-existing pickles produced by 95-03's standalone test path.
 
     Post-conditions (per plan ``<verify>``): pred.pkl + parity.json present.
-    parity.json status PARTIAL is acceptable per D-12 amended (e.g. PortAnaRecord
+    parity.json status PARTIAL is acceptable (e.g. PortAnaRecord
     pickles absent → ``port_analysis_1day.pkl`` LoadObjectError) — that's the
     documented structural PARTIAL.
     """
@@ -159,7 +159,7 @@ def test_e2e_prong_qrun() -> None:
         from scripts.run_qrun_basis_vol import run_qrun_basis_vol
         from scripts.run_qrun_parity_check import parity_check
 
-        # Tolerate the documented PortAnaRecord crash — Wave 1 95-03 SUMMARY
+        # Tolerate the documented PortAnaRecord crash — prior SUMMARY
         # records this as expected (provider_uri="" bypasses qlib calendar so
         # PortfolioMetrics.init_bench raises). Pre-existing pickles satisfy
         # the post-condition.
@@ -206,13 +206,13 @@ def test_e2e_prong_qrun() -> None:
 
 
 # =============================================================================
-# Prong 3 — ACTIVATE-03: Signal Analysis IC / IC decay / group (Wave 1 95-04).
+# Prong 3 — ACTIVATE-03: Signal Analysis IC / IC decay / group.
 # =============================================================================
 def test_e2e_prong_signal_analysis() -> None:
     """ACTIVATE-03 prong — invoke run_signal_analysis with synthetic anchor.
 
     Asserts ic.json + ic_decay.parquet + group_analysis.parquet present. Per
-    Wave 1 95-04 SUMMARY, single-instrument NaN behaviour is PASS-shape /
+    prior SUMMARY, single-instrument NaN behaviour is PASS-shape /
     PARTIAL-semantics — counts as PASS for E2E.
     """
     pytest.importorskip("qlib")
@@ -240,11 +240,11 @@ def test_e2e_prong_signal_analysis() -> None:
 
 
 # =============================================================================
-# Prong 4 — ACTIVATE-05: Portfolio Attribution / Graphical Reports (Wave 2 95-06).
+# Prong 4 — ACTIVATE-05: Portfolio Attribution / Graphical Reports.
 # Depends on Prong 2 (qrun) for the SignalRecord pickles.
 # =============================================================================
 def test_e2e_prong_portfolio_report() -> None:
-    """ACTIVATE-05 prong — invoke run_portfolio_report from Wave 2 qrun pickles.
+    """ACTIVATE-05 prong — invoke run_portfolio_report from qrun pickles.
 
     Asserts ≥1 HTML output ≥1KB. SKIPS if Prong 2 (qrun) didn't produce mlruns
     artifacts (correct ordering ensures that's a real failure not a missing
@@ -281,11 +281,11 @@ def test_e2e_prong_portfolio_report() -> None:
 
 
 # =============================================================================
-# Prong 5 — ACTIVATE-04: Cross-node Data Health Checker via SSH (Wave 1 95-05).
+# Prong 5 — ACTIVATE-04: Cross-node Data Health Checker via SSH.
 # Pattern P7: SSH/network failure → pytest.skip with cross-node-error tag.
 # =============================================================================
 def test_e2e_prong_data_health_macminim4() -> None:
-    """ACTIVATE-04 cross-node trigger via SSH (D-30 amended, Pattern P7).
+    """ACTIVATE-04 cross-node trigger via SSH (Pattern P7).
 
     Steps:
       1. ssh macminim4-lan → docker compose exec data-worker uv run python -c '...'
@@ -293,7 +293,7 @@ def test_e2e_prong_data_health_macminim4() -> None:
       3. Last stdout line is parsed as JSON; assert ``total_anomalies`` and
          ``markets`` keys present.
 
-    Failure modes (PARTIAL per D-33, isolation per Pattern P7):
+    Failure modes (PARTIAL, isolation per Pattern P7):
       * SSH timeout (>600s)
       * Non-zero exit code from remote command
       * JSON parse failure on last stdout line
@@ -364,22 +364,22 @@ def test_e2e_prong_data_health_macminim4() -> None:
 # prong's output_summary.json and emits phase_summary.json with verdict.
 # =============================================================================
 def test_phase95_aggregate_results() -> None:
-    """Aggregate per-prong results; enforce D-33 failure tolerance.
+    """Aggregate per-prong results; enforce failure tolerance.
 
     Verdict logic (per Plan 95-07 objective amendment):
-      Structural PARTIALs already documented as PASS-equivalent in Wave 1/2
-      SUMMARYs do NOT count toward D-33's ≤1 limit; only NEW failures do.
+      Structural PARTIALs already documented as PASS-equivalent in prior
+      SUMMARYs do NOT count toward the ≤1 limit; only NEW failures do.
       Pre-documented structural PARTIALs:
         * ACTIVATE-02 PARTIAL when ``parity.partial_reason`` references the
           documented PortAnaRecord ``port_analysis_1day.pkl`` LoadObjectError
-          (Pitfall 1 / Wave 1 95-03 SUMMARY Deviation #4 / D-12 acceptance).
+          (Pitfall 1 / prior SUMMARY Deviation #4 / acceptance).
         * ACTIVATE-04 PARTIAL when ``error`` starts with ``cross-node-error:``
-          (Pattern P7 failure isolation per D-30 amended).
+          (Pattern P7 failure isolation).
 
       * NEW PARTIAL count ≤1 AND missing=0 → GREEN.
       * NEW PARTIAL count ≥2 OR any MISSING → CHECKPOINT_REACHED.
 
-    Wall-clock: total elapsed across prongs must stay within D-31 budget (1800s).
+    Wall-clock: total elapsed across prongs must stay within budget (1800s).
     """
     smoke_root = _smoke_root()
 
@@ -411,7 +411,7 @@ def test_phase95_aggregate_results() -> None:
 
     def _is_documented_structural_partial(prong: str, payload: dict) -> bool:
         """Per Plan 95-07 objective: pre-documented structural PARTIALs count
-        as PASS-equivalent (not against D-33 ≤1 limit)."""
+        as PASS-equivalent (not against the ≤1 limit)."""
         if payload.get("status") != "PARTIAL":
             return False
         err = payload.get("error") or ""
@@ -457,24 +457,24 @@ def test_phase95_aggregate_results() -> None:
         "tolerance": (
             "Structural PARTIALs (ACTIVATE-02 PortAnaRecord per 95-03 Deviation #4, "
             "ACTIVATE-04 cross-node-error per Pattern P7) are PASS-equivalent. "
-            "≤1 NEW PARTIAL acceptable per D-33."
+            "≤1 NEW PARTIAL acceptable."
         ),
         "verdict": verdict,
         "prong_results": prong_results,
     }
     (smoke_root / "phase_summary.json").write_text(json.dumps(phase_summary, indent=2, default=str))
 
-    # D-33 amended: ≤1 NEW (non-structural) PARTIAL acceptable.
+    # ≤1 NEW (non-structural) PARTIAL acceptable.
     assert missing_count == 0, (
         f"missing prong outputs: {[k for k, v in prong_results.items() if v.get('status') == 'MISSING']}"
     )
     assert new_partial_count <= 1, (
         f"{new_partial_count} NEW (non-structural) prongs PARTIAL — CHECKPOINT REACHED. "
         f"NEW partials: {new_partials}. Structural (PASS-equivalent): {structural_partials}. "
-        f"Per D-33, 2+ NEW failures require user review. "
+        f"2+ NEW failures require user review. "
         f"Details in {smoke_root / 'phase_summary.json'}"
     )
-    # D-31: total wall-clock ≤30 min
+    # Total wall-clock ≤30 min
     assert total_elapsed < _PHASE_BUDGET_SEC, (
         f"total wall-clock {total_elapsed:.1f}s exceeds {_PHASE_BUDGET_SEC}s budget"
     )

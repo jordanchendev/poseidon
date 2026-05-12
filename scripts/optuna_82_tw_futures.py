@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 82: Optuna TrendFollowing parameter optimization for TX daily.
+"""Optuna TrendFollowing parameter optimization for TX daily.
 
 Searches EMA fast/slow periods, ATR period, and ATR multiplier using
 BayesianOptimizer with IS Sharpe ratio objective. Compares best result
@@ -41,9 +41,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Configuration (per D-02, D-09, D-11)
+# Configuration
 # ---------------------------------------------------------------------------
-START = datetime(2021, 3, 22)  # Earliest TX daily data (D-02)
+START = datetime(2021, 3, 22)  # Earliest TX daily data
 END = datetime.now()
 SYMBOL = "TX"
 MARKET = "tw_futures"
@@ -51,13 +51,13 @@ INITIAL_CAPITAL = 1_000_000.0  # 1M TWD
 INTERVAL = "1d"
 BARS_PER_YEAR = 252
 COST_MODEL = COST_MODELS["tw_futures"]
-N_TRIALS = 100  # D-09
+N_TRIALS = 100
 SEED = 42
 SIZING = SizingConfig(mode=SizingMode.FIXED_NOTIONAL, notional_pct=0.03)
 OUTPUT_DIR = Path(__file__).parent / "output"
 OUTPUT_JSON = OUTPUT_DIR / "optuna_82_results.json"
 
-# Parameter search space (D-08): BayesianOptimizer (low, high, type) format
+# Parameter search space: BayesianOptimizer (low, high, type) format
 PARAM_SPACE: dict[str, tuple] = {
     "ema_fast": (5, 50, "int"),
     "ema_slow": (20, 120, "int"),
@@ -164,8 +164,8 @@ def main() -> int:
     """Run Optuna TrendFollowing parameter optimization."""
     repo = RemoteDataRepository.from_settings()
 
-    # Step 1: Fetch OHLCV data
-    print("Phase 82: TrendFollowing Optuna Parameter Search")
+    # 1. Fetch OHLCV data
+    print("TrendFollowing Optuna Parameter Search")
     print(f"Period: {START.date()} to {END.date()}")
     print(f"Initial Capital: {INITIAL_CAPITAL:,.0f} TWD")
     print(f"Cost Model: {COST_MODEL.description}")
@@ -176,7 +176,7 @@ def main() -> int:
     print(f"OHLCV loaded: {len(ohlcv)} bars ({ohlcv.index[0]} to {ohlcv.index[-1]})")
     print()
 
-    # Step 2: Run baseline backtest with default params
+    # 2. Run baseline backtest with default params
     print(f"{'=' * 60}")
     print("Running baseline (default TrendFollowingConfig)...")
     print(f"{'=' * 60}")
@@ -210,7 +210,7 @@ def main() -> int:
     print(f"  Baseline Trades: {baseline_metrics.get('trade_count', 0)}")
     print()
 
-    # Step 3: Create BayesianOptimizer and run search (D-10, D-11)
+    # 3. Create BayesianOptimizer and run search
     print(f"{'=' * 60}")
     print(f"Running BayesianOptimizer: {N_TRIALS} trials")
     print(f"Search space: {PARAM_SPACE}")
@@ -230,11 +230,11 @@ def main() -> int:
         ohlcv=ohlcv,
         param_space=PARAM_SPACE,
         n_trials=N_TRIALS,
-        metric="sharpe_ratio",  # D-11: IS Sharpe as objective
+        metric="sharpe_ratio",  # IS Sharpe as objective
         seed=SEED,
     )
 
-    # Step 4: Filter and analyze results
+    # 4. Filter and analyze results
     # BayesianOptimizer returns 0.0 for failed trials (ValueError from validate_config)
     completed = [t for t in trials if t.metric_value > 0.0]
     completed.sort(key=lambda t: t.metric_value, reverse=True)
@@ -273,7 +273,7 @@ def main() -> int:
     improvement = best.metric_value - baseline_sharpe
     print(f"Improvement: {improvement:+.4f}")
 
-    # Step 5: Build output JSON
+    # 5. Build output JSON
     top_10 = []
     for trial in completed[:10]:
         top_10.append(
@@ -285,7 +285,6 @@ def main() -> int:
         )
 
     output = {
-        "phase": "82",
         "script": "optuna_82_tw_futures.py",
         "n_trials": N_TRIALS,
         "n_completed": len(completed),

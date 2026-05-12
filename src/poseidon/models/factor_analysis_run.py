@@ -1,4 +1,4 @@
-"""Factor analysis run ORM model (Phase 47)."""
+"""Factor analysis run ORM model."""
 
 import uuid
 

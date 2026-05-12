@@ -1,4 +1,4 @@
-"""Tests for PriceMomentum feature classes (Phase 71 D-15)."""
+"""Tests for PriceMomentum feature classes."""
 
 import numpy as np
 import pandas as pd
@@ -93,10 +93,10 @@ class TestPriceMomentum:
         assert is_nonprice_spec("momentum_6m") is False
         assert is_nonprice_spec("momentum_12m") is False
 
-    # --- Phase 74: adj_close tests ---
+    # --- adj_close tests ---
 
     def test_momentum_3m_uses_adj_close(self):
-        """Momentum should use adj_close when available (Phase 74 D-10)."""
+        """Momentum should use adj_close when available."""
         n_rows = 200
         dates = pd.date_range("2020-01-01", periods=n_rows, freq="B")
         # close has a 4x drop at midpoint (simulating split), adj_close is smooth
@@ -139,7 +139,7 @@ class TestPriceMomentum:
         feat = PriceMomentum3M()
         result = feat.compute(ohlcv)
 
-        # Should compute from close (same as before Phase 74)
+        # Should compute from close (same as before adj_close support)
         idx = 100
         expected = ohlcv["close"].iloc[idx] / ohlcv["close"].iloc[idx - _DAYS_3M] - 1.0
         assert abs(result.iloc[idx] - expected) < 1e-10

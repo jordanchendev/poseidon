@@ -1,7 +1,7 @@
-"""Phase 90 Wave 1 — RL aggregator (perf_full port + per-leg → pair metrics).
+"""RL aggregator (perf_full port + per-leg → pair metrics).
 
-Verbatim ports from existing v18 driver scripts so Phase 90 RL workers and
-Wave 2 comparison-table builders share exactly one source of truth for
+Verbatim ports from existing v18 driver scripts so RL workers and
+comparison-table builders share exactly one source of truth for
 performance accounting:
 
   * :data:`BARS_PER_YEAR` (=240) — TWSE/TAIFEX 240 trading-day convention.
@@ -11,16 +11,15 @@ performance accounting:
     ``scripts/test_tx_walkforward_v2.py:50-94``. Returns dict with the same
     12 keys that the v18 backtest emits.
   * :func:`v18_gap_cost_per_leg` — verbatim ``np.maximum(0.00032, |gap|/4)``
-    formula from ``scripts/test_tx_gap_validate.py:185`` (D-16 reference
+    formula from ``scripts/test_tx_gap_validate.py:185`` (reference
     baseline). Returned as fraction-of-notional, NOT bps (matches v18 use).
-  * :func:`compute_naive_intraday_ret` — Q1 RESOLVED (RESEARCH §Open
-    Questions). The naive baseline is reframed as the first-1-min-bar TWAP
-    open ⇒ last-1-min-bar close on each trigger day per leg, NOT a single
-    print at 09:00:00.
+  * :func:`compute_naive_intraday_ret` — naive baseline reframed as the
+    first-1-min-bar TWAP open ⇒ last-1-min-bar close on each trigger day
+    per leg, NOT a single print at 09:00:00.
   * :func:`aggregate_pair_metrics` — combines per-leg PA(bps) with the naive
     intraday return into a pair-level (long TX, short 0050) realized return,
     runs it through :func:`perf_full`, and reports separate + net slippage
-    diagnostics (D-15: both views required).
+    diagnostics (both views required).
 """
 
 from __future__ import annotations
@@ -47,8 +46,8 @@ def annualised(mean: float, std: float) -> float:
 def perf_full(net: pd.Series, engaged: pd.Series) -> dict:
     """Full perf incl. Sortino, downside vol, %time-in-DD, max DD duration.
 
-    Verbatim port of ``test_tx_walkforward_v2.py::perf_full`` so Phase 90
-    callers can compare apples-to-apples with v18 backtest outputs.
+    Verbatim port of ``test_tx_walkforward_v2.py::perf_full`` so callers
+    can compare apples-to-apples with v18 backtest outputs.
 
     Args:
         net: net (post-cost) return per bar/day.
@@ -107,9 +106,9 @@ def perf_full(net: pd.Series, engaged: pd.Series) -> dict:
     }
 
 
-# --- Verbatim D-16 formula from test_tx_gap_validate.py:185 ---
+# --- Verbatim formula from test_tx_gap_validate.py:185 ---
 def v18_gap_cost_per_leg(tx_open: pd.Series, prev_tx_close: pd.Series) -> pd.Series:
-    """v18 |gap|/4 cost-model per-leg (D-16 reference baseline).
+    """v18 |gap|/4 cost-model per-leg (reference baseline).
 
     Replicates the ``np.maximum(0.00032, df_tx["gap"].abs() / 4)`` line from
     ``scripts/test_tx_gap_validate.py:185`` byte-for-byte. ``gap`` is defined
@@ -133,22 +132,21 @@ def v18_gap_cost_per_leg(tx_open: pd.Series, prev_tx_close: pd.Series) -> pd.Ser
     return pd.Series(cost_series, index=tx_open.index)
 
 
-# --- Q1 RESOLVED (RESEARCH §Open Questions) ---
 def compute_naive_intraday_ret(
     ohlcv_1m: pd.DataFrame,
     trigger_dates: list[pd.Timestamp],
 ) -> pd.Series:
     """Naive baseline: first-1m-bar open → last-1m-bar close, per trigger day.
 
-    Q1 RESOLVED reframing of the "naive 09:00 print" baseline. For each
-    trigger date, filter ``ohlcv_1m`` to that day's intraday bars and compute::
+    Reframing of the "naive 09:00 print" baseline. For each trigger date,
+    filter ``ohlcv_1m`` to that day's intraday bars and compute::
 
         naive_ret = (last_1m_close - first_1m_open) / first_1m_open
 
-    This is the slippage-zero reference axis used by Wave 2's comparison
-    table and Wave 4's per-leg PA-bps aggregator: any RL or rule-based
-    execution that improves on the naive intraday TWAP shows up as a
-    positive PA-bps offset.
+    This is the slippage-zero reference axis used by the comparison table
+    and per-leg PA-bps aggregator: any RL or rule-based execution that
+    improves on the naive intraday TWAP shows up as a positive PA-bps
+    offset.
 
     Args:
         ohlcv_1m: 1-minute OHLCV DataFrame indexed by tz-aware DatetimeIndex
@@ -220,7 +218,7 @@ def aggregate_pair_metrics(
         cost of the short-leg (subtract from naive).
       * pair_ret = tx_realized − etf_realized (long TX, short 0050).
 
-    Slippage diagnostics (D-15: separate + net both reported):
+    Slippage diagnostics (separate + net both reported):
       * ``mean_per_leg_slippage_tx_bps``  — bps PA on the TX (long) leg.
       * ``mean_per_leg_slippage_etf_bps`` — bps PA on the 0050 (short) leg.
       * ``mean_net_slippage_bps``         — TX minus ETF, the actually-realised

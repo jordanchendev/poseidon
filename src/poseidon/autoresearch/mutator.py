@@ -1,6 +1,6 @@
 """StrategyMutator -- thin wrapper over VotingStrategyFactory for autoresearch.
 
-Per D-01: NOT a new search engine. Delegates to VotingStrategyFactory + Optuna.
+NOT a new search engine. Delegates to VotingStrategyFactory + Optuna.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ class StrategyMutator:
         model_version_id: int | None = None,
         available_models: list | None = None,
     ) -> VotingStrategy:
-        """Bayesian-guided mutation via Optuna trial suggest API (D-02)."""
+        """Bayesian-guided mutation via Optuna trial suggest API."""
         return VotingStrategyFactory.from_trial(
             trial,
             symbol=symbol,
@@ -52,7 +52,7 @@ class StrategyMutator:
         model_version_id: int | None = None,
         available_models: list | None = None,
     ) -> dict:
-        """Generate random config within PARAM_BOUNDS (D-03).
+        """Generate random config within PARAM_BOUNDS.
 
         Returns validated config dict. Deterministic for a given seed.
         """
@@ -81,7 +81,7 @@ class StrategyMutator:
             interval=interval,
             model_version_id=mv_id,
         )
-        # D-04: validate via existing Pydantic validation
+        # validate via existing Pydantic validation
         strategy = VotingStrategyFactory.from_config(config)
         strategy.validate_config()
         return config

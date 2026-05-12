@@ -78,7 +78,7 @@ def get_active_version(model_name: str) -> int | None:
 def get_predictions_path(artifact_path: str, segment: str) -> Path:
     """Return the path to a predictions Parquet file for a given segment.
 
-    Per Phase 41 D-18: predictions are serialized to Parquet at
+    Predictions are serialized to Parquet at
     ``{artifact_path}/predictions_{segment}.parquet``.
     """
     return Path(artifact_path) / f"predictions_{segment}.parquet"

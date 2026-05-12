@@ -1,18 +1,15 @@
 """PoseidonDataHandlerForQrun - qrun-YAML-friendly subclass of PoseidonDataHandler.
 
-Per Phase 95 RESEARCH Pitfall 8: qrun's YAML schema cannot inject a pre-built
-``DatasetBuilder`` (qrun calls ``init_instance_by_config`` which only forwards
-plain string/scalar kwargs). This adapter accepts plain kwargs
-(instruments, start_time, end_time, market, interval) and constructs
-``DatasetBuilder`` + parent class internally.
+Pitfall 8: qrun's YAML schema cannot inject a pre-built ``DatasetBuilder``
+(qrun calls ``init_instance_by_config`` which only forwards plain
+string/scalar kwargs). This adapter accepts plain kwargs (instruments,
+start_time, end_time, market, interval) and constructs ``DatasetBuilder`` +
+parent class internally.
 
 Pattern P8 (allowlist registration) applies: this class is referenced in
 ``poseidon.qlib.allowlist.ALLOWED_HANDLER_CLASSES`` so qrun YAML
-``handler.class: PoseidonDataHandlerForQrun`` resolves through the RCE boundary
-established in Phase 41 D-08/D-09.
-
-Phase 95 ACTIVATE-02 — Wave 0 scaffold (Plan 95-01 Task 2). Wave 2 lands the
-``tx_basis_vol.yml`` qrun config that exercises this adapter end-to-end.
+``handler.class: PoseidonDataHandlerForQrun`` resolves through the RCE
+boundary.
 """
 
 from __future__ import annotations
@@ -50,7 +47,7 @@ class PoseidonDataHandlerForQrun(PoseidonDataHandler):
       4. Eagerly materialises a Qlib ``DataHandlerLP`` (via ``to_qlib_handler``)
          so ``fetch()`` calls from qrun execute against a live qlib handler.
 
-    Capability metadata inherits from PoseidonDataHandler (D-21):
+    Capability metadata inherits from PoseidonDataHandler:
         supports_backtest = True, supports_live = False, bias_risk = [], stateful = False
     """
 

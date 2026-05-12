@@ -55,13 +55,12 @@ def load_symbols(config_path: str | None = None) -> SymbolConfig:
 
     config = SymbolConfig()
     for market_name, market_data in raw.get("markets", {}).items():
-        # Guard against RESEARCH.md example using "interval" (singular).
+        # Guard against the wrong singular key "interval".
         # The canonical key is "intervals" (plural). Fail fast if the wrong key is used.
         if "interval" in market_data and "intervals" not in market_data:
             raise ValueError(
                 f"Symbol config for market '{market_name}' uses 'interval' (singular). "
-                f"Use 'intervals' (plural list) instead. "
-                f"Note: RESEARCH.md shows 'interval' but the correct schema key is 'intervals'."
+                f"Use 'intervals' (plural list) instead."
             )
 
         symbols = []

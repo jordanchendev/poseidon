@@ -29,7 +29,7 @@ class SignalRecord(Base):
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, server_default="{}")
 
-    # Limit order fields (Phase 49)
+    # Limit order fields
     order_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     order_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     stop_loss_price: Mapped[float | None] = mapped_column(Float, nullable=True)

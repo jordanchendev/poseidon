@@ -393,7 +393,7 @@ class TestRegimeGate:
         assert router.enabled is False
 
     def test_gate_preserves_model_on_failure(self):
-        """After gate failure, regime_router._regime_model still present (D-08)."""
+        """After gate failure, regime_router._regime_model still present."""
         from poseidon.backtest.regime_gate import evaluate_regime_gate
 
         ohlcv = _make_ohlcv(500)

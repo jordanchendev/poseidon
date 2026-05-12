@@ -1,1 +1,1 @@
-"""Cross-cutting business logic services (Phase 87+)."""
+"""Cross-cutting business logic services."""

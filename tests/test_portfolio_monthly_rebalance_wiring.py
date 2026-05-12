@@ -1,14 +1,14 @@
-"""Phase 89 Plan 02 -- portfolio_monthly_rebalance un-noop wiring (W3).
+"""portfolio_monthly_rebalance un-noop wiring.
 
 Verifies that portfolio_monthly_rebalance, previously a logged no-op since
-Phase 61 (RevenueBreakoutStrategy removed when FinLab data became unavailable),
+its prior life (RevenueBreakoutStrategy removed when FinLab data became unavailable),
 now consumes PASSED tw_stock signals from the SignalRepository within a
 7-day freshness window and dispatches RebalanceOrders.
 
 The 7-day filter mechanically excludes the 13 legacy frozen signals dated
-2026-03-19 (CONTEXT D-15).
+2026-03-19.
 
-Test inventory (per 89-02-PLAN Task 2):
+Test inventory:
 1. test_fresh_signals_dispatch_orders — 3 fresh PASSED signals → 3 RebalanceOrders + signal_ids
 2. test_only_stale_signals_returns_skipped — 13 legacy signals (>7d) → no_recent_signals skip
 3. test_mixed_fresh_stale_only_fresh_honoured — fresh + stale → only fresh dispatched
@@ -199,7 +199,7 @@ class TestPortfolioMonthlyRebalanceWiring:
         """13 legacy signals (>7d) → no_recent_signals skip, no execute_rebalance call."""
         from poseidon.workers import cpu_tasks
 
-        # 13 frozen 2026-03-19 cluster (CONTEXT D-15) — all >7d old
+        # 13 frozen 2026-03-19 cluster — all >7d old
         patched_monthly_env["signals"] = []  # latest_passed(since=now-7d) → empty for stale
 
         result = cpu_tasks.portfolio_monthly_rebalance()

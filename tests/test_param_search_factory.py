@@ -127,12 +127,12 @@ def test_pipeline_run_uses_injected_factory_build_trial_factory():
 
 
 # ---------------------------------------------------------------------------
-# Test 4: No LiquiditySweep-specific imports in param_search.py (polymorphic per D-02)
+# Test 4: No LiquiditySweep-specific imports in param_search.py (polymorphic)
 # ---------------------------------------------------------------------------
 
 
 def test_no_liquidity_sweep_imports_in_param_search():
-    """param_search.py does NOT contain any LiquiditySweep-specific imports (per D-02)."""
+    """param_search.py does NOT contain any LiquiditySweep-specific imports."""
     param_search_path = os.path.join(
         os.path.dirname(__file__),
         "..",
@@ -221,7 +221,7 @@ def test_wfe_gate_rejects_low_wfe_liquidity_sweep_trial():
 
 
 # ---------------------------------------------------------------------------
-# Task 3: AutoResearchRunner factory injection tests (D-15)
+# Task 3: AutoResearchRunner factory injection tests
 # ---------------------------------------------------------------------------
 
 

@@ -2,7 +2,7 @@
 
 All qlib/mlflow imports are deferred to inside the task body to prevent
 ImportError in cp313 containers that discover this module via celery_app.
-Per Phase 41 D-12: separate module from cpu_tasks/gpu_tasks.
+Separate module from cpu_tasks/gpu_tasks.
 """
 
 from __future__ import annotations
@@ -97,10 +97,10 @@ def qlib_train(self, run_id: str) -> dict:
             overall_start = min(all_dates)
             overall_end = max(all_dates)
 
-            # Step 6b: Create DatasetBuilder (reads OHLCV from TimescaleDB)
+            # Create DatasetBuilder (reads OHLCV from TimescaleDB)
             ds_builder = DatasetBuilder(session=session, market=run.market, interval=run.interval)
 
-            # Step 6b2: Resolve feature_specs for expanded features (Phase 42)
+            # Resolve feature_specs for expanded features
             from poseidon.data.feature_engine import get_r2_specs, is_nonprice_spec
 
             expand_features = run.model_params.get("expand_features", True)
@@ -113,7 +113,7 @@ def qlib_train(self, run_id: str) -> dict:
                 if feature_specs:
                     logger.info("Expanded features: %d nonprice specs for market=%s", len(feature_specs), run.market)
 
-            # Step 6c: Create PoseidonDataHandler (calls ds_builder.build() internally)
+            # Create PoseidonDataHandler (calls ds_builder.build() internally)
             handler = PoseidonDataHandler(
                 dataset_builder=ds_builder,
                 symbols=run.symbols,
@@ -122,10 +122,10 @@ def qlib_train(self, run_id: str) -> dict:
                 feature_specs=feature_specs,
             )
 
-            # Step 6d: Convert to Qlib-native DataHandlerLP
+            # Convert to Qlib-native DataHandlerLP
             qlib_handler = handler.to_qlib_handler()
 
-            # Step 6e: Build Qlib DatasetH with time-based segments
+            # Build Qlib DatasetH with time-based segments
             qlib_segments = {seg_name: (seg_dates[0], seg_dates[1]) for seg_name, seg_dates in segments.items()}
             dataset = DatasetH(handler=qlib_handler, segments=qlib_segments)
 
@@ -152,7 +152,7 @@ def qlib_train(self, run_id: str) -> dict:
                 session.commit()
                 return {"run_id": run_id, "status": "cancelled"}
 
-            # 8. Generate predictions on ALL segments (per Phase 43 D-01: train, valid, test)
+            # 8. Generate predictions on ALL segments (train, valid, test)
             all_predictions: dict[str, pd.DataFrame | pd.Series | None] = {}
             for seg_name in segments:
                 try:
@@ -209,7 +209,7 @@ def qlib_train(self, run_id: str) -> dict:
                 run.metrics = computed_metrics
                 session.commit()
 
-            # 12. Export to ModelVersion via QlibModelExporter (D-06)
+            # 12. Export to ModelVersion via QlibModelExporter
             exporter = QlibModelExporter(session)
             model_version = exporter.export(
                 model=trained_model,
@@ -227,7 +227,7 @@ def qlib_train(self, run_id: str) -> dict:
             )
             run.model_version_id = model_version.id
 
-            # 13. Save predictions Parquet for ALL segments (per Phase 43 D-02)
+            # 13. Save predictions Parquet for ALL segments
             saved_segments: list[str] = []
             if model_version.artifact_path:
                 Path(model_version.artifact_path).mkdir(parents=True, exist_ok=True)

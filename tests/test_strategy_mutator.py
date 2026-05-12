@@ -84,7 +84,7 @@ class TestMutateRandom:
         assert config1 != config2
 
     def test_all_configs_validate(self):
-        """D-04: All generated configs must pass VotingStrategy.validate_config()."""
+        """All generated configs must pass VotingStrategy.validate_config()."""
         from poseidon.backtest.voting_strategy_factory import VotingStrategyFactory
 
         for seed in range(10):

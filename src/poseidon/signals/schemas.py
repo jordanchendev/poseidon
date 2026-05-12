@@ -70,7 +70,7 @@ class Signal(BaseModel):
     # Instrument-specific params (JSONB in DB)
     params: dict = Field(default_factory=dict)
 
-    # Limit order fields (Phase 49 -- all optional, backward-compatible)
+    # Limit order fields (all optional, backward-compatible)
     order_type: OrderType | None = None
     order_price: float | None = None
     stop_loss_price: float | None = None

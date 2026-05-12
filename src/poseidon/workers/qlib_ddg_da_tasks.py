@@ -1,17 +1,16 @@
-"""Phase 92 — DDG-DA comparison Celery task.
+"""DDG-DA comparison Celery task.
 
 All qlib imports DEFERRED to task body to prevent ImportError in cp313
 containers (api/cpu-worker/gpu-worker) per PATTERNS.md §Deferred qlib
 import. The cp313 containers auto-discover this module via
 ``celery_app.conf.imports`` so module-level qlib imports would crash them.
 
-Lifecycle (D-23 simplification of Phase 90 RLExecutionRun + Phase 91
-RDAgentRun durable rows): file-lock at ``result_dir/run.lock``. No
-Postgres row, no ORM dependency, no cooperative cancel API. Phase 92 is
-a research run — ad-hoc dispatch is sufficient.
+Lifecycle: file-lock at ``result_dir/run.lock``. No Postgres row, no ORM
+dependency, no cooperative cancel API. This is a research run — ad-hoc
+dispatch is sufficient.
 
-Path-traversal mitigation (T-92-02): ``run_id`` is validated as a UUID
-via ``uuid.UUID(run_id)`` BEFORE the filesystem path is constructed.
+Path-traversal mitigation: ``run_id`` is validated as a UUID via
+``uuid.UUID(run_id)`` BEFORE the filesystem path is constructed.
 ``str(uuid.UUID(...))`` canonicalizes to a 36-char hex/hyphen string
 that cannot escape AQUARIUM_ROOT.
 
@@ -61,16 +60,16 @@ def qlib_ddg_da_compare(
 ) -> dict:
     """Run a with-DDG-DA vs without-DDG-DA comparison for a thesis.
 
-    D-07: dispatched on the existing ``poseidon_qlib`` queue (no new
-    queue). D-23: file-lock lifecycle, no durable Postgres row.
+    Dispatched on the existing ``poseidon_qlib`` queue (no new queue).
+    File-lock lifecycle, no durable Postgres row.
 
     Args:
-        run_id: UUID string identifying the run (T-92-02 path-traversal
-            guard validates this BEFORE constructing the result_dir).
-        thesis_name: e.g. "tx_gap_intraday" (D-09 default).
-        model_class: e.g. "LGBModel" (D-11 default).
+        run_id: UUID string identifying the run (path-traversal guard
+            validates this BEFORE constructing the result_dir).
+        thesis_name: e.g. "tx_gap_intraday" (default).
+        model_class: e.g. "LGBModel" (default).
         smoke: when True, only the last 2 walk-forward folds are kept
-            (D-25 smoke window).
+            (smoke window).
 
     Returns:
         ``{"run_id": ..., "status": "succeeded"|"failed"|"already_running",
@@ -79,14 +78,14 @@ def qlib_ddg_da_compare(
         Pitfall 6: never re-raises. Exceptions become ``status="failed"``
         with the exception text persisted to ``result_dir/error.txt``.
     """
-    # T-92-02: validate run_id is a UUID BEFORE filesystem path construction.
+    # Validate run_id is a UUID BEFORE filesystem path construction.
     # uuid.UUID(run_id) raises ValueError on malformed input; the canonical
     # 36-char hex/hyphen string cannot escape AQUARIUM_ROOT.
     run_uuid = uuid.UUID(run_id)
     result_dir = AQUARIUM_ROOT / "local_dev" / "ddg-da" / "runs" / str(run_uuid)
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    # D-23 file-lock: if a lock exists, return already_running without raising.
+    # File-lock: if a lock exists, return already_running without raising.
     lock_path = result_dir / "run.lock"
     if lock_path.exists():
         logger.info(
@@ -114,7 +113,7 @@ def qlib_ddg_da_compare(
         # also defers its qlib imports to function bodies.
         from poseidon.autoresearch.ddg_da_compare import run_comparison
 
-        # D-10: default segments per Plan 92-2.5 Option B decision.
+        # Default segments per Option B decision.
         # Train 2021-03-22..2023-12-31 (33mo, 3 regimes) / Test
         # 2024-01-01..2026-05-04 (~28 walk-forward folds at step=20).
         segments = {
@@ -159,7 +158,7 @@ def qlib_ddg_da_compare(
             "result_dir": str(result_dir),
         }
     finally:
-        # Always release the lock (D-23 lifecycle invariant).
+        # Always release the lock (lifecycle invariant).
         if lock_path.exists():
             try:
                 lock_path.unlink()

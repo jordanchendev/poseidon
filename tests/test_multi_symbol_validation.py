@@ -1,4 +1,4 @@
-"""Tests for multi-symbol cross-validation gate (SWEEP-06, D-16/D-17).
+"""Tests for multi-symbol cross-validation gate (SWEEP-06).
 
 Covers:
 - Cross-symbol gate passes when ALL symbols meet thresholds
@@ -96,7 +96,7 @@ def test_cross_symbol_gate_fails_when_any_symbol_fails_wfe():
 
 
 def test_per_symbol_optuna_study_names():
-    """Each symbol gets its own Optuna study name (e.g., 'crypto_perp_BTCUSDT_1h') (D-03)."""
+    """Each symbol gets its own Optuna study name (e.g., 'crypto_perp_BTCUSDT_1h')."""
 
     symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     expected_names = [f"crypto_perp_{s}_1h" for s in symbols]

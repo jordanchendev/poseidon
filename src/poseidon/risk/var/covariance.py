@@ -2,7 +2,7 @@
 
 Computes the sample covariance matrix from aligned returns with epsilon
 regularization for numerical stability. Results are cached in Redis via
-msgpack serialization (per D-05).
+msgpack serialization.
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ def cache_covariance(
         "computed_at": datetime.now(UTC).isoformat(),
     }
     data = msgpack.packb(payload, use_bin_type=True)
-    # Jitter per Phase 15 cache pattern to avoid stampede
+    # Jitter to avoid cache stampede
     effective_ttl = ttl + random.randint(0, 3600)
     redis_client.set(COVARIANCE_CACHE_KEY, data, ex=effective_ttl)
 

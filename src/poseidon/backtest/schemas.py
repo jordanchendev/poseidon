@@ -1,6 +1,6 @@
 """Pydantic schemas for backtest configuration and results.
 
-Phase 93 D-03: BacktestResult accepts ad-hoc fields (fill_log, delta_breakdown,
+BacktestResult accepts ad-hoc fields (fill_log, delta_breakdown,
 inner_level, outer_level) attached by NestedBacktestRunner via ``extra="allow"``.
 """
 
@@ -33,7 +33,7 @@ class BacktestConfig(BaseModel):
 class BacktestResult(BaseModel):
     """Result of a completed backtest run.
 
-    Phase 93 D-03: ``model_config = ConfigDict(extra="allow")`` permits
+    ``model_config = ConfigDict(extra="allow")`` permits
     NestedBacktestRunner to attach ``fill_log`` / ``delta_breakdown`` /
     ``inner_level`` / ``outer_level`` without subclassing.
     """
@@ -48,10 +48,10 @@ class BacktestResult(BaseModel):
     status: str  # "completed" or "failed"
     error_message: str | None = None
     trades: list[dict] = Field(default_factory=list)
-    active_model_timestamp: datetime | None = None  # When model was selected for audit trail (per D-08)
+    active_model_timestamp: datetime | None = None  # When model was selected for audit trail
     model_version_id: UUID | None = None  # Which ModelVersion was used
 
-    # Funding rate cost modeling (ADV-02, D-13)
+    # Funding rate cost modeling
     funding_costs_total: float = 0.0
     funding_costs_by_trade: list[float] = Field(default_factory=list)
     pnl_with_funding: float | None = None

@@ -9,7 +9,6 @@ Trading day approximations:
   6M  = 126 days
   12M = 252 days
 
-Per D-01/D-02/D-03 in Phase 71 CONTEXT.md.
 """
 
 import pandas as pd

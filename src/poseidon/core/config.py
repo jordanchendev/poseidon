@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     var_min_observations: int = 30
     var_confidence_levels: str = "0.95,0.99"  # comma-separated
 
-    # Drawdown monitoring thresholds (per D-10)
+    # Drawdown monitoring thresholds
     drawdown_warning_pct: float = 0.05
     drawdown_alert_pct: float = 0.10
     drawdown_critical_pct: float = 0.20
@@ -41,19 +41,19 @@ class Settings(BaseSettings):
     # VaR cache TTL (2x hourly schedule = 2 hours, per pitfall 5)
     var_cache_ttl: int = 7200
 
-    # Monte Carlo VaR settings (per D-05)
+    # Monte Carlo VaR settings
     mc_simulations: int = 10_000
 
     # Prediction settings
     predict_confidence_threshold: float = 0.6
 
-    # Data quality scoring weights (per D-08, must sum to 1.0)
+    # Data quality scoring weights (must sum to 1.0)
     quality_weight_completeness: float = 0.30
     quality_weight_consistency: float = 0.25
     quality_weight_anomaly_free: float = 0.25
     quality_weight_timeliness: float = 0.20
 
-    # Phase 60: Thalassa connectivity (Phase 61: always remote, no feature flag)
+    # Thalassa connectivity (always remote, no feature flag)
     thalassa_base_url: str = ""
     thalassa_api_key: str = ""
     thalassa_timeout: float = 30.0

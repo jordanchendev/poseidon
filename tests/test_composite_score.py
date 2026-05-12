@@ -41,7 +41,7 @@ class TestCompositeScore:
         assert compute_composite_score(metrics) == 0.0
 
     def test_dd_below_15pct_threshold_no_penalty(self):
-        """max_drawdown=0.10 (<15%) -> dd_penalty=0.0 (Nunchi D-15)."""
+        """max_drawdown=0.10 (<15%) -> dd_penalty=0.0."""
         metrics = {
             "trade_count": 60,
             "max_drawdown": 0.10,
@@ -54,7 +54,7 @@ class TestCompositeScore:
         assert compute_composite_score(metrics) == pytest.approx(2.0)
 
     def test_dd_at_30pct_has_penalty(self):
-        """max_drawdown=0.30 -> dd_penalty=max(0, 0.30-0.15)*0.05=0.0075 (D-15)."""
+        """max_drawdown=0.30 -> dd_penalty=max(0, 0.30-0.15)*0.05=0.0075."""
         metrics = {
             "trade_count": 60,
             "max_drawdown": 0.30,
@@ -76,7 +76,7 @@ class TestCompositeScore:
         assert compute_composite_score(metrics) == pytest.approx(2.0)
 
     def test_turnover_ratio_below_500_no_penalty(self):
-        """turnover_ratio < 500 -> turnover_penalty=0.0 (D-16)."""
+        """turnover_ratio < 500 -> turnover_penalty=0.0."""
         metrics = {
             "trade_count": 100,
             "max_drawdown": 0.10,
@@ -90,7 +90,7 @@ class TestCompositeScore:
         assert compute_composite_score(metrics) == pytest.approx(2.0)
 
     def test_turnover_ratio_above_500_has_penalty(self):
-        """turnover_ratio > 500 -> turnover_penalty > 0 (D-16)."""
+        """turnover_ratio > 500 -> turnover_penalty > 0."""
         metrics = {
             "trade_count": 10000,
             "max_drawdown": 0.10,

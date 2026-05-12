@@ -89,7 +89,7 @@ class StressTestEngine:
             raise ValueError(f"Unknown scenario type: {config.type}")
 
     # ------------------------------------------------------------------
-    # Historical scenario (D-02, STRESS-02)
+    # Historical scenario
     # ------------------------------------------------------------------
 
     def _run_historical(
@@ -161,7 +161,7 @@ class StressTestEngine:
         )
 
     # ------------------------------------------------------------------
-    # Hypothetical scenario (D-03, STRESS-03)
+    # Hypothetical scenario
     # ------------------------------------------------------------------
 
     def _run_hypothetical(
@@ -209,7 +209,7 @@ class StressTestEngine:
         )
 
     # ------------------------------------------------------------------
-    # Correlation stress (D-04, STRESS-04)
+    # Correlation stress
     # ------------------------------------------------------------------
 
     def _run_correlation_stress(

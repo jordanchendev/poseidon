@@ -1,9 +1,9 @@
-"""Phase 90 Wave 1 + 3.5 — qlib RL Order pickle builder.
+"""qlib RL Order pickle builder.
 
-Plan 90-04.1 update: emit ``order_type`` as :class:`qlib.backtest.decision.OrderDir`
-**int values** (BUY=1 / SELL=0 — verified live against upstream qlib v0.9.7
+Emits ``order_type`` as :class:`qlib.backtest.decision.OrderDir` **int values**
+(BUY=1 / SELL=0 — verified live against upstream qlib v0.9.7
 ``qlib.backtest.decision.OrderDir``) instead of ``"BUY"`` / ``"SELL"`` strings.
-Adds :func:`build_orders_split` for the train/valid/test chronological split
+Exposes :func:`build_orders_split` for the train/valid/test chronological split
 required by ``qlib.rl.contrib.train_onpolicy``.
 
 Output schema after this rewrite (matches upstream
@@ -134,7 +134,7 @@ def build_orders_multileg(
 
     Combines two or more legs (e.g. ``{"TX": 1e6, "0050": 1e6}``) into a
     single pickle with one row per (trigger_date, leg) pair. Used by
-    :func:`build_orders_split` and by the Wave 4b end-to-end pipeline.
+    :func:`build_orders_split` and by the end-to-end pipeline.
 
     Args:
         trigger_dates: list of trigger-day Timestamps.
@@ -173,8 +173,8 @@ def build_orders_split(
 ) -> dict[str, Path]:
     """Chronological train/valid/test split, one pickle per split.
 
-    Splits ``trigger_dates`` chronologically (NOT randomly — D-32 frozen-
-    window sanity) into three buckets per the ``split`` ratios. Each bucket
+    Splits ``trigger_dates`` chronologically (NOT randomly — frozen-window
+    sanity) into three buckets per the ``split`` ratios. Each bucket
     is materialized as a single multi-leg pickle at ``<out_dir>/<split>``
     (no file extension — qlib's ``_read_orders`` accepts a file path with
     or without extension).

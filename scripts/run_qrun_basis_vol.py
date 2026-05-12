@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""ACTIVATE-02 driver — direct-call qrun for ``qrun_configs/v18/tx_basis_vol.yml``.
+"""Driver — direct-call qrun for ``qrun_configs/v18/tx_basis_vol.yml``.
 
-Pattern P4: uses ``qlib.cli.run.workflow(config_path=...)`` directly (not
-subprocess). Pitfall 2: explicit ``uri_folder`` pins MLflow to a file backend
-inside the bind-mounted ``local_dev/qlib-activations/qrun-runs/`` tree so the
-qlib-research container's Postgres MLflow URI does not leak into Phase 95.
+Uses ``qlib.cli.run.workflow(config_path=...)`` directly (not subprocess).
+Explicit ``uri_folder`` pins MLflow to a file backend inside the
+bind-mounted ``local_dev/qlib-activations/qrun-runs/`` tree so the
+qlib-research container's Postgres MLflow URI does not leak.
 
 Run on stormtrooper::
 
     docker compose exec -T qlib-research uv run python scripts/run_qrun_basis_vol.py
 
-The Wave 2 pytest smoke (``tests/test_qrun_smoke.py::test_qrun_smoke``) imports
+The pytest smoke (``tests/test_qrun_smoke.py::test_qrun_smoke``) imports
 ``run_qrun_basis_vol`` and invokes it programmatically — keep the function
 free of side effects beyond what is documented here.
 """
@@ -22,7 +22,7 @@ from pathlib import Path
 
 # Output directory — bind-mounted at /app/local_dev → host
 # aquarium/poseidon/local_dev/qlib-activations/qrun-runs/v18-tx_basis_vol/.
-# Wave 5 (Plan 95-06 portfolio report) consumes the recorder pickles emitted
+# Downstream portfolio-report tooling consumes the recorder pickles emitted
 # under {OUT_DIR}/mlruns/.
 OUT_DIR = Path("/app/local_dev/qlib-activations/qrun-runs/v18-tx_basis_vol")
 EXPERIMENT_NAME = "phase95_tx_basis_vol"
@@ -45,12 +45,12 @@ def run_qrun_basis_vol(
     config_path: str | Path | None = None,
     uri_folder: str | Path | None = None,
 ) -> None:
-    """Direct-call qrun for ACTIVATE-02 (Pattern P4).
+    """Direct-call qrun.
 
     Side effects:
       * Sets ``MLFLOW_TRACKING_URI`` to the file URI under ``uri_folder`` (or
         the default OUT_DIR/mlruns) — overrides any pre-existing env var so
-        Phase 41 D-14 Postgres MLflow leak is closed.
+        the upstream Postgres MLflow leak is closed.
       * Creates ``uri_folder`` if missing.
       * Calls ``qlib.cli.run.workflow(config_path, experiment_name, uri_folder)``
         — this loads the YAML via qlib's allowlist-aware ``init_instance_by_config``,

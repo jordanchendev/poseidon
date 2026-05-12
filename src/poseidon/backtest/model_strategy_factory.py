@@ -1,15 +1,15 @@
-"""ModelStrategyFactory for Optuna parameter search (FACT-02).
+"""ModelStrategyFactory for Optuna parameter search.
 
 Mirrors LiquiditySweepStrategyFactory duck-type pattern with PARAM_BOUNDS,
 build_from_trial(), from_config(), to_config_dict(), and build_trial_factory()
 for integration with ParameterSearchPipeline.
 
-Key design decisions (D-06 ~ D-09):
+Key design decisions:
 - Dynamic model_version_idx injection when multiple models available
 - PARAM_BOUNDS: prediction_threshold, position_pct, stop_loss_pct, take_profit_pct
 - build_trial_factory() returns config dicts (not strategy instances) because
   ModelStrategy requires a loaded model; BacktestRunner handles model loading
-  via prediction cache mechanism (Phase 43/44/45).
+  via prediction cache mechanism.
 """
 
 from __future__ import annotations
@@ -32,14 +32,14 @@ PARAM_BOUNDS: dict[str, tuple[int | float, int | float, str]] = {
 class ModelStrategyFactory:
     """Factory for building ModelStrategy configs from Optuna trials.
 
-    Mirrors LiquiditySweepStrategyFactory interface (D-08):
+    Mirrors LiquiditySweepStrategyFactory interface:
     - from_config(config) -> config dict (pass-through)
     - build_from_trial(trial, ...) -> config dict with model_version_id
     - to_config_dict(config_or_strategy) -> dict representation
     - build_trial_factory(symbol, market, interval) -> (callable, param_bounds)
 
     NOTE: build_trial_factory() is an INSTANCE method because it reads
-    self._available_models for dynamic model_version_idx bound injection (D-06).
+    self._available_models for dynamic model_version_idx bound injection.
 
     Unlike LiquiditySweepStrategyFactory which returns strategy instances,
     ModelStrategyFactory returns config dicts. ModelStrategy requires a loaded
@@ -152,7 +152,7 @@ class ModelStrategyFactory:
         """Return (trial_strategy_factory, param_bounds) for ParameterSearchPipeline.
 
         Instance method -- reads self._available_models for dynamic
-        model_version_idx bound injection (D-06).
+        model_version_idx bound injection.
 
         If len(available_models) > 1, adds model_version_idx to bounds.
         If len(available_models) <= 1, no model selection needed.

@@ -1,25 +1,27 @@
-"""Phase 85 — JSON artifact writer.
+"""JSON artifact writer for Optuna + WFE results.
 
-Produces the two files Phase 86 reads:
-  .planning/phases/85-optuna-wfe-validation/artifacts/{symbol}_optuna.json   (D-14)
-  .planning/phases/85-optuna-wfe-validation/artifacts/{symbol}_wfe.json      (D-15)
+Produces the two artifact files consumed by the downstream verdict layer:
+  {symbol}_optuna.json
+  {symbol}_wfe.json
 
 The verdict_inputs block uses key names that EXACTLY match the GATE.yaml
-criteria.gate_NN.metric values so Phase 86 can compare numerically without
-a translation layer. NO PASS/FAIL logic lives in this module — thresholds
-are Phase 86's domain. Phase 85 only emits raw values.
+criteria.gate_NN.metric values so downstream verdict logic can compare
+numerically without a translation layer. NO PASS/FAIL logic lives in this
+module — thresholds belong to the verdict layer. This module only emits
+raw values.
 
-GATE.yaml criteria (frozen at aquarium commit 5a1ecc9 — listed for
-cross-reference ONLY; thresholds are NOT consumed in this module):
+GATE.yaml criteria (listed for cross-reference ONLY; thresholds are NOT
+consumed in this module):
 
   gate_01: oos_aggregate_sharpe   '>'   0.0
   gate_02: wfe_degradation        '<'   0.40
   gate_03: oos_total_trades       '>='  100
   gate_04: max_consecutive_losses '<='  8
 
-Phase 85 emits the raw numbers under verdict_inputs; Phase 86 loads
-GATE.yaml and performs the comparison. Any threshold value embedded as
-runtime code in this module would be a layer-violation bug.
+This module emits the raw numbers under verdict_inputs; the downstream
+verdict layer loads GATE.yaml and performs the comparison. Any threshold
+value embedded as runtime code in this module would be a layer-violation
+bug.
 """
 
 from __future__ import annotations
@@ -38,7 +40,7 @@ from poseidon.backtest.phase85_metrics import (
 )
 
 ARTIFACT_SCHEMA_VERSION: str = "1.0.0"
-FROZEN_GATE_ANCHOR: str = "5a1ecc9"  # D-20 — Phase 86 will re-verify via git log
+FROZEN_GATE_ANCHOR: str = "5a1ecc9"  # downstream verdict layer re-verifies via git log
 
 REQUIRED_OPTUNA_KEYS: set = {
     "schema_version",
@@ -84,8 +86,8 @@ REQUIRED_WFE_KEYS: set = {
 #   gate_02.metric = "wfe_degradation"
 #   gate_03.metric = "oos_total_trades"
 #   gate_04.metric = "max_consecutive_losses"
-# Plus n_oos_windows for D-15 schema completeness (not a gate input itself).
-# IMPORTANT: thresholds are Phase 86's domain — Phase 85 only emits raw values.
+# Plus n_oos_windows for schema completeness (not a gate input itself).
+# IMPORTANT: thresholds are the verdict layer's domain — this module only emits raw values.
 REQUIRED_WFE_VERDICT_INPUTS: set = {
     "oos_total_trades",
     "oos_aggregate_sharpe",
@@ -123,16 +125,17 @@ def _ensure_redacted(url: str) -> str:
 
 
 def _now_iso_utc() -> str:
-    """UTC 'Z' timestamp matching D-14/D-15 schema 'generated_at'."""
+    """UTC 'Z' timestamp matching artifact schema 'generated_at'."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _ensure_no_passed(payload: dict) -> None:
     """Guard: top-level + verdict_inputs must not contain a 'passed' field.
 
-    Threshold-comparison logic belongs to Phase 86. Phase 85 only emits
-    raw `verdict_inputs` numbers — see GATE.yaml criteria.gate_NN.threshold
-    for the comparison rules (deliberately NOT consumed in this module).
+    Threshold-comparison logic belongs to the downstream verdict layer.
+    This module only emits raw `verdict_inputs` numbers — see GATE.yaml
+    criteria.gate_NN.threshold for the comparison rules (deliberately NOT
+    consumed in this module).
     """
     for forbidden in PASSED_FIELDS_FORBIDDEN:
         if forbidden in payload:
@@ -151,11 +154,11 @@ def build_optuna_payload(
     data_window_end: str,
     interval: str = "1m",
 ) -> dict:
-    """D-14 — `{symbol}_optuna.json` payload. NO verdict logic.
+    """`{symbol}_optuna.json` payload. NO verdict logic.
 
-    Thresholds (gate_01..gate_04) are NOT consulted here — Phase 85 emits
-    raw values; Phase 86 owns the comparison. See GATE.yaml at frozen
-    aquarium commit 5a1ecc9.
+    Thresholds (gate_01..gate_04) are NOT consulted here — this module
+    emits raw values; the downstream verdict layer owns the comparison.
+    See GATE.yaml at the frozen anchor commit.
     """
     payload = {
         "schema_version": ARTIFACT_SCHEMA_VERSION,
@@ -190,15 +193,15 @@ def build_optuna_payload(
 
 
 def _flatten_oos_trades(per_window: list) -> list:
-    """Concat all OOS trades across windows for D-19 max_consecutive_losses.
+    """Concat all OOS trades across windows for max_consecutive_losses.
 
-    85-03's driver guarantees every per-window dict carries 'oos_trades'
+    The driver guarantees every per-window dict carries 'oos_trades'
     (list[dict]) sourced from a per-window OOS-only re-backtest. If NO
     window surfaces a non-empty trade ledger we MUST fail loudly:
     a silent `[]` fallback would make `compute_max_consecutive_losses([])
     == 0`, and gate_04 (max_consecutive_losses <= 8 per GATE.yaml) would
     silently pass for every run regardless of true streak — a critical
-    correctness hazard for Phase 86.
+    correctness hazard for downstream verdict logic.
 
     We tolerate individual windows having empty `oos_trades` (some windows
     legitimately produce zero closed trades), but at least ONE window must
@@ -232,11 +235,11 @@ def _flatten_oos_trades(per_window: list) -> list:
     if n_windows_missing_key == n_windows_total:
         raise ValueError(
             "phase85_artifact: per_window dicts missing 'oos_trades' key — "
-            "85-03 driver did not surface trade ledger; "
+            "driver did not surface trade ledger; "
             "max_consecutive_losses computation impossible. "
             "WindowResult only carries oos_trade_count, NOT the ledger; "
             "the driver MUST re-run per-window OOS backtest and attach "
-            "oos_trades. See 85-03-PLAN.md _slice_window_trades."
+            "oos_trades (see _slice_window_trades)."
         )
     if n_windows_with_trades == 0:
         raise ValueError(
@@ -256,16 +259,17 @@ def build_wfe_payload(
     wf_config_dict: dict,
     interval: str = "1m",
 ) -> dict:
-    """D-15 — `{symbol}_wfe.json` payload. Computes verdict_inputs only.
+    """`{symbol}_wfe.json` payload. Computes verdict_inputs only.
 
     verdict_inputs key alignment to GATE.yaml criteria.gate_NN.metric
-    (frozen at aquarium 5a1ecc9; thresholds are Phase 86's domain — listed
-    here only for cross-reference, NEVER consumed):
+    (thresholds belong to the downstream verdict layer — listed here only
+    for cross-reference, NEVER consumed):
       - oos_aggregate_sharpe   (gate_01: '>'  0.0)
       - wfe_degradation        (gate_02: '<'  0.40)
       - oos_total_trades       (gate_03: '>=' 100)
       - max_consecutive_losses (gate_04: '<=' 8)
-    Phase 85 emits raw values; Phase 86 reads GATE.yaml and compares.
+    This module emits raw values; the verdict layer reads GATE.yaml and
+    compares.
     """
     per_window = result.wfe_per_window or []
     # Sum trades across windows for gate_03 input.
@@ -286,10 +290,11 @@ def build_wfe_payload(
 
     wfe_deg = wfe_degradation_excluding_is_negative(per_window)  # may be None
     oos_agg_sharpe = oos_aggregate_sharpe_trade_weighted(per_window)
-    # B-1 fix: _flatten_oos_trades raises ValueError when zero windows have
+    # _flatten_oos_trades raises ValueError when zero windows have
     # non-empty oos_trades — silent [] fallback would corrupt gate_04.
-    # Rule 1+2: legitimate zero-trade studies surface via wfe_flags +
-    # max_consecutive_losses=None so Phase 86 sees the truth (NOT spurious 0).
+    # Legitimate zero-trade studies surface via wfe_flags +
+    # max_consecutive_losses=None so the verdict layer sees the truth
+    # (NOT spurious 0).
     flags = list(result.wfe_flags)
     try:
         all_trades = _flatten_oos_trades(per_window)
@@ -338,7 +343,7 @@ def build_wfe_payload(
 
 def _write_json(path: Path, payload: dict) -> None:
     """Write payload as JSON. ``allow_nan=False`` fails loudly on stray NaN
-    (defense in depth alongside ``to_jsonable`` upstream — Pitfall 9)."""
+    (defense in depth alongside ``to_jsonable`` upstream)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(
         payload,

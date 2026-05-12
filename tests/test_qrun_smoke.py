@@ -1,18 +1,18 @@
-"""Phase 95 ACTIVATE-02 — qrun YAML pipeline smoke (Wave 2).
+"""ACTIVATE-02 — qrun YAML pipeline smoke.
 
-Two distinct gates per Plan 95-03:
+Two distinct gates:
 
   1. ``test_qrun_yaml_loads`` — runs on Mac (no STORMTROOPER guard). Asserts
      ``qrun_configs/v18/tx_basis_vol.yml`` parses cleanly and every ``class:``
-     entry resolves through ``poseidon.qlib.allowlist`` (Pattern P8 / T-95-01
-     RCE boundary). Defends against allowlist drift catching the issue before
+     entry resolves through ``poseidon.qlib.allowlist`` (Pattern P8 / RCE boundary).
+     Defends against allowlist drift catching the issue before
      the stormtrooper smoke runs.
 
   2. ``test_qrun_smoke`` — stormtrooper-only (Pattern S4). Drives the full
      qrun workflow end-to-end via ``scripts.run_qrun_basis_vol.run_qrun_basis_vol``
-     and applies the D-11 amended parity check. Status OK iff sign agreement
+     and applies the parity check. Status OK iff sign agreement
      AND magnitude ratio ∈ [0.5, 2.0]. PARTIAL with structured root cause is
-     acceptable per D-12 (does not block the phase).
+     acceptable (does not block the phase).
 
 Pattern P9: ``import qlib`` only via ``pytest.importorskip`` inside test
 bodies. Module-top imports are stdlib-only.
@@ -33,18 +33,18 @@ STORMTROOPER_GATE = pytest.mark.skipif(
     reason="stormtrooper-only smoke — set STORMTROOPER=1 inside qlib-research container",
 )
 
-# D-31 budget: 600s (10 min) for the qrun smoke (model train + record chain).
+# Budget: 600s (10 min) for the qrun smoke (model train + record chain).
 _BUDGET_SEC = 600.0
 
 
 def _smoke_dir(prong: str) -> Path:
-    """Resolve .planning/phases/95-*/smoke/{prong}/ from this file's path.
+    """Resolve the smoke output directory for the given prong.
 
     Inside the qlib-research container the bind-mount maps
     aquarium/poseidon/tests → /app/tests, so ``parents[2]`` is "/" rather than
     the real aquarium root. Detect this and fall back to /app/local_dev which
     IS bind-mounted — keeps smoke artifacts host-visible. Mirrors the carry-
-    forward helper from test_alpha158_eval.py (Plan 95-02).
+    forward helper from test_alpha158_eval.py.
     """
     here = Path(__file__).resolve()
     aquarium_root = here.parents[2]
@@ -57,7 +57,7 @@ def _smoke_dir(prong: str) -> Path:
 
 
 def test_qrun_yaml_loads() -> None:
-    """T-95-01 RCE boundary: every YAML ``class:`` resolves via allowlist.
+    """RCE boundary: every YAML ``class:`` resolves via allowlist.
 
     No STORMTROOPER gate — runs on Mac so allowlist drift surfaces in CI
     before the stormtrooper smoke. Pattern P8: handler/model class names are
@@ -93,12 +93,12 @@ def test_qrun_yaml_loads() -> None:
 
 @STORMTROOPER_GATE
 def test_qrun_smoke() -> None:
-    """ACTIVATE-02 smoke: drive qrun YAML end-to-end + run D-11 parity check.
+    """ACTIVATE-02 smoke: drive qrun YAML end-to-end + run parity check.
 
     Runs ``run_qrun_basis_vol()`` inside the qlib-research container. After the
-    workflow completes, asserts the recorder directory + mlruns/ exist (Wave 5
-    consumer contract) and runs the parity check. PARTIAL is acceptable per
-    D-12; only an empty recorder dir or a hard exception fails the test.
+    workflow completes, asserts the recorder directory + mlruns/ exist (downstream
+    consumer contract) and runs the parity check. PARTIAL is acceptable;
+    only an empty recorder dir or a hard exception fails the test.
     """
     pytest.importorskip("qlib")
 
@@ -119,7 +119,7 @@ def test_qrun_smoke() -> None:
             run_qrun_basis_vol()
             workflow_completed = True
         except Exception:
-            # D-12: a partial qrun execution (e.g. SignalRecord OK but
+            # A partial qrun execution (e.g. SignalRecord OK but
             # PortAnaRecord fails because qlib provider has no benchmark
             # data) is acceptable. Only hard-fail when no recorder output
             # at all is produced — the assertion below covers that.
@@ -134,7 +134,7 @@ def test_qrun_smoke() -> None:
         if parity.get("status") != "OK":
             status = "PARTIAL"
 
-        # Persist parity.json next to mlruns/ so Wave 5 + verifier can find it.
+        # Persist parity.json next to mlruns/ so downstream consumers + verifier can find it.
         parity_path = recorder_dir / "parity.json"
         parity_path.parent.mkdir(parents=True, exist_ok=True)
         parity_path.write_text(json.dumps(parity, indent=2, default=str))
@@ -147,7 +147,7 @@ def test_qrun_smoke() -> None:
             error = traceback.format_exc()
     elapsed = time.time() - t0
 
-    # Probe the recorder dir for SignalRecord output (pred.pkl). Wave 5
+    # Probe the recorder dir for SignalRecord output (pred.pkl). The downstream
     # consumer can fall back to pred.pkl + sig_analysis even when
     # PortAnaRecord cannot run (no qlib provider data for the benchmark).
     if (recorder_dir / "mlruns").exists():
@@ -172,10 +172,10 @@ def test_qrun_smoke() -> None:
         )
     )
 
-    # Hard assertions: mlruns/ + at least pred.pkl must exist (Wave 5
+    # Hard assertions: mlruns/ + at least pred.pkl must exist (the downstream
     # consumer needs SignalRecord output at minimum). PortAnaRecord may
     # be absent on systems without qlib provider data for the benchmark
-    # ticker — that becomes a PARTIAL per D-12, NOT a phase blocker.
+    # ticker — that becomes a PARTIAL, NOT a phase blocker.
     assert (recorder_dir / "mlruns").exists(), (
         f"mlruns directory missing at {recorder_dir / 'mlruns'} — qrun did not produce output"
     )

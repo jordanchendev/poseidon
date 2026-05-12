@@ -1,7 +1,7 @@
-"""Phase 92 Plan 92-02 — AutoResearchRunner.use_ddg_da branch dispatch.
+"""AutoResearchRunner.use_ddg_da branch dispatch.
 
-Tests cover D-03 (use_ddg_da flag dispatches to PoseidonDDGDA path) AND
-D-05 (the dispatch happens BEFORE autoresearch_context() so
+Tests cover that the use_ddg_da flag dispatches to PoseidonDDGDA path AND
+that the dispatch happens BEFORE autoresearch_context() so
 ``_AUTORESEARCH_ACTIVE`` remains False — DDG-DA's internal mutations would
 trip ImmutabilityViolationError if guard were active).
 """
@@ -17,7 +17,7 @@ from poseidon.backtest.param_search import SearchConfig
 
 
 def test_use_ddg_da_default_false_retains_existing_path() -> None:
-    """D-03: when use_ddg_da is unset, AutoResearchRunner does NOT call _run_ddg_da."""
+    """When use_ddg_da is unset, AutoResearchRunner does NOT call _run_ddg_da."""
     runner = AutoResearchRunner(
         db_session=MagicMock(),
         search_config=SearchConfig(n_trials=1),
@@ -38,7 +38,7 @@ def test_use_ddg_da_default_false_retains_existing_path() -> None:
 
 
 def test_use_ddg_da_true_dispatches_to_ddg_da_path(tmp_path: Path) -> None:
-    """D-03: when use_ddg_da=True, runner branches to _run_ddg_da BEFORE autoresearch_context()."""
+    """When use_ddg_da=True, runner branches to _run_ddg_da BEFORE autoresearch_context()."""
     runner = AutoResearchRunner(
         db_session=MagicMock(),
         search_config=SearchConfig(n_trials=1),
@@ -67,7 +67,7 @@ def test_use_ddg_da_true_dispatches_to_ddg_da_path(tmp_path: Path) -> None:
 
 
 def test_immutability_not_violated_in_ddg_da_path(tmp_path: Path) -> None:
-    """D-05/T-92-03: while inside DDG-DA dispatch, _AUTORESEARCH_ACTIVE must be False.
+    """While inside DDG-DA dispatch, _AUTORESEARCH_ACTIVE must be False.
 
     Captures the ContextVar state inside the wrapped run() callback and asserts
     the runner did NOT enter autoresearch_context() before calling DDG-DA.
@@ -96,6 +96,6 @@ def test_immutability_not_violated_in_ddg_da_path(tmp_path: Path) -> None:
         runner.run([MarketSpec(symbol="TX", market="tw_futures", interval="1d")])
 
     assert captured.get("active_during_run") is False, (
-        "D-05 violated: _AUTORESEARCH_ACTIVE was True during DDG-DA dispatch — "
+        "Invariant violated: _AUTORESEARCH_ACTIVE was True during DDG-DA dispatch — "
         "runner must branch BEFORE entering autoresearch_context()."
     )

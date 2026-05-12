@@ -1,10 +1,10 @@
-"""Phase 94 — qlib model zoo smoke tests (stormtrooper-only).
+"""qlib model zoo smoke tests (stormtrooper-only).
 
 Each test loads a model class via the allowlist (matching the worker's
 Pattern S2 lookup path), trains 2 epochs on a toy synthetic dataset built
-from the Wave 0 conftest fixtures, predicts on the test segment, and
-persists artifacts to ``.planning/phases/94-expanded-model-zoo/smoke/{model}/``
-per CONTEXT D-13.
+from the conftest fixtures, predicts on the test segment, and
+persists artifacts to the smoke output directory
+per the smoke artifact contract.
 
 Module-level ``pytestmark`` gates the whole file on ``STORMTROOPER=1`` so
 Mac-side ``pytest --collect-only`` succeeds (Pitfall 2) and the actual qlib
@@ -12,8 +12,8 @@ import only runs in the cp312 qlib-research container.
 
 Sources:
 - PATTERNS.md §test_zoo_smoke.py — full template skeleton (S1, S2, S4, S5)
-- RESEARCH §Code Examples Ex1 — ALSTM concrete smoke shape
-- CONTEXT D-09..D-14, D-20 — smoke design + TRA MTSDatasetH rule
+- Prior research notes — ALSTM concrete smoke shape
+- Smoke design + TRA MTSDatasetH rule
 """
 
 from __future__ import annotations
@@ -33,16 +33,16 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-# Per-model wall-clock budget per CONTEXT D-11 (5 minutes / 300 seconds).
+# Per-model wall-clock budget (5 minutes / 300 seconds).
 _BUDGET_SEC = 300.0
 
 
 def _smoke_dir(model_key: str) -> Path:
-    """Resolve .planning/phases/94-*/smoke/{model_key}/ from this file's path.
+    """Resolve the smoke output directory for the given model key.
 
     poseidon/tests/test_zoo_smoke.py → parents[0]=tests/, parents[1]=poseidon/,
-    parents[2]=aquarium root (where .planning/ lives). NEVER take a path from
-    user input — D-13 + Pitfall 6.
+    parents[2]=aquarium root (where the output tree lives). NEVER take a path from
+    user input — Pitfall 6.
     """
     here = Path(__file__).resolve()
     aquarium_root = here.parents[2]
@@ -65,7 +65,7 @@ def _resolve_model_class(model_key: str):
 
 
 def _build_segments(dates) -> dict[str, tuple[str, str]]:
-    """Build train/valid/test segments at 60/20/20 split (D-10) as ISO date strings."""
+    """Build train/valid/test segments at 60/20/20 split as ISO date strings."""
     n = len(dates)
     return {
         "train": (str(dates[0].date()), str(dates[int(n * 0.6) - 1].date())),
@@ -77,7 +77,7 @@ def _build_segments(dates) -> dict[str, tuple[str, str]]:
 def _build_handler(df, dates, instruments):
     """Wrap a synthetic DataFrame in a DataHandlerLP via StaticDataLoader.
 
-    Verified working against pyqlib 0.9.7 — see RESEARCH A5 + stormtrooper
+    Verified working against pyqlib 0.9.7 — see prior research notes A5 + stormtrooper
     inspection 2026-05-03.
     """
     from qlib.data.dataset.handler import DataHandlerLP
@@ -104,7 +104,7 @@ def _persist_artifacts(
     status: str = "OK",
     error: str | None = None,
 ) -> None:
-    """Write the D-13 artifact triplet (stdout.log + metrics.json + parquet).
+    """Write the artifact triplet (stdout.log + metrics.json + parquet).
 
     For PARTIAL outcomes (status != "OK") preds may be None — only metrics.json
     and stdout.log are guaranteed.
@@ -197,7 +197,7 @@ def test_localformer_smoke():
             error = "predict() returned empty"
         elif elapsed >= _BUDGET_SEC:
             status = "PARTIAL"
-            error = f"wall-clock {elapsed:.1f}s >= {_BUDGET_SEC}s budget (D-11)"
+            error = f"wall-clock {elapsed:.1f}s >= {_BUDGET_SEC}s budget"
     except Exception:
         elapsed = time.time() - t0 if "t0" in dir() else 0.0
         status = "PARTIAL"
@@ -216,11 +216,11 @@ def test_localformer_smoke():
 
     assert status == "OK", f"LocalformerModel smoke {status}: {error}"
     assert preds is not None and len(preds) > 0, "LocalformerModel produced no predictions"
-    assert elapsed < _BUDGET_SEC, f"LocalformerModel exceeded budget: {elapsed:.1f}s (D-11)"
+    assert elapsed < _BUDGET_SEC, f"LocalformerModel exceeded budget: {elapsed:.1f}s"
 
 
 def test_tra_smoke():
-    """TRAModel smoke: requires MTSDatasetH (D-20) — uses make_synthetic_mts_alpha158."""
+    """TRAModel smoke: requires MTSDatasetH — uses make_synthetic_mts_alpha158."""
     pytest.importorskip("qlib")
     pytest.importorskip("torch")
 
@@ -302,7 +302,7 @@ def test_tra_smoke():
             error = "predict() returned empty"
         elif elapsed >= _BUDGET_SEC:
             status = "PARTIAL"
-            error = f"wall-clock {elapsed:.1f}s >= {_BUDGET_SEC}s budget (D-11)"
+            error = f"wall-clock {elapsed:.1f}s >= {_BUDGET_SEC}s budget"
     except Exception:
         elapsed = time.time() - t0 if "t0" in dir() else 0.0
         status = "PARTIAL"
@@ -327,7 +327,7 @@ def test_tra_smoke():
 
     assert status == "OK", f"TRAModel smoke {status}: {error}"
     assert preds is not None and len(preds) > 0, "TRAModel produced no predictions"
-    assert elapsed < _BUDGET_SEC, f"TRAModel exceeded budget: {elapsed:.1f}s (D-11)"
+    assert elapsed < _BUDGET_SEC, f"TRAModel exceeded budget: {elapsed:.1f}s"
 
 
 def test_alstm_smoke():
@@ -376,7 +376,7 @@ def test_alstm_smoke():
             error = "predict() returned empty"
         elif elapsed >= _BUDGET_SEC:
             status = "PARTIAL"
-            error = f"wall-clock {elapsed:.1f}s >= {_BUDGET_SEC}s budget (D-11)"
+            error = f"wall-clock {elapsed:.1f}s >= {_BUDGET_SEC}s budget"
     except Exception:
         elapsed = time.time() - t0 if "t0" in dir() else 0.0
         status = "PARTIAL"
@@ -395,4 +395,4 @@ def test_alstm_smoke():
 
     assert status == "OK", f"ALSTM smoke {status}: {error}"
     assert preds is not None and len(preds) > 0, "ALSTM produced no predictions"
-    assert elapsed < _BUDGET_SEC, f"ALSTM exceeded budget: {elapsed:.1f}s (D-11)"
+    assert elapsed < _BUDGET_SEC, f"ALSTM exceeded budget: {elapsed:.1f}s"

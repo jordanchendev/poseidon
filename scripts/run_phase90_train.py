@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Phase 90 Wave 3.5 (Plan 90-04.1) — driver script.
+"""RL execution training driver script.
 
 Runs end-to-end:
 
@@ -7,14 +7,14 @@ Runs end-to-end:
    evaluation window.
 2. Aggregates to daily and computes basis-z + R2 trigger days
    (``basis_z<-1``).
-3. **Wave 2 back-fix smoke** — if ``twap`` or ``vwap`` are in ``--algos``,
-   runs them FIRST. Asserts non-NaN ``pa`` + ``ffr`` columns appear in the
+3. **Back-fix smoke** — if ``twap`` or ``vwap`` are in ``--algos``, runs
+   them FIRST. Asserts non-NaN ``pa`` + ``ffr`` columns appear in the
    resulting CSVs. If both algos return PARTIAL or NaN-only results, aborts
-   BEFORE kicking PPO/OPDS training (Plan 90-04 burnt-GPU lesson).
+   BEFORE kicking PPO/OPDS training (lesson from the burnt-GPU incident).
 4. **Pre-flight PPO time-box** — if ``--preflight-seconds`` > 0, runs a
    time-boxed PPO training on a small trigger-day subset, records wall-
    clock + GPU peak, extrapolates to the full window. Aborts if budget
-   exceeds D-11 4-hr cap.
+   exceeds the 4-hour cap.
 5. **Full PPO + OPDS training** — runs run_all_algos_legs with both algos.
 
 Designed to run INSIDE the poseidon-qlib-research container:
@@ -153,7 +153,7 @@ def aggregate_to_daily(ohlcv_1m: pd.DataFrame) -> pd.DataFrame:
 
 
 def compute_triggers(tx_1m: pd.DataFrame, etf_1m: pd.DataFrame) -> list[pd.Timestamp]:
-    """basis_z<-1 trigger days from D-06.
+    """basis_z<-1 trigger days.
 
     Drops triggers on the last calendar day of available data — qlib's
     backtest calendar manager reads t+1 internally and crashes with
@@ -177,7 +177,7 @@ def compute_triggers(tx_1m: pd.DataFrame, etf_1m: pd.DataFrame) -> list[pd.Times
 
 
 # ---------------------------------------------------------------------------
-# Wave 2 back-fix smoke
+# Back-fix smoke
 # ---------------------------------------------------------------------------
 
 
@@ -238,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-wave2-smoke",
         action="store_true",
-        help="skip the Wave 2 TWAP/VWAP back-fix non-NaN gate (DANGEROUS — Plan 90-04 lesson)",
+        help="skip the TWAP/VWAP back-fix non-NaN gate (DANGEROUS)",
     )
     parser.add_argument(
         "--preflight-seconds",
@@ -269,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 60)
-    logger.info("Phase 90 Wave 3.5 driver — run_id=%s", run_id)
+    logger.info("RL execution training driver — run_id=%s", run_id)
     logger.info("Window: %s → %s", window_start, window_end)
     logger.info("Algos: %s", args.algos)
     logger.info("Run dir: %s", run_dir.resolve())
@@ -297,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
             len(triggers),
         )
 
-    # 3. Wave 2 back-fix smoke (ABORT-IF-FAIL gate)
+    # 3. Back-fix smoke (ABORT-IF-FAIL gate)
     from poseidon.qlib.rl_runner import run_all_algos_legs
 
     rule_algos = [a for a in args.algos if a in ("twap", "vwap")]
@@ -309,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if rule_algos and not args.skip_wave2_smoke:
         logger.info(
-            "Wave 2 back-fix smoke: running %s on %d trigger days",
+            "back-fix smoke: running %s on %d trigger days",
             rule_algos,
             len(triggers),
         )
@@ -342,8 +342,8 @@ def main(argv: list[str] | None = None) -> int:
 
         if not any_passed:
             logger.error(
-                "Wave 2 back-fix smoke FAILED — no rule algo produced non-NaN pa/ffr. "
-                "Aborting BEFORE PPO/OPDS training (Plan 90-04 lesson). "
+                "back-fix smoke FAILED — no rule algo produced non-NaN pa/ffr. "
+                "Aborting BEFORE PPO/OPDS training. "
                 "Use --skip-wave2-smoke to override."
             )
             (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
@@ -401,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
             (preflight_dir / "preflight.json").write_text(json.dumps(preflight_record, indent=2))
             if extrapolated > DEFAULT_TIME_BUDGET_SECONDS:
                 logger.error(
-                    "Pre-flight extrapolation %.0fs exceeds D-11 budget %ds — aborting",
+                    "Pre-flight extrapolation %.0fs exceeds budget %ds — aborting",
                     extrapolated,
                     DEFAULT_TIME_BUDGET_SECONDS,
                 )

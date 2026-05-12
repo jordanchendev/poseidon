@@ -1,17 +1,17 @@
-"""TrainingRun ORM model — tracks Qlib training job lifecycle (Phase 41).
+"""TrainingRun ORM model — tracks Qlib training job lifecycle.
 
 A TrainingRun is created by ``POST /api/v1/models/train`` and progresses
 through the status enum:
 
     pending -> running -> succeeded | failed | cancelled
 
-Only **succeeded** runs promote to a ``ModelVersion`` row (D-06).  The
+Only **succeeded** runs promote to a ``ModelVersion`` row. The
 ``model_version_id`` FK is NULL until promotion completes.
 
-Schema: D-04 (training_runs columns)
-Status: D-05 (pending / running / succeeded / failed / cancelled)
-Promotion: D-06 (only succeeded runs link to model_versions)
-Error: D-07 (failed runs preserve error text)
+Schema: training_runs columns.
+Status: pending / running / succeeded / failed / cancelled.
+Promotion: only succeeded runs link to model_versions.
+Error: failed runs preserve error text.
 """
 
 import uuid

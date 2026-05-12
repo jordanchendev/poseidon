@@ -1,16 +1,14 @@
-"""Expand backfill_jobs for request-level API jobs (Phase 39).
+"""Expand backfill_jobs for request-level API jobs.
 
 Revision ID: 021
 Revises: 020
 Create Date: 2026-04-09
 
-Phase 39 backfill-api-coverage:
-
 A single user-triggered backfill job may now cover multiple symbols and
-intervals (D-03/D-08 in 39-CONTEXT.md). The Phase 38 substrate assumed one
-row per (symbol, interval) tuple and enforced NOT NULL on both columns.
-This migration relaxes that assumption while preserving the durable row
-contract Phase 38 committed to.
+intervals. The original backfill_jobs substrate assumed one row per
+(symbol, interval) tuple and enforced NOT NULL on both columns. This
+migration relaxes that assumption while preserving the durable row
+contract from the original schema.
 
 Changes:
 - backfill_jobs.symbol   -> NULLABLE (multi-symbol request jobs)
@@ -82,6 +80,6 @@ def downgrade():
     op.drop_column("backfill_jobs", "symbols")
 
     # Restore NOT NULL constraints (down path assumes no multi-tuple rows
-    # remain; operators should purge pending Phase 39 jobs before rollback).
+    # remain; operators should purge pending multi-tuple jobs before rollback).
     op.alter_column("backfill_jobs", "interval", existing_type=sa.String(8), nullable=False)
     op.alter_column("backfill_jobs", "symbol", existing_type=sa.String(32), nullable=False)

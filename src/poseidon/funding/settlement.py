@@ -3,8 +3,6 @@
 Records funding payments as TradeLogRecord entries with entry_type='funding'.
 Designed to be called every 8h for each open perp position.
 
-Phase 26: function implementation only.
-Phase 27: Celery Beat scheduling.
 """
 
 import logging

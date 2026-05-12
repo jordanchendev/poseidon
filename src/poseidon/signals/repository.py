@@ -98,9 +98,9 @@ class SignalRepository:
     ) -> list[SignalRecord]:
         """Return the most recent PASSED signals for ``market`` since ``since``.
 
-        Phase 89-02 wires perp_rebalance / portfolio_monthly_rebalance through
-        this method so live orders are produced from PASSED signals (closing
-        the F8 wiring breach found in Phase 88 — 25 orders, 0 matching signals).
+        perp_rebalance / portfolio_monthly_rebalance call this method so
+        live orders are produced from PASSED signals (closing the F8 wiring
+        breach — 25 orders, 0 matching signals).
 
         Args:
             market: Market identifier (e.g. ``"crypto_perp"``, ``"tw_stock"``).

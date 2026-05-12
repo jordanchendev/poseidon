@@ -231,7 +231,7 @@ class PerpPaperAdapter(BrokerAdapter):
         pass
 
     # ------------------------------------------------------------------
-    # Perp-specific methods (NOT on BrokerAdapter ABC, per D-08)
+    # Perp-specific methods (NOT on BrokerAdapter ABC)
     # ------------------------------------------------------------------
 
     def set_leverage(self, symbol: str, leverage: int) -> None:

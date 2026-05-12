@@ -1,4 +1,4 @@
-"""Phase 90 Wave 1 — qlib RL dataset pickle adapter.
+"""qlib RL dataset pickle adapter.
 
 Bridges Thalassa-shaped 1-minute OHLCV (``[time, open, high, low, close,
 volume]``) to the qlib RL backtest pickle layout produced upstream by
@@ -47,7 +47,7 @@ def write_pickle(
         instrument: instrument identifier to populate the inner MultiIndex
             level (e.g. ``"TX"`` or ``"0050"``).
         out_path: filesystem path where the pickle is written. Parent
-            directory must already exist (Wave 4 REST layer creates the
+            directory must already exist (the caller creates the
             ``runs/<run_id>/`` dir before calling this).
 
     Returns:

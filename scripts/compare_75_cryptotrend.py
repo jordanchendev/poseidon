@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 75 D-01~D-10: 4-way CryptoTrend baseline comparison + BTC buy-and-hold.
+"""4-way CryptoTrend baseline comparison + BTC buy-and-hold.
 
 Compares 4 variants:
   1. CryptoTrend original (4H EMA 12/26)
@@ -43,19 +43,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Configuration (per D-01 through D-10)
+# Configuration
 # ---------------------------------------------------------------------------
-START = datetime(2024, 1, 1)  # Post-ETF only (D-01)
+START = datetime(2024, 1, 1)  # Post-ETF only
 END = datetime.now()
 SYMBOLS = ["BTCUSDT", "ETHUSDT"]
 INITIAL_CAPITAL = 100_000.0  # 100K USDT
 INTERVAL = "4h"
-BARS_PER_YEAR = 2190  # 365.25 * 24 / 4 for 4H crypto bars (D-10, pitfall 6 fix)
-COST_MODEL = COST_MODELS["crypto_perp"]  # D-02
-ATR_PERIOD = 14  # D-05
-VOL_SIZING_CAP = (0.5, 2.0)  # D-06: cap multiplier range
-HMM_N_REGIMES = 2  # D-08, pitfall 2 fix: must be 2, NOT default 3
-REGIME_REDUCTION = 0.5  # D-09: 50% weight reduction in high-vol regime
+BARS_PER_YEAR = 2190  # 365.25 * 24 / 4 for 4H crypto bars
+COST_MODEL = COST_MODELS["crypto_perp"]
+ATR_PERIOD = 14
+VOL_SIZING_CAP = (0.5, 2.0)  # cap multiplier range
+HMM_N_REGIMES = 2  # must be 2, NOT default 3
+REGIME_REDUCTION = 0.5  # 50% weight reduction in high-vol regime
 
 
 # ---------------------------------------------------------------------------
@@ -179,13 +179,12 @@ class BacktestCryptoTrend:
 
 
 # ---------------------------------------------------------------------------
-# Strategy wrappers for weight modification (option c from RESEARCH.md)
+# Strategy wrappers for weight modification
 # ---------------------------------------------------------------------------
 class VolSizingWrapper:
     """Apply inverse-ATR vol sizing: multiply weight by baseline_atr / current_atr.
 
-    Per D-05: ATR period=14 on 4H bars.
-    Per D-06: inverse-ATR scaling, capped at [0.5, 2.0].
+    ATR period=14 on 4H bars.  Inverse-ATR scaling, capped at [0.5, 2.0].
     """
 
     def __init__(
@@ -255,8 +254,8 @@ class VolSizingWrapper:
 class RegimeFilterWrapper:
     """Reduce weights in high-vol HMM regime.
 
-    Per D-08: HMM n_regimes=2 on 4H close (BTC as reference).
-    Per D-09: When hmm_regime_label == 1 (high-vol), multiply weights by 0.5.
+    HMM n_regimes=2 on 4H close (BTC as reference).
+    When hmm_regime_label == 1 (high-vol), multiply weights by 0.5.
     """
 
     def __init__(
@@ -353,10 +352,10 @@ class CombinedWrapper:
 
 
 # ---------------------------------------------------------------------------
-# BTC buy-and-hold benchmark (per D-03, BASE-02)
+# BTC buy-and-hold benchmark
 # ---------------------------------------------------------------------------
 def compute_btc_benchmark(btc_ohlcv: pd.DataFrame, initial_capital: float, bars_per_year: int) -> dict:
-    """Compute BTC buy-and-hold metrics following Phase 73 pattern."""
+    """Compute BTC buy-and-hold metrics."""
     if btc_ohlcv.empty:
         return {"label": "BTC buy-and-hold", "error": "No BTC OHLCV data"}
 
@@ -393,11 +392,11 @@ def compute_btc_benchmark(btc_ohlcv: pd.DataFrame, initial_capital: float, bars_
 # Main comparison runner
 # ---------------------------------------------------------------------------
 def run_comparison() -> int:
-    """Run Phase 75 4-variant CryptoTrend comparison and print results."""
+    """Run the 4-variant CryptoTrend comparison and print results."""
     repo = RemoteDataRepository.from_settings()
     results: list[dict] = []
 
-    # Step 1: Pre-fetch OHLCV data for all symbols
+    # 1. Pre-fetch OHLCV data for all symbols
     print(f"Fetching OHLCV data for {len(SYMBOLS)} symbols ({INTERVAL})...")
     print(f"Period: {START.date()} to {END.date()}")
     ohlcv_dict: dict[str, pd.DataFrame] = {}
@@ -429,7 +428,7 @@ def run_comparison() -> int:
         if hasattr(df.index, "tz") and df.index.tz is not None:
             ohlcv_dict[symbol] = df.tz_localize(None)
 
-    # Step 2: Build base config (same params as live CryptoTrendConfig defaults)
+    # 2. Build base config (same params as live CryptoTrendConfig defaults)
     base_config = CryptoTrendConfig(
         symbols=SYMBOLS,
         momentum={"ema_fast_period": 12, "ema_slow_period": 26, "interval": INTERVAL},
@@ -437,7 +436,7 @@ def run_comparison() -> int:
         allocation={"method": "equal_weight", "position_limit_pct": 0.5, "leverage": 3},
     )
 
-    # Step 3: Define 4 variants (per D-07)
+    # 3. Define 4 variants
     # Using BacktestCryptoTrend (computes from pre-fetched OHLCV, respects as_of)
     # instead of live CryptoTrendStrategy (calls read_perp_ohlcv, ignores as_of)
     BacktestCryptoTrend(config=base_config, ohlcv_dict=ohlcv_dict)
@@ -474,7 +473,7 @@ def run_comparison() -> int:
         },
     ]
 
-    # Step 4: Run backtests using PortfolioBacktester (pitfall 4 fix)
+    # 4. Run backtests using PortfolioBacktester
     for entry in variants:
         label = entry["label"]
         strategy = entry["strategy"]
@@ -497,8 +496,8 @@ def run_comparison() -> int:
             if result.status == "failed":
                 raise RuntimeError(result.error_message or "Backtest failed")
 
-            # Re-compute metrics with bars_per_year=2190 (pitfall 6 fix)
-            # PortfolioBacktester._run_loop hardcodes bars_per_year=252
+            # Re-compute metrics with bars_per_year=2190.
+            # PortfolioBacktester._run_loop hardcodes bars_per_year=252.
             if result.equity_curve:
                 equity_series = pd.Series(
                     [nav for _, nav in result.equity_curve],
@@ -558,14 +557,14 @@ def run_comparison() -> int:
             logger.exception("Variant '%s' failed", label)
             results.append({"label": label, "error": str(exc)})
 
-    # Step 5: BTC buy-and-hold benchmark (D-03, BASE-02)
+    # 5. BTC buy-and-hold benchmark
     btc_ohlcv = ohlcv_dict.get("BTCUSDT", pd.DataFrame())
     benchmark_row = compute_btc_benchmark(btc_ohlcv, INITIAL_CAPITAL, BARS_PER_YEAR)
     results.append(benchmark_row)
 
-    # Step 6: Summary table
+    # 6. Summary table
     print(f"\n{'=' * 100}")
-    print("Phase 75: CryptoTrend 4-Way Comparison + BTC Buy-and-Hold")
+    print("CryptoTrend 4-Way Comparison + BTC Buy-and-Hold")
     print(f"{'=' * 100}")
     print(f"Period: {START.date()} to {END.date()}")
     print(f"Symbols: {', '.join(SYMBOLS)}")
@@ -597,7 +596,7 @@ def run_comparison() -> int:
             f"{ann_ret:>8} | {trades} | {avg_hold} | {win_rate}"
         )
 
-    # Step 7: Identify winner (highest Sharpe among strategy variants)
+    # 7. Identify winner (highest Sharpe among strategy variants)
     strat_results = [r for r in results if "error" not in r and r["label"] != "BTC buy-and-hold"]
     if strat_results:
         winner = max(strat_results, key=lambda r: r.get("sharpe_ratio", -999))
@@ -616,7 +615,7 @@ def run_comparison() -> int:
     if not bias_warning:
         print("  Look-ahead bias gate: PASSED (all |Sharpe| <= 3.0)")
 
-    # Per D-10: if neither variant improves Sharpe, that is acceptable
+    # If neither variant improves Sharpe, that is acceptable.
     if strat_results and len(strat_results) >= 2:
         original = next((r for r in strat_results if "original" in r["label"]), None)
         if original:
@@ -625,18 +624,16 @@ def run_comparison() -> int:
             )
             if not improved:
                 print(
-                    "\n  NOTE (D-10): Neither vol-sizing nor regime-filter improved "
+                    "\n  NOTE: Neither vol-sizing nor regime-filter improved "
                     "Sharpe over original. This is an acceptable finding."
                 )
 
-    # Step 8: Save JSON summary
+    # 8. Save JSON summary
     output_dir = Path("scripts/output")
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "compare_75_results.json"
 
     summary = {
-        "phase": "75",
-        "plan": "02",
         "description": "CryptoTrend 4-way comparison + BTC B&H",
         "period": {
             "start": START.date().isoformat(),
@@ -654,7 +651,7 @@ def run_comparison() -> int:
     output_path.write_text(json.dumps(summary, indent=2, default=str))
     print(f"\n  JSON summary saved to: {output_path}")
 
-    # Step 9: Print JSON for easy parsing
+    # 9. Print JSON for easy parsing
     print(f"\n{'=' * 100}")
     print("JSON SUMMARY")
     print(f"{'=' * 100}")

@@ -1,6 +1,6 @@
 """Tests for funding rate settlement in backtest engine.
 
-Phase 52-02: Validates BacktestResult funding cost fields and
+Validates BacktestResult funding cost fields and
 BacktestRunner funding settlement logic at 8h boundaries.
 
 All tests run without DB/GPU dependencies (synthetic data only).

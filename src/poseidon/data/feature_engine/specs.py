@@ -84,7 +84,7 @@ OI_NAMES = frozenset({"oi_change", "oi_buildup", "oi_cost_basis", "cascade"})
 PREDICTION_NAMES = frozenset({"qlib_prediction"})
 MACRO_PREFIX = "macro_"
 
-# Phase 66: Extended nonprice feature name sets
+# Extended nonprice feature name sets
 FUNDAMENTAL_EXTENDED_NAMES = frozenset(
     {
         "gross_margin",
@@ -118,7 +118,7 @@ VALUATION_NAMES = frozenset(
 )
 FOREIGN_HOLDING_NAMES = frozenset({"foreign_holding_change"})
 
-# Phase 71: Price momentum (OHLCV-derived, NOT nonprice)
+# Price momentum (OHLCV-derived, NOT nonprice)
 MOMENTUM_NAMES = frozenset({"momentum_3m", "momentum_6m", "momentum_12m"})
 
 
@@ -209,10 +209,10 @@ def get_r2_specs(symbol: str, market: str) -> list[tuple[str, dict]]:
                 ("revenue_yoy", {}),
                 ("avg_trade_size", {}),
                 ("turnover_ratio", {}),
-                # Fundamental expansion (Phase 42 FEAT-01)
+                # Fundamental expansion (FEAT-01)
                 ("roe", {}),
                 ("roa", {}),
-                # Margin transaction (Phase 42 FEAT-02)
+                # Margin transaction (FEAT-02)
                 ("margin_buy_ratio", {}),
                 ("margin_sell_ratio", {}),
             ]
@@ -249,7 +249,7 @@ def get_r2_specs(symbol: str, market: str) -> list[tuple[str, dict]]:
                 ("adx", {"period": 14}),
                 ("trend_strength", {"long_period": 100, "atr_period": 14}),
                 ("hour_of_day", {}),
-                # Phase 76: IC-validated micro-structure features
+                # IC-validated micro-structure features
                 # CVD: IC=-0.027 (h=1), p=0.006, n=10052 -- PASS
                 ("cvd", {"period": 20}),
                 # Cascade: IC=0.034 (h=20), p=0.0006, n=10054 -- PASS
@@ -308,7 +308,7 @@ EXPANDED_FEATURES_R2: list[tuple[str, dict]] = [
 ]
 
 
-# Phase 66: TW stock fundamental + institutional + quality features
+# TW stock fundamental + institutional + quality features
 TW_STOCK_FUNDAMENTAL_FEATURES: list[tuple[str, dict]] = [
     # FEAT-01: Fundamental extended
     ("gross_margin", {}),
@@ -333,7 +333,7 @@ TW_STOCK_FUNDAMENTAL_FEATURES: list[tuple[str, dict]] = [
     ("pbr_percentile", {}),
     ("dividend_yield_percentile", {}),
     ("dividend_yield", {}),
-    # FEAT-06: Price momentum (Phase 71 D-13)
+    # FEAT-06: Price momentum
     ("momentum_3m", {}),
     ("momentum_6m", {}),
     ("momentum_12m", {}),

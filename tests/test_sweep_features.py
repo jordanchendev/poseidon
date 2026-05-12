@@ -1,4 +1,4 @@
-"""Tests for liquidity sweep feature classes (Phase 43.1-02).
+"""Tests for liquidity sweep feature classes.
 
 Covers wick, swing, trend, volatility extension, and funding rate extension features.
 """

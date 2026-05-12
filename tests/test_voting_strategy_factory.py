@@ -165,15 +165,15 @@ class TestParamBounds:
             assert low < high, f"{name}: low ({low}) >= high ({high})"
 
     def test_param_bounds_atr_multiplier_range(self) -> None:
-        """ATR multiplier range should be (3.0, 8.0) per D-06."""
+        """ATR multiplier range should be (3.0, 8.0)."""
         assert PARAM_BOUNDS["atr_multiplier"] == (3.0, 8.0, "float")
 
     def test_param_bounds_bear_min_votes(self) -> None:
-        """Bear min_votes range should be (3, 6, int) per D-22."""
+        """Bear min_votes range should be (3, 6, int)."""
         assert PARAM_BOUNDS["bear_min_votes"] == (3, 6, "int")
 
     def test_param_bounds_bear_position_pct(self) -> None:
-        """Bear position_pct range should be (0.03, 0.12, float) per D-22."""
+        """Bear position_pct range should be (0.03, 0.12, float)."""
         assert PARAM_BOUNDS["bear_position_pct"] == (0.03, 0.12, "float")
 
     def test_param_bounds_qlib_model_enabled(self) -> None:
@@ -244,7 +244,7 @@ class TestBearSignalGeneration:
         assert bear_macd["threshold"] == 0
 
     def test_bull_bb_threshold_085(self) -> None:
-        """Bull BB squeeze threshold should be 0.85 (not 0.2) per D-14."""
+        """Bull BB squeeze threshold should be 0.85 (not 0.2)."""
         params = self._default_params()
         config = _build_config_from_params(
             params,

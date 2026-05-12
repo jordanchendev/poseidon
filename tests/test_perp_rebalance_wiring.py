@@ -1,4 +1,4 @@
-"""Phase 89 Plan 02 -- perp_rebalance wiring (W2).
+"""perp_rebalance wiring tests.
 
 Verifies perp_rebalance reads PASSED crypto_perp signals from SignalRepository
 and propagates signal_ids dict to OrderManager.execute_rebalance, tagging
@@ -287,7 +287,7 @@ class TestPerpRebalanceWiring:
 class TestSignalsToTargets:
     """The _signals_to_targets helper translates SignalRecord list to (targets, signal_ids).
 
-    Mapping (Phase 89-02):
+    Mapping:
         action='long'  → targets[symbol] = float(quantity_pct)
         action='short' → targets[symbol] = -float(quantity_pct)  (short side handled by RebalanceOrder.side='short')
         action='close' → targets[symbol] = 0.0

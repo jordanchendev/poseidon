@@ -29,7 +29,7 @@ _QLIB_COLUMNS = ["$open", "$high", "$low", "$close", "$volume", "$vwap"]
 class DatasetBuilder:
     """Queries OHLCV data from TimescaleDB and produces Qlib-compatible DataFrames.
 
-    Capability metadata (per D-21):
+    Capability metadata:
         supports_backtest = True
         supports_live = False
         bias_risk = []

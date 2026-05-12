@@ -1,16 +1,16 @@
-"""Phase 85 -- CLI entry. Runs ONE symbol end-to-end (D-10 serial).
+"""CLI entry for the Optuna+WFE driver. Runs ONE symbol end-to-end (serial).
 
 Examples:
     # 5-trial dry on a small slice (smoke before full run):
     python -m poseidon.backtest.phase85_run --symbol BTCUSDT --n-trials 5 --dry --days 30
 
-    # Full production run, BTC then ETH (run twice; D-10 serial):
+    # Full production run, BTC then ETH (run twice, serial):
     python -m poseidon.backtest.phase85_run --symbol BTCUSDT --n-trials 100
     python -m poseidon.backtest.phase85_run --symbol ETHUSDT --n-trials 100
 
     # Recover artifacts from an existing completed Optuna study without
-    # re-running optimization (operator escape hatch -- see Phase 85 SUMMARY
-    # for the original need: cpu-worker /tmp ephemerality + container restart):
+    # re-running optimization (operator escape hatch for cpu-worker /tmp
+    # ephemerality + container restart):
     python -m poseidon.backtest.phase85_run --symbol BTCUSDT --resume-only
 
 IMPORTANT artifact-dir guidance for stormtrooper cpu-worker:
@@ -22,16 +22,16 @@ IMPORTANT artifact-dir guidance for stormtrooper cpu-worker:
     so artifacts land on the persistent ``model-artifacts`` Docker volume
     that the cpu-worker bind-mounts at /data/models. Operators then
     ``docker cp poseidon-cpu-worker-1:/data/models/phase85_artifacts/. <host>``
-    + ``scp`` back to the local aquarium tree before committing.
+    + ``scp`` back to the local tree before committing.
 
-Outputs always land at the aquarium-rooted artifacts dir, resolved as:
+Output directory resolution order:
 
     1. ``$PHASE85_ARTIFACTS_DIR`` env override -- preferred.
-    2. ``../aquarium/.planning/phases/85-optuna-wfe-validation/artifacts/`` --
-       stormtrooper layout where poseidon and aquarium are sibling repos
-       under ``~/Projects``.
-    3. Walks ``__file__`` parents looking for an ``aquarium/.planning`` peer.
-    4. Falls back to ``cwd/.planning/phases/.../artifacts``.
+    2. Sibling-repo layout: walk parents for an ``aquarium/<artifact-tail>``
+       peer (stormtrooper has poseidon and aquarium as sibling repos under
+       ``~/Projects``).
+    3. Walk ``__file__`` parents for a matching directory (embedded layout).
+    4. Falls back to ``cwd`` joined with the artifact tail.
 
 The ``--dry`` flag uses a 30-day OHLCV slice + relaxed WFE thresholds so the
 pipeline can be smoke-tested for ~5 minutes before launching the 4-7 hour
@@ -39,15 +39,14 @@ production run. Dry artifacts are deliberately written to the SAME path as
 production artifacts -- a successful dry validates JSON serialization, schema
 shape, and Postgres connectivity before the real run overwrites them.
 
-D-10 contract: this module runs exactly ONE symbol per process. The 85-05
-plan launches BTC and ETH as TWO sequential processes (BTC tmux session must
-end before ETH starts; D-18 fail-isolation gate). Cross-symbol parallelism
-is forbidden.
+Contract: this module runs exactly ONE symbol per process. BTC and ETH must
+be launched as TWO sequential processes (BTC tmux session must end before
+ETH starts; fail-isolation gate). Cross-symbol parallelism is forbidden.
 
-D-20 contract: the artifact writer stamps ``frozen_gate_anchor='5a1ecc9'``
-into both JSON files. Operators must verify (post-run, on the aquarium tree)
-that every Phase 85 commit is strictly later than that anchor via
-``git log --oneline 5a1ecc9..HEAD -- .planning/phases/85-optuna-wfe-validation/``.
+Contract: the artifact writer stamps ``frozen_gate_anchor='5a1ecc9'`` into
+both JSON files. Operators must verify (post-run) that every commit
+touching the gate-anchored artifacts is strictly later than that anchor
+via ``git log --oneline 5a1ecc9..HEAD``.
 """
 
 from __future__ import annotations
@@ -69,20 +68,19 @@ from poseidon.backtest.walk_forward import WalkForwardConfig
 
 log = logging.getLogger(__name__)
 
-# Default 270-day data window aligned with Phase 85 D-07 (90/0/90/30 -> 4 OOS windows).
+# Default 270-day data window (90/0/90/30 -> 4 OOS windows).
 DATA_WINDOW_START_DEFAULT = "2025-07-30T00:00:00Z"
 DATA_WINDOW_END_DEFAULT = "2026-04-26T00:00:00Z"
 
 
 def _resolve_artifacts_dir() -> Path:
-    """Return the aquarium-rooted artifacts dir.
+    """Return the artifacts dir for this run.
 
     Resolution order:
     1. ``$PHASE85_ARTIFACTS_DIR`` env override.
-    2. Walk ``__file__`` parents looking for a sibling ``aquarium/.planning``.
-    3. Walk ``__file__`` parents for a ``.planning`` directly (if poseidon is
-       embedded inside aquarium worktree).
-    4. ``cwd/.planning/phases/85-.../artifacts``.
+    2. Walk ``__file__`` parents looking for a sibling layout.
+    3. Walk ``__file__`` parents for an embedded layout match.
+    4. Falls back to ``cwd`` joined with the artifact tail.
     """
     env_override = os.environ.get("PHASE85_ARTIFACTS_DIR")
     if env_override:
@@ -131,7 +129,7 @@ def _fetch_ohlcv(symbol: str, start: str, end: str, interval: str = "1m"):
 def _build_engines():
     """Construct FeatureEngine + RiskEngine with no DB / no rules.
 
-    Phase 85 driver runs on cached OHLCV passed in as a DataFrame; no remote
+    The driver runs on cached OHLCV passed in as a DataFrame; no remote
     feature loads are required. RiskEngine with empty rules lets every signal
     through -- driver tests are signal-orchestration agnostic.
     """
@@ -144,7 +142,7 @@ def _build_engines():
 def _build_wf_config(*, dry: bool, total_bars: int) -> WalkForwardConfig:
     """Pick the WalkForwardConfig for production vs dry.
 
-    Production (D-07): 90/0/90/30 calendar days at 1m -> 4 OOS windows on 270d.
+    Production: 90/0/90/30 calendar days at 1m -> 4 OOS windows on 270d.
     Dry: shrink to a window that fits a ~30-day fixture (10/0/10/5 days).
     """
     if dry:
@@ -202,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--storage-url",
         default=os.environ.get("OPTUNA_STORAGE_URL"),
-        help="Postgres URL for Optuna RDBStorage (D-04). Defaults to $OPTUNA_STORAGE_URL env var.",
+        help="Postgres URL for Optuna RDBStorage. Defaults to $OPTUNA_STORAGE_URL env var.",
     )
     parser.add_argument("--out-dir", default=None)
     parser.add_argument("--log-level", default="INFO")
@@ -246,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = Path(args.out_dir) if args.out_dir else _resolve_artifacts_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     log.info(
-        "Phase 85 run: symbol=%s n_trials_target=%d n_trials_to_run=%d dry=%s resume_only=%s out_dir=%s",
+        "Optuna+WFE run: symbol=%s n_trials_target=%d n_trials_to_run=%d dry=%s resume_only=%s out_dir=%s",
         args.symbol,
         args.n_trials,
         n_trials_to_run,
@@ -288,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
         wf_config=wf_config,
     )
 
-    # D-15 wf_config_dict reports CALENDAR DAYS (not bars) for human readability.
+    # wf_config_dict reports CALENDAR DAYS (not bars) for human readability.
     wf_config_dict = {
         "train_days": wf_config.train_days // 1440,
         "test_days": wf_config.test_days // 1440,

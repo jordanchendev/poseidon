@@ -4,7 +4,7 @@ Strategy types sharing a common interface:
 - ModelStrategy: wraps a BaseModel, converts predictions to Signals
 - RuleStrategy: parses DSL JSON, evaluates conditions against features
 - VotingStrategy: multi-signal voting with ATR trailing stop
-- StructuralReversalStrategy: 2-3 condition limit order reversal (Phase 77)
+- StructuralReversalStrategy: 2-3 condition limit order reversal
 """
 
 from poseidon.strategies.base import BaseStrategy, StrategyType

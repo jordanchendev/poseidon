@@ -1,9 +1,9 @@
-"""Protection locks API -- visibility and manual override endpoints (Phase 36).
+"""Protection locks API -- visibility and manual override endpoints.
 
 Endpoints:
-    GET  /locks          Active protection locks with optional filters (D-18)
-    GET  /history        Expired/released locks with pagination (D-19)
-    POST /locks/{id}/override   Manual lock release (D-20)
+    GET  /locks          Active protection locks with optional filters
+    GET  /history        Expired/released locks with pagination
+    POST /locks/{id}/override   Manual lock release
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ def get_active_locks(
     type: str | None = Query(None, alias="type", description="Filter by protection type"),
     db: Session = Depends(get_db),
 ) -> ProtectionLocksListResponse:
-    """Return all active protection locks with optional filters (D-18)."""
+    """Return all active protection locks with optional filters."""
     query = db.query(ProtectionLockRecord).filter(
         ProtectionLockRecord.active.is_(True),
     )
@@ -98,7 +98,7 @@ def get_lock_history(
     offset: int = Query(0, ge=0, description="Pagination offset"),
     db: Session = Depends(get_db),
 ) -> ProtectionLocksListResponse:
-    """Return expired/released protection locks with pagination (D-19)."""
+    """Return expired/released protection locks with pagination."""
     query = db.query(ProtectionLockRecord).filter(
         ProtectionLockRecord.active.is_(False),
     )
@@ -124,7 +124,7 @@ def override_lock(
     lock_id: int,
     db: Session = Depends(get_db),
 ) -> ProtectionOverrideResponse:
-    """Manually release an active protection lock (D-20)."""
+    """Manually release an active protection lock."""
     lock = (
         db.query(ProtectionLockRecord)
         .filter(

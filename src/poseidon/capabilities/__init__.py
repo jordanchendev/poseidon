@@ -1,4 +1,4 @@
-"""Component capability metadata system (Phase 34).
+"""Component capability metadata system.
 
 Provides:
 - Unified registry collecting capability flags from all component registries

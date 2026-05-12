@@ -2,7 +2,7 @@
 
 Portfolio runtime paths such as order risk checks import
 `poseidon.strategies.portfolio.schemas`. That must not eagerly import optional
-Phase 68 modules or repo-layout-specific files.
+Repo-layout-specific files.
 """
 
 from __future__ import annotations

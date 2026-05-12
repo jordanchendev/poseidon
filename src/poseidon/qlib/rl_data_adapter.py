@@ -1,11 +1,11 @@
-"""Phase 90 Wave 3.5 (Plan 90-04.1) — qlib bin + DataHandlerLP-pickle adapter.
+"""qlib bin + DataHandlerLP-pickle adapter.
 
 Bridges Thalassa-shaped 1-min OHLCV DataFrames to the qlib RL pipeline's
 expected on-disk layout. After this module lands, both
-``qlib.rl.contrib.train_onpolicy`` (Wave 3 train) and
-``qlib.rl.contrib.backtest`` (Wave 2 TWAP/VWAP back-fix + Wave 3 PPO/OPDS
-backtest) can resolve their ``provider_uri_1min`` + ``data_dir`` /
-``feature_root_dir`` paths without further conversion.
+``qlib.rl.contrib.train_onpolicy`` (train path) and
+``qlib.rl.contrib.backtest`` (TWAP/VWAP + PPO/OPDS backtest) can resolve
+their ``provider_uri_1min`` + ``data_dir`` / ``feature_root_dir`` paths
+without further conversion.
 
 On-disk layout produced by :func:`write_qlib_data_dir`::
 
@@ -348,7 +348,7 @@ def to_handler_pickles(
     Both pickles wrap byte-identical handler state — upstream qlib treats
     them as separate so users can swap the inference handler for a
     backtest-specific one (e.g. one that uses unprocessed prices). For our
-    Phase 90 use, both files contain the same OHLCV.
+    purposes, both files contain the same OHLCV.
 
     Args:
         df: DataFrame with ``open / high / low / close / volume`` columns
@@ -396,7 +396,7 @@ def write_qlib_data_dir(
     legs: dict[str, pd.DataFrame],
     out_root: Path,
 ) -> dict[str, Path]:
-    """Materialize the full qlib data directory tree for a Phase 90 run.
+    """Materialize the full qlib data directory tree for a run.
 
     For each (symbol → OHLCV DataFrame) pair, writes the qlib bin files
     under ``<out_root>/bin/`` (sharing one union calendar across symbols)

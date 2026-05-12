@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Phase 76 Plan 05: IC validation of new micro-structure features.
+"""IC validation of new micro-structure features.
 
-Validates 4 new Phase 76 features (CVD, OFI, VPIN, Cascade Composite)
-against the IC > 0.015 AND event count >= 100 gate threshold.
+Validates 4 new features (CVD, OFI, VPIN, Cascade Composite) against the
+IC > 0.015 AND event count >= 100 gate threshold.
 
-Uses the same IC computation pipeline as Phase 75 (compute_rank_ic_with_counts).
-Produces ic_76_results.json artifact for automated gating.
+Uses the same IC computation pipeline as the upstream crypto-features pass
+(compute_rank_ic_with_counts).  Produces ic_76_results.json artifact for
+automated gating.
 
 Run on stormtrooper inside cpu-worker container:
   docker compose exec cpu-worker python scripts/ic_76_new_features.py
@@ -27,17 +28,17 @@ from ic_75_crypto_features import compute_rank_ic_with_counts
 # -- Configuration -------------------------------------------------------
 SYMBOLS = ["BTCUSDT", "ETHUSDT"]
 MARKET = "crypto_perp"
-INTERVAL = "4h"  # D-07: 4H primary
-HORIZONS = [1, 5, 10, 20]  # D-07: h=5 as reference
+INTERVAL = "4h"  # 4H primary
+HORIZONS = [1, 5, 10, 20]  # h=5 as reference
 START_DATE = "2024-01-01"  # Post-ETF only
 END_DATE = "2026-04-21"
-MIN_OBSERVATIONS = 100  # D-05
+MIN_OBSERVATIONS = 100
 
-# IC gate threshold (D-05)
+# IC gate threshold
 IC_THRESHOLD = 0.015
 MIN_EVENTS = 100
 
-# New Phase 76 feature specs
+# New feature specs
 NEW_FEATURE_SPECS: list[tuple[str, dict]] = [
     ("cvd", {"period": 20}),
     ("ofi", {"period": 5}),
@@ -64,7 +65,7 @@ def compute_new_features(
     engine,
     repo,
 ) -> pd.DataFrame:
-    """Compute all Phase 76 new features on OHLCV data.
+    """Compute all new features on OHLCV data.
 
     Uses FeatureEngine's feature registry to compute each feature
     with its default parameters, plus loads OI data for Cascade.
@@ -243,7 +244,7 @@ def apply_ic_gate(results: dict[str, dict]) -> tuple[list[str], list[str]]:
 def print_summary_table(results: dict[str, dict]) -> None:
     """Print IC summary table for all new features."""
     print(f"\n{'=' * 90}")
-    print("PHASE 76 IC VALIDATION -- New Micro-Structure Features")
+    print("IC VALIDATION -- New Micro-Structure Features")
     print(f"{'=' * 90}")
     print(f"Gate: |IC| > {IC_THRESHOLD} AND n >= {MIN_EVENTS}")
     print(f"Interval: {INTERVAL}, Horizons: {HORIZONS}")
@@ -334,7 +335,6 @@ def save_json_artifact(
         horizon_detail[feature] = feature_horizons
 
     artifact = {
-        "phase": 76,
         "interval": INTERVAL,
         "gate_threshold": {"ic": IC_THRESHOLD, "min_events": MIN_EVENTS},
         "results": feature_results,
@@ -363,7 +363,7 @@ def main() -> None:
     from poseidon.data.feature_engine import FeatureEngine
     from poseidon.data.remote_repository import RemoteDataRepository
 
-    print("Phase 76 Plan 05: IC Validation of New Micro-Structure Features")
+    print("IC Validation of New Micro-Structure Features")
     print(f"Symbols: {SYMBOLS}")
     print(f"Market: {MARKET}")
     print(f"Interval: {INTERVAL}")
@@ -375,17 +375,17 @@ def main() -> None:
     repo = RemoteDataRepository.from_settings()
     engine = FeatureEngine()
 
-    # -- Step 1: Run IC validation --
+    # -- 1: Run IC validation --
     print("=" * 70)
-    print("IC VALIDATION -- Phase 76 New Features")
+    print("IC VALIDATION -- New Features")
     print("=" * 70)
 
     results = run_ic_validation(engine, repo)
 
-    # -- Step 2: Print summary --
+    # -- 2: Print summary --
     print_summary_table(results)
 
-    # -- Step 3: Apply IC gate --
+    # -- 3: Apply IC gate --
     passing, failing = apply_ic_gate(results)
 
     print(f"\n{'=' * 70}")
@@ -394,7 +394,7 @@ def main() -> None:
     print(f"  Features PASSING gate ({len(passing)}): {passing}")
     print(f"  Features FAILING gate ({len(failing)}): {failing}")
 
-    # -- Step 4: Save JSON artifact --
+    # -- 4: Save JSON artifact --
     save_json_artifact(results, passing, failing)
 
     # -- Summary --

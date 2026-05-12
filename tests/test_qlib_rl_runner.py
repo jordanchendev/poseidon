@@ -1,12 +1,12 @@
-"""Phase 90 — qlib RL runner + bridge-module tests.
+"""qlib RL runner + bridge-module tests.
 
-Plan 90-04.1 rewrite. After the qlib data-format adapter (Task 1) and
+After the qlib data-format adapter (Task 1) and
 order-builder OrderDir-int rewrite (Task 2), this test suite covers:
 
-* Wave 1 bridge module sanity (rl_dataset_adapter / rl_order_builder).
-* Plan 90-04.1 emitter/runner unit tests with the new signatures
+* Bridge module sanity (rl_dataset_adapter / rl_order_builder).
+* Emitter/runner unit tests with the new signatures
   (``bin_dir`` / ``pickle_dir`` / ``order_dir`` instead of pickle paths).
-* Plan 90-04.1 ``test_run_all_four_algos_unit`` — full DataFrame +
+* ``test_run_all_four_algos_unit`` — full DataFrame +
   triggers entry path with stubs covering ``write_qlib_data_dir`` (real),
   ``build_orders_split`` (real), ``train_one`` (stub), and
   ``qlib.rl.contrib.backtest`` (stub).
@@ -47,7 +47,7 @@ def test_dataset_adapter_roundtrip(tmp_path: Path):
 def test_order_builder_shape(tmp_path: Path):
     """build_orders emits 3 rows × [amount, order_type] for 3 trigger days.
 
-    Plan 90-04.1 schema: index ``[date, instrument]``, order_type int.
+    Schema: index ``[date, instrument]``, order_type int.
     """
     from poseidon.qlib.rl_order_builder import ORDER_DIR_BUY
 
@@ -330,7 +330,7 @@ def _stub_qlib_backtest_module(monkeypatch) -> list[dict]:
     def _stub_backtest(config_dict):
         calls.append(config_dict)
         # Pull the output_dir out of the config the stub get_backtest_config_fromfile
-        # returned. Plan 90-04.1 backtest YAML stores it at top-level.
+        # returned. The backtest YAML stores it at top-level.
         output_dir_str = config_dict.get("output_dir") or config_dict.get("_output_dir")
         if not output_dir_str:
             raise ValueError("stub backtest: no output_dir in config dict")
@@ -432,7 +432,7 @@ def _synthetic_run_inputs(tmp_path: Path):
 
 
 def test_run_all_four_algos_unit(tmp_path: Path, monkeypatch):
-    """Plan 90-04.1: full DataFrame + triggers entry path with stubs.
+    """Full DataFrame + triggers entry path with stubs.
 
     Asserts:
       * materialize_qlib_data writes bin_dir + pickle_dir + order splits.
@@ -483,7 +483,7 @@ def test_run_all_four_algos_unit(tmp_path: Path, monkeypatch):
 
 
 def test_run_all_four_algos_partial_tolerance_on_train_failure(tmp_path: Path, monkeypatch):
-    """If train_one raises, the algo is recorded PARTIAL and other algos continue (D-12)."""
+    """If train_one raises, the algo is recorded PARTIAL and other algos continue."""
     from poseidon.qlib import rl_runner
     from poseidon.qlib.rl_runner import run_all_algos_legs
 
@@ -499,7 +499,7 @@ def test_run_all_four_algos_partial_tolerance_on_train_failure(tmp_path: Path, m
     _stub_qlib_backtest_module(monkeypatch)
 
     def _exploding_train_one(algo, leg, *args, **kwargs):
-        raise RuntimeError(f"{algo}: GPU OOM (synthetic for D-12 test)")
+        raise RuntimeError(f"{algo}: GPU OOM (synthetic test)")
 
     monkeypatch.setattr(rl_runner, "train_one", _exploding_train_one)
 
@@ -525,7 +525,7 @@ def test_run_all_four_algos_stormtrooper(tmp_path: Path, monkeypatch):
     """Integration variant: run real qlib.rl.contrib.backtest on synthetic data.
 
     Accepts PARTIAL outcomes (qlib may fail on synthetic data); just asserts
-    no exception escapes (D-11 / D-12 partial-tolerance).
+    no exception escapes (partial-tolerance).
     """
     pytest.importorskip("qlib")
     from poseidon.qlib import rl_runner

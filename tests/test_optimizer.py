@@ -380,7 +380,7 @@ class TestBayesianOptimizer:
 
 
 class TestBayesianOptimizerFillModel:
-    """Tests for BayesianOptimizer fill_model passthrough (D-05, FIX-02)."""
+    """Tests for BayesianOptimizer fill_model passthrough (FIX-02)."""
 
     def test_fill_model_default_is_none(self, mock_components):
         """fill_model defaults to None when not provided."""

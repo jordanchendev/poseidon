@@ -1,12 +1,12 @@
-"""Phase 89 Plan 02 -- Task 3 (W4): protective close paths must tag order_origin.
+"""Protective close paths must tag order_origin.
 
-Closes the audit gap surfaced by Phase 88 F8: when an order has signal_id IS NULL
+Closes the audit gap surfaced by prior findings: when an order has signal_id IS NULL
 the auditor must be able to distinguish:
 
 * Cat-B legitimate protective close (signal_id NULL + origin in {stop_loss, liquidation})
 * Wiring breach (signal_id NULL + origin == 'signal')
 
-Test inventory (per 89-02-PLAN Task 3):
+Test inventory:
 
 1. test_order_record_has_order_origin_column
    OrderRecord ORM declares an order_origin column with default 'signal'.
@@ -20,12 +20,12 @@ Test inventory (per 89-02-PLAN Task 3):
 
 4. test_audit_query_distinguishes_protective_from_breach
    With a mixed in-memory population of captured Orders we can query by
-   (signal_id IS NULL, order_origin) groupings the way the 89-03 audit
+   (signal_id IS NULL, order_origin) groupings the way the audit
    driver will against the orders table:
 
    * stop_loss + signal_id NULL  -> legitimate Cat-B
    * liquidation + signal_id NULL -> legitimate Cat-B
-   * signal + signal_id NULL      -> wiring breach (must be zero post-89)
+   * signal + signal_id NULL      -> wiring breach (must be zero)
 
 5. test_stop_loss_origin_propagates_through_manager
    Calling execute_rebalance(order_origin='stop_loss', signal_ids=None)
@@ -36,7 +36,7 @@ Test inventory (per 89-02-PLAN Task 3):
    yields Orders whose order_origin == 'liquidation' and whose signal_id is None.
 
 7. test_order_origin_is_keyword_only
-   order_origin must be keyword-only (D-04 API style consistency).
+   order_origin must be keyword-only (API style consistency).
 """
 
 from __future__ import annotations
@@ -213,7 +213,7 @@ class TestOrderManagerOrderOriginPropagation:
         assert order.symbol == "ETHUSDT"
 
     def test_order_origin_is_keyword_only(self):
-        """order_origin must be keyword-only (D-04 API style consistency)."""
+        """order_origin must be keyword-only (API style consistency)."""
         sig = py_inspect.signature(OrderManager.execute_rebalance)
         param = sig.parameters.get("order_origin")
         assert param is not None, "execute_rebalance must declare order_origin param"
@@ -226,7 +226,7 @@ class TestOrderManagerOrderOriginPropagation:
 
 
 class TestAuditQuerySemantics:
-    """The 89-03 mini-audit must use (signal_id IS NULL, order_origin) to classify Cat-B."""
+    """The mini-audit must use (signal_id IS NULL, order_origin) to classify Cat-B."""
 
     def test_audit_query_distinguishes_protective_from_breach(self):
         """Group captured Orders by (signal_id_is_null, order_origin) the way the audit will."""

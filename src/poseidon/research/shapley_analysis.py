@@ -1,10 +1,10 @@
 """Shapley value analysis using TreeSHAP for tree-based models.
 
-Per D-05: Use shap library with TreeSHAP.
-Per D-07: Input is a trained ModelVersion ID.
-Per D-08: Output is per-feature mean absolute SHAP value.
+- Uses shap library with TreeSHAP.
+- Input is a trained ModelVersion ID.
+- Output is per-feature mean absolute SHAP value.
 
-NOTE: shap is only available in qlib-research container (D-06).
+NOTE: shap is only available in qlib-research container.
 This module must only be imported inside qlib_tasks.py task body.
 """
 

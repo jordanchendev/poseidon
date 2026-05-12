@@ -1,7 +1,7 @@
 """ExperimentTracker -- DB persistence for experiment/optimization results.
 
-Follows BacktestRepository pattern (D-06): session-based repository with
-CRUD operations. Per D-07: rejected trials are recorded with status="rejected",
+Follows BacktestRepository pattern: session-based repository with
+CRUD operations. Rejected trials are recorded with status="rejected",
 not discarded.
 """
 
@@ -134,7 +134,7 @@ class ExperimentTracker:
     def query_passed_by_study(self, study_name: str, limit: int = 10) -> list[ExperimentRecord]:
         """Query passed experiments for a study, ranked by composite_score.
 
-        Used by report generation (D-15) to find best configs per market.
+        Used by report generation to find best configs per market.
 
         Args:
             study_name: Study name to filter by.
@@ -157,7 +157,7 @@ class ExperimentTracker:
     def mark_rejected(self, experiment_id: uuid.UUID) -> None:
         """Mark an experiment as rejected.
 
-        Per D-07: rejected trials are recorded, not discarded.
+        Rejected trials are recorded, not discarded.
 
         Args:
             experiment_id: UUID of the experiment to reject.

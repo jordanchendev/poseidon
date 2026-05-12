@@ -50,16 +50,16 @@ dev = [
 qlib = [
     "pyqlib>=0.9",
     "shap>=0.50",
-    # Plan 90-04.1: tianshou (qlib RL trainer dep) requires shimmy as the
-    # OpenAI Gym → Gymnasium adapter. Without it, train_onpolicy crashes at
+    # tianshou (qlib RL trainer dep) requires shimmy as the OpenAI Gym →
+    # Gymnasium adapter. Without it, train_onpolicy crashes at
     # SubprocEnvWorker init with `ModuleNotFoundError: No module named 'shimmy'`.
     "shimmy>=2.0",
-    # Phase 68: qlib research runs include XGBModel, so the research image
-    # must install xgboost with the qlib extra instead of relying on gpu-only deps.
+    # qlib research runs include XGBModel, so the research image must install
+    # xgboost with the qlib extra instead of relying on gpu-only deps.
     "xgboost>=2.0",
-    # Phase 41 D-14: mlflow as explicit dependency for the metrics bridge
-    # (previously transitive via pyqlib). The qlib_train task scrapes
-    # mlflow.get_run() metrics into training_runs.metrics JSONB.
+    # mlflow as explicit dependency for the metrics bridge (previously
+    # transitive via pyqlib). The qlib_train task scrapes mlflow.get_run()
+    # metrics into training_runs.metrics JSONB.
     "mlflow>=2.0",
     # mlflow imports `google.protobuf.service` which was removed in
     # protobuf 5.x — pin to 4.x to avoid ImportError at qlib.init().
@@ -67,22 +67,21 @@ qlib = [
     # mlflow imports `pkg_resources` which was removed from setuptools 81+.
     # Pin to <81 so the legacy import still works.
     "setuptools>=68,<81",
-    # Phase 90 (RL Order Execution): qlib.rl.contrib needs tianshou as the
+    # qlib.rl.contrib (RL order execution) needs tianshou as the
     # reinforcement-learning runtime and gymnasium for env/space contracts.
-    # pyqlib does NOT pull these transitively (RESEARCH §Pitfall 2).
-    # Pin tianshou below 2.x — 2.x is a major API rewrite that breaks the
-    # qlib.rl.order_execution.policy shim (RESEARCH A1).
+    # pyqlib does NOT pull these transitively. Pin tianshou below 2.x — 2.x
+    # is a major API rewrite that breaks the qlib.rl.order_execution.policy shim.
     "tianshou>=0.5,<2",
     "gymnasium>=0.29,<2",
-    # Phase 95 ACTIVATE-05: qlib.contrib.report.* modules import plotly.graph_objs
-    # at module-top. pyqlib does NOT pull plotly transitively (verified on
-    # qlib-research image — `import plotly` raises ModuleNotFoundError).
-    # Pin >=5 because plotly 5.x's go.Figure.write_html() API is the one we use.
+    # qlib.contrib.report.* modules import plotly.graph_objs at module-top.
+    # pyqlib does NOT pull plotly transitively (verified on qlib-research
+    # image — `import plotly` raises ModuleNotFoundError). Pin >=5 because
+    # plotly 5.x's go.Figure.write_html() API is the one we use.
     "plotly>=5,<7",
-    # Phase 95 ACTIVATE-05: qlib.contrib.report.analysis_model.analysis_model_performance
-    # imports statsmodels.api + matplotlib.pyplot at module-top. pyqlib does NOT
-    # pull these transitively. statsmodels is used for QQ-plot distribution fits;
-    # matplotlib is a fallback graph backend behind plotly.
+    # qlib.contrib.report.analysis_model.analysis_model_performance imports
+    # statsmodels.api + matplotlib.pyplot at module-top. pyqlib does NOT
+    # pull these transitively. statsmodels is used for QQ-plot distribution
+    # fits; matplotlib is a fallback graph backend behind plotly.
     "statsmodels>=0.14",
     "matplotlib>=3.7",
 ]
@@ -97,16 +96,16 @@ packages = ["src/poseidon"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-# Phase 95 ACTIVATE-01: tests import driver scripts via `from scripts.X import Y`
-# (mirroring the existing v18 driver test patterns). Add the project root to
-# the test pythonpath so `scripts/` is importable as a package.
+# Tests import driver scripts via `from scripts.X import Y` (mirroring the
+# existing v18 driver test patterns). Add the project root to the test
+# pythonpath so `scripts/` is importable as a package.
 pythonpath = ["."]
-# Phase 93 W0: register pytest markers in pyproject.toml (in addition to the
+# Register pytest markers in pyproject.toml (in addition to the
 # `pytest_configure` registration in tests/conftest.py for backward compat).
 # `--strict-markers` users (including future CI) require markers to be declared
 # at config-file level, not just runtime.
 markers = [
-    "phase38: Phase 38 data-foundation tests",
+    "phase38: data-foundation tests for the phase38 module",
     "stormtrooper: smoke tests gated to stormtrooper qlib-research container (set STORMTROOPER=1 to enable)",
 ]
 

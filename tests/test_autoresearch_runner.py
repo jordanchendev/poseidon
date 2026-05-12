@@ -1,7 +1,7 @@
 """Integration tests for AutoResearchRunner and autoresearch_run Celery task.
 
-Tests D-09 (orchestration), D-11 (heartbeat), D-12 (graceful stop),
-D-13 (per-market failure isolation), D-14 (10 consecutive experiments).
+Tests orchestration, heartbeat, graceful stop,
+per-market failure isolation, 10 consecutive experiments.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ class TestAutoResearchRunner:
         mock_pipeline.run.assert_called_once()
 
     def test_graceful_stop(self, mock_risk, mock_feature, mock_model_manager, mock_pipeline_cls, mock_read_ohlcv):
-        """AutoResearchRunner stops after graceful stop is requested (D-12)."""
+        """AutoResearchRunner stops after graceful stop is requested."""
         mock_read_ohlcv.return_value = _make_ohlcv()
         mock_pipeline = MagicMock()
         mock_pipeline.run.return_value = _make_search_result()
@@ -112,7 +112,7 @@ class TestAutoResearchRunner:
     def test_per_market_failure_isolation(
         self, mock_risk, mock_feature, mock_model_manager, mock_pipeline_cls, mock_read_ohlcv
     ):
-        """Per-market failure does not abort entire run (D-13)."""
+        """Per-market failure does not abort entire run."""
         mock_read_ohlcv.return_value = _make_ohlcv()
         mock_model_manager.return_value.list_ready_models.return_value = []
 
@@ -147,7 +147,7 @@ class TestAutoResearchRunner:
     def test_progress_callback_called(
         self, mock_risk, mock_feature, mock_model_manager, mock_pipeline_cls, mock_read_ohlcv
     ):
-        """Progress callback receives (current, total, symbol) (D-11)."""
+        """Progress callback receives (current, total, symbol)."""
         mock_read_ohlcv.return_value = _make_ohlcv()
         mock_pipeline = MagicMock()
         mock_pipeline.run.return_value = _make_search_result()
@@ -178,7 +178,7 @@ class TestAutoResearchRunner:
     def test_autoresearch_guard_active_during_run(
         self, mock_risk, mock_feature, mock_model_manager, mock_pipeline_cls, mock_read_ohlcv
     ):
-        """_AUTORESEARCH_ACTIVE is True inside pipeline.run (D-05)."""
+        """_AUTORESEARCH_ACTIVE is True inside pipeline.run."""
         mock_read_ohlcv.return_value = _make_ohlcv()
         mock_model_manager.return_value.list_ready_models.return_value = []
 
@@ -203,7 +203,7 @@ class TestAutoResearchRunner:
         assert guard_values == [True]
 
     def test_10_consecutive(self, mock_risk, mock_feature, mock_model_manager, mock_pipeline_cls, mock_read_ohlcv):
-        """10 consecutive experiments run unattended without error (D-14, AUTO-05)."""
+        """10 consecutive experiments run unattended without error."""
         mock_read_ohlcv.return_value = _make_ohlcv()
         mock_model_manager.return_value.list_ready_models.return_value = []
 

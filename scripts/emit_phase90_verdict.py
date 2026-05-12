@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Phase 90 verdict emitter — Option C (TWAP+VWAP+Naive+v18gap, PPO/OPDS DEFERRED).
+"""Verdict emitter — TWAP+VWAP+Naive+v18gap (PPO/OPDS DEFERRED).
 
 Consumes backtest_result.csv files produced by `scripts/run_phase90_train.py`,
 aggregates per-leg PA(bps) → pair Sharpe / MDD / cumulative return via
@@ -8,9 +8,9 @@ via :mod:`poseidon.research.rl_comparison`, applies GATE.yaml thresholds,
 and emits a deploy / refine / kill verdict.
 
 PPO / OPDS columns are recorded as ``PARTIAL`` (status="DEFERRED — qlib
-v0.9.7 × tianshou 0.5+ API drift, see 90-04.1-SUMMARY.md"). The verdict
-is computed against the best-of-2-RL (TWAP/VWAP) instead of best-of-4-RL,
-with a clear caveat in the verdict text.
+v0.9.7 × tianshou 0.5+ API drift"). The verdict is computed against the
+best-of-2-RL (TWAP/VWAP) instead of best-of-4-RL, with a clear caveat in
+the verdict text.
 
 Output:
   <run-root>/<run_id>/comparison.csv
@@ -282,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         per_algo[algo] = emit_verdict_for_algo(csvs[key], tx_naive, etf_naive)
 
-    # Naive baseline — single fill at session open per D-13. Pair Sharpe
+    # Naive baseline — single fill at session open. Pair Sharpe
     # comes from naive intraday returns (TX long, 0050 short) with zero PA.
     pair_naive_ret = (tx_naive - etf_naive).dropna()
     engaged = pd.Series([True] * len(pair_naive_ret), index=pair_naive_ret.index)

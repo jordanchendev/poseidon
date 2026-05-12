@@ -19,7 +19,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Default processor configs (matching Qlib's common pipeline: D-06)
+# Default processor configs (matching Qlib's common pipeline)
 _DEFAULT_PROCESSORS: list[tuple[str, dict[str, Any]]] = [
     ("CSZScoreNorm", {"fields_group": "feature"}),
     ("Fillna", {"fields_group": "feature"}),
@@ -29,7 +29,7 @@ _DEFAULT_PROCESSORS: list[tuple[str, dict[str, Any]]] = [
 class PoseidonDataHandler:
     """Wraps DatasetBuilder output with processor support for Qlib research workflows.
 
-    Capability metadata (per D-21):
+    Capability metadata:
         supports_backtest = True
         supports_live = False
         bias_risk = []
@@ -112,7 +112,7 @@ class PoseidonDataHandler:
         promoting the flat $-prefixed columns to the MultiIndex column layout
         Qlib expects: ``[("feature", "$open"), ("feature", "$high"), ...]``.
 
-        Verified end-to-end against pyqlib 0.9.7 (D-03 confirmation, 2026-04-07):
+        Verified end-to-end against pyqlib 0.9.7 (2026-04-07):
         Poseidon DataFrame -> StaticDataLoader -> DataHandlerLP -> DatasetH
         produces correct train/valid/test splits with no data leakage.
 
@@ -142,7 +142,7 @@ class PoseidonDataHandler:
             raise ImportError(
                 "pyqlib is not installed. Qlib bridge requires Python 3.12 + "
                 "pyqlib. Install via `uv sync --extra qlib` (Python 3.12) or "
-                "use the Dockerfile.qlib research image. Per design D-19, "
+                "use the Dockerfile.qlib research image. "
                 "pyqlib is intentionally excluded from production containers."
             ) from exc
 

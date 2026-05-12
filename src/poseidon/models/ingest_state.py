@@ -1,4 +1,4 @@
-"""IngestState ORM model — cursor bookkeeping for self-healing ingest (Phase 38)."""
+"""IngestState ORM model — cursor bookkeeping for self-healing ingest."""
 
 from sqlalchemy import Boolean, Column, DateTime, String, Text, func
 
@@ -6,10 +6,7 @@ from poseidon.models.base import Base
 
 
 class IngestState(Base):
-    """Per-(symbol, market, interval) cursor state for the self-healing ingest loop.
-
-    See .planning/phases/38-data-foundation/38-CONTEXT.md D-01..D-03.
-    """
+    """Per-(symbol, market, interval) cursor state for the self-healing ingest loop."""
 
     __tablename__ = "ingest_state"
 

@@ -1,6 +1,6 @@
-"""Phase 92 Plan 92-03 — comparison_summary.parquet writer unit tests.
+"""comparison_summary.parquet writer unit tests.
 
-D-20 mandates per-fold rows aligned with/without/Δ. Sample-based tests on
+Per-fold rows aligned with/without/Δ. Sample-based tests on
 synthetic with/without arrays.
 """
 

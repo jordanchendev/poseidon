@@ -1,4 +1,4 @@
-"""Tests for the Qlib hybrid bridge (Phase 37).
+"""Tests for the Qlib hybrid bridge.
 
 Covers column_adapter, DatasetBuilder, PoseidonDataHandler, and QlibModelExporter.
 All tests use synthetic DataFrames and mocks — pyqlib is NOT required.
@@ -129,7 +129,7 @@ class TestColumnAdapter:
 
 class TestDatasetBuilder:
     def test_capability_metadata(self):
-        # D-21: Qlib bridge declares research-only capability
+        # Qlib bridge declares research-only capability
         assert DatasetBuilder.supports_backtest is True
         assert DatasetBuilder.supports_live is False
         assert DatasetBuilder.bias_risk == []

@@ -1,8 +1,7 @@
-# Phase 38 Shadow-Mode Runbook — 48h `INGEST_CURSOR_MODE=cursor` Smoke Test
+# Shadow-Mode Runbook — 48h `INGEST_CURSOR_MODE=cursor` Smoke Test
 
-Operator-facing runbook for the 48-hour shadow-mode soak test that flips the
-Phase 38 cursor-based self-healing ingest path on in production. Satisfies
-Phase 38 success criterion #5 and `DATA-FOUND-03`.
+Operator-facing runbook for the 48-hour shadow-mode soak test that flips
+the cursor-based self-healing ingest path on in production.
 
 Default production state is `INGEST_CURSOR_MODE=legacy` (byte-identical to
 v7.0). This runbook is the only prescribed path for flipping it to `cursor`
@@ -12,13 +11,13 @@ on stormtrooper.
 
 Before starting the window, confirm ALL of the following on stormtrooper:
 
-- [ ] Plans `38-01`, `38-02`, and `38-03` (Task 1 + Task 2) merged into
-      `poseidon` `main` and pulled onto `~/Projects/poseidon`.
+- [ ] Cursor-mode plans merged into `poseidon` `main` and pulled onto
+      `~/Projects/poseidon`.
 - [ ] `alembic upgrade head` reports `020 (head)`.
 - [ ] `docker compose ps` shows `api`, `cpu-worker`, `gpu-worker`, `beat`
       healthy with `INGEST_CURSOR_MODE` either absent or set to `legacy` in
       `.env`.
-- [ ] Phase 38 test suite green via
+- [ ] Cursor-mode test suite green via
       `docker compose run --rm -e PYTHONPATH=/app/src qlib-research uv run --with pytest --with pytest-asyncio --with fakeredis python -m pytest tests/unit/test_ingest_cursor.py tests/unit/test_backfill_chunk_idempotent.py tests/unit/test_fetch_market_data_flag.py tests/unit/test_migration_020.py tests/integration/test_cursor_self_heal.py tests/integration/test_backfill_kill_resume.py -x`.
 - [ ] On-call rotation aware of the 48h window and the rollback command in
       section 6.
@@ -170,7 +169,7 @@ If any criterion fails, proceed immediately to section 6 rollback.
 - [ ] Zero cursor-path ERROR lines.
 - [ ] `ingest_state` covers all live tuples.
 - [ ] Zero new `ohlcv` gaps.
-- [ ] Decision recorded in `.planning/STATE.md` (promote / rollback).
+- [ ] Decision recorded in your operator log (promote / rollback).
 
 ## 6. Rollback Procedure
 
@@ -200,9 +199,8 @@ Existing `ingest_state` rows remain in place — the legacy `fetch_market_data`
 branch does not touch them, so they are harmless and retained for the next
 attempt at the window. Do NOT drop `ingest_state` on rollback.
 
-Then file an incident note in `.planning/STATE.md` with:
+Then file an incident note in your operator log with:
 
 - T0 timestamp of the failed window
 - Which criterion failed (exact numbers)
-- Root cause investigation plan (usually a Phase 38 code fix before
-  re-attempting)
+- Root cause investigation plan (usually a code fix before re-attempting)

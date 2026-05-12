@@ -1,4 +1,4 @@
-"""Tests for MarketCapWeightedAllocator (Phase 71 D-16)."""
+"""Tests for MarketCapWeightedAllocator."""
 
 from poseidon.strategies.portfolio.fundamental_selection import MarketCapWeightedAllocator
 
@@ -31,7 +31,7 @@ class TestMarketCapWeightedAllocator:
         assert abs(sum(weights.values()) - 1.0) < 1e-6
 
     def test_missing_mv_fallback_to_equal_weight(self):
-        """D-08: Symbols without market_value get equal weight fallback."""
+        """Symbols without market_value get equal weight fallback."""
         allocator = MarketCapWeightedAllocator(position_limit_pct=0.50)
         symbols = ["A", "B", "C"]
         mv = {"A": 300.0}  # B and C have no market_value

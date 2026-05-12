@@ -2,12 +2,12 @@
 
 Mounted at /api/portfolio in main.py.
 
-Phase 87 (TRUTH-01..04) changes:
-- get_performance now uses Modified Dietz TWR (services.portfolio_metrics);
+TRUTH-01..04 changes:
+- get_performance uses Modified Dietz TWR (services.portfolio_metrics);
   isolates cash_flow from return/Sharpe so the 2026-04-28 $9.87M deposit
   no longer inflates total_return_pct.
-- get_holdings restricts to allowlist {tw_stock, us_stock} (D-09).
-- OrderResponse.reject_reason is dict|None (structured 4-key payload, D-17).
+- get_holdings restricts to allowlist {tw_stock, us_stock}.
+- OrderResponse.reject_reason is dict|None (structured 4-key payload).
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from poseidon.services.portfolio_metrics import (
 
 logger = logging.getLogger(__name__)
 
-# TRUTH-02 (D-09): explicit allowlist for /holdings; NULL/legacy market excluded.
+# TRUTH-02: explicit allowlist for /holdings; NULL/legacy market excluded.
 HOLDINGS_MARKET_ALLOWLIST = ("tw_stock", "us_stock")
 
 router = APIRouter()
@@ -47,12 +47,12 @@ class NavPointResponse(PydanticBase):
     holdings_value: float
     cash: float
     holdings_count: int
-    cash_flow: float = 0.0  # TRUTH-04 (D-05): exposed for audit/reconstruction
+    cash_flow: float = 0.0  # TRUTH-04: exposed for audit/reconstruction
 
 
 class PerformanceSummaryResponse(PydanticBase):
     nav_curve: list[NavPointResponse]
-    total_return_pct: float  # TWR ratio (0.05 = 5%); cash flows excluded (D-01..D-03)
+    total_return_pct: float  # TWR ratio (0.05 = 5%); cash flows excluded
     max_drawdown_pct: float  # ratio (0.05 = 5%)
     sharpe_ratio: float | None
     total_trades: int
@@ -86,7 +86,7 @@ class OrderResponse(PydanticBase):
     status: str
     price: float | None
     broker_mode: str
-    # TRUTH-03 (D-17): structured 4-key payload {check_name, rule, shortfall, details}
+    # TRUTH-03: structured 4-key payload {check_name, rule, shortfall, details}
     # or None when the order is not rejected.
     reject_reason: dict[str, Any] | None
     created_at: str
@@ -157,9 +157,9 @@ def get_performance(
         for s in snapshots
     ]
 
-    # TRUTH-01: Modified Dietz daily returns chained into cumulative TWR (D-01..D-04).
+    # TRUTH-01: Modified Dietz daily returns chained into cumulative TWR.
     # Cash flow is isolated via the formula's CF term, so a $9.87M deposit no
-    # longer inflates total_return_pct. Inception = first snapshot in range (D-04).
+    # longer inflates total_return_pct. Inception = first snapshot in range.
     daily_returns: list[float] = []
     for prev, curr in pairwise(snapshots):
         cf = float(curr.cash_flow) if curr.cash_flow is not None else 0.0
@@ -177,7 +177,7 @@ def get_performance(
     nav_curve_values = [float(s.total_nav) for s in snapshots]
     max_dd = max_drawdown_pct(nav_curve_values)
 
-    # TRUTH-01 (D-02): Sharpe from TWR daily returns, annualized via sqrt(252).
+    # TRUTH-01: Sharpe from TWR daily returns, annualized via sqrt(252).
     sharpe_ratio = sharpe_from_returns(daily_returns)
     sharpe_ratio = round(sharpe_ratio, 4) if sharpe_ratio is not None else None
 
@@ -210,7 +210,7 @@ def get_performance(
 def get_holdings(db: Session = Depends(get_db)):
     """Return current open holdings with unrealized PnL from remote market data.
 
-    TRUTH-02 (D-09/D-11): strictly filtered to {tw_stock, us_stock}. NULL
+    TRUTH-02: strictly filtered to {tw_stock, us_stock}. NULL
     market and crypto_perp positions are excluded so ETHUSDT no longer
     leaks into the equity holdings view; perp positions remain available
     via /perp-holdings.
@@ -309,7 +309,7 @@ def get_orders(
 
 @router.get("/perp-holdings", response_model=PerpHoldingsResponse)
 def get_perp_holdings(db: Session = Depends(get_db)):
-    """Return perp-specific holdings with leverage, liquidation, and margin detail (D-09)."""
+    """Return perp-specific holdings with leverage, liquidation, and margin detail."""
     from poseidon.broker.perp_paper_adapter import (
         PerpPaperAdapter,
         PerpPosition,
