@@ -11,6 +11,7 @@ Creates:
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "014"
@@ -38,9 +39,7 @@ def upgrade() -> None:
     )
 
     # Convert to TimescaleDB hypertable for time-series optimization
-    op.execute(
-        "SELECT create_hypertable('funding_rates', 'time', if_not_exists => TRUE)"
-    )
+    op.execute("SELECT create_hypertable('funding_rates', 'time', if_not_exists => TRUE)")
 
 
 def downgrade() -> None:

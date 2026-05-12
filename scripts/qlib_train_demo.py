@@ -4,22 +4,23 @@ Pulls BTC+ETH perp 4h bars via DatasetBuilder, builds a Qlib DataHandlerLP
 with feature+label columns, trains LGBModel via DatasetH, exports to
 Poseidon's ModelVersion registry via QlibModelExporter.
 """
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import qlib
 from qlib.constant import REG_CN
+from qlib.contrib.model.gbdt import LGBModel
 from qlib.data.dataset import DatasetH
 from qlib.data.dataset.handler import DataHandlerLP
 from qlib.data.dataset.loader import StaticDataLoader
-from qlib.contrib.model.gbdt import LGBModel
 
+from poseidon.models.base import SessionLocal
 from poseidon.qlib.dataset_builder import DatasetBuilder
 from poseidon.qlib.model_exporter import QlibModelExporter
-from poseidon.models.base import SessionLocal
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("qlib_train_demo")
@@ -29,7 +30,7 @@ def main() -> None:
     qlib.init(region=REG_CN, provider_uri="/tmp/qlib_dummy", expression_cache=None, dataset_cache=None)
     log.info("qlib initialized")
 
-    end = datetime.now(timezone.utc)
+    end = datetime.now(UTC)
     start = end - timedelta(days=120)
     symbols = ["BTCUSDT", "ETHUSDT"]
 
@@ -80,8 +81,13 @@ def main() -> None:
 
     dataset = DatasetH(handler=handler, segments=segments)
 
-    model_params = {"loss": "mse", "num_leaves": 31, "learning_rate": 0.05,
-                    "num_boost_round": 50, "early_stopping_rounds": 10}
+    model_params = {
+        "loss": "mse",
+        "num_leaves": 31,
+        "learning_rate": 0.05,
+        "num_boost_round": 50,
+        "early_stopping_rounds": 10,
+    }
     model = LGBModel(**model_params)
     log.info("fitting LGBModel...")
     model.fit(dataset)

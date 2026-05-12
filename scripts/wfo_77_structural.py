@@ -24,7 +24,6 @@ from datetime import datetime
 from itertools import product as itertools_product
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from poseidon.backtest.cost_model import COST_MODELS
@@ -242,9 +241,7 @@ def _compute_net_sharpe(metrics: dict, trades: list, total_bars: int) -> float:
             holding_bars = holding_hours / BAR_DURATION_HOURS
             total_holding_bars += holding_bars
 
-    time_in_market_fraction = (
-        total_holding_bars / total_bars if total_bars > 0 else 0.0
-    )
+    time_in_market_fraction = total_holding_bars / total_bars if total_bars > 0 else 0.0
 
     # Funding cost as annualized drag
     funding_cost_annual = FUNDING_RATE_ANNUAL * time_in_market_fraction
@@ -346,17 +343,13 @@ def _run_combined_window(
             [eq for _, eq, _ in btc_eq],
             index=pd.DatetimeIndex([t for t, _, _ in btc_eq]),
         )
-        combined_metrics = compute_metrics(
-            combined_equity, all_trades, bars_per_year=BARS_PER_YEAR
-        )
+        combined_metrics = compute_metrics(combined_equity, all_trades, bars_per_year=BARS_PER_YEAR)
     elif eth_eq:
         combined_equity = pd.Series(
             [eq for _, eq, _ in eth_eq],
             index=pd.DatetimeIndex([t for t, _, _ in eth_eq]),
         )
-        combined_metrics = compute_metrics(
-            combined_equity, all_trades, bars_per_year=BARS_PER_YEAR
-        )
+        combined_metrics = compute_metrics(combined_equity, all_trades, bars_per_year=BARS_PER_YEAR)
     else:
         combined_metrics = {"sharpe_ratio": 0.0, "annualized_return": 0.0, "trade_count": 0}
 
@@ -406,7 +399,7 @@ def run_grid_search_variation(
     print(f"\n  {variation_name}: {total_combos} combinations")
 
     for combo in itertools_product(*values):
-        params = {**base_config, **dict(zip(keys, combo))}
+        params = {**base_config, **dict(zip(keys, combo, strict=False))}
         use_cvd = params.pop("use_cvd_filter", False)
 
         combined = _run_combined_window(btc_ohlcv, eth_ohlcv, params, use_cvd)
@@ -424,7 +417,7 @@ def run_grid_search_variation(
         }
         trials.append(trial)
         print(
-            f"    {dict(zip(keys, combo))} -> net_sharpe={combined['net_sharpe']:.4f}, "
+            f"    {dict(zip(keys, combo, strict=False))} -> net_sharpe={combined['net_sharpe']:.4f}, "
             f"trades={combined['trade_count']}, maxdd={combined['max_drawdown']:.4f}"
         )
 
@@ -474,8 +467,9 @@ def run_combined_wfe(
         return []
 
     print(f"\n  WFE: {len(windows)} windows, data_length={data_length}")
-    print(f"  Config: train={WF_CONFIG.train_days} bars, test={WF_CONFIG.test_days} bars, "
-          f"step={WF_CONFIG.step_days} bars")
+    print(
+        f"  Config: train={WF_CONFIG.train_days} bars, test={WF_CONFIG.test_days} bars, step={WF_CONFIG.step_days} bars"
+    )
 
     window_results = []
     for i, ((train_s, train_e), (test_s, test_e)) in enumerate(windows):
@@ -520,7 +514,9 @@ def run_combined_wfe(
         if oos_combined["trade_count"] < WF_CONFIG.min_trades_per_oos:
             logger.warning(
                 "Window %d: OOS trade count %d < %d (D-30)",
-                i, oos_combined["trade_count"], WF_CONFIG.min_trades_per_oos,
+                i,
+                oos_combined["trade_count"],
+                WF_CONFIG.min_trades_per_oos,
             )
 
         print(
@@ -549,9 +545,7 @@ def run_random_baseline(
     """
     # Calibrate entry probability from real strategy's signal frequency
     total_bars = max(len(btc_ohlcv), len(eth_ohlcv))
-    entry_probability = (
-        real_entry_count / (total_bars * 2) if total_bars > 0 else 0.05
-    )
+    entry_probability = real_entry_count / (total_bars * 2) if total_bars > 0 else 0.05
     entry_probability = max(0.01, min(entry_probability, 0.20))
 
     print(f"\n  Random baseline: {n_seeds} seeds, entry_prob={entry_probability:.4f}")
@@ -561,8 +555,10 @@ def run_random_baseline(
         # Create random entry strategy for BTC
         btc_cfg = StructuralReversalConfig(**best_params)
         btc_strategy = RandomEntryStructuralStrategy(
-            config=btc_cfg, symbol="BTCUSDT",
-            seed=seed, entry_probability=entry_probability,
+            config=btc_cfg,
+            symbol="BTCUSDT",
+            seed=seed,
+            entry_probability=entry_probability,
         )
         btc_runner = _make_runner(btc_strategy)
         btc_result = btc_runner.run(btc_ohlcv)
@@ -570,16 +566,18 @@ def run_random_baseline(
         # Create random entry strategy for ETH
         eth_cfg = StructuralReversalConfig(**best_params)
         eth_strategy = RandomEntryStructuralStrategy(
-            config=eth_cfg, symbol="ETHUSDT",
-            seed=seed + 10000, entry_probability=entry_probability,
+            config=eth_cfg,
+            symbol="ETHUSDT",
+            seed=seed + 10000,
+            entry_probability=entry_probability,
         )
         eth_runner = _make_runner(eth_strategy)
         eth_result = eth_runner.run(eth_ohlcv)
 
         # Combined metrics
         if btc_result.status == "completed" and eth_result.status == "completed":
-            btc_metrics = _recompute_metrics(btc_runner)
-            eth_metrics = _recompute_metrics(eth_runner)
+            _recompute_metrics(btc_runner)
+            _recompute_metrics(eth_runner)
 
             btc_portfolio = btc_runner._ar_last_portfolio
             eth_portfolio = eth_runner._ar_last_portfolio
@@ -599,12 +597,8 @@ def run_random_baseline(
                 combined = pd.concat([btc_eq, eth_eq], axis=1).ffill()
                 combined = combined.dropna(how="all")
                 combined_equity = combined.sum(axis=1)
-                combined_metrics = compute_metrics(
-                    combined_equity, all_trades, bars_per_year=BARS_PER_YEAR
-                )
-                net_sharpe = _compute_net_sharpe(
-                    combined_metrics, all_trades, total_bars
-                )
+                combined_metrics = compute_metrics(combined_equity, all_trades, bars_per_year=BARS_PER_YEAR)
+                net_sharpe = _compute_net_sharpe(combined_metrics, all_trades, total_bars)
                 sharpes.append(round(net_sharpe, 4))
             else:
                 sharpes.append(0.0)
@@ -624,8 +618,7 @@ def run_random_baseline(
         "entry_probability": round(entry_probability, 4),
     }
 
-    print(f"  Baseline: median={result['median']:.4f}, "
-          f"p25={result['p25']:.4f}, p75={result['p75']:.4f}")
+    print(f"  Baseline: median={result['median']:.4f}, p25={result['p25']:.4f}, p75={result['p75']:.4f}")
     return result
 
 
@@ -641,9 +634,11 @@ def run_wfo() -> int:
     print(f"Symbols: {', '.join(SYMBOLS)}")
     print(f"Interval: {INTERVAL} | Bars/Year: {BARS_PER_YEAR}")
     print(f"Initial Capital: {INITIAL_CAPITAL:,.0f} USDT (per symbol)")
-    print(f"Fill Model: PESSIMISTIC")
-    print(f"WF Config: train={WF_CONFIG.train_days} bars, test={WF_CONFIG.test_days} bars, "
-          f"step={WF_CONFIG.step_days} bars")
+    print("Fill Model: PESSIMISTIC")
+    print(
+        f"WF Config: train={WF_CONFIG.train_days} bars, test={WF_CONFIG.test_days} bars, "
+        f"step={WF_CONFIG.step_days} bars"
+    )
     print(f"Min WFE: {WF_CONFIG.min_wfe} | Min trades OOS: {WF_CONFIG.min_trades_per_oos}")
     print(f"Random seeds: {RANDOM_SEEDS}")
     print()
@@ -716,7 +711,10 @@ def run_wfo() -> int:
     print(f"{'=' * 80}")
 
     window_results = run_combined_wfe(
-        btc_ohlcv, eth_ohlcv, best_params, use_cvd=use_cvd_best,
+        btc_ohlcv,
+        eth_ohlcv,
+        best_params,
+        use_cvd=use_cvd_best,
     )
 
     # Compute WFE aggregates
@@ -753,7 +751,9 @@ def run_wfo() -> int:
     # Calibrate from best variation's trade count
     real_entry_count = best_variation.get("trade_count", 50)
     baseline_result = run_random_baseline(
-        btc_ohlcv, eth_ohlcv, best_params,
+        btc_ohlcv,
+        eth_ohlcv,
+        best_params,
         real_entry_count=real_entry_count,
     )
 

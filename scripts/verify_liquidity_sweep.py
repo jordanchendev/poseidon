@@ -92,9 +92,9 @@ def main() -> int:
     for symbol, result in results.items():
         has_passed = result.passed_trials > 0
         if has_passed:
-            status = f"PASS (WFE >= {WFE_THRESHOLD*100:.0f}%) -- {result.passed_trials}/{result.total_trials} trials passed"
+            status = f"PASS (WFE >= {WFE_THRESHOLD * 100:.0f}%) -- {result.passed_trials}/{result.total_trials} trials passed"
         else:
-            status = f"EXPERIMENTAL (no trials passed WFE >= {WFE_THRESHOLD*100:.0f}%)"
+            status = f"EXPERIMENTAL (no trials passed WFE >= {WFE_THRESHOLD * 100:.0f}%)"
             all_pass = False
         print(f"  {symbol}: {status}")
 

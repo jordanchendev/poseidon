@@ -7,7 +7,6 @@ Usage (inside Docker container):
 import importlib
 import json
 import os
-import sys
 import time
 from pathlib import Path
 
@@ -29,9 +28,9 @@ results = {}
 
 for f in strategy_files:
     name = f.stem
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Running: {name}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     t0 = time.time()
     try:
@@ -50,7 +49,7 @@ for f in strategy_files:
             print(f"  Stats: {json.dumps(results[name]['stats'], indent=2, ensure_ascii=False)}")
         else:
             results[name] = {"status": "no_report", "elapsed_s": round(time.time() - t0, 1)}
-            print(f"  No report returned")
+            print("  No report returned")
 
     except Exception as e:
         elapsed = time.time() - t0
@@ -58,9 +57,9 @@ for f in strategy_files:
         print(f"  ERROR: {e}")
 
 # Summary
-print(f"\n\n{'='*60}")
+print(f"\n\n{'=' * 60}")
 print("SUMMARY")
-print(f"{'='*60}")
+print(f"{'=' * 60}")
 for name, r in results.items():
     status = r["status"]
     if status == "ok":

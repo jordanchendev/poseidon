@@ -10,8 +10,9 @@ Per D-05: optuna_study_name and optuna_trial_number provide optional linkage wit
 """
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+
+from alembic import op
 
 revision = "007"
 down_revision = "006"
@@ -37,9 +38,7 @@ def upgrade():
         sa.Column("metrics_json", JSONB, nullable=True),
         sa.Column("composite_score", sa.Numeric, nullable=True),
         sa.Column("wfe_score", sa.Numeric, nullable=True),
-        sa.Column(
-            "status", sa.String(16), nullable=False, server_default="running"
-        ),
+        sa.Column("status", sa.String(16), nullable=False, server_default="running"),
         sa.Column("market", sa.String(32), nullable=False),
         sa.Column("interval", sa.String(8), nullable=False),
         sa.Column("optuna_study_name", sa.String(128), nullable=True),
@@ -58,9 +57,7 @@ def upgrade():
             nullable=False,
         ),
     )
-    op.create_index(
-        "ix_experiments_market_interval", "experiments", ["market", "interval"]
-    )
+    op.create_index("ix_experiments_market_interval", "experiments", ["market", "interval"])
     op.create_index("ix_experiments_created_at", "experiments", ["created_at"])
 
 

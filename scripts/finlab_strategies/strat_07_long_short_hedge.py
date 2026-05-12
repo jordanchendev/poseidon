@@ -1,7 +1,6 @@
 """策略 7: 低 PB 多空對沖 (低PB做多70% + 空0050 30%)"""
 
-from finlab import data
-from finlab import backtest
+from finlab import backtest, data
 
 
 def run():

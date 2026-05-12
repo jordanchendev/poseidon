@@ -17,9 +17,9 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -93,7 +93,10 @@ def fetch_ohlcv(repo: RemoteDataRepository) -> pd.DataFrame:
 
     logger.info(
         "TX %s: %d bars (%s to %s)",
-        INTERVAL, len(df), df.index[0], df.index[-1],
+        INTERVAL,
+        len(df),
+        df.index[0],
+        df.index[-1],
     )
     return df
 
@@ -162,7 +165,7 @@ def main() -> int:
     repo = RemoteDataRepository.from_settings()
 
     # Step 1: Fetch OHLCV data
-    print(f"Phase 82: TrendFollowing Optuna Parameter Search")
+    print("Phase 82: TrendFollowing Optuna Parameter Search")
     print(f"Period: {START.date()} to {END.date()}")
     print(f"Initial Capital: {INITIAL_CAPITAL:,.0f} TWD")
     print(f"Cost Model: {COST_MODEL.description}")
@@ -174,9 +177,9 @@ def main() -> int:
     print()
 
     # Step 2: Run baseline backtest with default params
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print("Running baseline (default TrendFollowingConfig)...")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     baseline_config = TrendFollowingConfig()
     baseline_strategy = TrendFollowingStrategy(config=baseline_config)
@@ -195,10 +198,12 @@ def main() -> int:
     baseline_metrics = baseline_result.metrics
     baseline_sharpe = baseline_metrics.get("sharpe_ratio", 0.0)
 
-    print(f"  Baseline params: ema_fast={baseline_config.ema_fast}, "
-          f"ema_slow={baseline_config.ema_slow}, "
-          f"atr_period={baseline_config.atr_period}, "
-          f"atr_multiplier={baseline_config.atr_multiplier}")
+    print(
+        f"  Baseline params: ema_fast={baseline_config.ema_fast}, "
+        f"ema_slow={baseline_config.ema_slow}, "
+        f"atr_period={baseline_config.atr_period}, "
+        f"atr_multiplier={baseline_config.atr_multiplier}"
+    )
     print(f"  Baseline Sharpe: {baseline_sharpe:.4f}")
     print(f"  Baseline MaxDD:  {baseline_metrics.get('max_drawdown', 0.0):.4f}")
     print(f"  Baseline Return: {baseline_metrics.get('total_return', 0.0):.4f}")
@@ -206,10 +211,10 @@ def main() -> int:
     print()
 
     # Step 3: Create BayesianOptimizer and run search (D-10, D-11)
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Running BayesianOptimizer: {N_TRIALS} trials")
     print(f"Search space: {PARAM_SPACE}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print()
 
     optimizer = BayesianOptimizer(
@@ -241,13 +246,10 @@ def main() -> int:
         return 1
 
     # Print top 5
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Top 5 Parameter Sets")
-    print(f"{'='*60}")
-    print(
-        f"{'Rank':<5} {'EMA_F':<7} {'EMA_S':<7} {'ATR_P':<7} {'ATR_M':<7} "
-        f"{'Sharpe':<8} {'MaxDD':<8} {'Trades':<8}"
-    )
+    print(f"{'=' * 60}")
+    print(f"{'Rank':<5} {'EMA_F':<7} {'EMA_S':<7} {'ATR_P':<7} {'ATR_M':<7} {'Sharpe':<8} {'MaxDD':<8} {'Trades':<8}")
     print("-" * 65)
 
     for i, trial in enumerate(completed[:5], 1):
@@ -274,11 +276,13 @@ def main() -> int:
     # Step 5: Build output JSON
     top_10 = []
     for trial in completed[:10]:
-        top_10.append({
-            "params": _sanitize_dict(trial.params) if isinstance(trial.params, dict) else trial.params,
-            "sharpe": _to_native(trial.metric_value),
-            "metrics": _sanitize_dict(trial.metrics),
-        })
+        top_10.append(
+            {
+                "params": _sanitize_dict(trial.params) if isinstance(trial.params, dict) else trial.params,
+                "sharpe": _to_native(trial.metric_value),
+                "metrics": _sanitize_dict(trial.metrics),
+            }
+        )
 
     output = {
         "phase": "82",

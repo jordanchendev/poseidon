@@ -10,8 +10,9 @@ Changes:
 """
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "018"
 down_revision = "017"
@@ -40,9 +41,7 @@ def upgrade():
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_universe_snapshots_market", "universe_snapshots", ["market"])
-    op.create_index(
-        "ix_universe_snapshots_snapshot_time", "universe_snapshots", ["snapshot_time"]
-    )
+    op.create_index("ix_universe_snapshots_snapshot_time", "universe_snapshots", ["snapshot_time"])
     op.create_index(
         "ix_universe_snapshots_market_time",
         "universe_snapshots",

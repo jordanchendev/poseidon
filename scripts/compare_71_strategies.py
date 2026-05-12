@@ -12,8 +12,9 @@ Run on stormtrooper inside cpu-worker container:
 """
 
 import json
-import sys
 from datetime import date, datetime
+
+import pandas as pd
 
 from poseidon.backtest.cost_model import COST_MODELS
 from poseidon.backtest.portfolio_backtester import PortfolioBacktester
@@ -23,12 +24,30 @@ from poseidon.strategies.portfolio.fundamental_selection import (
     FundamentalSelectionStrategy,
 )
 
-
 # TW stock universe (same as poseidon/config/symbols.yaml tw_stock)
 TW_STOCK_SYMBOLS = [
-    "2330", "2317", "2454", "2308", "2881", "2882", "2891", "2303",
-    "1301", "1303", "2002", "2412", "3711", "2886", "6505", "2892",
-    "3008", "2382", "2357", "3045", "2603", "2880",
+    "2330",
+    "2317",
+    "2454",
+    "2308",
+    "2881",
+    "2882",
+    "2891",
+    "2303",
+    "1301",
+    "1303",
+    "2002",
+    "2412",
+    "3711",
+    "2886",
+    "6505",
+    "2892",
+    "3008",
+    "2382",
+    "2357",
+    "3045",
+    "2603",
+    "2880",
 ]
 
 START = date(2023, 1, 1)
@@ -140,8 +159,7 @@ def run_comparison():
 
     # Pre-fetch OHLCV data for all symbols (shared across all 4 configs)
     print(f"Fetching OHLCV data for {len(TW_STOCK_SYMBOLS)} symbols...")
-    ohlcv_dict: dict[str, "pd.DataFrame"] = {}
-    import pandas as pd
+    ohlcv_dict: dict[str, pd.DataFrame] = {}
 
     for symbol in TW_STOCK_SYMBOLS:
         df = repo.read_ohlcv(
@@ -162,9 +180,9 @@ def run_comparison():
     # Run 4 backtest variants
     for entry in CONFIGS:
         label = entry["label"]
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Running: {label}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         try:
             # Build strategy from config
@@ -196,11 +214,15 @@ def run_comparison():
             }
             results.append(row)
 
-            print(f"  Sharpe Ratio:      {row['sharpe_ratio']:.4f}" if row['sharpe_ratio'] else "  Sharpe Ratio: N/A")
-            print(f"  Max Drawdown:      {row['max_drawdown']:.4f}" if row['max_drawdown'] else "  Max Drawdown: N/A")
-            print(f"  Annualized Return: {row['annualized_return']:.4f}" if row['annualized_return'] else "  Ann Return: N/A")
-            print(f"  Total Return:      {row['total_return']:.4f}" if row['total_return'] else "  Total Return: N/A")
-            print(f"  Calmar Ratio:      {row['calmar_ratio']:.4f}" if row['calmar_ratio'] else "  Calmar Ratio: N/A")
+            print(f"  Sharpe Ratio:      {row['sharpe_ratio']:.4f}" if row["sharpe_ratio"] else "  Sharpe Ratio: N/A")
+            print(f"  Max Drawdown:      {row['max_drawdown']:.4f}" if row["max_drawdown"] else "  Max Drawdown: N/A")
+            print(
+                f"  Annualized Return: {row['annualized_return']:.4f}"
+                if row["annualized_return"]
+                else "  Ann Return: N/A"
+            )
+            print(f"  Total Return:      {row['total_return']:.4f}" if row["total_return"] else "  Total Return: N/A")
+            print(f"  Calmar Ratio:      {row['calmar_ratio']:.4f}" if row["calmar_ratio"] else "  Calmar Ratio: N/A")
             print(f"  Rebalances:        {row['num_rebalances']}")
 
         except Exception as exc:
@@ -208,18 +230,17 @@ def run_comparison():
             results.append({"label": label, "error": str(exc)})
 
     # Summary table
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("COMPARISON SUMMARY (D-14)")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Period: {START} to {END}")
     print(f"Universe: {len(TW_STOCK_SYMBOLS)} TW stock symbols")
     print()
 
     # Look-ahead bias gate (T-71-10): flag Sharpe > 3.0
     for r in results:
-        if "error" not in r and r.get("sharpe_ratio") is not None:
-            if r["sharpe_ratio"] > 3.0:
-                print(f"  WARNING: {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0 -- possible look-ahead bias!")
+        if "error" not in r and r.get("sharpe_ratio") is not None and r["sharpe_ratio"] > 3.0:
+            print(f"  WARNING: {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0 -- possible look-ahead bias!")
 
     print(json.dumps(results, indent=2, default=str))
     return results

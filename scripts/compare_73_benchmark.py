@@ -26,21 +26,69 @@ from poseidon.strategies.portfolio.fundamental_selection import (
     FundamentalSelectionStrategy,
 )
 
-
 # Phase 72 baseline universe (22 symbols)
 TW_STOCK_22 = [
-    "2330", "2317", "2454", "2308", "2881", "2882", "2891", "2303",
-    "1301", "1303", "2002", "2412", "3711", "2886", "6505", "2892",
-    "3008", "2382", "2357", "3045", "2603", "2880",
+    "2330",
+    "2317",
+    "2454",
+    "2308",
+    "2881",
+    "2882",
+    "2891",
+    "2303",
+    "1301",
+    "1303",
+    "2002",
+    "2412",
+    "3711",
+    "2886",
+    "6505",
+    "2892",
+    "3008",
+    "2382",
+    "2357",
+    "3045",
+    "2603",
+    "2880",
 ]
 
 # Expanded 0050 universe (~50 symbols, from poseidon/config/symbols.yaml)
-TW_STOCK_50 = sorted(TW_STOCK_22 + [
-    "1216", "2059", "2301", "2327", "2344", "2345", "2360", "2368",
-    "2379", "2383", "2395", "2408", "2449", "2615", "2883", "2884",
-    "2885", "2887", "2890", "3017", "3034", "3037", "3231", "3653",
-    "3661", "4904", "4938", "5871", "5876", "5880", "6669",
-])
+TW_STOCK_50 = sorted(
+    [
+        *TW_STOCK_22,
+        "1216",
+        "2059",
+        "2301",
+        "2327",
+        "2344",
+        "2345",
+        "2360",
+        "2368",
+        "2379",
+        "2383",
+        "2395",
+        "2408",
+        "2449",
+        "2615",
+        "2883",
+        "2884",
+        "2885",
+        "2887",
+        "2890",
+        "3017",
+        "3034",
+        "3037",
+        "3231",
+        "3653",
+        "3661",
+        "4904",
+        "4938",
+        "5871",
+        "5876",
+        "5880",
+        "6669",
+    ]
+)
 
 BENCHMARK_SYMBOL = "0050"
 START = date(2023, 1, 1)
@@ -209,9 +257,9 @@ def run_comparison() -> int:
     # Run backtest for each config variant
     for entry in CONFIGS:
         label = entry["label"]
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Running: {label}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         try:
             # Build strategy from config
@@ -219,9 +267,7 @@ def run_comparison() -> int:
             strategy = FundamentalSelectionStrategy(config=cfg, repo=repo)
 
             # Run backtest
-            backtester = PortfolioBacktester(
-                cost_model=cost_model, initial_capital=1_000_000.0
-            )
+            backtester = PortfolioBacktester(cost_model=cost_model, initial_capital=1_000_000.0)
             result = backtester.run(
                 strategy=strategy,
                 ohlcv_dict=ohlcv_dict,
@@ -239,12 +285,8 @@ def run_comparison() -> int:
             total_trades = len(trades)
             buy_trades = len([t for t in trades if t.get("action") == "buy"])
             sell_trades = len([t for t in trades if t.get("action") == "sell"])
-            hold_until_exits = len(
-                [t for t in trades if t.get("reason") == "hold_until_exit"]
-            )
-            stop_loss_exits = len(
-                [t for t in trades if t.get("reason") == "stop_loss"]
-            )
+            hold_until_exits = len([t for t in trades if t.get("reason") == "hold_until_exit"])
+            stop_loss_exits = len([t for t in trades if t.get("reason") == "stop_loss"])
 
             row = {
                 "label": label,
@@ -273,18 +315,24 @@ def run_comparison() -> int:
                 excess = compute_excess_metrics(strat_equity, bench_eq)
                 row.update(excess)
             else:
-                row.update({
-                    "excess_return_annual": None,
-                    "tracking_error": None,
-                    "jensens_alpha": None,
-                    "beta": None,
-                })
+                row.update(
+                    {
+                        "excess_return_annual": None,
+                        "tracking_error": None,
+                        "jensens_alpha": None,
+                        "beta": None,
+                    }
+                )
 
             results.append(row)
 
             print(f"  Sharpe Ratio:      {row['sharpe_ratio']:.4f}" if row["sharpe_ratio"] else "  Sharpe Ratio: N/A")
             print(f"  Max Drawdown:      {row['max_drawdown']:.4f}" if row["max_drawdown"] else "  Max Drawdown: N/A")
-            print(f"  Annualized Return: {row['annualized_return']:.4f}" if row["annualized_return"] else "  Ann Return: N/A")
+            print(
+                f"  Annualized Return: {row['annualized_return']:.4f}"
+                if row["annualized_return"]
+                else "  Ann Return: N/A"
+            )
             print(f"  Total Return:      {row['total_return']:.4f}" if row["total_return"] else "  Total Return: N/A")
             print(f"  Total Trades:      {row['total_trades']}")
             print(f"  Hold Until Exits:  {row['hold_until_exits']}")
@@ -304,19 +352,18 @@ def run_comparison() -> int:
     results.append(benchmark_row)
 
     # Summary table
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("Phase 73: Expanded Universe + Weekly Rebalance + 0050 Benchmark")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(f"Period: {START} to {END}")
     print(f"Universe: 22 (baseline) / {len(TW_STOCK_50)} (expanded) symbols")
-    print(f"Benchmark: 0050 ETF buy-and-hold")
-    print(f"Initial Capital: 1,000,000")
+    print("Benchmark: 0050 ETF buy-and-hold")
+    print("Initial Capital: 1,000,000")
     print()
 
     # Formatted comparison table
     header = (
-        f"{'Label':<45} | {'Sharpe':>8} | {'AnnRtn':>8} | {'MaxDD':>8} | "
-        f"{'TotRtn':>8} | {'Trades':>6} | {'Rebals':>6}"
+        f"{'Label':<45} | {'Sharpe':>8} | {'AnnRtn':>8} | {'MaxDD':>8} | {'TotRtn':>8} | {'Trades':>6} | {'Rebals':>6}"
     )
     print(header)
     print("-" * len(header))
@@ -334,9 +381,9 @@ def run_comparison() -> int:
         print(f"{r['label']:<45} | {sharpe:>8} | {ann_ret:>8} | {max_dd:>8} | {tot_ret:>8} | {trades} | {rebals}")
 
     # Excess metrics section (D-11)
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("Excess Metrics vs 0050 Benchmark (D-11)")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     ex_header = f"{'Label':<45} | {'ExRtn/yr':>8} | {'TrkErr':>8} | {'Alpha':>8} | {'Beta':>8}"
     print(ex_header)
     print("-" * len(ex_header))
@@ -354,21 +401,17 @@ def run_comparison() -> int:
     print()
     bias_warning = False
     for r in results:
-        if "error" not in r and r.get("sharpe_ratio") is not None:
-            if r["sharpe_ratio"] > 3.0:
-                print(
-                    f"  WARNING (D-18): {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0"
-                    " -- possible look-ahead bias!"
-                )
-                bias_warning = True
+        if "error" not in r and r.get("sharpe_ratio") is not None and r["sharpe_ratio"] > 3.0:
+            print(f"  WARNING (D-18): {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0 -- possible look-ahead bias!")
+            bias_warning = True
 
     if not bias_warning:
         print("  Look-ahead bias gate (D-18): PASSED (all Sharpe <= 3.0)")
 
     # JSON summary for easy parsing
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("JSON SUMMARY")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(json.dumps(results, indent=2, default=str))
 
     return 0

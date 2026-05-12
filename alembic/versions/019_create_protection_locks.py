@@ -10,6 +10,7 @@ Changes:
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "019"

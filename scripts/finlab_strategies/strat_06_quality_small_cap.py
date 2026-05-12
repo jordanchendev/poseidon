@@ -23,12 +23,6 @@ def run():
     quarterly_rev = monthly_rev.rolling(4).sum()
     ps_ratio = market_cap / quarterly_rev
 
-    position = (
-        (market_cap < 1e10)
-        & (fcf > 0)
-        & (roe > 0)
-        & (op_growth > 0)
-        & (ps_ratio < 5)
-    )
+    position = (market_cap < 1e10) & (fcf > 0) & (roe > 0) & (op_growth > 0) & (ps_ratio < 5)
     report = sim(position, resample="M", upload=False)
     return report

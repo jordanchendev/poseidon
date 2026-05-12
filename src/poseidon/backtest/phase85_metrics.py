@@ -21,10 +21,11 @@ Public surface:
   ``json.dumps(payload, default=to_jsonable)``.
 * ``BARS_PER_YEAR_1M`` — Pitfall 6 constant (525_600 1m bars per year).
 """
+
 from __future__ import annotations
 
 import math
-from typing import Iterable
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -82,12 +83,8 @@ def wfe_degradation_excluding_is_negative(per_window) -> float | None:
     """
     ratios: list[float] = []
     for window in per_window:
-        is_metrics = (
-            window.is_metrics if hasattr(window, "is_metrics") else window["is_metrics"]
-        )
-        oos_metrics = (
-            window.oos_metrics if hasattr(window, "oos_metrics") else window["oos_metrics"]
-        )
+        is_metrics = window.is_metrics if hasattr(window, "is_metrics") else window["is_metrics"]
+        oos_metrics = window.oos_metrics if hasattr(window, "oos_metrics") else window["oos_metrics"]
         is_sharpe = float(is_metrics.get("sharpe_ratio", 0.0))
         oos_sharpe = float(oos_metrics.get("sharpe_ratio", 0.0))
         if is_sharpe > 0:
@@ -112,16 +109,11 @@ def oos_aggregate_sharpe_trade_weighted(per_window) -> float:
     numerator = 0.0
     denominator = 0
     for window in per_window:
-        oos_metrics = (
-            window.oos_metrics if hasattr(window, "oos_metrics") else window["oos_metrics"]
-        )
+        oos_metrics = window.oos_metrics if hasattr(window, "oos_metrics") else window["oos_metrics"]
         sharpe = float(oos_metrics.get("sharpe_ratio", 0.0))
         # Poseidon's compute_metrics returns "trade_count"; D-17 spec uses
         # "trades". Accept either so the driver can pass raw window output.
-        if "trades" in oos_metrics:
-            trades = int(oos_metrics["trades"])
-        else:
-            trades = int(oos_metrics.get("trade_count", 0))
+        trades = int(oos_metrics["trades"]) if "trades" in oos_metrics else int(oos_metrics.get("trade_count", 0))
         if trades <= 0:
             continue
         numerator += sharpe * trades
@@ -157,15 +149,13 @@ def to_jsonable(obj):
         return obj.isoformat()
     if hasattr(obj, "to_dict"):  # pydantic / dataclass-like
         return obj.to_dict()
-    raise TypeError(
-        f"phase85_metrics.to_jsonable: unsupported {type(obj)!r}"
-    )
+    raise TypeError(f"phase85_metrics.to_jsonable: unsupported {type(obj)!r}")
 
 
 __all__ = [
     "BARS_PER_YEAR_1M",
     "compute_max_consecutive_losses",
-    "wfe_degradation_excluding_is_negative",
     "oos_aggregate_sharpe_trade_weighted",
     "to_jsonable",
+    "wfe_degradation_excluding_is_negative",
 ]

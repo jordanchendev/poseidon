@@ -85,7 +85,5 @@ def upgrade():
 def downgrade():
     # Drop the policy first, then the view (CASCADE handles any dependent
     # objects). ``if_exists => true`` keeps downgrade idempotent.
-    op.execute(
-        "SELECT remove_continuous_aggregate_policy('ohlcv_1d_cagg', if_exists => true)"
-    )
+    op.execute("SELECT remove_continuous_aggregate_policy('ohlcv_1d_cagg', if_exists => true)")
     op.execute("DROP MATERIALIZED VIEW IF EXISTS ohlcv_1d_cagg CASCADE")

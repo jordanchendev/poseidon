@@ -10,6 +10,7 @@ columns so public CRUD and persisted backtest results work on Postgres.
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "031"

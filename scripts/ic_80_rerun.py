@@ -21,7 +21,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
@@ -57,7 +56,7 @@ MIN_OBSERVATIONS = 30  # D-02
 
 REGIMES = {
     "post_etf": {"start": "2024-01-01", "end": "2026-04-24"},  # D-04
-    "pre_etf": {"start": "2019-01-01", "end": "2023-12-31"},   # D-05
+    "pre_etf": {"start": "2019-01-01", "end": "2023-12-31"},  # D-05
 }
 
 # D-01: All 18 abstract feature names (Phase 75 original 16 + Phase 76 CVD + Cascade)
@@ -72,15 +71,15 @@ CRYPTO_FEATURES_EXPECTED = [
     "oi_price_divergence_24",
     "oiwap_168",
     "oiwap_distance_168",
-    "wick_ratio",           # Abstract: maps to wick_ratio_upper/lower/total
-    "range_expansion",      # Abstract: maps to range_expansion_14
+    "wick_ratio",  # Abstract: maps to wick_ratio_upper/lower/total
+    "range_expansion",  # Abstract: maps to range_expansion_14
     "body_ratio",
     "volume_sma_20",
     "volume_ratio_20",
     "obv",
-    "cvd_change_20",        # Phase 76: IC=-0.027 (PASS)
-    "cascade_signal",       # Phase 76: IC=0.034 (PASS)
-    "cascade_direction",    # Phase 76: companion to cascade_signal
+    "cvd_change_20",  # Phase 76: IC=-0.027 (PASS)
+    "cascade_signal",  # Phase 76: IC=0.034 (PASS)
+    "cascade_direction",  # Phase 76: companion to cascade_signal
 ]
 
 # Direction labels for comparison table context
@@ -202,9 +201,7 @@ def compute_rank_ic_with_counts(
 
 
 # ── Feature column discovery ─────────────────────────────────────────
-def discover_feature_columns(
-    engine, repo, symbol: str
-) -> tuple[list[str], list[str]]:
+def discover_feature_columns(engine, repo, symbol: str) -> tuple[list[str], list[str]]:
     """Discover actual feature column names from compute_with_companions output.
 
     D-01 names are abstract; actual columns may have period suffixes
@@ -218,7 +215,9 @@ def discover_feature_columns(
     # Use post-ETF regime for discovery (guaranteed to have all data)
     post_etf = REGIMES["post_etf"]
     ohlcv = repo.read_ohlcv(
-        symbol, MARKET, INTERVAL,
+        symbol,
+        MARKET,
+        INTERVAL,
         start=pd.Timestamp(post_etf["start"]).to_pydatetime(),
         end=pd.Timestamp(post_etf["end"]).to_pydatetime(),
     )
@@ -232,14 +231,15 @@ def discover_feature_columns(
 
     specs = get_r2_specs(symbol, MARKET)
     computed = engine.compute_with_companions(
-        ohlcv, symbol=symbol, market=MARKET, interval=INTERVAL,
+        ohlcv,
+        symbol=symbol,
+        market=MARKET,
+        interval=INTERVAL,
         feature_specs=specs,
     )
 
     base_cols = {"open", "high", "low", "close", "volume"}
-    available_columns = sorted(
-        c for c in computed.columns if c not in base_cols
-    )
+    available_columns = sorted(c for c in computed.columns if c not in base_cols)
     print(f"\n  Available feature columns ({len(available_columns)}):")
     for col in available_columns:
         print(f"    - {col}")
@@ -262,7 +262,7 @@ def discover_feature_columns(
                 missing_features.append(name)
 
     if expanded_mapping:
-        print(f"\n  Expanded feature mappings:")
+        print("\n  Expanded feature mappings:")
         for abstract, actuals in expanded_mapping.items():
             print(f"    {abstract} -> {actuals}")
 
@@ -283,9 +283,7 @@ def discover_feature_columns(
 
 
 # ── Two-regime IC analysis loop ──────────────────────────────────────
-def run_two_regime_ic_analysis(
-    engine, repo, feature_columns: list[str]
-) -> dict[str, dict]:
+def run_two_regime_ic_analysis(engine, repo, feature_columns: list[str]) -> dict[str, dict]:
     """Run pooled IC analysis across two time regimes with event counts.
 
     Key Phase 80 adaptation:
@@ -298,8 +296,8 @@ def run_two_regime_ic_analysis(
     Returns:
         {regime_name: {h1: {feature: {ic, n, ...}}, h5: {...}, ...}}
     """
-    from poseidon.research.ic_analysis import compute_forward_returns
     from poseidon.data.feature_engine.specs import get_r2_specs
+    from poseidon.research.ic_analysis import compute_forward_returns
 
     all_results: dict[str, dict] = {}
 
@@ -307,9 +305,9 @@ def run_two_regime_ic_analysis(
         regime_start = regime_cfg["start"]
         regime_end = regime_cfg["end"]
 
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f"IC ANALYSIS: regime={regime_name} ({regime_start} to {regime_end})")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
 
         # Collect pooled frames per horizon
         horizon_frames: dict[int, list[pd.DataFrame]] = {h: [] for h in HORIZONS}
@@ -319,7 +317,9 @@ def run_two_regime_ic_analysis(
             print(f"\n  Processing {symbol} / {regime_name} ...")
 
             ohlcv = repo.read_ohlcv(
-                symbol, MARKET, INTERVAL,
+                symbol,
+                MARKET,
+                INTERVAL,
                 start=pd.Timestamp(regime_start).to_pydatetime(),
                 end=pd.Timestamp(regime_end).to_pydatetime(),
             )
@@ -345,20 +345,26 @@ def run_two_regime_ic_analysis(
                 print(f"    Funding data: {len(funding_data)} rows")
                 extra_nonprice = {"funding_data": funding_data}
                 computed = engine.compute_with_companions(
-                    ohlcv, symbol=symbol, market=MARKET, interval=INTERVAL,
+                    ohlcv,
+                    symbol=symbol,
+                    market=MARKET,
+                    interval=INTERVAL,
                     feature_specs=specs,
                     extra_nonprice_data=extra_nonprice,
                 )
             else:
                 # Post-ETF: also need CCXT symbol for funding rate query
                 # (Thalassa stores funding rates with CCXT format symbols)
-                print(f"    Post-ETF: fetching funding data from 2024-01-01 ...")
+                print("    Post-ETF: fetching funding data from 2024-01-01 ...")
                 ccxt_sym = to_ccxt_symbol(symbol)
                 funding_data = repo.read_funding_rates(ccxt_sym, start="2024-01-01")
                 print(f"    Funding data: {len(funding_data)} rows")
                 extra_nonprice = {"funding_data": funding_data}
                 computed = engine.compute_with_companions(
-                    ohlcv, symbol=symbol, market=MARKET, interval=INTERVAL,
+                    ohlcv,
+                    symbol=symbol,
+                    market=MARKET,
+                    interval=INTERVAL,
                     feature_specs=specs,
                     extra_nonprice_data=extra_nonprice,
                 )
@@ -396,7 +402,9 @@ def run_two_regime_ic_analysis(
             print(f"  Horizon {horizon}: {len(combined)} pooled rows, {len(cols_present)} features")
 
             ic_results = compute_rank_ic_with_counts(
-                combined[cols_present], fwd, cols_present,
+                combined[cols_present],
+                fwd,
+                cols_present,
                 min_observations=MIN_OBSERVATIONS,
             )
 
@@ -410,17 +418,15 @@ def run_two_regime_ic_analysis(
 
 
 # ── Comparison table output (D-17) ───────────────────────────────────
-def print_comparison_table(
-    results: dict[str, dict], feature_columns: list[str]
-) -> None:
+def print_comparison_table(results: dict[str, dict], feature_columns: list[str]) -> None:
     """Print markdown-style comparison table: Post-ETF vs Pre-ETF vs Phase 75.
 
     Shows Feature | Post-ETF IC(h=5) | n | Pre-ETF IC(h=5) | n | Phase 75 IC(h=5)
     Highlights features where funding data changed from 'Insufficient' to actual IC.
     """
-    print(f"\n{'='*110}")
+    print(f"\n{'=' * 110}")
     print("REGIME COMPARISON TABLE (h=5 reference horizon)")
-    print(f"{'='*110}")
+    print(f"{'=' * 110}")
 
     header = (
         f"{'Feature':<28} | {'Post-ETF IC':>11} | {'Post-ETF n':>10} "
@@ -445,10 +451,7 @@ def print_comparison_table(
         ic_post_str = f"{ic_post:>11.4f}" if ic_post is not None else f"{'N/A':>11}"
         ic_pre_str = f"{ic_pre:>11.4f}" if ic_pre is not None else f"{'N/A':>11}"
 
-        if isinstance(p75_val, float):
-            p75_str = f"{p75_val:>12.4f}"
-        else:
-            p75_str = f"{str(p75_val):>12}"
+        p75_str = f"{p75_val:>12.4f}" if isinstance(p75_val, float) else f"{p75_val!s:>12}"
 
         # Note: highlight funding features with new data
         note = ""
@@ -458,23 +461,18 @@ def print_comparison_table(
             elif ic_post is not None:
                 note = "* new post-ETF *"
 
-        print(
-            f"{feature:<28} | {ic_post_str} | {n_post:>10} "
-            f"| {ic_pre_str} | {n_pre:>10} | {p75_str} | {note}"
-        )
+        print(f"{feature:<28} | {ic_post_str} | {n_post:>10} | {ic_pre_str} | {n_pre:>10} | {p75_str} | {note}")
 
     print()
     print("  ** NEW DATA ** = funding feature now has pre-ETF IC (was 'Insufficient' in Phase 75)")
 
 
 # ── Full IC table for all horizons ───────────────────────────────────
-def print_full_ic_table(
-    results: dict[str, dict], feature_columns: list[str]
-) -> None:
+def print_full_ic_table(results: dict[str, dict], feature_columns: list[str]) -> None:
     """Print full IC table: all features x all horizons x both regimes."""
-    print(f"\n{'='*120}")
+    print(f"\n{'=' * 120}")
     print("FULL IC TABLE (all features x horizons x regimes)")
-    print(f"{'='*120}")
+    print(f"{'=' * 120}")
 
     header = f"{'Feature':<28}"
     for regime in REGIMES:
@@ -490,7 +488,7 @@ def print_full_ic_table(
                 hkey = f"h{h}"
                 entry = results.get(regime, {}).get(hkey, {}).get(feature, {})
                 ic_val = entry.get("ic")
-                n = entry.get("n", 0)
+                entry.get("n", 0)
                 sufficient = entry.get("sufficient", False)
                 if ic_val is not None:
                     flag = "" if sufficient else "*"
@@ -504,13 +502,11 @@ def print_full_ic_table(
 
 
 # ── Event count table ────────────────────────────────────────────────
-def print_event_count_table(
-    results: dict[str, dict], feature_columns: list[str]
-) -> None:
+def print_event_count_table(results: dict[str, dict], feature_columns: list[str]) -> None:
     """Print event count table for transparency."""
-    print(f"\n{'='*120}")
+    print(f"\n{'=' * 120}")
     print("EVENT COUNT TABLE (paired observations per feature-horizon)")
-    print(f"{'='*120}")
+    print(f"{'=' * 120}")
 
     header = f"{'Feature':<28}"
     for regime in REGIMES:
@@ -536,9 +532,7 @@ def print_event_count_table(
 
 
 # ── JSON artifact output (D-06) ──────────────────────────────────────
-def save_json_artifact(
-    results: dict[str, dict], feature_columns: list[str]
-) -> None:
+def save_json_artifact(results: dict[str, dict], feature_columns: list[str]) -> None:
     """Save machine-parseable JSON artifact for downstream consumption.
 
     Structure:
@@ -606,9 +600,7 @@ def main() -> None:
     print("=" * 70)
     print("FEATURE COLUMN DISCOVERY")
     print("=" * 70)
-    feature_columns, missing = discover_feature_columns(
-        engine, repo, SYMBOLS[0]
-    )
+    feature_columns, _missing = discover_feature_columns(engine, repo, SYMBOLS[0])
     if not feature_columns:
         print("ERROR: No feature columns discovered. Exiting.")
         sys.exit(1)
@@ -625,18 +617,20 @@ def main() -> None:
     save_json_artifact(results, feature_columns)
 
     # ── Summary ──
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("SUMMARY")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"  Total features analyzed: {len(feature_columns)}")
     print(f"  Regimes: {list(REGIMES.keys())}")
 
     # Highlight funding feature changes
     funding_features = [
-        "funding_rate_daily", "funding_zscore",
-        "funding_extreme", "funding_direction",
+        "funding_rate_daily",
+        "funding_zscore",
+        "funding_extreme",
+        "funding_direction",
     ]
-    print(f"\n  Funding feature status (was 'Insufficient' in Phase 75):")
+    print("\n  Funding feature status (was 'Insufficient' in Phase 75):")
     for f in funding_features:
         for regime_name in REGIMES:
             entry = results.get(regime_name, {}).get("h5", {}).get(f, {})

@@ -6,6 +6,7 @@ Create Date: 2026-03-28
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "009"
@@ -25,14 +26,9 @@ def upgrade():
         sa.Column("consistency", sa.Numeric, nullable=False),
         sa.Column("anomaly_free", sa.Numeric, nullable=False),
         sa.Column("timeliness", sa.Numeric, nullable=False),
-        sa.PrimaryKeyConstraint(
-            "time", "symbol", "interval", name="pk_quality_scores"
-        ),
+        sa.PrimaryKeyConstraint("time", "symbol", "interval", name="pk_quality_scores"),
     )
-    op.execute(
-        "SELECT create_hypertable('quality_scores', 'time', "
-        "chunk_time_interval => INTERVAL '1 week')"
-    )
+    op.execute("SELECT create_hypertable('quality_scores', 'time', chunk_time_interval => INTERVAL '1 week')")
 
 
 def downgrade():

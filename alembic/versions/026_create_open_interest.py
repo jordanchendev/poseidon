@@ -10,6 +10,7 @@ PK is (time, symbol, interval) to support multiple timeframes per symbol.
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "026"
@@ -38,9 +39,7 @@ def upgrade():
     )
 
     # Convert to TimescaleDB hypertable for efficient time-series queries
-    op.execute(
-        "SELECT create_hypertable('open_interest', 'time', if_not_exists => TRUE)"
-    )
+    op.execute("SELECT create_hypertable('open_interest', 'time', if_not_exists => TRUE)")
 
 
 def downgrade():

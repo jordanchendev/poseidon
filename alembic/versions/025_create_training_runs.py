@@ -17,8 +17,9 @@ Phase 41 decisions (.planning/phases/41-research-api/41-CONTEXT.md):
 """
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+
+from alembic import op
 
 revision = "025"
 down_revision = "024"
@@ -69,9 +70,7 @@ def upgrade():
             server_default=sa.text("'{}'::jsonb"),
         ),
         sa.Column("lookback", sa.Text, nullable=True),
-        sa.Column(
-            "status", sa.String(16), nullable=False, server_default="pending"
-        ),
+        sa.Column("status", sa.String(16), nullable=False, server_default="pending"),
         sa.Column("metrics", JSONB, nullable=True),
         sa.Column(
             "model_version_id",
@@ -87,12 +86,8 @@ def upgrade():
             nullable=False,
             server_default="api",
         ),
-        sa.Column(
-            "started_at", sa.DateTime(timezone=True), nullable=True
-        ),
-        sa.Column(
-            "finished_at", sa.DateTime(timezone=True), nullable=True
-        ),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -115,12 +110,8 @@ def upgrade():
     )
 
     # Indexes for GET /runs filtering and pagination
-    op.create_index(
-        "ix_training_runs_status", "training_runs", ["status"]
-    )
-    op.create_index(
-        "ix_training_runs_created_at", "training_runs", ["created_at"]
-    )
+    op.create_index("ix_training_runs_status", "training_runs", ["status"])
+    op.create_index("ix_training_runs_created_at", "training_runs", ["created_at"])
 
 
 def downgrade():

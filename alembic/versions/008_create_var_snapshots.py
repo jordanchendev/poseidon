@@ -6,8 +6,9 @@ Create Date: 2026-03-28
 """
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
+
+from alembic import op
 
 revision = "008"
 down_revision = "007"
@@ -29,10 +30,7 @@ def upgrade():
         sa.Column("details", JSONB, nullable=True),
         sa.PrimaryKeyConstraint("time", "method", name="pk_var_snapshots"),
     )
-    op.execute(
-        "SELECT create_hypertable('var_snapshots', 'time', "
-        "chunk_time_interval => INTERVAL '1 week')"
-    )
+    op.execute("SELECT create_hypertable('var_snapshots', 'time', chunk_time_interval => INTERVAL '1 week')")
 
 
 def downgrade():

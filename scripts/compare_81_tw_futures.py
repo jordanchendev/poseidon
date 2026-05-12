@@ -59,7 +59,7 @@ COST_MODEL: CostModel = COST_MODELS["tw_futures"]
 # Bars per year for different intervals (Pitfall 4 / D-17)
 BARS_PER_YEAR = {
     "1d": 252,
-    "1h": 4788,   # 252 * ~19 bars/day (day + night session)
+    "1h": 4788,  # 252 * ~19 bars/day (day + night session)
     "30m": 9576,  # 252 * ~38 bars/day
 }
 
@@ -111,14 +111,18 @@ def fetch_ohlcv_data(
         actual_end = df.index[-1]
         logger.info(
             "TX %s: %d bars (%s to %s)",
-            interval, len(df), actual_start, actual_end,
+            interval,
+            len(df),
+            actual_start,
+            actual_end,
         )
 
         if pd.Timestamp(actual_start) > pd.Timestamp(START):
             logger.warning(
-                "TX %s data starts at %s (requested %s) -- "
-                "continuing with available data",
-                interval, actual_start, START.date(),
+                "TX %s data starts at %s (requested %s) -- continuing with available data",
+                interval,
+                actual_start,
+                START.date(),
             )
 
         ohlcv_dict[interval] = df
@@ -209,9 +213,9 @@ def run_comparison() -> int:
             results.append({"label": label, "interval": interval, "error": "No data"})
             continue
 
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f"Running: {label} (interval={interval}, bars={len(ohlcv)})")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
 
         runner = BacktestRunner(
             strategy=strategy,
@@ -279,9 +283,9 @@ def run_comparison() -> int:
         results.append({"label": "Buy & Hold TX", "error": "No daily data"})
 
     # Step 5: Print comparison table (D-17)
-    print(f"\n{'='*100}")
+    print(f"\n{'=' * 100}")
     print("Phase 81: TW Futures Strategy Comparison")
-    print(f"{'='*100}")
+    print(f"{'=' * 100}")
     print(f"Period: {START.date()} to {END.date()}")
     print(f"Symbol: {SYMBOL} | Market: {MARKET}")
     print(f"Initial Capital: {INITIAL_CAPITAL:,.0f} TWD")
@@ -290,8 +294,7 @@ def run_comparison() -> int:
     print()
 
     header = (
-        f"{'Strategy':<35} {'Sharpe':>8} {'MaxDD':>8} {'Return':>10} "
-        f"{'Trades':>7} {'WinRate':>8} {'AvgHold(d)':>11}"
+        f"{'Strategy':<35} {'Sharpe':>8} {'MaxDD':>8} {'Return':>10} {'Trades':>7} {'WinRate':>8} {'AvgHold(d)':>11}"
     )
     print(header)
     print("-" * 91)
@@ -316,28 +319,18 @@ def run_comparison() -> int:
     print()
     bias_warning = False
     for r in results:
-        if "error" not in r and r.get("sharpe_ratio") is not None:
-            if abs(r["sharpe_ratio"]) > 3.0:
-                print(
-                    f"  WARNING: {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0"
-                    " -- possible look-ahead bias!"
-                )
-                bias_warning = True
+        if "error" not in r and r.get("sharpe_ratio") is not None and abs(r["sharpe_ratio"]) > 3.0:
+            print(f"  WARNING: {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0 -- possible look-ahead bias!")
+            bias_warning = True
     if not bias_warning:
         print("  Look-ahead bias gate: PASSED (all |Sharpe| <= 3.0)")
 
     # Step 6: Identify winner
-    strat_results = [
-        r for r in results
-        if "error" not in r and "Buy" not in r.get("label", "")
-    ]
+    strat_results = [r for r in results if "error" not in r and "Buy" not in r.get("label", "")]
     winner = None
     if strat_results:
         winner = max(strat_results, key=lambda r: r.get("sharpe_ratio", -999))
-        print(
-            f"\n  WINNER (highest Sharpe): {winner['label']} "
-            f"with Sharpe={winner['sharpe_ratio']:.4f}"
-        )
+        print(f"\n  WINNER (highest Sharpe): {winner['label']} with Sharpe={winner['sharpe_ratio']:.4f}")
     else:
         print("\n  WARNING: No successful strategy results to compare")
 
@@ -349,9 +342,7 @@ def run_comparison() -> int:
     # Determine actual data range for the JSON
     actual_start_str = START.date().isoformat()
     if ohlcv_dict:
-        earliest = min(
-            df.index[0] for df in ohlcv_dict.values() if not df.empty
-        )
+        earliest = min(df.index[0] for df in ohlcv_dict.values() if not df.empty)
         actual_start_str = str(earliest.date()) if hasattr(earliest, "date") else str(earliest)
 
     summary = {
@@ -376,9 +367,9 @@ def run_comparison() -> int:
     print(f"\n  JSON summary saved to: {output_path}")
 
     # Step 8: Print JSON for easy parsing
-    print(f"\n{'='*100}")
+    print(f"\n{'=' * 100}")
     print("JSON SUMMARY")
-    print(f"{'='*100}")
+    print(f"{'=' * 100}")
     print(json.dumps(summary, indent=2, default=str))
 
     return 0

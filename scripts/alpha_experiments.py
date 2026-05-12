@@ -24,7 +24,9 @@ logger = logging.getLogger(__name__)
 
 def _login():
     import finlab
+
     from poseidon.core.config import Settings
+
     settings = Settings()
     finlab.login(settings.finlab_api_token)
 
@@ -39,12 +41,12 @@ def run_revenue_trough_foreign_flow():
     from finlab import data
     from finlab.backtest import sim
 
-    close = data.get("price:收盤價")
+    data.get("price:收盤價")
     vol = data.get("price:成交股數")
-    rev = data.get('monthly_revenue:當月營收')
-    rev_year_growth = data.get('monthly_revenue:去年同月增減(%)')
+    rev = data.get("monthly_revenue:當月營收")
+    rev_year_growth = data.get("monthly_revenue:去年同月增減(%)")
 
-    foreign_buy = data.get('institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)')
+    foreign_buy = data.get("institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)")
 
     # Revenue trough recovery: near 12m low but turning up
     rev_near_bottom = (rev.rolling(12).min() / rev) < 0.85
@@ -62,9 +64,13 @@ def run_revenue_trough_foreign_flow():
     buy = buy.is_smallest(8)
 
     return sim(
-        buy, resample="M", position_limit=1 / 5,
-        fee_ratio=1.425 / 1000 / 3, stop_loss=0.10,
-        trade_at_price='open', name='revenue_trough_foreign_flow',
+        buy,
+        resample="M",
+        position_limit=1 / 5,
+        fee_ratio=1.425 / 1000 / 3,
+        stop_loss=0.10,
+        trade_at_price="open",
+        name="revenue_trough_foreign_flow",
     )
 
 
@@ -105,8 +111,11 @@ def run_margin_divergence():
     position = position.ffill().fillna(0)
 
     return sim(
-        position, resample="W", position_limit=0.2,
-        fee_ratio=1.425 / 1000 / 3, name='margin_divergence',
+        position,
+        resample="W",
+        position_limit=0.2,
+        fee_ratio=1.425 / 1000 / 3,
+        name="margin_divergence",
     )
 
 
@@ -120,9 +129,9 @@ def run_revenue_acceleration_value():
     from finlab import data
     from finlab.backtest import sim
 
-    close = data.get("price:收盤價")
+    data.get("price:收盤價")
     vol = data.get("price:成交股數")
-    rev_year_growth = data.get('monthly_revenue:去年同月增減(%)')
+    rev_year_growth = data.get("monthly_revenue:去年同月增減(%)")
     pe = data.get("price_earning_ratio:本益比")
 
     # Revenue acceleration: current growth > 3m ago growth
@@ -142,9 +151,13 @@ def run_revenue_acceleration_value():
     buy = buy.is_smallest(10)
 
     return sim(
-        buy, resample="M", position_limit=0.1,
-        fee_ratio=1.425 / 1000 / 3, stop_loss=0.12,
-        trade_at_price='open', name='revenue_acceleration_value',
+        buy,
+        resample="M",
+        position_limit=0.1,
+        fee_ratio=1.425 / 1000 / 3,
+        stop_loss=0.12,
+        trade_at_price="open",
+        name="revenue_acceleration_value",
     )
 
 
@@ -160,8 +173,8 @@ def run_trust_discovery():
 
     close = data.get("price:收盤價")
     vol = data.get("price:成交股數")
-    trust_buy = data.get('institutional_investors_trading_summary:投信買賣超股數')
-    rev_year_growth = data.get('monthly_revenue:去年同月增減(%)')
+    trust_buy = data.get("institutional_investors_trading_summary:投信買賣超股數")
+    rev_year_growth = data.get("monthly_revenue:去年同月增減(%)")
 
     # Trust fund net buy accelerating: recent > past
     trust_recent = trust_buy.rolling(5).sum()
@@ -183,9 +196,13 @@ def run_trust_discovery():
     buy = buy.is_smallest(8)
 
     return sim(
-        buy, resample="2W", position_limit=1 / 8,
-        fee_ratio=1.425 / 1000 / 3, stop_loss=0.10,
-        trade_at_price='open', name='trust_discovery',
+        buy,
+        resample="2W",
+        position_limit=1 / 8,
+        fee_ratio=1.425 / 1000 / 3,
+        stop_loss=0.10,
+        trade_at_price="open",
+        name="trust_discovery",
     )
 
 
@@ -201,7 +218,7 @@ def run_quiet_breakout():
 
     close = data.get("price:收盤價")
     vol = data.get("price:成交股數")
-    rev_year_growth = data.get('monthly_revenue:去年同月增減(%)')
+    rev_year_growth = data.get("monthly_revenue:去年同月增減(%)")
 
     # Low volatility: 20d std in bottom 20% of its own 250d history
     vol_20d = close.pct_change().rolling(20).std()
@@ -229,8 +246,11 @@ def run_quiet_breakout():
     position = position.ffill().fillna(0)
 
     return sim(
-        position, resample="W", position_limit=0.15,
-        fee_ratio=1.425 / 1000 / 3, name='quiet_breakout',
+        position,
+        resample="W",
+        position_limit=0.15,
+        fee_ratio=1.425 / 1000 / 3,
+        name="quiet_breakout",
     )
 
 
@@ -246,8 +266,8 @@ def run_revenue_surprise_volume():
 
     close = data.get("price:收盤價")
     vol = data.get("price:成交股數")
-    rev_year_growth = data.get('monthly_revenue:去年同月增減(%)')
-    rev_month_growth = data.get('monthly_revenue:上月比較增減(%)')
+    rev_year_growth = data.get("monthly_revenue:去年同月增減(%)")
+    rev_month_growth = data.get("monthly_revenue:上月比較增減(%)")
 
     # Revenue surprise: YoY > 30% AND MoM > 10%
     rev_surprise = (rev_year_growth > 30) & (rev_month_growth > 10)
@@ -267,9 +287,13 @@ def run_revenue_surprise_volume():
     buy = buy.is_smallest(5)
 
     return sim(
-        buy, resample="M", position_limit=0.2,
-        fee_ratio=1.425 / 1000 / 3, stop_loss=0.10,
-        trade_at_price='open', name='revenue_surprise_volume',
+        buy,
+        resample="M",
+        position_limit=0.2,
+        fee_ratio=1.425 / 1000 / 3,
+        stop_loss=0.10,
+        trade_at_price="open",
+        name="revenue_surprise_volume",
     )
 
 
@@ -285,11 +309,10 @@ def run_sector_revenue_breadth():
 
     close = data.get("price:收盤價")
     vol = data.get("price:成交股數")
-    rev_year_growth = data.get('monthly_revenue:去年同月增減(%)')
-    categories = data.get('security_categories')
+    rev_year_growth = data.get("monthly_revenue:去年同月增減(%)")
+    data.get("security_categories")
 
     # Sector breadth: % of stocks with positive revenue growth
-    rev_positive = rev_year_growth > 0
 
     # Simple approach: use all stocks, rank by revenue growth, buy lowest vol
     # in the top revenue growth quintile
@@ -308,9 +331,13 @@ def run_sector_revenue_breadth():
     buy = buy.is_smallest(10)
 
     return sim(
-        buy, resample="M", position_limit=0.1,
-        fee_ratio=1.425 / 1000 / 3, stop_loss=0.10,
-        trade_at_price='open', name='sector_revenue_breadth',
+        buy,
+        resample="M",
+        position_limit=0.1,
+        fee_ratio=1.425 / 1000 / 3,
+        stop_loss=0.10,
+        trade_at_price="open",
+        name="sector_revenue_breadth",
     )
 
 
@@ -326,7 +353,7 @@ def run_dealer_hedge_squeeze():
 
     close = data.get("price:收盤價")
     vol = data.get("price:成交股數")
-    dealer_hedge = data.get('institutional_investors_trading_summary:自營商買賣超股數(避險)')
+    dealer_hedge = data.get("institutional_investors_trading_summary:自營商買賣超股數(避險)")
 
     # Dealer heavily selling (hedging) in recent 10 days
     dealer_net_sell = dealer_hedge.rolling(10).sum() < 0
@@ -348,8 +375,11 @@ def run_dealer_hedge_squeeze():
     position = position.ffill().fillna(0)
 
     return sim(
-        position, resample="W", position_limit=0.15,
-        fee_ratio=1.425 / 1000 / 3, name='dealer_hedge_squeeze',
+        position,
+        resample="W",
+        position_limit=0.15,
+        fee_ratio=1.425 / 1000 / 3,
+        name="dealer_hedge_squeeze",
     )
 
 
@@ -365,13 +395,13 @@ def run_triple_revenue_newhigh():
 
     close = data.get("price:收盤價")
     vol = data.get("price:成交股數")
-    rev = data.get('monthly_revenue:當月營收')
-    rev_year_growth = data.get('monthly_revenue:去年同月增減(%)')
-    rev_month_growth = data.get('monthly_revenue:上月比較增減(%)')
+    rev = data.get("monthly_revenue:當月營收")
+    rev_year_growth = data.get("monthly_revenue:去年同月增減(%)")
+    rev_month_growth = data.get("monthly_revenue:上月比較增減(%)")
 
     # All revenue conditions from reference strategies combined
-    c_yoy = (rev_year_growth > 0).sustain(3)             # YoY positive 3 months
-    c_mom = (rev_month_growth > -10).sustain(3)           # MoM not collapsing
+    c_yoy = (rev_year_growth > 0).sustain(3)  # YoY positive 3 months
+    c_mom = (rev_month_growth > -10).sustain(3)  # MoM not collapsing
     c_trough = (rev.rolling(12).min() / rev < 0.8).sustain(3)  # Near trough recovery
     c_not_stale = ~(rev_year_growth > 60).sustain(12, 8)  # Not overextended
 
@@ -387,9 +417,13 @@ def run_triple_revenue_newhigh():
     buy = buy.is_smallest(5)
 
     return sim(
-        buy, resample="M", position_limit=1 / 5,
-        fee_ratio=1.425 / 1000 / 3, stop_loss=0.08,
-        trade_at_price='open', name='triple_revenue_newhigh',
+        buy,
+        resample="M",
+        position_limit=1 / 5,
+        fee_ratio=1.425 / 1000 / 3,
+        stop_loss=0.08,
+        trade_at_price="open",
+        name="triple_revenue_newhigh",
     )
 
 
@@ -405,8 +439,8 @@ def run_foreign_trust_consensus():
 
     close = data.get("price:收盤價")
     vol = data.get("price:成交股數")
-    foreign_buy = data.get('institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)')
-    trust_buy = data.get('institutional_investors_trading_summary:投信買賣超股數')
+    foreign_buy = data.get("institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)")
+    trust_buy = data.get("institutional_investors_trading_summary:投信買賣超股數")
 
     # Both foreign and trust net buying over 5 days
     foreign_positive = foreign_buy.rolling(5).sum() > 0
@@ -417,7 +451,7 @@ def run_foreign_trust_consensus():
     uptrend = close > close.average(60)
 
     # Revenue positive
-    rev_year_growth = data.get('monthly_revenue:去年同月增減(%)')
+    rev_year_growth = data.get("monthly_revenue:去年同月增減(%)")
     rev_ok = rev_year_growth > 0
 
     # Liquidity
@@ -429,9 +463,13 @@ def run_foreign_trust_consensus():
     buy = buy.is_smallest(8)
 
     return sim(
-        buy, resample="2W", position_limit=1 / 8,
-        fee_ratio=1.425 / 1000 / 3, stop_loss=0.10,
-        trade_at_price='open', name='foreign_trust_consensus',
+        buy,
+        resample="2W",
+        position_limit=1 / 8,
+        fee_ratio=1.425 / 1000 / 3,
+        stop_loss=0.10,
+        trade_at_price="open",
+        name="foreign_trust_consensus",
     )
 
 
@@ -447,7 +485,7 @@ def run_revenue_momentum_low_turnover():
 
     close = data.get("price:收盤價")
     vol = data.get("price:成交股數")
-    rev_year_growth = data.get('monthly_revenue:去年同月增減(%)')
+    rev_year_growth = data.get("monthly_revenue:去年同月增減(%)")
 
     # Revenue momentum: 3m average YoY growth in top 10%
     rev_3m = rev_year_growth.average(3)
@@ -470,9 +508,13 @@ def run_revenue_momentum_low_turnover():
     buy = buy.is_largest(8)  # pick highest revenue growth among cold stocks
 
     return sim(
-        buy, resample="M", position_limit=1 / 8,
-        fee_ratio=1.425 / 1000 / 3, stop_loss=0.12,
-        trade_at_price='open', name='revenue_momentum_low_turnover',
+        buy,
+        resample="M",
+        position_limit=1 / 8,
+        fee_ratio=1.425 / 1000 / 3,
+        stop_loss=0.12,
+        trade_at_price="open",
+        name="revenue_momentum_low_turnover",
     )
 
 
@@ -489,9 +531,9 @@ def run_post_earnings_drift():
 
     close = data.get("price:收盤價")
     vol = data.get("price:成交股數")
-    rev_year_growth = data.get('monthly_revenue:去年同月增減(%)')
-    foreign_buy = data.get('institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)')
-    trust_buy = data.get('institutional_investors_trading_summary:投信買賣超股數')
+    rev_year_growth = data.get("monthly_revenue:去年同月增減(%)")
+    foreign_buy = data.get("institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)")
+    trust_buy = data.get("institutional_investors_trading_summary:投信買賣超股數")
 
     # Revenue surprise: YoY > 20% and it's a new positive (previous month was < 10%)
     rev_surprise = (rev_year_growth > 20) & (rev_year_growth.shift(1) < 10)
@@ -511,13 +553,18 @@ def run_post_earnings_drift():
     buy = buy.is_smallest(8)
 
     return sim(
-        buy, resample="M", position_limit=1 / 8,
-        fee_ratio=1.425 / 1000 / 3, stop_loss=0.10,
-        trade_at_price='open', name='post_earnings_drift',
+        buy,
+        resample="M",
+        position_limit=1 / 8,
+        fee_ratio=1.425 / 1000 / 3,
+        stop_loss=0.10,
+        trade_at_price="open",
+        name="post_earnings_drift",
     )
 
 
 # ---------------------------------------------------------------------------
+
 
 def print_report(name, report):
     """Extract and print key metrics."""
@@ -526,14 +573,18 @@ def print_report(name, report):
     print(f"{'=' * 60}")
     try:
         stats = report.get_stats()
-        cagr = stats.get('cagr', 'N/A')
-        mdd = stats.get('max_drawdown', 'N/A')
-        sharpe = stats.get('daily_sharpe', 'N/A')
-        sortino = stats.get('daily_sortino', 'N/A')
-        total_return = stats.get('total_return', 'N/A')
-        win_ratio = stats.get('win_ratio', 'N/A')
+        cagr = stats.get("cagr", "N/A")
+        mdd = stats.get("max_drawdown", "N/A")
+        sharpe = stats.get("daily_sharpe", "N/A")
+        sortino = stats.get("daily_sortino", "N/A")
+        total_return = stats.get("total_return", "N/A")
+        win_ratio = stats.get("win_ratio", "N/A")
         print(f"  CAGR:          {cagr:.2%}" if isinstance(cagr, float) else f"  CAGR:          {cagr}")
-        print(f"  Total Return:  {total_return:.2%}" if isinstance(total_return, float) else f"  Total Return:  {total_return}")
+        print(
+            f"  Total Return:  {total_return:.2%}"
+            if isinstance(total_return, float)
+            else f"  Total Return:  {total_return}"
+        )
         print(f"  Max Drawdown:  {mdd:.2%}" if isinstance(mdd, float) else f"  Max Drawdown:  {mdd}")
         print(f"  Sharpe:        {sharpe:.2f}" if isinstance(sharpe, float) else f"  Sharpe:        {sharpe}")
         print(f"  Sortino:       {sortino:.2f}" if isinstance(sortino, float) else f"  Sortino:       {sortino}")

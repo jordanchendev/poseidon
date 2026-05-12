@@ -1,16 +1,13 @@
 """策略 10: 台積電布林帶逆勢抄底（避開 hold_until bug）"""
 
 import pandas as pd
-
 from finlab import data
 from finlab.backtest import sim
 
 
 def run():
     close = data.get("price:收盤價")
-    upperband, middleband, lowerband = data.indicator(
-        "BBANDS", resample="D", nbdevup=float(2.5), nbdevdn=float(2.5), timeperiod=40
-    )
+    _upperband, middleband, lowerband = data.indicator("BBANDS", resample="D", nbdevup=2.5, nbdevdn=2.5, timeperiod=40)
 
     # 只看台積電
     tsmc_close = close["2330"]

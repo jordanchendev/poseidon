@@ -163,9 +163,7 @@ class BacktestCryptoTrend:
         self._ohlcv_dict = ohlcv_dict
         self._funding_df = funding_df or {}
 
-    def select_stocks(
-        self, universe_df: pd.DataFrame, as_of: date | None = None
-    ) -> list[TargetPosition]:
+    def select_stocks(self, universe_df: pd.DataFrame, as_of: date | None = None) -> list[TargetPosition]:
         cfg = self.config
         targets: list[TargetPosition] = []
 
@@ -205,18 +203,10 @@ class BacktestCryptoTrend:
 
                 if not funding_slice.empty:
                     # Use funding_rate_daily column (from Thalassa funding rate data)
-                    latest_funding = float(
-                        funding_slice.iloc[-1].get("funding_rate_daily", 0)
-                    )
-                    if (
-                        signal == "long"
-                        and latest_funding > cfg.funding_filter.max_funding_rate_long
-                    ):
+                    latest_funding = float(funding_slice.iloc[-1].get("funding_rate_daily", 0))
+                    if signal == "long" and latest_funding > cfg.funding_filter.max_funding_rate_long:
                         continue  # skip: funding too expensive for long
-                    if (
-                        signal == "short"
-                        and latest_funding < cfg.funding_filter.max_funding_rate_short
-                    ):
+                    if signal == "short" and latest_funding < cfg.funding_filter.max_funding_rate_short:
                         continue  # skip: funding too expensive for short
 
             # Equal weight allocation (same as CryptoTrendStrategy)
@@ -324,9 +314,7 @@ def create_objective(
 
         # CRITICAL (Pitfall 1): Recompute metrics with bars_per_year=2190
         # PortfolioBacktester hardcodes bars_per_year=252 internally
-        metrics = compute_metrics(
-            equity_series, trades=[], bars_per_year=BARS_PER_YEAR
-        )
+        metrics = compute_metrics(equity_series, trades=[], bars_per_year=BARS_PER_YEAR)
 
         # D-12 constraint: positive total return
         if metrics.get("total_return", 0) <= 0:
@@ -373,8 +361,7 @@ def run_wfe_validation(
 
     print(f"\n  WFE: {len(windows)} windows, data_length={data_length}")
     print(
-        f"  Config: train={WF_CONFIG.train_days} bars, "
-        f"test={WF_CONFIG.test_days} bars, step={WF_CONFIG.step_days} bars"
+        f"  Config: train={WF_CONFIG.train_days} bars, test={WF_CONFIG.test_days} bars, step={WF_CONFIG.step_days} bars"
     )
 
     # Build config from best_params
@@ -574,10 +561,7 @@ def main() -> int:
                 funding = funding.tz_localize(None)
             funding = funding.sort_index()
             funding_dict[symbol] = funding
-            print(
-                f"  {symbol}: {len(funding)} funding records "
-                f"({funding.index[0]} to {funding.index[-1]})"
-            )
+            print(f"  {symbol}: {len(funding)} funding records ({funding.index[0]} to {funding.index[-1]})")
         else:
             print(f"  {symbol}: NO FUNDING DATA")
 
@@ -585,10 +569,10 @@ def main() -> int:
         print("WARNING: No funding data loaded. Optimization will run without funding filter.")
 
     # Step 3: Run Optuna search
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Running Optuna TPE search: {N_TRIALS} trials")
     print(f"Baseline Sharpe (Phase 75): {BASELINE_SHARPE}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     sampler = optuna.samplers.TPESampler(seed=42)
@@ -601,10 +585,7 @@ def main() -> int:
     study.optimize(objective, n_trials=N_TRIALS)
 
     # Extract top-3 completed trials (filter out -999.0 penalty trials)
-    completed_trials = [
-        t for t in study.trials
-        if t.value is not None and t.value > -999.0
-    ]
+    completed_trials = [t for t in study.trials if t.value is not None and t.value > -999.0]
     completed_trials.sort(key=lambda t: t.value, reverse=True)
     top3_trials = completed_trials[:3]
 
@@ -613,9 +594,9 @@ def main() -> int:
         return 1
 
     # Print top-3 results header
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Top-3 Parameter Sets")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(
         f"{'Rank':<5} {'EMA_F':<6} {'EMA_S':<6} {'MaxF_L':<10} {'MaxF_S':<10} "
         f"{'Sharpe':<8} {'MaxDD':<8} {'Trades':<8} {'WinRate':<8} {'WFE':<8}"
@@ -647,9 +628,9 @@ def main() -> int:
         top3_results.append(entry)
 
     # Step 5: Print comparison table (per D-18)
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Final Comparison Table (D-18)")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(
         f"{'Rank':<5} {'EMA_F':<6} {'EMA_S':<6} {'MaxF_L':<10} {'MaxF_S':<10} "
         f"{'Sharpe':<8} {'MaxDD':<8} {'Trades':<8} {'WinRate':<8} {'WFE':<8}"
@@ -682,17 +663,12 @@ def main() -> int:
     # D-19: recommendation logic
     if best_sharpe > BASELINE_SHARPE and best_wfe_passed:
         recommendation = "UPDATE_CONFIG"
-        rec_reason = (
-            f"Best Sharpe {best_sharpe:.3f} > baseline {BASELINE_SHARPE} "
-            f"AND WFE {best_wfe:.3f} >= 0.60"
-        )
+        rec_reason = f"Best Sharpe {best_sharpe:.3f} > baseline {BASELINE_SHARPE} AND WFE {best_wfe:.3f} >= 0.60"
     else:
         recommendation = "NO_CHANGE"
         reasons = []
         if best_sharpe <= BASELINE_SHARPE:
-            reasons.append(
-                f"Best Sharpe {best_sharpe:.3f} <= baseline {BASELINE_SHARPE}"
-            )
+            reasons.append(f"Best Sharpe {best_sharpe:.3f} <= baseline {BASELINE_SHARPE}")
         if not best_wfe_passed:
             reasons.append(f"WFE {best_wfe:.3f} < 0.60")
         rec_reason = " AND ".join(reasons)
@@ -728,34 +704,38 @@ def main() -> int:
         # Sanitize WFE window results for JSON serialization
         wfe_windows = []
         for w in entry["wfe"]["windows"]:
-            wfe_windows.append({
-                "window": w["window"],
-                "train_range": w["train_range"],
-                "test_range": w["test_range"],
-                "is_ann_return": float(w["is_ann_return"]),
-                "oos_ann_return": float(w["oos_ann_return"]),
-                "wfe": float(w["wfe"]),
-            })
+            wfe_windows.append(
+                {
+                    "window": w["window"],
+                    "train_range": w["train_range"],
+                    "test_range": w["test_range"],
+                    "is_ann_return": float(w["is_ann_return"]),
+                    "oos_ann_return": float(w["oos_ann_return"]),
+                    "wfe": float(w["wfe"]),
+                }
+            )
 
-        output["top3"].append({
-            "rank": entry["rank"],
-            "trial_number": entry["trial_number"],
-            "params": {
-                k: float(v) if isinstance(v, (int, float, np.integer, np.floating)) else v
-                for k, v in entry["params"].items()
-            },
-            "sharpe_ratio": float(entry["sharpe_ratio"]),
-            "max_drawdown": float(entry["max_drawdown"]),
-            "total_return": float(entry["total_return"]),
-            "annualized_return": float(entry["annualized_return"]),
-            "win_rate": float(entry["win_rate"]),
-            "trade_count": int(entry["trade_count"]),
-            "wfe": {
-                "avg_wfe": float(entry["wfe"]["avg_wfe"]),
-                "passed": bool(entry["wfe"]["passed"]),
-                "windows": wfe_windows,
-            },
-        })
+        output["top3"].append(
+            {
+                "rank": entry["rank"],
+                "trial_number": entry["trial_number"],
+                "params": {
+                    k: float(v) if isinstance(v, (int, float, np.integer, np.floating)) else v
+                    for k, v in entry["params"].items()
+                },
+                "sharpe_ratio": float(entry["sharpe_ratio"]),
+                "max_drawdown": float(entry["max_drawdown"]),
+                "total_return": float(entry["total_return"]),
+                "annualized_return": float(entry["annualized_return"]),
+                "win_rate": float(entry["win_rate"]),
+                "trade_count": int(entry["trade_count"]),
+                "wfe": {
+                    "avg_wfe": float(entry["wfe"]["avg_wfe"]),
+                    "passed": bool(entry["wfe"]["passed"]),
+                    "windows": wfe_windows,
+                },
+            }
+        )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_JSON, "w") as f:

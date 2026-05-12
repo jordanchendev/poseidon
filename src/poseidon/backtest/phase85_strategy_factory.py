@@ -16,6 +16,7 @@ plan 85-03 will decide whether to extend ``BayesianOptimizer.optimize`` or
 post-recompute via ``compute_metrics(returns, bars_per_year=525_600)`` on
 trial user_attrs (RESEARCH.md Pitfall 6).
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -29,23 +30,23 @@ from poseidon.backtest.liquidity_sweep_factory import (
 
 # D-01 locked search space (CONTEXT.md). Phase 85 ONLY samples these 9 dims.
 PARAM_SPACE: dict[str, tuple[float, float, str]] = {
-    "lookback_bars":         (720, 10080, "int"),
-    "cooldown_bars":         (60, 1440, "int"),
-    "wick_ratio_min":        (0.05, 0.30, "float"),
+    "lookback_bars": (720, 10080, "int"),
+    "cooldown_bars": (60, 1440, "int"),
+    "wick_ratio_min": (0.05, 0.30, "float"),
     "breakout_distance_min": (0.05, 0.30, "float"),
-    "oi_buildup_min":        (0.5, 2.0, "float"),
-    "fib_level":             (0.382, 0.786, "float"),
-    "atr_multiplier_low":    (1.0, 3.0, "float"),
-    "atr_multiplier_mid":    (1.5, 4.0, "float"),
-    "atr_multiplier_high":   (2.0, 6.0, "float"),
+    "oi_buildup_min": (0.5, 2.0, "float"),
+    "fib_level": (0.382, 0.786, "float"),
+    "atr_multiplier_low": (1.0, 3.0, "float"),
+    "atr_multiplier_mid": (1.5, 4.0, "float"),
+    "atr_multiplier_high": (2.0, 6.0, "float"),
 }
 
 # D-01 names → liquidity_sweep_factory PARAM_BOUNDS names (RESEARCH.md Pitfall 5).
 # Note: ``atr_mult_regime_3`` is intentionally absent — falls back to factory
 # default 2.0 (liquidity_sweep_factory.py line 78).
 D01_TO_FACTORY_NAME: dict[str, str] = {
-    "atr_multiplier_low":  "atr_mult_regime_0",
-    "atr_multiplier_mid":  "atr_mult_regime_1",
+    "atr_multiplier_low": "atr_mult_regime_0",
+    "atr_multiplier_mid": "atr_mult_regime_1",
     "atr_multiplier_high": "atr_mult_regime_2",
     # 6 others are pass-through:
     #   lookback_bars, cooldown_bars, wick_ratio_min,
@@ -112,9 +113,7 @@ def resolve_factory_params(d01_params: dict[str, Any]) -> dict[str, Any]:
                 resolved[name] = _FACTORY_DEFAULTS[name]
             else:
                 low, high, kind = PARAM_BOUNDS[name]
-                resolved[name] = (
-                    int((low + high) // 2) if kind == "int" else (low + high) / 2.0
-                )
+                resolved[name] = int((low + high) // 2) if kind == "int" else (low + high) / 2.0
     return resolved
 
 
@@ -159,17 +158,15 @@ def build_phase85_factory(
     Returns ``(factory_callable, PARAM_SPACE)``. The driver hands both to
     ``BayesianOptimizer.optimize(strategy_factory=..., param_space=...)``.
     """
-    factory = make_phase85_strategy_factory(
-        symbol, market, interval, direction_mode=direction_mode
-    )
+    factory = make_phase85_strategy_factory(symbol, market, interval, direction_mode=direction_mode)
     return factory, dict(PARAM_SPACE)
 
 
 __all__ = [
-    "PARAM_SPACE",
     "D01_TO_FACTORY_NAME",
+    "PARAM_SPACE",
+    "build_phase85_factory",
+    "make_phase85_strategy_factory",
     "remap_d01_to_factory",
     "resolve_factory_params",
-    "make_phase85_strategy_factory",
-    "build_phase85_factory",
 ]

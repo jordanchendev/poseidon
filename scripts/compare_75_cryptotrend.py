@@ -124,9 +124,7 @@ class BacktestCryptoTrend:
         self.config = config
         self._ohlcv_dict = ohlcv_dict
 
-    def select_stocks(
-        self, universe_df: pd.DataFrame, as_of: date | None = None
-    ) -> list[TargetPosition]:
+    def select_stocks(self, universe_df: pd.DataFrame, as_of: date | None = None) -> list[TargetPosition]:
         cfg = self.config
         targets: list[TargetPosition] = []
 
@@ -209,15 +207,11 @@ class VolSizingWrapper:
             self._atr_series[symbol] = atr
             self._baseline_atr[symbol] = float(atr.median()) if not atr.empty else 1.0
 
-    def select_stocks(
-        self, universe_df: pd.DataFrame, as_of: date | None = None
-    ) -> list[TargetPosition]:
+    def select_stocks(self, universe_df: pd.DataFrame, as_of: date | None = None) -> list[TargetPosition]:
         positions = self.base.select_stocks(universe_df, as_of=as_of)
         return self._apply_vol_sizing(positions, as_of)
 
-    def _apply_vol_sizing(
-        self, positions: list[TargetPosition], as_of: date | None
-    ) -> list[TargetPosition]:
+    def _apply_vol_sizing(self, positions: list[TargetPosition], as_of: date | None) -> list[TargetPosition]:
         modified = []
         for pos in positions:
             atr_series = self._atr_series.get(pos.symbol)
@@ -292,15 +286,11 @@ class RegimeFilterWrapper:
                     self._regime_labels.value_counts().to_dict(),
                 )
 
-    def select_stocks(
-        self, universe_df: pd.DataFrame, as_of: date | None = None
-    ) -> list[TargetPosition]:
+    def select_stocks(self, universe_df: pd.DataFrame, as_of: date | None = None) -> list[TargetPosition]:
         positions = self.base.select_stocks(universe_df, as_of=as_of)
         return self._apply_regime_filter(positions, as_of)
 
-    def _apply_regime_filter(
-        self, positions: list[TargetPosition], as_of: date | None
-    ) -> list[TargetPosition]:
+    def _apply_regime_filter(self, positions: list[TargetPosition], as_of: date | None) -> list[TargetPosition]:
         if self._regime_labels is None:
             return positions
 
@@ -351,13 +341,9 @@ class CombinedWrapper:
         self.config = base_strategy.config
         self.name = base_strategy.name
         self._vol = VolSizingWrapper(base_strategy, ohlcv_dict, atr_period)
-        self._regime = RegimeFilterWrapper(
-            base_strategy, ohlcv_dict, n_regimes, reduction_factor
-        )
+        self._regime = RegimeFilterWrapper(base_strategy, ohlcv_dict, n_regimes, reduction_factor)
 
-    def select_stocks(
-        self, universe_df: pd.DataFrame, as_of: date | None = None
-    ) -> list[TargetPosition]:
+    def select_stocks(self, universe_df: pd.DataFrame, as_of: date | None = None) -> list[TargetPosition]:
         # Vol-sizing first, then regime filter
         positions = self._vol.select_stocks(universe_df, as_of=as_of)
         return self._regime._apply_regime_filter(positions, as_of)
@@ -369,9 +355,7 @@ class CombinedWrapper:
 # ---------------------------------------------------------------------------
 # BTC buy-and-hold benchmark (per D-03, BASE-02)
 # ---------------------------------------------------------------------------
-def compute_btc_benchmark(
-    btc_ohlcv: pd.DataFrame, initial_capital: float, bars_per_year: int
-) -> dict:
+def compute_btc_benchmark(btc_ohlcv: pd.DataFrame, initial_capital: float, bars_per_year: int) -> dict:
     """Compute BTC buy-and-hold metrics following Phase 73 pattern."""
     if btc_ohlcv.empty:
         return {"label": "BTC buy-and-hold", "error": "No BTC OHLCV data"}
@@ -384,11 +368,7 @@ def compute_btc_benchmark(
     equity = btc_ohlcv["close"] / start_price * initial_capital
     returns = equity.pct_change().dropna()
 
-    sharpe = (
-        float((returns.mean() / returns.std()) * np.sqrt(bars_per_year))
-        if returns.std() > 0
-        else 0.0
-    )
+    sharpe = float((returns.mean() / returns.std()) * np.sqrt(bars_per_year)) if returns.std() > 0 else 0.0
 
     cummax = equity.cummax()
     max_dd = float(((cummax - equity) / cummax).max())
@@ -460,7 +440,7 @@ def run_comparison() -> int:
     # Step 3: Define 4 variants (per D-07)
     # Using BacktestCryptoTrend (computes from pre-fetched OHLCV, respects as_of)
     # instead of live CryptoTrendStrategy (calls read_perp_ohlcv, ignores as_of)
-    base_bt = BacktestCryptoTrend(config=base_config, ohlcv_dict=ohlcv_dict)
+    BacktestCryptoTrend(config=base_config, ohlcv_dict=ohlcv_dict)
 
     variants = [
         {
@@ -498,9 +478,9 @@ def run_comparison() -> int:
     for entry in variants:
         label = entry["label"]
         strategy = entry["strategy"]
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Running: {label}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         try:
             backtester = PortfolioBacktester(
@@ -522,13 +502,9 @@ def run_comparison() -> int:
             if result.equity_curve:
                 equity_series = pd.Series(
                     [nav for _, nav in result.equity_curve],
-                    index=pd.DatetimeIndex(
-                        [pd.Timestamp(d) for d, _ in result.equity_curve]
-                    ),
+                    index=pd.DatetimeIndex([pd.Timestamp(d) for d, _ in result.equity_curve]),
                 )
-                metrics = compute_metrics(
-                    equity_series, trades=[], bars_per_year=BARS_PER_YEAR
-                )
+                metrics = compute_metrics(equity_series, trades=[], bars_per_year=BARS_PER_YEAR)
             else:
                 metrics = result.metrics
 
@@ -588,9 +564,9 @@ def run_comparison() -> int:
     results.append(benchmark_row)
 
     # Step 6: Summary table
-    print(f"\n{'='*100}")
+    print(f"\n{'=' * 100}")
     print("Phase 75: CryptoTrend 4-Way Comparison + BTC Buy-and-Hold")
-    print(f"{'='*100}")
+    print(f"{'=' * 100}")
     print(f"Period: {START.date()} to {END.date()}")
     print(f"Symbols: {', '.join(SYMBOLS)}")
     print(f"Interval: {INTERVAL} | Bars/Year: {BARS_PER_YEAR}")
@@ -612,11 +588,7 @@ def run_comparison() -> int:
         sharpe = f"{r['sharpe_ratio']:.4f}" if r.get("sharpe_ratio") is not None else "N/A"
         max_dd = f"{r['max_drawdown']:.4f}" if r.get("max_drawdown") is not None else "N/A"
         tot_ret = f"{r['total_return']:.4f}" if r.get("total_return") is not None else "N/A"
-        ann_ret = (
-            f"{r['annualized_return']:.4f}"
-            if r.get("annualized_return") is not None
-            else "N/A"
-        )
+        ann_ret = f"{r['annualized_return']:.4f}" if r.get("annualized_return") is not None else "N/A"
         trades = f"{r.get('trade_count', 0):>6d}"
         avg_hold = f"{r.get('avg_hold_bars', 0):>7.1f}"
         win_rate = f"{r.get('win_rate', 0):>7.4f}"
@@ -626,17 +598,10 @@ def run_comparison() -> int:
         )
 
     # Step 7: Identify winner (highest Sharpe among strategy variants)
-    strat_results = [
-        r
-        for r in results
-        if "error" not in r and r["label"] != "BTC buy-and-hold"
-    ]
+    strat_results = [r for r in results if "error" not in r and r["label"] != "BTC buy-and-hold"]
     if strat_results:
         winner = max(strat_results, key=lambda r: r.get("sharpe_ratio", -999))
-        print(
-            f"\n  WINNER (highest Sharpe): {winner['label']} "
-            f"with Sharpe={winner['sharpe_ratio']:.4f}"
-        )
+        print(f"\n  WINNER (highest Sharpe): {winner['label']} with Sharpe={winner['sharpe_ratio']:.4f}")
     else:
         print("\n  WARNING: No successful variant results to compare")
         winner = None
@@ -645,26 +610,18 @@ def run_comparison() -> int:
     print()
     bias_warning = False
     for r in results:
-        if "error" not in r and r.get("sharpe_ratio") is not None:
-            if abs(r["sharpe_ratio"]) > 3.0:
-                print(
-                    f"  WARNING: {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0"
-                    " -- possible look-ahead bias!"
-                )
-                bias_warning = True
+        if "error" not in r and r.get("sharpe_ratio") is not None and abs(r["sharpe_ratio"]) > 3.0:
+            print(f"  WARNING: {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0 -- possible look-ahead bias!")
+            bias_warning = True
     if not bias_warning:
         print("  Look-ahead bias gate: PASSED (all |Sharpe| <= 3.0)")
 
     # Per D-10: if neither variant improves Sharpe, that is acceptable
     if strat_results and len(strat_results) >= 2:
-        original = next(
-            (r for r in strat_results if "original" in r["label"]), None
-        )
+        original = next((r for r in strat_results if "original" in r["label"]), None)
         if original:
             improved = any(
-                r["sharpe_ratio"] > original["sharpe_ratio"]
-                for r in strat_results
-                if r["label"] != original["label"]
+                r["sharpe_ratio"] > original["sharpe_ratio"] for r in strat_results if r["label"] != original["label"]
             )
             if not improved:
                 print(
@@ -698,9 +655,9 @@ def run_comparison() -> int:
     print(f"\n  JSON summary saved to: {output_path}")
 
     # Step 9: Print JSON for easy parsing
-    print(f"\n{'='*100}")
+    print(f"\n{'=' * 100}")
     print("JSON SUMMARY")
-    print(f"{'='*100}")
+    print(f"{'=' * 100}")
     print(json.dumps(summary, indent=2, default=str))
 
     return 0

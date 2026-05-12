@@ -65,8 +65,10 @@ def main() -> None:
 
     logger.info(
         "Starting R2 AutoResearch v2: %d markets, %d trials, min_wfe=%.2f, max_insufficient=%.2f",
-        len(markets), search_config.n_trials,
-        search_config.min_wfe, wf_config.max_insufficient_ratio,
+        len(markets),
+        search_config.n_trials,
+        search_config.min_wfe,
+        wf_config.max_insufficient_ratio,
     )
 
     runner = AutoResearchRunner(
@@ -79,6 +81,7 @@ def main() -> None:
 
     # Query experiment tracker for best metrics per market
     from poseidon.backtest.experiment_tracker import ExperimentTracker
+
     tracker = ExperimentTracker(session)
 
     best_sharpe = -999.0
@@ -97,8 +100,11 @@ def main() -> None:
 
         logger.info(
             "Market %s/%s/%s: %d trials, %d passed WFE, best_composite=%.4f",
-            r.spec.symbol, r.spec.market, r.spec.interval,
-            sr.total_trials, sr.passed_trials,
+            r.spec.symbol,
+            r.spec.market,
+            r.spec.interval,
+            sr.total_trials,
+            sr.passed_trials,
             sr.best_composite_score or 0,
         )
 
@@ -112,7 +118,10 @@ def main() -> None:
                 trades = m.get("total_trades", 0)
                 logger.info(
                     "  Best trial: sharpe=%.3f, pf=%.3f, trades=%d, composite=%.4f",
-                    sharpe, pf, trades, e.composite_score or 0,
+                    sharpe,
+                    pf,
+                    trades,
+                    e.composite_score or 0,
                 )
                 if sharpe > best_sharpe:
                     best_sharpe = sharpe

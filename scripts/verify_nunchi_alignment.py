@@ -85,7 +85,9 @@ def main() -> int:
 
     # D-02 checklist
     print("\n--- D-02 Nunchi Alignment Checklist ---")
-    print(f"  ATR 5.5x:         {config.get('atr_multiplier')} == 5.5 -> {'PASS' if config.get('atr_multiplier') == 5.5 else 'FAIL'}")
+    print(
+        f"  ATR 5.5x:         {config.get('atr_multiplier')} == 5.5 -> {'PASS' if config.get('atr_multiplier') == 5.5 else 'FAIL'}"
+    )
     # Check BB threshold in sub_signals
     bb_threshold = None
     for sig in config.get("sub_signals", []):

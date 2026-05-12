@@ -28,8 +28,9 @@ partial open-gap index. Downgrade drops them in reverse order.
 """
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
+
+from alembic import op
 
 revision = "023"
 down_revision = "022"

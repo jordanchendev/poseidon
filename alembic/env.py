@@ -1,14 +1,14 @@
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from alembic import context
 from poseidon.core.config import settings
+from poseidon.models.backfill import BackfillJob  # noqa: F401
 from poseidon.models.base import Base
 from poseidon.models.fundamentals import Fundamentals  # noqa: F401
-from poseidon.models.sentiment import Sentiment  # noqa: F401
-from poseidon.models.backfill import BackfillJob  # noqa: F401
 from poseidon.models.ingest_state import IngestState  # noqa: F401
+from poseidon.models.sentiment import Sentiment  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)

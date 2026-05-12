@@ -4,11 +4,12 @@ Default behavior: fetch from 2024-01-01 to now for BTCUSDT + ETHUSDT.
 Uses the same PerpFetcher + upsert_ohlcv path as the Celery Beat task
 (with pagination, rate limiting skipped for one-off run).
 """
+
 from __future__ import annotations
 
 import argparse
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from poseidon.data.fetchers import get_fetcher
 from poseidon.data.storage import upsert_ohlcv
@@ -22,7 +23,7 @@ log = logging.getLogger("backfill_perp")
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--start", default="2024-01-01")
-    ap.add_argument("--end", default=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    ap.add_argument("--end", default=datetime.now(UTC).strftime("%Y-%m-%d"))
     ap.add_argument("--interval", default="4h")
     ap.add_argument("--symbols", nargs="*", default=["BTCUSDT", "ETHUSDT"])
     args = ap.parse_args()

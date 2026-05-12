@@ -8,8 +8,9 @@ Create Date: 2026-03-20
 """
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+
+from alembic import op
 
 revision = "002"
 down_revision = "001"
@@ -36,16 +37,11 @@ def upgrade():
 
     # Convert to TimescaleDB hypertable (1 month chunks)
     op.execute(
-        "SELECT create_hypertable('ohlcv', 'time', "
-        "chunk_time_interval => INTERVAL '1 month', "
-        "if_not_exists => TRUE)"
+        "SELECT create_hypertable('ohlcv', 'time', chunk_time_interval => INTERVAL '1 month', if_not_exists => TRUE)"
     )
 
     # Create index for most common query pattern
-    op.execute(
-        "CREATE INDEX idx_ohlcv_symbol_market_interval_time "
-        "ON ohlcv (symbol, market, interval, time DESC)"
-    )
+    op.execute("CREATE INDEX idx_ohlcv_symbol_market_interval_time ON ohlcv (symbol, market, interval, time DESC)")
 
     # Enable compression
     op.execute("""

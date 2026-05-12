@@ -6,7 +6,7 @@ from finlab.backtest import sim
 
 def run():
     with data.universe(category="建材營造"):
-        close = data.get("price:收盤價")
+        data.get("price:收盤價")
         contract_debt = data.get("financial_statement:合約負債_流動")
         contract_debt_gr = contract_debt / contract_debt.shift() - 1
         equity = data.get("financial_statement:股本")

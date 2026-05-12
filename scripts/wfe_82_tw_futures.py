@@ -58,11 +58,11 @@ SIZING = SizingConfig(mode=SizingMode.FIXED_NOTIONAL, notional_pct=0.03)
 
 # Walk-forward configuration (D-04, D-05, D-06)
 WF_CONFIG = WalkForwardConfig(
-    train_days=252,          # D-04: 1 year IS
-    test_days=63,            # D-04: 1 quarter OOS
-    step_days=63,            # D-04: roll by 1 quarter
-    min_trades_per_oos=5,    # D-05
-    min_wfe=0.50,            # D-06
+    train_days=252,  # D-04: 1 year IS
+    test_days=63,  # D-04: 1 quarter OOS
+    step_days=63,  # D-04: roll by 1 quarter
+    min_trades_per_oos=5,  # D-05
+    min_wfe=0.50,  # D-06
 )
 
 OPTUNA_JSON = Path(__file__).parent / "output" / "optuna_82_results.json"
@@ -97,7 +97,10 @@ def fetch_ohlcv(repo: RemoteDataRepository) -> pd.DataFrame:
 
     logger.info(
         "TX %s: %d bars (%s to %s)",
-        INTERVAL, len(df), df.index[0], df.index[-1],
+        INTERVAL,
+        len(df),
+        df.index[0],
+        df.index[-1],
     )
     return df
 
@@ -180,11 +183,7 @@ def compute_bh_oos_sharpe(
         bh_metrics = compute_metrics(bh_equity, trades=[], bars_per_year=BARS_PER_YEAR)
         per_window_sharpes.append(bh_metrics.get("sharpe_ratio", 0.0))
 
-    avg_bh_sharpe = (
-        sum(per_window_sharpes) / len(per_window_sharpes)
-        if per_window_sharpes
-        else 0.0
-    )
+    avg_bh_sharpe = sum(per_window_sharpes) / len(per_window_sharpes) if per_window_sharpes else 0.0
     return avg_bh_sharpe, per_window_sharpes
 
 
@@ -226,8 +225,7 @@ def run_wfe(
 
     print(f"\n  WFE: {len(windows)} windows, data_length={len(ohlcv)}")
     print(
-        f"  Config: train={WF_CONFIG.train_days} bars, "
-        f"test={WF_CONFIG.test_days} bars, step={WF_CONFIG.step_days} bars"
+        f"  Config: train={WF_CONFIG.train_days} bars, test={WF_CONFIG.test_days} bars, step={WF_CONFIG.step_days} bars"
     )
 
     window_results: list[dict] = []
@@ -338,8 +336,8 @@ def _sanitize(obj):
 def main() -> int:
     """Run Phase 82 WFE validation for TrendFollowing TX daily."""
     # Step 1: Load best params from Optuna results
-    print(f"Phase 82: WFE Validation for TrendFollowing TX Daily")
-    print(f"{'='*60}")
+    print("Phase 82: WFE Validation for TrendFollowing TX Daily")
+    print(f"{'=' * 60}")
 
     if not OPTUNA_JSON.exists():
         print(f"ERROR: {OPTUNA_JSON} not found. Run optuna_82_tw_futures.py first.")
@@ -350,8 +348,10 @@ def main() -> int:
 
     best_params = optuna_data["best_params"]
     print(f"Loaded best params from {OPTUNA_JSON.name}:")
-    print(f"  ema_fast={best_params['ema_fast']}, ema_slow={best_params['ema_slow']}, "
-          f"atr_period={best_params['atr_period']}, atr_multiplier={best_params['atr_multiplier']}")
+    print(
+        f"  ema_fast={best_params['ema_fast']}, ema_slow={best_params['ema_slow']}, "
+        f"atr_period={best_params['atr_period']}, atr_multiplier={best_params['atr_multiplier']}"
+    )
     print(f"  Best IS Sharpe: {optuna_data.get('best_sharpe', 'N/A')}")
     print()
 
@@ -370,15 +370,15 @@ def main() -> int:
     print()
 
     # Step 3: Run WFE validation
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print("Running Walk-Forward Efficiency Validation")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     wfe_results = run_wfe(ohlcv, best_config)
 
     # Step 4: Compute B&H OOS Sharpe (Pitfall 4: over same OOS windows)
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Computing B&H OOS Sharpe (OOS-matched windows)")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # Regenerate windows for B&H computation
     analyzer = WalkForwardAnalyzer(
@@ -419,9 +419,9 @@ def main() -> int:
         json.dump(output, f, indent=2, default=str)
 
     # Step 6: Print summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Phase 82 WFE Validation Summary")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Aggregate WFE:        {wfe_results['avg_wfe']:.4f}")
     print(f"  OOS Aggregate Sharpe: {wfe_results['oos_aggregate_sharpe']:.4f}")
     print(f"  OOS Max Drawdown:     {wfe_results['oos_aggregate_max_drawdown']:.4f}")

@@ -11,8 +11,9 @@ Phase 38 data-foundation (D-01, D-10):
 """
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+
+from alembic import op
 
 revision = "020"
 down_revision = "019"
@@ -117,9 +118,7 @@ def downgrade():
             onupdate=sa.func.now(),
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "symbol", "market", "interval", name="uq_backfill_symbol_market_interval"
-        ),
+        sa.UniqueConstraint("symbol", "market", "interval", name="uq_backfill_symbol_market_interval"),
     )
 
     op.drop_index("ix_backfill_jobs_status", table_name="backfill_jobs")

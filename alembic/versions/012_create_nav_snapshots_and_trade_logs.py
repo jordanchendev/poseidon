@@ -6,8 +6,9 @@ Create Date: 2026-03-30
 """
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
+
+from alembic import op
 
 revision = "012"
 down_revision = "011"
@@ -64,9 +65,7 @@ def upgrade():
             nullable=False,
         ),
     )
-    op.create_index(
-        "ix_trade_logs_strategy_symbol", "trade_logs", ["strategy_name", "symbol"]
-    )
+    op.create_index("ix_trade_logs_strategy_symbol", "trade_logs", ["strategy_name", "symbol"])
 
 
 def downgrade():

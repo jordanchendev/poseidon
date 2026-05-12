@@ -18,12 +18,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 # Enable import from sibling script (ic_75_crypto_features.py)
 sys.path.insert(0, str(Path(__file__).parent))
-from ic_75_crypto_features import compute_rank_ic_with_counts  # noqa: E402
+from ic_75_crypto_features import compute_rank_ic_with_counts
 
 # -- Configuration -------------------------------------------------------
 SYMBOLS = ["BTCUSDT", "ETHUSDT"]
@@ -96,7 +95,7 @@ def compute_new_features(
             print(f"    OI data loaded: {len(oi_raw)} rows -> {oi_data.notna().sum().sum()} valid after resample")
     except Exception as e:
         print(f"    WARNING: Could not load OI data for {symbol}: {e}")
-        print(f"    Cascade will run without OI (wick+volume conditions only)")
+        print("    Cascade will run without OI (wick+volume conditions only)")
 
     # Compute each new feature
     for feat_name, params in NEW_FEATURE_SPECS:
@@ -140,7 +139,7 @@ def run_ic_validation(engine, repo) -> dict:
             end=pd.Timestamp(END_DATE).to_pydatetime(),
         )
         if ohlcv.empty:
-            print(f"    SKIP: No OHLCV data")
+            print("    SKIP: No OHLCV data")
             continue
 
         # Strip timezone for computation consistency
@@ -243,9 +242,9 @@ def apply_ic_gate(results: dict[str, dict]) -> tuple[list[str], list[str]]:
 
 def print_summary_table(results: dict[str, dict]) -> None:
     """Print IC summary table for all new features."""
-    print(f"\n{'='*90}")
+    print(f"\n{'=' * 90}")
     print("PHASE 76 IC VALIDATION -- New Micro-Structure Features")
-    print(f"{'='*90}")
+    print(f"{'=' * 90}")
     print(f"Gate: |IC| > {IC_THRESHOLD} AND n >= {MIN_EVENTS}")
     print(f"Interval: {INTERVAL}, Horizons: {HORIZONS}")
     print()
@@ -310,11 +309,7 @@ def save_json_artifact(
                 best_p = p_val
                 best_sufficient = sufficient
 
-        pass_gate = (
-            best_ic is not None
-            and abs(best_ic) > IC_THRESHOLD
-            and best_n >= MIN_EVENTS
-        )
+        pass_gate = best_ic is not None and abs(best_ic) > IC_THRESHOLD and best_n >= MIN_EVENTS
 
         feature_results[feature] = {
             "ic": float(best_ic) if best_ic is not None else None,
@@ -393,9 +388,9 @@ def main() -> None:
     # -- Step 3: Apply IC gate --
     passing, failing = apply_ic_gate(results)
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("IC GATE RESULTS")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"  Features PASSING gate ({len(passing)}): {passing}")
     print(f"  Features FAILING gate ({len(failing)}): {failing}")
 
@@ -403,16 +398,16 @@ def main() -> None:
     save_json_artifact(results, passing, failing)
 
     # -- Summary --
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("SUMMARY")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"  Total feature columns analyzed: {len(FEATURE_COLUMNS)}")
     print(f"  Passing IC gate: {len(passing)}")
     print(f"  Failing IC gate: {len(failing)}")
     if passing:
         print(f"  -> Add to specs.py crypto_perp: {passing}")
     else:
-        print(f"  -> No features passed gate -- do NOT modify specs.py")
+        print("  -> No features passed gate -- do NOT modify specs.py")
     print(f"  JSON artifact: {OUTPUT_JSON}")
     print()
 

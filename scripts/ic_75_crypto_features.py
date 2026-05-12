@@ -164,11 +164,9 @@ def validate_data_timestamps(repo, symbols: list[str], start_date: str) -> None:
             # Strip timezone for comparison
             oi_min_naive = oi_min.tz_localize(None) if oi_min.tzinfo else oi_min
             print(f"  OI: {len(oi)} rows, min={oi_min}, max={oi_max}")
-            assert oi_min_naive >= etf_cutoff, (
-                f"OI data has pre-ETF rows: {oi_min}"
-            )
+            assert oi_min_naive >= etf_cutoff, f"OI data has pre-ETF rows: {oi_min}"
         else:
-            print(f"  OI: EMPTY (no data)")
+            print("  OI: EMPTY (no data)")
 
         # Funding Rates
         funding = repo.read_funding_rates(symbol, start=start_date)
@@ -178,20 +176,16 @@ def validate_data_timestamps(repo, symbols: list[str], start_date: str) -> None:
             f_max = f_idx.max()
             f_min_naive = f_min.tz_localize(None) if f_min.tzinfo else f_min
             print(f"  Funding: {len(funding)} rows, min={f_min}, max={f_max}")
-            assert f_min_naive >= etf_cutoff, (
-                f"Funding data has pre-ETF rows: {f_min}"
-            )
+            assert f_min_naive >= etf_cutoff, f"Funding data has pre-ETF rows: {f_min}"
         else:
-            print(f"  Funding: EMPTY (no data)")
+            print("  Funding: EMPTY (no data)")
 
     print("\n  Data timestamp validation PASSED -- no pre-ETF contamination")
     print()
 
 
 # ── Feature column discovery ─────────────────────────────────────────
-def discover_feature_columns(
-    engine, repo, symbol: str, interval: str
-) -> tuple[list[str], list[str]]:
+def discover_feature_columns(engine, repo, symbol: str, interval: str) -> tuple[list[str], list[str]]:
     """Discover actual feature column names from compute_with_companions output.
 
     D-11 names are abstract; actual columns may have period suffixes
@@ -203,7 +197,9 @@ def discover_feature_columns(
     from poseidon.data.feature_engine.specs import get_r2_specs
 
     ohlcv = repo.read_ohlcv(
-        symbol, MARKET, interval,
+        symbol,
+        MARKET,
+        interval,
         start=pd.Timestamp(START_DATE).to_pydatetime(),
         end=pd.Timestamp(END_DATE).to_pydatetime(),
     )
@@ -212,19 +208,20 @@ def discover_feature_columns(
         return [], list(CRYPTO_FEATURES_EXPECTED)
 
     # Strip timezone for consistency
-    if hasattr(ohlcv.index, 'tz') and ohlcv.index.tz is not None:
+    if hasattr(ohlcv.index, "tz") and ohlcv.index.tz is not None:
         ohlcv.index = ohlcv.index.tz_localize(None)
 
     specs = get_r2_specs(symbol, MARKET)
     computed = engine.compute_with_companions(
-        ohlcv, symbol=symbol, market=MARKET, interval=interval,
+        ohlcv,
+        symbol=symbol,
+        market=MARKET,
+        interval=interval,
         feature_specs=specs,
     )
 
     base_cols = {"open", "high", "low", "close", "volume"}
-    available_columns = sorted(
-        c for c in computed.columns if c not in base_cols
-    )
+    available_columns = sorted(c for c in computed.columns if c not in base_cols)
     print(f"\n  Available feature columns ({len(available_columns)}):")
     for col in available_columns:
         print(f"    - {col}")
@@ -247,7 +244,7 @@ def discover_feature_columns(
                 missing_features.append(name)
 
     if expanded_mapping:
-        print(f"\n  Expanded feature mappings:")
+        print("\n  Expanded feature mappings:")
         for abstract, actuals in expanded_mapping.items():
             print(f"    {abstract} -> {actuals}")
 
@@ -268,9 +265,7 @@ def discover_feature_columns(
 
 
 # ── Main IC analysis loop ────────────────────────────────────────────
-def run_ic_analysis_with_counts(
-    engine, repo, feature_columns: list[str]
-) -> dict[str, dict]:
+def run_ic_analysis_with_counts(engine, repo, feature_columns: list[str]) -> dict[str, dict]:
     """Run pooled IC analysis for both 4H and 1H intervals with event counts.
 
     Mirrors run_ic_analysis() from ic_analysis.py but tracks per-feature
@@ -279,15 +274,15 @@ def run_ic_analysis_with_counts(
     Returns:
         {interval: {feature: {horizon: {ic, n, p_value, sufficient}}}}
     """
-    from poseidon.research.ic_analysis import compute_forward_returns
     from poseidon.data.feature_engine.specs import get_r2_specs
+    from poseidon.research.ic_analysis import compute_forward_returns
 
     all_results: dict[str, dict] = {}
 
     for interval in INTERVALS:
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f"IC ANALYSIS: interval={interval}")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
 
         # Collect pooled frames per horizon
         horizon_frames: dict[int, list[pd.DataFrame]] = {h: [] for h in HORIZONS}
@@ -296,23 +291,28 @@ def run_ic_analysis_with_counts(
         for symbol in SYMBOLS:
             print(f"\n  Processing {symbol} / {interval} ...")
             ohlcv = repo.read_ohlcv(
-                symbol, MARKET, interval,
+                symbol,
+                MARKET,
+                interval,
                 start=pd.Timestamp(START_DATE).to_pydatetime(),
                 end=pd.Timestamp(END_DATE).to_pydatetime(),
             )
             if ohlcv.empty:
-                print(f"    SKIP: No OHLCV data")
+                print("    SKIP: No OHLCV data")
                 continue
 
             # Strip timezone for computation consistency
-            if hasattr(ohlcv.index, 'tz') and ohlcv.index.tz is not None:
+            if hasattr(ohlcv.index, "tz") and ohlcv.index.tz is not None:
                 ohlcv.index = ohlcv.index.tz_localize(None)
 
             print(f"    OHLCV: {len(ohlcv)} bars, {ohlcv.index.min()} to {ohlcv.index.max()}")
 
             specs = get_r2_specs(symbol, MARKET)
             computed = engine.compute_with_companions(
-                ohlcv, symbol=symbol, market=MARKET, interval=interval,
+                ohlcv,
+                symbol=symbol,
+                market=MARKET,
+                interval=interval,
                 feature_specs=specs,
             )
             print(f"    Computed: {len(computed.columns)} columns")
@@ -347,7 +347,9 @@ def run_ic_analysis_with_counts(
             print(f"  Horizon {horizon}: {len(combined)} pooled rows, {len(cols_present)} features")
 
             ic_results = compute_rank_ic_with_counts(
-                combined[cols_present], fwd, cols_present,
+                combined[cols_present],
+                fwd,
+                cols_present,
                 min_observations=MIN_OBSERVATIONS,
             )
 
@@ -362,9 +364,9 @@ def run_ic_analysis_with_counts(
 # ── Output formatting ────────────────────────────────────────────────
 def print_ic_table(results: dict[str, dict], feature_columns: list[str]) -> None:
     """Print full IC table: all features x all horizons x both intervals."""
-    print(f"\n{'='*100}")
+    print(f"\n{'=' * 100}")
     print("FULL IC TABLE (all features x horizons x intervals)")
-    print(f"{'='*100}")
+    print(f"{'=' * 100}")
 
     header = f"{'Feature':<30}"
     for interval in INTERVALS:
@@ -379,7 +381,7 @@ def print_ic_table(results: dict[str, dict], feature_columns: list[str]) -> None
             for h in HORIZONS:
                 entry = results.get(interval, {}).get(feature, {}).get(h, {})
                 ic_val = entry.get("ic")
-                n = entry.get("n", 0)
+                entry.get("n", 0)
                 sufficient = entry.get("sufficient", False)
                 if ic_val is not None:
                     flag = "" if sufficient else "*"
@@ -394,9 +396,9 @@ def print_ic_table(results: dict[str, dict], feature_columns: list[str]) -> None
 
 def print_event_count_table(results: dict[str, dict], feature_columns: list[str]) -> None:
     """Print event count table for transparency (RES-02)."""
-    print(f"\n{'='*100}")
+    print(f"\n{'=' * 100}")
     print("EVENT COUNT TABLE (paired observations per feature-horizon)")
-    print(f"{'='*100}")
+    print(f"{'=' * 100}")
 
     header = f"{'Feature':<30}"
     for interval in INTERVALS:
@@ -420,13 +422,11 @@ def print_event_count_table(results: dict[str, dict], feature_columns: list[str]
     print("  ! = insufficient (< 100 observations)")
 
 
-def print_4h_vs_1h_comparison(
-    results: dict[str, dict], feature_columns: list[str]
-) -> dict:
+def print_4h_vs_1h_comparison(results: dict[str, dict], feature_columns: list[str]) -> dict:
     """RES-05: 4H vs 1H IC comparison at reference horizon h=5."""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("4H vs 1H IC COMPARISON (reference horizon h=5)")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     ref_horizon = 5
     header = f"{'Feature':<30} | {'4H IC':>8} | {'4H n':>6} | {'1H IC':>8} | {'1H n':>6} | Better"
@@ -495,9 +495,7 @@ def print_4h_vs_1h_comparison(
     }
 
 
-def generate_pattern_catalog(
-    results: dict[str, dict], feature_columns: list[str]
-) -> list[dict]:
+def generate_pattern_catalog(results: dict[str, dict], feature_columns: list[str]) -> list[dict]:
     """RES-04: Pattern catalog from IC results.
 
     Confidence levels:
@@ -506,14 +504,16 @@ def generate_pattern_catalog(
     - Low: |IC| <= 0.015 OR n < 100
     - Insufficient: n < 100
     """
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("PATTERN CATALOG -- Post-ETF Crypto Micro-Structure IC")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     ref_horizon = 5
     catalog: list[dict] = []
 
-    header = f"{'Structure':<35} | {'Direction':<22} | {'IC(4H,h=5)':>10} | {'Events':>6} | {'Confidence':>12} | 4H vs 1H"
+    header = (
+        f"{'Structure':<35} | {'Direction':<22} | {'IC(4H,h=5)':>10} | {'Events':>6} | {'Confidence':>12} | 4H vs 1H"
+    )
     print(header)
     print("-" * len(header))
 
@@ -571,7 +571,8 @@ def generate_pattern_catalog(
 
 
 def identify_features_above_threshold(
-    results: dict[str, dict], feature_columns: list[str],
+    results: dict[str, dict],
+    feature_columns: list[str],
     ic_threshold: float = 0.015,
 ) -> list[str]:
     """Identify features with |IC| > threshold and sufficient observations.
@@ -584,7 +585,7 @@ def identify_features_above_threshold(
             for h in HORIZONS:
                 entry = results.get(interval, {}).get(feature, {}).get(h, {})
                 ic_val = entry.get("ic")
-                n = entry.get("n", 0)
+                entry.get("n", 0)
                 sufficient = entry.get("sufficient", False)
                 if ic_val is not None and abs(ic_val) > ic_threshold and sufficient:
                     if feature not in above:
@@ -672,9 +673,7 @@ def main() -> None:
     print("=" * 70)
     print("FEATURE COLUMN DISCOVERY")
     print("=" * 70)
-    feature_columns, missing = discover_feature_columns(
-        engine, repo, SYMBOLS[0], INTERVALS[0]
-    )
+    feature_columns, _missing = discover_feature_columns(engine, repo, SYMBOLS[0], INTERVALS[0])
     if not feature_columns:
         print("ERROR: No feature columns discovered. Exiting.")
         sys.exit(1)
@@ -693,9 +692,9 @@ def main() -> None:
     save_json_artifact(results, catalog, comparison, features_above, feature_columns)
 
     # ── Summary ──
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("SUMMARY")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"  Total features analyzed: {len(feature_columns)}")
     print(f"  Features above IC > 0.015 threshold: {len(features_above)}")
     if features_above:

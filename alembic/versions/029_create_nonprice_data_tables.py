@@ -11,6 +11,7 @@ Two new tables for ingest-first non-price data pattern:
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "029"
@@ -42,9 +43,7 @@ def upgrade():
         sa.Column("category", sa.String(32), nullable=False),
         sa.Column("indicator", sa.String(64), nullable=False),
         sa.Column("value", sa.Float, nullable=False),
-        sa.PrimaryKeyConstraint(
-            "date", "symbol", "category", "indicator", name="pk_nonprice_ts"
-        ),
+        sa.PrimaryKeyConstraint("date", "symbol", "category", "indicator", name="pk_nonprice_ts"),
     )
     op.create_index(
         "idx_nonprice_ts_sym_cat_date",

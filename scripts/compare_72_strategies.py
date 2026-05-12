@@ -10,7 +10,6 @@ Run on stormtrooper inside cpu-worker container:
 """
 
 import json
-import sys
 from datetime import date, datetime
 
 import pandas as pd
@@ -23,12 +22,30 @@ from poseidon.strategies.portfolio.fundamental_selection import (
     FundamentalSelectionStrategy,
 )
 
-
 # TW stock universe (same as poseidon/config/symbols.yaml tw_stock)
 TW_STOCK_SYMBOLS = [
-    "2330", "2317", "2454", "2308", "2881", "2882", "2891", "2303",
-    "1301", "1303", "2002", "2412", "3711", "2886", "6505", "2892",
-    "3008", "2382", "2357", "3045", "2603", "2880",
+    "2330",
+    "2317",
+    "2454",
+    "2308",
+    "2881",
+    "2882",
+    "2891",
+    "2303",
+    "1301",
+    "1303",
+    "2002",
+    "2412",
+    "3711",
+    "2886",
+    "6505",
+    "2892",
+    "3008",
+    "2382",
+    "2357",
+    "3045",
+    "2603",
+    "2880",
 ]
 
 START = date(2023, 1, 1)
@@ -106,9 +123,9 @@ def run_comparison():
     # Run backtest for each config variant
     for entry in CONFIGS:
         label = entry["label"]
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Running: {label}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         try:
             # Build strategy from config
@@ -116,9 +133,7 @@ def run_comparison():
             strategy = FundamentalSelectionStrategy(config=cfg, repo=repo)
 
             # Run backtest
-            backtester = PortfolioBacktester(
-                cost_model=cost_model, initial_capital=1_000_000.0
-            )
+            backtester = PortfolioBacktester(cost_model=cost_model, initial_capital=1_000_000.0)
             result = backtester.run(
                 strategy=strategy,
                 ohlcv_dict=ohlcv_dict,
@@ -136,12 +151,8 @@ def run_comparison():
             total_trades = len(trades)
             buy_trades = len([t for t in trades if t.get("action") == "buy"])
             sell_trades = len([t for t in trades if t.get("action") == "sell"])
-            hold_until_exits = len(
-                [t for t in trades if t.get("reason") == "hold_until_exit"]
-            )
-            stop_loss_exits = len(
-                [t for t in trades if t.get("reason") == "stop_loss"]
-            )
+            hold_until_exits = len([t for t in trades if t.get("reason") == "hold_until_exit"])
+            stop_loss_exits = len([t for t in trades if t.get("reason") == "stop_loss"])
 
             row = {
                 "label": label,
@@ -160,7 +171,11 @@ def run_comparison():
 
             print(f"  Sharpe Ratio:      {row['sharpe_ratio']:.4f}" if row["sharpe_ratio"] else "  Sharpe Ratio: N/A")
             print(f"  Max Drawdown:      {row['max_drawdown']:.4f}" if row["max_drawdown"] else "  Max Drawdown: N/A")
-            print(f"  Annualized Return: {row['annualized_return']:.4f}" if row["annualized_return"] else "  Ann Return: N/A")
+            print(
+                f"  Annualized Return: {row['annualized_return']:.4f}"
+                if row["annualized_return"]
+                else "  Ann Return: N/A"
+            )
             print(f"  Total Return:      {row['total_return']:.4f}" if row["total_return"] else "  Total Return: N/A")
             print(f"  Total Trades:      {row['total_trades']}")
             print(f"  Hold Until Exits:  {row['hold_until_exits']}")
@@ -172,12 +187,12 @@ def run_comparison():
             results.append({"label": label, "error": str(exc)})
 
     # Summary table
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("COMPARISON SUMMARY (D-17: Phase 71 vs Phase 72)")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Period: {START} to {END}")
     print(f"Universe: {len(TW_STOCK_SYMBOLS)} TW stock symbols")
-    print(f"Initial Capital: 1,000,000")
+    print("Initial Capital: 1,000,000")
     print()
 
     # Formatted comparison table
@@ -211,21 +226,17 @@ def run_comparison():
     # Look-ahead bias gate (D-18): flag Sharpe > 3.0
     bias_warning = False
     for r in results:
-        if "error" not in r and r.get("sharpe_ratio") is not None:
-            if r["sharpe_ratio"] > 3.0:
-                print(
-                    f"  WARNING (D-18): {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0"
-                    " -- possible look-ahead bias!"
-                )
-                bias_warning = True
+        if "error" not in r and r.get("sharpe_ratio") is not None and r["sharpe_ratio"] > 3.0:
+            print(f"  WARNING (D-18): {r['label']} Sharpe={r['sharpe_ratio']:.4f} > 3.0 -- possible look-ahead bias!")
+            bias_warning = True
 
     if not bias_warning:
         print("  Look-ahead bias gate (D-18): PASSED (all Sharpe <= 3.0)")
 
     # JSON summary for easy parsing
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("JSON SUMMARY")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(json.dumps(results, indent=2, default=str))
 
     return results

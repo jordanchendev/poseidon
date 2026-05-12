@@ -11,6 +11,7 @@ prevent drift between source-of-truth and local leftovers.
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "030"
@@ -21,9 +22,7 @@ depends_on = None
 
 def upgrade():
     op.execute("SELECT remove_compression_policy('ohlcv', if_exists => TRUE)")
-    op.execute(
-        "SELECT remove_continuous_aggregate_policy('ohlcv_1d_cagg', if_exists => true)"
-    )
+    op.execute("SELECT remove_continuous_aggregate_policy('ohlcv_1d_cagg', if_exists => true)")
     op.execute("DROP MATERIALIZED VIEW IF EXISTS ohlcv_1d_cagg CASCADE")
     op.execute("DROP INDEX IF EXISTS ix_data_coverage_mv_tuple")
     op.execute("DROP MATERIALIZED VIEW IF EXISTS data_coverage_mv CASCADE")
@@ -45,10 +44,7 @@ def downgrade():
         sa.Column("volume", sa.Numeric(), nullable=False),
     )
     op.create_primary_key("pk_ohlcv", "ohlcv", ["time", "symbol", "market", "interval"])
-    op.execute(
-        "CREATE INDEX idx_ohlcv_symbol_market_interval_time "
-        "ON ohlcv (symbol, market, interval, time DESC)"
-    )
+    op.execute("CREATE INDEX idx_ohlcv_symbol_market_interval_time ON ohlcv (symbol, market, interval, time DESC)")
     op.execute(
         """
         CREATE MATERIALIZED VIEW data_coverage_mv AS

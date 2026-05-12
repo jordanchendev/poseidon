@@ -13,19 +13,20 @@ Flow:
 Data caveat: only ~120 days × 2 symbols, so results are for infra validation,
 not alpha discovery. Point is to prove Alpha158's 158 features work end-to-end.
 """
+
 from __future__ import annotations
 
 import logging
 import struct
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+from poseidon.models.base import SessionLocal
 from poseidon.qlib.dataset_builder import DatasetBuilder
 from poseidon.qlib.model_exporter import QlibModelExporter
-from poseidon.models.base import SessionLocal
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("alpha158_demo")
@@ -44,6 +45,7 @@ def dump_qlib_bin(daily: pd.DataFrame, symbols: list[str]) -> None:
     """
     if QLIB_ROOT.exists():
         import shutil
+
         shutil.rmtree(QLIB_ROOT)
     (QLIB_ROOT / "calendars").mkdir(parents=True)
     (QLIB_ROOT / "instruments").mkdir(parents=True)
@@ -97,7 +99,7 @@ def dump_qlib_bin(daily: pd.DataFrame, symbols: list[str]) -> None:
 
 def main() -> None:
     # Step 1: fetch 4h bars
-    end = datetime.now(timezone.utc)
+    end = datetime.now(UTC)
     start = end - timedelta(days=820)
     symbols = ["BTCUSDT", "ETHUSDT"]
 
@@ -113,23 +115,23 @@ def main() -> None:
     daily_parts = []
     for sym in symbols:
         sub = df.xs(sym, level="instrument")
-        d = pd.DataFrame({
-            "$open": sub["$open"].resample("1D").first(),
-            "$high": sub["$high"].resample("1D").max(),
-            "$low": sub["$low"].resample("1D").min(),
-            "$close": sub["$close"].resample("1D").last(),
-            "$volume": sub["$volume"].resample("1D").sum(),
-            "$vwap": sub["$vwap"].resample("1D").mean(),
-        }).dropna()
+        d = pd.DataFrame(
+            {
+                "$open": sub["$open"].resample("1D").first(),
+                "$high": sub["$high"].resample("1D").max(),
+                "$low": sub["$low"].resample("1D").min(),
+                "$close": sub["$close"].resample("1D").last(),
+                "$volume": sub["$volume"].resample("1D").sum(),
+                "$vwap": sub["$vwap"].resample("1D").mean(),
+            }
+        ).dropna()
         d["instrument"] = sym
         daily_parts.append(d)
     daily = pd.concat(daily_parts).set_index("instrument", append=True).swaplevel()
     daily.index = daily.index.set_names(["instrument", "datetime"])
     daily = daily.swaplevel().sort_index()
     # Normalize to tz-naive for qlib calendar (qlib stores dates as YYYY-MM-DD)
-    daily.index = daily.index.set_levels(
-        daily.index.levels[0].tz_localize(None), level=0
-    )
+    daily.index = daily.index.set_levels(daily.index.levels[0].tz_localize(None), level=0)
     log.info("daily: %d rows, %d symbols", len(daily), daily.index.get_level_values("instrument").nunique())
 
     # Step 3: dump to qlib bin
@@ -138,11 +140,13 @@ def main() -> None:
     # Step 4: init qlib pointed at our bin dir
     import qlib
     from qlib.constant import REG_CN
+
     qlib.init(provider_uri=str(QLIB_ROOT), region=REG_CN, expression_cache=None, dataset_cache=None)
     log.info("qlib initialized with provider_uri=%s", QLIB_ROOT)
 
     # Sanity: list instruments qlib sees
     from qlib.data import D
+
     cal = D.calendar(freq="day")
     log.info("qlib sees calendar: %d entries, first=%s last=%s", len(cal), cal[0], cal[-1])
     insts = D.instruments(market="all")
@@ -151,6 +155,7 @@ def main() -> None:
 
     # Step 5: Alpha158 handler
     from qlib.contrib.data.handler import Alpha158
+
     handler = Alpha158(
         instruments="all",
         start_time=cal[0].strftime("%Y-%m-%d"),
@@ -166,6 +171,7 @@ def main() -> None:
 
     # Step 6: DatasetH with time split
     from qlib.data.dataset import DatasetH
+
     all_d = sorted(raw.index.get_level_values("datetime").unique())
     n = len(all_d)
     t1 = all_d[int(n * 0.70)]
@@ -175,14 +181,19 @@ def main() -> None:
         "valid": (t1, t2),
         "test": (t2, all_d[-1]),
     }
-    log.info("segments: train=%s→%s valid=%s→%s test=%s→%s",
-             *[str(x) for seg in segments.values() for x in seg])
+    log.info("segments: train=%s→%s valid=%s→%s test=%s→%s", *[str(x) for seg in segments.values() for x in seg])
     dataset = DatasetH(handler=handler, segments=segments)
 
     # Step 7: LGBModel
     from qlib.contrib.model.gbdt import LGBModel
-    model_params = {"loss": "mse", "num_leaves": 31, "learning_rate": 0.05,
-                    "num_boost_round": 200, "early_stopping_rounds": 20}
+
+    model_params = {
+        "loss": "mse",
+        "num_leaves": 31,
+        "learning_rate": 0.05,
+        "num_boost_round": 200,
+        "early_stopping_rounds": 20,
+    }
     model = LGBModel(**model_params)
     log.info("fitting LGBModel with Alpha158 features...")
     model.fit(dataset)

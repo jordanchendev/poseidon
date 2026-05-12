@@ -19,7 +19,7 @@ Run on stormtrooper inside cpu-worker container:
 import json
 import logging
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -151,9 +151,7 @@ def _recompute_metrics(runner: BacktestRunner) -> dict:
     return metrics
 
 
-def _compute_funding_deduction(
-    metrics: dict, trades: list, total_bars: int
-) -> dict:
+def _compute_funding_deduction(metrics: dict, trades: list, total_bars: int) -> dict:
     """Estimate funding cost and compute net_sharpe.
 
     Funding cost estimation:
@@ -179,9 +177,7 @@ def _compute_funding_deduction(
             holding_bars = holding_hours / BAR_DURATION_HOURS
             total_holding_bars += holding_bars
 
-    time_in_market_fraction = (
-        total_holding_bars / total_bars if total_bars > 0 else 0.0
-    )
+    time_in_market_fraction = total_holding_bars / total_bars if total_bars > 0 else 0.0
 
     # Funding cost as annualized drag
     funding_cost_annual = FUNDING_RATE_ANNUAL * time_in_market_fraction
@@ -211,9 +207,7 @@ def _compute_sharpe_haircuts(net_sharpe: float) -> dict:
     haircuts = {}
     for haircut in HAIRCUT_RANGE:
         pct_label = int(haircut * 100)
-        haircuts[f"haircut_{pct_label}pct"] = round(
-            net_sharpe * (1.0 - haircut), 4
-        )
+        haircuts[f"haircut_{pct_label}pct"] = round(net_sharpe * (1.0 - haircut), 4)
     return haircuts
 
 
@@ -231,9 +225,7 @@ def _combine_equity_curves(
         if portfolio.equity_curve:
             es = pd.Series(
                 [eq for _, eq, _ in portfolio.equity_curve],
-                index=pd.DatetimeIndex(
-                    [t for t, _, _ in portfolio.equity_curve]
-                ),
+                index=pd.DatetimeIndex([t for t, _, _ in portfolio.equity_curve]),
             )
             equity_series_list.append(es)
 
@@ -271,7 +263,7 @@ def run_backtest() -> int:
     print(f"Symbols: {', '.join(SYMBOLS)}")
     print(f"Interval: {INTERVAL} | Bars/Year: {BARS_PER_YEAR}")
     print(f"Initial Capital: {INITIAL_CAPITAL:,.0f} USDT (per symbol)")
-    print(f"Fill Model: PESSIMISTIC")
+    print("Fill Model: PESSIMISTIC")
     print(f"Funding Rate (annualized): {FUNDING_RATE_ANNUAL:.4f}")
     print(f"Haircut Range: {[f'{h:.0%}' for h in HAIRCUT_RANGE]}")
     print()
@@ -299,9 +291,9 @@ def run_backtest() -> int:
             continue
 
         ohlcv = ohlcv_dict[symbol]
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Running: {symbol} ({len(ohlcv)} bars)")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         config = StructuralReversalConfig()  # default params
         strategy = StructuralReversalStrategy(config=config, symbol=symbol)
@@ -320,9 +312,7 @@ def run_backtest() -> int:
         # Compute funding deduction
         portfolio = runner._ar_last_portfolio
         total_bars = len(ohlcv)
-        net_metrics = _compute_funding_deduction(
-            metrics, portfolio.trades, total_bars
-        )
+        net_metrics = _compute_funding_deduction(metrics, portfolio.trades, total_bars)
 
         # Compute Sharpe haircuts
         haircuts = _compute_sharpe_haircuts(net_metrics["net_sharpe"])
@@ -335,9 +325,7 @@ def run_backtest() -> int:
             "closed_trade_count": metrics.get("closed_trade_count", 0),
             "max_drawdown": round(metrics.get("max_drawdown", 0.0), 4),
             "total_return": round(metrics.get("total_return", 0.0), 4),
-            "annualized_return": round(
-                metrics.get("annualized_return", 0.0), 4
-            ),
+            "annualized_return": round(metrics.get("annualized_return", 0.0), 4),
             "win_rate": round(metrics.get("win_rate", 0.0), 4),
             "profit_factor": round(metrics.get("profit_factor", 0.0), 4),
             "calmar_ratio": round(metrics.get("calmar_ratio", 0.0), 4),
@@ -374,47 +362,27 @@ def run_backtest() -> int:
             )
 
             # Total bars = average across symbols (they should be similar)
-            total_bars_avg = int(
-                np.mean([len(ohlcv_dict[s]) for s in ohlcv_dict])
-            )
-            combined_net = _compute_funding_deduction(
-                combined_metrics, combined_trades, total_bars_avg
-            )
-            combined_haircuts = _compute_sharpe_haircuts(
-                combined_net["net_sharpe"]
-            )
+            total_bars_avg = int(np.mean([len(ohlcv_dict[s]) for s in ohlcv_dict]))
+            combined_net = _compute_funding_deduction(combined_metrics, combined_trades, total_bars_avg)
+            combined_haircuts = _compute_sharpe_haircuts(combined_net["net_sharpe"])
 
             combined_result = {
                 **combined_net,
                 **combined_haircuts,
                 "trade_count": combined_metrics.get("trade_count", 0),
-                "closed_trade_count": combined_metrics.get(
-                    "closed_trade_count", 0
-                ),
-                "max_drawdown": round(
-                    combined_metrics.get("max_drawdown", 0.0), 4
-                ),
-                "total_return": round(
-                    combined_metrics.get("total_return", 0.0), 4
-                ),
-                "annualized_return": round(
-                    combined_metrics.get("annualized_return", 0.0), 4
-                ),
-                "win_rate": round(
-                    combined_metrics.get("win_rate", 0.0), 4
-                ),
-                "profit_factor": round(
-                    combined_metrics.get("profit_factor", 0.0), 4
-                ),
-                "calmar_ratio": round(
-                    combined_metrics.get("calmar_ratio", 0.0), 4
-                ),
+                "closed_trade_count": combined_metrics.get("closed_trade_count", 0),
+                "max_drawdown": round(combined_metrics.get("max_drawdown", 0.0), 4),
+                "total_return": round(combined_metrics.get("total_return", 0.0), 4),
+                "annualized_return": round(combined_metrics.get("annualized_return", 0.0), 4),
+                "win_rate": round(combined_metrics.get("win_rate", 0.0), 4),
+                "profit_factor": round(combined_metrics.get("profit_factor", 0.0), 4),
+                "calmar_ratio": round(combined_metrics.get("calmar_ratio", 0.0), 4),
             }
 
     # Step 4: Print combined summary
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("COMBINED (BTC + ETH)")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     if combined_result:
         print(f"  Gross Sharpe:      {combined_result['gross_sharpe']:.4f}")
         print(f"  Net Sharpe:        {combined_result['net_sharpe']:.4f}")
@@ -431,9 +399,9 @@ def run_backtest() -> int:
         print("  No combined results (no successful per-symbol runs)")
 
     # Step 5: Summary table
-    print(f"\n{'='*100}")
+    print(f"\n{'=' * 100}")
     print("SUMMARY TABLE")
-    print(f"{'='*100}")
+    print(f"{'=' * 100}")
     header = (
         f"{'Symbol':<12} | {'Gross SR':>9} | {'Net SR':>9} | "
         f"{'HC 30%':>8} | {'HC 40%':>8} | {'HC 50%':>8} | "
@@ -498,9 +466,9 @@ def run_backtest() -> int:
     print(f"\nJSON output saved to: {output_path}")
 
     # Step 7: Print JSON for easy parsing
-    print(f"\n{'='*100}")
+    print(f"\n{'=' * 100}")
     print("JSON OUTPUT")
-    print(f"{'='*100}")
+    print(f"{'=' * 100}")
     print(json.dumps(output, indent=2, default=str))
 
     return 0
