@@ -132,12 +132,23 @@ def historical_curve(pair: str, row: pd.Series, prices: pd.DataFrame) -> list[di
     return monthly_sample(frame["date"], equity)
 
 
+def load_validation(root: Path, pairs: set[str]) -> dict[str, dict]:
+    validation: dict[str, dict] = {}
+    validation_root = root / "validation"
+    for pair in pairs:
+        path = validation_root / pair / f"{pair}_three_layer_validation.json"
+        if path.exists():
+            validation[pair] = json.loads(path.read_text(encoding="utf-8"))
+    return validation
+
+
 def build_data(root: Path = ROOT) -> dict:
     results = root / "results"
     data_dir = root / "data"
     df = pd.read_csv(results / "representative_choices.csv")
     prices = pd.read_csv(data_dir / "prices_extended.csv", parse_dates=["date"])
     price_report = json.loads((data_dir / "price_report_extended.json").read_text(encoding="utf-8"))
+    pairs = set(df["pair"])
     rows = []
     seen_rules: dict[tuple[str, str], dict] = {}
     for _, row in df.iterrows():
@@ -184,9 +195,10 @@ def build_data(root: Path = ROOT) -> dict:
                 },
             }
             for key in PAIR_ORDER
-            if key in set(df["pair"])
+            if key in pairs
         ],
         "strategies": rows,
+        "validation": load_validation(root, pairs),
     }
 
 
@@ -437,7 +449,6 @@ HTML_TEMPLATE = """<!doctype html>
     .switch-col {
       width: 64px;
     }
-    }
     .rule-list {
       margin: 0;
       padding-left: 1.1em;
@@ -453,10 +464,81 @@ HTML_TEMPLATE = """<!doctype html>
       color: var(--muted);
       max-width: 980px;
     }
+    .validation-panel {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+    .validation-heading {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    .validation-heading p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .validation-meta {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .validation-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+    }
+    .validation-card {
+      min-width: 0;
+      background: var(--panel);
+      padding: 12px;
+    }
+    .validation-card h3 {
+      margin: 0 0 3px;
+      font-size: 14px;
+    }
+    .validation-card .subtle {
+      margin-bottom: 10px;
+      font-size: 12px;
+    }
+    .validation-table {
+      min-width: 0;
+      table-layout: fixed;
+      font-size: 12px;
+    }
+    .validation-table th,
+    .validation-table td {
+      padding: 6px 6px;
+      line-height: 1.3;
+    }
+    .validation-table th {
+      position: static;
+    }
+    .validation-table .strategy {
+      width: 94px;
+      overflow-wrap: anywhere;
+    }
+    .validation-table .regime {
+      width: 48px;
+    }
+    .validation-empty {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 8px 0 2px;
+    }
     @media (max-width: 900px) {
       main { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--line); }
       .summary { grid-template-columns: 1fr 1fr; }
+      .validation-heading { display: block; }
+      .validation-meta { margin-top: 4px; white-space: normal; }
+      .validation-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -545,6 +627,68 @@ HTML_TEMPLATE = """<!doctype html>
           <tbody id="rows"></tbody>
         </table>
       </div>
+      <div class="validation-panel" id="validationPanel">
+        <div class="validation-heading">
+          <div>
+            <h2>三層驗證</h2>
+            <p>檢查同一批策略在不同進場月份、市況與抽樣路徑下是否仍穩定。</p>
+          </div>
+          <div class="validation-meta" id="validationMeta"></div>
+        </div>
+        <div class="validation-grid">
+          <article class="validation-card">
+            <h3>滾動進場</h3>
+            <div class="subtle">同一策略從不同月份開始持有，觀察結果分布。</div>
+            <table class="validation-table">
+              <thead>
+                <tr>
+                  <th class="strategy">策略</th>
+                  <th class="num">年</th>
+                  <th class="num">中位</th>
+                  <th class="num">P05</th>
+                  <th class="num">勝率</th>
+                  <th class="num">最差DD</th>
+                </tr>
+              </thead>
+              <tbody id="rollingValidationRows"></tbody>
+            </table>
+          </article>
+          <article class="validation-card">
+            <h3>市況分組</h3>
+            <div class="subtle">依進場前行情分成牛市、熊市、盤整，看策略是否偏食。</div>
+            <table class="validation-table">
+              <thead>
+                <tr>
+                  <th class="strategy">策略</th>
+                  <th class="regime">市況</th>
+                  <th class="num">中位</th>
+                  <th class="num">P05</th>
+                  <th class="num">勝率</th>
+                  <th class="num">最差DD</th>
+                </tr>
+              </thead>
+              <tbody id="regimeValidationRows"></tbody>
+            </table>
+          </article>
+          <article class="validation-card">
+            <h3>蒙地卡羅</h3>
+            <div class="subtle">抽樣歷史月報酬重組路徑，估計左尾風險與可能範圍。</div>
+            <table class="validation-table">
+              <thead>
+                <tr>
+                  <th class="strategy">策略</th>
+                  <th class="num">P50</th>
+                  <th class="num">P05</th>
+                  <th class="num">P95</th>
+                  <th class="num">虧損</th>
+                  <th class="num">中位DD</th>
+                </tr>
+              </thead>
+              <tbody id="monteCarloValidationRows"></tbody>
+            </table>
+          </article>
+        </div>
+      </div>
       <p class="note">月投入採每月月底投入、用年化 CAGR 換算月複利。槓桿 ETF 為每日目標槓桿，長期結果會受波動耗損與追蹤誤差影響。</p>
     </section>
   </main>
@@ -566,6 +710,10 @@ HTML_TEMPLATE = """<!doctype html>
     const scaleToggle = document.getElementById('scaleToggle');
     const chartTooltip = document.getElementById('chartTooltip');
     const legend = document.getElementById('legend');
+    const validationMeta = document.getElementById('validationMeta');
+    const rollingValidationRows = document.getElementById('rollingValidationRows');
+    const regimeValidationRows = document.getElementById('regimeValidationRows');
+    const monteCarloValidationRows = document.getElementById('monteCarloValidationRows');
     const palette = ['#146c5f', '#b24c28', '#2f6fbd', '#8f5aa8', '#6f8d1d', '#ba7c1f', '#4c6b73', '#9b2c2c', '#7d6b2f', '#5b5fd6', '#2f855a', '#805ad5'];
     let visibleStrategies = [];
     let chartState = null;
@@ -577,6 +725,12 @@ HTML_TEMPLATE = """<!doctype html>
     }
     function fmtPct(value) {
       return (value * 100).toFixed(2) + '%';
+    }
+    function fmtPct0(value) {
+      return (value * 100).toFixed(0) + '%';
+    }
+    function fmtMultiple(value) {
+      return Number(value).toFixed(2) + 'x';
     }
     function escapeHtml(value) {
       return String(value)
@@ -590,6 +744,82 @@ HTML_TEMPLATE = """<!doctype html>
       const parts = String(rule).split('；').map((part) => part.trim()).filter(Boolean);
       if (parts.length <= 1) return escapeHtml(rule);
       return `<ul class="rule-list">${parts.map((part) => `<li>${escapeHtml(part)}</li>`).join('')}</ul>`;
+    }
+    function regimeLabel(value) {
+      return { bull: '牛市', bear: '熊市', sideways: '盤整', unknown: '不足' }[value] || value;
+    }
+    function validationEmpty(columns, text) {
+      return `<tr><td class="validation-empty" colspan="${columns}">${escapeHtml(text)}</td></tr>`;
+    }
+    function renderRollingValidation(validation, orderedChoices) {
+      if (!validation?.rolling?.length) return validationEmpty(6, '這個策略對尚未產生滾動進場驗證。');
+      const maxHorizon = Math.max(...validation.rolling.map((row) => row.horizonYears || 0));
+      const choiceRank = new Map(orderedChoices.map((choice, index) => [choice, index]));
+      const rows = validation.rolling
+        .filter((row) => row.horizonYears === maxHorizon)
+        .sort((a, b) => (choiceRank.get(a.choice) ?? 999) - (choiceRank.get(b.choice) ?? 999))
+        .slice(0, 8);
+      if (!rows.length) return validationEmpty(6, '滾動進場驗證沒有可顯示資料。');
+      return rows.map((row) => `
+        <tr>
+          <td class="strategy">${escapeHtml(row.choiceName)}</td>
+          <td class="num">${row.horizonYears}</td>
+          <td class="num">${fmtMultiple(row.medianFinalMultiple)}</td>
+          <td class="num">${fmtMultiple(row.p05FinalMultiple)}</td>
+          <td class="num">${fmtPct0(row.winRateVsCore)}</td>
+          <td class="num ${row.worstMaxDrawdown <= -0.6 ? 'danger' : row.worstMaxDrawdown <= -0.45 ? 'warn' : ''}">${fmtPct(row.worstMaxDrawdown)}</td>
+        </tr>`).join('');
+    }
+    function renderRegimeValidation(validation) {
+      if (!validation?.regimes?.length) return validationEmpty(6, '這個策略對尚未產生市況分組驗證。');
+      const regimeOrder = ['bear', 'sideways', 'bull', 'unknown'];
+      const rows = regimeOrder
+        .map((regime) => validation.regimes
+          .filter((row) => row.regime === regime)
+          .sort((a, b) => b.medianFinalMultiple - a.medianFinalMultiple)[0])
+        .filter(Boolean);
+      if (!rows.length) return validationEmpty(6, '市況分組驗證沒有可顯示資料。');
+      return rows.map((row) => `
+        <tr>
+          <td class="strategy">${escapeHtml(row.choiceName)}</td>
+          <td class="regime">${regimeLabel(row.regime)}</td>
+          <td class="num">${fmtMultiple(row.medianFinalMultiple)}</td>
+          <td class="num">${fmtMultiple(row.p05FinalMultiple)}</td>
+          <td class="num">${fmtPct0(row.winRateVsCore)}</td>
+          <td class="num ${row.worstMaxDrawdown <= -0.6 ? 'danger' : row.worstMaxDrawdown <= -0.45 ? 'warn' : ''}">${fmtPct(row.worstMaxDrawdown)}</td>
+        </tr>`).join('');
+    }
+    function renderMonteCarloValidation(validation) {
+      if (!validation?.monteCarlo?.length) return validationEmpty(6, '這個策略對尚未產生蒙地卡羅驗證。');
+      const rows = [...validation.monteCarlo]
+        .sort((a, b) => b.p50FinalMultiple - a.p50FinalMultiple)
+        .slice(0, 8);
+      return rows.map((row) => `
+        <tr>
+          <td class="strategy">${escapeHtml(row.choiceName)}</td>
+          <td class="num">${fmtMultiple(row.p50FinalMultiple)}</td>
+          <td class="num">${fmtMultiple(row.p05FinalMultiple)}</td>
+          <td class="num">${fmtMultiple(row.p95FinalMultiple)}</td>
+          <td class="num ${row.probabilityOfLoss >= 0.25 ? 'danger' : row.probabilityOfLoss >= 0.1 ? 'warn' : ''}">${fmtPct0(row.probabilityOfLoss)}</td>
+          <td class="num ${row.medianMaxDrawdown <= -0.6 ? 'danger' : row.medianMaxDrawdown <= -0.45 ? 'warn' : ''}">${fmtPct(row.medianMaxDrawdown)}</td>
+        </tr>`).join('');
+    }
+    function renderValidation(pair, sorted) {
+      const validation = data.validation?.[pair];
+      const orderedChoices = chartStrategies(sorted, 6).map((strategy) => strategy.choice);
+      if (!validation) {
+        validationMeta.textContent = '尚未產生驗證檔';
+        rollingValidationRows.innerHTML = validationEmpty(6, '這個策略對沒有 validation JSON。');
+        regimeValidationRows.innerHTML = validationEmpty(6, '這個策略對沒有 validation JSON。');
+        monteCarloValidationRows.innerHTML = validationEmpty(6, '這個策略對沒有 validation JSON。');
+        return;
+      }
+      const params = validation.parameters || {};
+      const horizons = Array.isArray(params.horizonsYears) ? params.horizonsYears.join(' / ') : '-';
+      validationMeta.textContent = `滾動 ${horizons} 年；市況 ${params.regimeHorizonYears ?? '-'} 年；MC ${params.monteCarloPaths ?? '-'} 路徑`;
+      rollingValidationRows.innerHTML = renderRollingValidation(validation, orderedChoices);
+      regimeValidationRows.innerHTML = renderRegimeValidation(validation);
+      monteCarloValidationRows.innerHTML = renderMonteCarloValidation(validation);
     }
     function futureValue(initial, monthly, cagr, years) {
       const months = years * 12;
@@ -904,6 +1134,7 @@ HTML_TEMPLATE = """<!doctype html>
       });
       const chartLimit = Number(chartLimitSelect.value || 6);
       drawChart(chartStrategies(sorted, chartLimit));
+      renderValidation(pair, sorted);
       rows.innerHTML = sorted.map((s) => `
         <tr>
           <td class="strategy-col">${s.choiceName}</td>
@@ -1002,6 +1233,12 @@ def verify_strategy_calculator_html(html_path: Path) -> None:
         "const height = 640",
         'id="scaleToggle"',
         "function toggleYScale",
+        'id="validationPanel"',
+        "function renderValidation",
+        "三層驗證",
+        "滾動進場",
+        "市況分組",
+        "蒙地卡羅",
         ".strategy-col",
         ".note-col",
         "table-layout: fixed",

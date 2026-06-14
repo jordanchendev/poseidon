@@ -126,6 +126,68 @@ def _write_minimal_rotation_research(root: Path) -> None:
         encoding="utf-8",
     )
 
+    validation = root / "validation" / "NASDAQ"
+    validation.mkdir(parents=True)
+    (validation / "NASDAQ_three_layer_validation.json").write_text(
+        json.dumps(
+            {
+                "pair": "NASDAQ",
+                "parameters": {
+                    "horizonsYears": [1, 3],
+                    "regimeHorizonYears": 3,
+                    "monteCarloYears": 10,
+                    "monteCarloPaths": 25,
+                    "seed": 42,
+                },
+                "rolling": [
+                    {
+                        "choice": "best_full_return",
+                        "choiceName": "歷史報酬最高",
+                        "horizonYears": 3,
+                        "horizonMonths": 36,
+                        "windows": 10,
+                        "medianFinalMultiple": 1.4,
+                        "p05FinalMultiple": 0.8,
+                        "p95FinalMultiple": 2.1,
+                        "winRateVsCore": 0.7,
+                        "worstMaxDrawdown": -0.35,
+                    }
+                ],
+                "regimes": [
+                    {
+                        "choice": "best_full_return",
+                        "choiceName": "歷史報酬最高",
+                        "regime": "bear",
+                        "horizonYears": 3,
+                        "horizonMonths": 36,
+                        "windows": 4,
+                        "medianFinalMultiple": 1.3,
+                        "p05FinalMultiple": 0.75,
+                        "p95FinalMultiple": 2.0,
+                        "winRateVsCore": 0.75,
+                        "worstMaxDrawdown": -0.4,
+                    }
+                ],
+                "monteCarlo": [
+                    {
+                        "choice": "best_full_return",
+                        "choiceName": "歷史報酬最高",
+                        "years": 10,
+                        "paths": 25,
+                        "p05FinalMultiple": 0.6,
+                        "p50FinalMultiple": 1.7,
+                        "p95FinalMultiple": 4.5,
+                        "probabilityOfLoss": 0.2,
+                        "medianMaxDrawdown": -0.3,
+                        "p05MaxDrawdown": -0.6,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
 
 def test_build_strategy_calculator_html_embeds_verified_poseidon_rotation_data(tmp_path: Path) -> None:
     root = tmp_path / "rotation-research"
@@ -149,9 +211,15 @@ def test_build_strategy_calculator_html_embeds_verified_poseidon_rotation_data(t
     assert "目前比例持有" not in html
     assert '<option value="history" selected>歷史回測</option>' in html
     assert 'id="scaleToggle"' in html
+    assert 'id="validationPanel"' in html
+    assert "三層驗證" in html
+    assert "滾動進場" in html
+    assert "市況分組" in html
+    assert "蒙地卡羅" in html
 
     rules = [(strategy["pair"], strategy["rule"]) for strategy in data["strategies"]]
     assert len(rules) == len(set(rules))
+    assert data["validation"]["NASDAQ"]["rolling"][0]["choiceName"] == "歷史報酬最高"
 
 
 def test_etf_rotation_report_script_wrapper_builds_and_verifies_html(tmp_path: Path) -> None:
