@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+
+from poseidon.research.etf_rotation.db_prices import build_price_artifacts
+from poseidon.research.etf_rotation.pipeline import run_rotation_pipeline_from_repository
+
+
+class FakeRepository:
+    def __init__(self, frames: dict[str, pd.DataFrame]) -> None:
+        self.frames = frames
+        self.calls: list[tuple[str, str, str]] = []
+
+    def read_ohlcv(self, symbol: str, market: str, interval: str) -> pd.DataFrame:
+        self.calls.append((symbol, market, interval))
+        return self.frames[symbol].copy()
+
+
+def _ohlcv(values: list[float], *, start: str = "2020-01-01", column: str = "adj_close") -> pd.DataFrame:
+    dates = pd.date_range(start, periods=len(values), freq="B")
+    frame = pd.DataFrame(
+        {
+            "open": values,
+            "high": values,
+            "low": values,
+            "close": [value * 10 for value in values],
+            "volume": [1000] * len(values),
+            column: values,
+        },
+        index=dates,
+    )
+    frame.index.name = "time"
+    return frame
+
+
+def test_build_price_artifacts_reads_repository_adjusted_close_and_pair_coverage(tmp_path: Path) -> None:
+    repo = FakeRepository(
+        {
+            "QQQ": _ohlcv([100, 102, 104, 103, 106]),
+            "TQQQ": _ohlcv([50, 54, 58, 55, 64]),
+        }
+    )
+
+    summary = build_price_artifacts(repo, tmp_path, pairs=("NASDAQ",))
+
+    prices = pd.read_csv(tmp_path / "prices_extended.csv")
+    assert prices.columns.tolist() == ["date", "NASDAQ_core", "NASDAQ_lev"]
+    assert prices["NASDAQ_core"].tolist() == [100, 102, 104, 103, 106]
+    assert prices["NASDAQ_lev"].tolist() == [50, 54, 58, 55, 64]
+    assert repo.calls == [("QQQ", "us_stock", "1d"), ("TQQQ", "us_stock", "1d")]
+    assert summary["pairs"]["NASDAQ"]["start"] == "2020-01-01"
+    assert summary["pairs"]["NASDAQ"]["rows"] == 5
+
+
+def test_build_price_artifacts_falls_back_to_close_when_adjusted_close_missing(tmp_path: Path) -> None:
+    repo = FakeRepository(
+        {
+            "QQQ": _ohlcv([10, 11, 12]).drop(columns=["adj_close"]),
+            "TQQQ": _ohlcv([20, 21, 22]).drop(columns=["adj_close"]),
+        }
+    )
+
+    build_price_artifacts(repo, tmp_path, pairs=("NASDAQ",))
+
+    prices = pd.read_csv(tmp_path / "prices_extended.csv")
+    assert prices["NASDAQ_core"].tolist() == [100, 110, 120]
+    assert prices["NASDAQ_lev"].tolist() == [200, 210, 220]
+
+
+def test_db_pipeline_builds_search_report_and_validation_artifacts(tmp_path: Path) -> None:
+    values = list(range(100, 830))
+    repo = FakeRepository(
+        {
+            "QQQ": _ohlcv([float(value) for value in values]),
+            "TQQQ": _ohlcv([float(value) ** 1.15 for value in values]),
+        }
+    )
+
+    summary = run_rotation_pipeline_from_repository(
+        repo,
+        root=tmp_path / "research",
+        pairs=("NASDAQ",),
+        shard_count=2,
+        workers=1,
+        validation_pairs=("NASDAQ",),
+        validation_monte_carlo_paths=25,
+        search_strategy_limit=60,
+        verify_report=True,
+    )
+
+    root = tmp_path / "research"
+    assert summary["pairs"] == ["NASDAQ"]
+    assert (root / "data" / "prices_extended.csv").exists()
+    assert (root / "results" / "NASDAQ_all_results.csv").exists()
+    assert (root / "results" / "representative_choices.csv").exists()
+    assert (root / "strategy-calculator.html").exists()
+    assert (root / "validation" / "NASDAQ" / "NASDAQ_three_layer_validation.json").exists()
