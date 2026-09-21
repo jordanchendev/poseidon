@@ -125,6 +125,18 @@ services:
       # so __file__ resolves inside .venv/site-packages, making `parents[4]`
       # point at .venv. Pin the project root explicitly.
       - POSEIDON_AQUARIUM_ROOT=/app
+      # Phase 91 RD-Agent integration env vars.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # D-11 Azure OpenAI backup toggle — pass-through so RD-Agent + LiteLLM can switch providers via host env without compose edits.
+      - AZURE_API_KEY=${AZURE_API_KEY:-}
+      - AZURE_API_BASE=${AZURE_API_BASE:-}
+      - RDAGENT_DEFAULT_MODEL=${RDAGENT_DEFAULT_MODEL:-gpt-4o}
+      - RDAGENT_COST_CAP_USD=${RDAGENT_COST_CAP_USD:-20}
+      # Conda toggle defaults (RESEARCH OQ-6 — defensive set all three; Pitfall 3 bypasses Docker-in-Docker).
+      - MODEL_COSTEER_ENV_TYPE=conda
+      - FACTOR_CoSTEER_ENV_TYPE=conda
+      - DS_CODER_COSTEER_ENV_TYPE=conda
+      - FACTOR_CoSTEER_python_bin=/app/.venv/bin/python
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

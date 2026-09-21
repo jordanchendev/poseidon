@@ -189,6 +189,68 @@ def make_synthetic_alpha158_features(
     return df, feature_names
 
 
+@pytest.fixture
+def make_synthetic_rdagent_trace():
+    """Build deterministic Trace.hist-shaped data for RD-Agent audit tests."""
+    from types import SimpleNamespace
+
+    def _make(n: int = 3, seed: int = 42):
+        rng = np.random.default_rng(seed)
+        return [
+            (
+                SimpleNamespace(
+                    hypothesis=(f"thesis-{i}: {['mean_reversion', 'momentum_trend', 'vol_regime'][i % 3]}"),
+                    result=pd.DataFrame(
+                        {
+                            "Sharpe": [float(rng.normal(0.5, 1.0))],
+                            "Sortino": [float(rng.normal(0.7, 1.2))],
+                            "MDD": [float(-abs(rng.normal(0.05, 0.02)))],
+                            "sample_size": [int(rng.integers(50, 500))],
+                        }
+                    ),
+                ),
+                SimpleNamespace(
+                    decision=bool(rng.random() > 0.5),
+                    reasoning=f"reasoning text for thesis-{i}",
+                ),
+            )
+            for i in range(n)
+        ]
+
+    return _make
+
+
+@pytest.fixture
+def make_synthetic_transcript_with_secrets():
+    """Build fake transcript records with known fake credentials for redaction tests."""
+
+    def _make():
+        return [
+            {"role": "system", "content": "OPENAI_API_KEY=sk-test-1234567890ABCDEF"},
+            {"role": "user", "content": "Find signals on TX 1d."},
+            {"role": "assistant", "content": "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.test"},
+            {"role": "tool", "content": "AZURE_API_KEY=abcdef0123456789"},
+        ]
+
+    return _make
+
+
+@pytest.fixture
+def make_synthetic_git_log_lines():
+    """Build deterministic v18-style git-log lines for velocity benchmarks."""
+
+    def _make():
+        return [
+            "1b7ecf8|2026-05-02 19:18:14 +0800|test_tx_gap_intraday.py: gap-fade R2 mean-rev",
+            "65feadd|2026-05-02 19:22:42 +0800|test_tx_gap_intraday_v2.py: vol filter",
+            "1d454ed|2026-05-02 19:30:58 +0800|test_tx_gap_validate.py: 0050 validation",
+            "fef6896|2026-05-02 19:36:45 +0800|test_tx_gap_mystery.py: 0050 mystery diagnosis",
+            "7cd07b0|2026-05-02 19:43:25 +0800|test_tx_gap_longshort.py: longshort dead end",
+        ]
+
+    return _make
+
+
 def make_synthetic_anchor_signal(n_days: int = 400, seed: int = 42) -> tuple[pd.Series, pd.Series]:
     """Synthetic (pred, label) MultiIndex(datetime, instrument=['TX']) for
     the ACTIVATE-03 unit tests.
@@ -325,6 +387,7 @@ def fake_redis():
 def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line("markers", "phase38: data-foundation tests")
+    config.addinivalue_line("markers", "qlib_only: tests that require qlib + rdagent (cp312 qlib-research only)")
     config.addinivalue_line(
         "markers",
         "stormtrooper: requires stormtrooper qlib-research container (set STORMTROOPER=1 inside docker compose exec)",

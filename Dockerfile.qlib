@@ -107,6 +107,15 @@ RUN /app/.venv/bin/python -c "import qlib; print(f'qlib {qlib.__version__} OK')"
     /app/.venv/bin/python -c "import mlflow; print(f'mlflow {mlflow.__version__} OK')" && \
     /app/.venv/bin/python -c "from poseidon.qlib import check_qlib_available; assert check_qlib_available(), 'qlib bridge reports unavailable inside research image'; print('poseidon.qlib bridge OK')"
 
+# Phase 91: RD-Agent autonomous research agent.
+# Pin to 0.8.0. Keep the qlib constraints explicit: RD-Agent otherwise resolves
+# protobuf 6, which breaks the existing mlflow import.
+RUN uv pip install --python /app/.venv/bin/python rdagent==0.8.0 pyqlib==0.9.7 'protobuf>=4.21,<5' 'setuptools>=68,<81' && \
+    /app/.venv/bin/python -c "import importlib.metadata; import rdagent; print(f'rdagent {importlib.metadata.version(\"rdagent\")} OK')" && \
+    /app/.venv/bin/python -c "from rdagent.app.qlib_rd_loop.conf import QUANT_PROP_SETTING; print('QUANT_PROP_SETTING importable')" && \
+    /app/.venv/bin/python -c "from rdagent.oai.backend.litellm import ACC_COST; print('ACC_COST importable')" && \
+    /app/.venv/bin/python -c "import mlflow; print(f'mlflow {mlflow.__version__} preserved')"
+
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Default CMD is a Python REPL for ad-hoc research sessions.
