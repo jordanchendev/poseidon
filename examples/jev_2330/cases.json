@@ -1,0 +1,94 @@
+{
+  "2026-q1": [
+    {
+      "id": "c1",
+      "claim": "1Q26 diluted earnings per share were NT$22.08.",
+      "evidence_id": "tsmc-1q26-earnings-release",
+      "quote": "NT$22.08",
+      "expected_label": "supports"
+    },
+    {
+      "id": "c2",
+      "claim": "1Q26 稀釋每股盈餘為新台幣 32.08 元。",
+      "evidence_id": "tsmc-1q26-earnings-release",
+      "expected_label": "contradicts"
+    },
+    {
+      "id": "c3",
+      "claim": "這份資料足以證明台積電股價低於其內在價值，現在買進價格便宜。",
+      "evidence_id": "tsmc-1q26-earnings-release",
+      "expected_label": "says_nothing"
+    },
+    {
+      "id": "c4",
+      "claim": "此快照的原始收盤價為新台幣 2085 元，並非含息總報酬。",
+      "evidence_id": "2330-price-2026-04-16",
+      "expected_label": "supports"
+    },
+    {
+      "id": "c5",
+      "claim": "公司保證未來股價上漲。",
+      "evidence_id": "tsmc-1q26-earnings-release",
+      "quote": "TSMC guarantees the stock price will rise.",
+      "expected_label": "fabricated_quote"
+    },
+    {
+      "id": "c6",
+      "claim": "1Q26 diluted earnings per share were NT$32.08.",
+      "evidence_id": "tsmc-1q26-earnings-release",
+      "expected_label": "contradicts"
+    },
+    {
+      "id": "c7",
+      "claim": "This evidence establishes that TSMC shares trade below intrinsic value and are cheap to buy now.",
+      "evidence_id": "tsmc-1q26-earnings-release",
+      "expected_label": "says_nothing"
+    }
+  ],
+  "2026-q2": [
+    {
+      "id": "c1",
+      "claim": "2Q26 diluted earnings per share were NT$27.25.",
+      "evidence_id": "tsmc-2q26-earnings-release",
+      "quote": "NT$27.25",
+      "expected_label": "supports"
+    },
+    {
+      "id": "c2",
+      "claim": "2Q26 稀釋每股盈餘為新台幣 37.25 元。",
+      "evidence_id": "tsmc-2q26-earnings-release",
+      "expected_label": "contradicts"
+    },
+    {
+      "id": "c3",
+      "claim": "這份資料足以證明台積電股價低於其內在價值，現在買進價格便宜。",
+      "evidence_id": "tsmc-2q26-earnings-release",
+      "expected_label": "says_nothing"
+    },
+    {
+      "id": "c4",
+      "claim": "此快照的原始收盤價為新台幣 2470 元，並非含息總報酬。",
+      "evidence_id": "2330-price-2026-07-16",
+      "expected_label": "supports"
+    },
+    {
+      "id": "c5",
+      "claim": "公司保證未來股價上漲。",
+      "evidence_id": "tsmc-2q26-earnings-release",
+      "quote": "TSMC guarantees the stock price will rise.",
+      "expected_label": "fabricated_quote"
+    },
+    {
+      "id": "c6",
+      "claim": "2Q26 diluted earnings per share were NT$37.25.",
+      "evidence_id": "tsmc-2q26-earnings-release",
+      "expected_label": "contradicts"
+    },
+    {
+      "id": "c7",
+      "claim": "This evidence establishes that TSMC shares trade below intrinsic value and are cheap to buy now.",
+      "evidence_id": "tsmc-2q26-earnings-release",
+      "expected_label": "says_nothing"
+    }
+  ]
+}
