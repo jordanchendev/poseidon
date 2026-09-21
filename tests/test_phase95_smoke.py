@@ -3,8 +3,7 @@
 Wall-clock budget:
   * Total budget:  ≤ 30 minutes for the full suite (1800s).
   * Per-prong budget: ≤ 6 minutes per prong (5 prongs × 6 min = 30 min ceiling).
-  * Failure tolerance: ≤ 1 PARTIAL acceptable;
-    2+ failures → aggregator assertion fails for human review.
+  * All five prongs must complete with status ``OK`` in the same smoke run.
 
 Five prongs covered, plus a final aggregator (collected last):
   1. ``test_e2e_prong_alpha158``               — ACTIVATE-01
@@ -15,9 +14,10 @@ Five prongs covered, plus a final aggregator (collected last):
                                                   cross-node via SSH macminim4-lan
   6. ``test_phase95_aggregate_results``        — verdict + phase_summary.json
 
-Pattern S4 STORMTROOPER gate at module level. Cross-node prong (#5)
-shells out to ``ssh macminim4-lan`` per Pattern P7; SSH/network failure → pytest.skip
-with ``cross-node-error: ...`` reason (PARTIAL — failure isolation).
+Pattern S4 STORMTROOPER gate at module level. Cross-node prong (#5) shells out
+from stormtrooper to ``ssh macminim4`` and runs Thalassa's actual health task
+inside its data-worker container. SSH, health-task, or JSON failures persist an
+error summary and fail the prong. They cannot certify the phase.
 
 The aggregator is collected last (per pytest's default in-file order) so it can
 read every prong's ``output_summary.json`` after the prong tests finish writing.
@@ -30,6 +30,7 @@ import os
 import subprocess
 import time
 import traceback
+import uuid
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,7 @@ _PRONG_BUDGET_SEC = 360.0
 _PHASE_BUDGET_SEC = 1800.0
 
 _SMOKE_ROOT_NAME = "95-activate-underutilised-qlib-surface"
+_RUN_ID = os.environ.get("PHASE95_RUN_ID") or str(uuid.uuid4())
 
 
 def _smoke_dir(prong: str) -> Path:
@@ -88,6 +90,7 @@ def _persist_prong_summary(
     """Persist per-prong output_summary.json under the E2E smoke tree."""
     d = _smoke_dir(prong)
     payload = {
+        "run_id": _RUN_ID,
         "prong": prong,
         "status": status,
         "elapsed_sec": elapsed,
@@ -128,7 +131,7 @@ def test_e2e_prong_alpha158() -> None:
         status, error = "PARTIAL", traceback.format_exc()
     elapsed = time.time() - t0
     _persist_prong_summary("ACTIVATE-01", status, elapsed, summary, error)
-    assert status in ("OK", "PARTIAL"), status
+    assert status == "OK", status
     assert elapsed < _PRONG_BUDGET_SEC, f"prong elapsed {elapsed:.1f}s > {_PRONG_BUDGET_SEC}s"
 
 
@@ -138,59 +141,24 @@ def test_e2e_prong_alpha158() -> None:
 def test_e2e_prong_qrun() -> None:
     """ACTIVATE-02 prong — invoke run_qrun_basis_vol then parity_check.
 
-    Per prior recorded behaviour (Pitfall 1 + Deviation #4), the qrun PortAnaRecord
-    chain crashes on benchmark calendar lookup (provider_uri="" bypass) — that
-    is *documented expected behaviour*, not a regression. The cross-prong wrapper
-    therefore wraps ``run_qrun_basis_vol()`` in its own except so the
-    structural crash doesn't prevent post-condition validation against
-    pre-existing pickles produced by 95-03's standalone test path.
-
-    Post-conditions (per plan ``<verify>``): pred.pkl + parity.json present.
-    parity.json status PARTIAL is acceptable (e.g. PortAnaRecord
-    pickles absent → ``port_analysis_1day.pkl`` LoadObjectError) — that's the
-    documented structural PARTIAL.
+    Requires a provider dump injected by the host and records the exact fresh
+    artifacts directory for the dependent report prong.
     """
     pytest.importorskip("qlib")
     _smoke_dir("ACTIVATE-02")  # ensure dir exists for output_summary.json
-    status, error, parity = "OK", None, None
-    qrun_run_error: str | None = None
+    provider_uri = os.environ.get("PHASE95_QLIB_PROVIDER_URI")
+    assert provider_uri, "set PHASE95_QLIB_PROVIDER_URI to a fresh TX+0050 Qlib dump"
+    status, error, parity, artifacts_dir = "PARTIAL", None, None, None
     t0 = time.time()
     try:
         from scripts.run_qrun_basis_vol import run_qrun_basis_vol
         from scripts.run_qrun_parity_check import parity_check
 
-        # Tolerate the documented PortAnaRecord crash — prior SUMMARY
-        # records this as expected (provider_uri="" bypasses qlib calendar so
-        # PortfolioMetrics.init_bench raises). Pre-existing pickles satisfy
-        # the post-condition.
-        try:
-            run_qrun_basis_vol()
-        except Exception:
-            qrun_run_error = traceback.format_exc()
-        # Recorder dir + v18 baseline JSON path are container-side absolutes
-        # (see scripts/run_qrun_*.py module constants).
-        recorder_dir = Path("/app/local_dev/qlib-activations/qrun-runs/v18-tx_basis_vol")
-        v18_json = Path("/app/scripts/output/tx_walkforward_v2.json")
-        parity = parity_check(recorder_dir=recorder_dir, v18_json_path=v18_json)
-        if parity.get("status") != "OK":
-            status = "PARTIAL"
-            error = parity.get("partial_reason")
-        # Persist parity.json next to the recorder if the standalone CLI didn't.
-        parity_path = recorder_dir / "parity.json"
-        if not parity_path.exists():
-            parity_path.parent.mkdir(parents=True, exist_ok=True)
-            parity_path.write_text(json.dumps(parity, indent=2, default=str))
-        # SignalRecord pickles live deep under mlruns/<exp>/<run>/artifacts/.
-        pred_pkls = (
-            list((recorder_dir / "mlruns").glob("*/*/artifacts/pred.pkl")) if (recorder_dir / "mlruns").exists() else []
-        )
-        if not pred_pkls:
-            # No prior 95-03 pickles available either — this is a real failure,
-            # surface the qrun crash trace.
-            status = "PARTIAL"
-            error = (error or "") + (
-                f" | pred.pkl missing under mlruns/ (qrun_run_error={qrun_run_error[:200] if qrun_run_error else 'None'})"
-            )
+        recorder_dir = _smoke_dir("ACTIVATE-02") / "recorder"
+        artifacts_dir = run_qrun_basis_vol(uri_folder=recorder_dir / "mlruns", provider_uri=provider_uri)
+        expected_returns = Path("/app/scripts/output/tx_walkforward_v2_basis_b_returns.parquet")
+        parity = parity_check(artifacts_dir=artifacts_dir, expected_returns_path=expected_returns)
+        status = parity["status"]
     except Exception:
         status, error = "PARTIAL", traceback.format_exc()
     elapsed = time.time() - t0
@@ -198,10 +166,11 @@ def test_e2e_prong_qrun() -> None:
         "ACTIVATE-02",
         status,
         elapsed,
-        {"parity": parity, "qrun_run_error_present": qrun_run_error is not None},
+        {"parity": parity, "artifacts_dir": str(artifacts_dir) if artifacts_dir else None},
         error,
     )
-    assert status in ("OK", "PARTIAL"), status
+    assert artifacts_dir is not None and (artifacts_dir / "portfolio_analysis/port_analysis_1day.pkl").exists()
+    assert status == "OK", status
     assert elapsed < _PRONG_BUDGET_SEC, f"prong elapsed {elapsed:.1f}s > {_PRONG_BUDGET_SEC}s"
 
 
@@ -211,9 +180,9 @@ def test_e2e_prong_qrun() -> None:
 def test_e2e_prong_signal_analysis() -> None:
     """ACTIVATE-03 prong — invoke run_signal_analysis with synthetic anchor.
 
-    Asserts ic.json + ic_decay.parquet + group_analysis.parquet present. Per
-    prior SUMMARY, single-instrument NaN behaviour is PASS-shape /
-    PARTIAL-semantics — counts as PASS for E2E.
+    Asserts ic.json + ic_decay.parquet + group_analysis.parquet present. A
+    single-instrument panel records IC and long-short as not applicable while
+    retaining the valid long-average statistic, so the analysis itself is OK.
     """
     pytest.importorskip("qlib")
     from tests.conftest import make_synthetic_anchor_signal
@@ -235,7 +204,7 @@ def test_e2e_prong_signal_analysis() -> None:
         status, error = "PARTIAL", traceback.format_exc()
     elapsed = time.time() - t0
     _persist_prong_summary("ACTIVATE-03", status, elapsed, summary, error)
-    assert status in ("OK", "PARTIAL"), status
+    assert status == "OK", status
     assert elapsed < _PRONG_BUDGET_SEC, f"prong elapsed {elapsed:.1f}s > {_PRONG_BUDGET_SEC}s"
 
 
@@ -252,37 +221,42 @@ def test_e2e_prong_portfolio_report() -> None:
     """
     pytest.importorskip("qlib")
     pytest.importorskip("plotly")
-    recorder_dir = Path("/app/local_dev/qlib-activations/qrun-runs/v18-tx_basis_vol")
-    if not (recorder_dir / "mlruns").exists():
-        # Prong 2 must run first; record as PARTIAL with cross-prong dep error.
+    qrun_summary = _smoke_dir("ACTIVATE-02") / "output_summary.json"
+    if not qrun_summary.exists():
         status, error = "PARTIAL", "ACTIVATE-02 mlruns/ missing — qrun did not produce SignalRecord pickles"
         _persist_prong_summary("ACTIVATE-05", status, 0.0, None, error)
-        pytest.skip(error)
-    backtest_out = Path("/app/local_dev/backtests/phase95_basis_vol/reports")
+        pytest.fail(error)
+    qrun_payload = json.loads(qrun_summary.read_text())
+    if qrun_payload.get("run_id") != _RUN_ID:
+        status, error = "PARTIAL", "ACTIVATE-02 output belongs to a different Phase95 run"
+        _persist_prong_summary("ACTIVATE-05", status, 0.0, None, error)
+        pytest.fail(error)
+    artifacts_dir = Path(qrun_payload["metrics"]["artifacts_dir"])
+    backtest_out = _smoke_dir("ACTIVATE-05") / "reports"
     backtest_out.mkdir(parents=True, exist_ok=True)
     status, error, summary = "OK", None, None
     t0 = time.time()
     try:
         from scripts.run_portfolio_report import run_portfolio_report
 
-        summary = run_portfolio_report(recorder_dir=recorder_dir, out_dir=backtest_out)
+        summary = run_portfolio_report(out_dir=backtest_out, artifacts_dir=artifacts_dir)
         # Assert ≥1 HTML output ≥1KB (ROADMAP SC5 acceptance).
         html_files = list(backtest_out.glob("*.html"))
         big_enough = [p for p in html_files if p.stat().st_size >= 1024]
-        if not big_enough:
+        if not big_enough or summary["n_skipped"] or summary["n_partial"]:
             status = "PARTIAL"
             error = f"no HTML ≥1KB under {backtest_out} (found {len(html_files)} HTMLs)"
     except Exception:
         status, error = "PARTIAL", traceback.format_exc()
     elapsed = time.time() - t0
     _persist_prong_summary("ACTIVATE-05", status, elapsed, summary, error)
-    assert status in ("OK", "PARTIAL"), status
+    assert status == "OK", status
     assert elapsed < _PRONG_BUDGET_SEC, f"prong elapsed {elapsed:.1f}s > {_PRONG_BUDGET_SEC}s"
 
 
 # =============================================================================
 # Prong 5 — ACTIVATE-04: Cross-node Data Health Checker via SSH.
-# Pattern P7: SSH/network failure → pytest.skip with cross-node-error tag.
+# SSH/network failures persist an error result and fail this required prong.
 # =============================================================================
 def test_e2e_prong_data_health_macminim4() -> None:
     """ACTIVATE-04 cross-node trigger via SSH (Pattern P7).
@@ -293,24 +267,29 @@ def test_e2e_prong_data_health_macminim4() -> None:
       3. Last stdout line is parsed as JSON; assert ``total_anomalies`` and
          ``markets`` keys present.
 
-    Failure modes (PARTIAL, isolation per Pattern P7):
+    Failure modes (persisted as ``PARTIAL`` and fail-closed):
       * SSH timeout (>600s)
       * Non-zero exit code from remote command
       * JSON parse failure on last stdout line
-    All result in ``pytest.skip("cross-node-error: ...")`` so the prong is
-    reported as PARTIAL via persisted output_summary.json without aborting
-    the rest of the smoke.
+    All result fail this required prong after writing an ``output_summary``;
+    the final aggregator therefore cannot report GREEN from stale artifacts.
     """
+    if os.environ.get("PHASE95_HOST_SSH") != "1":
+        pytest.skip("host-only check; set PHASE95_HOST_SSH=1 on stormtrooper host")
     _smoke_dir("ACTIVATE-04")  # ensure dir exists for output_summary.json
     inline = (
         "from thalassa.workers.data_health_tasks import qlib_data_health_check; "
         "import json; "
         "print(json.dumps(qlib_data_health_check.apply(kwargs={'lookback_days': 30}).get()))"
     )
+    ssh_target = os.environ.get("PHASE95_SSH_TARGET", "macminim4")
     cmd = [
         "ssh",
-        "macminim4-lan",
-        f'cd ~/Projects/thalassa && docker compose exec -T data-worker uv run python -c "{inline}"',
+        ssh_target,
+        (
+            "cd ~/Projects/thalassa && PATH=/opt/homebrew/bin:$PATH "
+            f'docker compose exec -T data-worker uv run python -c "{inline}"'
+        ),
     ]
     status, error, report = "OK", None, None
     t0 = time.time()
@@ -319,7 +298,7 @@ def test_e2e_prong_data_health_macminim4() -> None:
         if completed.returncode != 0:
             error = f"cross-node-error: rc={completed.returncode} stderr={completed.stderr[:300]}"
             _persist_prong_summary("ACTIVATE-04", "PARTIAL", time.time() - t0, None, error)
-            pytest.skip(error)
+            pytest.fail(error)
         # The inline script's print() lands on the LAST stdout line; preceding
         # lines may include warnings / logger output from the docker compose exec
         # boot sequence. Try last non-empty line first; on JSON parse failure
@@ -340,16 +319,16 @@ def test_e2e_prong_data_health_macminim4() -> None:
                 f"(last 5 lines: {stdout_lines[-5:]!r})"
             )
             _persist_prong_summary("ACTIVATE-04", "PARTIAL", time.time() - t0, None, error)
-            pytest.skip(error)
+            pytest.fail(error)
     except subprocess.TimeoutExpired:
         error = "cross-node-error: ssh timeout (>600s)"
         _persist_prong_summary("ACTIVATE-04", "PARTIAL", time.time() - t0, None, error)
-        pytest.skip(error)
+        pytest.fail(error)
     except FileNotFoundError as e:
         # ssh binary itself missing — only happens if the host's PATH is wrong.
         error = f"cross-node-error: ssh binary not found: {e!s}"
         _persist_prong_summary("ACTIVATE-04", "PARTIAL", time.time() - t0, None, error)
-        pytest.skip(error)
+        pytest.fail(error)
     elapsed = time.time() - t0
     _persist_prong_summary("ACTIVATE-04", status, elapsed, report, error)
     # Defensive: re-assert keys for the OK path.
@@ -364,20 +343,10 @@ def test_e2e_prong_data_health_macminim4() -> None:
 # prong's output_summary.json and emits phase_summary.json with verdict.
 # =============================================================================
 def test_phase95_aggregate_results() -> None:
-    """Aggregate per-prong results; enforce failure tolerance.
+    """Aggregate only fresh, successful output from all five required prongs.
 
-    Verdict logic (per Plan 95-07 objective amendment):
-      Structural PARTIALs already documented as PASS-equivalent in prior
-      SUMMARYs do NOT count toward the ≤1 limit; only NEW failures do.
-      Pre-documented structural PARTIALs:
-        * ACTIVATE-02 PARTIAL when ``parity.partial_reason`` references the
-          documented PortAnaRecord ``port_analysis_1day.pkl`` LoadObjectError
-          (Pitfall 1 / prior SUMMARY Deviation #4 / acceptance).
-        * ACTIVATE-04 PARTIAL when ``error`` starts with ``cross-node-error:``
-          (Pattern P7 failure isolation).
-
-      * NEW PARTIAL count ≤1 AND missing=0 → GREEN.
-      * NEW PARTIAL count ≥2 OR any MISSING → CHECKPOINT_REACHED.
+    Every summary must carry this module's ``_RUN_ID`` and exact ``OK`` status.
+    Missing, stale, partial, unsupported, or error output is a failing gate.
 
     Wall-clock: total elapsed across prongs must stay within budget (1800s).
     """
@@ -406,74 +375,36 @@ def test_phase95_aggregate_results() -> None:
                 "error": f"JSON parse error: {exc!s}",
             }
             continue
+        if payload.get("run_id") != _RUN_ID:
+            prong_results[prong] = {
+                "status": "MISSING",
+                "elapsed_sec": 0.0,
+                "error": f"run_id mismatch: expected {_RUN_ID}, got {payload.get('run_id')!r}",
+            }
+            continue
         prong_results[prong] = payload
         total_elapsed += float(payload.get("elapsed_sec") or 0)
 
-    def _is_documented_structural_partial(prong: str, payload: dict) -> bool:
-        """Per Plan 95-07 objective: pre-documented structural PARTIALs count
-        as PASS-equivalent (not against the ≤1 limit)."""
-        if payload.get("status") != "PARTIAL":
-            return False
-        err = payload.get("error") or ""
-        metrics = payload.get("metrics") or {}
-        # ACTIVATE-02: documented port_analysis pickle absence (95-03 Deviation #4).
-        if prong == "ACTIVATE-02":
-            parity = (metrics.get("parity") or {}) if isinstance(metrics.get("parity"), dict) else {}
-            preason = parity.get("partial_reason") or ""
-            if "port_analysis_1day" in preason or "PortAnaRecord" in err or "init_bench" in err:
-                return True
-            # Also accept the documented qrun crash chain that lands on the
-            # same root cause (calendar lookup with empty provider).
-            if "can't find a freq from []" in err or "init_bench" in preason:
-                return True
-        # ACTIVATE-04: documented Pattern P7 cross-node SSH failure isolation.
-        return prong == "ACTIVATE-04" and err.startswith("cross-node-error:")
-
-    partial_count = sum(1 for v in prong_results.values() if v.get("status") == "PARTIAL")
-    missing_count = sum(1 for v in prong_results.values() if v.get("status") == "MISSING")
     ok_count = sum(1 for v in prong_results.values() if v.get("status") == "OK")
-
-    structural_partials = [p for p, v in prong_results.items() if _is_documented_structural_partial(p, v)]
-    new_partials = [
-        p
-        for p, v in prong_results.items()
-        if v.get("status") == "PARTIAL" and not _is_documented_structural_partial(p, v)
-    ]
-    new_partial_count = len(new_partials)
-
-    verdict = "GREEN" if (new_partial_count <= 1 and missing_count == 0) else "CHECKPOINT_REACHED"
+    non_ok_prongs = [prong for prong, result in prong_results.items() if result.get("status") != "OK"]
+    verdict = "GREEN" if not non_ok_prongs else "CHECKPOINT_REACHED"
 
     phase_summary = {
         "n_prongs": len(prong_results),
+        "run_id": _RUN_ID,
         "ok": ok_count,
-        "partial": partial_count,
-        "missing": missing_count,
-        "structural_partials": structural_partials,
-        "new_partials": new_partials,
-        "new_partial_count": new_partial_count,
+        "non_ok_prongs": non_ok_prongs,
         "total_elapsed_sec": total_elapsed,
         "wall_clock_budget_sec": _PHASE_BUDGET_SEC,
         "wall_clock_within_budget": total_elapsed < _PHASE_BUDGET_SEC,
-        "tolerance": (
-            "Structural PARTIALs (ACTIVATE-02 PortAnaRecord per 95-03 Deviation #4, "
-            "ACTIVATE-04 cross-node-error per Pattern P7) are PASS-equivalent. "
-            "≤1 NEW PARTIAL acceptable."
-        ),
+        "tolerance": "Every required prong must be fresh and status OK.",
         "verdict": verdict,
         "prong_results": prong_results,
     }
     (smoke_root / "phase_summary.json").write_text(json.dumps(phase_summary, indent=2, default=str))
 
-    # ≤1 NEW (non-structural) PARTIAL acceptable.
-    assert missing_count == 0, (
-        f"missing prong outputs: {[k for k, v in prong_results.items() if v.get('status') == 'MISSING']}"
-    )
-    assert new_partial_count <= 1, (
-        f"{new_partial_count} NEW (non-structural) prongs PARTIAL — CHECKPOINT REACHED. "
-        f"NEW partials: {new_partials}. Structural (PASS-equivalent): {structural_partials}. "
-        f"2+ NEW failures require user review. "
-        f"Details in {smoke_root / 'phase_summary.json'}"
-    )
+    assert not non_ok_prongs, f"non-OK or stale prongs: {non_ok_prongs}; results={prong_results}"
+    assert verdict == "GREEN", f"Phase95 smoke requires all prongs: {phase_summary}"
     # Total wall-clock ≤30 min
     assert total_elapsed < _PHASE_BUDGET_SEC, (
         f"total wall-clock {total_elapsed:.1f}s exceeds {_PHASE_BUDGET_SEC}s budget"

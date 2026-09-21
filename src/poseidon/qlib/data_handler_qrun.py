@@ -88,7 +88,7 @@ class PoseidonDataHandlerForQrun(PoseidonDataHandler):
             # adapter boundary so all downstream qlib code sees a tz-naive
             # MultiIndex without modifying the upstream PoseidonDataHandler
             # contract used elsewhere.
-            self._raw_data = self._strip_tz_from_index(self._raw_data)
+            self._raw_data = self._normalize_index_for_interval(self._raw_data, interval)
             self._qlib_handler = self.to_qlib_handler()
             # Rule 1 fix #2 (95-03 stormtrooper smoke): qlib's mlflow recorder
             # pickles the handler to disk after training. SQLAlchemy Session
@@ -124,8 +124,8 @@ class PoseidonDataHandlerForQrun(PoseidonDataHandler):
             raise
 
     @staticmethod
-    def _strip_tz_from_index(df: pd.DataFrame) -> pd.DataFrame:
-        """Return ``df`` with the ``datetime`` level of its MultiIndex tz-naive.
+    def _normalize_index_for_interval(df: pd.DataFrame, interval: str) -> pd.DataFrame:
+        """Make daily bars match the provider's Asia/Taipei session calendar.
 
         DatasetBuilder fetches OHLCV from Postgres with timezone-aware
         timestamps; qrun YAML segments are tz-naive strings, so qlib's
@@ -141,17 +141,35 @@ class PoseidonDataHandlerForQrun(PoseidonDataHandler):
             return df
         dt_level = df.index.get_level_values("datetime")
         if getattr(dt_level, "tz", None) is None:
-            return df
-        # Rebuild MultiIndex with tz stripped from the datetime level only.
+            if interval != "1d":
+                return df
+            out = df.copy()
+            out.index = pd.MultiIndex.from_arrays(
+                [
+                    dt_level.normalize() if name == "datetime" else df.index.get_level_values(name)
+                    for name in df.index.names
+                ],
+                names=df.index.names,
+            )
+            return out[~out.index.duplicated(keep="last")]
+        # Rebuild MultiIndex with the datetime level only. Daily Qlib providers
+        # use midnight session labels, so stripping UTC from a 05:30/16:00 bar
+        # leaves an unmatchable timestamp. Convert to Taipei then normalize.
         names = list(df.index.names)
         levels = [
-            df.index.get_level_values(name).tz_localize(None) if name == "datetime" else df.index.get_level_values(name)
+            (
+                df.index.get_level_values(name).tz_convert("Asia/Taipei").normalize().tz_localize(None)
+                if name == "datetime" and interval == "1d"
+                else df.index.get_level_values(name).tz_localize(None)
+                if name == "datetime"
+                else df.index.get_level_values(name)
+            )
             for name in names
         ]
         new_index = pd.MultiIndex.from_arrays(levels, names=names)
         out = df.copy()
         out.index = new_index
-        return out
+        return out[~out.index.duplicated(keep="last")]
 
     def fetch(self, *args: Any, **kwargs: Any) -> pd.DataFrame:
         """Forward fetch to the underlying qlib ``DataHandlerLP``."""

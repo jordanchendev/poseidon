@@ -68,6 +68,7 @@ def _load_basis_arb_panel() -> pd.DataFrame:
         ``$open, $high, $low, $close, $volume, $factor`` (Alpha158 expectations).
     """
     from poseidon.data.remote_repository import RemoteDataRepository
+    from poseidon.research.tx_basis_rule import normalize_taipei_daily_index
 
     repo = RemoteDataRepository.from_settings()
     end = datetime.now()
@@ -75,11 +76,7 @@ def _load_basis_arb_panel() -> pd.DataFrame:
     if tx.empty:
         raise RuntimeError("No TX data returned from Thalassa")
 
-    # Align index — TZ-naive, normalized, deduped (verbatim from v18 driver).
-    tx_idx = tx.index.tz_localize(None) if tx.index.tz is not None else tx.index
-    tx = tx.copy()
-    tx.index = pd.to_datetime(tx_idx).normalize()
-    tx = tx[~tx.index.duplicated(keep="last")]
+    tx = normalize_taipei_daily_index(tx)
 
     panel = pd.DataFrame(
         {
@@ -105,6 +102,7 @@ def _load_basis_arb_panel() -> pd.DataFrame:
 def _load_etf_for_basis(panel: pd.DataFrame) -> pd.DataFrame:
     """Load 0050 1d aligned to the TX panel's date range (real-data path)."""
     from poseidon.data.remote_repository import RemoteDataRepository
+    from poseidon.research.tx_basis_rule import normalize_taipei_daily_index
 
     repo = RemoteDataRepository.from_settings()
     dates = panel.index.get_level_values("datetime")
@@ -117,11 +115,7 @@ def _load_etf_for_basis(panel: pd.DataFrame) -> pd.DataFrame:
     )
     if tw0050.empty:
         raise RuntimeError("No 0050 data returned from Thalassa")
-    e_idx = tw0050.index.tz_localize(None) if tw0050.index.tz is not None else tw0050.index
-    tw0050 = tw0050.copy()
-    tw0050.index = pd.to_datetime(e_idx).normalize()
-    tw0050 = tw0050[~tw0050.index.duplicated(keep="last")]
-    return tw0050
+    return normalize_taipei_daily_index(tw0050)
 
 
 # ---------------------------------------------------------------------------
@@ -578,7 +572,8 @@ def run_alpha158_eval(
     # Top-5 features by |IC|.
     abs_ic = per_feat_ic["ic"].abs()
     top5_idx = abs_ic.sort_values(ascending=False, na_position="last").index[:5]
-    top5 = per_feat_ic.loc[top5_idx].to_dict(orient="records")
+    top5 = per_feat_ic.loc[top5_idx].replace([np.inf, -np.inf], np.nan).astype(object).where(lambda x: x.notna(), None)
+    top5 = top5.to_dict(orient="records")
     summary = {
         "n_trigger_days": int(trigger_mask.sum()),
         "n_features": int(df_features.shape[1]),
@@ -587,7 +582,7 @@ def run_alpha158_eval(
         "anchor_signal": "basis_arb_daily",
         "thesis": "v18 TX-vs-0050 basis_z<-1 trigger (test_tx_basis_vol.py)",
     }
-    (out_path / "summary.json").write_text(json.dumps(summary, indent=2))
+    (out_path / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False))
     logger.info(
         "run_alpha158_eval: %d features × %d trigger days → %s",
         summary["n_features"],

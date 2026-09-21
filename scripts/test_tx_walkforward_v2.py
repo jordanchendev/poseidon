@@ -25,6 +25,11 @@ import numpy as np
 import pandas as pd
 
 from poseidon.data.remote_repository import RemoteDataRepository
+from poseidon.research.tx_basis_rule import (
+    basis_signal_from_z,
+    normalize_taipei_daily_index,
+    perf_full,
+)
 
 START = datetime(2021, 3, 22)
 END = datetime.now()
@@ -39,59 +44,6 @@ SMA_WIN = 20
 VOL_WIN = 20
 
 WARMUP_OPTIONS = [252, 504]  # (a) — compare 1yr vs 2yr warmup → OOS lengths
-
-
-def annualised(mean: float, std: float) -> float:
-    if std == 0 or np.isnan(std):
-        return 0.0
-    return float(mean / std * np.sqrt(BARS_PER_YEAR))
-
-
-def perf_full(net: pd.Series, engaged: pd.Series) -> dict:
-    """Full perf incl. Sortino, downside vol, %time-in-DD, max DD duration."""
-    n_total = len(net)
-    if n_total == 0:
-        return {}
-    eq = (1.0 + net).cumprod()
-    peak = eq.cummax()
-    dd = (eq / peak) - 1.0
-    mdd = float(dd.min())
-    cum = float(eq.iloc[-1] - 1.0)
-    sh = annualised(net.mean(), net.std())
-    # Sortino: downside-only std (returns < 0)
-    downside = net[net < 0]
-    downside_std = float(downside.std()) if len(downside) > 1 else 0.0
-    sortino = annualised(net.mean(), downside_std) if downside_std > 0 else 0.0
-    # %time in DD ≥ 1%
-    in_dd_1pct = float((dd <= -0.01).mean())
-    # Max DD duration in bars (longest stretch dd < 0)
-    in_dd = (dd < 0).astype(int)
-    if in_dd.sum() == 0:
-        max_dd_dur = 0
-    else:
-        # Run-length on True streaks
-        groups = (in_dd != in_dd.shift()).cumsum()
-        runs = in_dd.groupby(groups).sum()
-        max_dd_dur = int(runs.max())
-    n_eng = int(engaged.sum())
-    freq = n_eng / n_total
-    calmar = cum / abs(mdd) if mdd < 0 else (float("inf") if cum > 0 else 0.0)
-    eng_only = net[engaged.astype(bool)]
-    sh_eng = annualised(eng_only.mean(), eng_only.std()) if len(eng_only) > 1 else 0.0
-    return {
-        "n_total": n_total,
-        "n_engaged": n_eng,
-        "freq": freq,
-        "sh_full": sh,
-        "sh_engaged_only": sh_eng,
-        "sortino": sortino,
-        "downside_std_ann": float(downside_std * np.sqrt(BARS_PER_YEAR)),
-        "cum": cum,
-        "mdd": mdd,
-        "calmar": calmar,
-        "pct_time_in_dd_ge_1pct": in_dd_1pct,
-        "max_dd_duration_bars": max_dd_dur,
-    }
 
 
 def fmt_row(name: str, p: dict, base: dict | None = None) -> str:
@@ -125,9 +77,8 @@ def build_signals(df: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series]:
     yest_sma20 = df["sma20"].shift(1)
     yest_vol20 = df["vol20"].shift(1)
     yest_vol_p67 = df["vol_p67_rolling"].shift(1)
-    yest_basis_z = df["basis_z"].shift(1)
     sig_A = (yest_close < yest_sma20) & (yest_vol20 > yest_vol_p67)
-    sig_B = yest_basis_z < BASIS_THRESHOLD
+    sig_B = basis_signal_from_z(df["basis_z"])
     sig_C = sig_A | sig_B
     return sig_A, sig_B, sig_C
 
@@ -139,14 +90,8 @@ def main():
     if tx.empty or tw0050.empty:
         raise RuntimeError("Missing data")
 
-    tx_idx = tx.index.tz_localize(None) if tx.index.tz is not None else tx.index
-    e_idx = tw0050.index.tz_localize(None) if tw0050.index.tz is not None else tw0050.index
-    tx = tx.copy()
-    tw0050 = tw0050.copy()
-    tx.index = pd.to_datetime(tx_idx).normalize()
-    tw0050.index = pd.to_datetime(e_idx).normalize()
-    tx = tx[~tx.index.duplicated(keep="last")]
-    tw0050 = tw0050[~tw0050.index.duplicated(keep="last")]
+    tx = normalize_taipei_daily_index(tx)
+    tw0050 = normalize_taipei_daily_index(tw0050)
 
     df = pd.DataFrame(
         {
@@ -183,6 +128,7 @@ def main():
         },
         "runs": {},
     }
+    canonical_b_returns: pd.Series | None = None
 
     for warmup in WARMUP_OPTIONS:
         if len(df_valid) <= warmup + 60:
@@ -214,6 +160,8 @@ def main():
             net = intraday.where(engaged, 0.0) - engaged.astype(float) * ROUND_TRIP_COST
             nets[name] = (net, engaged)
             perfs[name] = perf_full(net, engaged)
+            if warmup == 252 and name == "B basis_z<-1 long":
+                canonical_b_returns = net.rename("return")
 
         print("  Header: sh=Sharpe  sort=Sortino  Δ vs baseline (Δsh, Δsort, Δcum pp, Δmdd pp)")
         print(fmt_row("baseline every-day intraday", base_perf))
@@ -253,6 +201,9 @@ def main():
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w") as f:
         json.dump(all_payload, f, indent=2, default=str)
+    if canonical_b_returns is None:
+        raise RuntimeError("warmup_252 canonical B returns were not produced")
+    canonical_b_returns.to_frame().to_parquet(out_path.with_name("tx_walkforward_v2_basis_b_returns.parquet"))
     print(f"Written: {out_path}")
 
 

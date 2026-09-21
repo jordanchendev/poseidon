@@ -64,6 +64,7 @@ def _build_pred_label_panels() -> tuple[pd.Series, pd.Series]:
     # ``pytest --collect-only`` works on Mac without poseidon installed in the
     # current venv.
     from poseidon.data.remote_repository import RemoteDataRepository
+    from poseidon.research.tx_basis_rule import normalize_taipei_daily_index
     from poseidon.research.tx_basis_signal import compute_basis_z
 
     repo = RemoteDataRepository.from_settings()
@@ -81,6 +82,8 @@ def _build_pred_label_panels() -> tuple[pd.Series, pd.Series]:
         start=datetime(2021, 3, 22),
         end=datetime.now(),
     )
+    tx = normalize_taipei_daily_index(tx)
+    tw0050 = normalize_taipei_daily_index(tw0050)
     adj_col = "adj_close" if "adj_close" in tw0050.columns else "close"
     basis_z = compute_basis_z(tx, tw0050, adj_col=adj_col)
     pred_flat = (-basis_z).rename("score")
@@ -120,22 +123,42 @@ def _ic_decay(pred: pd.Series, label: pd.Series, max_lag: int = 20) -> pd.DataFr
         if len(common) < 30:
             continue
         ic_lag, _ = calc_ic(pred.loc[common], label_lagged.loc[common])
-        rows.append({"lag": int(lag), "ic_mean": float(ic_lag.mean()), "n": len(ic_lag)})
+        ic_mean = _finite_or_none(ic_lag.mean())
+        if ic_mean is not None:
+            rows.append({"lag": int(lag), "ic_mean": ic_mean, "n": len(ic_lag)})
     return pd.DataFrame(rows)
 
 
-def _safe_ratio(numer: float, denom: float) -> float:
-    """Return ``numer / denom`` or ``0.0`` if denom is zero / non-finite."""
-    if not np.isfinite(denom) or denom == 0:
-        return 0.0
+def _finite_or_none(value: float) -> float | None:
+    """Convert invalid numerical output to JSON's explicit null."""
+    value = float(value)
+    return value if np.isfinite(value) else None
+
+
+def _json_safe(value):
+    """Recursively map non-finite numerical values to JSON null."""
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (float, np.floating)):
+        return _finite_or_none(value)
+    return value
+
+
+def _safe_ratio(numer: float, denom: float) -> float | None:
+    """Return a finite ratio, or null when the statistic is undefined."""
+    if not np.isfinite(numer) or not np.isfinite(denom) or denom == 0:
+        return None
     val = numer / denom
-    return float(val) if np.isfinite(val) else 0.0
+    return _finite_or_none(val)
 
 
 def run_signal_analysis(
     pred: pd.Series | None = None,
     label: pd.Series | None = None,
     out_dir: Path | None = None,
+    baseline_path: Path | str | None = None,
 ) -> dict:
     """Library entry — runs the three metrics + v18 comparison.
 
@@ -148,6 +171,8 @@ def run_signal_analysis(
     out_dir
         Output directory; defaults to the in-container path
         ``/app/local_dev/qlib-activations/signal-analysis/basis_arb``.
+    baseline_path
+        Optional v18 walk-forward JSON used for the side-by-side comparison.
 
     Returns
     -------
@@ -178,19 +203,44 @@ def run_signal_analysis(
         out_dir,
     )
 
-    # === IC + Rank IC ===
-    ic, rank_ic = calc_ic(pred, label)
-    ic_summary = {
-        "ic_mean": float(ic.mean()),
-        "ic_std": float(ic.std()),
-        "icir": _safe_ratio(float(ic.mean()), float(ic.std())),
-        "rank_ic_mean": float(rank_ic.mean()),
-        "rank_icir": _safe_ratio(float(rank_ic.mean()), float(rank_ic.std())),
-        "n_dates": len(ic),
+    n_instruments = pred.index.get_level_values("instrument").nunique()
+    n_dates = pred.index.get_level_values("datetime").nunique()
+    cross_sectional = n_instruments >= 2
+    applicability = {
+        "status": "APPLICABLE" if cross_sectional else "NOT_APPLICABLE",
+        "n_instruments": int(n_instruments),
+        "reason": (
+            None if cross_sectional else "IC, Rank IC, and long-short spread require at least two instruments per date."
+        ),
     }
-    (out_dir / "ic.json").write_text(json.dumps(ic_summary, indent=2))
+
+    # === IC + Rank IC ===
+    if cross_sectional:
+        ic, rank_ic = calc_ic(pred, label)
+        ic_mean, ic_std = _finite_or_none(ic.mean()), _finite_or_none(ic.std())
+        rank_ic_mean = _finite_or_none(rank_ic.mean())
+        ic_summary = {
+            "ic_mean": ic_mean,
+            "ic_std": ic_std,
+            "icir": _safe_ratio(ic.mean(), ic.std()),
+            "rank_ic_mean": rank_ic_mean,
+            "rank_icir": _safe_ratio(rank_ic.mean(), rank_ic.std()),
+            "n_dates": int(n_dates),
+            "cross_sectional": applicability,
+        }
+    else:
+        ic_summary = {
+            "ic_mean": None,
+            "ic_std": None,
+            "icir": None,
+            "rank_ic_mean": None,
+            "rank_icir": None,
+            "n_dates": int(n_dates),
+            "cross_sectional": applicability,
+        }
+    (out_dir / "ic.json").write_text(json.dumps(ic_summary, indent=2, allow_nan=False))
     logger.info(
-        "ic_summary: ic_mean=%.4f icir=%.3f rank_ic_mean=%.4f n_dates=%d",
+        "ic_summary: ic_mean=%s icir=%s rank_ic_mean=%s n_dates=%d",
         ic_summary["ic_mean"],
         ic_summary["icir"],
         ic_summary["rank_ic_mean"],
@@ -198,7 +248,7 @@ def run_signal_analysis(
     )
 
     # === IC decay (lags 0..20) ===
-    decay_df = _ic_decay(pred, label, max_lag=20)
+    decay_df = _ic_decay(pred, label, max_lag=20) if cross_sectional else pd.DataFrame(columns=["lag", "ic_mean", "n"])
     decay_df.to_parquet(out_dir / "ic_decay.parquet")
     logger.info("ic_decay: %d lag rows persisted", len(decay_df))
 
@@ -208,20 +258,28 @@ def run_signal_analysis(
     # Returns (long_short_r, long_avg_r) — daily series. ``keep`` kwarg from
     # plan template does not exist in this version; ``dropna=True`` keeps
     # behaviour stable when single-instrument panels have NaN at boundaries.
-    ls_ret, lavg_ret = calc_long_short_return(pred, label, dropna=True)
+    if cross_sectional:
+        ls_ret, lavg_ret = calc_long_short_return(pred, label, dropna=True)
+    else:
+        lavg_ret = label.droplevel("instrument").groupby(level="datetime").mean()
+        ls_ret = pd.Series(np.nan, index=lavg_ret.index, dtype=float)
+    long_avg_mean, long_avg_std = float(lavg_ret.mean()), float(lavg_ret.std())
+    long_short_ratio = _safe_ratio(ls_ret.mean(), ls_ret.std()) if cross_sectional else None
+    long_avg_ratio = _safe_ratio(long_avg_mean, long_avg_std)
     ls_summary = {
-        "ann_long_short_return": float(ls_ret.mean() * BARS_PER_YEAR),
+        "ann_long_short_return": _finite_or_none(ls_ret.mean() * BARS_PER_YEAR) if cross_sectional else None,
         "ann_long_short_sharpe": (
-            _safe_ratio(float(ls_ret.mean()), float(ls_ret.std())) * float(np.sqrt(BARS_PER_YEAR))
+            _finite_or_none(long_short_ratio * np.sqrt(BARS_PER_YEAR)) if long_short_ratio is not None else None
         ),
-        "ann_long_avg_return": float(lavg_ret.mean() * BARS_PER_YEAR),
+        "ann_long_avg_return": _finite_or_none(long_avg_mean * BARS_PER_YEAR),
         "ann_long_avg_sharpe": (
-            _safe_ratio(float(lavg_ret.mean()), float(lavg_ret.std())) * float(np.sqrt(BARS_PER_YEAR))
+            _finite_or_none(long_avg_ratio * np.sqrt(BARS_PER_YEAR)) if long_avg_ratio is not None else None
         ),
+        "long_short": applicability,
     }
     pd.concat({"long_short": ls_ret, "long_avg": lavg_ret}, axis=1).to_parquet(out_dir / "group_analysis.parquet")
     logger.info(
-        "group_analysis: ann_ls_sharpe=%.3f ann_long_avg_sharpe=%.3f",
+        "group_analysis: ann_ls_sharpe=%s ann_long_avg_sharpe=%s",
         ls_summary["ann_long_short_sharpe"],
         ls_summary["ann_long_avg_sharpe"],
     )
@@ -232,7 +290,7 @@ def run_signal_analysis(
     # via cpu-worker `python scripts/test_tx_walkforward_v2.py`). Mac-side
     # it is absent and we record `null` rather than raise — synthetic test
     # path never has a baseline.
-    v18_path = Path("/app/scripts/output/tx_walkforward_v2.json")
+    v18_path = Path(baseline_path or "/app/scripts/output/tx_walkforward_v2.json")
     v18_perf: dict | None = None
     if v18_path.exists():
         try:
@@ -250,7 +308,9 @@ def run_signal_analysis(
         "anchor_signal": "basis_arb_daily",
         "thesis": "v18 TX-vs-0050 basis_z<-1 trigger (long TX + short 0050)",
     }
-    (out_dir / "comparison_vs_v18.json").write_text(json.dumps(comparison, indent=2, default=str))
+    (out_dir / "comparison_vs_v18.json").write_text(
+        json.dumps(_json_safe(comparison), indent=2, default=str, allow_nan=False)
+    )
 
     return {**ic_summary, **ls_summary, "out_dir": str(out_dir)}
 

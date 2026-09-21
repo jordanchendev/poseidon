@@ -4,15 +4,16 @@
 # Pattern P4 — invoked via qlib.cli.run.workflow() (direct in-process call).
 # Pattern P8 — every `class:` entry MUST resolve through
 #   poseidon.qlib.allowlist.{resolve_handler,resolve_model} (RCE boundary).
-# Pitfall 1 — empty provider_uri because PoseidonDataHandlerForQrun bypasses
-#   qlib provider data via StaticDataLoader.
+# ``provider_uri`` is injected by run_qrun_basis_vol.py for each run. The
+# custom handler supplies model data, while PortAnaRecord still needs a real
+# provider calendar and the 0050 benchmark series.
 # Pitfall 2 — driver pins MLFLOW_TRACKING_URI=file:... explicitly to avoid
 #   leaking onto the qlib-research container's Postgres MLflow backend.
 # Pitfall 8 — model handler is the PoseidonDataHandlerForQrun adapter
 #   (allowlisted), NOT qlib.contrib.data.handler.Alpha158.
 
 qlib_init:
-  provider_uri: ""
+  provider_uri: null
   region: cn
 
 market: &market tx_basis_arb
@@ -30,16 +31,23 @@ data_handler_config: &data_handler_config
 port_analysis_config: &port_analysis_config
   strategy:
     class: TopkDropoutStrategy
-    module_path: qlib.contrib.strategy.strategy
+    module_path: qlib.contrib.strategy.signal_strategy
     kwargs:
       topk: 1
       n_drop: 0
-      signal: <PRED>
+      signal: [<MODEL>, <DATASET>]
   backtest:
     start_time: 2025-01-01
     end_time: 2026-04-30
     account: 1000000
     benchmark: *benchmark
+    exchange_kwargs:
+      deal_price: open
+      limit_threshold: null
+      trade_unit: 1
+      open_cost: 0.00016
+      close_cost: 0.00016
+      min_cost: 0
 
 task:
   model:
@@ -74,3 +82,9 @@ task:
       module_path: qlib.workflow.record_temp
       kwargs:
         config: *port_analysis_config
+    - class: BasisRuleRecord
+      module_path: poseidon.qlib.basis_rule_record
+      kwargs:
+        start_time: 2021-03-22
+        end_time: 2026-04-30
+        warmup: 252

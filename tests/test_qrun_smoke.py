@@ -23,7 +23,6 @@ from __future__ import annotations
 import json
 import os
 import time
-import traceback
 from pathlib import Path
 
 import pytest
@@ -89,100 +88,45 @@ def test_qrun_yaml_loads() -> None:
     yaml_handler_module = cfg["task"]["dataset"]["kwargs"]["handler"]["module_path"]
     assert model_fqn.startswith(yaml_model_module + "."), "YAML model module_path inconsistent with allowlist FQN"
     assert handler_fqn.startswith(yaml_handler_module + "."), "YAML handler module_path inconsistent with allowlist FQN"
+    records = cfg["task"]["record"]
+    basis_record = next(record for record in records if record["class"] == "BasisRuleRecord")
+    assert basis_record["module_path"] == "poseidon.qlib.basis_rule_record"
 
 
 @STORMTROOPER_GATE
-def test_qrun_smoke() -> None:
-    """ACTIVATE-02 smoke: drive qrun YAML end-to-end + run parity check.
-
-    Runs ``run_qrun_basis_vol()`` inside the qlib-research container. After the
-    workflow completes, asserts the recorder directory + mlruns/ exist (downstream
-    consumer contract) and runs the parity check. PARTIAL is acceptable;
-    only an empty recorder dir or a hard exception fails the test.
-    """
+def test_qrun_smoke(tmp_path: Path) -> None:
+    """A fresh provider-backed run must emit the complete PortAnaRecord set."""
     pytest.importorskip("qlib")
+    provider_uri = os.environ.get("PHASE95_QLIB_PROVIDER_URI")
+    assert provider_uri, "set PHASE95_QLIB_PROVIDER_URI to a fresh TX+0050 Qlib dump"
 
-    smoke_dir = _smoke_dir("ACTIVATE-02")
-    recorder_dir = Path("/app/local_dev/qlib-activations/qrun-runs/v18-tx_basis_vol")
+    from scripts.run_qrun_basis_vol import run_qrun_basis_vol
+    from scripts.run_qrun_parity_check import parity_check
 
-    status: str = "OK"
-    error: str | None = None
-    parity: dict | None = None
-    workflow_completed: bool = False
-    pred_pkl_exists: bool = False
     t0 = time.time()
-    try:
-        from scripts.run_qrun_basis_vol import run_qrun_basis_vol
-        from scripts.run_qrun_parity_check import parity_check
-
-        try:
-            run_qrun_basis_vol()
-            workflow_completed = True
-        except Exception:
-            # A partial qrun execution (e.g. SignalRecord OK but
-            # PortAnaRecord fails because qlib provider has no benchmark
-            # data) is acceptable. Only hard-fail when no recorder output
-            # at all is produced — the assertion below covers that.
-            status = "PARTIAL"
-            error = traceback.format_exc()
-
-        # Whether or not the full workflow completed, attempt the parity
-        # check — it gracefully reports a PARTIAL with structured reason
-        # when the PortAnaRecord pickle is absent.
-        v18_json = Path("/app/scripts/output/tx_walkforward_v2.json")
-        parity = parity_check(recorder_dir=recorder_dir, v18_json_path=v18_json)
-        if parity.get("status") != "OK":
-            status = "PARTIAL"
-
-        # Persist parity.json next to mlruns/ so downstream consumers + verifier can find it.
-        parity_path = recorder_dir / "parity.json"
-        parity_path.parent.mkdir(parents=True, exist_ok=True)
-        parity_path.write_text(json.dumps(parity, indent=2, default=str))
-
-    except Exception:
-        # Anything outside the inner try (e.g. parity_check itself crashing
-        # in a way it shouldn't) — surface as PARTIAL with traceback.
-        status = "PARTIAL"
-        if error is None:
-            error = traceback.format_exc()
+    artifacts_dir = run_qrun_basis_vol(uri_folder=tmp_path / "mlruns", provider_uri=provider_uri)
+    parity = parity_check(
+        artifacts_dir=artifacts_dir,
+        expected_returns_path=Path("/app/scripts/output/tx_walkforward_v2_basis_b_returns.parquet"),
+    )
     elapsed = time.time() - t0
-
-    # Probe the recorder dir for SignalRecord output (pred.pkl). The downstream
-    # consumer can fall back to pred.pkl + sig_analysis even when
-    # PortAnaRecord cannot run (no qlib provider data for the benchmark).
-    if (recorder_dir / "mlruns").exists():
-        pred_candidates = list(recorder_dir.rglob("pred.pkl"))
-        pred_pkl_exists = len(pred_candidates) > 0
-
-    # Pattern P3 — persist machine-readable per-prong summary.
-    (smoke_dir / "output_summary.json").write_text(
+    (_smoke_dir("ACTIVATE-02") / "output_summary.json").write_text(
         json.dumps(
             {
                 "prong": "ACTIVATE-02",
-                "status": status,
-                "elapsed_sec": round(elapsed, 2),
+                "status": parity["status"],
+                "elapsed_sec": elapsed,
                 "parity": parity,
-                "recorder_dir": str(recorder_dir),
-                "workflow_completed": workflow_completed,
-                "pred_pkl_exists": pred_pkl_exists,
-                "error": error,
+                "artifacts_dir": str(artifacts_dir),
             },
             indent=2,
             default=str,
         )
     )
 
-    # Hard assertions: mlruns/ + at least pred.pkl must exist (the downstream
-    # consumer needs SignalRecord output at minimum). PortAnaRecord may
-    # be absent on systems without qlib provider data for the benchmark
-    # ticker — that becomes a PARTIAL, NOT a phase blocker.
-    assert (recorder_dir / "mlruns").exists(), (
-        f"mlruns directory missing at {recorder_dir / 'mlruns'} — qrun did not produce output"
-    )
-    assert pred_pkl_exists, (
-        "pred.pkl missing under recorder_dir/mlruns — SignalRecord did not run; "
-        f"workflow_completed={workflow_completed} error={error!r}"
-    )
-
-    assert status in ("OK", "PARTIAL"), f"unexpected status {status}"
+    assert (artifacts_dir / "portfolio_analysis/port_analysis_1day.pkl").exists()
+    assert (artifacts_dir / "basis_rule/returns.pkl").exists()
+    assert (artifacts_dir / "basis_rule/engaged.pkl").exists()
+    assert (artifacts_dir / "basis_rule/metrics.pkl").exists()
+    assert parity["status"] == "OK", parity
     assert elapsed < _BUDGET_SEC, f"qrun smoke exceeded {_BUDGET_SEC}s budget: {elapsed:.1f}s"

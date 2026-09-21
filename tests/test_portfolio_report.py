@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import os
 import time
-import traceback
 from pathlib import Path
 
 import pytest
@@ -27,6 +26,22 @@ pytestmark = pytest.mark.skipif(
 
 _BUDGET_SEC = 300.0
 _RECORDER_DIR = Path("/app/local_dev/qlib-activations/qrun-runs/v18-tx_basis_vol")
+
+
+def test_portana_label_uses_instrument_then_datetime_index() -> None:
+    """PortAna slices its label data on MultiIndex level 1 (datetime)."""
+    import pandas as pd
+
+    from scripts.run_portfolio_report import _label_for_position_graphs
+
+    index = pd.MultiIndex.from_tuples([("2025-01-03", "TX"), ("2025-01-02", "TX")], names=["datetime", "instrument"])
+    label = pd.DataFrame({"label": [0.2, 0.1]}, index=index)
+
+    actual = _label_for_position_graphs(label)
+
+    assert actual.index.names == ["instrument", "datetime"]
+    assert actual.index.get_level_values("datetime").dtype.kind == "M"
+    assert actual.index.is_monotonic_increasing
 
 
 def _smoke_dir(prong: str) -> Path:
@@ -47,57 +62,36 @@ def _smoke_dir(prong: str) -> Path:
     return out
 
 
-def test_portfolio_report_smoke() -> None:
-    """End-to-end driver smoke: loads qrun pickles, emits HTMLs, asserts size.
-
-    Per the contract amendment (prior SUMMARY Deviation #4), this only
-    asserts on SignalRecord-derived graphs (score_ic_graph,
-    model_performance_graph). PortAnaRecord-dependent graphs are SKIPPED in
-    the driver — counted in summary.n_skipped, not asserted on.
-    """
+def test_portfolio_report_smoke(tmp_path: Path) -> None:
+    """Fresh qrun artifacts drive all six Qlib report graph families."""
     pytest.importorskip("qlib")
     pytest.importorskip("plotly")
 
+    provider_uri = os.environ.get("PHASE95_QLIB_PROVIDER_URI")
+    assert provider_uri, "set PHASE95_QLIB_PROVIDER_URI to a fresh TX+0050 Qlib dump"
     out_dir = _smoke_dir("ACTIVATE-05")
-    recorder_dir = _RECORDER_DIR
-
-    # qrun dependency — skip-with-reason if pickles missing (Pitfall 5)
-    mlruns = recorder_dir / "mlruns"
-    if not mlruns.exists():
-        pytest.skip(f"qrun mlruns missing at {mlruns} — run scripts/run_qrun_basis_vol.py first")
-
-    backtest_out = Path("/app/local_dev/backtests/phase95_basis_vol/reports")
-    backtest_out.mkdir(parents=True, exist_ok=True)
-
-    status: str = "OK"
-    error: str | None = None
-    summary: dict | None = None
+    backtest_out = tmp_path / "reports"
     t0 = time.time()
-    try:
-        from scripts.run_portfolio_report import run_portfolio_report
+    from scripts.run_portfolio_report import run_portfolio_report
+    from scripts.run_qrun_basis_vol import run_qrun_basis_vol
 
-        summary = run_portfolio_report(recorder_dir=recorder_dir, out_dir=backtest_out)
-    except Exception:
-        status = "PARTIAL"
-        error = traceback.format_exc()
+    artifacts_dir = run_qrun_basis_vol(uri_folder=tmp_path / "mlruns", provider_uri=provider_uri)
+    summary = run_portfolio_report(out_dir=backtest_out, artifacts_dir=artifacts_dir)
     elapsed = time.time() - t0
 
     (out_dir / "output_summary.json").write_text(
         json.dumps(
             {
                 "prong": "ACTIVATE-05",
-                "status": status,
+                "status": "OK",
                 "elapsed_sec": elapsed,
                 "summary": summary,
-                "error": error,
+                "artifacts_dir": str(artifacts_dir),
             },
             indent=2,
             default=str,
         )
     )
-
-    assert status == "OK", f"portfolio_report smoke {status}: {error}"
-    assert summary is not None
 
     # ROADMAP success criterion 5: "qlib's Portfolio Attribution / Graphical
     # Reports generated alongside at least one backtest run output". Drives the
@@ -108,21 +102,10 @@ def test_portfolio_report_smoke() -> None:
         size = html.stat().st_size
         assert size > 1024, f"{html.name} size {size}B is below 1KB threshold"
 
-    # Contract amendment: PARTIAL count (PortAnaRecord-dependent SKIPS)
-    # ≤ 4 of GRAPH_NAME_LIST (6 entries). The four SKIPPED graphs are
-    # cumulative_return / risk_analysis / report / rank_label.
-    assert summary["n_skipped"] <= 4, (
-        f"too many SKIPPED graphs: {summary['n_skipped']} (expected ≤4 — "
-        f"only PortAnaRecord-dependent graphs should skip)"
-    )
-
-    # At least 1 OK graph (sufficient for ROADMAP success criterion 5)
-    assert summary["n_ok"] >= 1, f"no OK graphs emitted — ROADMAP criterion 5 not met. summary={summary}"
-
-    # Specifically expect score_ic_graph to OK (simplest/most reliable)
+    assert summary["n_skipped"] == 0, summary
+    assert summary["n_partial"] == 0, summary
+    assert summary["n_not_applicable"] == 1, summary
     ok_graphs = summary["graph_name_list_coverage"]["ok"]
-    assert "analysis_position.score_ic_graph" in ok_graphs, (
-        f"score_ic_graph should be OK on pred+label data; got OK list: {ok_graphs}"
-    )
+    assert len(ok_graphs) == 5, ok_graphs
 
     assert elapsed < _BUDGET_SEC, f"elapsed {elapsed:.1f}s exceeds budget {_BUDGET_SEC}s"

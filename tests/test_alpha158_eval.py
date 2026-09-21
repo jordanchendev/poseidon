@@ -133,6 +133,7 @@ def test_alpha158_eval_smoke() -> None:
 
     assert (out_dir / "performance.json").exists(), "performance.json missing"
     assert (out_dir / "summary.json").exists(), "summary.json missing"
+    assert "NaN" not in (out_dir / "summary.json").read_text()
 
     # ≥158 Alpha158 features required.
     assert summary["n_features"] >= 158, f"expected ≥158 features, got {summary['n_features']}"

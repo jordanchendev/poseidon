@@ -5,17 +5,9 @@ Reuses the upstream qrun SignalRecord pickles emitted at::
 
     local_dev/qlib-activations/qrun-runs/v18-tx_basis_vol/mlruns/
 
-**Note:** PortAnaRecord pickles are deliberately absent — qlib's
-``PortfolioMetrics.init_bench`` requires ``qlib.data.D`` provider data
-which the upstream pipeline bypasses (``provider_uri=""`` so the
-``PoseidonDataHandlerForQrun.StaticDataLoader`` path can serve the basis
-arb panel without a qlib ``.bin`` calendar). The four PortAnaRecord-
-dependent graphs in qlib's ``GRAPH_NAME_LIST`` (``cumulative_return_graph``,
-``risk_analysis_graph``, ``report_graph``, ``rank_label_graph``) therefore
-SKIP with a structured PARTIAL note. The two SignalRecord-only graphs
-(``score_ic_graph`` and ``model_performance_graph``) run end-to-end and
-emit HTML — sufficient for the "at least one backtest run output"
-criterion.
+Reads the six Qlib report graph inputs from the *same fresh qrun recorder*.
+PortAnaRecord requires a real provider calendar and benchmark series; a run
+without its three portfolio pickles is invalid and is reported as an error.
 
 Run on stormtrooper::
 
@@ -40,69 +32,39 @@ DEFAULT_RECORDER_DIR = Path("/app/local_dev/qlib-activations/qrun-runs/v18-tx_ba
 DEFAULT_OUT_DIR = Path("/app/local_dev/backtests/phase95_basis_vol/reports")
 EXPERIMENT_NAME = "phase95_tx_basis_vol"
 
-# qlib's GRAPH_NAME_LIST in pyqlib v0.9.7 — used to compute SKIPPED count for
-# the SUMMARY / smoke output. The four below require PortAnaRecord pickles
-# (position / report_normal / port_analysis) and are skipped per the
-# upstream-amendment described in the module docstring.
-PORTANARECORD_DEPENDENT_GRAPHS = (
-    "analysis_position.cumulative_return_graph",
-    "analysis_position.risk_analysis_graph",
-    "analysis_position.report_graph",
-    "analysis_position.rank_label_graph",
-)
-SIGNALRECORD_ONLY_GRAPHS = (
-    "analysis_position.score_ic_graph",
-    "analysis_model.model_performance_graph",
-)
 
-
-def _load_signal_record(recorder_dir: Path) -> dict:
-    """Load pred.pkl + label.pkl from the upstream qrun mlruns directory.
-
-    Walks the mlruns tree to find a recorder dir that contains BOTH pred.pkl
-    and label.pkl. The qrun SignalRecord stage runs before PortAnaRecord, so
-    pred + label are guaranteed even when PortAnaRecord aborts.
-
-    Raises FileNotFoundError naming the missing pickle if no recorder has both.
-    """
+def _latest_artifacts_dir(recorder_dir: Path) -> Path:
+    """Find the newest complete recorder for interactive CLI use only."""
     mlruns = recorder_dir / "mlruns"
-    if not mlruns.exists():
-        raise FileNotFoundError(f"mlruns directory missing at {mlruns}; run scripts/run_qrun_basis_vol.py first")
+    candidates = sorted(mlruns.glob("*/*/artifacts"), key=lambda path: path.stat().st_mtime_ns, reverse=True)
+    for candidate in candidates:
+        if (candidate / "pred.pkl").exists() and (candidate / "label.pkl").exists():
+            return candidate
+    raise FileNotFoundError(f"no qrun recorder artifacts under {mlruns}")
 
-    # Walk the mlruns tree explicitly so we don't depend on a working
-    # qlib.workflow.R URI (which can hit a Postgres MLflow leak when the
-    # tracking URI env var isn't pinned). pred.pkl + label.pkl are plain
-    # pickles — load them directly.
+
+def _load_record(artifacts_dir: Path) -> dict:
+    """Load the complete SignalRecord and PortAnaRecord artifact set.
+
+    ``artifacts_dir`` is supplied by ``run_qrun_basis_vol`` in smoke paths,
+    which prevents an old successful recorder from satisfying a later run.
+    """
     import pickle
 
-    candidate_dirs = sorted(mlruns.glob("*/*/artifacts"))
-    if not candidate_dirs:
-        raise FileNotFoundError(
-            f"No recorder artifacts/ subdir under {mlruns} — qrun has not run yet (no '<exp_id>/<run_id>/artifacts/')"
-        )
-
-    last_error: str | None = None
-    for art_dir in reversed(candidate_dirs):  # newest first
-        pred_path = art_dir / "pred.pkl"
-        label_path = art_dir / "label.pkl"
-        if pred_path.exists() and label_path.exists():
-            with open(pred_path, "rb") as f:
-                pred = pickle.load(f)
-            with open(label_path, "rb") as f:
-                label = pickle.load(f)
-            logger.info("Loaded SignalRecord pickles from %s", art_dir)
-            return {"pred": pred, "label": label, "artifacts_dir": art_dir}
-        else:
-            missing = []
-            if not pred_path.exists():
-                missing.append("pred.pkl")
-            if not label_path.exists():
-                missing.append("label.pkl")
-            last_error = f"{art_dir} missing {missing}"
-
-    raise FileNotFoundError(
-        f"No mlruns recorder under {mlruns} has both pred.pkl AND label.pkl. Last checked: {last_error}"
-    )
+    paths = {
+        "pred": artifacts_dir / "pred.pkl",
+        "label": artifacts_dir / "label.pkl",
+        "position": artifacts_dir / "portfolio_analysis/positions_normal_1day.pkl",
+        "report_normal": artifacts_dir / "portfolio_analysis/report_normal_1day.pkl",
+        "analysis": artifacts_dir / "portfolio_analysis/port_analysis_1day.pkl",
+    }
+    missing = [path.name for path in paths.values() if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"incomplete PortAnaRecord artifacts at {artifacts_dir}: {missing}")
+    with_paths = {name: pickle.loads(path.read_bytes()) for name, path in paths.items()}
+    with_paths["artifacts_dir"] = artifacts_dir
+    logger.info("Loaded complete qrun recorder from %s", artifacts_dir)
+    return with_paths
 
 
 def _build_pred_label(pred, label):
@@ -124,6 +86,17 @@ def _build_pred_label(pred, label):
     return pred_label
 
 
+def _label_for_position_graphs(label):
+    """Adapt SignalRecord labels to PortAna's (instrument, datetime) slices."""
+    import pandas as pd
+
+    if not isinstance(label.index, pd.MultiIndex) or set(label.index.names) != {"datetime", "instrument"}:
+        raise ValueError("PortAna label data requires MultiIndex(datetime, instrument)")
+    frame = label.reset_index()
+    frame["datetime"] = pd.to_datetime(frame["datetime"])
+    return frame.set_index(["instrument", "datetime"]).sort_index()
+
+
 def _emit_graph_html(figs_iter, out_dir: Path, prefix: str) -> list[Path]:
     """Iterate plotly.graph_objs.Figure iterable; write each to <prefix>_<i>.html."""
     paths: list[Path] = []
@@ -137,6 +110,7 @@ def _emit_graph_html(figs_iter, out_dir: Path, prefix: str) -> list[Path]:
 def run_portfolio_report(
     recorder_dir: Path | None = None,
     out_dir: Path | None = None,
+    artifacts_dir: Path | None = None,
 ) -> dict:
     """Library entry — emit qlib graphical reports from the qrun pickles.
 
@@ -150,13 +124,20 @@ def run_portfolio_report(
     from qlib.contrib.report.analysis_model.analysis_model_performance import (
         model_performance_graph,
     )
+    from qlib.contrib.report.analysis_position import (
+        cumulative_return_graph,
+        rank_label_graph,
+        report_graph,
+        risk_analysis_graph,
+    )
     from qlib.contrib.report.analysis_position.score_ic import score_ic_graph
 
     recorder_dir = Path(recorder_dir or DEFAULT_RECORDER_DIR)
     out_dir = Path(out_dir or DEFAULT_OUT_DIR)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    sig = _load_signal_record(recorder_dir)
+    artifacts_dir = Path(artifacts_dir) if artifacts_dir is not None else _latest_artifacts_dir(recorder_dir)
+    sig = _load_record(artifacts_dir)
     pred_label = _build_pred_label(sig["pred"], sig["label"])
     logger.info(
         "pred_label shape=%s, n_instruments=%d, n_dates=%d",
@@ -192,55 +173,87 @@ def run_portfolio_report(
     # Workaround: drop 'group_return' from graph_names when n_instruments < 2.
     n_instruments = pred_label.index.get_level_values("instrument").nunique()
     if n_instruments < 2:
-        mp_graph_names = ["pred_ic", "pred_autocorr"]
-        mp_note = f"single-instrument panel (n={n_instruments}) — group_return graph excluded"
+        graph_results.append(
+            {
+                "graph": "analysis_model.model_performance_graph",
+                "status": "NOT_APPLICABLE",
+                "reason": f"single-instrument panel (n={n_instruments}) has no cross-sectional IC or rank autocorrelation",
+            }
+        )
     else:
         mp_graph_names = ["group_return", "pred_ic", "pred_autocorr"]
-        mp_note = None
-    try:
-        figs = list(
-            model_performance_graph(
-                pred_label,
-                graph_names=mp_graph_names,
-                show_notebook=False,
+        try:
+            figs = list(
+                model_performance_graph(
+                    pred_label,
+                    graph_names=mp_graph_names,
+                    show_notebook=False,
+                )
             )
-        )
-        paths = _emit_graph_html(figs, out_dir, "model_performance")
-        graph_results.append(
-            {
-                "graph": "analysis_model.model_performance_graph",
-                "status": "OK",
-                "n_html": len(paths),
-                "paths": [str(p) for p in paths],
-                "graph_names": mp_graph_names,
-                "note": mp_note,
-            }
-        )
-    except Exception as e:
-        graph_results.append(
-            {
-                "graph": "analysis_model.model_performance_graph",
-                "status": "PARTIAL",
-                "error": f"{type(e).__name__}: {e}",
-                "graph_names": mp_graph_names,
-            }
-        )
+            paths = _emit_graph_html(figs, out_dir, "model_performance")
+            graph_results.append(
+                {
+                    "graph": "analysis_model.model_performance_graph",
+                    "status": "OK",
+                    "n_html": len(paths),
+                    "paths": [str(p) for p in paths],
+                    "graph_names": mp_graph_names,
+                }
+            )
+        except Exception as e:
+            graph_results.append(
+                {
+                    "graph": "analysis_model.model_performance_graph",
+                    "status": "PARTIAL",
+                    "error": f"{type(e).__name__}: {e}",
+                    "graph_names": mp_graph_names,
+                }
+            )
 
-    # Graphs 3-6: PortAnaRecord-dependent — SKIP with structured note.
-    # PortAnaRecord pickles absent by design because qlib's
-    # PortfolioMetrics.init_bench requires provider data bypassed via
-    # provider_uri="".  Skipping is documented behaviour.
-    skip_reason = (
-        "PortAnaRecord pickles absent — the upstream pipeline deliberately "
-        'bypasses qlib provider data via provider_uri="", so '
-        "PortfolioMetrics.init_bench cannot run. Skip is by design."
+    portana_graphs = (
+        (
+            "analysis_position.cumulative_return_graph",
+            "cumulative_return",
+            cumulative_return_graph,
+            {
+                "position": sig["position"],
+                "report_normal": sig["report_normal"],
+                "label_data": _label_for_position_graphs(sig["label"]),
+            },
+        ),
+        (
+            "analysis_position.risk_analysis_graph",
+            "risk_analysis",
+            risk_analysis_graph,
+            {
+                "analysis_df": sig["analysis"],
+                "report_normal_df": sig["report_normal"],
+            },
+        ),
+        ("analysis_position.report_graph", "report", report_graph, {"report_df": sig["report_normal"]}),
+        (
+            "analysis_position.rank_label_graph",
+            "rank_label",
+            rank_label_graph,
+            {
+                "position": sig["position"],
+                "label_data": _label_for_position_graphs(sig["label"]),
+            },
+        ),
     )
-    for graph_name in PORTANARECORD_DEPENDENT_GRAPHS:
-        graph_results.append({"graph": graph_name, "status": "SKIPPED", "reason": skip_reason})
+    for graph_name, prefix, graph_fn, kwargs in portana_graphs:
+        try:
+            paths = _emit_graph_html(graph_fn(show_notebook=False, **kwargs), out_dir, prefix)
+            graph_results.append(
+                {"graph": graph_name, "status": "OK", "n_html": len(paths), "paths": [str(p) for p in paths]}
+            )
+        except Exception as exc:
+            graph_results.append({"graph": graph_name, "status": "ERROR", "error": f"{type(exc).__name__}: {exc}"})
 
     n_ok = sum(1 for g in graph_results if g["status"] == "OK")
     n_skipped = sum(1 for g in graph_results if g["status"] == "SKIPPED")
     n_partial = sum(1 for g in graph_results if g["status"] in ("PARTIAL", "ERROR"))
+    n_not_applicable = sum(1 for g in graph_results if g["status"] == "NOT_APPLICABLE")
     total_html = sum(g.get("n_html", 0) for g in graph_results)
 
     summary = {
@@ -252,11 +265,13 @@ def run_portfolio_report(
         "n_ok": n_ok,
         "n_skipped": n_skipped,
         "n_partial": n_partial,
+        "n_not_applicable": n_not_applicable,
         "total_html": total_html,
         "graph_name_list_coverage": {
             "ok": [g["graph"] for g in graph_results if g["status"] == "OK"],
             "skipped": [g["graph"] for g in graph_results if g["status"] == "SKIPPED"],
             "partial": [g["graph"] for g in graph_results if g["status"] in ("PARTIAL", "ERROR")],
+            "not_applicable": [g["graph"] for g in graph_results if g["status"] == "NOT_APPLICABLE"],
         },
     }
     logger.info(
