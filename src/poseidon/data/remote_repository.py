@@ -119,7 +119,8 @@ class RemoteDataRepository:
     def _parse_ohlcv_response(self, data: dict) -> pd.DataFrame:
         """Parse OHLCVResponse JSON into a DataFrame with datetime index.
 
-        Includes adj_close column with NULL→close fallback.
+        Preserves adj_close nulls when the API provides the column. Callers that
+        need close fallback should decide at their own price-selection boundary.
         """
         rows = data.get("data", [])
         if not rows:
@@ -127,13 +128,10 @@ class RemoteDataRepository:
         df = pd.DataFrame(rows)
         df["time"] = pd.to_datetime(df["time"])
         df = df.set_index("time")
-        # adj_close with fallback to close
         if "adj_close" in df.columns:
             df["adj_close"] = pd.to_numeric(df["adj_close"], errors="coerce")
-            df["adj_close"] = df["adj_close"].fillna(df["close"])
-        else:
-            df["adj_close"] = df["close"]
-        return df[["open", "high", "low", "close", "volume", "adj_close"]]
+            return df[["open", "high", "low", "close", "volume", "adj_close"]]
+        return df[["open", "high", "low", "close", "volume"]]
 
     def _parse_dataframe_response(self, data: dict) -> pd.DataFrame:
         """Parse DataFrameResponse JSON into a DataFrame with date/time index."""

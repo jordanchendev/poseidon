@@ -6,6 +6,7 @@ import pandas as pd
 
 from poseidon.research.etf_rotation.db_prices import build_price_artifacts
 from poseidon.research.etf_rotation.pipeline import run_rotation_pipeline_from_repository
+from poseidon.research.etf_rotation.report import load_embedded_strategy_data
 
 
 class FakeRepository:
@@ -69,6 +70,38 @@ def test_build_price_artifacts_falls_back_to_close_when_adjusted_close_missing(t
     assert prices["NASDAQ_lev"].tolist() == [200, 210, 220]
 
 
+def test_build_price_artifacts_drops_rows_with_missing_adjusted_close_when_adjusted_series_exists(
+    tmp_path: Path,
+) -> None:
+    qqq = _ohlcv([10, 11, 12])
+    qqq.loc[qqq.index[1], "adj_close"] = pd.NA
+    tqqq = _ohlcv([20, 21, 22])
+
+    repo = FakeRepository({"QQQ": qqq, "TQQQ": tqqq})
+
+    build_price_artifacts(repo, tmp_path, pairs=("NASDAQ",))
+
+    prices = pd.read_csv(tmp_path / "prices_extended.csv")
+    assert prices["NASDAQ_core"].dropna().tolist() == [10, 12]
+    assert 110 not in prices["NASDAQ_core"].tolist()
+
+
+def test_build_price_artifacts_applies_pair_trusted_start(tmp_path: Path) -> None:
+    repo = FakeRepository(
+        {
+            "0050": _ohlcv([10, 11, 12, 13], start="2014-12-31"),
+            "00631L": _ohlcv([20, 21, 22, 23], start="2014-12-31"),
+        }
+    )
+
+    summary = build_price_artifacts(repo, tmp_path, pairs=("TAIWAN50",))
+
+    prices = pd.read_csv(tmp_path / "prices_extended.csv")
+    assert prices["TAIWAN50_core"].dropna().tolist() == [13]
+    assert prices["TAIWAN50_lev"].dropna().tolist() == [23]
+    assert summary["pairs"]["TAIWAN50"]["start"] == "2015-01-05"
+
+
 def test_db_pipeline_builds_search_report_and_validation_artifacts(tmp_path: Path) -> None:
     values = list(range(100, 830))
     repo = FakeRepository(
@@ -97,3 +130,5 @@ def test_db_pipeline_builds_search_report_and_validation_artifacts(tmp_path: Pat
     assert (root / "results" / "representative_choices.csv").exists()
     assert (root / "strategy-calculator.html").exists()
     assert (root / "validation" / "NASDAQ" / "NASDAQ_three_layer_validation.json").exists()
+    data, _ = load_embedded_strategy_data(root / "strategy-calculator.html")
+    assert data["validation"]["NASDAQ"]["rolling"]

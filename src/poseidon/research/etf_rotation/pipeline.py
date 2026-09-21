@@ -69,15 +69,15 @@ def run_rotation_pipeline_from_repository(
     )
     aggregate_summary = aggregate_results(root, pairs=selected_pairs)
     build_representative_choices(root, pairs=selected_pairs)
-    html = build_strategy_calculator_html(root=root, out=root / "strategy-calculator.html")
-    if verify_report:
-        verify_strategy_calculator_html(html)
     validation_outputs = _run_validation(
         root,
         pairs=validation_selected_pairs,
         out_dir=validation_dir,
         monte_carlo_paths=validation_monte_carlo_paths,
     )
+    html = build_strategy_calculator_html(root=root, out=root / "strategy-calculator.html")
+    if verify_report:
+        verify_strategy_calculator_html(html)
     return {
         "root": str(root),
         "pairs": list(selected_pairs),

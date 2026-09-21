@@ -17,6 +17,7 @@ FIELDNAMES = [
     "shard_index",
     "shard_count",
     "strategy_index",
+    "mode",
     "stages",
     "floor",
     "max_lev",
@@ -45,6 +46,10 @@ FIELDNAMES = [
     "full_active_days_frac",
     "score",
 ]
+THRESHOLD_EPSILON = 1e-12
+CASH_BASED_MODES = {"de_risk_to_cash_on_drawdown", "leveraged_cash_band"}
+DE_RISK_MODES = {"de_risk_on_drawdown", "de_risk_to_cash_on_drawdown"}
+MA_MODES = {"ma_sma", "ma_ema", "ma_sma_band"}
 
 
 @dataclass(frozen=True)
@@ -55,6 +60,7 @@ class Params:
     enter: tuple[float, ...]
     exit: tuple[float, ...]
     levels: tuple[float, ...]
+    mode: str = "buy_dip"
 
 
 @dataclass
@@ -102,6 +108,46 @@ def max_drawdown(equity: np.ndarray) -> tuple[float, np.ndarray]:
     return float(drawdowns.min()), drawdowns
 
 
+def threshold_reached(value: float, threshold: float) -> bool:
+    return value + THRESHOLD_EPSILON >= threshold
+
+
+def moving_average_values(core: np.ndarray, mode: str, window: int) -> np.ndarray:
+    values = np.full(len(core), np.nan, dtype=float)
+    if window <= 0:
+        raise ValueError(f"moving average window must be positive: {window}")
+    if len(core) < window:
+        return values
+
+    if mode == "ma_ema":
+        alpha = 2.0 / (window + 1.0)
+        ema = core[0]
+        for index, price in enumerate(core):
+            ema = price if index == 0 else alpha * price + (1.0 - alpha) * ema
+            if index >= window - 1:
+                values[index] = ema
+        return values
+
+    cumulative = np.cumsum(np.insert(core, 0, 0.0))
+    values[window - 1 :] = (cumulative[window:] - cumulative[:-window]) / window
+    return values
+
+
+def ma_desired_exposure(params: Params, price: float, ma_value: float, current: float) -> float:
+    floor = params.floor
+    max_lev = params.max_lev
+    if np.isnan(ma_value):
+        return floor
+    if params.mode == "ma_sma_band":
+        band = params.enter[1]
+        if current <= floor + 1e-12 and price > ma_value * (1.0 + band):
+            return max_lev
+        if current >= max_lev - 1e-12 and price < ma_value * (1.0 - band):
+            return floor
+        return current
+    return max_lev if price > ma_value else floor
+
+
 def simulate(
     dates: np.ndarray,
     core: np.ndarray,
@@ -111,7 +157,10 @@ def simulate(
     end: int,
 ) -> Metrics:
     floor = params.floor
-    frac = floor
+    frac = params.max_lev if params.mode in DE_RISK_MODES or params.mode == "leveraged_cash_band" else floor
+    ma_values = None
+    if params.mode in MA_MODES:
+        ma_values = moving_average_values(core, params.mode, round(params.enter[0]))
     switches = 0
     peak = core[start]
     trough = core[start]
@@ -123,7 +172,7 @@ def simulate(
     for out_i, i in enumerate(range(start + 1, end), start=1):
         core_ret = core[i] / core[i - 1] - 1.0
         lev_ret = lev[i] / lev[i - 1] - 1.0
-        day_ret = (1.0 - frac) * core_ret + frac * lev_ret
+        day_ret = frac * lev_ret if params.mode in CASH_BASED_MODES else (1.0 - frac) * core_ret + frac * lev_ret
         daily_returns[out_i] = day_ret
         equity[out_i] = equity[out_i - 1] * (1.0 + day_ret)
 
@@ -131,32 +180,75 @@ def simulate(
         if frac > floor + 1e-12:
             active_days += 1
 
+        if params.mode == "leveraged_cash_band":
+            target = params.max_lev
+            band = params.enter[0]
+            desired = frac
+            if 1.0 + day_ret > 0:
+                desired = frac * (1.0 + lev_ret) / (1.0 + day_ret)
+                desired = min(1.0, max(0.0, desired))
+            if abs(desired - target) >= band:
+                desired = target
+                switches += 1
+            frac = desired
+            continue
+
+        if ma_values is not None:
+            desired = ma_desired_exposure(params, core[i], ma_values[i], frac)
+            desired = min(params.max_lev, max(floor, desired))
+            if abs(desired - frac) > 1e-12:
+                switches += 1
+                frac = desired
+            continue
+
         price = core[i]
         if price > peak:
             peak = price
         drawdown = 1.0 - price / peak
-        trough = min(trough, price) if frac > floor + 1e-12 else price
+        if params.mode in DE_RISK_MODES:
+            trough = min(trough, price) if frac < params.max_lev - 1e-12 else price
+        else:
+            trough = min(trough, price) if frac > floor + 1e-12 else price
 
         desired = frac
-        entered_from_floor = frac <= floor + 1e-12
-        for threshold, level in zip(params.enter, params.levels, strict=True):
-            if drawdown >= threshold:
-                desired = max(desired, level)
-        if entered_from_floor and desired > floor + 1e-12:
-            trough = price
+        if params.mode in DE_RISK_MODES:
+            for threshold, level in zip(params.enter, params.levels, strict=True):
+                if threshold_reached(drawdown, threshold):
+                    desired = min(desired, level)
+            if desired < params.max_lev - 1e-12 and trough > 0:
+                rebound = price / trough - 1.0
+                for stage_index, threshold in enumerate(params.exit):
+                    if threshold_reached(rebound, threshold):
+                        cap = (
+                            params.max_lev
+                            if stage_index == params.stages - 1
+                            else params.levels[params.stages - 2 - stage_index]
+                        )
+                        desired = max(desired, cap)
+        else:
+            entered_from_floor = frac <= floor + 1e-12
+            for threshold, level in zip(params.enter, params.levels, strict=True):
+                if threshold_reached(drawdown, threshold):
+                    desired = max(desired, level)
+            if entered_from_floor and desired > floor + 1e-12:
+                trough = price
 
-        if desired > floor + 1e-12 and trough > 0:
-            rebound = price / trough - 1.0
-            for stage_index in range(params.stages - 1, -1, -1):
-                if rebound >= params.exit[stage_index]:
-                    cap = floor if stage_index == params.stages - 1 else params.levels[params.stages - 2 - stage_index]
-                    desired = min(desired, cap)
-                    break
+            if desired > floor + 1e-12 and trough > 0:
+                rebound = price / trough - 1.0
+                for stage_index in range(params.stages - 1, -1, -1):
+                    if threshold_reached(rebound, params.exit[stage_index]):
+                        cap = (
+                            floor
+                            if stage_index == params.stages - 1
+                            else params.levels[params.stages - 2 - stage_index]
+                        )
+                        desired = min(desired, cap)
+                        break
 
         desired = min(params.max_lev, max(floor, desired))
         if abs(desired - frac) > 1e-12:
             switches += 1
-            if desired <= floor + 1e-12:
+            if desired <= floor + 1e-12 or desired >= params.max_lev - 1e-12:
                 trough = price
             frac = desired
 
@@ -184,6 +276,8 @@ def parameter_grid() -> list[Params]:
     ):
         if max_lev > floor:
             params.append(Params(1, floor, max_lev, (enter,), (exit_value,), (max_lev,)))
+            params.append(Params(1, floor, max_lev, (enter,), (exit_value,), (floor,), "de_risk_on_drawdown"))
+            params.append(Params(1, floor, max_lev, (enter,), (exit_value,), (floor,), "de_risk_to_cash_on_drawdown"))
 
     enter_pairs = [
         (a, b) for a in [0.05, 0.075, 0.10, 0.125, 0.15] for b in [0.175, 0.20, 0.225, 0.25, 0.30, 0.35, 0.40] if a < b
@@ -200,6 +294,9 @@ def parameter_grid() -> list[Params]:
             continue
         levels = tuple(min(max_lev, floor + (max_lev - floor) * x) for x in level_shape)
         params.append(Params(2, floor, max_lev, enter, exit_value, levels))
+        de_risk_levels = tuple(max(floor, max_lev - (max_lev - floor) * x) for x in level_shape)
+        params.append(Params(2, floor, max_lev, enter, exit_value, de_risk_levels, "de_risk_on_drawdown"))
+        params.append(Params(2, floor, max_lev, enter, exit_value, de_risk_levels, "de_risk_to_cash_on_drawdown"))
 
     enter_triplets = [
         (a, b, c)
@@ -220,6 +317,20 @@ def parameter_grid() -> list[Params]:
             continue
         levels = tuple(min(max_lev, floor + (max_lev - floor) * x) for x in level_shape)
         params.append(Params(3, floor, max_lev, enter, exit_value, levels))
+        de_risk_levels = tuple(max(floor, max_lev - (max_lev - floor) * x) for x in level_shape)
+        params.append(Params(3, floor, max_lev, enter, exit_value, de_risk_levels, "de_risk_on_drawdown"))
+        params.append(Params(3, floor, max_lev, enter, exit_value, de_risk_levels, "de_risk_to_cash_on_drawdown"))
+
+    for target, band in itertools.product([0.50, 0.60, 0.70], [0.05, 0.10, 0.15]):
+        params.append(Params(0, 0.0, target, (band,), (), (), "leveraged_cash_band"))
+
+    params.extend(
+        [
+            Params(0, 0.0, 1.0, (200.0,), (), (), "ma_sma"),
+            Params(0, 0.0, 1.0, (200.0,), (), (), "ma_ema"),
+            Params(0, 0.0, 1.0, (200.0, 0.02), (), (), "ma_sma_band"),
+        ]
+    )
 
     return params
 
@@ -257,6 +368,7 @@ def _row_for(
         "shard_index": shard_index,
         "shard_count": shard_count,
         "strategy_index": strategy_index,
+        "mode": params.mode,
         "stages": params.stages,
         "floor": f"{params.floor:.4f}",
         "max_lev": f"{params.max_lev:.4f}",

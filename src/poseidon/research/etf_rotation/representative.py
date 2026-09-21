@@ -22,6 +22,7 @@ def _pick(df: pd.DataFrame, name: str, subset: pd.Series, sort_col: str = "score
     row = sub.sort_values(sort_col, ascending=False).iloc[0]
     return {
         "choice": name,
+        "mode": row.get("mode", "buy_dip"),
         "stages": int(row["stages"]),
         "floor": float(row["floor"]),
         "max_lev": float(row["max_lev"]),
@@ -40,6 +41,8 @@ def _pick(df: pd.DataFrame, name: str, subset: pd.Series, sort_col: str = "score
 
 def _read_all(root: Path, pair: str) -> pd.DataFrame:
     df = pd.read_csv(root / "results" / f"{pair}_all_results.csv")
+    if "mode" not in df.columns:
+        df["mode"] = "buy_dip"
     for col in [
         "score",
         "stages",
@@ -63,6 +66,7 @@ def _benchmark_choices(summary: dict[str, Any], pair: str) -> list[dict[str, Any
     return [
         {
             "choice": "core_buy_hold",
+            "mode": "buy_hold",
             "stages": 0,
             "floor": 0.0,
             "max_lev": 0.0,
@@ -79,6 +83,7 @@ def _benchmark_choices(summary: dict[str, Any], pair: str) -> list[dict[str, Any
         },
         {
             "choice": "leveraged_buy_hold",
+            "mode": "buy_hold",
             "stages": 0,
             "floor": 1.0,
             "max_lev": 1.0,
@@ -95,6 +100,7 @@ def _benchmark_choices(summary: dict[str, Any], pair: str) -> list[dict[str, Any
         },
         {
             "choice": "current_mix_buy_hold",
+            "mode": "buy_hold",
             "stages": 0,
             "floor": None,
             "max_lev": None,
@@ -119,21 +125,102 @@ def build_representative_choices(root: Path, *, pairs: tuple[str, ...]) -> dict[
 
     for pair in pairs:
         df = _read_all(root, pair)
+        buy_dip = df["mode"] == "buy_dip"
+        real_de_risk = (df["mode"] == "de_risk_on_drawdown") & (df["full_switches"] > 0)
+        real_de_risk_cash = (df["mode"] == "de_risk_to_cash_on_drawdown") & (df["full_switches"] > 0)
+        leveraged_cash_band = df["mode"] == "leveraged_cash_band"
+        ma_sma200 = df["mode"] == "ma_sma"
+        ma_ema200 = df["mode"] == "ma_ema"
+        ma_sma200_band_2 = df["mode"] == "ma_sma_band"
         pair_choices = _benchmark_choices(summary, pair)
         buckets = [
-            ("best_return_under_35dd", df["full_maxdd"] >= -0.35, "full_final"),
-            ("best_return_under_40dd", df["full_maxdd"] >= -0.40, "full_final"),
-            ("best_return_under_45dd", df["full_maxdd"] >= -0.45, "full_final"),
-            ("best_return_under_50dd", df["full_maxdd"] >= -0.50, "full_final"),
-            ("best_return_under_60dd", df["full_maxdd"] >= -0.60, "full_final"),
-            ("best_score", pd.Series(True, index=df.index), "score"),
-            ("best_full_return", pd.Series(True, index=df.index), "full_final"),
-            ("best_1_stage_score", df["stages"] == 1, "score"),
-            ("best_2_stage_score", df["stages"] == 2, "score"),
-            ("best_3_stage_score", df["stages"] == 3, "score"),
-            ("best_low_turnover_return", df["full_switches"] <= 10, "full_final"),
-            ("best_mid_turnover_return", (df["full_switches"] > 10) & (df["full_switches"] <= 25), "full_final"),
-            ("best_high_turnover_return", df["full_switches"] > 25, "full_final"),
+            ("best_return_under_35dd", buy_dip & (df["full_maxdd"] >= -0.35), "full_final"),
+            ("best_return_under_40dd", buy_dip & (df["full_maxdd"] >= -0.40), "full_final"),
+            ("best_return_under_45dd", buy_dip & (df["full_maxdd"] >= -0.45), "full_final"),
+            ("best_return_under_50dd", buy_dip & (df["full_maxdd"] >= -0.50), "full_final"),
+            ("best_return_under_60dd", buy_dip & (df["full_maxdd"] >= -0.60), "full_final"),
+            ("best_score", buy_dip, "score"),
+            ("best_full_return", buy_dip, "full_final"),
+            ("best_1_stage_score", buy_dip & (df["stages"] == 1), "score"),
+            ("best_2_stage_score", buy_dip & (df["stages"] == 2), "score"),
+            ("best_3_stage_score", buy_dip & (df["stages"] == 3), "score"),
+            ("best_low_turnover_return", buy_dip & (df["full_switches"] <= 10), "full_final"),
+            (
+                "best_mid_turnover_return",
+                buy_dip & (df["full_switches"] > 10) & (df["full_switches"] <= 25),
+                "full_final",
+            ),
+            ("best_high_turnover_return", buy_dip & (df["full_switches"] > 25), "full_final"),
+            ("best_de_risk_score", real_de_risk, "score"),
+            ("best_de_risk_return", real_de_risk, "full_final"),
+            (
+                "best_de_risk_under_40dd",
+                real_de_risk & (df["full_maxdd"] >= -0.40),
+                "full_final",
+            ),
+            (
+                "best_de_risk_under_45dd",
+                real_de_risk & (df["full_maxdd"] >= -0.45),
+                "full_final",
+            ),
+            (
+                "best_de_risk_under_50dd",
+                real_de_risk & (df["full_maxdd"] >= -0.50),
+                "full_final",
+            ),
+            (
+                "best_de_risk_under_60dd",
+                real_de_risk & (df["full_maxdd"] >= -0.60),
+                "full_final",
+            ),
+            ("best_de_risk_low_turnover_return", real_de_risk & (df["full_switches"] <= 10), "full_final"),
+            ("best_de_risk_2_stage_score", real_de_risk & (df["stages"] == 2), "score"),
+            ("best_de_risk_3_stage_score", real_de_risk & (df["stages"] == 3), "score"),
+            ("best_de_risk_cash_score", real_de_risk_cash, "score"),
+            ("best_de_risk_cash_return", real_de_risk_cash, "full_final"),
+            (
+                "best_de_risk_cash_under_40dd",
+                real_de_risk_cash & (df["full_maxdd"] >= -0.40),
+                "full_final",
+            ),
+            (
+                "best_de_risk_cash_under_45dd",
+                real_de_risk_cash & (df["full_maxdd"] >= -0.45),
+                "full_final",
+            ),
+            (
+                "best_de_risk_cash_under_50dd",
+                real_de_risk_cash & (df["full_maxdd"] >= -0.50),
+                "full_final",
+            ),
+            (
+                "best_de_risk_cash_under_60dd",
+                real_de_risk_cash & (df["full_maxdd"] >= -0.60),
+                "full_final",
+            ),
+            ("best_de_risk_cash_low_turnover_return", real_de_risk_cash & (df["full_switches"] <= 10), "full_final"),
+            ("best_de_risk_cash_2_stage_score", real_de_risk_cash & (df["stages"] == 2), "score"),
+            ("best_de_risk_cash_3_stage_score", real_de_risk_cash & (df["stages"] == 3), "score"),
+            ("best_leveraged_cash_band_score", leveraged_cash_band, "score"),
+            ("best_leveraged_cash_band_return", leveraged_cash_band, "full_final"),
+            (
+                "best_leveraged_cash_band_under_40dd",
+                leveraged_cash_band & (df["full_maxdd"] >= -0.40),
+                "full_final",
+            ),
+            (
+                "best_leveraged_cash_band_under_50dd",
+                leveraged_cash_band & (df["full_maxdd"] >= -0.50),
+                "full_final",
+            ),
+            (
+                "best_leveraged_cash_band_under_60dd",
+                leveraged_cash_band & (df["full_maxdd"] >= -0.60),
+                "full_final",
+            ),
+            ("ma_sma200", ma_sma200, "full_final"),
+            ("ma_ema200", ma_ema200, "full_final"),
+            ("ma_sma200_band_2", ma_sma200_band_2, "full_final"),
         ]
 
         seen = set()
@@ -141,7 +228,15 @@ def build_representative_choices(root: Path, *, pairs: tuple[str, ...]) -> dict[
             item = _pick(df, name, subset, sort_col)
             if item is None:
                 continue
-            key = (item["stages"], item["floor"], item["max_lev"], item["enter"], item["exit"], item["levels"])
+            key = (
+                item["mode"],
+                item["stages"],
+                item["floor"],
+                item["max_lev"],
+                item["enter"],
+                item["exit"],
+                item["levels"],
+            )
             item["duplicate_of_prior"] = key in seen
             seen.add(key)
             pair_choices.append(item)

@@ -14,6 +14,7 @@ class PairConfig:
     capital_twd: int
     current_core_twd: int
     current_lev_twd: int
+    trusted_start: str | None = None
 
 
 PAIRS: dict[str, PairConfig] = {
@@ -38,6 +39,7 @@ PAIRS: dict[str, PairConfig] = {
         capital_twd=1_500_000,
         current_core_twd=1_000_000,
         current_lev_twd=500_000,
+        trusted_start="2015-01-05",
     ),
     "VOO_SSO": PairConfig(
         key="VOO_SSO",

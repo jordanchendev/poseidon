@@ -88,6 +88,41 @@ class TestReadOHLCV:
             assert isinstance(df, pd.DataFrame)
             assert len(df) == 0
 
+    def test_read_ohlcv_preserves_missing_adjusted_close(self, repo):
+        mock_resp = _mock_response(
+            {
+                "data": [
+                    {
+                        "time": "2024-01-01T00:00:00",
+                        "open": 100.0,
+                        "high": 110.0,
+                        "low": 90.0,
+                        "close": 105.0,
+                        "volume": 1000.0,
+                        "adj_close": 101.0,
+                    },
+                    {
+                        "time": "2024-01-02T00:00:00",
+                        "open": 105.0,
+                        "high": 115.0,
+                        "low": 95.0,
+                        "close": 110.0,
+                        "volume": 1200.0,
+                        "adj_close": None,
+                    },
+                ],
+                "symbol": "0050",
+                "market": "tw_stock",
+                "interval": "1d",
+                "count": 2,
+            }
+        )
+        with patch.object(repo._client, "request", return_value=mock_resp):
+            df = repo.read_ohlcv("0050", "tw_stock", "1d")
+            assert list(df.columns) == ["open", "high", "low", "close", "volume", "adj_close"]
+            assert df["adj_close"].iloc[0] == 101.0
+            assert pd.isna(df["adj_close"].iloc[1])
+
     def test_read_ohlcv_passes_start_end(self, repo):
         mock_resp = _mock_response(
             {

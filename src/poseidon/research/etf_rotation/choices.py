@@ -29,6 +29,32 @@ CHOICE_ZH = {
     "best_low_turnover_return": "低交易次數最高報酬",
     "best_mid_turnover_return": "中交易次數最高報酬",
     "best_high_turnover_return": "高交易次數最高報酬",
+    "best_de_risk_score": "反向降槓桿綜合最佳",
+    "best_de_risk_return": "反向降槓桿歷史報酬最高",
+    "best_de_risk_under_40dd": "反向降槓桿回撤小於 40% 內最高報酬",
+    "best_de_risk_under_45dd": "反向降槓桿回撤小於 45% 內最高報酬",
+    "best_de_risk_under_50dd": "反向降槓桿回撤小於 50% 內最高報酬",
+    "best_de_risk_under_60dd": "反向降槓桿回撤小於 60% 內最高報酬",
+    "best_de_risk_low_turnover_return": "反向降槓桿低交易次數最高報酬",
+    "best_de_risk_2_stage_score": "反向降槓桿兩段規則最佳",
+    "best_de_risk_3_stage_score": "反向降槓桿三段規則最佳",
+    "best_de_risk_cash_score": "反向切現金綜合最佳",
+    "best_de_risk_cash_return": "反向切現金歷史報酬最高",
+    "best_de_risk_cash_under_40dd": "反向切現金回撤小於 40% 內最高報酬",
+    "best_de_risk_cash_under_45dd": "反向切現金回撤小於 45% 內最高報酬",
+    "best_de_risk_cash_under_50dd": "反向切現金回撤小於 50% 內最高報酬",
+    "best_de_risk_cash_under_60dd": "反向切現金回撤小於 60% 內最高報酬",
+    "best_de_risk_cash_low_turnover_return": "反向切現金低交易次數最高報酬",
+    "best_de_risk_cash_2_stage_score": "反向切現金兩段規則最佳",
+    "best_de_risk_cash_3_stage_score": "反向切現金三段規則最佳",
+    "best_leveraged_cash_band_score": "正2現金權重帶綜合最佳",
+    "best_leveraged_cash_band_return": "正2現金權重帶歷史報酬最高",
+    "best_leveraged_cash_band_under_40dd": "正2現金權重帶回撤小於 40% 內最高報酬",
+    "best_leveraged_cash_band_under_50dd": "正2現金權重帶回撤小於 50% 內最高報酬",
+    "best_leveraged_cash_band_under_60dd": "正2現金權重帶回撤小於 60% 內最高報酬",
+    "ma_sma200": "MA：核心站上 SMA200",
+    "ma_ema200": "MA：核心站上 EMA200",
+    "ma_sma200_band_2": "MA：SMA200 ±2% 權重帶",
 }
 
 
@@ -49,6 +75,32 @@ DESCRIPTIONS = {
     "best_low_turnover_return": "限制歷史轉換次數不超過 10 次，在低操作頻率中找最高報酬。",
     "best_mid_turnover_return": "限制歷史轉換次數約 11 到 25 次，在中等操作頻率中找最高報酬。",
     "best_high_turnover_return": "允許超過 25 次轉換，在高操作頻率中找最高報酬。",
+    "best_de_risk_score": "預設持有槓桿 ETF，遇到下跌時降到核心 ETF，用綜合分數找最佳折衷。",
+    "best_de_risk_return": "預設持有槓桿 ETF，遇到下跌時降到核心 ETF，完全以歷史終值最大化為目標。",
+    "best_de_risk_under_40dd": "預設持有槓桿 ETF，遇到下跌時降到核心 ETF，並把歷史最大回撤控制在約 40% 以內。",
+    "best_de_risk_under_45dd": "預設持有槓桿 ETF，遇到下跌時降到核心 ETF，並把歷史最大回撤控制在約 45% 以內。",
+    "best_de_risk_under_50dd": "預設持有槓桿 ETF，遇到下跌時降到核心 ETF，並把歷史最大回撤控制在約 50% 以內。",
+    "best_de_risk_under_60dd": "預設持有槓桿 ETF，遇到下跌時降到核心 ETF，並把歷史最大回撤控制在約 60% 以內。",
+    "best_de_risk_low_turnover_return": "預設持有槓桿 ETF，遇到下跌時降到核心 ETF，並限制歷史轉換次數不超過 10 次。",
+    "best_de_risk_2_stage_score": "預設持有槓桿 ETF，遇到下跌時用兩段規則分批降槓桿，在同類規則中找綜合分數最佳。",
+    "best_de_risk_3_stage_score": "預設持有槓桿 ETF，遇到下跌時用三段規則分批降槓桿，在同類規則中找綜合分數最佳。",
+    "best_de_risk_cash_score": "預設持有槓桿 ETF，遇到下跌時切到現金，用綜合分數找最佳折衷。",
+    "best_de_risk_cash_return": "預設持有槓桿 ETF，遇到下跌時切到現金，完全以歷史終值最大化為目標。",
+    "best_de_risk_cash_under_40dd": "預設持有槓桿 ETF，遇到下跌時切到現金，並把歷史最大回撤控制在約 40% 以內。",
+    "best_de_risk_cash_under_45dd": "預設持有槓桿 ETF，遇到下跌時切到現金，並把歷史最大回撤控制在約 45% 以內。",
+    "best_de_risk_cash_under_50dd": "預設持有槓桿 ETF，遇到下跌時切到現金，並把歷史最大回撤控制在約 50% 以內。",
+    "best_de_risk_cash_under_60dd": "預設持有槓桿 ETF，遇到下跌時切到現金，並把歷史最大回撤控制在約 60% 以內。",
+    "best_de_risk_cash_low_turnover_return": "預設持有槓桿 ETF，遇到下跌時切到現金，並限制歷史轉換次數不超過 10 次。",
+    "best_de_risk_cash_2_stage_score": "預設持有槓桿 ETF，遇到下跌時用兩段規則分批切現金，在同類規則中找綜合分數最佳。",
+    "best_de_risk_cash_3_stage_score": "預設持有槓桿 ETF，遇到下跌時用三段規則分批切現金，在同類規則中找綜合分數最佳。",
+    "best_leveraged_cash_band_score": "固定持有槓桿 ETF 加現金，當槓桿 ETF 權重偏離目標權重帶時再平衡。",
+    "best_leveraged_cash_band_return": "固定持有槓桿 ETF 加現金，用權重帶再平衡，在同類規則中找最高終值。",
+    "best_leveraged_cash_band_under_40dd": "固定持有槓桿 ETF 加現金，用權重帶再平衡，並把歷史最大回撤控制在約 40% 以內。",
+    "best_leveraged_cash_band_under_50dd": "固定持有槓桿 ETF 加現金，用權重帶再平衡，並把歷史最大回撤控制在約 50% 以內。",
+    "best_leveraged_cash_band_under_60dd": "固定持有槓桿 ETF 加現金，用權重帶再平衡，並把歷史最大回撤控制在約 60% 以內。",
+    "ma_sma200": "趨勢濾網策略：核心 ETF 收盤站上 SMA200 才持有槓桿 ETF，跌回均線下方則回核心 ETF。",
+    "ma_ema200": "趨勢濾網策略：核心 ETF 收盤站上 EMA200 才持有槓桿 ETF，EMA 對近期價格反應比 SMA 快。",
+    "ma_sma200_band_2": "趨勢濾網策略：用 SMA200 上下 2% 權重帶降低均線附近來回洗出洗進。",
 }
 
 
@@ -85,9 +137,9 @@ def percent(value: float) -> str:
 
 
 def split_values(text: str) -> list[float]:
-    if not isinstance(text, str) or not text:
+    if text is None or pd.isna(text):
         return []
-    return [float(part) for part in text.split("|")]
+    return [float(part) for part in str(text).split("|") if part]
 
 
 def base_holding_text(pair: str, floor: float) -> str:
@@ -97,6 +149,24 @@ def base_holding_text(pair: str, floor: float) -> str:
     if floor >= 1:
         return f"平常持有 100% {assets['lev']}"
     return f"平常持有 {percent(1 - floor)} {assets['core']} / {percent(floor)} {assets['lev']}"
+
+
+def de_risk_base_holding_text(pair: str, max_lev: float) -> str:
+    assets = PAIR_ASSETS[pair]
+    if max_lev >= 1:
+        return f"平常持有 100% {assets['lev']}"
+    if max_lev <= 0:
+        return f"平常持有 100% {assets['core']}"
+    return f"平常持有 {percent(1 - max_lev)} {assets['core']} / {percent(max_lev)} {assets['lev']}"
+
+
+def leveraged_cash_holding_text(pair: str, leveraged_weight: float) -> str:
+    assets = PAIR_ASSETS[pair]
+    if leveraged_weight >= 1:
+        return f"平常持有 100% {assets['lev']}"
+    if leveraged_weight <= 0:
+        return "平常持有 100% 現金"
+    return f"平常持有 {percent(leveraged_weight)} {assets['lev']} / {percent(1 - leveraged_weight)} 現金"
 
 
 def current_mix_text(pair: str) -> str:
@@ -122,6 +192,38 @@ def exit_rules(pair: str, exits: list[float], levels: list[float], floor: float)
     return rules
 
 
+def de_risk_exit_rules(pair: str, exits: list[float], levels: list[float], max_lev: float) -> list[str]:
+    assets = PAIR_ASSETS[pair]
+    rules: list[str] = []
+    if len(exits) == 1:
+        rules.append(
+            f"之後 {assets['core']} 從低點反彈 {percent(exits[0])} 時，回到 {percent(max_lev)} {assets['lev']}"
+        )
+        return rules
+
+    # Reverse mode restores leveraged exposure gradually as rebound thresholds
+    # are reached: first threshold -> previous/higher stage, final threshold -> max_lev.
+    for index, threshold in enumerate(exits):
+        target = max_lev if index == len(exits) - 1 else levels[len(exits) - 2 - index]
+        rules.append(f"反彈 {percent(threshold)} 時，回升到 {percent(target)} {assets['lev']}")
+    return rules
+
+
+def de_risk_cash_exit_rules(pair: str, exits: list[float], levels: list[float], max_lev: float) -> list[str]:
+    assets = PAIR_ASSETS[pair]
+    rules: list[str] = []
+    if len(exits) == 1:
+        rules.append(
+            f"之後 {assets['core']} 從低點反彈 {percent(exits[0])} 時，回到 {percent(max_lev)} {assets['lev']}"
+        )
+        return rules
+
+    for index, threshold in enumerate(exits):
+        target = max_lev if index == len(exits) - 1 else levels[len(exits) - 2 - index]
+        rules.append(f"反彈 {percent(threshold)} 時，回升到 {percent(target)} {assets['lev']}，其餘持有現金")
+    return rules
+
+
 def rule_text(pair: str, row: pd.Series) -> str:
     assets = PAIR_ASSETS[pair]
     choice = row["choice"]
@@ -133,9 +235,59 @@ def rule_text(pair: str, row: pd.Series) -> str:
         return current_mix_text(pair) + "。"
 
     floor = float(row["floor"])
+    max_lev = float(row["max_lev"])
     enters = split_values(row["enter"])
     exits = split_values(row["exit"])
     levels = split_values(row["levels"])
+    mode = row.get("mode", "buy_dip")
+
+    if mode == "de_risk_on_drawdown":
+        parts = [de_risk_base_holding_text(pair, max_lev)]
+        for threshold, level in zip(enters, levels, strict=True):
+            parts.append(
+                f"{assets['core']} 從近期高點下跌 {percent(threshold)} 時，降到 {percent(level)} {assets['lev']}"
+            )
+        parts.extend(de_risk_exit_rules(pair, exits, levels, max_lev))
+        return "；".join(parts) + "。"
+
+    if mode == "de_risk_to_cash_on_drawdown":
+        parts = [leveraged_cash_holding_text(pair, max_lev)]
+        for threshold, level in zip(enters, levels, strict=True):
+            parts.append(
+                f"{assets['core']} 從近期高點下跌 {percent(threshold)} 時，降到 {percent(level)} {assets['lev']}，其餘持有現金"
+            )
+        parts.extend(de_risk_cash_exit_rules(pair, exits, levels, max_lev))
+        return "；".join(parts) + "。"
+
+    if mode == "leveraged_cash_band":
+        target = max_lev
+        band = enters[0]
+        lower = max(0.0, target - band)
+        upper = min(1.0, target + band)
+        return (
+            f"{leveraged_cash_holding_text(pair, target)}；"
+            f"{assets['lev']} 權重高於 {percent(upper)} 或低於 {percent(lower)} 時，再平衡回 {percent(target)} {assets['lev']}。"
+        )
+
+    if mode == "ma_sma":
+        window = int(enters[0])
+        return (
+            f"{assets['core']} 收盤高於 SMA{window} 時，隔日持有 100% {assets['lev']}；否則持有 100% {assets['core']}。"
+        )
+
+    if mode == "ma_ema":
+        window = int(enters[0])
+        return (
+            f"{assets['core']} 收盤高於 EMA{window} 時，隔日持有 100% {assets['lev']}；否則持有 100% {assets['core']}。"
+        )
+
+    if mode == "ma_sma_band":
+        window = int(enters[0])
+        band = enters[1]
+        return (
+            f"{assets['core']} 收盤高於 SMA{window} {percent(band)} 時，隔日持有 100% {assets['lev']}；"
+            f"{assets['core']} 收盤低於 SMA{window} {percent(band)} 時，隔日回到 100% {assets['core']}。"
+        )
 
     parts = [base_holding_text(pair, floor)]
     for threshold, level in zip(enters, levels, strict=True):

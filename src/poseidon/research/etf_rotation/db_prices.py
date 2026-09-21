@@ -19,8 +19,11 @@ def market_for_symbol(symbol: str) -> str:
 
 
 def _price_column(frame: pd.DataFrame) -> pd.Series:
-    series = frame["adj_close"].fillna(frame["close"]) if "adj_close" in frame.columns else frame["close"]
-    return pd.to_numeric(series, errors="coerce")
+    if "adj_close" in frame.columns:
+        adjusted = pd.to_numeric(frame["adj_close"], errors="coerce")
+        if adjusted.notna().any():
+            return adjusted
+    return pd.to_numeric(frame["close"], errors="coerce")
 
 
 def _read_symbol_prices(repository: OhlcvRepository, symbol: str) -> pd.Series:
@@ -34,6 +37,15 @@ def _read_symbol_prices(repository: OhlcvRepository, symbol: str) -> pd.Series:
         raise ValueError(f"no usable adjusted close/close values for {symbol}")
     series.name = symbol
     return series
+
+
+def _apply_trusted_start(series: pd.Series, trusted_start: str | None) -> pd.Series:
+    if trusted_start is None:
+        return series
+    start = pd.Timestamp(trusted_start)
+    if series.index.tz is not None:
+        start = start.tz_localize(series.index.tz)
+    return series.where(series.index >= start)
 
 
 def _max_drawdown(series: pd.Series) -> float:
@@ -100,8 +112,14 @@ def build_price_artifacts(
     prices = pd.DataFrame(index=sorted(set().union(*(series.index for series in symbols.values()))))
     for pair in selected_pairs:
         cfg = PAIRS[pair]
-        prices[cfg.core_col] = symbols[cfg.core].reindex(prices.index)
-        prices[cfg.lev_col] = symbols[cfg.lev].reindex(prices.index)
+        prices[cfg.core_col] = _apply_trusted_start(
+            symbols[cfg.core].reindex(prices.index),
+            cfg.trusted_start,
+        )
+        prices[cfg.lev_col] = _apply_trusted_start(
+            symbols[cfg.lev].reindex(prices.index),
+            cfg.trusted_start,
+        )
 
     prices.index.name = "date"
     prices.reset_index().to_csv(out_dir / "prices_extended.csv", index=False)
