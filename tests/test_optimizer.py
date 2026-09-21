@@ -252,7 +252,7 @@ class TestBayesianOptimizer:
         # Return different sharpe values each call
         call_count = 0
 
-        def mock_run(ohlcv, feature_specs=None):
+        def mock_run(ohlcv, feature_specs=None, db_session=None):
             nonlocal call_count
             result = _make_mock_result(float(call_count))
             call_count += 1

@@ -167,13 +167,11 @@ class TestBacktestPortfolio:
         assert trade is not None
         # Fill price with slippage: 100 * (1 + 0.0005) = 100.05
         # trade_value = 100.05 * quantity
-        # quantity = floor(capital * quantity_pct / fill_price)
-        # quantity = floor(1_000_000 * 0.1 / 100.05) = floor(999.5) = 999
-        # trade_value = 100.05 * 999 = 99949.95
-        # buy_fee = 99949.95 * 0.001 = 99.94995
-        # total deduction = 99949.95 + 99.94995 = 100049.89995
+        # Crypto markets allow fractional quantities.
+        # quantity = 1_000_000 * 0.1 / 100.05 = 999.500249875...
+        # trade_value = 100000 and buy_fee = 100.
         expected_fill_price = 100.0 * (1 + 0.0005)
-        quantity = int(1_000_000 * 0.1 / expected_fill_price)
+        quantity = 1_000_000 * 0.1 / expected_fill_price
         trade_value = expected_fill_price * quantity
         buy_fee = trade_value * 0.001
         expected_cash = 1_000_000 - trade_value - buy_fee
@@ -320,8 +318,8 @@ class TestMetrics:
         result = compute_metrics(equity, [])
         assert result["sharpe_ratio"] == 0
 
-    def test_all_10_metrics_returned(self):
-        """compute_metrics returns all 10 standard metrics."""
+    def test_all_12_metrics_returned(self):
+        """compute_metrics returns all 12 standard metrics."""
         equity = pd.Series([100.0, 110.0, 105.0, 120.0])
         result = compute_metrics(equity, [])
         expected_keys = {
@@ -336,6 +334,7 @@ class TestMetrics:
             "avg_loss",
             "trade_count",
             "closed_trade_count",
+            "avg_holding_period",
         }
         assert set(result.keys()) == expected_keys
 
