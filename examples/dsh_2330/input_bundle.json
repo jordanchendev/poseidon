@@ -1,0 +1,168 @@
+{
+  "symbol": "2330",
+  "bundle_generated_at": "2026-09-21T11:10:00Z",
+  "source_manifest": [
+    {
+      "id": "tsmc-1q26-earnings-release-pdf",
+      "source_url": "https://investor.tsmc.com/english/encrypt/files/encrypt_file/reports/2026-04/e85216eea8dccd8ca75d7e040e8d57be3ccd618b/1Q26%20EarningsRelease.pdf",
+      "title": "TSMC 1Q26 Earnings Release",
+      "published_at": "2026-04-16",
+      "download_attempted_at": "2026-09-21T11:08:01Z",
+      "local_file": null,
+      "source_file_sha256": null,
+      "download_status": "official PDF verified through the web PDF reader; direct public CDN download returned HTTP 403 from this environment; isolated runtime host also returned HTTP 403. Preserved normalized verified facts, not original PDF bytes."
+    },
+    {
+      "id": "tsmc-2q26-earnings-release-pdf",
+      "source_url": "https://investor.tsmc.com/english/encrypt/files/encrypt_file/reports/2026-07/a80d7933be643644081584087731f73b22ea5a2c/2Q26%20EarningsRelease.pdf",
+      "title": "TSMC 2Q26 Earnings Release",
+      "published_at": "2026-07-16",
+      "download_attempted_at": "2026-09-21T11:08:01Z",
+      "local_file": null,
+      "source_file_sha256": null,
+      "download_status": "official PDF verified through the web PDF reader; direct public CDN download returned HTTP 403 from this environment; isolated runtime host also returned HTTP 403. Preserved normalized verified facts, not original PDF bytes."
+    }
+  ],
+  "snapshots": [
+    {
+      "id": "2026-q1",
+      "as_of": "2026-04-16T23:59:59+08:00",
+      "evidence": [
+        {
+          "id": "tsmc-1q26-earnings-release",
+          "published_at": "2026-04-16",
+          "source_url": "https://investor.tsmc.com/english/encrypt/files/encrypt_file/reports/2026-04/e85216eea8dccd8ca75d7e040e8d57be3ccd618b/1Q26%20EarningsRelease.pdf",
+          "title": "TSMC 1Q26 Earnings Release",
+          "locator": "PDF p.1, paragraphs 1-4 and guidance bullets",
+          "text": "TSMC reported 1Q26 consolidated revenue of NT$1,134.10 billion, diluted EPS of NT$22.08, gross margin of 66.2%, and operating margin of 58.1%.",
+          "facts": {
+            "quarter": "1Q26",
+            "period_end": "2026-03-31",
+            "revenue_twd_billion": 1134.1,
+            "revenue_usd_billion": 35.9,
+            "diluted_eps_twd": 22.08,
+            "diluted_eps_usd_per_adr": 3.49,
+            "gross_margin_pct": 66.2,
+            "operating_margin_pct": 58.1,
+            "net_profit_margin_pct": 50.5,
+            "revenue_yoy_pct": 35.1,
+            "revenue_qoq_pct": 8.4,
+            "guidance_next_quarter": "2Q26",
+            "guidance_revenue_usd_billion_low": 39.0,
+            "guidance_revenue_usd_billion_high": 40.2,
+            "guidance_gross_margin_pct_low": 65.5,
+            "guidance_gross_margin_pct_high": 67.5,
+            "guidance_operating_margin_pct_low": 56.5,
+            "guidance_operating_margin_pct_high": 58.5,
+            "guidance_usd_twd_assumption": 31.7
+          },
+          "normalized_content_sha256": "1900361ef57940c291259d32f03fb9eaf0032c47503d56e67b345437b744b80d"
+        },
+        {
+          "id": "2330-price-2026-04-16",
+          "published_at": "2026-04-16",
+          "source_url": "thalassa://ohlcv/tw_stock/2330/1d",
+          "title": "2330 Thalassa historical daily OHLCV (retrieved 2026-09-21)",
+          "locator": "2330-ohlcv.csv: time <= 2026-04-16; last 61 sessions",
+          "sha256": "349b8b43417158ee3a9d7db3a6e41d772c01b9a02a9a00e0ab90e676b1232d41",
+          "text": "Actual stored daily OHLCV. SMA uses raw close over 20/60 trading sessions. 20-session change = (close / close 20 sessions earlier - 1) * 100; volume ratio uses current volume divided by 20-session mean including current. Raw prices: not adjusted for dividends/splits; not total return. Historical data retrieved later; point-in-time database revisions are unavailable. Volume unit not verified. No valuation conclusion from this data alone.",
+          "facts": {
+            "close_twd": 2085.0,
+            "sma20_twd": 1895.0,
+            "sma60_twd": 1847.83,
+            "price_change_20_sessions_pct": 11.5,
+            "volume_vs_20_session_mean": 0.96,
+            "last_trading_date": "2026-04-16"
+          },
+          "normalized_content_sha256": "4c90854184c9ffd4996340759e1a5aa1fcfd092359ee02bfaa231116bc937088"
+        }
+      ],
+      "cutoff_policy": "End of Asia/Taipei disclosure date; exact intraday publication time not verified. Historical replay, not a point-in-time trading backtest."
+    },
+    {
+      "id": "2026-q2",
+      "as_of": "2026-07-16T23:59:59+08:00",
+      "evidence": [
+        {
+          "id": "tsmc-1q26-earnings-release",
+          "published_at": "2026-04-16",
+          "source_url": "https://investor.tsmc.com/english/encrypt/files/encrypt_file/reports/2026-04/e85216eea8dccd8ca75d7e040e8d57be3ccd618b/1Q26%20EarningsRelease.pdf",
+          "title": "TSMC 1Q26 Earnings Release",
+          "locator": "PDF p.1, paragraphs 1-4 and guidance bullets",
+          "text": "TSMC reported 1Q26 consolidated revenue of NT$1,134.10 billion, diluted EPS of NT$22.08, gross margin of 66.2%, and operating margin of 58.1%.",
+          "facts": {
+            "quarter": "1Q26",
+            "period_end": "2026-03-31",
+            "revenue_twd_billion": 1134.1,
+            "revenue_usd_billion": 35.9,
+            "diluted_eps_twd": 22.08,
+            "diluted_eps_usd_per_adr": 3.49,
+            "gross_margin_pct": 66.2,
+            "operating_margin_pct": 58.1,
+            "net_profit_margin_pct": 50.5,
+            "revenue_yoy_pct": 35.1,
+            "revenue_qoq_pct": 8.4,
+            "guidance_next_quarter": "2Q26",
+            "guidance_revenue_usd_billion_low": 39.0,
+            "guidance_revenue_usd_billion_high": 40.2,
+            "guidance_gross_margin_pct_low": 65.5,
+            "guidance_gross_margin_pct_high": 67.5,
+            "guidance_operating_margin_pct_low": 56.5,
+            "guidance_operating_margin_pct_high": 58.5,
+            "guidance_usd_twd_assumption": 31.7
+          },
+          "normalized_content_sha256": "1900361ef57940c291259d32f03fb9eaf0032c47503d56e67b345437b744b80d"
+        },
+        {
+          "id": "tsmc-2q26-earnings-release",
+          "published_at": "2026-07-16",
+          "source_url": "https://investor.tsmc.com/english/encrypt/files/encrypt_file/reports/2026-07/a80d7933be643644081584087731f73b22ea5a2c/2Q26%20EarningsRelease.pdf",
+          "title": "TSMC 2Q26 Earnings Release",
+          "locator": "PDF p.1, paragraphs 1-4 and guidance bullets",
+          "text": "TSMC reported 2Q26 consolidated revenue of NT$1,270.38 billion, diluted EPS of NT$27.25, gross margin of 67.7%, and operating margin of 60.3%.",
+          "facts": {
+            "quarter": "2Q26",
+            "period_end": "2026-06-30",
+            "revenue_twd_billion": 1270.38,
+            "revenue_usd_billion": 40.2,
+            "diluted_eps_twd": 27.25,
+            "diluted_eps_usd_per_adr": 4.31,
+            "gross_margin_pct": 67.7,
+            "operating_margin_pct": 60.3,
+            "net_profit_margin_pct": 55.6,
+            "revenue_yoy_pct": 36.0,
+            "revenue_qoq_pct": 12.0,
+            "guidance_next_quarter": "3Q26",
+            "guidance_revenue_usd_billion_low": 44.6,
+            "guidance_revenue_usd_billion_high": 45.8,
+            "guidance_gross_margin_pct_low": 65.0,
+            "guidance_gross_margin_pct_high": 67.0,
+            "guidance_operating_margin_pct_low": 56.0,
+            "guidance_operating_margin_pct_high": 58.0,
+            "guidance_usd_twd_assumption": 32.0
+          },
+          "normalized_content_sha256": "4396101b240fc13d4f2abec563981f8160c57eb85e0f42e1273487589b2700e1"
+        },
+        {
+          "id": "2330-price-2026-07-16",
+          "published_at": "2026-07-16",
+          "source_url": "thalassa://ohlcv/tw_stock/2330/1d",
+          "title": "2330 Thalassa historical daily OHLCV (retrieved 2026-09-21)",
+          "locator": "2330-ohlcv.csv: time <= 2026-07-16; last 61 sessions",
+          "sha256": "349b8b43417158ee3a9d7db3a6e41d772c01b9a02a9a00e0ab90e676b1232d41",
+          "text": "Actual stored daily OHLCV. SMA uses raw close over 20/60 trading sessions. 20-session change = (close / close 20 sessions earlier - 1) * 100; volume ratio uses current volume divided by 20-session mean including current. Raw prices: not adjusted for dividends/splits; not total return. Historical data retrieved later; point-in-time database revisions are unavailable. Volume unit not verified. No valuation conclusion from this data alone.",
+          "facts": {
+            "close_twd": 2470.0,
+            "sma20_twd": 2433.0,
+            "sma60_twd": 2319.75,
+            "price_change_20_sessions_pct": 2.92,
+            "volume_vs_20_session_mean": 0.842,
+            "last_trading_date": "2026-07-16"
+          },
+          "normalized_content_sha256": "8df685f73b747c68bbe41b4efe7e6f4925968f94f6f6d79c8fc174a1cfdbe4ef"
+        }
+      ],
+      "cutoff_policy": "End of Asia/Taipei disclosure date; exact intraday publication time not verified. Historical replay, not a point-in-time trading backtest."
+    }
+  ]
+}
