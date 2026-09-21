@@ -8,6 +8,7 @@ from poseidon.models.backfill import BackfillJob  # noqa: F401
 from poseidon.models.base import Base
 from poseidon.models.fundamentals import Fundamentals  # noqa: F401
 from poseidon.models.ingest_state import IngestState  # noqa: F401
+from poseidon.models.rd_agent_run import RDAgentRun  # noqa: F401
 from poseidon.models.sentiment import Sentiment  # noqa: F401
 
 config = context.config

@@ -457,3 +457,45 @@ class RLExecutionRunListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# --- RD-Agent Autonomous Research ---
+
+
+class RDAgentRunRequest(BaseModel):
+    challenge: str = Field(..., min_length=1, max_length=2000)
+    time_budget_hours: float = Field(4.0, gt=0, le=24)
+    cost_cap_usd: float = Field(20.0, gt=0, le=100)
+    use_gpu: bool = False
+
+
+class RDAgentRunResponse(BaseModel):
+    run_id: UUID
+    challenge: str
+    time_budget_hours: float
+    cost_cap_usd: float
+    use_gpu: bool
+    status: str
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    model_config = {"from_attributes": True}
+
+
+class RDAgentRunDetailResponse(RDAgentRunResponse):
+    cancel_requested: bool
+    cancel_reason: str | None = None
+    token_cost_acc_usd: float | None = None
+    summary: dict | None = None
+    verdict: str | None = None
+    result_dir: str | None = None
+    error: str | None = None
+    requested_by: str
+    updated_at: datetime
+
+
+class RDAgentRunListResponse(BaseModel):
+    runs: list[RDAgentRunResponse]
+    total: int
+    limit: int
+    offset: int

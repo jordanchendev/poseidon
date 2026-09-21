@@ -15,6 +15,7 @@ from poseidon.api import (
     notifications,
     portfolio,
     protections,
+    rdagent,
     research_api,
     risk,
     risk_metrics,
@@ -73,3 +74,4 @@ app.include_router(
 )
 app.include_router(research_api.router, prefix="/api/v1/models", tags=["research"], dependencies=secured)
 app.include_router(rl_execution.router, prefix="/research/rl-execution", tags=["rl-execution"], dependencies=secured)
+app.include_router(rdagent.router, prefix="/research/rd-agent", tags=["rd-agent"], dependencies=secured)

@@ -14,6 +14,7 @@ from poseidon.models.order import OrderRecord  # noqa: F401
 from poseidon.models.order_fill import OrderFillRecord  # noqa: F401
 from poseidon.models.portfolio_holding import PortfolioHoldingRecord  # noqa: F401
 from poseidon.models.protection_lock import ProtectionLockRecord  # noqa: F401
+from poseidon.models.rd_agent_run import RDAgentRun  # noqa: F401
 from poseidon.models.risk_rule import RiskRuleRecord  # noqa: F401
 from poseidon.models.rl_execution_run import RLExecutionRun  # noqa: F401
 from poseidon.models.sentiment import Sentiment  # noqa: F401

@@ -140,6 +140,7 @@ celery_app.conf.update(
         "poseidon.workers.gpu_tasks",
         "poseidon.workers.qlib_tasks",
         "poseidon.workers.qlib_rl_tasks",
+        "poseidon.workers.qlib_rdagent_tasks",
         "poseidon.workers.qlib_ddg_da_tasks",
     ],
 )

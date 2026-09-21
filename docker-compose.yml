@@ -131,6 +131,7 @@ services:
       - AZURE_API_KEY=${AZURE_API_KEY:-}
       - AZURE_API_BASE=${AZURE_API_BASE:-}
       - RDAGENT_DEFAULT_MODEL=${RDAGENT_DEFAULT_MODEL:-gpt-4o}
+      - CHAT_MAX_TOKENS=${CHAT_MAX_TOKENS:-4096}
       - RDAGENT_COST_CAP_USD=${RDAGENT_COST_CAP_USD:-20}
       # Conda toggle defaults (RESEARCH OQ-6 — defensive set all three; Pitfall 3 bypasses Docker-in-Docker).
       - MODEL_COSTEER_ENV_TYPE=conda
