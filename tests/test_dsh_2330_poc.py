@@ -13,7 +13,10 @@ from dsh_2330_poc import (
     POLICY_VERSION,
     RevisionLedger,
     ValidationError,
+    load_decision_context,
+    report,
     select_snapshot,
+    snapshot_digest,
     validate_research,
 )
 from dsh_poc_tools import previous_for_session, serve
@@ -162,3 +165,98 @@ class Dsh2330PocTests(unittest.TestCase):
             ["read_snapshot", "read_previous_revision"],
         )
         self.assertIn("q1-release", replies[2]["result"]["content"][0]["text"])
+
+    def test_decision_artifact_matches_snapshot_and_filters_generator_evidence(self) -> None:
+        from tempfile import TemporaryDirectory
+
+        from dsh_decision_poc import build_jev_request, consume_answers, packet_sha256
+
+        snapshot = select_snapshot(bundle(), "2026-q1")
+        packet = {
+            "id": "q1-decisions",
+            "snapshot_id": snapshot["id"],
+            "snapshot_digest": snapshot_digest(snapshot),
+            "state": {"research_goal": "bounded", "snapshot": snapshot, "previous_snapshot": None},
+            "questions": {
+                "evidence_0": {
+                    "type": "choice",
+                    "instructions": "relevance",
+                    "criteria": {"relevant": "yes", "irrelevant": "no", "uncertain": "unknown"},
+                },
+                "revision_route": {
+                    "type": "choice",
+                    "instructions": "route",
+                    "criteria": {"create": "new", "update": "changed", "no_change": "same", "review": "unclear"},
+                },
+                "research_sufficiency": {
+                    "type": "choice",
+                    "instructions": "enough",
+                    "criteria": {"bounded": "yes", "insufficient": "no"},
+                },
+                "valuation_sufficiency": {
+                    "type": "choice",
+                    "instructions": "valuation",
+                    "criteria": {"sufficient": "yes", "insufficient": "no"},
+                },
+            },
+            "evidence_question_ids": {"evidence_0": "q1-release"},
+        }
+        answers = {
+            "evidence_0": {
+                "type": "choice",
+                "choice": "relevant",
+                "confidence": 1.0,
+                "probabilities": {"relevant": 1.0, "irrelevant": 0.0, "uncertain": 0.0},
+            },
+            "revision_route": {
+                "type": "choice",
+                "choice": "create",
+                "confidence": 1.0,
+                "probabilities": {"create": 1.0, "update": 0.0, "no_change": 0.0, "review": 0.0},
+            },
+            "research_sufficiency": {
+                "type": "choice",
+                "choice": "bounded",
+                "confidence": 1.0,
+                "probabilities": {"bounded": 1.0, "insufficient": 0.0},
+            },
+            "valuation_sufficiency": {
+                "type": "choice",
+                "choice": "insufficient",
+                "confidence": 1.0,
+                "probabilities": {"sufficient": 0.0, "insufficient": 1.0},
+            },
+        }
+        record = {
+            "status": "success",
+            "packet_id": "q1-decisions",
+            "packet_sha256": packet_sha256(packet),
+            "provider": "jev",
+            "snapshot_id": snapshot["id"],
+            "snapshot_digest": snapshot_digest(snapshot),
+            "request": build_jev_request(packet),
+            "response": {"model": "jev-1.13.0", "answers": answers, "usage": {"input_tokens": 1, "output_tokens": 1}},
+            "decision": dict(consume_answers(packet, answers), route="review", requires_review=True),
+        }
+        with TemporaryDirectory() as directory:
+            artifact = Path(directory) / "records.json"
+            artifact.write_text(__import__("json").dumps({"packet": packet, "records": [record]}), encoding="utf-8")
+            context, filtered = load_decision_context(artifact, snapshot)
+        self.assertEqual(context["route"], "create")
+        self.assertEqual([item["id"] for item in filtered["evidence"]], ["q1-release"])
+
+    def test_report_shows_initial_and_resolved_review_decision_provenance(self) -> None:
+        snapshot = select_snapshot(bundle(), "2026-q1")
+        reviewed = research()
+        reviewed["decision_provenance"] = {
+            "initial": {"provider": "jev", "model": "jev-1.13.0", "policy": "decision-v1", "context_sha256": "initial"},
+            "review": {
+                "provider": "terra",
+                "model": "terra-reviewer",
+                "policy": "decision-v1",
+                "context_sha256": "reviewed",
+            },
+        }
+        rendered = report(reviewed, snapshot, "terra", "terra-writer")
+        self.assertIn("決策：terra/terra-reviewer", rendered)
+        self.assertIn("初始決策：jev/jev-1.13.0", rendered)
