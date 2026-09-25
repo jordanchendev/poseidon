@@ -26,3 +26,4 @@ Thumbs.db
 # These are large (per-run) and host-specific (different on Mac dev vs stormtrooper).
 local_dev/
 .claude/worktrees/
+.worktrees/
