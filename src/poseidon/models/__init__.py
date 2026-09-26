@@ -3,6 +3,8 @@ from poseidon.models.backfill import BackfillJob  # noqa: F401
 from poseidon.models.base import Base  # noqa: F401
 from poseidon.models.data_gap import DataGap  # noqa: F401
 from poseidon.models.data_manifest import DataManifest  # noqa: F401
+from poseidon.models.decision_event import DecisionEvent  # noqa: F401
+from poseidon.models.decision_record import DecisionRecord  # noqa: F401
 from poseidon.models.evaluation_run import EvaluationRun  # noqa: F401
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot  # noqa: F401
 from poseidon.models.experiment import ExperimentRecord  # noqa: F401
