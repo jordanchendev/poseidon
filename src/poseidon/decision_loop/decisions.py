@@ -416,6 +416,7 @@ class DecisionService:
         risk = _json_object(risk_snapshot_json, "risk_snapshot_json")
         final_action = original.get("final_action")
         selected = _validate_selection(snapshots, original.get("selected_evaluation_ids"), final_action)
+        original["selected_evaluation_ids"] = [str(row.id) for row in selected]
         hard_failures = risk.get("hard_failures")
         allowed_actions = risk.get("allowed_actions")
         if not isinstance(hard_failures, list):
@@ -561,7 +562,7 @@ class DecisionService:
     def trace(self, decision_id, *, principal):
         decision = self.get(decision_id, principal=principal)
         run, version, manifest, snapshots = verify_complete_run(self.session, decision.evaluation_run_id)
-        selected_ids = set(decision.original_json["selected_evaluation_ids"])
+        selected_ids = {uuid.UUID(value) for value in decision.original_json["selected_evaluation_ids"]}
         evaluations = []
         for snapshot in snapshots:
             revision_ids = list(snapshot.research_revision_ids)
@@ -583,7 +584,7 @@ class DecisionService:
                     "market": snapshot.market,
                     "instrument": snapshot.instrument,
                     "status": snapshot.status,
-                    "selected": str(snapshot.id) in selected_ids,
+                    "selected": snapshot.id in selected_ids,
                     "recommendation_json": json.loads(canonical_json(snapshot.recommendation_json)),
                     "technical_json": json.loads(canonical_json(snapshot.technical_json)),
                     "reason_codes": list(snapshot.reason_codes),

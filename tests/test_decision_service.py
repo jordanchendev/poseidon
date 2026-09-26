@@ -234,6 +234,22 @@ def test_create_decision_is_replay_safe_and_appends_one_event(db):
     assert db.query(DecisionEvent).filter_by(decision_id=first.id).count() == 1
 
 
+@pytest.mark.parametrize("uuid_format", ["uppercase", "hex"])
+def test_selected_uuid_formats_share_identity_and_trace_selection(db, uuid_format):
+    run, _, snapshot_ids = decision_inputs(db)
+    selected_id = snapshot_ids[0].upper() if uuid_format == "uppercase" else uuid.UUID(snapshot_ids[0]).hex
+    original = {"selected_evaluation_ids": [selected_id], "final_action": "hold"}
+    first = create_decision(db, run.id, snapshot_ids, original_json=original)
+    replay = create_decision(db, run.id, snapshot_ids)
+    assert first.id == replay.id
+    assert first.original_json["selected_evaluation_ids"] == [snapshot_ids[0]]
+    assert original["selected_evaluation_ids"] == [selected_id]
+    trace = DecisionService(db).trace(first.id, principal=manager())
+    assert [row["id"] for row in trace["evaluations"] if row["selected"]] == [snapshot_ids[0]]
+    assert db.query(DecisionRecord).count() == 1
+    assert db.query(DecisionEvent).filter_by(decision_id=first.id).count() == 1
+
+
 @pytest.mark.parametrize("field", ["account_scope", "universe_id"])
 def test_create_decision_rejects_policy_scope_mismatch(db, field):
     policy = synthetic_policy(**{field: "mismatch"})
