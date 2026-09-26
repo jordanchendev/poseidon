@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal
 from poseidon.decision_loop.decisions import (
+    DecisionConflictError,
     DecisionPolicy,
     DecisionService,
 )
@@ -276,3 +277,220 @@ def test_creation_requires_worker_role_and_exact_account_scope(db):
         with pytest.raises(HTTPException) as error:
             create_decision(db, run.id, snapshot_ids, principal=principal)
         assert error.value.status_code == 403
+
+
+def test_approve_exact_double_click_replays_one_transition(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    service = DecisionService(db)
+    body = {"expected_revision": 1}
+
+    first = service.approve(
+        decision.id,
+        body,
+        principal=manager(),
+        idempotency_key="approve-once",
+        now=datetime(2026, 9, 26, 12, 30, tzinfo=UTC),
+    )
+    replay = service.approve(
+        decision.id,
+        body,
+        principal=manager(),
+        idempotency_key="approve-once",
+        now=datetime(2026, 9, 26, 12, 31, tzinfo=UTC),
+    )
+
+    assert replay == first
+    assert first["status"] == "approved"
+    assert first["revision"] == 2
+    assert db.query(DecisionEvent).filter_by(decision_id=decision.id, event_type="approved").count() == 1
+
+
+def test_idempotency_conflicts_on_changed_body_operation_actor_or_new_key(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    service = DecisionService(db)
+    now = datetime(2026, 9, 26, 12, 30, tzinfo=UTC)
+    service.approve(
+        decision.id,
+        {"expected_revision": 1},
+        principal=manager(),
+        idempotency_key="same-key",
+        now=now,
+    )
+
+    attempts = [
+        lambda: service.approve(
+            decision.id,
+            {"expected_revision": 1, "override_reason": "changed"},
+            principal=manager(),
+            idempotency_key="same-key",
+            now=now,
+        ),
+        lambda: service.reject(
+            decision.id,
+            {"expected_revision": 1, "reason": "changed operation"},
+            principal=manager(),
+            idempotency_key="same-key",
+            now=now,
+        ),
+        lambda: service.approve(
+            decision.id,
+            {"expected_revision": 1},
+            principal=manager(actor="portfolio-manager:other"),
+            idempotency_key="same-key",
+            now=now,
+        ),
+        lambda: service.approve(
+            decision.id,
+            {"expected_revision": 1},
+            principal=manager(),
+            idempotency_key="different-key",
+            now=now,
+        ),
+    ]
+    for attempt in attempts:
+        with pytest.raises(DecisionConflictError):
+            attempt()
+    assert db.query(DecisionEvent).filter_by(decision_id=decision.id, event_type="approved").count() == 1
+
+
+@pytest.mark.parametrize("case", ["stale", "expired", "superseded", "policy", "hard_failure"])
+def test_approval_conflicts_for_invalid_frozen_state(db, case):
+    run, version, snapshot_ids = decision_inputs(db)
+    risk = {"hard_failures": [], "allowed_actions": ["hold", "reduce", "exit"]}
+    if case == "hard_failure":
+        risk["hard_failures"] = ["synthetic_limit"]
+    decision = create_decision(db, run.id, snapshot_ids, risk_snapshot_json=risk)
+    body = {"expected_revision": 2 if case == "stale" else 1}
+    now = datetime(2026, 9, 26, 13 if case == "expired" else 12, 30, tzinfo=UTC)
+    if case == "superseded":
+        create_decision(
+            db,
+            run.id,
+            snapshot_ids,
+            portfolio_snapshot_json={"cash": 90000.0, "positions": []},
+        )
+    elif case == "policy":
+        version.policy_json = copy.deepcopy(version.policy_json) | {"decision_ttl_seconds": 7200}
+
+    with db.no_autoflush, pytest.raises(DecisionConflictError):
+        DecisionService(db).approve(
+            decision.id,
+            body,
+            principal=manager(),
+            idempotency_key=f"approve-{case}",
+            now=now,
+        )
+    assert db.query(DecisionEvent).filter_by(decision_id=decision.id, event_type="approved").count() == 0
+
+
+def test_authorization_runs_before_stored_idempotency_replay(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    service = DecisionService(db)
+    body = {"expected_revision": 1}
+    now = datetime(2026, 9, 26, 12, 30, tzinfo=UTC)
+    service.approve(decision.id, body, principal=manager(), idempotency_key="protected", now=now)
+
+    for principal in (worker(), manager(scope="paper:other")):
+        with pytest.raises(HTTPException) as error:
+            service.approve(decision.id, body, principal=principal, idempotency_key="protected", now=now)
+        assert error.value.status_code == 403
+
+
+def test_soft_override_replaces_final_json_and_preserves_original(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    original = copy.deepcopy(decision.original_json)
+    response = DecisionService(db).approve(
+        decision.id,
+        {"expected_revision": 1, "final_action": "reduce", "override_reason": "Synthetic review"},
+        principal=manager(),
+        idempotency_key="override",
+        now=datetime(2026, 9, 26, 12, 30, tzinfo=UTC),
+    )
+
+    assert decision.original_json == original
+    assert decision.final_json == {
+        **original,
+        "final_action": "reduce",
+        "override_reason": "Synthetic review",
+    }
+    assert response["final_json"] == decision.final_json
+    db.expire(decision, ["final_json"])
+    assert decision.final_json["final_action"] == "reduce"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"expected_revision": 1, "final_action": "reduce"},
+        {"expected_revision": 1, "final_action": "enter", "override_reason": "Synthetic review"},
+    ],
+)
+def test_soft_override_requires_reason_and_frozen_allowed_action(db, body):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    with pytest.raises(DecisionConflictError):
+        DecisionService(db).approve(
+            decision.id,
+            body,
+            principal=manager(),
+            idempotency_key="invalid-override",
+            now=datetime(2026, 9, 26, 12, 30, tzinfo=UTC),
+        )
+
+
+def test_reject_requires_reason_and_replays_exact_response(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    service = DecisionService(db)
+    body = {"expected_revision": 1, "reason": "Synthetic rejection"}
+    now = datetime(2026, 9, 26, 12, 30, tzinfo=UTC)
+    first = service.reject(decision.id, body, principal=manager(), idempotency_key="reject-once", now=now)
+    replay = service.reject(decision.id, body, principal=manager(), idempotency_key="reject-once", now=now)
+
+    assert replay == first
+    assert first["status"] == "rejected"
+    assert db.query(DecisionEvent).filter_by(decision_id=decision.id, event_type="rejected").count() == 1
+
+
+def test_get_pending_and_trace_are_account_scoped_and_frozen(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    service = DecisionService(db)
+    principal = manager()
+
+    assert service.get(decision.id, principal=principal).id == decision.id
+    assert [row.id for row in service.list_pending(principal=principal, now=datetime(2026, 9, 26, 12, 30, tzinfo=UTC))] == [
+        decision.id
+    ]
+    trace = service.trace(decision.id, principal=principal)
+
+    assert trace["decision"]["id"] == str(decision.id)
+    assert trace["evaluation_run"]["id"] == str(run.id)
+    assert trace["manifest"]["id"]
+    assert trace["manifest"]["content_sha256"]
+    assert len(trace["evaluations"]) == 2
+    assert sum(item["selected"] for item in trace["evaluations"]) == 1
+    assert {item["research"]["research_status"] for item in trace["evaluations"]} == {"not_required"}
+    assert [item["event_type"] for item in trace["events"]] == ["created"]
+    assert not {"orders", "claims", "fills"}.intersection(trace)
+
+    with pytest.raises(HTTPException) as error:
+        service.trace(decision.id, principal=manager(scope="paper:other"))
+    assert error.value.status_code == 403
+
+
+def test_transition_body_rejects_actor_identity(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    with pytest.raises(PydanticValidationError):
+        DecisionService(db).approve(
+            decision.id,
+            {"expected_revision": 1, "actor_id": "forged"},
+            principal=manager(),
+            idempotency_key="forged",
+            now=datetime(2026, 9, 26, 12, 30, tzinfo=UTC),
+        )
