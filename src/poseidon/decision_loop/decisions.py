@@ -468,6 +468,9 @@ class DecisionService:
                 DecisionRecord.strategy_version_id == version.id,
                 DecisionRecord.status.in_(LIVE_STATUSES),
             )
+            .with_for_update()
+            .populate_existing()
+            .order_by(DecisionRecord.valid_until, DecisionRecord.id)
             .all()
         )
         for candidate in older:
@@ -490,6 +493,7 @@ class DecisionService:
             self.session.query(DecisionRecord)
             .filter(DecisionRecord.status.in_(LIVE_STATUSES), DecisionRecord.valid_until <= cutoff)
             .with_for_update()
+            .populate_existing()
             .order_by(DecisionRecord.valid_until, DecisionRecord.id)
             .all()
         )

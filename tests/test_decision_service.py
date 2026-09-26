@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
@@ -265,6 +265,27 @@ def test_expiry_is_one_transition_and_eligibility_is_fail_closed(db):
 
     version.policy_json = copy.deepcopy(version.policy_json) | {"decision_ttl_seconds": 7200}
     assert not service.is_execution_eligible(decision.id, 2, datetime(2026, 9, 26, 12, 30, tzinfo=UTC))
+
+
+@pytest.mark.parametrize("operation", ["superseded", "expired"])
+def test_system_transition_refreshes_revision_after_another_writer(db, operation):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    # Keep the identity map stale, as when another transaction approves the row.
+    db.execute(
+        update(DecisionRecord)
+        .where(DecisionRecord.id == decision.id)
+        .values(status="approved", revision=2)
+        .execution_options(synchronize_session=False)
+    )
+    assert decision.revision == 1
+    if operation == "superseded":
+        create_decision(db, run.id, snapshot_ids, portfolio_snapshot_json={"cash": 90000.0})
+    else:
+        DecisionService(db).expire_due(datetime(2026, 9, 26, 13, 0, tzinfo=UTC))
+    assert (decision.status, decision.revision) == (operation, 3)
+    event = db.query(DecisionEvent).filter_by(decision_id=decision.id, event_type=operation).one()
+    assert event.expected_revision == 2
 
 
 def test_creation_requires_worker_role_and_exact_account_scope(db):
