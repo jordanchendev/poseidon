@@ -1,5 +1,6 @@
 """Keep migration 040 and ORM schema aligned without a live database."""
 
+import importlib
 import importlib.util
 from pathlib import Path
 
@@ -80,3 +81,87 @@ def test_foundation_migration_matches_orm_and_reverses_dependency_order(monkeypa
 
     migration.downgrade()
     assert operations.dropped == [model.__tablename__ for model in reversed(models)]
+
+
+def test_decision_models_have_exact_phase97_contract():
+    record_spec = importlib.util.find_spec("poseidon.models.decision_record")
+    event_spec = importlib.util.find_spec("poseidon.models.decision_event")
+    assert record_spec is not None, "DecisionRecord model is missing"
+    assert event_spec is not None, "DecisionEvent model is missing"
+
+    DecisionRecord = importlib.import_module("poseidon.models.decision_record").DecisionRecord
+    DecisionEvent = importlib.import_module("poseidon.models.decision_event").DecisionEvent
+    record = DecisionRecord.__table__
+    event = DecisionEvent.__table__
+
+    assert list(record.c.keys()) == [
+        "id",
+        "evaluation_run_id",
+        "strategy_version_id",
+        "account_scope",
+        "decision_as_of",
+        "valid_until",
+        "status",
+        "revision",
+        "creation_sha256",
+        "policy_sha256",
+        "original_json",
+        "final_json",
+        "portfolio_snapshot_json",
+        "risk_snapshot_json",
+        "created_at",
+        "updated_at",
+    ]
+    assert {fk.target_fullname for fk in record.c.evaluation_run_id.foreign_keys} == {"evaluation_runs.id"}
+    assert {fk.target_fullname for fk in record.c.strategy_version_id.foreign_keys} == {"strategy_versions.id"}
+    assert not any(
+        name in record.c
+        for name in (
+            "execution_key",
+            "claimed_at",
+            "order_id",
+            "client_order_ref",
+            "lot_id",
+            "reconciliation_status",
+        )
+    )
+    assert {(index.name, tuple(index.columns.keys())) for index in record.indexes} == {
+        (
+            "ix_decision_records_account_status_valid_created",
+            ("account_scope", "status", "valid_until", "created_at"),
+        )
+    }
+    assert {
+        (constraint.name, tuple(constraint.columns.keys()))
+        for constraint in record.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {("uq_decision_records_creation_sha256", ("creation_sha256",))}
+
+    assert list(event.c.keys()) == [
+        "id",
+        "decision_id",
+        "event_type",
+        "actor_id",
+        "expected_revision",
+        "idempotency_key",
+        "request_sha256",
+        "payload_json",
+        "created_at",
+    ]
+    assert {fk.target_fullname for fk in event.c.decision_id.foreign_keys} == {"decision_records.id"}
+    assert event.c.actor_id.nullable is False
+    assert not {"credential", "credential_fingerprint", "api_key", "api_key_fingerprint"} & set(event.c.keys())
+    assert {
+        (constraint.name, tuple(constraint.columns.keys()))
+        for constraint in event.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {
+        ("uq_decision_events_type_revision", ("decision_id", "event_type", "expected_revision")),
+        ("uq_decision_events_idempotency_key", ("decision_id", "idempotency_key")),
+    }
+    assert {constraint.name for constraint in event.constraints if isinstance(constraint, sa.CheckConstraint)} == {
+        "ck_decision_events_idempotency_pair"
+    }
+    assert {(index.name, tuple(index.columns.keys())) for index in event.indexes} == {
+        ("ix_decision_events_decision_created", ("decision_id", "created_at"))
+    }
