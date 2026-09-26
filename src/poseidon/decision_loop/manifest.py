@@ -124,12 +124,16 @@ def verify_manifest(manifest: DataManifest) -> dict:
     if manifest is None:
         raise ValidationError("manifest does not exist")
     payload = validate_manifest(manifest.payload_json)
+    stored_as_of = manifest.as_of
+    if isinstance(stored_as_of, datetime) and stored_as_of.tzinfo is None:
+        # SQLite drops timezone metadata on reload; persisted Phase 96 times are UTC.
+        stored_as_of = stored_as_of.replace(tzinfo=UTC)
     if content_sha256(payload) != manifest.content_sha256:
         raise ValidationError("frozen manifest content hash mismatch")
     if (
         manifest.market != payload["market"]
         or manifest.interval != payload["interval"]
-        or timestamp(manifest.as_of, "manifest.as_of") != timestamp(payload["as_of"], "payload.as_of")
+        or timestamp(stored_as_of, "manifest.as_of") != timestamp(payload["as_of"], "payload.as_of")
         or manifest.capability_json != payload["capability_json"]
         or manifest.sources_json != payload.get("sources_json", [])
     ):
