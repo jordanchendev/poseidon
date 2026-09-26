@@ -10,6 +10,7 @@ from poseidon.api import (
     backtests,
     capabilities,
     data,
+    decisions,
     factor_analysis,
     health,
     notifications,
@@ -53,6 +54,7 @@ app.add_middleware(
 
 # --- Health endpoint: NO authentication (used by Docker healthcheck) ---
 app.include_router(health.router, tags=["health"])
+app.include_router(decisions.router, prefix="/api/v1/decisions", tags=["decisions"])
 
 # --- Secured endpoints: require valid X-API-Key header ---
 secured = [Depends(verify_api_key)]
