@@ -378,7 +378,8 @@ def test_approval_conflicts_for_invalid_frozen_state(db, case):
             idempotency_key=f"approve-{case}",
             now=now,
         )
-    assert db.query(DecisionEvent).filter_by(decision_id=decision.id, event_type="approved").count() == 0
+    with db.no_autoflush:
+        assert db.query(DecisionEvent).filter_by(decision_id=decision.id, event_type="approved").count() == 0
 
 
 def test_authorization_runs_before_stored_idempotency_replay(db):
