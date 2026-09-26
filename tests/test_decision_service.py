@@ -1,0 +1,278 @@
+"""Decision service contracts; PostgreSQL race proof remains Plan 97-04."""
+
+import copy
+import uuid
+from datetime import UTC, datetime
+
+import pytest
+from fastapi import HTTPException
+from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import Session
+
+from poseidon.api.auth import AuthPrincipal
+from poseidon.decision_loop.decisions import (
+    DecisionPolicy,
+    DecisionService,
+)
+from poseidon.decision_loop.evaluation import EvaluationService
+from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256
+from poseidon.models.base import Base
+from poseidon.models.decision_event import DecisionEvent
+from poseidon.models.decision_record import DecisionRecord
+from poseidon.models.evaluation_snapshot import EvaluationSnapshot
+from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
+
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb_sqlite(type_, compiler, **kw):
+    return "JSON"
+
+
+@pytest.fixture
+def db():
+    engine = create_engine("sqlite://")
+    tables = [
+        Base.metadata.tables[name]
+        for name in (
+            "data_manifests",
+            "research_revisions",
+            "strategy_versions",
+            "evaluation_runs",
+            "evaluation_snapshots",
+            "decision_records",
+            "decision_events",
+        )
+    ]
+    Base.metadata.create_all(engine, tables=tables)
+    with Session(engine) as session:
+        yield session
+    engine.dispose()
+
+
+def worker(scope="paper:pilot"):
+    return AuthPrincipal("decision-worker:synthetic", frozenset({"decision-worker"}), frozenset({scope}))
+
+
+def manager(actor="portfolio-manager:synthetic", scope="paper:pilot"):
+    return AuthPrincipal(actor, frozenset({"portfolio_manager"}), frozenset({scope}))
+
+
+def synthetic_policy(**changes):
+    policy = {
+        "policy_id": "synthetic-policy-v1",
+        "mode": "human",
+        "market": "tw_stock",
+        "account_scope": "paper:pilot",
+        "universe_id": "tw-stock-pilot-v1",
+        "decision_ttl_seconds": 3600,
+        "required_data": {"ohlcv": {"max_age_seconds": 86400}},
+        "hard_limits": {"max_gross_exposure": 1.0, "max_position_weight": 0.2},
+        "approval_roles": ["portfolio_manager"],
+        "protective_exit": {"allowed_without_approval": True},
+        "release_gate": {"minimum_mature_samples": 10, "requires_human_release": True},
+    }
+    policy.update(changes)
+    return policy
+
+
+def manifest_request():
+    payload = {"close": 100.0, "symbol": "2330"}
+    return {
+        "market": "tw_stock",
+        "interval": "1d",
+        "as_of": "2026-09-26T12:00:00Z",
+        "account_scope": "paper:pilot",
+        "universe_id": "tw-stock-pilot-v1",
+        "capability_json": {"ohlcv": True},
+        "required_data": {"ohlcv": {"max_age_seconds": 86400}},
+        "evidence": [
+            {
+                "id": "ohlcv",
+                "event_time": "2026-09-26T00:00:00Z",
+                "available_at": "2026-09-26T01:00:00Z",
+                "recorded_at": "2026-09-26T02:00:00Z",
+                "source_uri": "fixture://ohlcv",
+                "kind": "ohlcv",
+                "payload": payload,
+                "content_sha256": content_sha256(payload),
+            }
+        ],
+    }
+
+
+def decision_inputs(db, *, policy=None):
+    manifest = ManifestService(db).freeze(manifest_request())
+    policy = synthetic_policy() if policy is None else policy
+    version = StrategyVersion(
+        strategy_id=uuid.uuid4(),
+        version_no=1,
+        config_json={"fixture": "synthetic"},
+        policy_json=policy,
+        artifact_json={},
+        content_sha256=strategy_version_digest({"fixture": "synthetic"}, policy, {}),
+        status="draft",
+    )
+    db.add(version)
+    db.flush()
+    universe = [
+        {"symbol": "2330", "market": "tw_stock", "instrument": "spot"},
+        {"symbol": "2317", "market": "tw_stock", "instrument": "spot"},
+    ]
+    snapshots = [
+        {
+            **universe[0],
+            "status": "evaluated",
+            "recommendation_json": {"research_status": "not_required"},
+            "reason_codes": [],
+            "valid_until": "2026-09-26T15:00:00Z",
+        },
+        {
+            **universe[1],
+            "status": "no_trade",
+            "recommendation_json": {"research_status": "not_required"},
+            "reason_codes": ["synthetic_no_trade"],
+            "valid_until": "2026-09-26T15:00:00Z",
+        },
+    ]
+    run = EvaluationService(db).evaluate_run(version.id, manifest.id, universe, snapshots)
+    rows = db.query(EvaluationSnapshot).filter_by(evaluation_run_id=run.id).all()
+    snapshot_by_symbol = {row.symbol: row for row in rows}
+    snapshot_ids = [str(snapshot_by_symbol[symbol].id) for symbol in ("2330", "2317")]
+    return run, version, snapshot_ids
+
+
+def create_decision(db, run_id, snapshot_ids, **changes):
+    values = {
+        "principal": worker(),
+        "account_scope": "paper:pilot",
+        "original_json": {"selected_evaluation_ids": [snapshot_ids[0]], "final_action": "hold"},
+        "portfolio_snapshot_json": {"cash": 100000.0, "positions": []},
+        "risk_snapshot_json": {"hard_failures": [], "allowed_actions": ["hold", "reduce", "exit"]},
+        "now": datetime(2026, 9, 26, 12, 0, tzinfo=UTC),
+    }
+    values.update(changes)
+    return DecisionService(db).create_decision(run_id, **values)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value.pop("policy_id"),
+        lambda value: value.update(extra="forbidden"),
+        lambda value: value.update(mode="unknown"),
+        lambda value: value.update(market="crypto"),
+        lambda value: value.update(decision_ttl_seconds=True),
+        lambda value: value.update(decision_ttl_seconds=0),
+        lambda value: value.update(hard_limits={"max_gross_exposure": 1.0}),
+        lambda value: value.update(
+            hard_limits={"max_gross_exposure": float("inf"), "max_position_weight": 0.2}
+        ),
+        lambda value: value.update(hard_limits={"max_gross_exposure": 1.0, "max_position_weight": 0.0}),
+        lambda value: value.update(approval_roles=[]),
+        lambda value: value.update(approval_roles=["viewer"]),
+        lambda value: value.update(protective_exit={}),
+        lambda value: value.update(release_gate={"minimum_mature_samples": 10}),
+        lambda value: value.update(
+            release_gate={"minimum_mature_samples": 0, "requires_human_release": True}
+        ),
+    ],
+)
+def test_policy_validation_rejects_incomplete_or_unsafe_values(mutate):
+    policy = synthetic_policy()
+    mutate(policy)
+    with pytest.raises(PydanticValidationError):
+        DecisionPolicy.model_validate(policy)
+
+
+def test_create_decision_is_replay_safe_and_appends_one_event(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    first = create_decision(db, run.id, snapshot_ids)
+    replay = create_decision(db, run.id, snapshot_ids)
+
+    assert replay.id == first.id
+    assert first.status == "pending_approval"
+    assert first.revision == 1
+    assert first.original_json == first.final_json
+    assert db.query(DecisionEvent).filter_by(decision_id=first.id).count() == 1
+
+
+@pytest.mark.parametrize("field", ["account_scope", "universe_id"])
+def test_create_decision_rejects_policy_scope_mismatch(db, field):
+    policy = synthetic_policy(**{field: "mismatch"})
+    run, _, snapshot_ids = decision_inputs(db, policy=policy)
+    with pytest.raises(ValidationError, match=field):
+        create_decision(db, run.id, snapshot_ids)
+
+
+@pytest.mark.parametrize("case", ["foreign", "duplicate", "nonterminal", "increase", "risk", "portfolio"])
+def test_create_decision_rejects_invalid_selection_or_snapshot(db, case):
+    run, _, snapshot_ids = decision_inputs(db)
+    changes = {}
+    original = {"selected_evaluation_ids": [snapshot_ids[0]], "final_action": "hold"}
+    if case == "foreign":
+        original["selected_evaluation_ids"] = [str(uuid.uuid4())]
+    elif case == "duplicate":
+        original["selected_evaluation_ids"] *= 2
+    elif case == "nonterminal":
+        row = db.get(EvaluationSnapshot, uuid.UUID(snapshot_ids[0]))
+        row.status = "pending"
+    elif case == "increase":
+        original = {"selected_evaluation_ids": [snapshot_ids[1]], "final_action": "enter"}
+        changes["risk_snapshot_json"] = {"hard_failures": [], "allowed_actions": ["enter"]}
+    elif case == "risk":
+        changes["risk_snapshot_json"] = {"hard_failures": "none", "allowed_actions": ["hold"]}
+    else:
+        changes["portfolio_snapshot_json"] = []
+    changes["original_json"] = original
+
+    with db.no_autoflush, pytest.raises(ValidationError):
+        create_decision(db, run.id, snapshot_ids, **changes)
+    assert db.query(DecisionRecord).count() == 0
+
+
+def test_changed_frozen_input_supersedes_the_previous_candidate_once(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    first = create_decision(db, run.id, snapshot_ids)
+    second = create_decision(
+        db,
+        run.id,
+        snapshot_ids,
+        portfolio_snapshot_json={"cash": 90000.0, "positions": []},
+    )
+
+    assert second.id != first.id
+    assert second.creation_sha256 != first.creation_sha256
+    assert first.status == "superseded"
+    assert first.revision == 2
+    assert db.query(DecisionEvent).filter_by(decision_id=first.id, event_type="superseded").count() == 1
+
+
+def test_expiry_is_one_transition_and_eligibility_is_fail_closed(db):
+    run, version, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    service = DecisionService(db)
+    decision.status = "approved"
+    assert service.is_execution_eligible(decision.id, 1, datetime(2026, 9, 26, 12, 30, tzinfo=UTC))
+    assert not service.is_execution_eligible(decision.id, 2, datetime(2026, 9, 26, 12, 30, tzinfo=UTC))
+
+    expired = service.expire_due(datetime(2026, 9, 26, 13, 0, tzinfo=UTC))
+    assert [row.id for row in expired] == [decision.id]
+    assert decision.status == "expired"
+    assert decision.revision == 2
+    assert service.expire_due(datetime(2026, 9, 26, 14, 0, tzinfo=UTC)) == []
+    assert not service.is_execution_eligible(decision.id, 2, datetime(2026, 9, 26, 12, 30, tzinfo=UTC))
+    assert db.query(DecisionEvent).filter_by(decision_id=decision.id, event_type="expired").count() == 1
+
+    version.policy_json = copy.deepcopy(version.policy_json) | {"decision_ttl_seconds": 7200}
+    assert not service.is_execution_eligible(decision.id, 2, datetime(2026, 9, 26, 12, 30, tzinfo=UTC))
+
+
+def test_creation_requires_worker_role_and_exact_account_scope(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    for principal in (manager(), worker("paper:other")):
+        with pytest.raises(HTTPException) as error:
+            create_decision(db, run.id, snapshot_ids, principal=principal)
+        assert error.value.status_code == 403
