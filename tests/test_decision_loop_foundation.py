@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
+from poseidon.decision_loop import evaluation
 from poseidon.decision_loop.evaluation import EvaluationService
 from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256
 from poseidon.models.base import Base
@@ -61,6 +62,7 @@ def manifest_request(as_of="2026-09-26T12:00:00Z"):
         "as_of": as_of,
         "symbol": "2330",
         "account_scope": "paper:pilot",
+        "universe_id": "tw-stock-pilot-v1",
         "capability_json": {"fundamental": True, "ohlcv": True},
         "required_data": {"fundamental": {"max_age_seconds": 86400}, "ohlcv": {"max_age_seconds": 86400}},
         "evidence": evidence,
@@ -121,7 +123,12 @@ def evaluation_inputs(db):
     db.flush()
     universe = [{"symbol": symbol, "market": "tw_stock", "instrument": "spot"} for symbol in ("2330", "2317")]
     snapshots = [
-        dict(member, status=status, reason_codes=["fixture"])
+        dict(
+            member,
+            status=status,
+            recommendation_json={"research_status": "not_required"},
+            reason_codes=["fixture"],
+        )
         for member, status in zip(universe, ("evaluated", "no_trade"), strict=True)
     ]
     return manifest, version, universe, snapshots
@@ -151,6 +158,50 @@ def test_evaluation_run_has_complete_coverage_and_is_idempotent(db):
     changed[0]["status"] = "failed"
     with pytest.raises(ValidationError, match="immutable"):
         service.evaluate_run(version.id, manifest.id, universe, changed)
+
+
+def test_verify_complete_run_rechecks_the_frozen_chain(db):
+    manifest, version, universe, snapshots = evaluation_inputs(db)
+    run = EvaluationService(db).evaluate_run(version.id, manifest.id, universe, snapshots)
+
+    verified_run, verified_version, verified_manifest, verified_snapshots = evaluation.verify_complete_run(db, run.id)
+
+    assert verified_run.id == run.id
+    assert verified_version.id == version.id
+    assert verified_manifest.id == manifest.id
+    assert {row.symbol for row in verified_snapshots} == {"2330", "2317"}
+
+
+@pytest.mark.parametrize("corruption", ["missing", "status", "run", "snapshot", "version", "manifest"])
+def test_verify_complete_run_rejects_missing_or_corrupt_chain(db, corruption):
+    manifest, version, universe, snapshots = evaluation_inputs(db)
+    run = EvaluationService(db).evaluate_run(version.id, manifest.id, universe, snapshots)
+    if corruption == "missing":
+        run_id = uuid.uuid4()
+    else:
+        run_id = run.id
+        if corruption == "status":
+            run.status = "pending"
+        elif corruption == "run":
+            run.input_sha256 = "0" * 64
+        elif corruption == "snapshot":
+            row = db.query(evaluation.EvaluationSnapshot).filter_by(evaluation_run_id=run.id).first()
+            row.content_sha256 = "0" * 64
+        elif corruption == "version":
+            version.content_sha256 = "0" * 64
+        else:
+            manifest.content_sha256 = "0" * 64
+
+    with db.no_autoflush, pytest.raises(ValidationError):
+        evaluation.verify_complete_run(db, run_id)
+
+
+def test_no_research_requires_explicit_not_required_status(db):
+    manifest, version, universe, snapshots = evaluation_inputs(db)
+    snapshots[0]["recommendation_json"] = {}
+
+    with pytest.raises(ValidationError, match="research_status"):
+        EvaluationService(db).evaluate_run(version.id, manifest.id, universe, snapshots)
 
 
 def test_manifest_and_evaluation_parent_corruption_fail_closed(db):
