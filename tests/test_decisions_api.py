@@ -15,6 +15,7 @@ from poseidon.core.config import settings
 from poseidon.core.database import get_db
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionNotFoundError
 from poseidon.decision_loop.manifest import ValidationError
+from poseidon.main import app as poseidon_app
 
 ACCOUNT = "paper:pilot"
 OTHER_ACCOUNT = "paper:other"
@@ -134,9 +135,8 @@ def _fingerprint(key):
     return hashlib.sha256(key.encode()).hexdigest()
 
 
-@pytest.fixture
-def api(monkeypatch):
-    principals = {
+def _principal_config():
+    return {
         _fingerprint(WORKER_KEY): {
             "actor_id": "service:decision-worker",
             "roles": ["decision-worker"],
@@ -158,8 +158,16 @@ def api(monkeypatch):
             "account_scopes": [OTHER_ACCOUNT],
         },
     }
+
+
+def _configure_auth(monkeypatch):
     monkeypatch.setattr(settings, "api_key", LEGACY_KEY)
-    monkeypatch.setattr(settings, "api_principals_json", json.dumps(principals))
+    monkeypatch.setattr(settings, "api_principals_json", json.dumps(_principal_config()))
+
+
+@pytest.fixture
+def api(monkeypatch):
+    _configure_auth(monkeypatch)
     session = TrackingSession()
     service = StubDecisionService()
     monkeypatch.setattr(decisions_api, "DecisionService", lambda _db: service)
@@ -167,6 +175,19 @@ def api(monkeypatch):
     app.include_router(decisions_api.router, prefix="/api/v1/decisions")
     app.dependency_overrides[get_db] = lambda: session
     return TestClient(app), session, service
+
+
+@pytest.fixture
+def real_api(monkeypatch):
+    _configure_auth(monkeypatch)
+    session = TrackingSession()
+    service = StubDecisionService()
+    monkeypatch.setattr(decisions_api, "DecisionService", lambda _db: service)
+    poseidon_app.dependency_overrides[get_db] = lambda: session
+    try:
+        yield TestClient(poseidon_app, raise_server_exceptions=False), session, service
+    finally:
+        poseidon_app.dependency_overrides.pop(get_db, None)
 
 
 def _create_body(**overrides):
@@ -387,3 +408,67 @@ def test_authorization_http_exception_is_preserved(api):
     assert response.status_code == 403
     assert response.json()["detail"] == "Role not authorized"
     assert session.rollbacks == 1
+
+
+def test_real_app_mapped_principal_reaches_decisions_without_legacy_gate(real_api):
+    client, session, service = real_api
+    response = client.post("/api/v1/decisions/", json=_create_body(), headers=_headers(WORKER_KEY))
+    assert response.status_code == 200
+    assert response.json()["id"] == str(service.decision.id)
+    assert session.commits == 1
+
+
+def test_real_app_legacy_key_has_no_decision_authority_but_keeps_legacy_access(real_api):
+    client, _session, service = real_api
+    decision_response = client.get(
+        f"/api/v1/decisions/{service.decision.id}",
+        headers=_headers(LEGACY_KEY),
+    )
+    assert decision_response.status_code == 403
+
+    legacy_response = client.get("/api/strategies", headers=_headers(LEGACY_KEY))
+    assert legacy_response.status_code not in (401, 403)
+    mapped_response = client.get("/api/strategies", headers=_headers(WORKER_KEY))
+    assert mapped_response.status_code == 401
+
+
+def test_real_app_exposes_only_the_decision_contract(real_api):
+    client, _session, service = real_api
+    schema = client.get("/openapi.json").json()
+    decision_paths = {
+        path: set(operations) for path, operations in schema["paths"].items() if path.startswith("/api/v1/decisions")
+    }
+    assert decision_paths == {
+        "/api/v1/decisions/": {"get", "post"},
+        "/api/v1/decisions/{decision_id}": {"get"},
+        "/api/v1/decisions/{decision_id}/approve": {"post"},
+        "/api/v1/decisions/{decision_id}/reject": {"post"},
+        "/api/v1/decisions/{decision_id}/trace": {"get"},
+    }
+
+    for suffix in ("submit", "claim", "execute", "release", "orders"):
+        response = client.post(
+            f"/api/v1/decisions/{service.decision.id}/{suffix}",
+            headers=_headers(MANAGER_KEY),
+        )
+        assert response.status_code in (404, 405)
+
+
+def test_real_app_trace_is_decision_only(real_api):
+    client, _session, service = real_api
+    response = client.get(
+        f"/api/v1/decisions/{service.decision.id}/trace",
+        headers=_headers(VIEWER_KEY),
+    )
+    assert response.status_code == 200
+
+    def keys(value):
+        if isinstance(value, dict):
+            return set(value).union(*(keys(item) for item in value.values()))
+        if isinstance(value, list):
+            return set().union(*(keys(item) for item in value))
+        return set()
+
+    assert keys(response.json()).isdisjoint(
+        {"order", "orders", "fill", "fills", "broker", "claim", "activation", "release", "dsh"}
+    )
