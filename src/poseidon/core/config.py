@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_key: str = ""
+    api_principals_json: str = "{}"  # SHA-256 credential fingerprints -> fixed principals
     shioaji_trade_api_key: str = ""
     shioaji_trade_secret_key: str = ""
     shioaji_trade_simulation: bool = True
