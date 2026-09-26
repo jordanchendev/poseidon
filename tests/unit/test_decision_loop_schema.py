@@ -38,18 +38,8 @@ class MigrationOperations:
         self.dropped.append(name)
 
 
-def test_foundation_migration_matches_orm_and_reverses_dependency_order(monkeypatch):
-    path = Path(__file__).resolve().parents[2] / "alembic/versions/040_decision_loop_foundation.py"
-    spec = importlib.util.spec_from_file_location("foundation_migration", path)
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    assert (migration.revision, migration.down_revision) == ("040", "039")
-    operations = MigrationOperations()
-    monkeypatch.setattr(migration, "op", operations)
-    migration.upgrade()
-
+def _assert_migration_matches_models(operations, models):
     dialect = postgresql.dialect()
-    models = (DataManifest, ResearchRevision, StrategyVersion, EvaluationRun, EvaluationSnapshot)
     for model in models:
         table = model.__table__
         migrated = operations.metadata.tables[table.name]
@@ -76,8 +66,31 @@ def test_foundation_migration_matches_orm_and_reverses_dependency_order(monkeypa
             for constraint in migrated.constraints
             if isinstance(constraint, sa.UniqueConstraint)
         }
+        assert {
+            (constraint.name, str(constraint.sqltext))
+            for constraint in table.constraints
+            if isinstance(constraint, sa.CheckConstraint)
+        } == {
+            (constraint.name, str(constraint.sqltext))
+            for constraint in migrated.constraints
+            if isinstance(constraint, sa.CheckConstraint)
+        }
         # Existing SQLite tests compile all registered tables via these adapters.
         assert "CREATE TABLE" in str(CreateTable(table).compile(dialect=sqlite.dialect()))
+
+
+def test_foundation_migration_matches_orm_and_reverses_dependency_order(monkeypatch):
+    path = Path(__file__).resolve().parents[2] / "alembic/versions/040_decision_loop_foundation.py"
+    spec = importlib.util.spec_from_file_location("foundation_migration", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    assert (migration.revision, migration.down_revision) == ("040", "039")
+    operations = MigrationOperations()
+    monkeypatch.setattr(migration, "op", operations)
+    migration.upgrade()
+
+    models = (DataManifest, ResearchRevision, StrategyVersion, EvaluationRun, EvaluationSnapshot)
+    _assert_migration_matches_models(operations, models)
 
     migration.downgrade()
     assert operations.dropped == [model.__tablename__ for model in reversed(models)]
@@ -165,3 +178,28 @@ def test_decision_models_have_exact_phase97_contract():
     assert {(index.name, tuple(index.columns.keys())) for index in event.indexes} == {
         ("ix_decision_events_decision_created", ("decision_id", "created_at"))
     }
+
+
+def test_decision_migration_matches_orm_and_stays_decision_only(monkeypatch):
+    path = Path(__file__).resolve().parents[2] / "alembic/versions/041_decision_execution.py"
+    assert path.is_file(), "decision migration 041 is missing"
+
+    spec = importlib.util.spec_from_file_location("decision_migration", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    assert (migration.revision, migration.down_revision) == ("041", "040")
+
+    import poseidon.models as models
+
+    assert hasattr(models, "DecisionRecord"), "DecisionRecord is not exported"
+    assert hasattr(models, "DecisionEvent"), "DecisionEvent is not exported"
+    operations = MigrationOperations()
+    monkeypatch.setattr(migration, "op", operations)
+    migration.upgrade()
+
+    decision_models = (models.DecisionRecord, models.DecisionEvent)
+    assert list(operations.metadata.tables) == [model.__tablename__ for model in decision_models]
+    _assert_migration_matches_models(operations, decision_models)
+
+    migration.downgrade()
+    assert operations.dropped == ["decision_events", "decision_records"]
