@@ -13,6 +13,7 @@ from poseidon.decision_loop import evaluation
 from poseidon.decision_loop.evaluation import EvaluationService
 from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256
 from poseidon.models.base import Base
+from poseidon.models.research_revision import ResearchRevision
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 
 
@@ -134,6 +135,41 @@ def evaluation_inputs(db):
     return manifest, version, universe, snapshots
 
 
+def completed_research(db, manifest):
+    body = {
+        "scope_key": "tw-stock:2330",
+        "as_of": manifest.payload_json["as_of"],
+        "symbol": "2330",
+        "thesis": "Synthetic fixture thesis",
+        "stance": "neutral",
+        "change_summary": "Initial synthetic fixture",
+        "next_review_at": "2026-10-01T00:00:00Z",
+        "risks": ["Synthetic fixture risk"],
+        "invalidation_conditions": ["Synthetic invalidation"],
+        "unknowns": ["Synthetic unknown"],
+        "claims": [
+            {"kind": "fact", "text": "Fundamental fixture", "evidence_ids": ["fundamental"]},
+            {"kind": "fact", "text": "OHLCV fixture", "evidence_ids": ["ohlcv"]},
+            {"kind": "inference", "text": "Combined fixture", "evidence_ids": ["fundamental", "ohlcv"]},
+        ],
+    }
+    revision = ResearchRevision(
+        scope_key=body["scope_key"],
+        manifest_id=manifest.id,
+        request_sha256="1" * 64,
+        policy_version="synthetic-v1",
+        provider="human",
+        model="manual",
+        runtime_digest="synthetic-runtime",
+        content_sha256=content_sha256(body),
+        status="completed",
+        research_json=body,
+    )
+    db.add(revision)
+    db.flush()
+    return revision
+
+
 def test_strategy_version_materializes_default_json_before_hash_check(db):
     version = StrategyVersion(
         strategy_id=uuid.uuid4(),
@@ -170,6 +206,20 @@ def test_verify_complete_run_rechecks_the_frozen_chain(db):
     assert verified_version.id == version.id
     assert verified_manifest.id == manifest.id
     assert {row.symbol for row in verified_snapshots} == {"2330", "2317"}
+
+
+def test_verify_complete_run_rechecks_completed_research(db):
+    manifest, version, universe, snapshots = evaluation_inputs(db)
+    revision = completed_research(db, manifest)
+    snapshots[0]["recommendation_json"] = {"research_status": "completed"}
+    snapshots[0]["research_revision_ids"] = [str(revision.id)]
+    run = EvaluationService(db).evaluate_run(version.id, manifest.id, universe, snapshots)
+
+    evaluation.verify_complete_run(db, run.id)
+    revision.research_json = dict(revision.research_json, thesis="tampered")
+
+    with db.no_autoflush, pytest.raises(ValidationError, match="research content hash"):
+        evaluation.verify_complete_run(db, run.id)
 
 
 @pytest.mark.parametrize("corruption", ["missing", "status", "run", "snapshot", "version", "manifest"])
