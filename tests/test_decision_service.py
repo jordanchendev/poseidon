@@ -184,6 +184,44 @@ def test_policy_validation_rejects_incomplete_or_unsafe_values(mutate):
         DecisionPolicy.model_validate(policy)
 
 
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {},
+        None,
+        {"max_age_seconds": -1},
+        {"max_age_seconds": True},
+        {"max_age_seconds": "86400"},
+        {"max_age_seconds": float("inf")},
+        {"max_age_seconds": float("nan")},
+        {"max_age_seconds": 86400, "unknown": True},
+    ],
+)
+def test_policy_rejects_invalid_freshness_rules(rule):
+    with pytest.raises(PydanticValidationError):
+        DecisionPolicy.model_validate(synthetic_policy(required_data={"ohlcv": rule}))
+
+
+@pytest.mark.parametrize("kind", ["", " ohlcv", "ohlcv "])
+def test_policy_rejects_invalid_required_data_kind(kind):
+    with pytest.raises(PydanticValidationError):
+        DecisionPolicy.model_validate(synthetic_policy(required_data={kind: {"max_age_seconds": 86400}}))
+
+
+@pytest.mark.parametrize(
+    "required_data,reason",
+    [
+        ({"ohlcv": {"max_age_seconds": 1}}, "stale"),
+        ({"fundamental": {"max_age_seconds": 86400}}, "missing"),
+    ],
+)
+def test_creation_enforces_policy_data_rules_over_manifest_rules(db, required_data, reason):
+    run, _, snapshot_ids = decision_inputs(db, policy=synthetic_policy(required_data=required_data))
+    with pytest.raises(ValidationError, match=reason):
+        create_decision(db, run.id, snapshot_ids)
+    assert db.query(DecisionRecord).count() == 0
+
+
 def test_create_decision_is_replay_safe_and_appends_one_event(db):
     run, _, snapshot_ids = decision_inputs(db)
     first = create_decision(db, run.id, snapshot_ids)

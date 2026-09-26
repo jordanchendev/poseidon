@@ -27,6 +27,7 @@ from poseidon.decision_loop.manifest import (
     iso_time,
     required_text,
     timestamp,
+    validate_manifest,
 )
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
@@ -76,6 +77,12 @@ class ReleaseGate(BaseModel):
     requires_human_release: StrictBool
 
 
+class FreshnessRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_age_seconds: Annotated[float, Field(strict=True, ge=0, allow_inf_nan=False)]
+
+
 class DecisionPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -85,7 +92,7 @@ class DecisionPolicy(BaseModel):
     account_scope: Annotated[str, Field(min_length=1)]
     universe_id: Annotated[str, Field(min_length=1)]
     decision_ttl_seconds: PositiveStrictInt
-    required_data: Annotated[dict, Field(min_length=1)]
+    required_data: Annotated[dict[str, FreshnessRule], Field(min_length=1)]
     hard_limits: HardLimits
     approval_roles: Annotated[list[str], Field(min_length=1)]
     protective_exit: ProtectiveExit
@@ -97,6 +104,13 @@ class DecisionPolicy(BaseModel):
         if not value.strip() or value != value.strip():
             raise ValueError("must be non-empty trimmed text")
         return value
+
+    @field_validator("required_data")
+    @classmethod
+    def require_data_kinds(cls, rules):
+        if any(not kind.strip() or kind != kind.strip() for kind in rules):
+            raise ValueError("required data kinds must be non-empty trimmed text")
+        return rules
 
     @field_validator("approval_roles")
     @classmethod
@@ -389,6 +403,13 @@ class DecisionService:
         ):
             if actual != expected:
                 raise ValidationError(f"policy {field} mismatch")
+        validate_manifest(
+            dict(
+                manifest_payload,
+                as_of=iso_time(_stored_time(run.decision_as_of, "decision_as_of"), "decision_as_of"),
+                required_data={kind: rule.model_dump() for kind, rule in policy.required_data.items()},
+            )
+        )
 
         original = _json_object(original_json, "original_json")
         portfolio = _json_object(portfolio_snapshot_json, "portfolio_snapshot_json")
