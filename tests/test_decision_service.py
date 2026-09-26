@@ -168,17 +168,13 @@ def create_decision(db, run_id, snapshot_ids, **changes):
         lambda value: value.update(decision_ttl_seconds=True),
         lambda value: value.update(decision_ttl_seconds=0),
         lambda value: value.update(hard_limits={"max_gross_exposure": 1.0}),
-        lambda value: value.update(
-            hard_limits={"max_gross_exposure": float("inf"), "max_position_weight": 0.2}
-        ),
+        lambda value: value.update(hard_limits={"max_gross_exposure": float("inf"), "max_position_weight": 0.2}),
         lambda value: value.update(hard_limits={"max_gross_exposure": 1.0, "max_position_weight": 0.0}),
         lambda value: value.update(approval_roles=[]),
         lambda value: value.update(approval_roles=["viewer"]),
         lambda value: value.update(protective_exit={}),
         lambda value: value.update(release_gate={"minimum_mature_samples": 10}),
-        lambda value: value.update(
-            release_gate={"minimum_mature_samples": 0, "requires_human_release": True}
-        ),
+        lambda value: value.update(release_gate={"minimum_mature_samples": 0, "requires_human_release": True}),
     ],
 )
 def test_policy_validation_rejects_incomplete_or_unsafe_values(mutate):
@@ -463,9 +459,9 @@ def test_get_pending_and_trace_are_account_scoped_and_frozen(db):
     principal = manager()
 
     assert service.get(decision.id, principal=principal).id == decision.id
-    assert [row.id for row in service.list_pending(principal=principal, now=datetime(2026, 9, 26, 12, 30, tzinfo=UTC))] == [
-        decision.id
-    ]
+    assert [
+        row.id for row in service.list_pending(principal=principal, now=datetime(2026, 9, 26, 12, 30, tzinfo=UTC))
+    ] == [decision.id]
     trace = service.trace(decision.id, principal=principal)
 
     assert trace["decision"]["id"] == str(decision.id)
