@@ -104,7 +104,7 @@ def manifest_request():
     }
 
 
-def decision_inputs(db, *, policy=None):
+def decision_inputs(db, *, policy=None, non_evaluated_status="no_trade"):
     manifest = ManifestService(db).freeze(manifest_request())
     policy = synthetic_policy() if policy is None else policy
     version = StrategyVersion(
@@ -132,7 +132,7 @@ def decision_inputs(db, *, policy=None):
         },
         {
             **universe[1],
-            "status": "no_trade",
+            "status": non_evaluated_status,
             "recommendation_json": {"research_status": "not_required"},
             "reason_codes": ["synthetic_no_trade"],
             "valid_until": "2026-09-26T15:00:00Z",
@@ -438,6 +438,31 @@ def test_soft_override_replaces_final_json_and_preserves_original(db):
     assert response["final_json"] == decision.final_json
     db.expire(decision, ["final_json"])
     assert decision.final_json["final_action"] == "reduce"
+
+
+@pytest.mark.parametrize("status", ["failed", "excluded", "no_trade"])
+@pytest.mark.parametrize("action", ["enter", "add"])
+def test_override_cannot_increase_exposure_for_non_evaluated_selection(db, status, action):
+    run, _, snapshot_ids = decision_inputs(db, non_evaluated_status=status)
+    decision = create_decision(
+        db,
+        run.id,
+        snapshot_ids,
+        original_json={"selected_evaluation_ids": [snapshot_ids[1]], "final_action": "hold"},
+        risk_snapshot_json={"hard_failures": [], "allowed_actions": ["hold", action]},
+    )
+    with pytest.raises(DecisionConflictError, match="evaluated selections"):
+        DecisionService(db).approve(
+            decision.id,
+            {"expected_revision": 1, "final_action": action, "override_reason": "Synthetic override"},
+            principal=manager(),
+            idempotency_key="invalid-exposure-override",
+            now=datetime(2026, 9, 26, 12, 30, tzinfo=UTC),
+        )
+    assert decision.status == "pending_approval"
+    assert decision.revision == 1
+    assert decision.final_json["final_action"] == "hold"
+    assert db.query(DecisionEvent).filter_by(decision_id=decision.id, event_type="approved").count() == 0
 
 
 @pytest.mark.parametrize(

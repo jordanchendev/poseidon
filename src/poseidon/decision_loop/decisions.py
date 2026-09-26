@@ -136,6 +136,29 @@ def _json_object(value, field):
     return json.loads(canonical_json(value))
 
 
+def _validate_selection(snapshots, selected_values, final_action):
+    if not isinstance(selected_values, list) or not selected_values:
+        raise ValidationError("selected_evaluation_ids must be a non-empty list")
+    try:
+        selected_ids = [uuid.UUID(value) for value in selected_values]
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValidationError("selected_evaluation_ids must contain UUID strings") from error
+    if len(set(selected_ids)) != len(selected_ids):
+        raise ValidationError("selected_evaluation_ids must be unique")
+    if not isinstance(final_action, str) or final_action not in ACTION_VALUES:
+        raise ValidationError("final_action is invalid")
+    snapshot_by_id = {row.id: row for row in snapshots}
+    try:
+        selected = [snapshot_by_id[selected_id] for selected_id in selected_ids]
+    except KeyError as error:
+        raise ValidationError("selected evaluation does not belong to the run") from error
+    if any(row.status not in TERMINAL_STATUSES for row in selected):
+        raise ValidationError("selected evaluation is not terminal")
+    if final_action in {"enter", "add"} and any(row.status != "evaluated" for row in selected):
+        raise ValidationError("exposure increase requires evaluated selections")
+    return selected
+
+
 def _stored_time(value, field):
     if isinstance(value, datetime) and value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
@@ -289,6 +312,11 @@ class DecisionService:
             final_action = body.final_action or final_json.get("final_action")
             if not isinstance(allowed_actions, list) or final_action not in allowed_actions:
                 raise DecisionConflictError("override action is not allowed by frozen risk")
+            try:
+                _, _, _, snapshots = verify_complete_run(self.session, decision.evaluation_run_id)
+                _validate_selection(snapshots, final_json.get("selected_evaluation_ids"), final_action)
+            except ValidationError as error:
+                raise DecisionConflictError(str(error)) from error
             if final_action != final_json.get("final_action"):
                 if not isinstance(body.override_reason, str) or not body.override_reason.strip():
                     raise DecisionConflictError("action override requires a reason")
@@ -365,18 +393,8 @@ class DecisionService:
         original = _json_object(original_json, "original_json")
         portfolio = _json_object(portfolio_snapshot_json, "portfolio_snapshot_json")
         risk = _json_object(risk_snapshot_json, "risk_snapshot_json")
-        selected_values = original.get("selected_evaluation_ids")
-        if not isinstance(selected_values, list) or not selected_values:
-            raise ValidationError("selected_evaluation_ids must be a non-empty list")
-        try:
-            selected_ids = [uuid.UUID(value) for value in selected_values]
-        except (AttributeError, TypeError, ValueError) as error:
-            raise ValidationError("selected_evaluation_ids must contain UUID strings") from error
-        if len(set(selected_ids)) != len(selected_ids):
-            raise ValidationError("selected_evaluation_ids must be unique")
         final_action = original.get("final_action")
-        if not isinstance(final_action, str) or final_action not in ACTION_VALUES:
-            raise ValidationError("final_action is invalid")
+        selected = _validate_selection(snapshots, original.get("selected_evaluation_ids"), final_action)
         hard_failures = risk.get("hard_failures")
         allowed_actions = risk.get("allowed_actions")
         if not isinstance(hard_failures, list):
@@ -391,16 +409,6 @@ class DecisionService:
             raise ValidationError("allowed_actions must be a unique non-empty action list")
         if final_action not in allowed_actions:
             raise ValidationError("final_action is not allowed by frozen risk")
-
-        snapshot_by_id = {row.id: row for row in snapshots}
-        try:
-            selected = [snapshot_by_id[selected_id] for selected_id in selected_ids]
-        except KeyError as error:
-            raise ValidationError("selected evaluation does not belong to the run") from error
-        if any(row.status not in TERMINAL_STATUSES for row in selected):
-            raise ValidationError("selected evaluation is not terminal")
-        if final_action in {"enter", "add"} and any(row.status != "evaluated" for row in selected):
-            raise ValidationError("exposure increase requires evaluated selections")
 
         decision_as_of = _stored_time(run.decision_as_of, "decision_as_of")
         expiry_candidates = [decision_as_of + timedelta(seconds=policy.decision_ttl_seconds)]
