@@ -40,6 +40,7 @@ ACTION_VALUES = frozenset({"watch", "hold", "enter", "add", "reduce", "exit", "r
 EXECUTABLE_ACTIONS = frozenset({"enter", "add", "reduce", "exit"})
 LIVE_STATUSES = frozenset({"pending_approval", "approved"})
 SYSTEM_ACTOR = "system:decision-service"
+CLAIM_SCAN_LIMIT = 100
 PositiveStrictInt = Annotated[int, Field(strict=True, gt=0)]
 PositiveFiniteFloat = Annotated[float, Field(gt=0, allow_inf_nan=False)]
 PositiveStrictFiniteFloat = Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
@@ -782,10 +783,7 @@ class DecisionService:
             ],
         }
 
-    def validate_execution(self, decision_id, expected_revision, as_of):
-        decision = self.session.get(DecisionRecord, decision_id)
-        if decision is None:
-            raise DecisionNotFoundError("decision does not exist")
+    def _validate_execution_record(self, decision, expected_revision, as_of):
         if decision.status != "approved":
             raise DecisionConflictError("decision is not approved")
         if decision.revision != expected_revision:
@@ -799,6 +797,9 @@ class DecisionService:
         policy = DecisionPolicy.model_validate(version.policy_json)
         if policy.reconciliation is None:
             raise DecisionConflictError("execution requires an owner reconciliation policy")
+        hard_failures = decision.risk_snapshot_json.get("hard_failures")
+        if not isinstance(hard_failures, list) or hard_failures:
+            raise DecisionConflictError("hard risk failures prevent execution")
         try:
             _, _, _, snapshots = verify_complete_run(self.session, decision.evaluation_run_id)
             selected = _validate_selection(
@@ -809,6 +810,100 @@ class DecisionService:
             return _validate_order_intents(selected, decision.final_json, policy)
         except ValidationError as error:
             raise DecisionConflictError(str(error)) from error
+
+    def validate_execution(self, decision_id, expected_revision, as_of):
+        decision = self.session.get(DecisionRecord, decision_id)
+        if decision is None:
+            raise DecisionNotFoundError("decision does not exist")
+        return self._validate_execution_record(decision, expected_revision, as_of)
+
+    @staticmethod
+    def _execution_claim_response(decision):
+        return {
+            "decision_id": str(decision.id),
+            "execution_key": str(decision.execution_key),
+            "status": decision.status,
+            "revision": decision.revision,
+            "claimed_at": iso_time(_stored_time(decision.claimed_at, "claimed_at"), "claimed_at"),
+        }
+
+    def _claim_locked(self, decision, expected_revision, *, principal, as_of):
+        principal.require_account_scope(decision.account_scope)
+        intents = self._validate_execution_record(decision, expected_revision, as_of)
+        if not intents:
+            raise DecisionConflictError("execution claim requires order_intents")
+
+        claimed_at = timestamp(as_of, "as_of")
+        decision.execution_key = uuid.uuid4()
+        decision.claimed_at = claimed_at
+        decision.status = "execution_claimed"
+        decision.revision += 1
+        response = self._execution_claim_response(decision)
+        self._append_event(
+            decision,
+            "execution_claimed",
+            principal.actor_id,
+            expected_revision,
+            payload_json={"response": response},
+        )
+        self.session.flush()
+        return response
+
+    def claim_execution(self, decision_id, expected_revision, *, principal, now=None):
+        principal.require_role("decision-worker")
+        if type(expected_revision) is not int or expected_revision <= 0:
+            raise DecisionConflictError("expected revision is invalid")
+        self._authorized_decision(decision_id, principal)
+        decision = (
+            self.session.query(DecisionRecord)
+            .filter(DecisionRecord.id == decision_id)
+            .with_for_update(skip_locked=True)
+            .populate_existing()
+            .one_or_none()
+        )
+        if decision is None:
+            raise DecisionConflictError("decision is locked")
+        return self._claim_locked(
+            decision,
+            expected_revision,
+            principal=principal,
+            as_of=now if now is not None else datetime.now(UTC),
+        )
+
+    def claim_next_approved(self, account_scope, *, principal, now=None):
+        principal.require_role("decision-worker")
+        principal.require_account_scope(account_scope)
+        current_time = timestamp(now if now is not None else datetime.now(UTC), "now")
+        skipped_ids = []
+        # ponytail: keep claim transactions bounded; quarantine invalid rows if this ceiling is reached.
+        for _ in range(CLAIM_SCAN_LIMIT):
+            query = self.session.query(DecisionRecord).filter(
+                DecisionRecord.account_scope == account_scope,
+                DecisionRecord.status == "approved",
+                DecisionRecord.execution_key.is_(None),
+                DecisionRecord.claimed_at.is_(None),
+                DecisionRecord.valid_until > current_time,
+            )
+            if skipped_ids:
+                query = query.filter(DecisionRecord.id.notin_(skipped_ids))
+            decision = (
+                query.order_by(DecisionRecord.created_at, DecisionRecord.id)
+                .with_for_update(skip_locked=True)
+                .populate_existing()
+                .first()
+            )
+            if decision is None:
+                return None
+            try:
+                return self._claim_locked(
+                    decision,
+                    decision.revision,
+                    principal=principal,
+                    as_of=current_time,
+                )
+            except DecisionConflictError:
+                skipped_ids.append(decision.id)
+        raise DecisionConflictError("claim candidate scan limit exceeded")
 
     def is_execution_eligible(self, decision_id, expected_revision, as_of):
         try:
