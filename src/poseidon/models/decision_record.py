@@ -14,6 +14,7 @@ class DecisionRecord(Base):
     __tablename__ = "decision_records"
     __table_args__ = (
         UniqueConstraint("creation_sha256", name="uq_decision_records_creation_sha256"),
+        UniqueConstraint("execution_key", name="uq_decision_records_execution_key"),
         Index(
             "ix_decision_records_account_status_valid_created",
             "account_scope",
@@ -21,6 +22,7 @@ class DecisionRecord(Base):
             "valid_until",
             "created_at",
         ),
+        Index("ix_decision_records_claim_selection", "status", "valid_until", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -43,6 +45,8 @@ class DecisionRecord(Base):
     final_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
     portfolio_snapshot_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
     risk_snapshot_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    execution_key: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()

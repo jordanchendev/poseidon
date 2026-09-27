@@ -1,4 +1,5 @@
 from poseidon.core.database import SessionLocal, engine, get_db  # noqa: F401
+from poseidon.models.account_reconciliation import AccountReconciliation  # noqa: F401
 from poseidon.models.backfill import BackfillJob  # noqa: F401
 from poseidon.models.base import Base  # noqa: F401
 from poseidon.models.data_gap import DataGap  # noqa: F401
@@ -9,6 +10,7 @@ from poseidon.models.evaluation_run import EvaluationRun  # noqa: F401
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot  # noqa: F401
 from poseidon.models.experiment import ExperimentRecord  # noqa: F401
 from poseidon.models.factor_analysis_run import FactorAnalysisRun  # noqa: F401
+from poseidon.models.fill_allocation import FillAllocation  # noqa: F401
 from poseidon.models.fundamentals import Fundamentals  # noqa: F401
 from poseidon.models.ingest_state import IngestState  # noqa: F401
 from poseidon.models.macro_index import MacroIndex  # noqa: F401
@@ -17,7 +19,12 @@ from poseidon.models.nav_snapshot import NavSnapshotRecord  # noqa: F401
 from poseidon.models.nonprice_timeseries import NonpriceTimeseries  # noqa: F401
 from poseidon.models.order import OrderRecord  # noqa: F401
 from poseidon.models.order_fill import OrderFillRecord  # noqa: F401
+from poseidon.models.paper_broker_account import PaperBrokerAccount  # noqa: F401
+from poseidon.models.paper_broker_fill import PaperBrokerFill  # noqa: F401
+from poseidon.models.paper_broker_order import PaperBrokerOrder  # noqa: F401
+from poseidon.models.paper_cash_movement import PaperCashMovement  # noqa: F401
 from poseidon.models.portfolio_holding import PortfolioHoldingRecord  # noqa: F401
+from poseidon.models.position_lot import PositionLot  # noqa: F401
 from poseidon.models.protection_lock import ProtectionLockRecord  # noqa: F401
 from poseidon.models.rd_agent_run import RDAgentRun  # noqa: F401
 from poseidon.models.research_revision import ResearchRevision  # noqa: F401
