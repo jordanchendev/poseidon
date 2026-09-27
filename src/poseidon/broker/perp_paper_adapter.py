@@ -124,11 +124,10 @@ class PerpPaperAdapter(BrokerAdapter):
 
         Raises ValueError if no perpetual price data exists for the symbol.
         """
-        if (
-            order.order_origin in {"decision", *DURABLE_PROTECTIVE_ORIGINS}
-            and order.execution_key is not None
-            and client_order_ref is None
-        ):
+        durable = order.order_origin == "decision" or (
+            order.order_origin in DURABLE_PROTECTIVE_ORIGINS and order.execution_key is not None
+        )
+        if durable and client_order_ref is None:
             raise BrokerCapabilityError("durable execution requires the stored client reference")
         if client_order_ref is not None:
             self._require_decision_submission(order, client_order_ref)

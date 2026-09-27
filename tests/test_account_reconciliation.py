@@ -8,11 +8,19 @@ from datetime import timedelta
 from threading import Barrier
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 from sqlalchemy import delete, select, text, update
 
+from poseidon.api.auth import AuthPrincipal
 from poseidon.broker.paper_adapter import PaperBrokerAdapter
-from poseidon.decision_loop.execution import DecisionExecutionService, ExecutionConflictError, internal_state_watermark
+from poseidon.decision_loop.execution import (
+    DecisionExecutionService,
+    ExecutionConflictError,
+    ProtectiveExecutionService,
+    internal_state_watermark,
+)
+from poseidon.decision_loop.reconciliation import ReconciliationService, submit_or_reconcile_order
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.fill_allocation import FillAllocation
@@ -60,6 +68,11 @@ def account():
         session.execute(delete(PaperBrokerOrder).where(PaperBrokerOrder.account_scope == seed.account))
         session.execute(
             delete(PortfolioHoldingRecord).where(PortfolioHoldingRecord.strategy_name == f"decision-lots:{account_id}")
+        )
+        session.execute(
+            delete(PortfolioHoldingRecord).where(
+                PortfolioHoldingRecord.strategy_name.startswith("phase98-reconcile-legacy:")
+            )
         )
     next(fixture, None)
 
@@ -154,6 +167,128 @@ def stored(account, result):
         return session.get(AccountReconciliation, uuid.UUID(result["reconciliation_id"]))
 
 
+def legacy_close(account, monkeypatch, *, shares=5):
+    holding_id = uuid.uuid4()
+    with account.sessions() as session, session.begin():
+        session.add(
+            PortfolioHoldingRecord(
+                id=holding_id,
+                strategy_name=f"phase98-reconcile-legacy:{holding_id}",
+                symbol="2330",
+                market="tw_stock",
+                weight=0.1,
+                shares=shares,
+                entry_price=100,
+                entry_date=NOW,
+                closed=False,
+                side="long",
+                stop_loss_pct=0.1,
+            )
+        )
+        materialized = ProtectiveExecutionService(session).materialize(
+            account_scope=account.scope,
+            account_generation="generation-1",
+            market="tw_stock",
+            symbol="2330",
+            instrument="spot",
+            side="long",
+            origin="stop_loss",
+            trigger_generation=f"legacy-reconciliation:{holding_id}",
+            price=100,
+            source_holding_ids=[holding_id],
+            allow_legacy_holdings=True,
+            principal=AuthPrincipal(
+                "system:test-protective",
+                frozenset({"decision-worker"}),
+                frozenset({account.scope}),
+            ),
+            now=NOW,
+        )
+    repo = type("Repo", (), {"read_ohlcv": lambda _self, *_args: pd.DataFrame({"close": [100.0]})})()
+    monkeypatch.setattr("poseidon.data.remote_repository.RemoteDataRepository.from_settings", lambda: repo)
+    order_id = uuid.UUID(materialized["order_ids"][0])
+    submit_or_reconcile_order(account.sessions, order_id, account.adapter, now=NOW)
+    with account.sessions() as session:
+        fill_id = session.scalar(select(OrderFillRecord.id).where(OrderFillRecord.order_id == order_id))
+    lot_tests.project(account.seed, fill_id)
+    return holding_id, order_id
+
+
+def legacy_partial_close(account, monkeypatch, *, shares=5, filled=2):
+    holding_id = uuid.uuid4()
+    with account.sessions() as session, session.begin():
+        session.add(
+            PortfolioHoldingRecord(
+                id=holding_id,
+                strategy_name=f"phase98-reconcile-legacy:{holding_id}",
+                symbol="2330",
+                market="tw_stock",
+                weight=0.1,
+                shares=shares,
+                entry_price=100,
+                entry_date=NOW,
+                closed=False,
+                side="long",
+                stop_loss_pct=0.1,
+            )
+        )
+        materialized = ProtectiveExecutionService(session).materialize(
+            account_scope=account.scope,
+            account_generation="generation-1",
+            market="tw_stock",
+            symbol="2330",
+            instrument="spot",
+            side="long",
+            origin="stop_loss",
+            trigger_generation=f"legacy-reconciliation-partial:{holding_id}",
+            price=100,
+            source_holding_ids=[holding_id],
+            allow_legacy_holdings=True,
+            principal=AuthPrincipal(
+                "system:test-protective",
+                frozenset({"decision-worker"}),
+                frozenset({account.scope}),
+            ),
+            now=NOW,
+        )
+    repo = type("Repo", (), {"read_ohlcv": lambda _self, *_args: pd.DataFrame({"close": [100.0]})})()
+    monkeypatch.setattr("poseidon.data.remote_repository.RemoteDataRepository.from_settings", lambda: repo)
+    order_id = uuid.UUID(materialized["order_ids"][0])
+    with account.sessions() as session, session.begin():
+        prepared = ReconciliationService(session).prepare_attempt(order_id, account.adapter, now=NOW)
+    accepted = account.adapter.place_order(prepared.order, client_order_ref=prepared.order.client_order_ref)
+    with account.sessions() as session, session.begin():
+        broker_order = session.scalar(
+            select(PaperBrokerOrder).where(PaperBrokerOrder.broker_order_id == accepted.broker_order_id)
+        )
+        broker_order.status = "cancelled"
+        session.scalar(
+            select(PaperBrokerFill).where(PaperBrokerFill.paper_broker_order_id == broker_order.id)
+        ).fill_quantity = filled
+        session.scalar(
+            select(PaperCashMovement).where(
+                PaperCashMovement.account_scope == account.scope,
+                PaperCashMovement.state_version == broker_order.state_version,
+            )
+        ).amount = filled * 100
+    snapshot = account.adapter.find_order_by_client_ref(
+        prepared.order.client_order_ref,
+        account_scope=account.scope,
+        account_generation="generation-1",
+    )
+    fills = account.adapter.query_fills(
+        snapshot.broker_order_id,
+        account_scope=account.scope,
+        account_generation="generation-1",
+    )
+    with account.sessions() as session, session.begin():
+        ReconciliationService(session).import_broker_state(order_id, snapshot, fills, now=NOW)
+    with account.sessions() as session:
+        fill_id = session.scalar(select(OrderFillRecord.id).where(OrderFillRecord.order_id == order_id))
+    lot_tests.project(account.seed, fill_id)
+    return holding_id, order_id
+
+
 def test_bootstrap_zero_trade_matched_exact_replay_is_immutable(account):
     result = reconcile(account)
     assert result["status"] == "matched"
@@ -171,6 +306,99 @@ def test_bootstrap_zero_trade_matched_exact_replay_is_immutable(account):
             )
             == 1
         )
+
+
+def test_full_legacy_close_baseline_is_ledger_watermark_not_broker_order_drift(monkeypatch, account):
+    _holding_id, order_id = legacy_close(account, monkeypatch)
+
+    result = reconcile(account)
+
+    row = stored(account, result)
+    assert result["status"] == "matched", row.difference_json
+    assert row.broker_state_watermark == "broker:2"
+    assert set(row.broker_snapshot_json["orders"]) == {
+        session_ref
+        for session_ref in [
+            next(
+                value
+                for value in row.internal_snapshot_json["orders"]
+                if row.internal_snapshot_json["orders"][value]["broker_order_id"].startswith("PAPER-LEGACY-")
+            )
+        ]
+    }
+    with account.sessions() as session:
+        baseline = session.scalar(
+            select(PaperBrokerOrder).where(
+                PaperBrokerOrder.account_scope == account.scope,
+                PaperBrokerOrder.action == "position_base",
+            )
+        )
+        assert baseline is not None
+        assert baseline.state_version == 1
+        assert session.get(OrderRecord, order_id).status == "filled"
+
+
+def test_partial_legacy_close_baseline_remains_honest_unresolved(monkeypatch, account):
+    legacy_partial_close(account, monkeypatch)
+
+    result = reconcile(account)
+
+    assert result["status"] in {"mismatch", "unresolved"}
+    row = stored(account, result)
+    assert not any(ref.startswith("LEGACY-BASE-") for ref in row.broker_snapshot_json["orders"])
+    assert row.broker_snapshot_json["positions"]
+
+
+@pytest.mark.parametrize("corruption", ["action", "status", "client_ref", "broker_id", "fill"])
+def test_malformed_legacy_baseline_is_never_excluded_from_reconciliation(monkeypatch, account, corruption):
+    legacy_close(account, monkeypatch)
+    snapshot = account.adapter.query_account_snapshot(account.scope, "generation-1")
+    with account.sessions() as session, session.begin():
+        baseline = session.scalar(
+            select(PaperBrokerOrder).where(
+                PaperBrokerOrder.account_scope == account.scope,
+                PaperBrokerOrder.action == "position_base",
+            )
+        )
+        if corruption == "action":
+            baseline.action = "sell"
+        elif corruption == "status":
+            baseline.status = "filled"
+        elif corruption == "client_ref":
+            baseline.client_order_ref = "LEGACY-BASE-not-a-uuid"
+        elif corruption == "broker_id":
+            baseline.broker_order_id = "PAPER-BASE-corrupt"
+        else:
+            session.add(
+                PaperBrokerFill(
+                    paper_broker_order_id=baseline.id,
+                    account_scope=account.scope,
+                    account_generation="generation-1",
+                    broker_fill_id=f"corrupt-{uuid.uuid4()}",
+                    market=baseline.market,
+                    symbol=baseline.symbol,
+                    instrument=baseline.instrument,
+                    side=baseline.side,
+                    fill_price=baseline.price,
+                    fill_quantity=1,
+                    fill_time=NOW,
+                    state_version=baseline.state_version,
+                )
+            )
+    with account.sessions() as session, session.begin():
+        result = ReconciliationService(session).reconcile_account(
+            account.id,
+            snapshot,
+            now=NOW,
+            prices={("tw_stock", "2330", "spot"): 100.0},
+        )
+
+    assert result["status"] != "matched"
+    row = stored(account, result)
+    assert any(
+        reason.startswith(("broker baseline unresolved:", "broker order unresolved:"))
+        for reason in row.difference_json["unresolved"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -252,6 +480,59 @@ def test_projection_pending_unresolved_then_match_terminalizes_decision(account)
     assert result["status"] == "matched"
     with account.sessions() as session:
         assert session.get(DecisionRecord, decision_id).status == "executed"
+
+
+def test_matched_account_terminalizes_only_canonical_ordinary_orders_with_anchored_protective(
+    monkeypatch,
+    account,
+):
+    opening_fill_id = trade(account)
+    with account.sessions() as session:
+        opening_order = session.get(OrderRecord, session.get(OrderFillRecord, opening_fill_id).order_id)
+        decision_id = opening_order.decision_id
+    with account.sessions() as session, session.begin():
+        protective = ProtectiveExecutionService(session).materialize(
+            account_scope=account.scope,
+            account_generation="generation-1",
+            market="tw_stock",
+            symbol="2330",
+            instrument="spot",
+            side="long",
+            origin="stop_loss",
+            trigger_generation="terminalization:protective",
+            price=100.0,
+            principal=AuthPrincipal(
+                "system:test-protective",
+                frozenset({"decision-worker"}),
+                frozenset({account.scope}),
+            ),
+            now=NOW,
+        )
+    protective_order_id = uuid.UUID(protective["order_ids"][0])
+    repo = type(
+        "Repo",
+        (),
+        {"read_ohlcv": lambda _self, *_args: pd.DataFrame({"close": [100.0]})},
+    )()
+    monkeypatch.setattr(
+        "poseidon.data.remote_repository.RemoteDataRepository.from_settings",
+        lambda: repo,
+    )
+    submit_or_reconcile_order(account.sessions, protective_order_id, account.adapter, now=NOW)
+    with account.sessions() as session:
+        protective_fill_id = session.scalar(
+            select(OrderFillRecord.id).where(OrderFillRecord.order_id == protective_order_id)
+        )
+    lot_tests.project(account.seed, protective_fill_id)
+
+    result = reconcile(account)
+
+    assert result["status"] == "matched"
+    with account.sessions() as session:
+        assert session.get(DecisionRecord, decision_id).status == "executed"
+        protective_order = session.get(OrderRecord, protective_order_id)
+        assert protective_order.status == "filled"
+        assert protective_order.reservation_status == "released"
 
 
 def test_freshness_exposure_gate_invalidates_match_on_new_broker_watermark(account):

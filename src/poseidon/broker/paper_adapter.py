@@ -7,7 +7,7 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from poseidon.broker.base import (
     BrokerAccountSnapshot,
@@ -32,6 +32,10 @@ PAPER_RECONCILIATION_CAPABILITIES = BrokerCapabilities(
     query_fills=True,
     query_account_snapshot=True,
 )
+LEGACY_BASELINE_ACTION = "position_base"
+LEGACY_BASELINE_STATUS = "position_baseline"
+LEGACY_BASELINE_REF_PREFIX = "LEGACY-BASE-"
+LEGACY_EXECUTION_PREFIX = "PAPER-LEGACY"
 
 
 def _utc(value: datetime) -> datetime:
@@ -137,7 +141,239 @@ def _existing_replay(session_factory, order: Order, client_order_ref: str, broke
         session.close()
 
 
+def _legacy_context(order: Order):
+    context = order.protective_context_json
+    return context if isinstance(context, dict) and context.get("legacy_exception") is True else None
+
+
+def _baseline_broker_id(row: PaperBrokerOrder) -> str:
+    digest = content_sha256(
+        {
+            "account_scope": row.account_scope,
+            "account_generation": row.account_generation,
+            "client_order_ref": row.client_order_ref,
+            "market": row.market,
+            "symbol": row.symbol,
+            "instrument": row.instrument,
+            "side": row.side,
+            "quantity": row.quantity,
+            "price": row.price,
+        }
+    )
+    return f"PAPER-BASE-{digest[:40]}"
+
+
+def _validated_baselines(
+    session, account_scope, account_generation, *, market=None, symbol=None, instrument=None, side=None
+):
+    statement = select(PaperBrokerOrder).where(
+        PaperBrokerOrder.account_scope == account_scope,
+        PaperBrokerOrder.account_generation == account_generation,
+        PaperBrokerOrder.action == LEGACY_BASELINE_ACTION,
+    )
+    for field, value in (("market", market), ("symbol", symbol), ("instrument", instrument), ("side", side)):
+        if value is not None:
+            statement = statement.where(getattr(PaperBrokerOrder, field) == value)
+    rows = session.scalars(statement.order_by(PaperBrokerOrder.state_version, PaperBrokerOrder.client_order_ref)).all()
+    for row in rows:
+        try:
+            uuid.UUID(row.client_order_ref.removeprefix(LEGACY_BASELINE_REF_PREFIX))
+        except (AttributeError, ValueError) as error:
+            raise BrokerCapabilityError("legacy position baseline identity is invalid") from error
+        if (
+            not row.client_order_ref.startswith(LEGACY_BASELINE_REF_PREFIX)
+            or row.status != LEGACY_BASELINE_STATUS
+            or row.order_type != "market"
+            or row.broker_order_id != _baseline_broker_id(row)
+            or not math.isfinite(row.quantity)
+            or row.quantity <= 0
+            or row.price is None
+            or not math.isfinite(row.price)
+            or row.price <= 0
+            or row.state_version <= 0
+            or session.scalar(
+                select(PaperBrokerFill.id).where(PaperBrokerFill.paper_broker_order_id == row.id).limit(1)
+            )
+            is not None
+        ):
+            raise BrokerCapabilityError("legacy position baseline is invalid")
+    return rows
+
+
+def _ensure_legacy_baselines(
+    session,
+    account,
+    order: Order,
+    client_order_ref: str,
+    *,
+    allow_create: bool,
+) -> None:
+    context = _legacy_context(order)
+    if context is None:
+        return
+    expected_context = {
+        "account_scope",
+        "account_generation",
+        "identity",
+        "origin",
+        "trigger_generation",
+        "source_lot_ids",
+        "source_decision_ids",
+        "source_holding_ids",
+        "source_holding_quantities",
+        "source_holding_risk",
+        "legacy_exception",
+        "dedupe_sha256",
+    }
+    source_ids = context.get("source_holding_ids")
+    quantities = context.get("source_holding_quantities")
+    risks = context.get("source_holding_risk")
+    try:
+        valid_ids = (
+            isinstance(source_ids, list)
+            and bool(source_ids)
+            and source_ids == sorted(source_ids)
+            and len(source_ids) == len(set(source_ids))
+            and all(str(uuid.UUID(value)) == value for value in source_ids)
+        )
+        valid_maps = (
+            isinstance(quantities, dict)
+            and set(quantities) == set(source_ids or ())
+            and isinstance(risks, dict)
+            and set(risks) == set(source_ids or ())
+        )
+        total = Decimal("0")
+        if valid_maps:
+            for holding_id in source_ids:
+                quantity = quantities[holding_id]
+                risk = risks[holding_id]
+                if (
+                    isinstance(quantity, bool)
+                    or not isinstance(quantity, (int, float))
+                    or not math.isfinite(quantity)
+                    or quantity <= 0
+                    or not isinstance(risk, dict)
+                    or set(risk) != {"entry_price", "stop_loss_pct"}
+                    or any(
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not math.isfinite(value)
+                        or value <= 0
+                        for value in risk.values()
+                    )
+                ):
+                    valid_maps = False
+                    break
+                total += Decimal(str(quantity))
+    except (TypeError, ValueError):
+        valid_ids = valid_maps = False
+        total = Decimal("0")
+    if (
+        set(context) != expected_context
+        or not valid_ids
+        or not valid_maps
+        or context["source_lot_ids"] != []
+        or context["source_decision_ids"] != []
+        or Decimal(str(order.quantity)) != total
+    ):
+        raise BrokerCapabilityError("legacy protective context requires exact positive full-close sources")
+    refs = {holding_id: f"{LEGACY_BASELINE_REF_PREFIX}{holding_id}" for holding_id in context["source_holding_ids"]}
+    baselines = _validated_baselines(
+        session,
+        order.account_scope,
+        order.account_generation,
+        market=order.market,
+        symbol=order.symbol,
+        instrument=order.instrument,
+        side=order.side,
+    )
+    by_ref = {row.client_order_ref: row for row in baselines}
+    missing = [holding_id for holding_id, ref in refs.items() if ref not in by_ref]
+    if missing:
+        if not allow_create:
+            raise BrokerCapabilityError("legacy position baseline is missing on replay")
+        state_version = account.state_version + 1
+        accepted_at = datetime.now(UTC)
+        for holding_id in missing:
+            risk = context["source_holding_risk"][holding_id]
+            row = PaperBrokerOrder(
+                account_scope=order.account_scope,
+                account_generation=order.account_generation,
+                client_order_ref=refs[holding_id],
+                broker_order_id="pending",
+                market=order.market,
+                symbol=order.symbol,
+                instrument=order.instrument,
+                action=LEGACY_BASELINE_ACTION,
+                side=order.side,
+                order_type="market",
+                quantity=context["source_holding_quantities"][holding_id],
+                price=risk["entry_price"],
+                status=LEGACY_BASELINE_STATUS,
+                state_version=state_version,
+                accepted_at=accepted_at,
+            )
+            row.broker_order_id = _baseline_broker_id(row)
+            session.add(row)
+        account.state_version = state_version
+        account.updated_at = accepted_at
+        session.flush()
+        baselines = _validated_baselines(
+            session,
+            order.account_scope,
+            order.account_generation,
+            market=order.market,
+            symbol=order.symbol,
+            instrument=order.instrument,
+            side=order.side,
+        )
+        by_ref = {row.client_order_ref: row for row in baselines}
+    prior_closed = session.scalar(
+        select(func.coalesce(func.sum(PaperBrokerFill.fill_quantity), 0.0))
+        .join(PaperBrokerOrder, PaperBrokerOrder.id == PaperBrokerFill.paper_broker_order_id)
+        .where(
+            PaperBrokerOrder.account_scope == order.account_scope,
+            PaperBrokerOrder.account_generation == order.account_generation,
+            PaperBrokerOrder.market == order.market,
+            PaperBrokerOrder.symbol == order.symbol,
+            PaperBrokerOrder.instrument == order.instrument,
+            PaperBrokerOrder.side == order.side,
+            PaperBrokerOrder.broker_order_id.like(f"{LEGACY_EXECUTION_PREFIX}-%"),
+            PaperBrokerOrder.client_order_ref != client_order_ref,
+        )
+    )
+    remaining_closed = Decimal(str(prior_closed))
+    remaining_by_ref = {}
+    for row in baselines:
+        quantity = Decimal(str(row.quantity))
+        consumed = min(quantity, remaining_closed)
+        remaining_by_ref[row.client_order_ref] = quantity - consumed
+        remaining_closed -= consumed
+    if remaining_closed:
+        raise BrokerCapabilityError("legacy position baseline is smaller than prior durable closes")
+    for holding_id, ref in refs.items():
+        row = by_ref.get(ref)
+        risk = context["source_holding_risk"][holding_id]
+        if (
+            row is None
+            or Decimal(str(context["source_holding_quantities"][holding_id])) != remaining_by_ref[ref]
+            or Decimal(str(risk["entry_price"])) != Decimal(str(row.price))
+        ):
+            raise BrokerCapabilityError("legacy position baseline changed")
+
+
 def _position_state(session, order: Order) -> tuple[Decimal, Decimal]:
+    baselines = _validated_baselines(
+        session,
+        order.account_scope,
+        order.account_generation,
+        market=order.market,
+        symbol=order.symbol,
+        instrument=order.instrument,
+        side=order.side,
+    )
+    quantity = sum((Decimal(str(row.quantity)) for row in baselines), Decimal("0"))
+    entry_cost = sum((Decimal(str(row.quantity)) * Decimal(str(row.price)) for row in baselines), Decimal("0"))
     rows = session.execute(
         select(PaperBrokerOrder, PaperBrokerFill)
         .join(PaperBrokerFill, PaperBrokerFill.paper_broker_order_id == PaperBrokerOrder.id)
@@ -151,8 +387,6 @@ def _position_state(session, order: Order) -> tuple[Decimal, Decimal]:
         )
         .order_by(PaperBrokerFill.state_version, PaperBrokerFill.id)
     ).all()
-    quantity = Decimal("0")
-    entry_cost = Decimal("0")
     opening_action = "buy" if order.side == "long" else "sell"
     for broker_order, fill in rows:
         fill_quantity = Decimal(str(fill.fill_quantity))
@@ -210,6 +444,13 @@ def _accept_decision_order(
                 PaperBrokerOrder.account_generation == order.account_generation,
                 PaperBrokerOrder.client_order_ref == client_order_ref,
             )
+        )
+        _ensure_legacy_baselines(
+            session,
+            account,
+            order,
+            client_order_ref,
+            allow_create=existing is None,
         )
         if existing is not None:
             if not _same_order(existing, order, expected_broker_order_id):
@@ -323,19 +564,19 @@ class PaperBrokerAdapter(BrokerAdapter):
 
     def place_order(self, order: Order, *, client_order_ref: str | None = None):
         """Use durable truth for decision orders and memory only for legacy calls."""
-        if (
-            order.order_origin in {"decision", *DURABLE_PROTECTIVE_ORIGINS}
-            and order.execution_key is not None
-            and client_order_ref is None
-        ):
+        durable = order.order_origin == "decision" or (
+            order.order_origin in DURABLE_PROTECTIVE_ORIGINS and order.execution_key is not None
+        )
+        if durable and client_order_ref is None:
             raise BrokerCapabilityError("durable execution requires the stored client reference")
         if client_order_ref is not None:
             self._require_decision_submission(order, client_order_ref)
             if order.market != "tw_stock" or order.instrument != "spot":
                 raise BrokerCapabilityError("stock paper execution requires tw_stock/spot")
-            replay = _existing_replay(self._session_factory, order, client_order_ref, "PAPER")
-            if replay is not None:
-                return replay
+            if _legacy_context(order) is None:
+                replay = _existing_replay(self._session_factory, order, client_order_ref, "PAPER")
+                if replay is not None:
+                    return replay
 
         from poseidon.data.remote_repository import RemoteDataRepository
 
@@ -345,12 +586,13 @@ class PaperBrokerAdapter(BrokerAdapter):
             raise ValueError(f"No price data for {order.symbol}")
         fill_price = float(latest["close"].iloc[-1])
         if client_order_ref is not None:
+            prefix = LEGACY_EXECUTION_PREFIX if _legacy_context(order) is not None else "PAPER"
             return _accept_decision_order(
                 self._session_factory,
                 order,
                 client_order_ref,
                 fill_price,
-                broker_prefix="PAPER",
+                broker_prefix=prefix,
             )
 
         broker_order_id = f"PAPER-{uuid.uuid4().hex[:12]}"
@@ -455,6 +697,11 @@ class PaperBrokerAdapter(BrokerAdapter):
                 )
             ).all()
             quantities: dict[tuple[str, str, str, str], Decimal] = {}
+            for baseline in _validated_baselines(session, account_scope, account_generation):
+                if baseline.state_version > account.state_version:
+                    raise BrokerCapabilityError("legacy position baseline exceeds account watermark")
+                identity = (baseline.market, baseline.symbol, baseline.instrument, baseline.side)
+                quantities[identity] = quantities.get(identity, Decimal("0")) + Decimal(str(baseline.quantity))
             for broker_order, fill in rows:
                 identity = (fill.market, fill.symbol, fill.instrument, fill.side)
                 opening_action = "buy" if fill.side == "long" else "sell"

@@ -34,6 +34,7 @@ from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.paper_broker_fill import PaperBrokerFill
 from poseidon.models.paper_broker_order import PaperBrokerOrder
 from poseidon.models.paper_cash_movement import PaperCashMovement
+from poseidon.models.portfolio_holding import PortfolioHoldingRecord
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy_version import StrategyVersion
 from poseidon.orders.schemas import Order
@@ -241,10 +242,10 @@ class ReconciliationService:
             raise ReconciliationConflictError("decision order does not exist")
         return order
 
-    def _validate_durable_intent(self, order: OrderRecord) -> None:
+    def _validate_durable_intent(self, order: OrderRecord, *, lock_fills=True) -> None:
         if order.order_origin in PROTECTIVE_ORIGINS:
             try:
-                ProtectiveExecutionService(self.session).validate_order(order)
+                ProtectiveExecutionService(self.session).validate_order(order, lock_fills=lock_fills)
             except ExecutionConflictError as error:
                 raise ReconciliationConflictError("durable order intent changed after materialization") from error
             return
@@ -291,7 +292,7 @@ class ReconciliationService:
         probe = self.session.get(OrderRecord, order_id)
         if probe is None:
             raise ReconciliationConflictError("decision order does not exist")
-        self._validate_durable_intent(probe)
+        self._validate_durable_intent(probe, lock_fills=False)
         order = self._locked_order_and_account(order_id)
         self._validate_durable_intent(order)
         dto = _order_dto(order)
@@ -346,6 +347,8 @@ class ReconciliationService:
                 .with_for_update()
             ).all()
             required = Decimal("0")
+            legacy_required = Decimal("0")
+            legacy_source_ids = set()
             for reserved_order in reserved_orders:
                 reserved_action = (reserved_order.intent_json or {}).get("frozen_intent", {}).get("action")
                 if reserved_action not in {"reduce", "exit"}:
@@ -362,7 +365,28 @@ class ReconciliationService:
                 outstanding = _number(reserved_order.reserved_quantity) - applied
                 if outstanding < 0:
                     raise ReconciliationConflictError("applied close fills exceed the durable reservation")
-                required += outstanding
+                context = reserved_order.protective_context_json
+                if isinstance(context, dict) and context.get("legacy_exception") is True:
+                    try:
+                        legacy_source_ids.update(uuid.UUID(value) for value in context["source_holding_ids"])
+                    except (KeyError, TypeError, ValueError) as error:
+                        raise ReconciliationConflictError("legacy protective source provenance is invalid") from error
+                    legacy_required += outstanding
+                else:
+                    required += outstanding
+
+            if legacy_required:
+                legacy_holdings = self.session.scalars(
+                    select(PortfolioHoldingRecord)
+                    .where(PortfolioHoldingRecord.id.in_(legacy_source_ids))
+                    .with_for_update()
+                ).all()
+                available = sum(
+                    (_number(row.shares) for row in legacy_holdings if row.shares is not None),
+                    Decimal("0"),
+                )
+                if len(legacy_holdings) != len(legacy_source_ids) or available < legacy_required:
+                    raise ReconciliationConflictError("legacy close reservation demand exceeds open holdings")
 
             lots = self.session.scalars(
                 select(PositionLot)
@@ -588,6 +612,15 @@ class ReconciliationService:
             .order_by(PaperBrokerOrder.state_version, PaperBrokerOrder.id)
             .with_for_update()
         ).all()
+        all_broker_orders = broker_orders
+        try:
+            from poseidon.broker.paper_adapter import _validated_baselines
+
+            baseline_ids = {row.id for row in _validated_baselines(self.session, scope, generation)}
+        except BrokerCapabilityError as error:
+            baseline_ids = set()
+            reasons.append(f"broker baseline unresolved: {error}")
+        broker_orders = [row for row in all_broker_orders if row.id not in baseline_ids]
         broker_fills = self.session.scalars(
             select(PaperBrokerFill)
             .where(PaperBrokerFill.account_scope == scope, PaperBrokerFill.account_generation == generation)
@@ -695,7 +728,9 @@ class ReconciliationService:
             for movement in movements:
                 cash[movement.currency] = cash.get(movement.currency, Decimal(0)) + _number(movement.amount)
             broker["cash"] = {key: float(value) for key, value in sorted(cash.items())}
-            if any(row.state_version > account.state_version for row in [*broker_orders, *broker_fills, *movements]):
+            if any(
+                row.state_version > account.state_version for row in [*all_broker_orders, *broker_fills, *movements]
+            ):
                 reasons.append("broker ledger exceeds account watermark")
             if not isinstance(snapshot, BrokerAccountSnapshot):
                 raise ReconciliationConflictError("adapter account snapshot is missing required fields")
@@ -848,7 +883,7 @@ class ReconciliationService:
                 ledger = [(broker_by_id[row.paper_broker_order_id], row) for row in broker_fills]
                 nav = (
                     paper_liquidation_nav(snapshot, policy, prices or {}, ledger)
-                    if snapshot.positions or ledger
+                    if snapshot.positions or (ledger and not baseline_ids)
                     else float(_number(snapshot.cash))
                 )
             except (ValueError, KeyError, ReconciliationConflictError) as error:
@@ -929,14 +964,18 @@ class ReconciliationService:
             for decision in decisions:
                 if decision.status != "execution_claimed":
                     continue
-                decision_orders = [order for order in orders if order.decision_id == decision.id]
                 try:
                     _, _, intents = execution._policy_and_intents(decision)
                     canonical = execution._replay(decision, intents, generation)
                 except ExecutionConflictError:
                     continue
+                canonical_ids = (
+                    set() if canonical is None else {uuid.UUID(order_id) for order_id in canonical["order_ids"]}
+                )
+                decision_orders = [order for order in orders if order.id in canonical_ids]
                 if (
                     canonical is None
+                    or len(canonical_ids) != len(intents)
                     or len(decision_orders) != len(intents)
                     or any(
                         order.status not in {"filled", "rejected", "cancelled"}

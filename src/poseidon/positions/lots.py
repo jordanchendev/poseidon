@@ -13,6 +13,7 @@ from poseidon.models.fill_allocation import FillAllocation
 from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
 from poseidon.models.paper_broker_account import PaperBrokerAccount
+from poseidon.models.portfolio_holding import PortfolioHoldingRecord
 from poseidon.models.position_lot import PositionLot
 from poseidon.orders.schemas import DURABLE_PROTECTIVE_ORIGINS
 
@@ -192,6 +193,66 @@ class FillProjectionService:
             "entry_cost": float(quantity * entry_price * multiplier),
         }
 
+    def _apply_legacy_holding_fill(self, order, fill, order_fills, account, quantity):
+        context = order.protective_context_json
+        try:
+            source_ids = [uuid.UUID(value) for value in context["source_holding_ids"]]
+        except (KeyError, TypeError, ValueError) as error:
+            raise FillProjectionConflictError("legacy protective source provenance is invalid") from error
+        holdings = self.session.scalars(
+            select(PortfolioHoldingRecord)
+            .where(PortfolioHoldingRecord.id.in_(source_ids))
+            .order_by(PortfolioHoldingRecord.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).all()
+        if [row.id for row in holdings] != source_ids or any(
+            row.strategy_name.startswith("decision-lots:")
+            or (row.market, row.symbol, row.side) != (order.market, order.symbol, order.side)
+            for row in holdings
+        ):
+            raise FillProjectionConflictError("legacy protective source ownership changed")
+        originals = {row.id: _number(context["source_holding_quantities"][str(row.id)]) for row in holdings}
+
+        def balances(applied):
+            result = {}
+            remaining = applied
+            for row in holdings:
+                used = min(originals[row.id], remaining)
+                result[row.id] = originals[row.id] - used
+                remaining -= used
+            if remaining:
+                raise FillProjectionConflictError("closing fill exceeds open legacy inventory")
+            return result
+
+        already_applied = sum(
+            (_number(row.fill_quantity) for row in order_fills if row.projection_status == "applied"),
+            Decimal("0"),
+        )
+        expected = balances(already_applied)
+        if any(
+            row.shares is None or _number(row.shares) != expected[row.id] or row.closed != (expected[row.id] == 0)
+            for row in holdings
+        ):
+            raise FillProjectionConflictError("legacy holding balance disagrees with applied fills")
+        if fill.projection_status == "applied":
+            return self._response(fill, [], [])
+        changes = balances(already_applied + quantity)
+        pending = any(row.id != fill.id and row.projection_status == "projection_pending" for row in order_fills)
+        release = order.status in {"filled", "rejected", "cancelled"} and not pending
+        now = datetime.now(UTC)
+        for row in holdings:
+            row.shares = float(changes[row.id])
+            row.closed = changes[row.id] == 0
+            row.close_date = _utc(fill.fill_time) if row.closed else None
+            row.updated_at = now
+        fill.projection_status = "applied"
+        if release:
+            order.reservation_status = "released"
+        order.updated_at = now
+        self.session.flush()
+        return self._response(fill, [], [])
+
     def apply(self, fill_id):
         probe = self.session.get(OrderFillRecord, fill_id)
         if probe is None:
@@ -227,6 +288,13 @@ class FillProjectionService:
             (_number(row.fill_quantity) for row in order_fills), Decimal(0)
         ) > _number(order.quantity):
             raise FillProjectionConflictError("order fill quantity or projection state is invalid")
+        if (
+            isinstance(order.protective_context_json, dict)
+            and order.protective_context_json.get("legacy_exception") is True
+        ):
+            if opening:
+                raise FillProjectionConflictError("legacy protective projection cannot increase exposure")
+            return self._apply_legacy_holding_fill(order, fill, order_fills, account, quantity)
         lots = self.session.scalars(
             select(PositionLot)
             .filter_by(**identity)

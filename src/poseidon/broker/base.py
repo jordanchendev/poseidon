@@ -134,12 +134,32 @@ class BrokerAdapter(ABC):
             raise BrokerCapabilityError("decision execution requires the stored client reference")
         if not order.account_scope or not order.account_generation or not order.instrument:
             raise BrokerCapabilityError("decision execution requires complete account and instrument identity")
-        if order.decision_id is None or order.execution_key is None:
+        legacy_protective = (
+            order.order_origin in DURABLE_PROTECTIVE_ORIGINS
+            and isinstance(order.protective_context_json, dict)
+            and order.protective_context_json.get("legacy_exception") is True
+        )
+        if order.execution_key is None or (order.decision_id is None) != legacy_protective:
             raise BrokerCapabilityError("decision execution requires durable decision identity")
         if order.order_origin in DURABLE_PROTECTIVE_ORIGINS:
             frozen = (order.intent_json or {}).get("frozen_intent", {})
             if frozen.get("action") not in {"reduce", "exit"} or not order.protective_context_json:
                 raise BrokerCapabilityError("protective execution requires reduction-only durable context")
+            if legacy_protective and set(order.protective_context_json) != {
+                "account_scope",
+                "account_generation",
+                "identity",
+                "origin",
+                "trigger_generation",
+                "source_lot_ids",
+                "source_decision_ids",
+                "source_holding_ids",
+                "source_holding_quantities",
+                "source_holding_risk",
+                "legacy_exception",
+                "dedupe_sha256",
+            }:
+                raise BrokerCapabilityError("legacy protective execution requires complete durable context")
         try:
             valid_intent = bool(order.intent_json) and order.intent_sha256 == content_sha256(order.intent_json)
         except ValueError as error:

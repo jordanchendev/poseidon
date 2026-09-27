@@ -28,6 +28,7 @@ from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.paper_broker_fill import PaperBrokerFill
 from poseidon.models.paper_broker_order import PaperBrokerOrder
 from poseidon.models.paper_cash_movement import PaperCashMovement
+from poseidon.models.portfolio_holding import PortfolioHoldingRecord
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy_version import StrategyVersion
 from poseidon.orders.schemas import DURABLE_PROTECTIVE_ORIGINS
@@ -392,13 +393,15 @@ class DecisionExecutionService:
     def _identity(order):
         return (order.market, order.symbol, order.instrument, order.side)
 
-    def _outstanding_reservation(self, order, currency):
+    def _outstanding_reservation(self, order, currency, *, lock_fills=True):
         original = Decimal(str(_finite_positive(order.reserved_quantity, "reserved_quantity")))
-        fills = self.session.scalars(
-            select(OrderFillRecord).where(OrderFillRecord.order_id == order.id).with_for_update()
-        ).all()
+        statement = select(OrderFillRecord).where(OrderFillRecord.order_id == order.id)
+        if lock_fills:
+            statement = statement.with_for_update()
+        fills = self.session.scalars(statement).all()
         applied = Decimal("0")
         total = Decimal("0")
+        pending_projection = False
         for fill in fills:
             if fill.projection_status not in {"projection_pending", "applied"}:
                 raise ExecutionConflictError("pending reservation has invalid fill projection status")
@@ -406,6 +409,8 @@ class DecisionExecutionService:
             total += quantity
             if fill.projection_status == "applied":
                 applied += quantity
+            else:
+                pending_projection = True
         if total > original:
             raise ExecutionConflictError("reserved fills exceed original reservation")
         cash = order.reserved_cash_json
@@ -425,7 +430,12 @@ class DecisionExecutionService:
             raise ExecutionConflictError("pending reservation has invalid frozen action")
         if action in {"reduce", "exit"} and cash["amount"] != 0:
             raise ExecutionConflictError("reserved cash disagrees with frozen action")
-        outstanding = original - applied
+        released_terminal = (
+            order.reservation_status == "released"
+            and order.status in {"filled", "rejected", "cancelled"}
+            and not pending_projection
+        )
+        outstanding = Decimal("0") if released_terminal else original - applied
         return outstanding, Decimal(str(cash["amount"])) * outstanding / original
 
     def _projected_risk_failures(self, decision, reconciliation, pending, specs, prices, nav, policy, reservations):
@@ -721,15 +731,17 @@ class ProtectiveExecutionService(DecisionExecutionService):
 
     @staticmethod
     def _dedupe_input(order_origin, context):
-        return {
+        result = {
             "account_scope": context["account_scope"],
             "account_generation": context["account_generation"],
             "origin": order_origin,
-            "source_lot_ids": context["source_lot_ids"],
             "trigger_generation": context["trigger_generation"],
         }
+        source = "source_holding_ids" if context.get("legacy_exception") is True else "source_lot_ids"
+        result[source] = context[source]
+        return result
 
-    def validate_order(self, order):
+    def validate_order(self, order, *, lock_fills=True):
         """Revalidate a stored protective intent before attempt or projection."""
         if order.order_origin not in PROTECTIVE_ORIGINS:
             raise ExecutionConflictError("protective order origin is not exact-allowlisted")
@@ -737,23 +749,31 @@ class ProtectiveExecutionService(DecisionExecutionService):
             raise ExecutionConflictError("protective order must be paper and non-signal")
         intent = order.intent_json
         context = order.protective_context_json
+        legacy = isinstance(context, dict) and context.get("legacy_exception") is True
+        expected_context = {
+            "account_scope",
+            "account_generation",
+            "identity",
+            "origin",
+            "trigger_generation",
+            "source_lot_ids",
+            "source_decision_ids",
+            "dedupe_sha256",
+        }
+        if legacy:
+            expected_context |= {
+                "legacy_exception",
+                "source_holding_ids",
+                "source_holding_quantities",
+                "source_holding_risk",
+            }
         if (
             not isinstance(intent, dict)
             or order.intent_sha256 != content_sha256(intent)
             or not isinstance(intent.get("frozen_intent"), dict)
             or not isinstance(intent.get("economics"), dict)
             or not isinstance(context, dict)
-            or set(context)
-            != {
-                "account_scope",
-                "account_generation",
-                "identity",
-                "origin",
-                "trigger_generation",
-                "source_lot_ids",
-                "source_decision_ids",
-                "dedupe_sha256",
-            }
+            or set(context) != expected_context
         ):
             raise ExecutionConflictError("protective durable content is invalid")
         frozen = intent["frozen_intent"]
@@ -781,6 +801,19 @@ class ProtectiveExecutionService(DecisionExecutionService):
             or context["trigger_generation"] != context["trigger_generation"].strip()
         ):
             raise ExecutionConflictError("protective intent is not reduction-only or changed identity")
+        digest = content_sha256(self._dedupe_input(order.order_origin, context))
+        expected_key = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:execution:{digest}")
+        expected_id = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:order:{digest}")
+        if (
+            context["dedupe_sha256"] != digest
+            or order.execution_key != expected_key
+            or order.id != expected_id
+            or order.client_order_ref != f"PX-{digest}"
+        ):
+            raise ExecutionConflictError("protective deterministic identity changed")
+        if legacy:
+            self._validate_legacy_order(order, context, lock_fills=lock_fills)
+            return
         try:
             source_lot_ids = [uuid.UUID(value) for value in context["source_lot_ids"]]
             source_decision_ids = [uuid.UUID(value) for value in context["source_decision_ids"]]
@@ -791,19 +824,9 @@ class ProtectiveExecutionService(DecisionExecutionService):
             or len(set(source_lot_ids)) != len(source_lot_ids)
             or not source_decision_ids
             or context["source_decision_ids"] != sorted(context["source_decision_ids"])
-        ):
-            raise ExecutionConflictError("protective source provenance is invalid")
-        digest = content_sha256(self._dedupe_input(order.order_origin, context))
-        expected_key = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:execution:{digest}")
-        expected_id = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:order:{digest}")
-        if (
-            context["dedupe_sha256"] != digest
-            or order.execution_key != expected_key
-            or order.id != expected_id
-            or order.client_order_ref != f"PX-{digest}"
             or order.decision_id != min(source_decision_ids, key=str)
         ):
-            raise ExecutionConflictError("protective deterministic identity changed")
+            raise ExecutionConflictError("protective source provenance is invalid")
         lots = self.session.scalars(
             select(PositionLot)
             .where(PositionLot.id.in_(source_lot_ids))
@@ -852,7 +875,7 @@ class ProtectiveExecutionService(DecisionExecutionService):
             or order.order_type != "market"
         ):
             raise ExecutionConflictError("protective executable economics changed")
-        outstanding, cash = self._outstanding_reservation(order, currency)
+        outstanding, cash = self._outstanding_reservation(order, currency, lock_fills=lock_fills)
         if cash != 0 or sum((Decimal(str(lot.reserved_close_quantity)) for lot in lots), Decimal(0)) < outstanding:
             raise ExecutionConflictError("protective close reservation changed")
         event = self.session.scalar(
@@ -880,6 +903,249 @@ class ProtectiveExecutionService(DecisionExecutionService):
         if event is None or event.payload_json != expected_event_payload:
             raise ExecutionConflictError("protective audit event is missing or changed")
 
+    def _validate_legacy_order(self, order, context, *, lock_fills):
+        try:
+            source_ids = [uuid.UUID(value) for value in context["source_holding_ids"]]
+        except (TypeError, ValueError) as error:
+            raise ExecutionConflictError("protective legacy source provenance is invalid") from error
+        quantities = context["source_holding_quantities"]
+        risk = context["source_holding_risk"]
+        if (
+            not source_ids
+            or len(set(source_ids)) != len(source_ids)
+            or context["source_holding_ids"] != sorted(context["source_holding_ids"])
+            or context["source_lot_ids"] != []
+            or context["source_decision_ids"] != []
+            or order.decision_id is not None
+            or not isinstance(quantities, dict)
+            or set(quantities) != set(context["source_holding_ids"])
+            or not isinstance(risk, dict)
+            or set(risk) != set(context["source_holding_ids"])
+        ):
+            raise ExecutionConflictError("protective legacy source provenance is invalid")
+        account = self.session.scalar(
+            select(PaperBrokerAccount).where(
+                PaperBrokerAccount.account_scope == order.account_scope,
+                PaperBrokerAccount.account_generation == order.account_generation,
+            )
+        )
+        holdings = self.session.scalars(
+            select(PortfolioHoldingRecord)
+            .where(PortfolioHoldingRecord.id.in_(source_ids))
+            .order_by(PortfolioHoldingRecord.id)
+        ).all()
+        if account is None or account.currency != "TWD" or [row.id for row in holdings] != source_ids:
+            raise ExecutionConflictError("protective legacy source set changed")
+        original = Decimal("0")
+        remaining = Decimal("0")
+        for holding in holdings:
+            amount = _finite_positive(quantities[str(holding.id)], "protective legacy source quantity")
+            frozen_risk = risk[str(holding.id)]
+            if not isinstance(frozen_risk, dict) or set(frozen_risk) != {"entry_price", "stop_loss_pct"}:
+                raise ExecutionConflictError("protective legacy source risk is invalid")
+            entry_price = _finite_positive(frozen_risk["entry_price"], "protective legacy entry price")
+            stop_loss_pct = _finite_positive(frozen_risk["stop_loss_pct"], "protective legacy stop loss")
+            shares = Decimal(str(holding.shares)) if holding.shares is not None else Decimal("-1")
+            if (
+                holding.strategy_name.startswith("decision-lots:")
+                or (holding.market, holding.symbol, holding.side) != (order.market, order.symbol, order.side)
+                or shares < 0
+                or shares > Decimal(str(amount))
+                or holding.closed != (shares == 0)
+                or entry_price <= 0
+                or stop_loss_pct >= 1
+            ):
+                raise ExecutionConflictError("protective legacy source ownership changed")
+            original += Decimal(str(amount))
+            remaining += shares
+        quantity = _finite_positive(order.quantity, "protective quantity")
+        economics = order.intent_json["economics"]
+        if (
+            order.market != "tw_stock"
+            or order.instrument != "spot"
+            or order.reserved_quantity != quantity
+            or economics.get("materialized_quantity") != quantity
+            or economics.get("price") != order.price
+            or order.action != ("sell" if order.side == "long" else "buy")
+            or original != Decimal(str(quantity))
+        ):
+            raise ExecutionConflictError("protective legacy executable economics changed")
+        outstanding, cash = self._outstanding_reservation(order, account.currency, lock_fills=lock_fills)
+        if cash != 0 or remaining < outstanding:
+            raise ExecutionConflictError("protective legacy close reservation changed")
+
+    def _materialize_legacy_holdings(
+        self,
+        *,
+        account,
+        account_scope,
+        account_generation,
+        market,
+        symbol,
+        instrument,
+        side,
+        origin,
+        trigger_generation,
+        current_price,
+        action,
+        quantity,
+        source_holding_ids,
+        current_time,
+    ):
+        if market != "tw_stock" or instrument != "spot" or account.currency != "TWD":
+            raise ExecutionConflictError("legacy protective exception is limited to the approved TW paper account")
+        try:
+            source_ids = sorted({uuid.UUID(str(value)) for value in source_holding_ids}, key=str)
+        except (TypeError, ValueError) as error:
+            raise ExecutionConflictError("protective legacy source provenance is invalid") from error
+        if not source_ids or len(source_ids) != len(source_holding_ids):
+            raise ExecutionConflictError("protective legacy source provenance is invalid")
+        holdings = self.session.scalars(
+            select(PortfolioHoldingRecord)
+            .where(PortfolioHoldingRecord.id.in_(source_ids))
+            .order_by(PortfolioHoldingRecord.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).all()
+        if [row.id for row in holdings] != source_ids or any(
+            row.closed
+            or row.strategy_name.startswith("decision-lots:")
+            or (row.market, row.symbol, row.side) != (market, symbol, side)
+            or row.shares is None
+            or not math.isfinite(row.shares)
+            or row.shares <= 0
+            or row.entry_price is None
+            or not math.isfinite(row.entry_price)
+            or row.entry_price <= 0
+            or row.stop_loss_pct is None
+            or not math.isfinite(row.stop_loss_pct)
+            or row.stop_loss_pct <= 0
+            or row.stop_loss_pct >= 1
+            for row in holdings
+        ):
+            raise ExecutionConflictError("protective legacy source ownership changed")
+        source_holding_ids = [str(value) for value in source_ids]
+        dedupe_input = {
+            "account_scope": account_scope,
+            "account_generation": account_generation,
+            "origin": origin,
+            "source_holding_ids": source_holding_ids,
+            "trigger_generation": trigger_generation,
+        }
+        digest = content_sha256(dedupe_input)
+        order_id = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:order:{digest}")
+        existing = self.session.get(OrderRecord, order_id)
+        if existing is not None:
+            self.validate_order(existing)
+            return self._response_for(existing)
+        source_set = set(source_holding_ids)
+        reserved = Decimal("0")
+        siblings = self.session.scalars(
+            select(OrderRecord).where(
+                OrderRecord.account_scope == account_scope,
+                OrderRecord.account_generation == account_generation,
+                OrderRecord.market == market,
+                OrderRecord.symbol == symbol,
+                OrderRecord.instrument == instrument,
+                OrderRecord.side == side,
+                OrderRecord.order_origin.in_(PROTECTIVE_ORIGINS),
+                OrderRecord.reservation_status == "reserved",
+                OrderRecord.status.in_(ACTIVE_RESERVATION_STATUSES),
+            )
+        ).all()
+        for sibling in siblings:
+            context = sibling.protective_context_json
+            if (
+                isinstance(context, dict)
+                and context.get("legacy_exception") is True
+                and source_set.intersection(context.get("source_holding_ids", ()))
+            ):
+                outstanding, _cash = self._outstanding_reservation(sibling, account.currency)
+                reserved += outstanding
+        available = sum((Decimal(str(row.shares)) for row in holdings), Decimal("0")) - reserved
+        requested = available if quantity is None else Decimal(str(_finite_positive(quantity, "protective quantity")))
+        if quantity is not None and requested != available:
+            raise ExecutionConflictError("legacy protective exception requires a full available close")
+        close_quantity = available
+        if close_quantity <= 0:
+            return {"status": "already_reserved", "execution_key": None, "order_ids": [], "client_order_refs": []}
+        execution_key = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:execution:{digest}")
+        frozen = {
+            "market": market,
+            "symbol": symbol,
+            "instrument": instrument,
+            "side": side,
+            "action": action,
+            "target_weight": 0.0,
+            "order_type": "market",
+        }
+        intent = json.loads(
+            canonical_json(
+                {
+                    "frozen_intent": frozen,
+                    "economics": {
+                        "price": current_price,
+                        "materialized_quantity": float(close_quantity),
+                        "contract_multiplier": 1.0,
+                        "sizing_rules": {"quantity_rounding": "whole_share_floor"},
+                    },
+                }
+            )
+        )
+        context = json.loads(
+            canonical_json(
+                {
+                    **dedupe_input,
+                    "identity": {"market": market, "symbol": symbol, "instrument": instrument, "side": side},
+                    "source_lot_ids": [],
+                    "source_decision_ids": [],
+                    "source_holding_quantities": {str(row.id): row.shares for row in holdings},
+                    "source_holding_risk": {
+                        str(row.id): {
+                            "entry_price": row.entry_price,
+                            "stop_loss_pct": row.stop_loss_pct,
+                        }
+                        for row in holdings
+                    },
+                    "legacy_exception": True,
+                    "dedupe_sha256": digest,
+                }
+            )
+        )
+        order = OrderRecord(
+            id=order_id,
+            strategy_name=f"protective:{origin}",
+            symbol=symbol,
+            market=market,
+            action="sell" if side == "long" else "buy",
+            order_type="market",
+            target_weight=0,
+            quantity=float(close_quantity),
+            price=current_price,
+            side=side,
+            status="pending_submit",
+            broker_mode="paper",
+            order_origin=origin,
+            decision_id=None,
+            account_scope=account_scope,
+            account_generation=account_generation,
+            execution_key=execution_key,
+            client_order_ref=f"PX-{digest}",
+            instrument=instrument,
+            intent_json=intent,
+            intent_sha256=content_sha256(intent),
+            reserved_cash_json={"currency": account.currency, "amount": 0.0},
+            reserved_quantity=float(close_quantity),
+            reservation_status="reserved",
+            reconciliation_status="pending",
+            protective_context_json=context,
+            created_at=current_time,
+            updated_at=current_time,
+        )
+        self.session.add(order)
+        self.session.flush()
+        return self._response_for(order)
+
     def materialize(
         self,
         *,
@@ -895,6 +1161,8 @@ class ProtectiveExecutionService(DecisionExecutionService):
         principal: AuthPrincipal,
         action="exit",
         quantity=None,
+        source_holding_ids=None,
+        allow_legacy_holdings=False,
         now=None,
     ):
         principal.require_role("decision-worker")
@@ -924,6 +1192,27 @@ class ProtectiveExecutionService(DecisionExecutionService):
         )
         if account is None:
             raise ExecutionConflictError("approved paper account generation does not exist")
+        if source_holding_ids is not None:
+            if not allow_legacy_holdings:
+                raise ExecutionConflictError("legacy protective source requires explicit authorization")
+            return self._materialize_legacy_holdings(
+                account=account,
+                account_scope=account_scope,
+                account_generation=account_generation,
+                market=market,
+                symbol=symbol,
+                instrument=instrument,
+                side=side,
+                origin=origin,
+                trigger_generation=trigger_generation,
+                current_price=current_price,
+                action=action,
+                quantity=quantity,
+                source_holding_ids=source_holding_ids,
+                current_time=current_time,
+            )
+        if allow_legacy_holdings:
+            raise ExecutionConflictError("legacy protective source IDs are required")
         active_source_lot_ids = set()
         for existing in self.session.scalars(
             select(OrderRecord).where(

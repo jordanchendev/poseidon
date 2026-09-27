@@ -4,6 +4,7 @@ Dataclasses for runtime data (TargetPosition, Holding, RebalanceOrder)
 and Pydantic models for YAML config validation (RevenueBreakoutConfig).
 """
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -45,6 +46,7 @@ class RebalanceOrder:
     current_weight: float
     delta_weight: float  # positive = buy more, negative = sell
     side: str = "long"  # propagated from TargetPosition
+    holding_id: uuid.UUID | None = None  # exact pre-lot source for transitional protective closes
 
 
 # --- Pydantic config models for YAML validation (per PSTRAT-04) ---

@@ -182,6 +182,29 @@ def test_durable_protective_adapter_requires_stored_client_ref(
         adapter_type(sessions).place_order(order)
 
 
+@pytest.mark.parametrize(
+    ("adapter_type", "market", "instrument"),
+    [
+        (PaperBrokerAdapter, "tw_stock", "spot"),
+        (PerpPaperAdapter, "crypto_perp", "BTC-USDT"),
+    ],
+)
+def test_ordinary_decision_without_execution_key_still_requires_stored_client_ref(
+    sessions,
+    adapter_type,
+    market,
+    instrument,
+):
+    order = _decision_order(
+        market=market,
+        instrument=instrument,
+        execution_key=None,
+    )
+
+    with pytest.raises(BrokerCapabilityError, match="stored client reference"):
+        adapter_type(sessions).place_order(order)
+
+
 def test_legacy_protective_without_durable_identity_keeps_paper_path(sessions, monkeypatch):
     repo = type(
         "Repo",

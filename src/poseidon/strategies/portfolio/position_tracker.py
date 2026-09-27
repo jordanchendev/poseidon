@@ -232,14 +232,28 @@ class PositionTracker:
                         side=side,
                     )
                 elif order.action == "sell":
-                    existing = (
-                        session.query(PortfolioHoldingRecord)
-                        .filter(
-                            PortfolioHoldingRecord.symbol == order.symbol,
-                            PortfolioHoldingRecord.closed == False,  # noqa: E712
+                    if order.holding_id is None:
+                        existing = (
+                            session.query(PortfolioHoldingRecord)
+                            .filter(
+                                PortfolioHoldingRecord.symbol == order.symbol,
+                                PortfolioHoldingRecord.closed == False,  # noqa: E712
+                            )
+                            .first()
                         )
-                        .first()
-                    )
+                    else:
+                        existing = session.scalar(
+                            select(PortfolioHoldingRecord)
+                            .where(PortfolioHoldingRecord.id == order.holding_id)
+                            .with_for_update()
+                        )
+                        if (
+                            existing is None
+                            or existing.closed
+                            or existing.strategy_name.startswith("decision-lots:")
+                            or (existing.symbol, existing.market, existing.side) != (order.symbol, market, order.side)
+                        ):
+                            raise ValueError("exact legacy holding identity changed")
                     if existing:
                         existing.closed = True
                         existing.close_date = now

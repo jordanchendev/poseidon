@@ -92,7 +92,7 @@ def _configured_protective_route(market):
     )
 
 
-def _run_durable_protective(*, origin, market, triggered):
+def _run_durable_protective(*, origin, market, triggered, source_holding_ids_by_identity=None):
     """Commit protective intents per lot identity, then enqueue UUID-only submission."""
     from poseidon.api.auth import AuthPrincipal
     from poseidon.decision_loop.execution import ProtectiveExecutionService
@@ -107,6 +107,9 @@ def _run_durable_protective(*, origin, market, triggered):
         if identity_market != market:
             raise ValueError("protective trigger market changed")
         price = triggered[identity]
+        source_holding_ids = (
+            None if source_holding_ids_by_identity is None else source_holding_ids_by_identity[identity]
+        )
         trigger_generation = content_sha256(
             {
                 "origin": origin,
@@ -117,6 +120,7 @@ def _run_durable_protective(*, origin, market, triggered):
                     "side": side,
                 },
                 "price": price,
+                "source_holding_ids": source_holding_ids,
             }
         )
         with SessionLocal() as session, session.begin():
@@ -131,11 +135,59 @@ def _run_durable_protective(*, origin, market, triggered):
                 trigger_generation=trigger_generation,
                 price=price,
                 principal=principal,
+                source_holding_ids=source_holding_ids,
+                allow_legacy_holdings=source_holding_ids is not None,
             )
         order_ids.extend(response["order_ids"])
     for order_id in order_ids:
         submit_decision_order.delay(order_id)
     return order_ids
+
+
+def _approved_legacy_holdings(market):
+    """Return only non-projected pre-lot holdings for the configured paper account."""
+    from sqlalchemy import select
+
+    from poseidon.models.paper_broker_account import PaperBrokerAccount
+    from poseidon.models.portfolio_holding import PortfolioHoldingRecord
+
+    scope = settings.decision_loop_approved_account_scope
+    generation = settings.decision_loop_approved_account_generation
+    with SessionLocal() as session:
+        account = session.scalar(
+            select(PaperBrokerAccount).where(
+                PaperBrokerAccount.account_scope == scope,
+                PaperBrokerAccount.account_generation == generation,
+            )
+        )
+        if account is None:
+            return []
+        marker = f"decision-lots:{account.id}"
+        holdings = session.scalars(
+            select(PortfolioHoldingRecord)
+            .where(
+                PortfolioHoldingRecord.market == market,
+                PortfolioHoldingRecord.closed.is_(False),
+                PortfolioHoldingRecord.strategy_name != marker,
+                PortfolioHoldingRecord.strategy_name.not_like("decision-lots:%"),
+            )
+            .order_by(PortfolioHoldingRecord.symbol, PortfolioHoldingRecord.side, PortfolioHoldingRecord.id)
+        ).all()
+        if market != "crypto_perp":
+            return holdings
+        from poseidon.models.position_lot import PositionLot
+
+        durable_symbols = set(
+            session.scalars(
+                select(PositionLot.symbol).where(
+                    PositionLot.account_scope == scope,
+                    PositionLot.account_generation == generation,
+                    PositionLot.market == market,
+                    PositionLot.open_quantity > 0,
+                )
+            ).all()
+        )
+        return [row for row in holdings if row.symbol not in durable_symbols]
 
 
 def _durable_protective_triggers(market):
@@ -161,8 +213,6 @@ def _durable_protective_triggers(market):
             )
             .order_by(PositionLot.symbol, PositionLot.instrument, PositionLot.side, PositionLot.opened_at)
         ).all()
-        if not lots:
-            return {"checked": 0, "triggered": {}}
         source_settings = {}
         service = ProtectiveExecutionService(session)
         for decision_id in sorted({lot.opening_decision_id for lot in lots}, key=str):
@@ -186,7 +236,30 @@ def _durable_protective_triggers(market):
         grouped = defaultdict(list)
         for lot in lots:
             grouped[(market, lot.symbol, lot.instrument, lot.side)].append(lot)
-        symbols = sorted({identity[1] for identity in grouped})
+    legacy = (
+        _approved_legacy_holdings(market)
+        if market == "tw_stock" and scope in settings.decision_loop_legacy_protective_scopes
+        else []
+    )
+    legacy_grouped = defaultdict(list)
+    legacy_skipped = False
+    for holding in legacy:
+        values = (holding.shares, holding.entry_price, holding.stop_loss_pct)
+        if (
+            holding.side not in {"long", "short"}
+            or any(
+                isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0
+                for value in values
+            )
+            or holding.stop_loss_pct >= 1
+        ):
+            legacy_grouped.clear()
+            legacy_skipped = True
+            break
+        legacy_grouped[(market, holding.symbol, "spot", holding.side)].append(holding)
+    if not grouped and not legacy_grouped:
+        return {"checked": 0, "triggered": {}, "legacy_sources": {}, "legacy_triggered": {}}
+    symbols = sorted({identity[1] for identity in grouped} | {identity[1] for identity in legacy_grouped})
     prices = _get_latest_prices(symbols) if market == "tw_stock" else _get_perp_mark_prices(symbols)
     triggered = {}
     for identity, identity_lots in grouped.items():
@@ -194,11 +267,13 @@ def _durable_protective_triggers(market):
         price = prices.get(symbol)
         if price is None or not math.isfinite(price) or price <= 0:
             continue
-        quantity = sum(lot.open_quantity for lot in identity_lots)
-        entry = sum(lot.open_quantity * lot.cost_basis_json["unit_price"] for lot in identity_lots) / quantity
         if market == "tw_stock":
-            stop_loss = min(source_settings[lot.opening_decision_id][0] for lot in identity_lots)
-            breached = price <= entry * (1 - stop_loss) if side == "long" else price >= entry * (1 + stop_loss)
+            breached = any(
+                price <= lot.cost_basis_json["unit_price"] * (1 - source_settings[lot.opening_decision_id][0])
+                if side == "long"
+                else price >= lot.cost_basis_json["unit_price"] * (1 + source_settings[lot.opening_decision_id][0])
+                for lot in identity_lots
+            )
         else:
             direction = 1 if side == "long" else -1
             breached = any(
@@ -214,7 +289,34 @@ def _durable_protective_triggers(market):
             triggered[identity] = price
     if market == "crypto_perp" and triggered:
         triggered = {identity: prices[identity[1]] for identity in grouped if identity[1] in prices}
-    return {"checked": len(grouped), "triggered": triggered}
+    legacy_sources = {}
+    legacy_triggered = {}
+    for identity, holdings in legacy_grouped.items():
+        _identity_market, symbol, _instrument, side = identity
+        price = prices.get(symbol)
+        if price is None or not math.isfinite(price) or price <= 0:
+            continue
+        breached = [
+            holding
+            for holding in holdings
+            if (
+                price <= holding.entry_price * (1 - holding.stop_loss_pct)
+                if side == "long"
+                else price >= holding.entry_price * (1 + holding.stop_loss_pct)
+            )
+        ]
+        if breached:
+            legacy_sources[identity] = [str(row.id) for row in breached]
+            legacy_triggered[identity] = price
+    result = {
+        "checked": len(grouped) + len(legacy_grouped),
+        "triggered": triggered,
+        "legacy_sources": legacy_sources,
+        "legacy_triggered": legacy_triggered,
+    }
+    if legacy_skipped:
+        result["skipped"] = "legacy_protective_policy_unresolved"
+    return result
 
 
 def _approved_ordinary_candidate(session, market, now):
@@ -2207,9 +2309,19 @@ def portfolio_stop_loss_monitor() -> dict:
             if triggered
             else []
         )
+        legacy_triggered = protection.get("legacy_triggered", {})
+        if legacy_triggered:
+            order_ids.extend(
+                _run_durable_protective(
+                    origin="stop_loss",
+                    market="tw_stock",
+                    triggered=legacy_triggered,
+                    source_holding_ids_by_identity=protection["legacy_sources"],
+                )
+            )
         result = {
             "checked": protection["checked"],
-            "stopped_out": sorted({identity[1] for identity in triggered}),
+            "stopped_out": sorted({identity[1] for identity in {*triggered, *legacy_triggered}}),
             "durable_order_ids": order_ids,
         }
         if "skipped" in protection:
@@ -2511,10 +2623,12 @@ def perp_liquidation_monitor() -> dict:
     MARGIN_THRESHOLD = 0.15  # 15% threshold
 
     route = _configured_protective_route("crypto_perp")
+    durable_order_ids = []
+    approved_legacy_holdings = None
     if route == "durable":
         protection = _durable_protective_triggers("crypto_perp")
         triggered = protection["triggered"]
-        order_ids = (
+        durable_order_ids = (
             _run_durable_protective(
                 origin="liquidation",
                 market="crypto_perp",
@@ -2523,21 +2637,33 @@ def perp_liquidation_monitor() -> dict:
             if triggered
             else []
         )
-        result = {
-            "checked": protection["checked"],
-            "closed": [],
-            "durable_order_ids": order_ids,
-        }
-        if "skipped" in protection:
-            result["skipped"] = protection["skipped"]
-        return result
+        approved_legacy_holdings = _approved_legacy_holdings("crypto_perp")
+        if not approved_legacy_holdings:
+            result = {
+                "checked": protection["checked"],
+                "closed": [],
+                "durable_order_ids": durable_order_ids,
+            }
+            if "skipped" in protection:
+                result["skipped"] = protection["skipped"]
+            return result
+        if settings.decision_loop_approved_account_scope not in settings.decision_loop_legacy_protective_scopes:
+            return {
+                "checked": protection["checked"],
+                "closed": [],
+                "durable_order_ids": durable_order_ids,
+                "skipped": "legacy_protective_scope_not_authorized",
+            }
     if route == "skip":
         return {"checked": 0, "closed": [], "skipped": "protective_scope_not_authorized"}
 
     # 1. Rebuild perp adapter from DB
     adapter = _build_perp_adapter_from_db()
     if not adapter._positions:
-        return {"checked": 0, "closed": []}
+        result = {"checked": 0, "closed": []}
+        if route == "durable":
+            result["durable_order_ids"] = durable_order_ids
+        return result
 
     # 2. Get mark prices and update adapter
     symbols = list(adapter._positions.keys())
@@ -2558,11 +2684,18 @@ def perp_liquidation_monitor() -> dict:
             breach_detected = True
 
     if not breach_detected:
-        return {"checked": len(positions), "closed": []}
+        result = {"checked": len(positions), "closed": []}
+        if route == "durable":
+            result["durable_order_ids"] = durable_order_ids
+        return result
 
     # 4. Full close ALL perp positions (close all, not partial)
-    position_tracker = _build_position_tracker()
-    perp_holdings = {sym: h for sym, h in position_tracker.current_holdings().items() if h.market == "crypto_perp"}
+    if approved_legacy_holdings is None:
+        position_tracker = _build_position_tracker()
+        perp_holdings = {sym: h for sym, h in position_tracker.current_holdings().items() if h.market == "crypto_perp"}
+    else:
+        position_tracker = _build_position_tracker()
+        perp_holdings = {holding.symbol: holding for holding in approved_legacy_holdings}
 
     close_orders = []
     for sym, holding in perp_holdings.items():
@@ -2574,11 +2707,15 @@ def perp_liquidation_monitor() -> dict:
                 current_weight=holding.weight,
                 delta_weight=-holding.weight,
                 side=holding.side,
+                holding_id=holding.id if approved_legacy_holdings is not None else None,
             )
         )
 
     if not close_orders:
-        return {"checked": len(positions), "closed": []}
+        result = {"checked": len(positions), "closed": []}
+        if route == "durable":
+            result["durable_order_ids"] = durable_order_ids
+        return result
 
     # 5. Dispatch close orders via OrderManager (same as stop-loss pattern)
     broker_yaml_path = "config/broker_perp.yaml"
@@ -2598,7 +2735,9 @@ def perp_liquidation_monitor() -> dict:
 
     close_adapter = PerpPaperAdapter(SessionLocal)
     # Rebuild positions for the close adapter too
-    close_adapter._positions = adapter._positions.copy()
+    close_adapter._positions = {
+        symbol: position for symbol, position in adapter._positions.items() if symbol in perp_holdings
+    }
 
     risk_checker = OrderRiskChecker(
         position_limit_pct=1.0,  # No position limit for liquidation close
@@ -2659,7 +2798,10 @@ def perp_liquidation_monitor() -> dict:
         len(closed_symbols),
         closed_symbols,
     )
-    return {"checked": len(positions), "closed": closed_symbols}
+    result = {"checked": len(positions), "closed": closed_symbols}
+    if route == "durable":
+        result["durable_order_ids"] = durable_order_ids
+    return result
 
 
 def _signals_to_targets(signals) -> tuple[dict[str, float], dict[str, "uuid.UUID"]]:
