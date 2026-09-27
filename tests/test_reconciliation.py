@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import inspect
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
 from threading import Event
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -20,10 +23,11 @@ from poseidon.broker.base import (
     BrokerCapabilities,
     BrokerFillSnapshot,
     BrokerOrderSnapshot,
+    BrokerPositionSnapshot,
 )
 from poseidon.broker.paper_adapter import PAPER_RECONCILIATION_CAPABILITIES, PaperBrokerAdapter
 from poseidon.decision_loop.decisions import DecisionService
-from poseidon.decision_loop.execution import internal_state_watermark
+from poseidon.decision_loop.execution import ExecutionConflictError, internal_state_watermark
 from poseidon.decision_loop.reconciliation import (
     ReconciliationConflictError,
     ReconciliationService,
@@ -45,6 +49,352 @@ from poseidon.orders.schemas import Order
 from tests.test_decision_order_wiring import NOW, PRICE_2330, _claimed
 from tests.test_decision_service import synthetic_reconciliation_policy, worker
 from tests.test_execution_concurrency_postgres import CLAIM_TIME, ENGINE, claim_seed  # noqa: F401
+
+
+@pytest.mark.parametrize(
+    "task_name",
+    [
+        "materialize_execution_claim",
+        "submit_decision_order",
+        "reconcile_execution_claim",
+        "project_decision_fill",
+        "reconcile_paper_account",
+    ],
+)
+def test_internal_task_uuid_only_rejects_malformed_before_io(monkeypatch, task_name):
+    from poseidon.workers import cpu_tasks
+
+    task = getattr(cpu_tasks, task_name)
+    assert len(inspect.signature(task.run).parameters) == 1
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("malformed task payload performed I/O")
+
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", forbidden)
+    with pytest.raises(ValueError):
+        task.run("not-a-uuid")
+
+
+def test_submit_task_redelivery_preserves_unknown_marker(sessions, monkeypatch):
+    from poseidon.workers import cpu_tasks
+
+    _, order_id = _intent(sessions)
+    adapter = SnapshotAdapter(sessions, timeout=True, no_order=True)
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", sessions)
+    monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", lambda market: adapter)
+    with pytest.raises(TimeoutError):
+        cpu_tasks.submit_decision_order.run(str(order_id))
+    result = cpu_tasks.submit_decision_order.run(str(order_id))
+    assert result["reconciliation_status"] == "required"
+    assert adapter.place_calls == 1
+    assert adapter.lookup_calls == 1
+    with sessions() as session:
+        order = session.get(OrderRecord, order_id)
+        assert order.submit_attempted_at is not None
+        assert order.reconciliation_status == "required"
+
+
+def test_recovery_sweep_uuid_routes_reconcile_to_decision(sessions, monkeypatch):
+    from poseidon.workers import cpu_tasks
+
+    decision_id, order_id = _intent(sessions)
+    adapter = SnapshotAdapter(sessions, timeout=True, no_order=True)
+    with pytest.raises(TimeoutError):
+        submit_or_reconcile_order(sessions, order_id, adapter, now=NOW)
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", sessions)
+    queued = []
+    for name in (
+        "materialize_execution_claim",
+        "submit_decision_order",
+        "reconcile_execution_claim",
+        "project_decision_fill",
+        "reconcile_paper_account",
+    ):
+        monkeypatch.setattr(getattr(cpu_tasks, name), "delay", lambda value, name=name: queued.append((name, value)))
+    assert not inspect.signature(cpu_tasks.recover_decision_execution.run).parameters
+    cpu_tasks.recover_decision_execution.run()
+    assert ("reconcile_execution_claim", str(decision_id)) in queued
+    assert ("submit_decision_order", str(order_id)) not in queued
+    assert all(isinstance(value, str) and str(uuid.UUID(value)) == value for _, value in queued)
+
+
+def test_reconcile_task_decision_uuid_never_submits_unattempted(sessions, monkeypatch):
+    from poseidon.workers import cpu_tasks
+
+    decision_id, order_id = _intent(sessions)
+    adapter = SnapshotAdapter(sessions)
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", sessions)
+    monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", lambda market: adapter)
+    cpu_tasks.reconcile_execution_claim.run(str(decision_id))
+    assert adapter.place_calls == 0
+    assert adapter.lookup_calls == 0
+    with sessions() as session:
+        assert session.get(OrderRecord, order_id).submit_attempted_at is None
+
+
+def test_materialization_short_liquidation_nav():
+    from poseidon.workers.cpu_tasks import _decision_liquidation_nav
+
+    policy = SimpleNamespace(
+        perp_instrument_rules={
+            "BTC-USDT": SimpleNamespace(
+                contract_multiplier=2, margin_semantics="full_notional", funding_semantics="excluded"
+            )
+        }
+    )
+    position = BrokerPositionSnapshot("crypto_perp", "BTC", "BTC-USDT", "short", 1)
+    snapshot = SimpleNamespace(cash=800, positions=(position,))
+    order = SimpleNamespace(market="crypto_perp", symbol="BTC", instrument="BTC-USDT", side="short", action="sell")
+    fill = SimpleNamespace(fill_quantity=1, fill_price=100)
+    assert (
+        _decision_liquidation_nav(snapshot, policy, {("crypto_perp", "BTC", "BTC-USDT"): 120}, [(order, fill)]) == 960
+    )
+
+
+def test_materialization_stock_short_liquidation_nav_partial_close():
+    from poseidon.workers.cpu_tasks import _decision_liquidation_nav
+
+    position = BrokerPositionSnapshot("tw_stock", "2330", "spot", "short", 1)
+    snapshot = SimpleNamespace(cash=950, positions=(position,))
+    opening = SimpleNamespace(market="tw_stock", symbol="2330", instrument="spot", side="short", action="sell")
+    closing = SimpleNamespace(**{**vars(opening), "action": "buy"})
+    ledger = [
+        (opening, SimpleNamespace(fill_quantity=2, fill_price=100)),
+        (closing, SimpleNamespace(fill_quantity=1, fill_price=150)),
+    ]
+    assert _decision_liquidation_nav(snapshot, None, PRICE_2330, ledger) == 1050
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ["side", "action", "snapshot_duplicate", "negative", "missing_mark", "infinite_mark", "multiplier", "semantics"],
+)
+def test_materialization_liquidation_nav_fails_closed(corruption):
+    from poseidon.workers.cpu_tasks import _decision_liquidation_nav
+
+    rule = SimpleNamespace(contract_multiplier=2, margin_semantics="full_notional", funding_semantics="excluded")
+    policy = SimpleNamespace(perp_instrument_rules={"BTC-USDT": rule})
+    position = BrokerPositionSnapshot("crypto_perp", "BTC", "BTC-USDT", "short", 1)
+    snapshot = SimpleNamespace(cash=800, positions=(position,))
+    order = SimpleNamespace(market="crypto_perp", symbol="BTC", instrument="BTC-USDT", side="short", action="sell")
+    fill = SimpleNamespace(fill_quantity=1, fill_price=100)
+    prices = {("crypto_perp", "BTC", "BTC-USDT"): 120}
+    if corruption == "side":
+        order.side = "garbage"
+        snapshot.positions = (replace(position, side="garbage"),)
+    elif corruption == "action":
+        order.action = "garbage"
+        snapshot.positions = (replace(position, quantity=-1),)
+    elif corruption == "snapshot_duplicate":
+        snapshot.positions = (position, position)
+    elif corruption == "negative":
+        order.action = "buy"
+    elif corruption == "missing_mark":
+        prices.clear()
+    elif corruption == "infinite_mark":
+        prices[("crypto_perp", "BTC", "BTC-USDT")] = float("inf")
+    elif corruption == "multiplier":
+        rule.contract_multiplier = -2
+    else:
+        rule.margin_semantics = "leveraged"
+    with pytest.raises(ValueError):
+        _decision_liquidation_nav(snapshot, policy, prices, [(order, fill)])
+
+
+def test_materialize_task_loads_current_prices_outside_db_session(sessions, monkeypatch):
+    from poseidon.workers import cpu_tasks
+
+    with sessions() as session:
+        decision_id, _ = _claimed(session)
+    active = []
+
+    @contextlib.contextmanager
+    def tracked_sessions():
+        with sessions() as session:
+            active.append(session)
+            try:
+                yield session
+            finally:
+                active.remove(session)
+
+    def prices(symbols):
+        assert not active, "price I/O retained a DB session"
+        assert symbols == ["2330"]
+        return {"2330": 200.0}
+
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", tracked_sessions)
+    monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", lambda market: PaperBrokerAdapter(sessions))
+    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", prices)
+    # The durable seed has a bounded validity window; freeze the service's clock.
+    monkeypatch.setattr("poseidon.decision_loop.execution.timestamp", lambda value, field: NOW)
+    result = cpu_tasks.materialize_execution_claim.run(str(decision_id))
+    with sessions() as session:
+        order = session.get(OrderRecord, uuid.UUID(result["order_ids"][0]))
+        assert order.price == 200
+        assert order.quantity == 50
+
+
+def test_materialize_task_rejects_account_changed_during_price_io(sessions, monkeypatch):
+    from poseidon.workers import cpu_tasks
+
+    with sessions() as session:
+        decision_id, _ = _claimed(session)
+
+    def prices(symbols):
+        with sessions() as session:
+            account = session.query(PaperBrokerAccount).one()
+            account.state_version += 1
+            account.updated_at = NOW - timedelta(seconds=10)
+            reconciliation = session.query(AccountReconciliation).one()
+            reconciliation.broker_state_watermark = "broker:1"
+            reconciliation.as_of = NOW
+            session.commit()
+        return {"2330": 100.0}
+
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", sessions)
+    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", prices)
+    monkeypatch.setattr("poseidon.decision_loop.execution.timestamp", lambda value, field: NOW)
+    with pytest.raises(ValueError, match="changed"):
+        cpu_tasks.materialize_execution_claim.run(str(decision_id))
+    with sessions() as session:
+        assert session.query(OrderRecord).count() == 0
+
+
+def test_recovery_sweep_repeated_execution_keeps_one_effective_order_fill(sessions, monkeypatch):
+    from poseidon.workers import cpu_tasks
+
+    decision_id, order_id = _intent(sessions)
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", sessions)
+    monkeypatch.setattr(
+        "poseidon.data.remote_repository.RemoteDataRepository.from_settings",
+        lambda: type("Repo", (), {"read_ohlcv": lambda _self, *_args: pd.DataFrame({"close": [100.0]})})(),
+    )
+    queued = []
+    for name in (
+        "materialize_execution_claim",
+        "submit_decision_order",
+        "reconcile_execution_claim",
+        "project_decision_fill",
+        "reconcile_paper_account",
+    ):
+        monkeypatch.setattr(getattr(cpu_tasks, name), "delay", lambda value, name=name: queued.append((name, value)))
+    # Two sweeps before delivery enqueue the same submit UUID twice.
+    cpu_tasks.recover_decision_execution.run()
+    cpu_tasks.recover_decision_execution.run()
+    for task_name, value in queued:
+        if task_name == "submit_decision_order":
+            getattr(cpu_tasks, task_name).run(value)
+    assert queued.count(("submit_decision_order", str(order_id))) == 2
+    queued.clear()
+    cpu_tasks.recover_decision_execution.run()
+    cpu_tasks.reconcile_execution_claim.run(str(decision_id))
+    cpu_tasks.submit_decision_order.run(str(order_id))
+    with sessions() as session:
+        assert session.query(PaperBrokerOrder).count() == 1
+        assert session.query(PaperBrokerFill).count() == 1
+        assert session.query(OrderFillRecord).count() == 1
+
+
+def test_future_task_seams_fail_observably(monkeypatch):
+    from poseidon.workers import cpu_tasks
+
+    for task in (cpu_tasks.project_decision_fill, cpu_tasks.reconcile_paper_account):
+        with pytest.raises(ImportError):
+            task.run(str(uuid.uuid4()))
+
+
+def test_recovery_sweep_deduplicates_orders_of_one_decision(sessions, monkeypatch):
+    from poseidon.workers import cpu_tasks
+
+    with sessions() as session:
+        decision_id, _ = _claimed(session, symbols=("2330", "2317"))
+    result = materialize_order_intents(
+        sessions,
+        decision_id,
+        principal=worker(),
+        account_nav=100_000,
+        prices={**PRICE_2330, ("tw_stock", "2317", "spot"): 100},
+        now=NOW,
+    )
+    for order_id in result["order_ids"]:
+        with pytest.raises(TimeoutError):
+            submit_or_reconcile_order(sessions, uuid.UUID(order_id), SnapshotAdapter(sessions, timeout=True), now=NOW)
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", sessions)
+    queued = []
+    monkeypatch.setattr(cpu_tasks.reconcile_execution_claim, "delay", queued.append)
+    monkeypatch.setattr(cpu_tasks.reconcile_paper_account, "delay", lambda value: None)
+    cpu_tasks.recover_decision_execution.run()
+    assert queued == [str(decision_id)]
+
+
+def test_materialize_task_loads_pending_reservation_marks(sessions, monkeypatch):
+    from poseidon.workers import cpu_tasks
+
+    with sessions() as session:
+        decision_id, _ = _claimed(session)
+    response = materialize_order_intents(
+        sessions, decision_id, principal=worker(), account_nav=100_000, prices=PRICE_2330, now=NOW
+    )
+    with sessions() as session:
+        # This outstanding reservation has no broker inventory yet.
+        session.get(OrderRecord, uuid.UUID(response["order_ids"][0])).symbol = "2317"
+        session.commit()
+    observed = []
+
+    def prices(symbols):
+        observed.extend(symbols)
+        return {symbol: 100.0 for symbol in symbols}
+
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", sessions)
+    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", prices)
+    monkeypatch.setattr("poseidon.decision_loop.execution.timestamp", lambda value, field: NOW)
+    # Replay rejects our isolated reservation fault, after collecting marks.
+    with pytest.raises(ExecutionConflictError, match="content changed"):
+        cpu_tasks.materialize_execution_claim.run(str(decision_id))
+    assert observed == ["2317", "2330"]
+
+
+def test_reconcile_task_processes_siblings_after_observable_failure(sessions, monkeypatch):
+    from poseidon.workers import cpu_tasks
+
+    with sessions() as session:
+        decision_id, _ = _claimed(session, symbols=("2330", "2317"))
+    response = materialize_order_intents(
+        sessions,
+        decision_id,
+        principal=worker(),
+        account_nav=100_000,
+        prices={**PRICE_2330, ("tw_stock", "2317", "spot"): 100},
+        now=NOW,
+    )
+    bad_id, good_id = sorted(uuid.UUID(value) for value in response["order_ids"])
+    adapter = SnapshotAdapter(sessions)
+    with sessions() as session, session.begin():
+        for order_id in (bad_id, good_id):
+            ReconciliationService(session).prepare_attempt(order_id, adapter, now=NOW)
+        bad_ref = session.get(OrderRecord, bad_id).client_order_ref
+        good = session.get(OrderRecord, good_id)
+        adapter.snapshot = _snapshot(good)
+        adapter.fills = [_fill(good, adapter.snapshot)]
+    lookup = adapter.find_order_by_client_ref
+
+    def failing_lookup(client_order_ref, **kwargs):
+        if client_order_ref == bad_ref:
+            raise TimeoutError("unavailable first order")
+        return lookup(client_order_ref, **kwargs)
+
+    monkeypatch.setattr(adapter, "find_order_by_client_ref", failing_lookup)
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", sessions)
+    monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", lambda market: adapter)
+    with pytest.raises(ExceptionGroup) as error:
+        cpu_tasks.reconcile_execution_claim.run(str(decision_id))
+    assert len(error.value.exceptions) == 1
+    assert isinstance(error.value.exceptions[0], TimeoutError)
+    assert str(error.value.exceptions[0]) == "unavailable first order"
+    with sessions() as session:
+        assert session.get(OrderRecord, bad_id).reconciliation_status == "required"
+        assert session.get(OrderRecord, good_id).status == "filled"
+        assert session.query(OrderFillRecord).filter_by(order_id=good_id).count() == 1
 
 
 @pytest.fixture

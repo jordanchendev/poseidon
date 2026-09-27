@@ -6,8 +6,10 @@ Poseidon reads data exclusively via Thalassa RemoteDataRepository.
 
 import contextlib
 import logging
+import math
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pandas as pd
 
@@ -30,6 +32,253 @@ from poseidon.strategies.voting_strategy import VotingStrategy
 from poseidon.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+def _decision_paper_adapter(market):
+    from poseidon.broker.paper_adapter import PaperBrokerAdapter
+    from poseidon.broker.perp_paper_adapter import PerpPaperAdapter
+
+    if market == "tw_stock":
+        return PaperBrokerAdapter(SessionLocal)
+    if market == "crypto_perp":
+        return PerpPaperAdapter(SessionLocal)
+    raise ValueError("decision execution requires a supported paper market")
+
+
+def _decision_liquidation_nav(snapshot, policy, prices, ledger):
+    """Value independent inventory at current marks, including short collateral."""
+    inventory = {}
+    multipliers = {}
+    for order, fill in ledger:
+        identity = (order.market, order.symbol, order.instrument, order.side)
+        if order.side not in {"long", "short"} or order.action not in {"buy", "sell"}:
+            raise ValueError("paper ledger has invalid side or action")
+        multiplier = Decimal(1)
+        if order.market == "crypto_perp":
+            rule = policy.perp_instrument_rules.get(order.instrument)
+            if rule is None or rule.margin_semantics != "full_notional" or rule.funding_semantics != "excluded":
+                raise ValueError("unsupported paper collateral semantics")
+            multiplier = Decimal(str(rule.contract_multiplier))
+            if not multiplier.is_finite() or multiplier <= 0:
+                raise ValueError("paper multiplier must be positive and finite")
+        elif order.market != "tw_stock" or order.instrument != "spot":
+            raise ValueError("unsupported paper position identity")
+        multipliers[identity] = multiplier
+        quantity, cost = inventory.get(identity, (Decimal(0), Decimal(0)))
+        amount, price = Decimal(str(fill.fill_quantity)), Decimal(str(fill.fill_price))
+        if not amount.is_finite() or amount <= 0 or not price.is_finite() or price <= 0:
+            raise ValueError("paper ledger has invalid fill economics")
+        if order.action == ("buy" if order.side == "long" else "sell"):
+            quantity, cost = quantity + amount, cost + price * amount
+        else:
+            if amount > quantity or quantity <= 0:
+                raise ValueError("paper ledger contains negative inventory")
+            cost, quantity = cost - cost / quantity * amount, quantity - amount
+        inventory[identity] = quantity, cost
+    positions = {position.identity: Decimal(str(position.quantity)) for position in snapshot.positions}
+    if len(positions) != len(snapshot.positions) or any(
+        not value.is_finite() or value <= 0 for value in positions.values()
+    ):
+        raise ValueError("paper snapshot has duplicate or invalid inventory")
+    if {key: value[0] for key, value in inventory.items() if value[0]} != positions:
+        raise ValueError("paper snapshot and inventory ledger disagree")
+    nav = Decimal(str(snapshot.cash))
+    if not nav.is_finite():
+        raise ValueError("paper cash must be finite")
+    for (market, symbol, instrument, side), (quantity, cost) in inventory.items():
+        if not quantity:
+            continue
+        mark = Decimal(str(prices.get((market, symbol, instrument), "NaN")))
+        if not mark.is_finite() or mark <= 0:
+            raise ValueError("materialization requires a positive finite mark")
+        multiplier = multipliers[(market, symbol, instrument, side)]
+        nav += (mark * quantity if side == "long" else 2 * cost - mark * quantity) * multiplier
+    if not nav.is_finite() or nav <= 0 or not math.isfinite(float(nav)):
+        raise ValueError("materialization requires positive finite NAV")
+    return float(nav)
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.materialize_execution_claim", max_retries=0)
+def materialize_execution_claim(decision_id: str) -> dict:
+    persisted_id = uuid.UUID(decision_id)
+    from sqlalchemy import select
+
+    from poseidon.api.auth import AuthPrincipal
+    from poseidon.decision_loop.execution import DecisionExecutionService
+    from poseidon.models.decision_record import DecisionRecord
+    from poseidon.models.paper_broker_fill import PaperBrokerFill
+    from poseidon.models.paper_broker_order import PaperBrokerOrder
+
+    with SessionLocal() as session:
+        decision = session.get(DecisionRecord, persisted_id)
+        if decision is None:
+            raise ValueError("decision does not exist")
+        _, policy, intents = DecisionExecutionService(session)._policy_and_intents(decision)
+        account_scope = decision.account_scope
+        reconciliation = policy.reconciliation
+        reservation_identities = {
+            (order.market, order.symbol, order.instrument)
+            for order in DecisionExecutionService(session)._pending_orders(decision, reconciliation.account_generation)
+        }
+    adapter = _decision_paper_adapter(policy.market)
+    snapshot = adapter.query_account_snapshot(account_scope, reconciliation.account_generation)
+    if (snapshot.account_scope, snapshot.account_generation, snapshot.currency) != (
+        account_scope,
+        reconciliation.account_generation,
+        reconciliation.currency,
+    ):
+        raise ValueError("paper snapshot account identity changed")
+    with SessionLocal() as session:
+        ledger = session.execute(
+            select(PaperBrokerOrder, PaperBrokerFill)
+            .join(PaperBrokerFill, PaperBrokerFill.paper_broker_order_id == PaperBrokerOrder.id)
+            .where(
+                PaperBrokerOrder.account_scope == account_scope,
+                PaperBrokerOrder.account_generation == reconciliation.account_generation,
+                PaperBrokerFill.state_version <= snapshot.state_version,
+            )
+            .order_by(PaperBrokerFill.state_version, PaperBrokerFill.id)
+        ).all()
+    identities = {(intent.market, intent.symbol, intent.instrument) for intent in intents}
+    identities.update(reservation_identities)
+    identities.update((position.market, position.symbol, position.instrument) for position in snapshot.positions)
+    prices = {}
+    for market in sorted({identity[0] for identity in identities}):
+        symbols = sorted({identity[1] for identity in identities if identity[0] == market})
+        if market == "tw_stock":
+            marks = _get_latest_prices(symbols)
+        elif market == "crypto_perp":
+            marks = _get_perp_mark_prices(symbols)
+        else:
+            raise ValueError("unsupported materialization market")
+        for identity in identities:
+            if identity[0] == market:
+                mark = marks.get(identity[1])
+                if mark is None or isinstance(mark, bool) or not math.isfinite(mark) or mark <= 0:
+                    raise ValueError("materialization requires every current mark")
+                prices[identity] = mark
+    nav = _decision_liquidation_nav(snapshot, reconciliation, prices, ledger)
+    principal = AuthPrincipal("system:decision-worker", frozenset({"decision-worker"}), frozenset({account_scope}))
+    with SessionLocal() as session, session.begin():
+        execution = DecisionExecutionService(session)
+        decision = session.get(DecisionRecord, persisted_id)
+        if decision is None:
+            raise ValueError("decision does not exist")
+        # Reuse the service's advisory/account lock order; marks never hold DB locks.
+        account = execution._lock_account(decision, policy)
+        if account.state_version != snapshot.state_version:
+            raise ValueError("paper account changed during materialization")
+        return execution.materialize(persisted_id, principal=principal, account_nav=nav, prices=prices)
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.submit_decision_order", max_retries=0)
+def submit_decision_order(order_id: str) -> dict:
+    persisted_id = uuid.UUID(order_id)
+    from poseidon.decision_loop.reconciliation import submit_or_reconcile_order
+    from poseidon.models.order import OrderRecord
+
+    with SessionLocal() as session:
+        order = session.get(OrderRecord, persisted_id)
+        if order is None or order.order_origin != "decision":
+            raise ValueError("decision order does not exist")
+        market = order.market
+    return submit_or_reconcile_order(SessionLocal, persisted_id, _decision_paper_adapter(market))
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.reconcile_execution_claim", max_retries=0)
+def reconcile_execution_claim(decision_id: str) -> dict:
+    persisted_id = uuid.UUID(decision_id)
+    from sqlalchemy import select
+
+    from poseidon.models.decision_record import DecisionRecord
+    from poseidon.models.order import OrderRecord
+
+    with SessionLocal() as session:
+        if session.get(DecisionRecord, persisted_id) is None:
+            raise ValueError("decision does not exist")
+        order_ids = session.scalars(
+            select(OrderRecord.id)
+            .where(OrderRecord.decision_id == persisted_id, OrderRecord.submit_attempted_at.is_not(None))
+            .order_by(OrderRecord.id)
+        ).all()
+    results, failures = [], []
+    for order_id in order_ids:
+        try:
+            results.append(submit_decision_order.run(str(order_id)))
+        except Exception as error:
+            error.add_note(f"decision order {order_id}")
+            failures.append(error)
+    if failures:
+        raise ExceptionGroup("decision order reconciliation failed", failures)
+    return {"decision_id": str(persisted_id), "orders": results}
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.project_decision_fill", max_retries=0)
+def project_decision_fill(fill_id: str) -> dict:
+    persisted_id = uuid.UUID(fill_id)
+    from poseidon.positions.lots import apply_fill_projection
+
+    return apply_fill_projection(SessionLocal, persisted_id)
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.reconcile_paper_account", max_retries=0)
+def reconcile_paper_account(account_id: str) -> dict:
+    persisted_id = uuid.UUID(account_id)
+    from sqlalchemy import select
+
+    from poseidon.decision_loop.reconciliation import reconcile_account
+    from poseidon.models.decision_record import DecisionRecord
+    from poseidon.models.paper_broker_account import PaperBrokerAccount
+    from poseidon.models.strategy_version import StrategyVersion
+
+    with SessionLocal() as session:
+        account = session.get(PaperBrokerAccount, persisted_id)
+        if account is None:
+            raise ValueError("paper account does not exist")
+        market = None
+        for decision in session.scalars(
+            select(DecisionRecord)
+            .where(DecisionRecord.account_scope == account.account_scope)
+            .order_by(DecisionRecord.created_at.desc(), DecisionRecord.id.desc())
+        ):
+            version = session.get(StrategyVersion, decision.strategy_version_id)
+            policy = {} if version is None else version.policy_json
+            if policy.get("reconciliation", {}).get("account_generation") == account.account_generation:
+                market = policy.get("market")
+                break
+    return reconcile_account(SessionLocal, persisted_id, _decision_paper_adapter(market))
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.recover_decision_execution", max_retries=0)
+def recover_decision_execution() -> dict:
+    from poseidon.decision_loop.recovery import RecoverySelector
+    from poseidon.models.order import OrderRecord
+
+    tasks = {
+        "materialize_decision": materialize_execution_claim,
+        "submit_order": submit_decision_order,
+        "reconcile_order": reconcile_execution_claim,
+        "project_fill": project_decision_fill,
+        "reconcile_account": reconcile_paper_account,
+    }
+    with SessionLocal() as session:
+        actions = RecoverySelector(session).select()
+        dispatches = []
+        seen = set()
+        for action in actions:
+            persisted_id = action.persisted_id
+            if action.operation == "reconcile_order":
+                order = session.get(OrderRecord, persisted_id)
+                if order is None or order.decision_id is None:
+                    raise ValueError("recovery order lacks decision identity")
+                persisted_id = order.decision_id
+            dispatch = action.operation, str(persisted_id)
+            if dispatch not in seen:
+                dispatches.append(dispatch)
+                seen.add(dispatch)
+    for operation, persisted_id in dispatches:
+        tasks[operation].delay(persisted_id)
+    return {"enqueued": len(dispatches)}
 
 
 def _build_portfolio_strategy(record, repo):
