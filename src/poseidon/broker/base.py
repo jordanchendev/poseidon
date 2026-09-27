@@ -156,6 +156,7 @@ class BrokerAdapter(ABC):
                 "source_holding_ids",
                 "source_holding_quantities",
                 "source_holding_risk",
+                "legacy_context_sha256",
                 "legacy_exception",
                 "dedupe_sha256",
             }:

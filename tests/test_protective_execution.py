@@ -163,6 +163,7 @@ def _legacy_holding(
     side="long",
     stop_loss_pct=0.10,
     projected=False,
+    holding_id=None,
 ):
     with seed.sessions() as session, session.begin():
         account = session.scalar(
@@ -181,6 +182,7 @@ def _legacy_holding(
             session.add(account)
             session.flush()
         holding = PortfolioHoldingRecord(
+            id=holding_id,
             strategy_name=(f"decision-lots:{account.id}" if projected else f"phase98-protective:{uuid.uuid4().hex}"),
             symbol=symbol,
             market=market,
@@ -220,13 +222,14 @@ def _materialize(seed, origin="stop_loss", trigger="price:80", **changes):
         return ProtectiveExecutionService(session).materialize(**values)
 
 
-def _materialize_legacy(seed, holding_id, origin="stop_loss", trigger="legacy:price:80"):
+def _materialize_legacy(seed, holding_id, origin="stop_loss", trigger="legacy:price:80", **changes):
     return _materialize(
         seed,
         origin=origin,
         trigger=trigger,
         source_holding_ids=[holding_id],
         allow_legacy_holdings=True,
+        **changes,
     )
 
 
@@ -240,6 +243,53 @@ def _paper_price(monkeypatch, price=79.0):
         "poseidon.data.remote_repository.RemoteDataRepository.from_settings",
         lambda: repo,
     )
+
+
+def _partial_legacy_close(monkeypatch, seed, holding_id, *, side="long", entry_price=100, filled=2, price=150):
+    result = _materialize_legacy(
+        seed,
+        holding_id,
+        trigger=f"legacy:partial:{holding_id}",
+        side=side,
+        price=price,
+    )
+    order_id = uuid.UUID(result["order_ids"][0])
+    adapter = PaperBrokerAdapter(seed.sessions)
+    _paper_price(monkeypatch, price)
+    with seed.sessions() as session, session.begin():
+        prepared = ReconciliationService(session).prepare_attempt(order_id, adapter, now=NOW)
+    accepted = adapter.place_order(prepared.order, client_order_ref=prepared.order.client_order_ref)
+    with seed.sessions() as session, session.begin():
+        broker_order = session.scalar(
+            select(PaperBrokerOrder).where(PaperBrokerOrder.broker_order_id == accepted.broker_order_id)
+        )
+        broker_order.status = "cancelled"
+        session.scalar(
+            select(PaperBrokerFill).where(PaperBrokerFill.paper_broker_order_id == broker_order.id)
+        ).fill_quantity = filled
+        cash = price * filled if side == "long" else (2 * entry_price - price) * filled
+        session.scalar(
+            select(PaperCashMovement).where(
+                PaperCashMovement.account_scope == seed.account,
+                PaperCashMovement.state_version == broker_order.state_version,
+            )
+        ).amount = cash
+    snapshot = adapter.find_order_by_client_ref(
+        prepared.order.client_order_ref,
+        account_scope=seed.account,
+        account_generation="generation-1",
+    )
+    fills = adapter.query_fills(
+        snapshot.broker_order_id,
+        account_scope=seed.account,
+        account_generation="generation-1",
+    )
+    with seed.sessions() as session, session.begin():
+        ReconciliationService(session).import_broker_state(order_id, snapshot, fills, now=NOW)
+    with seed.sessions() as session:
+        fill_id = session.scalar(select(OrderFillRecord.id).where(OrderFillRecord.order_id == order_id))
+    project(seed, fill_id)
+    return adapter, order_id, fill_id
 
 
 def _set_owner_protection(seed, decision_id, **values):
@@ -439,6 +489,26 @@ def test_concurrent_legacy_holding_origins_reserve_one_net_close(seed):
         assert orders[0].reserved_quantity == 5
 
 
+def test_overlapping_legacy_reservation_omits_fully_reserved_source(seed):
+    first_id, _account_id = _legacy_holding(seed, shares=5, holding_id=uuid.UUID(int=1))
+    second_id, _account_id = _legacy_holding(seed, shares=5, holding_id=uuid.UUID(int=2))
+    _materialize_legacy(seed, first_id, trigger="legacy:first-reservation")
+
+    result = _materialize(
+        seed,
+        trigger="legacy:overlap",
+        source_holding_ids=[first_id, second_id],
+        allow_legacy_holdings=True,
+    )
+
+    with seed.sessions() as session:
+        order = session.get(OrderRecord, uuid.UUID(result["order_ids"][0]))
+        assert order.quantity == 5
+        assert order.protective_context_json["source_holding_ids"] == [str(second_id)]
+        assert order.protective_context_json["source_holding_quantities"] == {str(second_id): 5.0}
+        ProtectiveExecutionService(session).validate_order(order)
+
+
 def test_legacy_holding_partial_projection_and_replay_are_deterministic(seed):
     holding_id, _account_id = _legacy_holding(seed, shares=5)
     result = _materialize_legacy(seed, holding_id)
@@ -508,6 +578,48 @@ def test_legacy_holding_partial_cancel_releases_unfilled_remainder(seed):
         assert (order.reservation_status, holding.shares, holding.closed) == ("released", 3, False)
 
 
+def test_durable_lot_and_legacy_holding_fills_project_without_cross_reservation(seed):
+    lot_id, _decision_id = _opening(seed, quantity=5)
+    holding_id, _account_id = _legacy_holding(seed, shares=4)
+    durable = _materialize(seed, trigger="coexist:durable")
+    legacy = _materialize_legacy(seed, holding_id, trigger="coexist:legacy")
+    durable_order_id = uuid.UUID(durable["order_ids"][0])
+    legacy_order_id = uuid.UUID(legacy["order_ids"][0])
+    durable_fill_id = uuid.uuid4()
+    legacy_fill_id = uuid.uuid4()
+    with seed.sessions() as session, session.begin():
+        for order_id, fill_id, quantity in (
+            (durable_order_id, durable_fill_id, 5),
+            (legacy_order_id, legacy_fill_id, 4),
+        ):
+            order = session.get(OrderRecord, order_id)
+            order.status = "filled"
+            order.broker_order_id = f"PAPER-{uuid.uuid4().hex}"
+            order.submit_attempted_at = NOW
+            order.reconciliation_status = "resolved"
+            session.add(
+                OrderFillRecord(
+                    id=fill_id,
+                    order_id=order.id,
+                    broker_fill_id=f"fill-{uuid.uuid4().hex}",
+                    fill_price=79,
+                    fill_quantity=quantity,
+                    fill_time=NOW,
+                    projection_status="projection_pending",
+                    created_at=NOW,
+                )
+            )
+
+    project(seed, durable_fill_id)
+    project(seed, legacy_fill_id)
+
+    with seed.sessions() as session:
+        lot = session.get(PositionLot, lot_id)
+        holding = session.get(PortfolioHoldingRecord, holding_id)
+        assert (lot.open_quantity, lot.reserved_close_quantity) == (0, 0)
+        assert (holding.shares, holding.closed) == (0, True)
+
+
 def test_legacy_holding_projection_rejects_overfill(seed):
     holding_id, _account_id = _legacy_holding(seed, shares=5)
     result = _materialize_legacy(seed, holding_id)
@@ -555,7 +667,157 @@ def test_legacy_holding_true_paper_adapter_full_close_uses_one_durable_baseline(
             .where(PaperBrokerOrder.account_scope == seed.account)
             .order_by(PaperBrokerOrder.client_order_ref)
         ).all()
-        assert [(row.action, row.quantity) for row in rows] == [("position_base", 5), ("sell", 5)]
+        assert [(row.action, row.quantity) for row in rows] == [
+            ("position_alloc", 5),
+            ("position_base", 5),
+            ("sell", 5),
+        ]
+        attribution = rows[0]
+        assert attribution.status == "position_attribution"
+        assert attribution.state_version == rows[2].state_version
+        assert attribution.accepted_at == rows[2].accepted_at
+        assert (
+            session.scalar(select(PaperBrokerFill.id).where(PaperBrokerFill.paper_broker_order_id == attribution.id))
+            is None
+        )
+
+
+@pytest.mark.parametrize(("side", "expected_cash"), [("long", 750.0), ("short", 1250.0)])
+def test_later_legacy_holding_uses_its_own_chronological_cost_basis(monkeypatch, seed, side, expected_cash):
+    first_id, _account_id = _legacy_holding(
+        seed,
+        shares=5,
+        entry_price=100,
+        side=side,
+        holding_id=uuid.UUID(int=1),
+    )
+    adapter, _first_order_id, _first_fill_id = _partial_legacy_close(
+        monkeypatch,
+        seed,
+        first_id,
+        side=side,
+        entry_price=100,
+        filled=2,
+        price=150,
+    )
+    second_id, _account_id = _legacy_holding(
+        seed,
+        shares=5,
+        entry_price=200,
+        side=side,
+        holding_id=uuid.UUID(int=2),
+    )
+    second = _materialize_legacy(
+        seed,
+        second_id,
+        trigger="legacy:later-basis",
+        side=side,
+        price=150,
+    )
+    _paper_price(monkeypatch, 150)
+
+    submit_or_reconcile_order(
+        seed.sessions,
+        uuid.UUID(second["order_ids"][0]),
+        adapter,
+        now=NOW.replace(minute=1),
+    )
+
+    with seed.sessions() as session:
+        latest = session.scalar(
+            select(PaperCashMovement)
+            .where(PaperCashMovement.account_scope == seed.account)
+            .order_by(PaperCashMovement.state_version.desc())
+        )
+        assert latest.amount == expected_cash
+
+
+def test_legacy_broker_attribution_survives_a_partial_b_full_then_a_remainder(monkeypatch, seed):
+    first_id, _account_id = _legacy_holding(seed, shares=5, entry_price=100, holding_id=uuid.UUID(int=1))
+    adapter, _first_order_id, _first_fill_id = _partial_legacy_close(
+        monkeypatch,
+        seed,
+        first_id,
+        filled=2,
+        price=150,
+    )
+    second_id, _account_id = _legacy_holding(seed, shares=5, entry_price=200, holding_id=uuid.UUID(int=2))
+    second = _materialize_legacy(seed, second_id, trigger="legacy:b-full", price=150)
+    _paper_price(monkeypatch, 150)
+    submit_or_reconcile_order(
+        seed.sessions,
+        uuid.UUID(second["order_ids"][0]),
+        adapter,
+        now=NOW.replace(minute=1),
+    )
+    with seed.sessions() as session:
+        second_fill_id = session.scalar(
+            select(OrderFillRecord.id).where(OrderFillRecord.order_id == uuid.UUID(second["order_ids"][0]))
+        )
+    project(seed, second_fill_id)
+    remainder = _materialize_legacy(seed, first_id, trigger="legacy:a-remainder", price=150)
+
+    submit_or_reconcile_order(
+        seed.sessions,
+        uuid.UUID(remainder["order_ids"][0]),
+        adapter,
+        now=NOW.replace(minute=2),
+    )
+
+    assert adapter.query_account_snapshot(seed.account, "generation-1").positions == ()
+
+
+def test_legacy_broker_attribution_validation_is_scoped_to_position_identity(monkeypatch, seed):
+    first_id, _account_id = _legacy_holding(seed, symbol="2330", shares=2)
+    second_id, _account_id = _legacy_holding(seed, symbol="0050", shares=3)
+    adapter = PaperBrokerAdapter(seed.sessions)
+    _paper_price(monkeypatch, 80)
+
+    for minute, (holding_id, symbol) in enumerate(((first_id, "2330"), (second_id, "0050"))):
+        result = _materialize_legacy(
+            seed,
+            holding_id,
+            trigger=f"legacy:multi-identity:{symbol}",
+            symbol=symbol,
+            price=80,
+        )
+        submit_or_reconcile_order(
+            seed.sessions,
+            uuid.UUID(result["order_ids"][0]),
+            adapter,
+            now=NOW.replace(minute=minute),
+        )
+
+    assert adapter.query_account_snapshot(seed.account, "generation-1").positions == ()
+    with seed.sessions() as session:
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(PaperBrokerOrder)
+                .where(
+                    PaperBrokerOrder.account_scope == seed.account,
+                    PaperBrokerOrder.action == "position_alloc",
+                )
+            )
+            == 2
+        )
+
+
+def test_stored_legacy_risk_mutation_is_rejected_before_adapter_io(seed):
+    holding_id, _account_id = _legacy_holding(seed, shares=5)
+    result = _materialize_legacy(seed, holding_id)
+    order_id = uuid.UUID(result["order_ids"][0])
+    with seed.sessions() as session, session.begin():
+        order = session.get(OrderRecord, order_id)
+        context = copy.deepcopy(order.protective_context_json)
+        context["source_holding_risk"][str(holding_id)]["entry_price"] = 101.0
+        order.protective_context_json = context
+    adapter = _MarkerAdapter(seed.sessions, order_id)
+
+    with pytest.raises(ReconciliationConflictError, match="durable order intent"):
+        submit_or_reconcile_order(seed.sessions, order_id, adapter, now=NOW)
+
+    assert adapter.place_calls == adapter.lookup_calls == 0
 
 
 @pytest.mark.parametrize(
@@ -629,15 +891,24 @@ def test_legacy_holding_partial_cancel_then_new_trigger_reuses_baseline(monkeypa
     project(seed, fill_id)
 
     second = _materialize_legacy(seed, holding_id, trigger="legacy:second")
+    second_order_id = uuid.UUID(second["order_ids"][0])
     submit_or_reconcile_order(
         seed.sessions,
-        uuid.UUID(second["order_ids"][0]),
+        second_order_id,
         adapter,
         now=NOW.replace(minute=1),
     )
+    with seed.sessions() as session:
+        second_fill_id = session.scalar(select(OrderFillRecord.id).where(OrderFillRecord.order_id == second_order_id))
+    project(seed, second_fill_id)
+    project(seed, fill_id)
 
     assert adapter.query_account_snapshot(seed.account, "generation-1").positions == ()
     with seed.sessions() as session:
+        assert (
+            session.get(PortfolioHoldingRecord, holding_id).shares,
+            session.get(PortfolioHoldingRecord, holding_id).closed,
+        ) == (0, True)
         assert (
             session.scalar(
                 select(func.count())

@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import delete, select, text, update
 
 from poseidon.api.auth import AuthPrincipal
+from poseidon.broker.base import BrokerCapabilityError
 from poseidon.broker.paper_adapter import PaperBrokerAdapter
 from poseidon.decision_loop.execution import (
     DecisionExecutionService,
@@ -349,6 +350,99 @@ def test_partial_legacy_close_baseline_remains_honest_unresolved(monkeypatch, ac
     assert row.broker_snapshot_json["positions"]
 
 
+def test_two_generation_legacy_close_replays_and_reconciles(monkeypatch, account):
+    holding_id, first_order_id = legacy_partial_close(account, monkeypatch)
+    with account.sessions() as session, session.begin():
+        second = ProtectiveExecutionService(session).materialize(
+            account_scope=account.scope,
+            account_generation="generation-1",
+            market="tw_stock",
+            symbol="2330",
+            instrument="spot",
+            side="long",
+            origin="stop_loss",
+            trigger_generation=f"legacy-reconciliation-second:{holding_id}",
+            price=100,
+            source_holding_ids=[holding_id],
+            allow_legacy_holdings=True,
+            principal=AuthPrincipal(
+                "system:test-protective",
+                frozenset({"decision-worker"}),
+                frozenset({account.scope}),
+            ),
+            now=NOW,
+        )
+    second_order_id = uuid.UUID(second["order_ids"][0])
+    submit_or_reconcile_order(account.sessions, second_order_id, account.adapter, now=NOW)
+    with account.sessions() as session:
+        first_fill_id = session.scalar(select(OrderFillRecord.id).where(OrderFillRecord.order_id == first_order_id))
+        second_fill_id = session.scalar(select(OrderFillRecord.id).where(OrderFillRecord.order_id == second_order_id))
+    lot_tests.project(account.seed, second_fill_id)
+    lot_tests.project(account.seed, first_fill_id)
+
+    result = reconcile(account)
+
+    assert result["status"] == "matched", stored(account, result).difference_json
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ["action", "status", "client_ref", "broker_id", "fill", "parent_identity", "state_version"],
+)
+def test_malformed_legacy_attribution_is_never_excluded_from_reconciliation(monkeypatch, account, corruption):
+    legacy_close(account, monkeypatch)
+    snapshot = account.adapter.query_account_snapshot(account.scope, "generation-1")
+    with account.sessions() as session, session.begin():
+        attribution = session.scalar(
+            select(PaperBrokerOrder).where(
+                PaperBrokerOrder.account_scope == account.scope,
+                PaperBrokerOrder.action == "position_alloc",
+            )
+        )
+        if corruption == "action":
+            attribution.action = "sell"
+        elif corruption == "status":
+            attribution.status = "filled"
+        elif corruption == "client_ref":
+            attribution.client_order_ref = "LEGACY-ALLOC-not-a-uuid"
+        elif corruption == "broker_id":
+            attribution.broker_order_id = "PAPER-ALLOC-corrupt"
+        elif corruption == "parent_identity":
+            attribution.symbol = "0050"
+        elif corruption == "state_version":
+            attribution.state_version += 1
+        else:
+            session.add(
+                PaperBrokerFill(
+                    paper_broker_order_id=attribution.id,
+                    account_scope=account.scope,
+                    account_generation="generation-1",
+                    broker_fill_id=f"corrupt-{uuid.uuid4()}",
+                    market=attribution.market,
+                    symbol=attribution.symbol,
+                    instrument=attribution.instrument,
+                    side=attribution.side,
+                    fill_price=attribution.price,
+                    fill_quantity=1,
+                    fill_time=NOW,
+                    state_version=attribution.state_version,
+                )
+            )
+    with pytest.raises(BrokerCapabilityError):
+        account.adapter.query_account_snapshot(account.scope, "generation-1")
+    with account.sessions() as session, session.begin():
+        result = ReconciliationService(session).reconcile_account(
+            account.id,
+            snapshot,
+            now=NOW,
+            prices={("tw_stock", "2330", "spot"): 100.0},
+        )
+
+    assert result["status"] in {"mismatch", "unresolved"}
+    row = stored(account, result)
+    assert any("broker control ledger unresolved" in reason for reason in row.difference_json["unresolved"])
+
+
 @pytest.mark.parametrize("corruption", ["action", "status", "client_ref", "broker_id", "fill"])
 def test_malformed_legacy_baseline_is_never_excluded_from_reconciliation(monkeypatch, account, corruption):
     legacy_close(account, monkeypatch)
@@ -396,7 +490,7 @@ def test_malformed_legacy_baseline_is_never_excluded_from_reconciliation(monkeyp
     assert result["status"] != "matched"
     row = stored(account, result)
     assert any(
-        reason.startswith(("broker baseline unresolved:", "broker order unresolved:"))
+        reason.startswith(("broker control ledger unresolved:", "broker order unresolved:"))
         for reason in row.difference_json["unresolved"]
     )
 

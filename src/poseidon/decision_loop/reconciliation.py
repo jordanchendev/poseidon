@@ -614,13 +614,19 @@ class ReconciliationService:
         ).all()
         all_broker_orders = broker_orders
         try:
-            from poseidon.broker.paper_adapter import _validated_baselines
+            from poseidon.broker.paper_adapter import _validated_attributions, _validated_baselines
 
-            baseline_ids = {row.id for row in _validated_baselines(self.session, scope, generation)}
+            control_ids = {
+                row.id
+                for row in [
+                    *_validated_baselines(self.session, scope, generation),
+                    *_validated_attributions(self.session, scope, generation),
+                ]
+            }
         except BrokerCapabilityError as error:
-            baseline_ids = set()
-            reasons.append(f"broker baseline unresolved: {error}")
-        broker_orders = [row for row in all_broker_orders if row.id not in baseline_ids]
+            control_ids = set()
+            reasons.append(f"broker control ledger unresolved: {error}")
+        broker_orders = [row for row in all_broker_orders if row.id not in control_ids]
         broker_fills = self.session.scalars(
             select(PaperBrokerFill)
             .where(PaperBrokerFill.account_scope == scope, PaperBrokerFill.account_generation == generation)
@@ -883,7 +889,7 @@ class ReconciliationService:
                 ledger = [(broker_by_id[row.paper_broker_order_id], row) for row in broker_fills]
                 nav = (
                     paper_liquidation_nav(snapshot, policy, prices or {}, ledger)
-                    if snapshot.positions or (ledger and not baseline_ids)
+                    if snapshot.positions or (ledger and not control_ids)
                     else float(_number(snapshot.cash))
                 )
             except (ValueError, KeyError, ReconciliationConflictError) as error:

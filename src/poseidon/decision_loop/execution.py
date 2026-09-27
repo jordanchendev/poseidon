@@ -739,6 +739,8 @@ class ProtectiveExecutionService(DecisionExecutionService):
         }
         source = "source_holding_ids" if context.get("legacy_exception") is True else "source_lot_ids"
         result[source] = context[source]
+        if context.get("legacy_exception") is True:
+            result["legacy_context_sha256"] = context["legacy_context_sha256"]
         return result
 
     def validate_order(self, order, *, lock_fills=True):
@@ -766,6 +768,7 @@ class ProtectiveExecutionService(DecisionExecutionService):
                 "source_holding_ids",
                 "source_holding_quantities",
                 "source_holding_risk",
+                "legacy_context_sha256",
             }
         if (
             not isinstance(intent, dict)
@@ -910,6 +913,7 @@ class ProtectiveExecutionService(DecisionExecutionService):
             raise ExecutionConflictError("protective legacy source provenance is invalid") from error
         quantities = context["source_holding_quantities"]
         risk = context["source_holding_risk"]
+        legacy_context_sha256 = content_sha256({"source_holding_quantities": quantities, "source_holding_risk": risk})
         if (
             not source_ids
             or len(set(source_ids)) != len(source_ids)
@@ -921,6 +925,8 @@ class ProtectiveExecutionService(DecisionExecutionService):
             or set(quantities) != set(context["source_holding_ids"])
             or not isinstance(risk, dict)
             or set(risk) != set(context["source_holding_ids"])
+            or context["legacy_context_sha256"] != legacy_context_sha256
+            or order.intent_json["economics"].get("legacy_context_sha256") != legacy_context_sha256
         ):
             raise ExecutionConflictError("protective legacy source provenance is invalid")
         account = self.session.scalar(
@@ -1024,22 +1030,25 @@ class ProtectiveExecutionService(DecisionExecutionService):
             for row in holdings
         ):
             raise ExecutionConflictError("protective legacy source ownership changed")
-        source_holding_ids = [str(value) for value in source_ids]
-        dedupe_input = {
-            "account_scope": account_scope,
-            "account_generation": account_generation,
-            "origin": origin,
-            "source_holding_ids": source_holding_ids,
-            "trigger_generation": trigger_generation,
-        }
-        digest = content_sha256(dedupe_input)
-        order_id = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:order:{digest}")
-        existing = self.session.get(OrderRecord, order_id)
-        if existing is not None:
-            self.validate_order(existing)
-            return self._response_for(existing)
-        source_set = set(source_holding_ids)
-        reserved = Decimal("0")
+        requested_ids = {str(value) for value in source_ids}
+        replay_candidates = self.session.scalars(
+            select(OrderRecord).where(
+                OrderRecord.account_scope == account_scope,
+                OrderRecord.account_generation == account_generation,
+                OrderRecord.order_origin == origin,
+            )
+        ).all()
+        for candidate in replay_candidates:
+            candidate_context = candidate.protective_context_json
+            if (
+                isinstance(candidate_context, dict)
+                and candidate_context.get("legacy_exception") is True
+                and candidate_context.get("trigger_generation") == trigger_generation
+                and candidate_context.get("source_holding_ids") == sorted(requested_ids)
+            ):
+                self.validate_order(candidate)
+                return self._response_for(candidate)
+        reserved_by_id = {value: Decimal("0") for value in requested_ids}
         siblings = self.session.scalars(
             select(OrderRecord).where(
                 OrderRecord.account_scope == account_scope,
@@ -1058,17 +1067,64 @@ class ProtectiveExecutionService(DecisionExecutionService):
             if (
                 isinstance(context, dict)
                 and context.get("legacy_exception") is True
-                and source_set.intersection(context.get("source_holding_ids", ()))
+                and requested_ids.intersection(context.get("source_holding_ids", ()))
             ):
+                self.validate_order(sibling)
                 outstanding, _cash = self._outstanding_reservation(sibling, account.currency)
-                reserved += outstanding
-        available = sum((Decimal(str(row.shares)) for row in holdings), Decimal("0")) - reserved
+                sibling_quantities = context["source_holding_quantities"]
+                filled = Decimal(str(sibling.reserved_quantity)) - outstanding
+                for holding_id in context["source_holding_ids"]:
+                    planned = Decimal(str(sibling_quantities[holding_id]))
+                    consumed = min(planned, filled)
+                    filled -= consumed
+                    if holding_id in reserved_by_id:
+                        reserved_by_id[holding_id] += planned - consumed
+                if filled:
+                    raise ExecutionConflictError("legacy protective fills exceed frozen source attribution")
+        available_holdings = []
+        available_by_id = {}
+        for row in holdings:
+            available = Decimal(str(row.shares)) - reserved_by_id[str(row.id)]
+            if available < 0:
+                raise ExecutionConflictError("legacy protective reservations exceed source inventory")
+            if available:
+                available_holdings.append(row)
+                available_by_id[str(row.id)] = available
+        available = sum(available_by_id.values(), Decimal("0"))
         requested = available if quantity is None else Decimal(str(_finite_positive(quantity, "protective quantity")))
         if quantity is not None and requested != available:
             raise ExecutionConflictError("legacy protective exception requires a full available close")
         close_quantity = available
         if close_quantity <= 0:
             return {"status": "already_reserved", "execution_key": None, "order_ids": [], "client_order_refs": []}
+        source_holding_ids = sorted(available_by_id)
+        source_holding_quantities = {
+            holding_id: float(available_by_id[holding_id]) for holding_id in source_holding_ids
+        }
+        source_holding_risk = {
+            str(row.id): {"entry_price": row.entry_price, "stop_loss_pct": row.stop_loss_pct}
+            for row in available_holdings
+        }
+        legacy_context_sha256 = content_sha256(
+            {
+                "source_holding_quantities": source_holding_quantities,
+                "source_holding_risk": source_holding_risk,
+            }
+        )
+        dedupe_input = {
+            "account_scope": account_scope,
+            "account_generation": account_generation,
+            "origin": origin,
+            "source_holding_ids": source_holding_ids,
+            "trigger_generation": trigger_generation,
+            "legacy_context_sha256": legacy_context_sha256,
+        }
+        digest = content_sha256(dedupe_input)
+        order_id = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:order:{digest}")
+        existing = self.session.get(OrderRecord, order_id)
+        if existing is not None:
+            self.validate_order(existing)
+            return self._response_for(existing)
         execution_key = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:execution:{digest}")
         frozen = {
             "market": market,
@@ -1088,6 +1144,7 @@ class ProtectiveExecutionService(DecisionExecutionService):
                         "materialized_quantity": float(close_quantity),
                         "contract_multiplier": 1.0,
                         "sizing_rules": {"quantity_rounding": "whole_share_floor"},
+                        "legacy_context_sha256": legacy_context_sha256,
                     },
                 }
             )
@@ -1099,14 +1156,8 @@ class ProtectiveExecutionService(DecisionExecutionService):
                     "identity": {"market": market, "symbol": symbol, "instrument": instrument, "side": side},
                     "source_lot_ids": [],
                     "source_decision_ids": [],
-                    "source_holding_quantities": {str(row.id): row.shares for row in holdings},
-                    "source_holding_risk": {
-                        str(row.id): {
-                            "entry_price": row.entry_price,
-                            "stop_loss_pct": row.stop_loss_pct,
-                        }
-                        for row in holdings
-                    },
+                    "source_holding_quantities": source_holding_quantities,
+                    "source_holding_risk": source_holding_risk,
                     "legacy_exception": True,
                     "dedupe_sha256": digest,
                 }

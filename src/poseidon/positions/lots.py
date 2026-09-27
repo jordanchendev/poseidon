@@ -145,6 +145,15 @@ class FillProjectionService:
         ).all()
         required = Decimal(0)
         for sibling in reserved_orders:
+            if (
+                isinstance(sibling.protective_context_json, dict)
+                and sibling.protective_context_json.get("legacy_exception") is True
+            ):
+                try:
+                    ReconciliationService(self.session)._validate_durable_intent(sibling)
+                except ReconciliationConflictError as error:
+                    raise FillProjectionConflictError(str(error)) from error
+                continue
             if not isinstance(sibling.intent_json, dict) or not isinstance(
                 sibling.intent_json.get("frozen_intent"), dict
             ):
@@ -193,57 +202,103 @@ class FillProjectionService:
             "entry_cost": float(quantity * entry_price * multiplier),
         }
 
-    def _apply_legacy_holding_fill(self, order, fill, order_fills, account, quantity):
-        context = order.protective_context_json
-        try:
-            source_ids = [uuid.UUID(value) for value in context["source_holding_ids"]]
-        except (KeyError, TypeError, ValueError) as error:
-            raise FillProjectionConflictError("legacy protective source provenance is invalid") from error
+    def _apply_legacy_holding_fill(self, order, fill, order_fills, quantity):
+        legacy_orders = self.session.scalars(
+            select(OrderRecord)
+            .where(
+                *(getattr(OrderRecord, field) == getattr(order, field) for field in IDENTITY_FIELDS),
+                OrderRecord.order_origin.in_(DURABLE_PROTECTIVE_ORIGINS),
+            )
+            .with_for_update()
+        ).all()
+        legacy_orders = [
+            row
+            for row in legacy_orders
+            if isinstance(row.protective_context_json, dict)
+            and row.protective_context_json.get("legacy_exception") is True
+        ]
+        reconciliation = ReconciliationService(self.session)
+        fills_by_order = {}
+        source_ids = set()
+        for legacy_order in legacy_orders:
+            try:
+                reconciliation._validate_durable_intent(legacy_order)
+                source_ids.update(
+                    uuid.UUID(value) for value in legacy_order.protective_context_json["source_holding_ids"]
+                )
+            except (ReconciliationConflictError, KeyError, TypeError, ValueError) as error:
+                raise FillProjectionConflictError("legacy protective source provenance is invalid") from error
+            fills_by_order[legacy_order.id] = self.session.scalars(
+                select(OrderFillRecord)
+                .where(OrderFillRecord.order_id == legacy_order.id)
+                .order_by(OrderFillRecord.fill_time, OrderFillRecord.id)
+                .with_for_update()
+            ).all()
+
+        def generation_key(legacy_order):
+            fills = fills_by_order[legacy_order.id]
+            first_fill = min((_utc(row.fill_time) for row in fills), default=datetime.max.replace(tzinfo=UTC))
+            return first_fill, _utc(legacy_order.created_at), legacy_order.id
+
+        legacy_orders.sort(key=generation_key)
+        ordered_source_ids = sorted(source_ids)
         holdings = self.session.scalars(
             select(PortfolioHoldingRecord)
-            .where(PortfolioHoldingRecord.id.in_(source_ids))
+            .where(PortfolioHoldingRecord.id.in_(ordered_source_ids))
             .order_by(PortfolioHoldingRecord.id)
             .with_for_update()
             .execution_options(populate_existing=True)
         ).all()
-        if [row.id for row in holdings] != source_ids or any(
+        if [row.id for row in holdings] != ordered_source_ids or any(
             row.strategy_name.startswith("decision-lots:")
             or (row.market, row.symbol, row.side) != (order.market, order.symbol, order.side)
             for row in holdings
         ):
             raise FillProjectionConflictError("legacy protective source ownership changed")
-        originals = {row.id: _number(context["source_holding_quantities"][str(row.id)]) for row in holdings}
-
-        def balances(applied):
-            result = {}
-            remaining = applied
-            for row in holdings:
-                used = min(originals[row.id], remaining)
-                result[row.id] = originals[row.id] - used
-                remaining -= used
-            if remaining:
+        balances = {}
+        for legacy_order in legacy_orders:
+            context = legacy_order.protective_context_json
+            generation_ids = [uuid.UUID(value) for value in context["source_holding_ids"]]
+            for holding_id in generation_ids:
+                frozen = _number(context["source_holding_quantities"][str(holding_id)])
+                if holding_id in balances and balances[holding_id] != frozen:
+                    raise FillProjectionConflictError("legacy holding generation does not continue prior balance")
+                balances.setdefault(holding_id, frozen)
+            applied = sum(
+                (
+                    _number(row.fill_quantity)
+                    for row in fills_by_order[legacy_order.id]
+                    if row.projection_status == "applied"
+                ),
+                Decimal("0"),
+            )
+            for holding_id in generation_ids:
+                consumed = min(balances[holding_id], applied)
+                balances[holding_id] -= consumed
+                applied -= consumed
+            if applied:
                 raise FillProjectionConflictError("closing fill exceeds open legacy inventory")
-            return result
-
-        already_applied = sum(
-            (_number(row.fill_quantity) for row in order_fills if row.projection_status == "applied"),
-            Decimal("0"),
-        )
-        expected = balances(already_applied)
         if any(
-            row.shares is None or _number(row.shares) != expected[row.id] or row.closed != (expected[row.id] == 0)
+            row.shares is None or _number(row.shares) != balances[row.id] or row.closed != (balances[row.id] == 0)
             for row in holdings
         ):
             raise FillProjectionConflictError("legacy holding balance disagrees with applied fills")
         if fill.projection_status == "applied":
             return self._response(fill, [], [])
-        changes = balances(already_applied + quantity)
+        current_ids = [uuid.UUID(value) for value in order.protective_context_json["source_holding_ids"]]
+        remaining = quantity
+        for holding_id in current_ids:
+            consumed = min(balances[holding_id], remaining)
+            balances[holding_id] -= consumed
+            remaining -= consumed
+        if remaining:
+            raise FillProjectionConflictError("closing fill exceeds open legacy inventory")
         pending = any(row.id != fill.id and row.projection_status == "projection_pending" for row in order_fills)
         release = order.status in {"filled", "rejected", "cancelled"} and not pending
         now = datetime.now(UTC)
         for row in holdings:
-            row.shares = float(changes[row.id])
-            row.closed = changes[row.id] == 0
+            row.shares = float(balances[row.id])
+            row.closed = balances[row.id] == 0
             row.close_date = _utc(fill.fill_time) if row.closed else None
             row.updated_at = now
         fill.projection_status = "applied"
@@ -294,7 +349,7 @@ class FillProjectionService:
         ):
             if opening:
                 raise FillProjectionConflictError("legacy protective projection cannot increase exposure")
-            return self._apply_legacy_holding_fill(order, fill, order_fills, account, quantity)
+            return self._apply_legacy_holding_fill(order, fill, order_fills, quantity)
         lots = self.session.scalars(
             select(PositionLot)
             .filter_by(**identity)

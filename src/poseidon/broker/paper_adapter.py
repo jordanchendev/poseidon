@@ -36,6 +36,10 @@ LEGACY_BASELINE_ACTION = "position_base"
 LEGACY_BASELINE_STATUS = "position_baseline"
 LEGACY_BASELINE_REF_PREFIX = "LEGACY-BASE-"
 LEGACY_EXECUTION_PREFIX = "PAPER-LEGACY"
+LEGACY_ATTRIBUTION_ACTION = "position_alloc"
+LEGACY_ATTRIBUTION_STATUS = "position_attribution"
+LEGACY_ATTRIBUTION_REF_PREFIX = "LEGACY-ALLOC-"
+LEGACY_ATTRIBUTION_BROKER_PREFIX = "PAPER-ALLOC"
 
 
 def _utc(value: datetime) -> datetime:
@@ -163,6 +167,56 @@ def _baseline_broker_id(row: PaperBrokerOrder) -> str:
     return f"PAPER-BASE-{digest[:40]}"
 
 
+def _control_broker_id(prefix: str, row: PaperBrokerOrder) -> str:
+    digest = content_sha256(
+        {
+            "account_scope": row.account_scope,
+            "account_generation": row.account_generation,
+            "client_order_ref": row.client_order_ref,
+            "market": row.market,
+            "symbol": row.symbol,
+            "instrument": row.instrument,
+            "action": row.action,
+            "side": row.side,
+            "order_type": row.order_type,
+            "quantity": row.quantity,
+            "price": row.price,
+            "status": row.status,
+            "state_version": row.state_version,
+        }
+    )
+    return f"{prefix}-{digest[:40]}"
+
+
+def _baseline_holding_id(row: PaperBrokerOrder) -> uuid.UUID:
+    try:
+        value = row.client_order_ref.removeprefix(LEGACY_BASELINE_REF_PREFIX)
+        holding_id = uuid.UUID(value)
+    except (AttributeError, ValueError) as error:
+        raise BrokerCapabilityError("legacy position baseline identity is invalid") from error
+    if not row.client_order_ref.startswith(LEGACY_BASELINE_REF_PREFIX) or str(holding_id) != value:
+        raise BrokerCapabilityError("legacy position baseline identity is invalid")
+    return holding_id
+
+
+def _attribution_identity(row: PaperBrokerOrder) -> tuple[uuid.UUID, str]:
+    try:
+        value = row.client_order_ref.removeprefix(LEGACY_ATTRIBUTION_REF_PREFIX)
+        holding_value, execution_ref = value.split(":", 1)
+        holding_id = uuid.UUID(holding_value)
+    except (AttributeError, ValueError) as error:
+        raise BrokerCapabilityError("legacy close attribution identity is invalid") from error
+    if (
+        not row.client_order_ref.startswith(LEGACY_ATTRIBUTION_REF_PREFIX)
+        or str(holding_id) != holding_value
+        or len(execution_ref) != 67
+        or not execution_ref.startswith("PX-")
+        or any(character not in "0123456789abcdef" for character in execution_ref[3:])
+    ):
+        raise BrokerCapabilityError("legacy close attribution identity is invalid")
+    return holding_id, execution_ref
+
+
 def _validated_baselines(
     session, account_scope, account_generation, *, market=None, symbol=None, instrument=None, side=None
 ):
@@ -176,13 +230,9 @@ def _validated_baselines(
             statement = statement.where(getattr(PaperBrokerOrder, field) == value)
     rows = session.scalars(statement.order_by(PaperBrokerOrder.state_version, PaperBrokerOrder.client_order_ref)).all()
     for row in rows:
-        try:
-            uuid.UUID(row.client_order_ref.removeprefix(LEGACY_BASELINE_REF_PREFIX))
-        except (AttributeError, ValueError) as error:
-            raise BrokerCapabilityError("legacy position baseline identity is invalid") from error
+        _baseline_holding_id(row)
         if (
-            not row.client_order_ref.startswith(LEGACY_BASELINE_REF_PREFIX)
-            or row.status != LEGACY_BASELINE_STATUS
+            row.status != LEGACY_BASELINE_STATUS
             or row.order_type != "market"
             or row.broker_order_id != _baseline_broker_id(row)
             or not math.isfinite(row.quantity)
@@ -198,6 +248,139 @@ def _validated_baselines(
         ):
             raise BrokerCapabilityError("legacy position baseline is invalid")
     return rows
+
+
+def _validated_attributions(
+    session, account_scope, account_generation, *, market=None, symbol=None, instrument=None, side=None
+):
+    statement = select(PaperBrokerOrder).where(
+        PaperBrokerOrder.account_scope == account_scope,
+        PaperBrokerOrder.account_generation == account_generation,
+        PaperBrokerOrder.action == LEGACY_ATTRIBUTION_ACTION,
+    )
+    for field, value in (("market", market), ("symbol", symbol), ("instrument", instrument), ("side", side)):
+        if value is not None:
+            statement = statement.where(getattr(PaperBrokerOrder, field) == value)
+    rows = session.scalars(statement.order_by(PaperBrokerOrder.state_version, PaperBrokerOrder.client_order_ref)).all()
+    baselines = {
+        _baseline_holding_id(row): row
+        for row in _validated_baselines(
+            session,
+            account_scope,
+            account_generation,
+            market=market,
+            symbol=symbol,
+            instrument=instrument,
+            side=side,
+        )
+    }
+    execution_statement = select(PaperBrokerOrder).where(
+        PaperBrokerOrder.account_scope == account_scope,
+        PaperBrokerOrder.account_generation == account_generation,
+        PaperBrokerOrder.broker_order_id.like(f"{LEGACY_EXECUTION_PREFIX}-%"),
+    )
+    for field, value in (("market", market), ("symbol", symbol), ("instrument", instrument), ("side", side)):
+        if value is not None:
+            execution_statement = execution_statement.where(getattr(PaperBrokerOrder, field) == value)
+    executions = {row.client_order_ref: row for row in session.scalars(execution_statement).all()}
+    for execution in executions.values():
+        expected_action = "sell" if execution.side == "long" else "buy"
+        if (
+            len(execution.client_order_ref) != 67
+            or not execution.client_order_ref.startswith("PX-")
+            or any(character not in "0123456789abcdef" for character in execution.client_order_ref[3:])
+            or len(execution.broker_order_id) != len(f"{LEGACY_EXECUTION_PREFIX}-") + 40
+            or not execution.broker_order_id.startswith(f"{LEGACY_EXECUTION_PREFIX}-")
+            or any(
+                character not in "0123456789abcdef"
+                for character in execution.broker_order_id[len(f"{LEGACY_EXECUTION_PREFIX}-") :]
+            )
+            or execution.action != expected_action
+            or execution.order_type != "market"
+            or execution.status not in {"filled", "cancelled"}
+        ):
+            raise BrokerCapabilityError("legacy close execution is invalid")
+    groups: dict[str, list[PaperBrokerOrder]] = {}
+    for row in rows:
+        holding_id, execution_ref = _attribution_identity(row)
+        execution = executions.get(execution_ref)
+        baseline = baselines.get(holding_id)
+        if (
+            row.status != LEGACY_ATTRIBUTION_STATUS
+            or row.order_type != "market"
+            or row.broker_order_id != _control_broker_id(LEGACY_ATTRIBUTION_BROKER_PREFIX, row)
+            or execution is None
+            or baseline is None
+            or row.state_version != execution.state_version
+            or _utc(row.accepted_at) != _utc(execution.accepted_at)
+            or any(
+                getattr(row, field) != getattr(execution, field)
+                for field in ("account_scope", "account_generation", "market", "symbol", "instrument", "side")
+            )
+            or not math.isfinite(row.quantity)
+            or row.quantity <= 0
+            or row.price is None
+            or not math.isfinite(row.price)
+            or row.price <= 0
+            or Decimal(str(row.price)) != Decimal(str(baseline.price))
+            or session.scalar(
+                select(PaperBrokerFill.id).where(PaperBrokerFill.paper_broker_order_id == row.id).limit(1)
+            )
+            is not None
+        ):
+            raise BrokerCapabilityError("legacy close attribution is invalid")
+        groups.setdefault(execution_ref, []).append(row)
+    for execution_ref, group in groups.items():
+        execution = executions[execution_ref]
+        holding_ids = [_attribution_identity(row)[0] for row in group]
+        filled = session.scalar(
+            select(func.coalesce(func.sum(PaperBrokerFill.fill_quantity), 0.0)).where(
+                PaperBrokerFill.paper_broker_order_id == execution.id
+            )
+        )
+        if (
+            len(holding_ids) != len(set(holding_ids))
+            or sum((Decimal(str(row.quantity)) for row in group), Decimal("0")) != Decimal(str(execution.quantity))
+            or Decimal(str(filled)) > Decimal(str(execution.quantity))
+        ):
+            raise BrokerCapabilityError("legacy close attribution group is invalid")
+    if set(groups) != set(executions):
+        raise BrokerCapabilityError("legacy close execution lacks exact attribution")
+    return rows
+
+
+def _attributed_consumption(session, attributions, *, exclude_execution_ref=None):
+    usage: dict[uuid.UUID, Decimal] = {}
+    groups: dict[str, list[PaperBrokerOrder]] = {}
+    for row in attributions:
+        _holding_id, execution_ref = _attribution_identity(row)
+        if execution_ref != exclude_execution_ref:
+            groups.setdefault(execution_ref, []).append(row)
+    for execution_ref, group in groups.items():
+        execution = session.scalar(
+            select(PaperBrokerOrder).where(
+                PaperBrokerOrder.account_scope == group[0].account_scope,
+                PaperBrokerOrder.account_generation == group[0].account_generation,
+                PaperBrokerOrder.client_order_ref == execution_ref,
+            )
+        )
+        remaining = Decimal(
+            str(
+                session.scalar(
+                    select(func.coalesce(func.sum(PaperBrokerFill.fill_quantity), 0.0)).where(
+                        PaperBrokerFill.paper_broker_order_id == execution.id
+                    )
+                )
+            )
+        )
+        for row in sorted(group, key=lambda item: item.client_order_ref):
+            holding_id, _execution_ref = _attribution_identity(row)
+            consumed = min(Decimal(str(row.quantity)), remaining)
+            usage[holding_id] = usage.get(holding_id, Decimal("0")) + consumed
+            remaining -= consumed
+        if remaining:
+            raise BrokerCapabilityError("legacy close attribution is smaller than execution fills")
+    return usage
 
 
 def _ensure_legacy_baselines(
@@ -222,6 +405,7 @@ def _ensure_legacy_baselines(
         "source_holding_ids",
         "source_holding_quantities",
         "source_holding_risk",
+        "legacy_context_sha256",
         "legacy_exception",
         "dedupe_sha256",
     }
@@ -268,6 +452,20 @@ def _ensure_legacy_baselines(
     except (TypeError, ValueError):
         valid_ids = valid_maps = False
         total = Decimal("0")
+    try:
+        legacy_context_sha256 = content_sha256({"source_holding_quantities": quantities, "source_holding_risk": risks})
+        dedupe_sha256 = content_sha256(
+            {
+                "account_scope": context.get("account_scope"),
+                "account_generation": context.get("account_generation"),
+                "origin": order.order_origin,
+                "source_holding_ids": source_ids,
+                "trigger_generation": context.get("trigger_generation"),
+                "legacy_context_sha256": legacy_context_sha256,
+            }
+        )
+    except (TypeError, ValueError) as error:
+        raise BrokerCapabilityError("legacy protective context is not canonical") from error
     if (
         set(context) != expected_context
         or not valid_ids
@@ -275,6 +473,9 @@ def _ensure_legacy_baselines(
         or context["source_lot_ids"] != []
         or context["source_decision_ids"] != []
         or Decimal(str(order.quantity)) != total
+        or context["legacy_context_sha256"] != legacy_context_sha256
+        or (order.intent_json or {}).get("economics", {}).get("legacy_context_sha256") != legacy_context_sha256
+        or context["dedupe_sha256"] != dedupe_sha256
     ):
         raise BrokerCapabilityError("legacy protective context requires exact positive full-close sources")
     refs = {holding_id: f"{LEGACY_BASELINE_REF_PREFIX}{holding_id}" for holding_id in context["source_holding_ids"]}
@@ -328,42 +529,7 @@ def _ensure_legacy_baselines(
             side=order.side,
         )
         by_ref = {row.client_order_ref: row for row in baselines}
-    prior_closed = session.scalar(
-        select(func.coalesce(func.sum(PaperBrokerFill.fill_quantity), 0.0))
-        .join(PaperBrokerOrder, PaperBrokerOrder.id == PaperBrokerFill.paper_broker_order_id)
-        .where(
-            PaperBrokerOrder.account_scope == order.account_scope,
-            PaperBrokerOrder.account_generation == order.account_generation,
-            PaperBrokerOrder.market == order.market,
-            PaperBrokerOrder.symbol == order.symbol,
-            PaperBrokerOrder.instrument == order.instrument,
-            PaperBrokerOrder.side == order.side,
-            PaperBrokerOrder.broker_order_id.like(f"{LEGACY_EXECUTION_PREFIX}-%"),
-            PaperBrokerOrder.client_order_ref != client_order_ref,
-        )
-    )
-    remaining_closed = Decimal(str(prior_closed))
-    remaining_by_ref = {}
-    for row in baselines:
-        quantity = Decimal(str(row.quantity))
-        consumed = min(quantity, remaining_closed)
-        remaining_by_ref[row.client_order_ref] = quantity - consumed
-        remaining_closed -= consumed
-    if remaining_closed:
-        raise BrokerCapabilityError("legacy position baseline is smaller than prior durable closes")
-    for holding_id, ref in refs.items():
-        row = by_ref.get(ref)
-        risk = context["source_holding_risk"][holding_id]
-        if (
-            row is None
-            or Decimal(str(context["source_holding_quantities"][holding_id])) != remaining_by_ref[ref]
-            or Decimal(str(risk["entry_price"])) != Decimal(str(row.price))
-        ):
-            raise BrokerCapabilityError("legacy position baseline changed")
-
-
-def _position_state(session, order: Order) -> tuple[Decimal, Decimal]:
-    baselines = _validated_baselines(
+    attributions = _validated_attributions(
         session,
         order.account_scope,
         order.account_generation,
@@ -372,24 +538,124 @@ def _position_state(session, order: Order) -> tuple[Decimal, Decimal]:
         instrument=order.instrument,
         side=order.side,
     )
-    quantity = sum((Decimal(str(row.quantity)) for row in baselines), Decimal("0"))
-    entry_cost = sum((Decimal(str(row.quantity)) * Decimal(str(row.price)) for row in baselines), Decimal("0"))
+    consumed = _attributed_consumption(session, attributions, exclude_execution_ref=client_order_ref)
+    for holding_id, ref in refs.items():
+        row = by_ref.get(ref)
+        risk = context["source_holding_risk"][holding_id]
+        holding_uuid = uuid.UUID(holding_id)
+        if (
+            row is None
+            or Decimal(str(context["source_holding_quantities"][holding_id]))
+            != Decimal(str(row.quantity)) - consumed.get(holding_uuid, Decimal("0"))
+            or Decimal(str(risk["entry_price"])) != Decimal(str(row.price))
+        ):
+            raise BrokerCapabilityError("legacy position baseline changed")
+    current = [row for row in attributions if _attribution_identity(row)[1] == client_order_ref]
+    if not allow_create:
+        planned = {
+            str(_attribution_identity(row)[0]): (Decimal(str(row.quantity)), Decimal(str(row.price))) for row in current
+        }
+        expected = {
+            holding_id: (
+                Decimal(str(context["source_holding_quantities"][holding_id])),
+                Decimal(str(context["source_holding_risk"][holding_id]["entry_price"])),
+            )
+            for holding_id in source_ids
+        }
+        if planned != expected:
+            raise BrokerCapabilityError("legacy close attribution changed on replay")
+
+
+def _position_state_for_identity(
+    session,
+    account_scope,
+    account_generation,
+    market,
+    symbol,
+    instrument,
+    side,
+    *,
+    state_version=None,
+) -> tuple[Decimal, Decimal]:
+    baselines = _validated_baselines(
+        session,
+        account_scope,
+        account_generation,
+        market=market,
+        symbol=symbol,
+        instrument=instrument,
+        side=side,
+    )
+    attributions = _validated_attributions(
+        session,
+        account_scope,
+        account_generation,
+        market=market,
+        symbol=symbol,
+        instrument=instrument,
+        side=side,
+    )
+    if state_version is not None and any(row.state_version > state_version for row in [*baselines, *attributions]):
+        raise BrokerCapabilityError("legacy position control ledger exceeds account watermark")
+    attribution_groups: dict[str, list[PaperBrokerOrder]] = {}
+    attribution_remaining: dict[uuid.UUID, Decimal] = {}
+    baseline_prices = {_baseline_holding_id(row): Decimal(str(row.price)) for row in baselines}
+    holding_remaining: dict[uuid.UUID, Decimal] = {}
+    for row in attributions:
+        holding_id, execution_ref = _attribution_identity(row)
+        attribution_groups.setdefault(execution_ref, []).append(row)
+        attribution_remaining[row.id] = Decimal(str(row.quantity))
     rows = session.execute(
         select(PaperBrokerOrder, PaperBrokerFill)
         .join(PaperBrokerFill, PaperBrokerFill.paper_broker_order_id == PaperBrokerOrder.id)
         .where(
-            PaperBrokerOrder.account_scope == order.account_scope,
-            PaperBrokerOrder.account_generation == order.account_generation,
-            PaperBrokerOrder.market == order.market,
-            PaperBrokerOrder.symbol == order.symbol,
-            PaperBrokerOrder.instrument == order.instrument,
-            PaperBrokerOrder.side == order.side,
+            PaperBrokerOrder.account_scope == account_scope,
+            PaperBrokerOrder.account_generation == account_generation,
+            PaperBrokerOrder.market == market,
+            PaperBrokerOrder.symbol == symbol,
+            PaperBrokerOrder.instrument == instrument,
+            PaperBrokerOrder.side == side,
+            *(() if state_version is None else (PaperBrokerFill.state_version <= state_version,)),
         )
         .order_by(PaperBrokerFill.state_version, PaperBrokerFill.id)
     ).all()
-    opening_action = "buy" if order.side == "long" else "sell"
-    for broker_order, fill in rows:
+    events = [(row.state_version, 0, row.client_order_ref, row, None) for row in baselines]
+    events.extend((fill.state_version, 1, str(fill.id), broker_order, fill) for broker_order, fill in rows)
+    quantity = Decimal("0")
+    entry_cost = Decimal("0")
+    opening_action = "buy" if side == "long" else "sell"
+    for _version, priority, _key, broker_order, fill in sorted(events, key=lambda event: event[:3]):
+        if priority == 0:
+            holding_id = _baseline_holding_id(broker_order)
+            baseline_quantity = Decimal(str(broker_order.quantity))
+            if holding_id in holding_remaining:
+                raise BrokerCapabilityError("independent paper broker ledger contains a duplicate baseline")
+            holding_remaining[holding_id] = baseline_quantity
+            quantity += baseline_quantity
+            entry_cost += baseline_quantity * Decimal(str(broker_order.price))
+            continue
         fill_quantity = Decimal(str(fill.fill_quantity))
+        group = attribution_groups.get(broker_order.client_order_ref)
+        if group is not None:
+            remaining_fill = fill_quantity
+            attributed_cost = Decimal("0")
+            for attribution in sorted(group, key=lambda item: item.client_order_ref):
+                holding_id, _execution_ref = _attribution_identity(attribution)
+                available = attribution_remaining[attribution.id]
+                consumed = min(available, remaining_fill)
+                if consumed > holding_remaining.get(holding_id, Decimal("0")):
+                    raise BrokerCapabilityError("legacy close exceeds its attributed holding")
+                attribution_remaining[attribution.id] -= consumed
+                holding_remaining[holding_id] -= consumed
+                attributed_cost += baseline_prices[holding_id] * consumed
+                remaining_fill -= consumed
+            if remaining_fill:
+                raise BrokerCapabilityError("legacy close exceeds its frozen attribution")
+            if fill_quantity > quantity:
+                raise BrokerCapabilityError("independent paper broker ledger contains a negative position")
+            quantity -= fill_quantity
+            entry_cost -= attributed_cost
+            continue
         if broker_order.action == opening_action:
             quantity += fill_quantity
             entry_cost += Decimal(str(fill.fill_price)) * fill_quantity
@@ -400,6 +666,18 @@ def _position_state(session, order: Order) -> tuple[Decimal, Decimal]:
         entry_cost -= average_entry * fill_quantity
         quantity -= fill_quantity
     return quantity, entry_cost
+
+
+def _position_state(session, order: Order) -> tuple[Decimal, Decimal]:
+    return _position_state_for_identity(
+        session,
+        order.account_scope,
+        order.account_generation,
+        order.market,
+        order.symbol,
+        order.instrument,
+        order.side,
+    )
 
 
 def _validate_action(order: Order, intent_action: str) -> None:
@@ -483,7 +761,19 @@ def _accept_decision_order(
             if order.side == "long":
                 cash_delta = notional
             else:
-                average_entry = entry_cost / position_quantity
+                legacy_context = _legacy_context(order)
+                if legacy_context is None:
+                    average_entry = entry_cost / position_quantity
+                else:
+                    attributed_cost = sum(
+                        (
+                            Decimal(str(legacy_context["source_holding_quantities"][holding_id]))
+                            * Decimal(str(legacy_context["source_holding_risk"][holding_id]["entry_price"]))
+                            for holding_id in legacy_context["source_holding_ids"]
+                        ),
+                        Decimal("0"),
+                    )
+                    average_entry = attributed_cost / quantity
                 cash_delta = (Decimal("2") * average_entry - price) * quantity * multiplier
         if current_cash + cash_delta < 0:
             raise BrokerCapabilityError("paper order exceeds durable account cash")
@@ -526,6 +816,28 @@ def _accept_decision_order(
                 state_version=state_version,
             )
         )
+        legacy_context = _legacy_context(order)
+        if legacy_context is not None:
+            for holding_id in legacy_context["source_holding_ids"]:
+                attribution = PaperBrokerOrder(
+                    account_scope=order.account_scope,
+                    account_generation=order.account_generation,
+                    client_order_ref=f"{LEGACY_ATTRIBUTION_REF_PREFIX}{holding_id}:{client_order_ref}",
+                    broker_order_id="pending",
+                    market=order.market,
+                    symbol=order.symbol,
+                    instrument=order.instrument,
+                    action=LEGACY_ATTRIBUTION_ACTION,
+                    side=order.side,
+                    order_type="market",
+                    quantity=legacy_context["source_holding_quantities"][holding_id],
+                    price=legacy_context["source_holding_risk"][holding_id]["entry_price"],
+                    status=LEGACY_ATTRIBUTION_STATUS,
+                    state_version=state_version,
+                    accepted_at=accepted_at,
+                )
+                attribution.broker_order_id = _control_broker_id(LEGACY_ATTRIBUTION_BROKER_PREFIX, attribution)
+                session.add(attribution)
         if cash_delta:
             session.add(
                 PaperCashMovement(
@@ -540,6 +852,23 @@ def _accept_decision_order(
             )
         account.state_version = state_version
         account.updated_at = accepted_at
+        session.flush()
+        if legacy_context is not None:
+            current_attributions = [
+                row
+                for row in _validated_attributions(
+                    session,
+                    order.account_scope,
+                    order.account_generation,
+                    market=order.market,
+                    symbol=order.symbol,
+                    instrument=order.instrument,
+                    side=order.side,
+                )
+                if _attribution_identity(row)[1] == client_order_ref
+            ]
+            if len(current_attributions) != len(legacy_context["source_holding_ids"]):
+                raise BrokerCapabilityError("legacy close attribution was not durably recorded")
         snapshot = _order_snapshot(broker_order)
         session.commit()
         return snapshot
@@ -696,23 +1025,30 @@ class PaperBrokerAdapter(BrokerAdapter):
                     PaperBrokerFill.state_version <= account.state_version,
                 )
             ).all()
-            quantities: dict[tuple[str, str, str, str], Decimal] = {}
-            for baseline in _validated_baselines(session, account_scope, account_generation):
+            baselines = _validated_baselines(session, account_scope, account_generation)
+            attributions = _validated_attributions(session, account_scope, account_generation)
+            for baseline in baselines:
                 if baseline.state_version > account.state_version:
                     raise BrokerCapabilityError("legacy position baseline exceeds account watermark")
-                identity = (baseline.market, baseline.symbol, baseline.instrument, baseline.side)
-                quantities[identity] = quantities.get(identity, Decimal("0")) + Decimal(str(baseline.quantity))
-            for broker_order, fill in rows:
-                identity = (fill.market, fill.symbol, fill.instrument, fill.side)
-                opening_action = "buy" if fill.side == "long" else "sell"
-                direction = Decimal("1") if broker_order.action == opening_action else Decimal("-1")
-                quantities[identity] = quantities.get(identity, Decimal("0")) + direction * Decimal(
-                    str(fill.fill_quantity)
-                )
+            if any(row.state_version > account.state_version for row in attributions):
+                raise BrokerCapabilityError("legacy position attribution exceeds account watermark")
+            identities = {(row.market, row.symbol, row.instrument, row.side) for row in baselines}
+            for _broker_order, fill in rows:
+                identities.add((fill.market, fill.symbol, fill.instrument, fill.side))
+            quantities = {
+                identity: _position_state_for_identity(
+                    session,
+                    account_scope,
+                    account_generation,
+                    *identity,
+                    state_version=account.state_version,
+                )[0]
+                for identity in identities
+            }
             positions = tuple(
                 BrokerPositionSnapshot(*identity, float(quantity))
                 for identity, quantity in sorted(quantities.items())
-                if quantity != 0
+                if quantity > 0
             )
             cash = Decimal(str(account.opening_cash)) + sum(
                 (Decimal(str(movement.amount)) for movement in movements),
