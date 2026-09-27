@@ -145,22 +145,25 @@ class BrokerAdapter(ABC):
             frozen = (order.intent_json or {}).get("frozen_intent", {})
             if frozen.get("action") not in {"reduce", "exit"} or not order.protective_context_json:
                 raise BrokerCapabilityError("protective execution requires reduction-only durable context")
-            if legacy_protective and set(order.protective_context_json) != {
-                "account_scope",
-                "account_generation",
-                "identity",
-                "origin",
-                "trigger_generation",
-                "source_lot_ids",
-                "source_decision_ids",
-                "source_holding_ids",
-                "source_holding_quantities",
-                "source_holding_risk",
-                "legacy_context_sha256",
-                "legacy_exception",
-                "dedupe_sha256",
-            }:
-                raise BrokerCapabilityError("legacy protective execution requires complete durable context")
+            if legacy_protective:
+                base_context = {
+                    "account_scope",
+                    "account_generation",
+                    "identity",
+                    "origin",
+                    "trigger_generation",
+                    "source_lot_ids",
+                    "source_decision_ids",
+                    "source_holding_ids",
+                    "source_holding_quantities",
+                    "source_holding_risk",
+                    "legacy_context_sha256",
+                    "legacy_exception",
+                    "dedupe_sha256",
+                }
+                generation_context = {"predecessor_order_ids", "remaining_source_quantities"}
+                if set(order.protective_context_json) not in (base_context, base_context | generation_context):
+                    raise BrokerCapabilityError("legacy protective execution requires complete durable context")
         try:
             valid_intent = bool(order.intent_json) and order.intent_sha256 == content_sha256(order.intent_json)
         except ValueError as error:

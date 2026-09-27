@@ -828,6 +828,45 @@ def test_durable_lot_and_legacy_holding_fills_project_without_cross_reservation(
         assert (holding.shares, holding.closed) == (0, True)
 
 
+def test_same_trigger_generation_is_isolated_by_source_variant(seed):
+    _opening(seed, quantity=5)
+    holding_id, _account_id = _legacy_holding(seed, shares=4)
+
+    durable = _materialize(seed, trigger="same-trigger:coexistence")
+    legacy = _materialize_legacy(seed, holding_id, trigger="same-trigger:coexistence")
+
+    assert durable["order_ids"] != legacy["order_ids"]
+    with seed.sessions() as session:
+        orders = session.scalars(
+            select(OrderRecord).where(
+                OrderRecord.id.in_([uuid.UUID(durable["order_ids"][0]), uuid.UUID(legacy["order_ids"][0])])
+            )
+        ).all()
+        assert {order.decision_id is None for order in orders} == {False, True}
+
+
+@pytest.mark.parametrize("source_kind", ["durable", "legacy"])
+def test_generation_scan_rejects_corrupt_other_trigger_candidate(seed, source_kind):
+    holding_id = None
+    if source_kind == "durable":
+        _opening(seed, quantity=5)
+        first = _materialize(seed, trigger="generation:original")
+    else:
+        holding_id, _account_id = _legacy_holding(seed, shares=5)
+        first = _materialize_legacy(seed, holding_id, trigger="generation:original")
+    with seed.sessions() as session, session.begin():
+        order = session.get(OrderRecord, uuid.UUID(first["order_ids"][0]))
+        context = copy.deepcopy(order.protective_context_json)
+        context["trigger_generation"] = "generation:corrupt"
+        order.protective_context_json = context
+
+    with pytest.raises(ExecutionConflictError, match="deterministic identity"):
+        if holding_id is None:
+            _materialize(seed, trigger="generation:fresh")
+        else:
+            _materialize_legacy(seed, holding_id, trigger="generation:fresh")
+
+
 def test_ordinary_exit_sizing_excludes_pending_legacy_holding_close(seed):
     _opening(seed, quantity=10)
     holding_id, _account_id = _legacy_holding(seed, shares=5)
@@ -1241,6 +1280,27 @@ def test_legacy_holding_partial_cancel_then_new_trigger_reuses_baseline(monkeypa
         )
 
 
+def test_same_trigger_legacy_successor_passes_adapter_strict_boundary(monkeypatch, seed):
+    holding_id, _account_id = _legacy_holding(seed, shares=5)
+    adapter, first_order_id, _fill_id = _partial_legacy_close(
+        monkeypatch,
+        seed,
+        holding_id,
+        filled=2,
+        price=79,
+    )
+    successor = _materialize_legacy(seed, holding_id, trigger=f"legacy:partial:{holding_id}", price=79)
+    successor_id = uuid.UUID(successor["order_ids"][0])
+
+    submit_or_reconcile_order(seed.sessions, successor_id, adapter, now=NOW.replace(minute=1))
+
+    with seed.sessions() as session:
+        order = session.get(OrderRecord, successor_id)
+        assert order.protective_context_json["predecessor_order_ids"] == [str(first_order_id)]
+        assert order.protective_context_json["remaining_source_quantities"] == {str(holding_id): 3.0}
+        assert order.status == "filled"
+
+
 def test_legacy_holding_baseline_replay_detects_corruption(monkeypatch, seed):
     holding_id, _account_id = _legacy_holding(seed, shares=5)
     result = _materialize_legacy(seed, holding_id)
@@ -1411,6 +1471,139 @@ def test_partial_cancel_releases_only_the_unfilled_remainder_after_projection(se
         ReconciliationService(session)._validate_durable_intent(order)
         lot = session.scalar(select(PositionLot).where(PositionLot.account_scope == seed.account))
         assert (order.reservation_status, lot.open_quantity, lot.reserved_close_quantity) == ("released", 3, 0)
+
+
+@pytest.mark.parametrize("source_kind", ["durable", "legacy"])
+def test_same_trigger_rearms_after_terminal_partial_projection(seed, source_kind):
+    holding_id = None
+    if source_kind == "durable":
+        _opening(seed, quantity=5)
+    else:
+        holding_id, _account_id = _legacy_holding(seed, shares=5)
+
+    def materialize():
+        if holding_id is None:
+            return _materialize(seed, trigger="same-trigger:partial-terminal")
+        return _materialize_legacy(seed, holding_id, trigger="same-trigger:partial-terminal")
+
+    first = materialize()
+    first_order_id = uuid.UUID(first["order_ids"][0])
+    fill_id = uuid.uuid4()
+    with seed.sessions() as session, session.begin():
+        order = session.get(OrderRecord, first_order_id)
+        order.status = "cancelled"
+        order.broker_order_id = f"PAPER-{uuid.uuid4().hex}"
+        order.submit_attempted_at = NOW
+        order.reconciliation_status = "resolved"
+        session.add(
+            OrderFillRecord(
+                id=fill_id,
+                order_id=order.id,
+                broker_fill_id=f"fill-{fill_id.hex}",
+                fill_price=79,
+                fill_quantity=2,
+                fill_time=NOW,
+                projection_status="projection_pending",
+                created_at=NOW,
+            )
+        )
+    project(seed, fill_id)
+
+    second = materialize()
+    assert second["order_ids"] != first["order_ids"]
+    assert materialize() == second
+    second_order_id = uuid.UUID(second["order_ids"][0])
+    with seed.sessions() as session, session.begin():
+        second_order = session.get(OrderRecord, second_order_id)
+        assert second_order.quantity == 3
+        second_order.status = "rejected"
+        second_order.reservation_status = "released"
+        second_order.reconciliation_status = "resolved"
+        if source_kind == "durable":
+            session.scalar(
+                select(PositionLot).where(PositionLot.account_scope == seed.account)
+            ).reserved_close_quantity = 0
+
+    third = materialize()
+    assert third["order_ids"] != first["order_ids"]
+    assert third["order_ids"] != second["order_ids"]
+    with seed.sessions() as session:
+        assert session.get(OrderRecord, uuid.UUID(third["order_ids"][0])).quantity == 3
+
+
+@pytest.mark.parametrize("source_kind", ["durable", "legacy"])
+@pytest.mark.parametrize("status", ["cancelled", "rejected"])
+def test_same_trigger_rearms_after_terminal_zero_fill(seed, source_kind, status):
+    holding_id = None
+    if source_kind == "durable":
+        _opening(seed, quantity=5)
+    else:
+        holding_id, _account_id = _legacy_holding(seed, shares=5)
+
+    def materialize():
+        if holding_id is None:
+            return _materialize(seed, trigger=f"same-trigger:zero:{status}")
+        return _materialize_legacy(seed, holding_id, trigger=f"same-trigger:zero:{status}")
+
+    first = materialize()
+    with seed.sessions() as session, session.begin():
+        order = session.get(OrderRecord, uuid.UUID(first["order_ids"][0]))
+        order.status = status
+        order.reservation_status = "released"
+        order.reconciliation_status = "resolved"
+        if source_kind == "durable":
+            session.scalar(
+                select(PositionLot).where(PositionLot.account_scope == seed.account)
+            ).reserved_close_quantity = 0
+
+    second = materialize()
+    assert second["order_ids"] != first["order_ids"]
+    assert materialize() == second
+    with seed.sessions() as session:
+        assert session.get(OrderRecord, uuid.UUID(second["order_ids"][0])).quantity == 5
+
+
+@pytest.mark.parametrize("source_kind", ["durable", "legacy"])
+@pytest.mark.parametrize("state", ["active", "unknown", "terminal_pending", "terminal_reserved"])
+def test_same_trigger_replays_nonfinal_protective_generation(seed, source_kind, state):
+    holding_id = None
+    if source_kind == "durable":
+        _opening(seed, quantity=5)
+    else:
+        holding_id, _account_id = _legacy_holding(seed, shares=5)
+    first = (
+        _materialize(seed, trigger=f"same-trigger:nonfinal:{state}")
+        if holding_id is None
+        else _materialize_legacy(seed, holding_id, trigger=f"same-trigger:nonfinal:{state}")
+    )
+    with seed.sessions() as session, session.begin():
+        order = session.get(OrderRecord, uuid.UUID(first["order_ids"][0]))
+        if state == "unknown":
+            order.status = "reconciliation_required"
+        elif state == "terminal_reserved":
+            order.status = "cancelled"
+        elif state == "terminal_pending":
+            order.status = "cancelled"
+            order.submit_attempted_at = NOW
+            session.add(
+                OrderFillRecord(
+                    id=uuid.uuid4(),
+                    order_id=order.id,
+                    broker_fill_id=f"fill-{uuid.uuid4().hex}",
+                    fill_price=79,
+                    fill_quantity=2,
+                    fill_time=NOW,
+                    projection_status="projection_pending",
+                    created_at=NOW,
+                )
+            )
+
+    replay = (
+        _materialize(seed, trigger=f"same-trigger:nonfinal:{state}")
+        if holding_id is None
+        else _materialize_legacy(seed, holding_id, trigger=f"same-trigger:nonfinal:{state}")
+    )
+    assert replay["order_ids"] == first["order_ids"]
 
 
 def test_rejected_zero_fill_releases_full_protective_reservation(seed):

@@ -411,6 +411,10 @@ def _ensure_legacy_baselines(
         "legacy_exception",
         "dedupe_sha256",
     }
+    generation_context = {"predecessor_order_ids", "remaining_source_quantities"}
+    generation_keys = set(context) & generation_context
+    if generation_keys:
+        expected_context |= generation_context
     source_ids = context.get("source_holding_ids")
     quantities = context.get("source_holding_quantities")
     risks = context.get("source_holding_risk")
@@ -454,24 +458,43 @@ def _ensure_legacy_baselines(
     except (TypeError, ValueError):
         valid_ids = valid_maps = False
         total = Decimal("0")
+    predecessors = context.get("predecessor_order_ids")
+    remaining_sources = context.get("remaining_source_quantities")
+    try:
+        valid_generation = generation_keys == set() or (
+            generation_keys == generation_context
+            and isinstance(predecessors, list)
+            and bool(predecessors)
+            and predecessors == sorted(predecessors)
+            and len(predecessors) == len(set(predecessors))
+            and all(str(uuid.UUID(value)) == value for value in predecessors)
+            and remaining_sources == quantities
+        )
+    except (TypeError, ValueError):
+        valid_generation = False
     try:
         legacy_context_sha256 = content_sha256({"source_holding_quantities": quantities, "source_holding_risk": risks})
-        dedupe_sha256 = content_sha256(
-            {
-                "account_scope": context.get("account_scope"),
-                "account_generation": context.get("account_generation"),
-                "origin": order.order_origin,
-                "source_holding_ids": source_ids,
-                "trigger_generation": context.get("trigger_generation"),
-                "legacy_context_sha256": legacy_context_sha256,
-            }
-        )
+        dedupe_input = {
+            "account_scope": context.get("account_scope"),
+            "account_generation": context.get("account_generation"),
+            "origin": order.order_origin,
+            "source_holding_ids": source_ids,
+            "trigger_generation": context.get("trigger_generation"),
+            "legacy_context_sha256": legacy_context_sha256,
+        }
+        if generation_keys:
+            dedupe_input.update(
+                predecessor_order_ids=predecessors,
+                remaining_source_quantities=remaining_sources,
+            )
+        dedupe_sha256 = content_sha256(dedupe_input)
     except (TypeError, ValueError) as error:
         raise BrokerCapabilityError("legacy protective context is not canonical") from error
     if (
         set(context) != expected_context
         or not valid_ids
         or not valid_maps
+        or not valid_generation
         or context["source_lot_ids"] != []
         or context["source_decision_ids"] != []
         or Decimal(str(order.quantity)) != total

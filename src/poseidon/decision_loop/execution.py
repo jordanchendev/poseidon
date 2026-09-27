@@ -711,6 +711,8 @@ class DecisionExecutionService:
 class ProtectiveExecutionService(DecisionExecutionService):
     """Materialize one account-locked, reduction-only protective intent."""
 
+    _GENERATION_CONTEXT_KEYS = {"predecessor_order_ids", "remaining_source_quantities"}
+
     @staticmethod
     def _response_for(order):
         return {
@@ -755,7 +757,62 @@ class ProtectiveExecutionService(DecisionExecutionService):
         result[source] = context[source]
         if context.get("legacy_exception") is True:
             result["legacy_context_sha256"] = context["legacy_context_sha256"]
+        if "predecessor_order_ids" in context:
+            result["predecessor_order_ids"] = context["predecessor_order_ids"]
+            result["remaining_source_quantities"] = context["remaining_source_quantities"]
         return result
+
+    @staticmethod
+    def _generation_complete(order, fills):
+        return (
+            order.status in {"filled", "rejected", "cancelled"}
+            and order.reservation_status == "released"
+            and all(fill.projection_status == "applied" for fill in fills)
+        )
+
+    def _generation_replay(
+        self,
+        *,
+        account_scope,
+        account_generation,
+        market,
+        symbol,
+        instrument,
+        side,
+        origin,
+        trigger_generation,
+        source_field,
+        source_ids,
+    ):
+        completed = []
+        incomplete = []
+        candidates = self.session.scalars(
+            select(OrderRecord)
+            .where(
+                OrderRecord.account_scope == account_scope,
+                OrderRecord.account_generation == account_generation,
+                OrderRecord.market == market,
+                OrderRecord.symbol == symbol,
+                OrderRecord.instrument == instrument,
+                OrderRecord.side == side,
+                OrderRecord.order_origin == origin,
+            )
+            .order_by(OrderRecord.id)
+        ).all()
+        for candidate in candidates:
+            context = candidate.protective_context_json
+            self.validate_order(candidate)
+            if context.get("trigger_generation") != trigger_generation:
+                continue
+            if context.get(source_field) != source_ids:
+                continue
+            fills = self.session.scalars(
+                select(OrderFillRecord).where(OrderFillRecord.order_id == candidate.id).with_for_update()
+            ).all()
+            (completed if self._generation_complete(candidate, fills) else incomplete).append(candidate)
+        if len(incomplete) > 1:
+            raise ExecutionConflictError("protective generation has multiple incomplete orders")
+        return (incomplete[0] if incomplete else None), sorted(str(order.id) for order in completed)
 
     def validate_order(self, order, *, lock_fills=True):
         """Revalidate a stored protective intent before attempt or projection."""
@@ -766,6 +823,7 @@ class ProtectiveExecutionService(DecisionExecutionService):
         intent = order.intent_json
         context = order.protective_context_json
         legacy = isinstance(context, dict) and context.get("legacy_exception") is True
+        generation_keys = set() if not isinstance(context, dict) else set(context) & self._GENERATION_CONTEXT_KEYS
         expected_context = {
             "account_scope",
             "account_generation",
@@ -784,12 +842,15 @@ class ProtectiveExecutionService(DecisionExecutionService):
                 "source_holding_risk",
                 "legacy_context_sha256",
             }
+        if generation_keys:
+            expected_context |= self._GENERATION_CONTEXT_KEYS
         if (
             not isinstance(intent, dict)
             or order.intent_sha256 != content_sha256(intent)
             or not isinstance(intent.get("frozen_intent"), dict)
             or not isinstance(intent.get("economics"), dict)
             or not isinstance(context, dict)
+            or generation_keys not in (set(), self._GENERATION_CONTEXT_KEYS)
             or set(context) != expected_context
         ):
             raise ExecutionConflictError("protective durable content is invalid")
@@ -828,6 +889,73 @@ class ProtectiveExecutionService(DecisionExecutionService):
             or order.client_order_ref != f"PX-{digest}"
         ):
             raise ExecutionConflictError("protective deterministic identity changed")
+        source_field = "source_holding_ids" if legacy else "source_lot_ids"
+        if generation_keys:
+            predecessors = context["predecessor_order_ids"]
+            remaining = context["remaining_source_quantities"]
+            try:
+                predecessor_ids = [uuid.UUID(value) for value in predecessors]
+                valid_remaining = (
+                    isinstance(remaining, dict)
+                    and set(remaining) == set(context[source_field])
+                    and all(
+                        not isinstance(value, bool)
+                        and isinstance(value, (int, float))
+                        and math.isfinite(value)
+                        and value >= 0
+                        for value in remaining.values()
+                    )
+                    and sum((Decimal(str(value)) for value in remaining.values()), Decimal(0)) > 0
+                )
+            except (TypeError, ValueError):
+                predecessor_ids = []
+                valid_remaining = False
+            if (
+                not predecessor_ids
+                or order.id in predecessor_ids
+                or predecessors != sorted(predecessors)
+                or len(predecessor_ids) != len(set(predecessor_ids))
+                or not valid_remaining
+            ):
+                raise ExecutionConflictError("protective generation provenance is invalid")
+            predecessor_orders = self.session.scalars(
+                select(OrderRecord).where(OrderRecord.id.in_(predecessor_ids)).order_by(OrderRecord.id)
+            ).all()
+            if [row.id for row in predecessor_orders] != predecessor_ids:
+                raise ExecutionConflictError("protective generation predecessor set changed")
+            for predecessor in predecessor_orders:
+                predecessor_context = predecessor.protective_context_json
+                if (
+                    (
+                        predecessor.account_scope,
+                        predecessor.account_generation,
+                        predecessor.market,
+                        predecessor.symbol,
+                        predecessor.instrument,
+                        predecessor.side,
+                        predecessor.order_origin,
+                    )
+                    != (
+                        order.account_scope,
+                        order.account_generation,
+                        order.market,
+                        order.symbol,
+                        order.instrument,
+                        order.side,
+                        order.order_origin,
+                    )
+                    or not isinstance(predecessor_context, dict)
+                    or predecessor_context.get("trigger_generation") != context["trigger_generation"]
+                    or predecessor_context.get(source_field) != context[source_field]
+                ):
+                    raise ExecutionConflictError("protective generation predecessor identity changed")
+                self.validate_order(predecessor, lock_fills=lock_fills)
+                statement = select(OrderFillRecord).where(OrderFillRecord.order_id == predecessor.id)
+                if lock_fills:
+                    statement = statement.with_for_update()
+                fills = self.session.scalars(statement).all()
+                if not self._generation_complete(predecessor, fills):
+                    raise ExecutionConflictError("protective generation predecessor is not complete")
         if legacy:
             self._validate_legacy_order(order, context, lock_fills=lock_fills)
             return
@@ -917,6 +1045,11 @@ class ProtectiveExecutionService(DecisionExecutionService):
             "source_lot_ids": context["source_lot_ids"],
             "source_decision_ids": context["source_decision_ids"],
         }
+        if generation_keys:
+            expected_event_payload.update(
+                predecessor_order_ids=context["predecessor_order_ids"],
+                remaining_source_quantities=context["remaining_source_quantities"],
+            )
         if event is None or event.payload_json != expected_event_payload:
             raise ExecutionConflictError("protective audit event is missing or changed")
 
@@ -1045,23 +1178,21 @@ class ProtectiveExecutionService(DecisionExecutionService):
         ):
             raise ExecutionConflictError("protective legacy source ownership changed")
         requested_ids = {str(value) for value in source_ids}
-        replay_candidates = self.session.scalars(
-            select(OrderRecord).where(
-                OrderRecord.account_scope == account_scope,
-                OrderRecord.account_generation == account_generation,
-                OrderRecord.order_origin == origin,
-            )
-        ).all()
-        for candidate in replay_candidates:
-            candidate_context = candidate.protective_context_json
-            if (
-                isinstance(candidate_context, dict)
-                and candidate_context.get("legacy_exception") is True
-                and candidate_context.get("trigger_generation") == trigger_generation
-                and candidate_context.get("source_holding_ids") == sorted(requested_ids)
-            ):
-                self.validate_order(candidate)
-                return self._response_for(candidate)
+        requested_source_ids = sorted(requested_ids)
+        replay, predecessor_order_ids = self._generation_replay(
+            account_scope=account_scope,
+            account_generation=account_generation,
+            market=market,
+            symbol=symbol,
+            instrument=instrument,
+            side=side,
+            origin=origin,
+            trigger_generation=trigger_generation,
+            source_field="source_holding_ids",
+            source_ids=requested_source_ids,
+        )
+        if replay is not None:
+            return self._response_for(replay)
         reserved_by_id = {value: Decimal("0") for value in requested_ids}
         siblings = self.session.scalars(
             select(OrderRecord).where(
@@ -1111,6 +1242,8 @@ class ProtectiveExecutionService(DecisionExecutionService):
         if close_quantity <= 0:
             return {"status": "already_reserved", "execution_key": None, "order_ids": [], "client_order_refs": []}
         source_holding_ids = sorted(available_by_id)
+        if source_holding_ids != requested_source_ids:
+            predecessor_order_ids = []
         source_holding_quantities = {
             holding_id: float(available_by_id[holding_id]) for holding_id in source_holding_ids
         }
@@ -1124,6 +1257,14 @@ class ProtectiveExecutionService(DecisionExecutionService):
                 "source_holding_risk": source_holding_risk,
             }
         )
+        generation_context = (
+            {
+                "predecessor_order_ids": predecessor_order_ids,
+                "remaining_source_quantities": source_holding_quantities,
+            }
+            if predecessor_order_ids
+            else {}
+        )
         dedupe_input = {
             "account_scope": account_scope,
             "account_generation": account_generation,
@@ -1131,6 +1272,7 @@ class ProtectiveExecutionService(DecisionExecutionService):
             "source_holding_ids": source_holding_ids,
             "trigger_generation": trigger_generation,
             "legacy_context_sha256": legacy_context_sha256,
+            **generation_context,
         }
         digest = content_sha256(dedupe_input)
         order_id = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:order:{digest}")
@@ -1323,12 +1465,38 @@ class ProtectiveExecutionService(DecisionExecutionService):
         if account.currency != currency or any(policy.reconciliation.currency != currency for _, policy in policies):
             raise ExecutionConflictError("protective account terms disagree with source policy")
         source_lot_ids = [str(lot.id) for lot in lots]
+        replay, predecessor_order_ids = self._generation_replay(
+            account_scope=account_scope,
+            account_generation=account_generation,
+            market=market,
+            symbol=symbol,
+            instrument=instrument,
+            side=side,
+            origin=origin,
+            trigger_generation=trigger_generation,
+            source_field="source_lot_ids",
+            source_ids=source_lot_ids,
+        )
+        if replay is not None:
+            return self._response_for(replay)
+        available_by_lot = {
+            str(lot.id): Decimal(str(lot.open_quantity)) - Decimal(str(lot.reserved_close_quantity)) for lot in lots
+        }
+        generation_context = (
+            {
+                "predecessor_order_ids": predecessor_order_ids,
+                "remaining_source_quantities": {lot_id: float(available_by_lot[lot_id]) for lot_id in source_lot_ids},
+            }
+            if predecessor_order_ids
+            else {}
+        )
         dedupe_input = {
             "account_scope": account_scope,
             "account_generation": account_generation,
             "origin": origin,
             "source_lot_ids": source_lot_ids,
             "trigger_generation": trigger_generation,
+            **generation_context,
         }
         digest = content_sha256(dedupe_input)
         execution_key = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:execution:{digest}")
@@ -1337,10 +1505,7 @@ class ProtectiveExecutionService(DecisionExecutionService):
         if existing is not None:
             self.validate_order(existing)
             return self._response_for(existing)
-        available = sum(
-            (Decimal(str(lot.open_quantity)) - Decimal(str(lot.reserved_close_quantity)) for lot in lots),
-            Decimal(0),
-        )
+        available = sum(available_by_lot.values(), Decimal(0))
         requested = available if quantity is None else Decimal(str(_finite_positive(quantity, "protective quantity")))
         close_quantity = min(available, requested)
         if close_quantity <= 0:
@@ -1450,6 +1615,7 @@ class ProtectiveExecutionService(DecisionExecutionService):
                     "quantity": float(close_quantity),
                     "source_lot_ids": source_lot_ids,
                     "source_decision_ids": source_decision_ids,
+                    **generation_context,
                 },
             )
         )
