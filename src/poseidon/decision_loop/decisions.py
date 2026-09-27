@@ -17,7 +17,7 @@ from pydantic import (
 from pydantic import (
     ValidationError as PydanticValidationError,
 )
-from sqlalchemy import text
+from sqlalchemy import and_, or_, select, text
 
 from poseidon.api.auth import AuthPrincipal
 from poseidon.decision_loop.evaluation import TERMINAL_STATUSES, verify_complete_run
@@ -30,9 +30,14 @@ from poseidon.decision_loop.manifest import (
     timestamp,
     validate_manifest,
 )
+from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_run import EvaluationRun
+from poseidon.models.fill_allocation import FillAllocation
+from poseidon.models.order import OrderRecord
+from poseidon.models.order_fill import OrderFillRecord
+from poseidon.models.position_lot import PositionLot
 from poseidon.models.research_revision import ResearchRevision
 from poseidon.models.strategy_version import StrategyVersion
 
@@ -734,11 +739,81 @@ class DecisionService:
                     "research": research,
                 }
             )
-        events = (
-            self.session.query(DecisionEvent)
-            .filter_by(decision_id=decision.id)
-            .order_by(DecisionEvent.created_at, DecisionEvent.id)
-            .all()
+        scoped_orders = self.session.scalars(
+            select(OrderRecord)
+            .where(OrderRecord.account_scope == decision.account_scope)
+            .order_by(OrderRecord.created_at, OrderRecord.id)
+        ).all()
+        orders = [
+            order
+            for order in scoped_orders
+            if order.decision_id == decision.id
+            or str(decision.id) in (order.protective_context_json or {}).get("source_decision_ids", [])
+        ]
+        linked_event_filters = []
+        for order in orders:
+            context = order.protective_context_json
+            digest = context.get("dedupe_sha256") if isinstance(context, dict) else None
+            if (
+                order.decision_id is not None
+                and isinstance(digest, str)
+                and len(digest) == 64
+                and context.get("origin") == order.order_origin
+            ):
+                linked_event_filters.append(
+                    and_(
+                        DecisionEvent.decision_id == order.decision_id,
+                        DecisionEvent.event_type == f"protective_{digest[:13]}",
+                    )
+                )
+        event_filter = DecisionEvent.decision_id == decision.id
+        if linked_event_filters:
+            event_filter = or_(event_filter, *linked_event_filters)
+        events = self.session.scalars(
+            select(DecisionEvent).where(event_filter).order_by(DecisionEvent.created_at, DecisionEvent.id)
+        ).all()
+        order_ids = [order.id for order in orders]
+        fills = (
+            self.session.scalars(
+                select(OrderFillRecord)
+                .where(OrderFillRecord.order_id.in_(order_ids))
+                .order_by(OrderFillRecord.fill_time, OrderFillRecord.id)
+            ).all()
+            if order_ids
+            else []
+        )
+        fill_ids = [fill.id for fill in fills]
+        allocations = (
+            self.session.scalars(
+                select(FillAllocation)
+                .where(FillAllocation.closing_fill_id.in_(fill_ids))
+                .order_by(FillAllocation.created_at, FillAllocation.id)
+            ).all()
+            if fill_ids
+            else []
+        )
+        lot_ids = {allocation.position_lot_id for allocation in allocations}
+        for order in orders:
+            lot_ids.update(
+                uuid.UUID(value) for value in (order.protective_context_json or {}).get("source_lot_ids", [])
+            )
+        lots = self.session.scalars(
+            select(PositionLot)
+            .where((PositionLot.opening_decision_id == decision.id) | (PositionLot.id.in_(lot_ids)))
+            .order_by(PositionLot.opened_at, PositionLot.id)
+        ).all()
+        account_generations = sorted({order.account_generation for order in orders if order.account_generation})
+        reconciliations = (
+            self.session.scalars(
+                select(AccountReconciliation)
+                .where(
+                    AccountReconciliation.account_scope == decision.account_scope,
+                    AccountReconciliation.account_generation.in_(account_generations),
+                )
+                .order_by(AccountReconciliation.as_of, AccountReconciliation.id)
+            ).all()
+            if account_generations
+            else []
         )
         return {
             "decision": {
@@ -764,6 +839,92 @@ class DecisionService:
             },
             "manifest": {"id": str(manifest.id), "content_sha256": manifest.content_sha256},
             "evaluations": evaluations,
+            "execution_key": str(decision.execution_key) if decision.execution_key is not None else None,
+            "execution_keys": sorted(
+                {
+                    str(value)
+                    for value in (decision.execution_key, *(order.execution_key for order in orders))
+                    if value is not None
+                }
+            ),
+            "orders": [
+                {
+                    "id": str(order.id),
+                    "decision_id": str(order.decision_id) if order.decision_id is not None else None,
+                    "execution_key": str(order.execution_key) if order.execution_key is not None else None,
+                    "client_order_ref": order.client_order_ref,
+                    "intent_sha256": order.intent_sha256,
+                    "order_origin": order.order_origin,
+                    "market": order.market,
+                    "symbol": order.symbol,
+                    "instrument": order.instrument,
+                    "side": order.side,
+                    "action": order.action,
+                    "quantity": order.quantity,
+                    "status": order.status,
+                    "reconciliation_status": order.reconciliation_status,
+                    "reservation_status": order.reservation_status,
+                    "reserved_quantity": order.reserved_quantity,
+                    "submit_attempted_at": (
+                        iso_time(_stored_time(order.submit_attempted_at, "submit_attempted_at"), "submit_attempted_at")
+                        if order.submit_attempted_at is not None
+                        else None
+                    ),
+                    "protective_context_json": (
+                        json.loads(canonical_json(order.protective_context_json))
+                        if order.protective_context_json is not None
+                        else None
+                    ),
+                }
+                for order in orders
+            ],
+            "fills": [
+                {
+                    "id": str(fill.id),
+                    "order_id": str(fill.order_id),
+                    "broker_fill_id": fill.broker_fill_id,
+                    "fill_quantity": fill.fill_quantity,
+                    "fill_price": fill.fill_price,
+                    "fill_time": iso_time(_stored_time(fill.fill_time, "fill_time"), "fill_time"),
+                    "projection_status": fill.projection_status,
+                }
+                for fill in fills
+            ],
+            "lots": [
+                {
+                    "id": str(lot.id),
+                    "opening_fill_id": str(lot.opening_fill_id),
+                    "opening_decision_id": str(lot.opening_decision_id),
+                    "original_quantity": lot.original_quantity,
+                    "open_quantity": lot.open_quantity,
+                    "reserved_close_quantity": lot.reserved_close_quantity,
+                    "cost_basis_sha256": content_sha256(lot.cost_basis_json),
+                }
+                for lot in lots
+            ],
+            "allocations": [
+                {
+                    "id": str(allocation.id),
+                    "closing_fill_id": str(allocation.closing_fill_id),
+                    "position_lot_id": str(allocation.position_lot_id),
+                    "closing_decision_id": str(allocation.closing_decision_id),
+                    "quantity": allocation.quantity,
+                    "realized_cost_sha256": content_sha256(allocation.realized_cost_json),
+                }
+                for allocation in allocations
+            ],
+            "reconciliations": [
+                {
+                    "id": str(row.id),
+                    "status": row.status,
+                    "policy_sha256": row.policy_sha256,
+                    "broker_state_watermark": row.broker_state_watermark,
+                    "internal_state_watermark": row.internal_state_watermark,
+                    "broker_snapshot_sha256": row.broker_snapshot_sha256,
+                    "as_of": iso_time(_stored_time(row.as_of, "reconciliation.as_of"), "reconciliation.as_of"),
+                }
+                for row in reconciliations
+            ],
             "events": [
                 {
                     "id": str(event.id),

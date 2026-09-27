@@ -65,6 +65,158 @@ def _ordinary_execution_authorized(scope, market, generation):
     )
 
 
+def _protective_execution_route(mode, *, enabled, approved_identity, legacy_allowed):
+    if mode in {"legacy", "shadow"}:
+        return "legacy"
+    if mode == "decision" and not enabled:
+        return "skip"
+    if approved_identity:
+        return "durable"
+    return "legacy" if legacy_allowed else "skip"
+
+
+def _configured_protective_route(market):
+    scope = settings.decision_loop_approved_account_scope
+    generation = settings.decision_loop_approved_account_generation
+    approved_identity = bool(
+        scope
+        and generation
+        and settings.decision_loop_approved_market
+        and market == settings.decision_loop_approved_market
+    )
+    return _protective_execution_route(
+        settings.decision_loop_execution_mode,
+        enabled=settings.decision_loop_execution_enabled,
+        approved_identity=approved_identity,
+        legacy_allowed=scope in settings.decision_loop_legacy_protective_scopes,
+    )
+
+
+def _run_durable_protective(*, origin, market, triggered):
+    """Commit protective intents per lot identity, then enqueue UUID-only submission."""
+    from poseidon.api.auth import AuthPrincipal
+    from poseidon.decision_loop.execution import ProtectiveExecutionService
+    from poseidon.decision_loop.manifest import content_sha256
+
+    scope = settings.decision_loop_approved_account_scope
+    generation = settings.decision_loop_approved_account_generation
+    principal = AuthPrincipal("system:protective-worker", frozenset({"decision-worker"}), frozenset({scope}))
+    order_ids = []
+    for identity in sorted(triggered):
+        identity_market, symbol, instrument, side = identity
+        if identity_market != market:
+            raise ValueError("protective trigger market changed")
+        price = triggered[identity]
+        trigger_generation = content_sha256(
+            {
+                "origin": origin,
+                "identity": {
+                    "market": market,
+                    "symbol": symbol,
+                    "instrument": instrument,
+                    "side": side,
+                },
+                "price": price,
+            }
+        )
+        with SessionLocal() as session, session.begin():
+            response = ProtectiveExecutionService(session).materialize(
+                account_scope=scope,
+                account_generation=generation,
+                market=market,
+                symbol=symbol,
+                instrument=instrument,
+                side=side,
+                origin=origin,
+                trigger_generation=trigger_generation,
+                price=price,
+                principal=principal,
+            )
+        order_ids.extend(response["order_ids"])
+    for order_id in order_ids:
+        submit_decision_order.delay(order_id)
+    return order_ids
+
+
+def _durable_protective_triggers(market):
+    """Evaluate the configured account's durable lots without legacy position state."""
+    from collections import defaultdict
+
+    from sqlalchemy import select
+
+    from poseidon.decision_loop.execution import ExecutionConflictError, ProtectiveExecutionService
+    from poseidon.models.position_lot import PositionLot
+    from poseidon.models.strategy_version import StrategyVersion
+
+    scope = settings.decision_loop_approved_account_scope
+    generation = settings.decision_loop_approved_account_generation
+    with SessionLocal() as session:
+        lots = session.scalars(
+            select(PositionLot)
+            .where(
+                PositionLot.account_scope == scope,
+                PositionLot.account_generation == generation,
+                PositionLot.market == market,
+                PositionLot.open_quantity > 0,
+            )
+            .order_by(PositionLot.symbol, PositionLot.instrument, PositionLot.side, PositionLot.opened_at)
+        ).all()
+        if not lots:
+            return {"checked": 0, "triggered": {}}
+        source_settings = {}
+        service = ProtectiveExecutionService(session)
+        for decision_id in sorted({lot.opening_decision_id for lot in lots}, key=str):
+            try:
+                decision, _policy = service._policy(decision_id, scope, generation, market)
+            except ExecutionConflictError:
+                return {"checked": len(lots), "triggered": {}, "skipped": "protective_policy_unresolved"}
+            version = session.get(StrategyVersion, decision.strategy_version_id)
+            config = version.config_json if isinstance(version.config_json, dict) else {}
+            risk = config.get("protective_exit")
+            if not isinstance(risk, dict):
+                return {"checked": len(lots), "triggered": {}, "skipped": "protective_policy_unresolved"}
+            required = ("stop_loss_pct",) if market == "tw_stock" else ("leverage", "margin_ratio_threshold")
+            values = tuple(risk.get(field) for field in required)
+            if any(
+                isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0
+                for value in values
+            ) or (market == "tw_stock" and values[0] >= 1):
+                return {"checked": len(lots), "triggered": {}, "skipped": "protective_policy_unresolved"}
+            source_settings[decision_id] = values
+        grouped = defaultdict(list)
+        for lot in lots:
+            grouped[(market, lot.symbol, lot.instrument, lot.side)].append(lot)
+        symbols = sorted({identity[1] for identity in grouped})
+    prices = _get_latest_prices(symbols) if market == "tw_stock" else _get_perp_mark_prices(symbols)
+    triggered = {}
+    for identity, identity_lots in grouped.items():
+        _identity_market, symbol, _instrument, side = identity
+        price = prices.get(symbol)
+        if price is None or not math.isfinite(price) or price <= 0:
+            continue
+        quantity = sum(lot.open_quantity for lot in identity_lots)
+        entry = sum(lot.open_quantity * lot.cost_basis_json["unit_price"] for lot in identity_lots) / quantity
+        if market == "tw_stock":
+            stop_loss = min(source_settings[lot.opening_decision_id][0] for lot in identity_lots)
+            breached = price <= entry * (1 - stop_loss) if side == "long" else price >= entry * (1 + stop_loss)
+        else:
+            direction = 1 if side == "long" else -1
+            breached = any(
+                (
+                    lot.cost_basis_json["unit_price"] / source_settings[lot.opening_decision_id][0]
+                    + (price - lot.cost_basis_json["unit_price"]) * direction
+                )
+                / price
+                < source_settings[lot.opening_decision_id][1]
+                for lot in identity_lots
+            )
+        if breached:
+            triggered[identity] = price
+    if market == "crypto_perp" and triggered:
+        triggered = {identity: prices[identity[1]] for identity in grouped if identity[1] in prices}
+    return {"checked": len(grouped), "triggered": triggered}
+
+
 def _approved_ordinary_candidate(session, market, now):
     from sqlalchemy import select
 
@@ -294,15 +446,30 @@ def submit_decision_order(order_id: str) -> dict:
     persisted_id = uuid.UUID(order_id)
     from poseidon.decision_loop.reconciliation import submit_or_reconcile_order
     from poseidon.models.order import OrderRecord
+    from poseidon.orders.schemas import DURABLE_PROTECTIVE_ORIGINS
 
     with SessionLocal() as session:
         order = session.get(OrderRecord, persisted_id)
-        if order is None or order.order_origin != "decision":
+        if order is None or order.order_origin not in {"decision", *DURABLE_PROTECTIVE_ORIGINS}:
             raise ValueError("decision order does not exist")
-        if order.submit_attempted_at is None and not _ordinary_execution_authorized(
-            order.account_scope, order.market, order.account_generation
-        ):
-            return {"skipped": "ordinary_execution_not_authorized"}
+        if order.submit_attempted_at is None:
+            authorized = (
+                _ordinary_execution_authorized(order.account_scope, order.market, order.account_generation)
+                if order.order_origin == "decision"
+                else _configured_protective_route(order.market) == "durable"
+                and (order.account_scope, order.account_generation)
+                == (
+                    settings.decision_loop_approved_account_scope,
+                    settings.decision_loop_approved_account_generation,
+                )
+            )
+            if not authorized:
+                reason = (
+                    "ordinary_execution_not_authorized"
+                    if order.order_origin == "decision"
+                    else "durable_execution_not_authorized"
+                )
+                return {"skipped": reason}
         market = order.market
     return submit_or_reconcile_order(SessionLocal, persisted_id, _decision_paper_adapter(market))
 
@@ -2027,6 +2194,30 @@ def portfolio_stop_loss_monitor() -> dict:
     if current_minutes < trading_start or current_minutes > trading_end:
         return {"skipped": "outside_trading_hours"}
 
+    route = _configured_protective_route("tw_stock")
+    if route == "durable":
+        protection = _durable_protective_triggers("tw_stock")
+        triggered = protection["triggered"]
+        order_ids = (
+            _run_durable_protective(
+                origin="stop_loss",
+                market="tw_stock",
+                triggered=triggered,
+            )
+            if triggered
+            else []
+        )
+        result = {
+            "checked": protection["checked"],
+            "stopped_out": sorted({identity[1] for identity in triggered}),
+            "durable_order_ids": order_ids,
+        }
+        if "skipped" in protection:
+            result["skipped"] = protection["skipped"]
+        return result
+    if route == "skip":
+        return {"checked": 0, "stopped_out": [], "skipped": "protective_scope_not_authorized"}
+
     position_tracker = _build_position_tracker()
     holdings = position_tracker.current_holdings()
 
@@ -2318,6 +2509,30 @@ def perp_liquidation_monitor() -> dict:
     from poseidon.strategies.portfolio.schemas import RebalanceOrder
 
     MARGIN_THRESHOLD = 0.15  # 15% threshold
+
+    route = _configured_protective_route("crypto_perp")
+    if route == "durable":
+        protection = _durable_protective_triggers("crypto_perp")
+        triggered = protection["triggered"]
+        order_ids = (
+            _run_durable_protective(
+                origin="liquidation",
+                market="crypto_perp",
+                triggered=triggered,
+            )
+            if triggered
+            else []
+        )
+        result = {
+            "checked": protection["checked"],
+            "closed": [],
+            "durable_order_ids": order_ids,
+        }
+        if "skipped" in protection:
+            result["skipped"] = protection["skipped"]
+        return result
+    if route == "skip":
+        return {"checked": 0, "closed": [], "skipped": "protective_scope_not_authorized"}
 
     # 1. Rebuild perp adapter from DB
     adapter = _build_perp_adapter_from_db()

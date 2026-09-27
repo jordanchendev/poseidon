@@ -17,7 +17,13 @@ from poseidon.broker.base import (
     BrokerFillSnapshot,
     BrokerOrderSnapshot,
 )
-from poseidon.decision_loop.execution import DecisionExecutionService, ExecutionConflictError, internal_state_watermark
+from poseidon.decision_loop.execution import (
+    PROTECTIVE_ORIGINS,
+    DecisionExecutionService,
+    ExecutionConflictError,
+    ProtectiveExecutionService,
+    internal_state_watermark,
+)
 from poseidon.decision_loop.manifest import canonical_json, content_sha256, iso_time, timestamp
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_event import DecisionEvent
@@ -236,6 +242,14 @@ class ReconciliationService:
         return order
 
     def _validate_durable_intent(self, order: OrderRecord) -> None:
+        if order.order_origin in PROTECTIVE_ORIGINS:
+            try:
+                ProtectiveExecutionService(self.session).validate_order(order)
+            except ExecutionConflictError as error:
+                raise ReconciliationConflictError("durable order intent changed after materialization") from error
+            return
+        if order.order_origin != "decision":
+            raise ReconciliationConflictError("durable order intent changed after materialization")
         decision = self.session.get(DecisionRecord, order.decision_id)
         if decision is None:
             raise ReconciliationConflictError("durable order intent changed after materialization")
@@ -272,7 +286,13 @@ class ReconciliationService:
 
     def prepare_attempt(self, order_id, adapter: BrokerAdapter, *, now=None) -> PreparedAttempt:
         """Lock and mark one never-attempted intent before any adapter I/O."""
-        order = self._locked_order(order_id)
+        # Fail fast on corrupted identity without taking a row lock in the
+        # opposite order; the authoritative validation repeats under locks.
+        probe = self.session.get(OrderRecord, order_id)
+        if probe is None:
+            raise ReconciliationConflictError("decision order does not exist")
+        self._validate_durable_intent(probe)
+        order = self._locked_order_and_account(order_id)
         self._validate_durable_intent(order)
         dto = _order_dto(order)
         try:

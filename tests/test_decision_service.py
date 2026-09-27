@@ -47,6 +47,11 @@ def db():
             "evaluation_snapshots",
             "decision_records",
             "decision_events",
+            "orders",
+            "order_fills",
+            "position_lots",
+            "fill_allocations",
+            "account_reconciliations",
         )
     ]
     Base.metadata.create_all(engine, tables=tables)
@@ -900,7 +905,12 @@ def test_get_pending_and_trace_are_account_scoped_and_frozen(db):
     assert sum(item["selected"] for item in trace["evaluations"]) == 1
     assert {item["research"]["research_status"] for item in trace["evaluations"]} == {"not_required"}
     assert [item["event_type"] for item in trace["events"]] == ["created"]
-    assert not {"orders", "claims", "fills"}.intersection(trace)
+    assert "claims" not in trace
+    assert trace["orders"] == []
+    assert trace["fills"] == []
+    assert trace["lots"] == []
+    assert trace["allocations"] == []
+    assert trace["reconciliations"] == []
 
     with pytest.raises(HTTPException) as error:
         service.trace(decision.id, principal=manager(scope="paper:other"))

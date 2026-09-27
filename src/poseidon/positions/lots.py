@@ -14,6 +14,7 @@ from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
 from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.position_lot import PositionLot
+from poseidon.orders.schemas import DURABLE_PROTECTIVE_ORIGINS
 
 IDENTITY_FIELDS = ("account_scope", "account_generation", "market", "symbol", "instrument", "side")
 
@@ -43,7 +44,7 @@ class FillProjectionService:
         ):
             raise FillProjectionConflictError("fill account or persisted intent is invalid")
         if (
-            order.order_origin != "decision"
+            order.order_origin not in {"decision", *DURABLE_PROTECTIVE_ORIGINS}
             or order.broker_mode != "paper"
             or not order.client_order_ref
             or not order.broker_order_id

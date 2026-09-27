@@ -23,7 +23,7 @@ from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.paper_broker_fill import PaperBrokerFill
 from poseidon.models.paper_broker_order import PaperBrokerOrder
 from poseidon.models.paper_cash_movement import PaperCashMovement
-from poseidon.orders.schemas import Fill, Order
+from poseidon.orders.schemas import DURABLE_PROTECTIVE_ORIGINS, Fill, Order
 
 PAPER_RECONCILIATION_CAPABILITIES = BrokerCapabilities(
     stable_client_reference=True,
@@ -323,8 +323,12 @@ class PaperBrokerAdapter(BrokerAdapter):
 
     def place_order(self, order: Order, *, client_order_ref: str | None = None):
         """Use durable truth for decision orders and memory only for legacy calls."""
-        if order.order_origin == "decision" and client_order_ref is None:
-            raise BrokerCapabilityError("decision execution requires the stored client reference")
+        if (
+            order.order_origin in {"decision", *DURABLE_PROTECTIVE_ORIGINS}
+            and order.execution_key is not None
+            and client_order_ref is None
+        ):
+            raise BrokerCapabilityError("durable execution requires the stored client reference")
         if client_order_ref is not None:
             self._require_decision_submission(order, client_order_ref)
             if order.market != "tw_stock" or order.instrument != "spot":

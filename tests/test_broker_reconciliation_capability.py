@@ -155,6 +155,57 @@ def test_decision_origin_is_part_of_the_order_dto():
     assert "decision" in get_args(annotation)
 
 
+@pytest.mark.parametrize("origin", ["stop_loss", "liquidation", "manual_emergency"])
+@pytest.mark.parametrize(
+    ("adapter_type", "market", "instrument"),
+    [
+        (PaperBrokerAdapter, "tw_stock", "spot"),
+        (PerpPaperAdapter, "crypto_perp", "BTC-USDT"),
+    ],
+)
+def test_durable_protective_adapter_requires_stored_client_ref(
+    sessions,
+    origin,
+    adapter_type,
+    market,
+    instrument,
+):
+    order = _decision_order(
+        order_origin=origin,
+        market=market,
+        instrument=instrument,
+        action="sell",
+        intent_json={"frozen_intent": {"action": "exit"}, "economics": {}},
+    )
+
+    with pytest.raises(BrokerCapabilityError, match="stored client reference"):
+        adapter_type(sessions).place_order(order)
+
+
+def test_legacy_protective_without_durable_identity_keeps_paper_path(sessions, monkeypatch):
+    repo = type(
+        "Repo",
+        (),
+        {"read_ohlcv": lambda _self, *_args: pd.DataFrame({"close": [612.0]})},
+    )()
+    monkeypatch.setattr(
+        "poseidon.data.remote_repository.RemoteDataRepository.from_settings",
+        lambda: repo,
+    )
+    order = _decision_order(
+        order_origin="stop_loss",
+        decision_id=None,
+        execution_key=None,
+        client_order_ref=None,
+        account_scope=None,
+        account_generation=None,
+        intent_json=None,
+        intent_sha256=None,
+    )
+
+    assert PaperBrokerAdapter(sessions).place_order(order)
+
+
 def test_stock_paper_acceptance_is_independent_and_restart_safe(sessions, monkeypatch):
     _seed_account(sessions)
     repo = type(

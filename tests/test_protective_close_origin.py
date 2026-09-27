@@ -3,7 +3,7 @@
 Closes the audit gap surfaced by prior findings: when an order has signal_id IS NULL
 the auditor must be able to distinguish:
 
-* Cat-B legitimate protective close (signal_id NULL + origin in {stop_loss, liquidation})
+* Cat-B legitimate protective close (signal_id NULL + exact durable protective origin)
 * Wiring breach (signal_id NULL + origin == 'signal')
 
 Test inventory:
@@ -268,7 +268,7 @@ class TestAuditQuerySemantics:
         breach: list[Order] = []
         matched: list[Order] = []
         for o in captured:
-            if o.signal_id is None and o.order_origin in ("stop_loss", "liquidation", "manual"):
+            if o.signal_id is None and o.order_origin in ("stop_loss", "liquidation", "manual_emergency"):
                 protective.append(o)
             elif o.signal_id is None and o.order_origin == "signal":
                 breach.append(o)

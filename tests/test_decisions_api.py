@@ -127,6 +127,12 @@ class StubDecisionService:
         return {
             "decision": {"id": str(decision_id)},
             "evaluation_run": {"id": str(self.decision.evaluation_run_id)},
+            "execution_key": None,
+            "orders": [],
+            "fills": [],
+            "lots": [],
+            "allocations": [],
+            "reconciliations": [],
             "events": [{"event_type": "created"}],
         }
 
@@ -446,7 +452,16 @@ def test_real_app_exposes_only_the_decision_contract(real_api):
         "/api/v1/decisions/{decision_id}/trace": {"get"},
     }
 
-    for suffix in ("submit", "claim", "execute", "release", "orders"):
+    for suffix in (
+        "submit",
+        "claim",
+        "execute",
+        "retry",
+        "release",
+        "orders",
+        "manual-order",
+        "manual-emergency",
+    ):
         response = client.post(
             f"/api/v1/decisions/{service.decision.id}/{suffix}",
             headers=_headers(MANAGER_KEY),
@@ -454,7 +469,7 @@ def test_real_app_exposes_only_the_decision_contract(real_api):
         assert response.status_code in (404, 405)
 
 
-def test_real_app_trace_is_decision_only(real_api):
+def test_real_app_trace_exposes_read_only_execution_audit_only(real_api):
     client, _session, service = real_api
     response = client.get(
         f"/api/v1/decisions/{service.decision.id}/trace",
@@ -469,6 +484,14 @@ def test_real_app_trace_is_decision_only(real_api):
             return set().union(*(keys(item) for item in value))
         return set()
 
+    assert {
+        "execution_key",
+        "orders",
+        "fills",
+        "lots",
+        "allocations",
+        "reconciliations",
+    }.issubset(keys(response.json()))
     assert keys(response.json()).isdisjoint(
-        {"order", "orders", "fill", "fills", "broker", "claim", "activation", "release", "dsh"}
+        {"credential", "credentials", "broker_snapshot_json", "internal_snapshot_json", "dsh"}
     )

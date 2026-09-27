@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from poseidon.orders.state_machine import OrderStatus
 
+DURABLE_PROTECTIVE_ORIGINS = frozenset({"stop_loss", "liquidation", "manual_emergency"})
+
 
 @dataclass
 class Order:

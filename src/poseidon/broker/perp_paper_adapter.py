@@ -21,7 +21,7 @@ from poseidon.broker.paper_adapter import (
     _accept_decision_order,
     _existing_replay,
 )
-from poseidon.orders.schemas import Fill, Order
+from poseidon.orders.schemas import DURABLE_PROTECTIVE_ORIGINS, Fill, Order
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +124,12 @@ class PerpPaperAdapter(BrokerAdapter):
 
         Raises ValueError if no perpetual price data exists for the symbol.
         """
-        if order.order_origin == "decision" and client_order_ref is None:
-            raise BrokerCapabilityError("decision execution requires the stored client reference")
+        if (
+            order.order_origin in {"decision", *DURABLE_PROTECTIVE_ORIGINS}
+            and order.execution_key is not None
+            and client_order_ref is None
+        ):
+            raise BrokerCapabilityError("durable execution requires the stored client reference")
         if client_order_ref is not None:
             self._require_decision_submission(order, client_order_ref)
             if order.market != "crypto_perp":

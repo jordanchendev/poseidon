@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from poseidon.decision_loop.manifest import content_sha256
-from poseidon.orders.schemas import Fill, Order
+from poseidon.orders.schemas import DURABLE_PROTECTIVE_ORIGINS, Fill, Order
 
 
 class BrokerCapabilityError(ValueError):
@@ -128,14 +128,18 @@ class BrokerAdapter(ABC):
             raise BrokerCapabilityError(f"missing reconciliation contract: {missing}")
         if order.broker_mode != "paper":
             raise BrokerCapabilityError("decision execution requires broker_mode=paper")
-        if order.order_origin != "decision":
-            raise BrokerCapabilityError("decision execution requires order_origin=decision")
+        if order.order_origin not in {"decision", *DURABLE_PROTECTIVE_ORIGINS}:
+            raise BrokerCapabilityError("decision execution requires order_origin=decision or exact protective origin")
         if not client_order_ref or order.client_order_ref != client_order_ref:
             raise BrokerCapabilityError("decision execution requires the stored client reference")
         if not order.account_scope or not order.account_generation or not order.instrument:
             raise BrokerCapabilityError("decision execution requires complete account and instrument identity")
         if order.decision_id is None or order.execution_key is None:
             raise BrokerCapabilityError("decision execution requires durable decision identity")
+        if order.order_origin in DURABLE_PROTECTIVE_ORIGINS:
+            frozen = (order.intent_json or {}).get("frozen_intent", {})
+            if frozen.get("action") not in {"reduce", "exit"} or not order.protective_context_json:
+                raise BrokerCapabilityError("protective execution requires reduction-only durable context")
         try:
             valid_intent = bool(order.intent_json) and order.intent_sha256 == content_sha256(order.intent_json)
         except ValueError as error:

@@ -30,8 +30,10 @@ from poseidon.models.paper_broker_order import PaperBrokerOrder
 from poseidon.models.paper_cash_movement import PaperCashMovement
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy_version import StrategyVersion
+from poseidon.orders.schemas import DURABLE_PROTECTIVE_ORIGINS
 
 ACTIVE_RESERVATION_STATUSES = frozenset({"pending_submit", "reconciliation_required", "submitted", "partially_filled"})
+PROTECTIVE_ORIGINS = DURABLE_PROTECTIVE_ORIGINS
 
 
 class ExecutionConflictError(RuntimeError):
@@ -680,3 +682,423 @@ class DecisionExecutionService:
             orders.append(order)
         self.session.flush()
         return self._response(decision, orders)
+
+
+class ProtectiveExecutionService(DecisionExecutionService):
+    """Materialize one account-locked, reduction-only protective intent."""
+
+    @staticmethod
+    def _response_for(order):
+        return {
+            "status": order.status,
+            "execution_key": str(order.execution_key),
+            "order_ids": [str(order.id)],
+            "client_order_refs": [order.client_order_ref],
+        }
+
+    def _policy(self, decision_id, account_scope, account_generation, market):
+        decision = self.session.get(DecisionRecord, decision_id)
+        version = None if decision is None else self.session.get(StrategyVersion, decision.strategy_version_id)
+        try:
+            if decision is None or version is None:
+                raise ValueError("missing decision provenance")
+            version.verify_content()
+            policy = DecisionPolicy.model_validate(version.policy_json)
+        except (TypeError, ValueError, PydanticValidationError) as error:
+            raise ExecutionConflictError("protective source decision policy is invalid") from error
+        reconciliation = policy.reconciliation
+        if (
+            decision.account_scope != account_scope
+            or policy.account_scope != account_scope
+            or policy.market != market
+            or reconciliation is None
+            or reconciliation.account_generation != account_generation
+            or not policy.protective_exit.allowed_without_approval
+            or decision.policy_sha256 != content_sha256(version.policy_json)
+        ):
+            raise ExecutionConflictError("protective source decision is outside the approved paper scope")
+        return decision, policy
+
+    @staticmethod
+    def _dedupe_input(order_origin, context):
+        return {
+            "account_scope": context["account_scope"],
+            "account_generation": context["account_generation"],
+            "origin": order_origin,
+            "source_lot_ids": context["source_lot_ids"],
+            "trigger_generation": context["trigger_generation"],
+        }
+
+    def validate_order(self, order):
+        """Revalidate a stored protective intent before attempt or projection."""
+        if order.order_origin not in PROTECTIVE_ORIGINS:
+            raise ExecutionConflictError("protective order origin is not exact-allowlisted")
+        if order.broker_mode != "paper" or order.signal_id is not None:
+            raise ExecutionConflictError("protective order must be paper and non-signal")
+        intent = order.intent_json
+        context = order.protective_context_json
+        if (
+            not isinstance(intent, dict)
+            or order.intent_sha256 != content_sha256(intent)
+            or not isinstance(intent.get("frozen_intent"), dict)
+            or not isinstance(intent.get("economics"), dict)
+            or not isinstance(context, dict)
+            or set(context)
+            != {
+                "account_scope",
+                "account_generation",
+                "identity",
+                "origin",
+                "trigger_generation",
+                "source_lot_ids",
+                "source_decision_ids",
+                "dedupe_sha256",
+            }
+        ):
+            raise ExecutionConflictError("protective durable content is invalid")
+        frozen = intent["frozen_intent"]
+        identity = {
+            "market": order.market,
+            "symbol": order.symbol,
+            "instrument": order.instrument,
+            "side": order.side,
+        }
+        if (
+            frozen
+            != {
+                **identity,
+                "action": frozen.get("action"),
+                "target_weight": 0.0,
+                "order_type": "market",
+            }
+            or frozen["action"] not in {"reduce", "exit"}
+            or context["identity"] != identity
+            or context["account_scope"] != order.account_scope
+            or context["account_generation"] != order.account_generation
+            or context["origin"] != order.order_origin
+            or not isinstance(context["trigger_generation"], str)
+            or not context["trigger_generation"]
+            or context["trigger_generation"] != context["trigger_generation"].strip()
+        ):
+            raise ExecutionConflictError("protective intent is not reduction-only or changed identity")
+        try:
+            source_lot_ids = [uuid.UUID(value) for value in context["source_lot_ids"]]
+            source_decision_ids = [uuid.UUID(value) for value in context["source_decision_ids"]]
+        except (TypeError, ValueError) as error:
+            raise ExecutionConflictError("protective source provenance is invalid") from error
+        if (
+            not source_lot_ids
+            or len(set(source_lot_ids)) != len(source_lot_ids)
+            or not source_decision_ids
+            or context["source_decision_ids"] != sorted(context["source_decision_ids"])
+        ):
+            raise ExecutionConflictError("protective source provenance is invalid")
+        digest = content_sha256(self._dedupe_input(order.order_origin, context))
+        expected_key = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:execution:{digest}")
+        expected_id = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:order:{digest}")
+        if (
+            context["dedupe_sha256"] != digest
+            or order.execution_key != expected_key
+            or order.id != expected_id
+            or order.client_order_ref != f"PX-{digest}"
+            or order.decision_id != min(source_decision_ids, key=str)
+        ):
+            raise ExecutionConflictError("protective deterministic identity changed")
+        lots = self.session.scalars(
+            select(PositionLot)
+            .where(PositionLot.id.in_(source_lot_ids))
+            .order_by(PositionLot.opened_at, PositionLot.id)
+        ).all()
+        if [lot.id for lot in lots] != source_lot_ids:
+            raise ExecutionConflictError("protective source lot set changed")
+        if (
+            any(
+                (
+                    lot.account_scope,
+                    lot.account_generation,
+                    lot.market,
+                    lot.symbol,
+                    lot.instrument,
+                    lot.side,
+                )
+                != (
+                    order.account_scope,
+                    order.account_generation,
+                    order.market,
+                    order.symbol,
+                    order.instrument,
+                    order.side,
+                )
+                for lot in lots
+            )
+            or sorted({str(lot.opening_decision_id) for lot in lots}) != context["source_decision_ids"]
+        ):
+            raise ExecutionConflictError("protective source lot ownership changed")
+        policies = [
+            self._policy(decision_id, order.account_scope, order.account_generation, order.market)
+            for decision_id in source_decision_ids
+        ]
+        currency = policies[0][1].reconciliation.currency
+        if any(policy.reconciliation.currency != currency for _, policy in policies):
+            raise ExecutionConflictError("protective source policies disagree")
+        quantity = _finite_positive(order.quantity, "protective quantity")
+        economics = intent["economics"]
+        if (
+            order.reserved_quantity != quantity
+            or economics.get("materialized_quantity") != quantity
+            or economics.get("price") != order.price
+            or order.action != ("sell" if order.side == "long" else "buy")
+            or order.target_weight != 0
+            or order.order_type != "market"
+        ):
+            raise ExecutionConflictError("protective executable economics changed")
+        outstanding, cash = self._outstanding_reservation(order, currency)
+        if cash != 0 or sum((Decimal(str(lot.reserved_close_quantity)) for lot in lots), Decimal(0)) < outstanding:
+            raise ExecutionConflictError("protective close reservation changed")
+        event = self.session.scalar(
+            select(DecisionEvent).where(
+                DecisionEvent.decision_id == order.decision_id,
+                DecisionEvent.event_type == f"protective_{digest[:13]}",
+            )
+        )
+        expected_event_payload = {
+            "kind": "protective_exit_requested",
+            "order_id": str(order.id),
+            "execution_key": str(order.execution_key),
+            "client_order_ref": order.client_order_ref,
+            "intent_sha256": order.intent_sha256,
+            "protective_context_sha256": digest,
+            "origin": order.order_origin,
+            "trigger_generation": context["trigger_generation"],
+            "current_price": order.price,
+            "identity": context["identity"],
+            "action": frozen["action"],
+            "quantity": order.quantity,
+            "source_lot_ids": context["source_lot_ids"],
+            "source_decision_ids": context["source_decision_ids"],
+        }
+        if event is None or event.payload_json != expected_event_payload:
+            raise ExecutionConflictError("protective audit event is missing or changed")
+
+    def materialize(
+        self,
+        *,
+        account_scope,
+        account_generation,
+        market,
+        symbol,
+        instrument,
+        side,
+        origin,
+        trigger_generation,
+        price,
+        principal: AuthPrincipal,
+        action="exit",
+        quantity=None,
+        now=None,
+    ):
+        principal.require_role("decision-worker")
+        principal.require_account_scope(account_scope)
+        if origin not in PROTECTIVE_ORIGINS:
+            raise ExecutionConflictError("protective origin is not exact-allowlisted")
+        if action not in {"reduce", "exit"}:
+            raise ExecutionConflictError("protective intent must be reduction-only")
+        if (
+            not isinstance(trigger_generation, str)
+            or not trigger_generation
+            or trigger_generation != trigger_generation.strip()
+        ):
+            raise ExecutionConflictError("protective trigger generation must be non-empty trimmed text")
+        if market not in {"tw_stock", "crypto_perp"} or side not in {"long", "short"}:
+            raise ExecutionConflictError("protective identity is invalid")
+        current_time = timestamp(now if now is not None else datetime.now(UTC), "now")
+        current_price = _finite_positive(price, "protective price")
+        self._advisory_lock(account_scope, account_generation)
+        account = self.session.scalar(
+            select(PaperBrokerAccount)
+            .where(
+                PaperBrokerAccount.account_scope == account_scope,
+                PaperBrokerAccount.account_generation == account_generation,
+            )
+            .with_for_update()
+        )
+        if account is None:
+            raise ExecutionConflictError("approved paper account generation does not exist")
+        active_source_lot_ids = set()
+        for existing in self.session.scalars(
+            select(OrderRecord).where(
+                OrderRecord.account_scope == account_scope,
+                OrderRecord.account_generation == account_generation,
+                OrderRecord.market == market,
+                OrderRecord.symbol == symbol,
+                OrderRecord.instrument == instrument,
+                OrderRecord.side == side,
+                OrderRecord.order_origin == origin,
+                OrderRecord.reservation_status == "reserved",
+                OrderRecord.status.in_(ACTIVE_RESERVATION_STATUSES),
+            )
+        ):
+            context = existing.protective_context_json
+            if isinstance(context, dict) and context.get("trigger_generation") == trigger_generation:
+                try:
+                    active_source_lot_ids.update(uuid.UUID(value) for value in context["source_lot_ids"])
+                except (KeyError, TypeError, ValueError) as error:
+                    raise ExecutionConflictError("protective source provenance is invalid") from error
+        lots = self.session.scalars(
+            select(PositionLot)
+            .where(
+                PositionLot.account_scope == account_scope,
+                PositionLot.account_generation == account_generation,
+                PositionLot.market == market,
+                PositionLot.symbol == symbol,
+                PositionLot.instrument == instrument,
+                PositionLot.side == side,
+                (PositionLot.open_quantity > 0) | (PositionLot.id.in_(active_source_lot_ids)),
+            )
+            .order_by(PositionLot.opened_at, PositionLot.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).all()
+        if not lots:
+            return {"status": "no_open_lots", "execution_key": None, "order_ids": [], "client_order_refs": []}
+        source_decision_ids = sorted({str(lot.opening_decision_id) for lot in lots})
+        policies = [
+            self._policy(uuid.UUID(decision_id), account_scope, account_generation, market)
+            for decision_id in source_decision_ids
+        ]
+        currency = policies[0][1].reconciliation.currency
+        if account.currency != currency or any(policy.reconciliation.currency != currency for _, policy in policies):
+            raise ExecutionConflictError("protective account terms disagree with source policy")
+        source_lot_ids = [str(lot.id) for lot in lots]
+        dedupe_input = {
+            "account_scope": account_scope,
+            "account_generation": account_generation,
+            "origin": origin,
+            "source_lot_ids": source_lot_ids,
+            "trigger_generation": trigger_generation,
+        }
+        digest = content_sha256(dedupe_input)
+        execution_key = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:execution:{digest}")
+        order_id = uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:order:{digest}")
+        existing = self.session.get(OrderRecord, order_id)
+        if existing is not None:
+            self.validate_order(existing)
+            return self._response_for(existing)
+        available = sum(
+            (Decimal(str(lot.open_quantity)) - Decimal(str(lot.reserved_close_quantity)) for lot in lots),
+            Decimal(0),
+        )
+        requested = available if quantity is None else Decimal(str(_finite_positive(quantity, "protective quantity")))
+        close_quantity = min(available, requested)
+        if close_quantity <= 0:
+            return {"status": "already_reserved", "execution_key": None, "order_ids": [], "client_order_refs": []}
+        anchor = min((uuid.UUID(value) for value in source_decision_ids), key=str)
+        policy = next(policy for decision, policy in policies if decision.id == anchor)
+        multiplier = Decimal("1")
+        sizing_rules = {"quantity_rounding": "whole_share_floor"}
+        if market == "crypto_perp":
+            rule = policy.reconciliation.perp_instrument_rules.get(instrument)
+            if rule is None:
+                raise ExecutionConflictError("owner-frozen perp sizing rules are required")
+            multiplier = Decimal(str(rule.contract_multiplier))
+            sizing_rules = rule.model_dump(mode="json")
+        frozen = {
+            "market": market,
+            "symbol": symbol,
+            "instrument": instrument,
+            "side": side,
+            "action": action,
+            "target_weight": 0.0,
+            "order_type": "market",
+        }
+        intent = json.loads(
+            canonical_json(
+                {
+                    "frozen_intent": frozen,
+                    "economics": {
+                        "price": current_price,
+                        "materialized_quantity": float(close_quantity),
+                        "contract_multiplier": float(multiplier),
+                        "sizing_rules": sizing_rules,
+                    },
+                }
+            )
+        )
+        context = json.loads(
+            canonical_json(
+                {
+                    **dedupe_input,
+                    "identity": {"market": market, "symbol": symbol, "instrument": instrument, "side": side},
+                    "source_decision_ids": source_decision_ids,
+                    "dedupe_sha256": digest,
+                }
+            )
+        )
+        remaining = close_quantity
+        for lot in lots:
+            reservable = Decimal(str(lot.open_quantity)) - Decimal(str(lot.reserved_close_quantity))
+            reserved = min(remaining, reservable)
+            lot.reserved_close_quantity = float(Decimal(str(lot.reserved_close_quantity)) + reserved)
+            remaining -= reserved
+            if remaining <= 0:
+                break
+        if remaining:
+            raise ExecutionConflictError("protective close reservation is incomplete")
+        order = OrderRecord(
+            id=order_id,
+            strategy_name=f"protective:{origin}",
+            symbol=symbol,
+            market=market,
+            action="sell" if side == "long" else "buy",
+            order_type="market",
+            target_weight=0,
+            quantity=float(close_quantity),
+            price=current_price,
+            side=side,
+            status="pending_submit",
+            broker_mode="paper",
+            order_origin=origin,
+            decision_id=anchor,
+            account_scope=account_scope,
+            account_generation=account_generation,
+            execution_key=execution_key,
+            client_order_ref=f"PX-{digest}",
+            instrument=instrument,
+            intent_json=intent,
+            intent_sha256=content_sha256(intent),
+            reserved_cash_json={"currency": currency, "amount": 0.0},
+            reserved_quantity=float(close_quantity),
+            reservation_status="reserved",
+            reconciliation_status="pending",
+            protective_context_json=context,
+            created_at=current_time,
+            updated_at=current_time,
+        )
+        anchor_decision = next(decision for decision, _ in policies if decision.id == anchor)
+        self.session.add(order)
+        self.session.add(
+            DecisionEvent(
+                decision_id=anchor,
+                event_type=f"protective_{digest[:13]}",
+                actor_id=principal.actor_id,
+                expected_revision=anchor_decision.revision,
+                payload_json={
+                    "kind": "protective_exit_requested",
+                    "order_id": str(order_id),
+                    "execution_key": str(execution_key),
+                    "client_order_ref": order.client_order_ref,
+                    "intent_sha256": order.intent_sha256,
+                    "protective_context_sha256": digest,
+                    "origin": origin,
+                    "trigger_generation": trigger_generation,
+                    "current_price": current_price,
+                    "identity": context["identity"],
+                    "action": action,
+                    "quantity": float(close_quantity),
+                    "source_lot_ids": source_lot_ids,
+                    "source_decision_ids": source_decision_ids,
+                },
+            )
+        )
+        self.session.flush()
+        return self._response_for(order)
