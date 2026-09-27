@@ -1059,7 +1059,6 @@ class ProtectiveExecutionService(DecisionExecutionService):
                 OrderRecord.side == side,
                 OrderRecord.order_origin.in_(PROTECTIVE_ORIGINS),
                 OrderRecord.reservation_status == "reserved",
-                OrderRecord.status.in_(ACTIVE_RESERVATION_STATUSES),
             )
         ).all()
         for sibling in siblings:

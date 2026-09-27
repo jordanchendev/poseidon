@@ -349,7 +349,7 @@ def _validated_attributions(
     return rows
 
 
-def _attributed_consumption(session, attributions, *, exclude_execution_ref=None):
+def _attributed_consumption(session, attributions, *, exclude_execution_ref=None, before_state_version=None):
     usage: dict[uuid.UUID, Decimal] = {}
     groups: dict[str, list[PaperBrokerOrder]] = {}
     for row in attributions:
@@ -364,6 +364,8 @@ def _attributed_consumption(session, attributions, *, exclude_execution_ref=None
                 PaperBrokerOrder.client_order_ref == execution_ref,
             )
         )
+        if before_state_version is not None and execution.state_version >= before_state_version:
+            continue
         remaining = Decimal(
             str(
                 session.scalar(
@@ -538,7 +540,19 @@ def _ensure_legacy_baselines(
         instrument=order.instrument,
         side=order.side,
     )
-    consumed = _attributed_consumption(session, attributions, exclude_execution_ref=client_order_ref)
+    current = [row for row in attributions if _attribution_identity(row)[1] == client_order_ref]
+    before_state_version = None
+    if not allow_create:
+        versions = {row.state_version for row in current}
+        if len(versions) != 1:
+            raise BrokerCapabilityError("legacy close attribution changed on replay")
+        before_state_version = versions.pop()
+    consumed = _attributed_consumption(
+        session,
+        attributions,
+        exclude_execution_ref=client_order_ref,
+        before_state_version=before_state_version,
+    )
     for holding_id, ref in refs.items():
         row = by_ref.get(ref)
         risk = context["source_holding_risk"][holding_id]
@@ -550,7 +564,6 @@ def _ensure_legacy_baselines(
             or Decimal(str(risk["entry_price"])) != Decimal(str(row.price))
         ):
             raise BrokerCapabilityError("legacy position baseline changed")
-    current = [row for row in attributions if _attribution_identity(row)[1] == client_order_ref]
     if not allow_create:
         planned = {
             str(_attribution_identity(row)[0]): (Decimal(str(row.quantity)), Decimal(str(row.price))) for row in current
@@ -576,7 +589,7 @@ def _position_state_for_identity(
     side,
     *,
     state_version=None,
-) -> tuple[Decimal, Decimal]:
+) -> tuple[Decimal, Decimal, Decimal]:
     baselines = _validated_baselines(
         session,
         account_scope,
@@ -599,7 +612,6 @@ def _position_state_for_identity(
         raise BrokerCapabilityError("legacy position control ledger exceeds account watermark")
     attribution_groups: dict[str, list[PaperBrokerOrder]] = {}
     attribution_remaining: dict[uuid.UUID, Decimal] = {}
-    baseline_prices = {_baseline_holding_id(row): Decimal(str(row.price)) for row in baselines}
     holding_remaining: dict[uuid.UUID, Decimal] = {}
     for row in attributions:
         holding_id, execution_ref = _attribution_identity(row)
@@ -621,8 +633,9 @@ def _position_state_for_identity(
     ).all()
     events = [(row.state_version, 0, row.client_order_ref, row, None) for row in baselines]
     events.extend((fill.state_version, 1, str(fill.id), broker_order, fill) for broker_order, fill in rows)
-    quantity = Decimal("0")
-    entry_cost = Decimal("0")
+    legacy_quantity = Decimal("0")
+    ordinary_quantity = Decimal("0")
+    ordinary_entry_cost = Decimal("0")
     opening_action = "buy" if side == "long" else "sell"
     for _version, priority, _key, broker_order, fill in sorted(events, key=lambda event: event[:3]):
         if priority == 0:
@@ -631,14 +644,12 @@ def _position_state_for_identity(
             if holding_id in holding_remaining:
                 raise BrokerCapabilityError("independent paper broker ledger contains a duplicate baseline")
             holding_remaining[holding_id] = baseline_quantity
-            quantity += baseline_quantity
-            entry_cost += baseline_quantity * Decimal(str(broker_order.price))
+            legacy_quantity += baseline_quantity
             continue
         fill_quantity = Decimal(str(fill.fill_quantity))
         group = attribution_groups.get(broker_order.client_order_ref)
         if group is not None:
             remaining_fill = fill_quantity
-            attributed_cost = Decimal("0")
             for attribution in sorted(group, key=lambda item: item.client_order_ref):
                 holding_id, _execution_ref = _attribution_identity(attribution)
                 available = attribution_remaining[attribution.id]
@@ -647,28 +658,26 @@ def _position_state_for_identity(
                     raise BrokerCapabilityError("legacy close exceeds its attributed holding")
                 attribution_remaining[attribution.id] -= consumed
                 holding_remaining[holding_id] -= consumed
-                attributed_cost += baseline_prices[holding_id] * consumed
                 remaining_fill -= consumed
             if remaining_fill:
                 raise BrokerCapabilityError("legacy close exceeds its frozen attribution")
-            if fill_quantity > quantity:
+            if fill_quantity > legacy_quantity:
                 raise BrokerCapabilityError("independent paper broker ledger contains a negative position")
-            quantity -= fill_quantity
-            entry_cost -= attributed_cost
+            legacy_quantity -= fill_quantity
             continue
         if broker_order.action == opening_action:
-            quantity += fill_quantity
-            entry_cost += Decimal(str(fill.fill_price)) * fill_quantity
+            ordinary_quantity += fill_quantity
+            ordinary_entry_cost += Decimal(str(fill.fill_price)) * fill_quantity
             continue
-        if fill_quantity > quantity:
+        if fill_quantity > ordinary_quantity:
             raise BrokerCapabilityError("independent paper broker ledger contains a negative position")
-        average_entry = entry_cost / quantity
-        entry_cost -= average_entry * fill_quantity
-        quantity -= fill_quantity
-    return quantity, entry_cost
+        average_entry = ordinary_entry_cost / ordinary_quantity
+        ordinary_entry_cost -= average_entry * fill_quantity
+        ordinary_quantity -= fill_quantity
+    return legacy_quantity + ordinary_quantity, ordinary_quantity, ordinary_entry_cost
 
 
-def _position_state(session, order: Order) -> tuple[Decimal, Decimal]:
+def _position_state(session, order: Order) -> tuple[Decimal, Decimal, Decimal]:
     return _position_state_for_identity(
         session,
         order.account_scope,
@@ -748,7 +757,7 @@ def _accept_decision_order(
             ),
             start=Decimal("0"),
         )
-        position_quantity, entry_cost = _position_state(session, order)
+        position_quantity, ordinary_quantity, ordinary_entry_cost = _position_state(session, order)
         quantity = Decimal(str(order.quantity))
         price = Decimal(str(fill_price))
         multiplier = Decimal(str(contract_multiplier))
@@ -756,14 +765,15 @@ def _accept_decision_order(
         if intent_action in {"enter", "add"}:
             cash_delta = -notional
         else:
-            if quantity > position_quantity:
+            legacy_context = _legacy_context(order)
+            available = position_quantity - ordinary_quantity if legacy_context is not None else ordinary_quantity
+            if quantity > available:
                 raise BrokerCapabilityError("close exceeds independent broker inventory")
             if order.side == "long":
                 cash_delta = notional
             else:
-                legacy_context = _legacy_context(order)
                 if legacy_context is None:
-                    average_entry = entry_cost / position_quantity
+                    average_entry = ordinary_entry_cost / ordinary_quantity
                 else:
                     attributed_cost = sum(
                         (

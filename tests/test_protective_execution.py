@@ -19,6 +19,7 @@ from poseidon.decision_loop.execution import ExecutionConflictError, ProtectiveE
 from poseidon.decision_loop.reconciliation import (
     ReconciliationConflictError,
     ReconciliationService,
+    _order_dto,
     submit_or_reconcile_order,
 )
 from poseidon.models.account_reconciliation import AccountReconciliation
@@ -489,6 +490,48 @@ def test_concurrent_legacy_holding_origins_reserve_one_net_close(seed):
         assert orders[0].reserved_quantity == 5
 
 
+@pytest.mark.parametrize(("status", "fill_quantity"), [("cancelled", 2), ("filled", 5)])
+def test_terminal_legacy_order_with_pending_projection_blocks_sibling_reservation(seed, status, fill_quantity):
+    holding_id, _account_id = _legacy_holding(seed, shares=5)
+    first = _materialize_legacy(seed, holding_id, trigger=f"legacy:{status}:first")
+    first_order_id = uuid.UUID(first["order_ids"][0])
+    with seed.sessions() as session, session.begin():
+        order = session.get(OrderRecord, first_order_id)
+        order.status = status
+        order.submit_attempted_at = NOW
+        session.add(
+            OrderFillRecord(
+                id=uuid.uuid4(),
+                order_id=order.id,
+                broker_fill_id=f"fill-{uuid.uuid4().hex}",
+                fill_price=79,
+                fill_quantity=fill_quantity,
+                fill_time=NOW,
+                projection_status="projection_pending",
+                created_at=NOW,
+            )
+        )
+
+    sibling = _materialize_legacy(
+        seed,
+        holding_id,
+        origin="liquidation",
+        trigger=f"legacy:{status}:sibling",
+    )
+
+    assert sibling["status"] == "already_reserved"
+    assert sibling["order_ids"] == []
+    with seed.sessions() as session:
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(OrderRecord)
+                .where(OrderRecord.account_scope == seed.account, OrderRecord.decision_id.is_(None))
+            )
+            == 1
+        )
+
+
 def test_overlapping_legacy_reservation_omits_fully_reserved_source(seed):
     first_id, _account_id = _legacy_holding(seed, shares=5, holding_id=uuid.UUID(int=1))
     second_id, _account_id = _legacy_holding(seed, shares=5, holding_id=uuid.UUID(int=2))
@@ -542,6 +585,54 @@ def test_legacy_holding_partial_projection_and_replay_are_deterministic(seed):
     with seed.sessions() as session:
         holding = session.get(PortfolioHoldingRecord, holding_id)
         assert (holding.shares, holding.closed) == (3, False)
+        assert session.get(OrderFillRecord, fill_id).projection_status == "applied"
+
+
+@pytest.mark.parametrize("first_status", ["cancelled", "rejected"])
+def test_zero_fill_terminal_generation_precedes_later_projected_close(seed, first_status):
+    holding_id, _account_id = _legacy_holding(seed, shares=5)
+    first = _materialize_legacy(seed, holding_id, trigger=f"legacy:g1:{first_status}", now=NOW)
+    with seed.sessions() as session, session.begin():
+        first_order = session.get(OrderRecord, uuid.UUID(first["order_ids"][0]))
+        first_order.status = first_status
+        first_order.reservation_status = "released"
+        first_order.reconciliation_status = "resolved"
+        first_order.submit_attempted_at = NOW
+
+    second = _materialize_legacy(
+        seed,
+        holding_id,
+        trigger=f"legacy:g2:{first_status}",
+        now=NOW.replace(minute=1),
+    )
+    second_order_id = uuid.UUID(second["order_ids"][0])
+    fill_id = uuid.uuid4()
+    with seed.sessions() as session, session.begin():
+        second_order = session.get(OrderRecord, second_order_id)
+        second_order.status = "filled"
+        second_order.broker_order_id = f"PAPER-{uuid.uuid4().hex}"
+        second_order.submit_attempted_at = NOW.replace(minute=1)
+        second_order.reconciliation_status = "resolved"
+        session.add(
+            OrderFillRecord(
+                id=fill_id,
+                order_id=second_order.id,
+                broker_fill_id=f"fill-{uuid.uuid4().hex}",
+                fill_price=79,
+                fill_quantity=5,
+                fill_time=NOW.replace(minute=2),
+                projection_status="projection_pending",
+                created_at=NOW.replace(minute=2),
+            )
+        )
+
+    first_projection = project(seed, fill_id)
+    replay_projection = project(seed, fill_id)
+
+    assert replay_projection == first_projection
+    with seed.sessions() as session:
+        holding = session.get(PortfolioHoldingRecord, holding_id)
+        assert (holding.shares, holding.closed) == (0, True)
         assert session.get(OrderFillRecord, fill_id).projection_status == "applied"
 
 
@@ -732,6 +823,77 @@ def test_later_legacy_holding_uses_its_own_chronological_cost_basis(monkeypatch,
         assert latest.amount == expected_cash
 
 
+def test_legacy_short_basis_is_separate_from_ordinary_short_economics(monkeypatch, seed):
+    legacy_id, _account_id = _legacy_holding(
+        seed,
+        shares=5,
+        entry_price=100,
+        side="short",
+        holding_id=uuid.UUID(int=1),
+    )
+    adapter, _legacy_order_id, _legacy_fill_id = _partial_legacy_close(
+        monkeypatch,
+        seed,
+        legacy_id,
+        side="short",
+        entry_price=100,
+        filled=2,
+        price=150,
+    )
+
+    def submit_ordinary(fill_id, price):
+        with seed.sessions() as session:
+            fill = session.get(OrderFillRecord, fill_id)
+            order = session.get(OrderRecord, fill.order_id)
+            dto = _order_dto(order)
+        _paper_price(monkeypatch, price)
+        adapter.place_order(dto, client_order_ref=dto.client_order_ref)
+
+    ordinary_open = seed.fill(quantity=5, price=200, side="short", time=NOW.replace(minute=1))
+    submit_ordinary(ordinary_open, 200)
+    project(seed, ordinary_open)
+    ordinary_close = seed.fill(
+        quantity=5,
+        price=150,
+        action="exit",
+        side="short",
+        time=NOW.replace(minute=2),
+    )
+    submit_ordinary(ordinary_close, 150)
+    project(seed, ordinary_close)
+
+    with seed.sessions() as session:
+        close_movement = session.scalar(
+            select(PaperCashMovement)
+            .where(PaperCashMovement.account_scope == seed.account)
+            .order_by(PaperCashMovement.state_version.desc())
+        )
+        assert close_movement.amount == 1250
+    assert [
+        (row.quantity, row.side) for row in adapter.query_account_snapshot(seed.account, "generation-1").positions
+    ] == [(3.0, "short")]
+
+    later_open = seed.fill(quantity=1, price=300, side="short", time=NOW.replace(minute=3))
+    submit_ordinary(later_open, 300)
+    project(seed, later_open)
+    later_close = seed.fill(
+        quantity=1,
+        price=250,
+        action="exit",
+        side="short",
+        time=NOW.replace(minute=4),
+    )
+    submit_ordinary(later_close, 250)
+
+    with seed.sessions() as session:
+        later_movement = session.scalar(
+            select(PaperCashMovement)
+            .where(PaperCashMovement.account_scope == seed.account)
+            .order_by(PaperCashMovement.state_version.desc())
+        )
+        assert later_movement.amount == 350
+
+
 def test_legacy_broker_attribution_survives_a_partial_b_full_then_a_remainder(monkeypatch, seed):
     first_id, _account_id = _legacy_holding(seed, shares=5, entry_price=100, holding_id=uuid.UUID(int=1))
     adapter, _first_order_id, _first_fill_id = _partial_legacy_close(
@@ -890,7 +1052,7 @@ def test_legacy_holding_partial_cancel_then_new_trigger_reuses_baseline(monkeypa
         fill_id = session.scalar(select(OrderFillRecord.id).where(OrderFillRecord.order_id == first_order_id))
     project(seed, fill_id)
 
-    second = _materialize_legacy(seed, holding_id, trigger="legacy:second")
+    second = _materialize_legacy(seed, holding_id, trigger="legacy:second", now=NOW.replace(minute=1))
     second_order_id = uuid.UUID(second["order_ids"][0])
     submit_or_reconcile_order(
         seed.sessions,
@@ -902,7 +1064,11 @@ def test_legacy_holding_partial_cancel_then_new_trigger_reuses_baseline(monkeypa
         second_fill_id = session.scalar(select(OrderFillRecord.id).where(OrderFillRecord.order_id == second_order_id))
     project(seed, second_fill_id)
     project(seed, fill_id)
+    replay = adapter.place_order(prepared.order, client_order_ref=prepared.order.client_order_ref)
 
+    assert replay.broker_order_id == accepted.broker_order_id
+    assert replay.client_order_ref == prepared.order.client_order_ref
+    assert replay.status == "cancelled"
     assert adapter.query_account_snapshot(seed.account, "generation-1").positions == ()
     with seed.sessions() as session:
         assert (
@@ -1713,3 +1879,31 @@ def test_exact_legacy_tracker_close_rejects_missing_or_projected_id(seed, source
 
     with seed.sessions() as session:
         assert session.get(PortfolioHoldingRecord, projected_id).closed is False
+
+
+def test_recovery_sweep_routes_unlinked_protective_order_by_order_uuid(seed, monkeypatch):
+    holding_id, _account_id = _legacy_holding(seed)
+    materialized = _materialize_legacy(seed, holding_id)
+    order_id = uuid.UUID(materialized["order_ids"][0])
+    with seed.sessions() as session, session.begin():
+        order = session.get(OrderRecord, order_id)
+        order.status = "reconciliation_required"
+        order.reconciliation_status = "required"
+        order.submit_attempted_at = NOW
+
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", seed.sessions)
+    queued = []
+    for name in (
+        "materialize_execution_claim",
+        "submit_decision_order",
+        "reconcile_execution_claim",
+        "project_decision_fill",
+        "reconcile_paper_account",
+    ):
+        monkeypatch.setattr(getattr(cpu_tasks, name), "delay", lambda value, name=name: queued.append((name, value)))
+
+    result = cpu_tasks.recover_decision_execution.run()
+
+    assert ("submit_decision_order", str(order_id)) in queued
+    assert all(name != "reconcile_execution_claim" for name, _value in queued)
+    assert result["enqueued"] == len(set(queued))

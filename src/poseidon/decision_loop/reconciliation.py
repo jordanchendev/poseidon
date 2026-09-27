@@ -817,6 +817,7 @@ class ReconciliationService:
             try:
                 internal_cash = opening
                 short_groups = {}
+                legacy_short_consumption = {}
                 for fill in fills:
                     order = internal_by_id[fill.order_id]
                     identity = order.market, order.symbol, order.instrument, order.side
@@ -828,6 +829,31 @@ class ReconciliationService:
                     if order.side == "long":
                         internal_cash += (-1 if is_open else 1) * price * amount * multiplier
                     else:
+                        context = order.protective_context_json
+                        legacy_close = (
+                            not is_open and isinstance(context, dict) and context.get("legacy_exception") is True
+                        )
+                        if legacy_close:
+                            self._validate_durable_intent(order)
+                            remaining = amount
+                            entry_notional = Decimal("0")
+                            for holding_id in context["source_holding_ids"]:
+                                key = order.id, holding_id
+                                planned = _number(context["source_holding_quantities"][holding_id])
+                                used = legacy_short_consumption.get(key, Decimal("0"))
+                                available = planned - used
+                                consumed = min(available, remaining)
+                                legacy_short_consumption[key] = used + consumed
+                                entry_notional += consumed * _number(
+                                    context["source_holding_risk"][holding_id]["entry_price"]
+                                )
+                                remaining -= consumed
+                            if remaining:
+                                raise ReconciliationConflictError(
+                                    "internal legacy short fills exceed frozen attribution"
+                                )
+                            internal_cash += (Decimal("2") * entry_notional - price * amount) * multiplier
+                            continue
                         short_groups.setdefault((identity, _utc(fill.fill_time)), []).append((is_open, amount, price))
                 inventory = {}
                 for (identity, _), group in sorted(short_groups.items()):

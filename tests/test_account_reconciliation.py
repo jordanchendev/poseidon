@@ -168,7 +168,7 @@ def stored(account, result):
         return session.get(AccountReconciliation, uuid.UUID(result["reconciliation_id"]))
 
 
-def legacy_close(account, monkeypatch, *, shares=5):
+def legacy_close(account, monkeypatch, *, shares=5, entry_price=100, fill_price=100, side="long"):
     holding_id = uuid.uuid4()
     with account.sessions() as session, session.begin():
         session.add(
@@ -179,10 +179,10 @@ def legacy_close(account, monkeypatch, *, shares=5):
                 market="tw_stock",
                 weight=0.1,
                 shares=shares,
-                entry_price=100,
+                entry_price=entry_price,
                 entry_date=NOW,
                 closed=False,
-                side="long",
+                side=side,
                 stop_loss_pct=0.1,
             )
         )
@@ -192,10 +192,10 @@ def legacy_close(account, monkeypatch, *, shares=5):
             market="tw_stock",
             symbol="2330",
             instrument="spot",
-            side="long",
+            side=side,
             origin="stop_loss",
             trigger_generation=f"legacy-reconciliation:{holding_id}",
-            price=100,
+            price=fill_price,
             source_holding_ids=[holding_id],
             allow_legacy_holdings=True,
             principal=AuthPrincipal(
@@ -205,7 +205,7 @@ def legacy_close(account, monkeypatch, *, shares=5):
             ),
             now=NOW,
         )
-    repo = type("Repo", (), {"read_ohlcv": lambda _self, *_args: pd.DataFrame({"close": [100.0]})})()
+    repo = type("Repo", (), {"read_ohlcv": lambda _self, *_args: pd.DataFrame({"close": [fill_price]})})()
     monkeypatch.setattr("poseidon.data.remote_repository.RemoteDataRepository.from_settings", lambda: repo)
     order_id = uuid.UUID(materialized["order_ids"][0])
     submit_or_reconcile_order(account.sessions, order_id, account.adapter, now=NOW)
@@ -339,6 +339,17 @@ def test_full_legacy_close_baseline_is_ledger_watermark_not_broker_order_drift(m
         assert session.get(OrderRecord, order_id).status == "filled"
 
 
+def test_full_legacy_short_close_reconstructs_frozen_basis_and_reconciles(monkeypatch, account):
+    legacy_close(account, monkeypatch, shares=5, entry_price=100, fill_price=80, side="short")
+
+    result = reconcile(account)
+
+    row = stored(account, result)
+    assert result["status"] == "matched", row.difference_json
+    assert row.broker_snapshot_json["cash"] == row.internal_snapshot_json["cash"] == {"TWD": 100600.0}
+    assert row.broker_snapshot_json["positions"] == row.internal_snapshot_json["positions"] == {}
+
+
 def test_partial_legacy_close_baseline_remains_honest_unresolved(monkeypatch, account):
     legacy_partial_close(account, monkeypatch)
 
@@ -370,7 +381,7 @@ def test_two_generation_legacy_close_replays_and_reconciles(monkeypatch, account
                 frozenset({"decision-worker"}),
                 frozenset({account.scope}),
             ),
-            now=NOW,
+            now=NOW + timedelta(microseconds=1),
         )
     second_order_id = uuid.UUID(second["order_ids"][0])
     submit_or_reconcile_order(account.sessions, second_order_id, account.adapter, now=NOW)

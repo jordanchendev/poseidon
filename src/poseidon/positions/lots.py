@@ -236,9 +236,7 @@ class FillProjectionService:
             ).all()
 
         def generation_key(legacy_order):
-            fills = fills_by_order[legacy_order.id]
-            first_fill = min((_utc(row.fill_time) for row in fills), default=datetime.max.replace(tzinfo=UTC))
-            return first_fill, _utc(legacy_order.created_at), legacy_order.id
+            return _utc(legacy_order.created_at), legacy_order.id
 
         legacy_orders.sort(key=generation_key)
         ordered_source_ids = sorted(source_ids)

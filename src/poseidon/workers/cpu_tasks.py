@@ -681,6 +681,7 @@ def reconcile_paper_account(account_id: str) -> dict:
 def recover_decision_execution() -> dict:
     from poseidon.decision_loop.recovery import RecoverySelector
     from poseidon.models.order import OrderRecord
+    from poseidon.orders.schemas import DURABLE_PROTECTIVE_ORIGINS
 
     tasks = {
         "materialize_decision": materialize_execution_claim,
@@ -694,13 +695,19 @@ def recover_decision_execution() -> dict:
         dispatches = []
         seen = set()
         for action in actions:
+            operation = action.operation
             persisted_id = action.persisted_id
             if action.operation == "reconcile_order":
                 order = session.get(OrderRecord, persisted_id)
-                if order is None or order.decision_id is None:
+                if order is None:
                     raise ValueError("recovery order lacks decision identity")
-                persisted_id = order.decision_id
-            dispatch = action.operation, str(persisted_id)
+                if order.decision_id is None:
+                    if order.order_origin not in DURABLE_PROTECTIVE_ORIGINS:
+                        raise ValueError("recovery order lacks decision identity")
+                    operation = "submit_order"
+                else:
+                    persisted_id = order.decision_id
+            dispatch = operation, str(persisted_id)
             if dispatch not in seen:
                 dispatches.append(dispatch)
                 seen.add(dispatch)
