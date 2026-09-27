@@ -50,6 +50,170 @@ def _decision_liquidation_nav(snapshot, policy, prices, ledger):
     return paper_liquidation_nav(snapshot, policy, prices, ledger)
 
 
+def _ordinary_execution_authorized(scope, market, generation):
+    return (
+        settings.decision_loop_execution_mode == "decision"
+        and settings.decision_loop_execution_enabled
+        and bool(scope)
+        and bool(generation)
+        and (scope, market, generation)
+        == (
+            settings.decision_loop_approved_account_scope,
+            settings.decision_loop_approved_market,
+            settings.decision_loop_approved_account_generation,
+        )
+    )
+
+
+def _approved_ordinary_candidate(session, market, now):
+    from sqlalchemy import select
+
+    from poseidon.models.decision_record import DecisionRecord
+    from poseidon.models.strategy_version import StrategyVersion
+
+    return session.scalar(
+        select(DecisionRecord)
+        .join(StrategyVersion, StrategyVersion.id == DecisionRecord.strategy_version_id)
+        .where(
+            DecisionRecord.account_scope == settings.decision_loop_approved_account_scope,
+            DecisionRecord.status == "approved",
+            DecisionRecord.execution_key.is_(None),
+            DecisionRecord.claimed_at.is_(None),
+            DecisionRecord.valid_until > now,
+            StrategyVersion.policy_json["market"].as_string() == market,
+            StrategyVersion.policy_json["reconciliation"]["account_generation"].as_string()
+            == settings.decision_loop_approved_account_generation,
+        )
+        .order_by(DecisionRecord.created_at, DecisionRecord.id)
+        .limit(1)
+    )
+
+
+def _execute_approved_decision(market):
+    """One ordinary writer: commit a validated claim before UUID-only worker calls."""
+    import yaml
+
+    from poseidon.api.auth import AuthPrincipal
+    from poseidon.broker.config import BrokerConfig
+    from poseidon.decision_loop.decisions import DecisionConflictError, DecisionService
+    from poseidon.decision_loop.execution import DecisionExecutionService, ExecutionConflictError
+
+    scope = settings.decision_loop_approved_account_scope
+    generation = settings.decision_loop_approved_account_generation
+    if not _ordinary_execution_authorized(scope, market, generation):
+        return {"skipped": "decision_execution_not_authorized"}
+    now = datetime.now(UTC)
+    principal = AuthPrincipal("system:decision-worker", frozenset({"decision-worker"}), frozenset({scope}))
+    try:
+        path = "config/broker.yaml" if market == "tw_stock" else "config/broker_perp.yaml"
+        with open(path) as stream:
+            raw = yaml.safe_load(stream)
+        if not isinstance(raw, dict) or raw.get("mode") != "paper":
+            raise ValueError("ordinary decision execution requires explicit paper broker mode")
+        broker_config = BrokerConfig(**raw)
+        if broker_config.execution_backend != "paper":
+            raise ValueError("ordinary decision execution requires paper backend")
+        adapter = _decision_paper_adapter(market)
+        with SessionLocal() as session, session.begin():
+            decision = _approved_ordinary_candidate(session, market, now)
+            if decision is None:
+                return {"skipped": "no_approved_decision"}
+            DecisionExecutionService(session).preflight_approved(
+                decision, principal=principal, market=market, account_generation=generation, adapter=adapter
+            )
+            response = DecisionService(session).claim_execution(
+                decision.id, decision.revision, principal=principal, now=datetime.now(UTC)
+            )
+    except (ValueError, OSError, DecisionConflictError, ExecutionConflictError):
+        return {"skipped": "decision_preflight_failed"}
+    decision_id = response["decision_id"]
+    materialized = materialize_execution_claim.run(decision_id)
+    results = [submit_decision_order.run(order_id) for order_id in materialized["order_ids"]]
+    return {"decision_id": decision_id, "orders": len(results), "mode": "decision"}
+
+
+def _record_shadow_parity(market, orders):
+    """Audit frozen target parity only; never claim, materialize, or submit."""
+    from sqlalchemy import select
+
+    from poseidon.decision_loop.execution import DecisionExecutionService, ExecutionConflictError
+    from poseidon.decision_loop.manifest import content_sha256
+    from poseidon.models.decision_event import DecisionEvent
+
+    if settings.decision_loop_approved_market != market:
+        return
+    with SessionLocal() as session, session.begin():
+        decision = _approved_ordinary_candidate(session, market, datetime.now(UTC))
+        if decision is None:
+            return
+        # Serialize only the audit append against concurrent shadow deliveries.
+        session.refresh(decision, with_for_update=True)
+        if decision.status != "approved":
+            return
+        try:
+            _, _, intents = DecisionExecutionService(session)._policy_and_intents(decision)
+        except ExecutionConflictError:
+            return
+        legacy = sorted(
+            [
+                [
+                    market,
+                    order.symbol,
+                    getattr(order, "instrument", "spot" if market == "tw_stock" else None),
+                    order.side,
+                    ("enter" if order.current_weight == 0 else "add")
+                    if order.delta_weight > 0
+                    else (("exit" if order.target_weight == 0 else "reduce") if order.delta_weight < 0 else "hold"),
+                    float(order.target_weight),
+                ]
+                for order in orders
+            ]
+        )
+        frozen = sorted(
+            [
+                [
+                    intent.market,
+                    intent.symbol,
+                    intent.instrument,
+                    intent.side,
+                    intent.action,
+                    float(intent.target_weight),
+                ]
+                for intent in intents
+            ]
+        )
+        payload = {
+            "decision_id": str(decision.id),
+            "policy_sha256": decision.policy_sha256,
+            "legacy_sha256": content_sha256(legacy),
+            "intents_sha256": content_sha256(frozen),
+            "frozen_intents_sha256": content_sha256([intent.model_dump(mode="json") for intent in intents]),
+            "legacy_targets": legacy,
+            "frozen_targets": frozen,
+            "matched": legacy == frozen,
+        }
+        digest = content_sha256(payload)
+        key = "shadow:" + digest
+        existing = session.scalar(
+            select(DecisionEvent).where(DecisionEvent.decision_id == decision.id, DecisionEvent.idempotency_key == key)
+        )
+        if existing is not None:
+            if existing.payload_json != payload:
+                raise ExecutionConflictError("shadow audit replay changed content")
+            return
+        session.add(
+            DecisionEvent(
+                decision_id=decision.id,
+                event_type="shadow:" + digest[:17],
+                actor_id="system:shadow-parity",
+                expected_revision=decision.revision,
+                idempotency_key=key,
+                request_sha256=digest,
+                payload_json=payload,
+            )
+        )
+
+
 @celery_app.task(name="poseidon.workers.cpu_tasks.materialize_execution_claim", max_retries=0)
 def materialize_execution_claim(decision_id: str) -> dict:
     persisted_id = uuid.UUID(decision_id)
@@ -68,6 +232,8 @@ def materialize_execution_claim(decision_id: str) -> dict:
         _, policy, intents = DecisionExecutionService(session)._policy_and_intents(decision)
         account_scope = decision.account_scope
         reconciliation = policy.reconciliation
+        if not _ordinary_execution_authorized(account_scope, policy.market, reconciliation.account_generation):
+            return {"skipped": "ordinary_execution_not_authorized"}
         reservation_identities = {
             (order.market, order.symbol, order.instrument)
             for order in DecisionExecutionService(session)._pending_orders(decision, reconciliation.account_generation)
@@ -133,6 +299,10 @@ def submit_decision_order(order_id: str) -> dict:
         order = session.get(OrderRecord, persisted_id)
         if order is None or order.order_origin != "decision":
             raise ValueError("decision order does not exist")
+        if order.submit_attempted_at is None and not _ordinary_execution_authorized(
+            order.account_scope, order.market, order.account_generation
+        ):
+            return {"skipped": "ordinary_execution_not_authorized"}
         market = order.market
     return submit_or_reconcile_order(SessionLocal, persisted_id, _decision_paper_adapter(market))
 
@@ -1741,6 +1911,13 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
             compatibility with legacy beat-trigger contracts. Not currently
             used (multi-symbol rebalance reads its own batch).
     """
+    mode = settings.decision_loop_execution_mode
+    if mode == "halted":
+        return {"skipped": "execution_halted"}
+    if mode == "decision":
+        return _execute_approved_decision("tw_stock")
+    if mode not in {"legacy", "shadow"}:
+        raise ValueError("unknown ordinary execution mode")
     import yaml
 
     from poseidon.broker.config import BrokerConfig
@@ -1807,6 +1984,8 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
         market="tw_stock",
         signal_ids=signal_ids,
     )
+    if mode == "shadow":
+        _record_shadow_parity("tw_stock", rebalance_orders)
 
     logger.info(
         "portfolio_monthly_rebalance: dispatched %d orders from %d fresh signals",
@@ -2371,6 +2550,13 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
     Args:
         signal_id: Optional signal UUID that triggered this rebalance (legacy).
     """
+    mode = settings.decision_loop_execution_mode
+    if mode == "halted":
+        return {"skipped": "execution_halted"}
+    if mode == "decision":
+        return _execute_approved_decision("crypto_perp")
+    if mode not in {"legacy", "shadow"}:
+        raise ValueError("unknown ordinary execution mode")
     import yaml
 
     from poseidon.broker.config import BrokerConfig
@@ -2522,6 +2708,8 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
         market=strategy_cfg.market,
         signal_ids=signal_ids,
     )
+    if mode == "shadow":
+        _record_shadow_parity("crypto_perp", rebalance_orders)
 
     # Create TradeLogRecords for filled sell orders
     trade_log_count = 0

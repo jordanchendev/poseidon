@@ -159,6 +159,7 @@ def patched_perp_env(monkeypatch):
     def fake_execute_rebalance(
         self, rebalance_orders, strategy_name, prices, market="tw_stock", *, signal_ids=None, **extra
     ):
+        state["captured"]["call_count"] = state["captured"].get("call_count", 0) + 1
         state["captured"]["rebalance_orders"] = list(rebalance_orders)
         state["captured"]["strategy_name"] = strategy_name
         state["captured"]["prices"] = dict(prices)

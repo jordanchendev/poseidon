@@ -51,6 +51,71 @@ from tests.test_decision_service import synthetic_reconciliation_policy, worker
 from tests.test_execution_concurrency_postgres import CLAIM_TIME, ENGINE, claim_seed  # noqa: F401
 
 
+@pytest.fixture
+def decision_task_settings(monkeypatch):
+    from poseidon.core.config import Settings
+    from poseidon.workers import cpu_tasks
+
+    config = Settings(
+        _env_file=None,
+        decision_loop_execution_mode="decision",
+        decision_loop_execution_enabled=True,
+        decision_loop_approved_account_scope="paper:pilot",
+        decision_loop_approved_market="tw_stock",
+        decision_loop_approved_account_generation="generation-1",
+    )
+    monkeypatch.setattr(cpu_tasks, "settings", config)
+    return config
+
+
+@pytest.mark.parametrize("mode", ["legacy", "shadow", "halted"])
+def test_uuid_submit_boundary_blocks_never_attempted_ordinary(sessions, monkeypatch, decision_task_settings, mode):
+    from poseidon.workers import cpu_tasks
+
+    _, order_id = _intent(sessions)
+    adapter = SnapshotAdapter(sessions)
+    decision_task_settings.decision_loop_execution_mode = mode
+    decision_task_settings.decision_loop_execution_enabled = False
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", sessions)
+    monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", lambda market: adapter)
+    result = cpu_tasks.submit_decision_order.run(str(order_id))
+    assert result["skipped"] == "ordinary_execution_not_authorized"
+    assert adapter.place_calls == adapter.lookup_calls == 0
+    with sessions() as session:
+        assert session.get(OrderRecord, order_id).submit_attempted_at is None
+
+
+@pytest.mark.parametrize("mode", ["legacy", "shadow", "halted"])
+def test_uuid_materialize_boundary_blocks_ordinary(sessions, monkeypatch, decision_task_settings, mode):
+    from poseidon.workers import cpu_tasks
+
+    with sessions() as session:
+        decision_id, _ = _claimed(session)
+    decision_task_settings.decision_loop_execution_mode = mode
+    decision_task_settings.decision_loop_execution_enabled = False
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", sessions)
+    monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", lambda market: pytest.fail("broker snapshot IO"))
+    assert cpu_tasks.materialize_execution_claim.run(str(decision_id))["skipped"] == "ordinary_execution_not_authorized"
+    with sessions() as session:
+        assert session.query(OrderRecord).count() == 0
+
+
+@pytest.mark.parametrize("mode", ["legacy", "shadow", "halted"])
+def test_uuid_attempted_boundary_remains_lookup_only_in_every_mode(sessions, monkeypatch, decision_task_settings, mode):
+    from poseidon.workers import cpu_tasks
+
+    _, order_id = _intent(sessions)
+    adapter = SnapshotAdapter(sessions, timeout=True, no_order=True)
+    with pytest.raises(TimeoutError):
+        submit_or_reconcile_order(sessions, order_id, adapter, now=NOW)
+    decision_task_settings.decision_loop_execution_mode = mode
+    decision_task_settings.decision_loop_execution_enabled = False
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", sessions)
+    monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", lambda market: adapter)
+    cpu_tasks.submit_decision_order.run(str(order_id))
+    assert (adapter.place_calls, adapter.lookup_calls) == (1, 1)
+
+
 @pytest.mark.parametrize(
     "task_name",
     [
@@ -75,7 +140,7 @@ def test_internal_task_uuid_only_rejects_malformed_before_io(monkeypatch, task_n
         task.run("not-a-uuid")
 
 
-def test_submit_task_redelivery_preserves_unknown_marker(sessions, monkeypatch):
+def test_submit_task_redelivery_preserves_unknown_marker(sessions, monkeypatch, decision_task_settings):
     from poseidon.workers import cpu_tasks
 
     _, order_id = _intent(sessions)
@@ -201,7 +266,7 @@ def test_materialization_liquidation_nav_fails_closed(corruption):
         _decision_liquidation_nav(snapshot, policy, prices, [(order, fill)])
 
 
-def test_materialize_task_loads_current_prices_outside_db_session(sessions, monkeypatch):
+def test_materialize_task_loads_current_prices_outside_db_session(sessions, monkeypatch, decision_task_settings):
     from poseidon.workers import cpu_tasks
 
     with sessions() as session:
@@ -234,7 +299,7 @@ def test_materialize_task_loads_current_prices_outside_db_session(sessions, monk
         assert order.quantity == 50
 
 
-def test_materialize_task_rejects_account_changed_during_price_io(sessions, monkeypatch):
+def test_materialize_task_rejects_account_changed_during_price_io(sessions, monkeypatch, decision_task_settings):
     from poseidon.workers import cpu_tasks
 
     with sessions() as session:
@@ -260,7 +325,9 @@ def test_materialize_task_rejects_account_changed_during_price_io(sessions, monk
         assert session.query(OrderRecord).count() == 0
 
 
-def test_recovery_sweep_repeated_execution_keeps_one_effective_order_fill(sessions, monkeypatch):
+def test_recovery_sweep_repeated_execution_keeps_one_effective_order_fill(
+    sessions, monkeypatch, decision_task_settings
+):
     from poseidon.workers import cpu_tasks
 
     decision_id, order_id = _intent(sessions)
@@ -330,7 +397,7 @@ def test_recovery_sweep_deduplicates_orders_of_one_decision(sessions, monkeypatc
     assert queued == [str(decision_id)]
 
 
-def test_materialize_task_loads_pending_reservation_marks(sessions, monkeypatch):
+def test_materialize_task_loads_pending_reservation_marks(sessions, monkeypatch, decision_task_settings):
     from poseidon.workers import cpu_tasks
 
     with sessions() as session:

@@ -19,24 +19,48 @@ def _fresh_settings():
     return cfg.Settings()
 
 
-def test_ingest_cursor_mode_default(monkeypatch):
-    # Default (no env var) → legacy
-    monkeypatch.delenv("INGEST_CURSOR_MODE", raising=False)
-    monkeypatch.delenv("POSEIDON_INGEST_CURSOR_MODE", raising=False)
-    s = _fresh_settings()
-    assert s.ingest_cursor_mode == "legacy"
+def test_execution_mode_defaults_preserve_legacy():
+    from poseidon.core.config import Settings
 
-    # Explicit cursor via unprefixed env var
-    monkeypatch.setenv("INGEST_CURSOR_MODE", "cursor")
-    s = _fresh_settings()
-    assert s.ingest_cursor_mode == "cursor"
+    config = Settings(_env_file=None)
+    assert config.decision_loop_execution_mode == "legacy"
+    assert config.decision_loop_execution_enabled is False
+    assert config.decision_loop_approved_account_scope == ""
+    assert config.decision_loop_approved_market == ""
+    assert config.decision_loop_approved_account_generation == ""
+    assert config.decision_loop_legacy_protective_scopes == ()
 
-    # Invalid value → pydantic ValidationError
-    monkeypatch.setenv("INGEST_CURSOR_MODE", "bogus")
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"decision_loop_execution_mode": "unknown"},
+        {"decision_loop_execution_mode": "decision"},
+        {"decision_loop_execution_enabled": True},
+        {"decision_loop_execution_mode": "shadow", "decision_loop_execution_enabled": True},
+        {"decision_loop_execution_mode": "decision", "decision_loop_execution_enabled": True},
+        {"decision_loop_approved_account_scope": "paper:pilot"},
+        {"decision_loop_legacy_protective_scopes": ["*"]},
+    ],
+)
+def test_execution_configuration_invalid_combinations_fail_closed(values):
+    from poseidon.core.config import Settings
+
     with pytest.raises(ValidationError):
-        _fresh_settings()
+        Settings(_env_file=None, **values)
 
-    # Back to legacy
-    monkeypatch.setenv("INGEST_CURSOR_MODE", "legacy")
-    s = _fresh_settings()
-    assert s.ingest_cursor_mode == "legacy"
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_halted_identity_survives_enabled_toggle(enabled):
+    from poseidon.core.config import Settings
+
+    config = Settings(
+        _env_file=None,
+        decision_loop_execution_mode="halted",
+        decision_loop_execution_enabled=enabled,
+        decision_loop_approved_account_scope="paper:owner",
+        decision_loop_approved_market="tw_stock",
+        decision_loop_approved_account_generation="owner-generation",
+    )
+    assert config.decision_loop_execution_mode == "halted"
+    assert config.decision_loop_approved_account_scope == "paper:owner"

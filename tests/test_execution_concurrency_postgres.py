@@ -602,7 +602,8 @@ def test_same_account_materialization_serializes_cash_capacity(claim_seed):
             outcomes = [
                 future.result(timeout=20) for future in [pool.submit(materialize, item) for item in decision_ids]
             ]
-        assert sorted(outcomes) == ["pending intents exceed available paper cash", "pending_submit"]
+        # Winner's reservation invalidates the prior match before loser's capacity arithmetic.
+        assert sorted(outcomes) == ["account reconciliation internal watermark changed", "pending_submit"]
         with Session(ENGINE) as session:
             orders = session.scalars(select(OrderRecord).where(OrderRecord.decision_id.in_(decision_ids))).all()
             materialized = [order for order in orders if order.id != source_order_id]

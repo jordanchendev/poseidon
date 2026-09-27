@@ -17,6 +17,7 @@ Test inventory:
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -122,6 +123,7 @@ def patched_monthly_env(monkeypatch):
     def fake_execute_rebalance(
         self, rebalance_orders, strategy_name, prices, market="tw_stock", *, signal_ids=None, **extra
     ):
+        state["captured"]["call_count"] = state["captured"].get("call_count", 0) + 1
         state["captured"]["rebalance_orders"] = list(rebalance_orders)
         state["captured"]["strategy_name"] = strategy_name
         state["captured"]["prices"] = dict(prices)
@@ -241,3 +243,396 @@ class TestPortfolioMonthlyRebalanceWiring:
         assert len(results) >= 1
         for r in results:
             assert r.order.order_origin == "signal", f"Expected order_origin='signal', got {r.order.order_origin}"
+
+
+@pytest.mark.parametrize(
+    "task_name,fixture_name,market",
+    [
+        ("portfolio_monthly_rebalance", "patched_monthly_env", "tw_stock"),
+        ("perp_rebalance", "patched_perp_env", "crypto_perp"),
+    ],
+)
+@pytest.mark.parametrize("mode", ["legacy", "shadow", "decision", "halted"])
+def test_ordinary_mode_matrix_single_writer(request, monkeypatch, task_name, fixture_name, market, mode):
+    from poseidon.signals.repository import SignalRepository
+    from poseidon.workers import cpu_tasks
+
+    env = request.getfixturevalue(fixture_name)
+    env["signals"] = [_make_signal(symbol="2330") if market == "tw_stock" else _make_signal_record(symbol="ETHUSDT")]
+    config = SimpleNamespace(
+        decision_loop_execution_mode=mode,
+        decision_loop_execution_enabled=mode == "decision",
+        decision_loop_approved_account_scope="paper:pilot",
+        decision_loop_approved_market=market,
+        decision_loop_approved_account_generation="generation-1",
+    )
+    monkeypatch.setattr(cpu_tasks, "settings", config)
+    decisions, audits = [], []
+    monkeypatch.setattr(
+        cpu_tasks, "_execute_approved_decision", lambda m: decisions.append(m) or {"decision": True}, raising=False
+    )
+    monkeypatch.setattr(
+        cpu_tasks, "_record_shadow_parity", lambda m, orders: audits.append((m, list(orders))), raising=False
+    )
+    if mode in {"decision", "halted"}:
+        monkeypatch.setattr(SignalRepository, "latest_passed", lambda *a, **k: pytest.fail("legacy signals touched"))
+    result = getattr(cpu_tasks, task_name).run()
+    assert bool(env["captured"]) == (mode in {"legacy", "shadow"})
+    assert env["captured"].get("call_count", 0) == (1 if mode in {"legacy", "shadow"} else 0)
+    assert decisions == ([market] if mode == "decision" else [])
+    assert len(audits) == (1 if mode == "shadow" else 0)
+    if mode == "halted":
+        assert result == {"skipped": "execution_halted"}
+
+
+from tests.test_perp_rebalance_wiring import _make_signal_record, patched_perp_env  # noqa: E402,F401
+
+
+@pytest.fixture
+def cutover_account(tmp_path, monkeypatch):
+    from sqlalchemy import delete
+
+    from poseidon.core.config import Settings
+    from poseidon.models.decision_event import DecisionEvent
+    from poseidon.models.decision_record import DecisionRecord
+    from poseidon.workers import cpu_tasks
+    from tests.test_decision_order_wiring import NOW, _claimed, sessions
+
+    generator = sessions.__wrapped__(tmp_path)
+    factory = next(generator)
+    with factory() as session:
+        decision_id, version_id = _claimed(session)
+        row = session.get(DecisionRecord, decision_id)
+        row.status, row.revision, row.execution_key, row.claimed_at = "approved", 2, None, None
+        session.execute(
+            delete(DecisionEvent).where(
+                DecisionEvent.decision_id == decision_id, DecisionEvent.event_type == "execution_claimed"
+            )
+        )
+        session.commit()
+    clock = SimpleNamespace(now=NOW)
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock.now
+
+    monkeypatch.setattr(cpu_tasks, "datetime", FixedDatetime)
+    monkeypatch.setattr("poseidon.decision_loop.execution.datetime", FixedDatetime)
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", factory)
+    config = Settings(
+        _env_file=None,
+        decision_loop_execution_mode="decision",
+        decision_loop_execution_enabled=True,
+        decision_loop_approved_account_scope="paper:pilot",
+        decision_loop_approved_market="tw_stock",
+        decision_loop_approved_account_generation="generation-1",
+    )
+    monkeypatch.setattr(cpu_tasks, "settings", config)
+    calls = []
+    monkeypatch.setattr(
+        cpu_tasks.materialize_execution_claim,
+        "run",
+        lambda ident: calls.append(("materialize", ident)) or {"order_ids": [str(uuid.uuid4())]},
+    )
+    monkeypatch.setattr(cpu_tasks.submit_decision_order, "run", lambda ident: calls.append(("submit", ident)) or {})
+    yield SimpleNamespace(
+        sessions=factory, decision_id=decision_id, version_id=version_id, config=config, calls=calls, clock=clock
+    )
+    with contextlib.suppress(StopIteration):
+        next(generator)
+
+
+def test_decision_mode_claims_only_after_bootstrap_and_dispatches_uuid(cutover_account):
+    from poseidon.models.decision_record import DecisionRecord
+    from poseidon.workers import cpu_tasks
+
+    result = cpu_tasks.portfolio_monthly_rebalance.run()
+    assert result["decision_id"] == str(cutover_account.decision_id)
+    assert [call[0] for call in cutover_account.calls] == ["materialize", "submit"]
+    assert all(str(uuid.UUID(call[1])) == call[1] for call in cutover_account.calls)
+    with cutover_account.sessions() as session:
+        assert session.get(DecisionRecord, cutover_account.decision_id).status == "execution_claimed"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "missing_bootstrap",
+        "mismatch",
+        "stale",
+        "scope",
+        "market",
+        "generation",
+        "disabled",
+        "unsupported_adapter",
+        "live",
+        "missing_cash",
+        "missing_currency",
+        "missing_cash_tolerance",
+        "missing_position_tolerance",
+        "missing_quantity_tolerance",
+        "missing_sizing",
+    ],
+)
+def test_decision_preflight_failure_never_claims_or_submits(cutover_account, monkeypatch, failure):
+    from sqlalchemy import delete, select
+
+    from poseidon.broker.base import BrokerCapabilities
+    from poseidon.models.account_reconciliation import AccountReconciliation
+    from poseidon.models.decision_record import DecisionRecord
+    from poseidon.workers import cpu_tasks
+
+    with cutover_account.sessions() as session:
+        rec = session.scalar(select(AccountReconciliation))
+        if failure == "missing_bootstrap":
+            session.execute(delete(AccountReconciliation))
+        elif failure == "mismatch":
+            # Immutable record mutation via SQL is deliberate corruption.
+            from sqlalchemy import update
+
+            session.execute(update(AccountReconciliation).values(status="mismatch"))
+        elif failure == "stale":
+            from sqlalchemy import update
+
+            session.execute(update(AccountReconciliation).values(as_of=rec.as_of - timedelta(days=1)))
+        elif failure.startswith("missing_"):
+            import copy
+
+            from sqlalchemy import update
+
+            from poseidon.decision_loop.manifest import content_sha256
+            from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
+
+            version = session.get(StrategyVersion, cutover_account.version_id)
+            policy = copy.deepcopy(version.policy_json)
+            field = {
+                "missing_cash": "opening_cash",
+                "missing_currency": "currency",
+                "missing_cash_tolerance": "cash_tolerance",
+                "missing_position_tolerance": "position_tolerance",
+                "missing_quantity_tolerance": "fill_tolerance",
+                "missing_sizing": "tw_stock_quantity_rounding",
+            }[failure]
+            policy["reconciliation"].pop(field)
+            digest = content_sha256(policy)
+            session.execute(
+                update(StrategyVersion)
+                .where(StrategyVersion.id == version.id)
+                .values(
+                    policy_json=policy,
+                    content_sha256=strategy_version_digest(version.config_json, policy, version.artifact_json),
+                )
+            )
+            session.execute(
+                update(DecisionRecord)
+                .where(DecisionRecord.id == cutover_account.decision_id)
+                .values(policy_sha256=digest)
+            )
+            session.execute(update(AccountReconciliation).values(policy_sha256=digest))
+        session.commit()
+    if failure in {"scope", "market", "generation"}:
+        attr = {"scope": "account_scope", "market": "market", "generation": "account_generation"}[failure]
+        setattr(
+            cutover_account.config, "decision_loop_approved_" + attr, "crypto_perp" if failure == "market" else "other"
+        )
+    if failure == "disabled":
+        cutover_account.config.decision_loop_execution_enabled = False
+    if failure == "unsupported_adapter":
+        monkeypatch.setattr(
+            cpu_tasks, "_decision_paper_adapter", lambda m: SimpleNamespace(capabilities=BrokerCapabilities())
+        )
+    if failure == "live":
+        import builtins
+        from io import StringIO
+
+        original = builtins.open
+        monkeypatch.setattr(
+            builtins,
+            "open",
+            lambda path, *a, **k: (
+                StringIO("mode: live\nexecution_backend: shioaji\n")
+                if str(path) == "config/broker.yaml"
+                else original(path, *a, **k)
+            ),
+        )
+        monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", lambda m: pytest.fail("live adapter built"))
+    result = cpu_tasks.portfolio_monthly_rebalance.run()
+    assert "skipped" in result
+    assert cutover_account.calls == []
+    with cutover_account.sessions() as session:
+        row = session.get(DecisionRecord, cutover_account.decision_id)
+        assert row.status == "approved" and row.execution_key is None
+
+
+def test_shadow_parity_is_durable_stable_and_never_claims(cutover_account):
+    from sqlalchemy import select
+
+    from poseidon.models.decision_event import DecisionEvent
+    from poseidon.models.decision_record import DecisionRecord
+    from poseidon.models.order import OrderRecord
+    from poseidon.strategies.portfolio.schemas import RebalanceOrder
+    from poseidon.workers import cpu_tasks
+
+    cutover_account.config.decision_loop_execution_mode = "shadow"
+    cutover_account.config.decision_loop_execution_enabled = False
+    orders = [RebalanceOrder(symbol="2330", action="buy", current_weight=0.0, target_weight=0.1, delta_weight=0.1)]
+    cpu_tasks._record_shadow_parity("tw_stock", orders)
+    cpu_tasks._record_shadow_parity("tw_stock", orders)
+    with cutover_account.sessions() as session:
+        events = [row for row in session.scalars(select(DecisionEvent)) if row.event_type.startswith("shadow")]
+        assert len(events) == 1
+        assert events[0].payload_json["matched"] is True
+        assert events[0].payload_json["decision_id"] == str(cutover_account.decision_id)
+        assert len(events[0].payload_json["legacy_sha256"]) == 64
+        assert len(events[0].payload_json["intents_sha256"]) == 64
+        assert session.get(DecisionRecord, cutover_account.decision_id).status == "approved"
+        assert session.query(OrderRecord).count() == 0
+    assert cutover_account.calls == []
+
+
+def test_shadow_opposite_action_never_reports_matched(cutover_account):
+    from sqlalchemy import select
+
+    from poseidon.models.decision_event import DecisionEvent
+    from poseidon.strategies.portfolio.schemas import RebalanceOrder
+    from poseidon.workers import cpu_tasks
+
+    cutover_account.config.decision_loop_execution_mode = "shadow"
+    cutover_account.config.decision_loop_execution_enabled = False
+    cpu_tasks._record_shadow_parity(
+        "tw_stock",
+        [RebalanceOrder(symbol="2330", action="sell", current_weight=0.2, target_weight=0.1, delta_weight=-0.1)],
+    )
+    with cutover_account.sessions() as session:
+        event = next(row for row in session.scalars(select(DecisionEvent)) if row.event_type.startswith("shadow"))
+        assert event.payload_json["matched"] is False
+        assert len(event.payload_json["frozen_intents_sha256"]) == 64
+
+
+def test_preflight_lock_wait_rechecks_current_time_before_claim(cutover_account, monkeypatch):
+    from poseidon.decision_loop.execution import DecisionExecutionService
+    from poseidon.models.decision_record import DecisionRecord
+    from poseidon.workers import cpu_tasks
+
+    original = DecisionExecutionService._lock_account
+
+    def delayed(self, decision, policy):
+        account = original(self, decision, policy)
+        cutover_account.clock.now += timedelta(days=1)
+        return account
+
+    monkeypatch.setattr(DecisionExecutionService, "_lock_account", delayed)
+    assert "skipped" in cpu_tasks.portfolio_monthly_rebalance.run()
+    with cutover_account.sessions() as session:
+        assert session.get(DecisionRecord, cutover_account.decision_id).status == "approved"
+    assert cutover_account.calls == []
+
+
+def test_shadow_task_submits_legacy_once_and_records_real_audit(patched_monthly_env, cutover_account):
+    from sqlalchemy import select
+
+    from poseidon.models.decision_event import DecisionEvent
+    from poseidon.models.decision_record import DecisionRecord
+    from poseidon.models.order import OrderRecord
+    from poseidon.workers import cpu_tasks
+
+    cutover_account.config.decision_loop_execution_mode = "shadow"
+    cutover_account.config.decision_loop_execution_enabled = False
+    patched_monthly_env["signals"] = [_make_signal(symbol="2330", quantity_pct=0.1)]
+    result = cpu_tasks.portfolio_monthly_rebalance.run()
+    assert result["orders"] == 1
+    assert patched_monthly_env["captured"]["call_count"] == 1
+    with cutover_account.sessions() as session:
+        assert len([row for row in session.scalars(select(DecisionEvent)) if row.event_type.startswith("shadow")]) == 1
+        assert session.get(DecisionRecord, cutover_account.decision_id).status == "approved"
+        assert session.query(OrderRecord).count() == 0
+    assert cutover_account.calls == []
+
+
+def test_race_after_claim_materialization_freshness_prevents_submission(cutover_account, monkeypatch):
+    from sqlalchemy import select
+
+    from poseidon.decision_loop.execution import DecisionExecutionService, ExecutionConflictError
+    from poseidon.models.paper_broker_account import PaperBrokerAccount
+    from poseidon.workers import cpu_tasks
+    from tests.test_decision_order_wiring import NOW, PRICE_2330
+    from tests.test_decision_service import worker
+
+    def materialize(ident):
+        with cutover_account.sessions() as session:
+            account = session.scalar(select(PaperBrokerAccount))
+            account.state_version += 1
+            session.commit()
+        with cutover_account.sessions() as session, session.begin():
+            return DecisionExecutionService(session).materialize(
+                uuid.UUID(ident), principal=worker(), account_nav=100000.0, prices=PRICE_2330, now=NOW
+            )
+
+    monkeypatch.setattr(cpu_tasks.materialize_execution_claim, "run", materialize)
+    with pytest.raises(ExecutionConflictError, match="watermark"):
+        cpu_tasks.portfolio_monthly_rebalance.run()
+    assert cutover_account.calls == []
+
+
+def test_perp_decision_selects_exact_market_scope_generation_without_legacy(cutover_account, monkeypatch):
+    import builtins
+    from io import StringIO
+
+    from sqlalchemy import delete
+
+    from poseidon.models.decision_event import DecisionEvent
+    from poseidon.models.decision_record import DecisionRecord
+    from poseidon.signals.repository import SignalRepository
+    from poseidon.workers import cpu_tasks
+    from tests.test_decision_order_wiring import _claimed
+    from tests.test_decision_service import synthetic_reconciliation_policy
+
+    policy = synthetic_reconciliation_policy(
+        account_generation="perp-generation-1",
+        currency="TWD",
+        perp_instrument_rules={
+            "ETH-USDT": {
+                "quantity_step": 0.001,
+                "contract_multiplier": 1.0,
+                "margin_semantics": "full_notional",
+                "funding_semantics": "excluded",
+            }
+        },
+    )
+    with cutover_account.sessions() as session:
+        decision_id, _ = _claimed(
+            session,
+            account="paper:pilot",
+            market="crypto_perp",
+            instrument="ETH-USDT",
+            symbols=("ETH",),
+            reconciliation=policy,
+        )
+        row = session.get(DecisionRecord, decision_id)
+        row.status, row.revision, row.execution_key, row.claimed_at = "approved", 2, None, None
+        session.execute(
+            delete(DecisionEvent).where(
+                DecisionEvent.decision_id == decision_id, DecisionEvent.event_type == "execution_claimed"
+            )
+        )
+        session.commit()
+    cutover_account.config.decision_loop_approved_market = "crypto_perp"
+    cutover_account.config.decision_loop_approved_account_generation = "perp-generation-1"
+    original = builtins.open
+    monkeypatch.setattr(
+        builtins,
+        "open",
+        lambda path, *a, **k: (
+            StringIO("mode: paper\nexecution_backend: paper\n")
+            if str(path) == "config/broker_perp.yaml"
+            else original(path, *a, **k)
+        ),
+    )
+    monkeypatch.setattr(SignalRepository, "latest_passed", lambda *a, **k: pytest.fail("legacy signals touched"))
+    result = cpu_tasks.perp_rebalance.run()
+    assert result["decision_id"] == str(decision_id)
+    assert [call[0] for call in cutover_account.calls] == ["materialize", "submit"]
+    with cutover_account.sessions() as session:
+        assert session.get(DecisionRecord, cutover_account.decision_id).status == "approved"
+        assert session.get(DecisionRecord, decision_id).status == "execution_claimed"

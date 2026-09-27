@@ -1,3 +1,6 @@
+from typing import Literal
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -25,6 +28,37 @@ class Settings(BaseSettings):
     binance_trade_secret: str = ""
     symbols_config: str = "config/symbols.yaml"
     model_artifact_dir: str = "/data/models"
+
+    decision_loop_execution_enabled: bool = False
+    decision_loop_execution_mode: Literal["legacy", "shadow", "decision", "halted"] = "legacy"
+    decision_loop_approved_account_scope: str = ""
+    decision_loop_approved_market: Literal["", "tw_stock", "crypto_perp"] = ""
+    decision_loop_approved_account_generation: str = ""
+    decision_loop_legacy_protective_scopes: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_execution_gate(self):
+        identity = (
+            self.decision_loop_approved_account_scope,
+            self.decision_loop_approved_market,
+            self.decision_loop_approved_account_generation,
+        )
+        if any(identity) and not all(identity):
+            raise ValueError("approved execution identity must be complete")
+        for value in (*identity, *self.decision_loop_legacy_protective_scopes):
+            if value and (value != value.strip() or "*" in value):
+                raise ValueError("execution identities must be exact trimmed text")
+        if any(not value for value in self.decision_loop_legacy_protective_scopes):
+            raise ValueError("legacy protective scopes must be explicit")
+        if len(set(self.decision_loop_legacy_protective_scopes)) != len(self.decision_loop_legacy_protective_scopes):
+            raise ValueError("legacy protective scopes must be unique")
+        if self.decision_loop_execution_mode in {"legacy", "shadow"} and self.decision_loop_execution_enabled:
+            raise ValueError("legacy/shadow cannot enable decision execution")
+        if self.decision_loop_execution_mode == "decision" and not self.decision_loop_execution_enabled:
+            raise ValueError("decision mode requires the execution gate")
+        if self.decision_loop_execution_enabled and not all(identity):
+            raise ValueError("enabled execution requires approved identity")
+        return self
 
     # Cache settings
     cache_enabled: bool = True

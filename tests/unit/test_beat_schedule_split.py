@@ -56,3 +56,21 @@ def test_poseidon_beat_entry_count():
 
     schedule = celery_app.conf.beat_schedule
     assert len(schedule) == 17, f"Expected 17 entries, got {len(schedule)}: {list(schedule.keys())}"
+
+
+def test_cutover_preserves_redbeat_names_and_recovery_protective_symbols():
+    from poseidon.workers import cpu_tasks
+    from poseidon.workers.celery_app import celery_app
+
+    schedule = celery_app.conf.beat_schedule
+    for entry, task in [
+        ("portfolio-monthly-rebalance", "portfolio_monthly_rebalance"),
+        ("perp-rebalance-4h", "perp_rebalance"),
+        ("portfolio-stop-loss-monitor", "portfolio_stop_loss_monitor"),
+        ("perp-liquidation-monitor", "perp_liquidation_monitor"),
+    ]:
+        assert schedule[entry]["task"] == "poseidon.workers.cpu_tasks." + task
+        assert callable(getattr(cpu_tasks, task).run)
+    assert callable(cpu_tasks.reconcile_execution_claim.run)
+    assert callable(cpu_tasks.reconcile_paper_account.run)
+    assert callable(cpu_tasks.recover_decision_execution.run)

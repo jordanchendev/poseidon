@@ -231,6 +231,33 @@ class DecisionExecutionService:
             raise ExecutionConflictError("paper account does not match owner-frozen opening terms")
         return account
 
+    def preflight_approved(self, decision, *, principal, market, account_generation, adapter, now=None):
+        """Validate the ordinary cutover gate before a caller claims the decision."""
+        from poseidon.broker.base import BrokerCapabilities
+        from poseidon.decision_loop.decisions import DecisionService
+
+        principal.require_role("decision-worker")
+        principal.require_account_scope(decision.account_scope)
+        capabilities = adapter.capabilities
+        if not isinstance(capabilities, BrokerCapabilities) or not capabilities.supports_reconciliation:
+            raise ExecutionConflictError("paper adapter lacks full reconciliation capability")
+        _, policy, intents = self._policy_and_intents(decision)
+        if policy.market != market or policy.reconciliation.account_generation != account_generation:
+            raise ExecutionConflictError("approved execution identity changed")
+        if any(intent.market != market for intent in intents):
+            raise ExecutionConflictError("approved intent market changed")
+        account = self._lock_account(decision, policy)
+        decision = self.session.scalar(
+            select(DecisionRecord)
+            .where(DecisionRecord.id == decision.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        current_time = now if now is not None else datetime.now(UTC)
+        DecisionService(self.session).validate_execution(decision.id, decision.revision, current_time)
+        self._require_reconciled(decision, policy.reconciliation, account, current_time)
+        return policy
+
     def _risk_failures(self, decision, policy, intents):
         failures = decision.risk_snapshot_json.get("hard_failures")
         if not isinstance(failures, list):
