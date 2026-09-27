@@ -12,6 +12,7 @@ from pydantic import (
     Field,
     StrictBool,
     field_validator,
+    model_validator,
 )
 from pydantic import (
     ValidationError as PydanticValidationError,
@@ -36,10 +37,13 @@ from poseidon.models.research_revision import ResearchRevision
 from poseidon.models.strategy_version import StrategyVersion
 
 ACTION_VALUES = frozenset({"watch", "hold", "enter", "add", "reduce", "exit", "reject"})
+EXECUTABLE_ACTIONS = frozenset({"enter", "add", "reduce", "exit"})
 LIVE_STATUSES = frozenset({"pending_approval", "approved"})
 SYSTEM_ACTOR = "system:decision-service"
 PositiveStrictInt = Annotated[int, Field(strict=True, gt=0)]
 PositiveFiniteFloat = Annotated[float, Field(gt=0, allow_inf_nan=False)]
+PositiveStrictFiniteFloat = Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
+NonNegativeStrictFiniteFloat = Annotated[float, Field(strict=True, ge=0, allow_inf_nan=False)]
 
 
 class DecisionNotFoundError(LookupError):
@@ -83,12 +87,56 @@ class FreshnessRule(BaseModel):
     max_age_seconds: Annotated[float, Field(strict=True, ge=0, allow_inf_nan=False)]
 
 
+class PerpInstrumentRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quantity_step: PositiveStrictFiniteFloat
+    contract_multiplier: PositiveStrictFiniteFloat
+    margin_semantics: Annotated[str, Field(min_length=1)]
+    funding_semantics: Annotated[str, Field(min_length=1)]
+
+    @field_validator("margin_semantics", "funding_semantics")
+    @classmethod
+    def require_trimmed_semantics(cls, value):
+        if value != value.strip():
+            raise ValueError("semantics must be non-empty trimmed text")
+        return value
+
+
+class ReconciliationPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    account_generation: Annotated[str, Field(min_length=1)]
+    opening_cash: NonNegativeStrictFiniteFloat
+    currency: Annotated[str, Field(min_length=3, max_length=10, pattern=r"^[A-Z][A-Z0-9]+$")]
+    max_reconciliation_age_seconds: PositiveStrictInt
+    cash_tolerance: NonNegativeStrictFiniteFloat
+    position_tolerance: NonNegativeStrictFiniteFloat
+    fill_tolerance: NonNegativeStrictFiniteFloat
+    tw_stock_quantity_rounding: Literal["whole_share_floor"]
+    perp_instrument_rules: dict[str, PerpInstrumentRule]
+
+    @field_validator("account_generation")
+    @classmethod
+    def require_trimmed_generation(cls, value):
+        if value != value.strip():
+            raise ValueError("account_generation must be non-empty trimmed text")
+        return value
+
+    @field_validator("perp_instrument_rules")
+    @classmethod
+    def require_canonical_instrument_keys(cls, rules):
+        if any(not instrument.strip() or instrument != instrument.strip() for instrument in rules):
+            raise ValueError("perp instrument keys must be non-empty trimmed text")
+        return rules
+
+
 class DecisionPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     policy_id: Annotated[str, Field(min_length=1)]
     mode: Literal["human", "assisted", "automatic"]
-    market: Literal["tw_stock"]
+    market: Literal["tw_stock", "crypto_perp"]
     account_scope: Annotated[str, Field(min_length=1)]
     universe_id: Annotated[str, Field(min_length=1)]
     decision_ttl_seconds: PositiveStrictInt
@@ -97,6 +145,7 @@ class DecisionPolicy(BaseModel):
     approval_roles: Annotated[list[str], Field(min_length=1)]
     protective_exit: ProtectiveExit
     release_gate: ReleaseGate
+    reconciliation: ReconciliationPolicy | None = None
 
     @field_validator("policy_id", "account_scope", "universe_id")
     @classmethod
@@ -120,6 +169,34 @@ class DecisionPolicy(BaseModel):
         if "portfolio_manager" not in roles:
             raise ValueError("portfolio_manager approval is required")
         return roles
+
+    @model_validator(mode="after")
+    def require_perp_rules(self):
+        if self.market == "crypto_perp" and (
+            self.reconciliation is None or not self.reconciliation.perp_instrument_rules
+        ):
+            raise ValueError("crypto_perp requires perp_instrument_rules")
+        return self
+
+
+class ExecutableIntent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evaluation_snapshot_id: uuid.UUID
+    symbol: Annotated[str, Field(min_length=1)]
+    market: Literal["tw_stock", "crypto_perp"]
+    instrument: Annotated[str, Field(min_length=1)]
+    action: Literal["enter", "add", "reduce", "exit"]
+    side: Literal["long", "short"]
+    target_weight: Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
+    order_type: Literal["market"] = "market"
+
+    @field_validator("symbol", "instrument")
+    @classmethod
+    def require_trimmed_identity(cls, value):
+        if value != value.strip():
+            raise ValueError("identity must be non-empty trimmed text")
+        return value
 
 
 class ApprovalBody(BaseModel):
@@ -171,6 +248,58 @@ def _validate_selection(snapshots, selected_values, final_action):
     if final_action in {"enter", "add"} and any(row.status != "evaluated" for row in selected):
         raise ValidationError("exposure increase requires evaluated selections")
     return selected
+
+
+def _validate_order_intents(selected, final_json, policy):
+    final_action = final_json.get("final_action")
+    raw_intents = final_json.get("order_intents")
+    if final_action not in EXECUTABLE_ACTIONS:
+        if raw_intents not in (None, []):
+            raise ValidationError("non-executable action must not contain order_intents")
+        return []
+    if not isinstance(raw_intents, list) or not raw_intents:
+        raise ValidationError("executable decision requires order_intents")
+    try:
+        intents = [ExecutableIntent.model_validate(value) for value in raw_intents]
+    except PydanticValidationError as error:
+        raise ValidationError("order_intents are invalid") from error
+
+    intent_ids = [intent.evaluation_snapshot_id for intent in intents]
+    selected_by_id = {row.id: row for row in selected}
+    if len(set(intent_ids)) != len(intent_ids):
+        raise ValidationError("order_intents require one unique selected snapshot")
+    if set(intent_ids) != set(selected_by_id):
+        raise ValidationError("order_intents must reference every selected snapshot exactly once")
+    for intent in intents:
+        snapshot = selected_by_id[intent.evaluation_snapshot_id]
+        if (intent.symbol, intent.market, intent.instrument) != (
+            snapshot.symbol,
+            snapshot.market,
+            snapshot.instrument,
+        ):
+            raise ValidationError("order intent does not match snapshot identity")
+        if intent.market == "crypto_perp" and (
+            policy.reconciliation is None or intent.instrument not in policy.reconciliation.perp_instrument_rules
+        ):
+            raise ValidationError("order intent requires an owner-frozen perp instrument rule")
+        if intent.side != snapshot.recommendation_json.get("side"):
+            raise ValidationError("order intent does not match snapshot side")
+        if intent.action != final_action:
+            raise ValidationError("order intent action does not match final_action")
+        if intent.action in {"enter", "add"} and intent.target_weight <= 0:
+            raise ValidationError("enter/add target_weight must be positive")
+        if intent.action == "exit" and intent.target_weight != 0:
+            raise ValidationError("exit target_weight must be zero")
+    return sorted(
+        intents,
+        key=lambda intent: (
+            intent.symbol,
+            intent.market,
+            intent.instrument,
+            intent.side,
+            str(intent.evaluation_snapshot_id),
+        ),
+    )
 
 
 def _stored_time(value, field):
@@ -326,16 +455,21 @@ class DecisionService:
             final_action = body.final_action or final_json.get("final_action")
             if not isinstance(allowed_actions, list) or final_action not in allowed_actions:
                 raise DecisionConflictError("override action is not allowed by frozen risk")
-            try:
-                _, _, _, snapshots = verify_complete_run(self.session, decision.evaluation_run_id)
-                _validate_selection(snapshots, final_json.get("selected_evaluation_ids"), final_action)
-            except ValidationError as error:
-                raise DecisionConflictError(str(error)) from error
             if final_action != final_json.get("final_action"):
                 if not isinstance(body.override_reason, str) or not body.override_reason.strip():
                     raise DecisionConflictError("action override requires a reason")
                 final_json["final_action"] = final_action
                 final_json["override_reason"] = body.override_reason
+            try:
+                _, _, _, snapshots = verify_complete_run(self.session, decision.evaluation_run_id)
+                selected = _validate_selection(snapshots, final_json.get("selected_evaluation_ids"), final_action)
+                version = self.session.get(StrategyVersion, decision.strategy_version_id)
+                policy = DecisionPolicy.model_validate(version.policy_json)
+                intents = _validate_order_intents(selected, final_json, policy)
+            except ValidationError as error:
+                raise DecisionConflictError(str(error)) from error
+            if intents:
+                final_json["order_intents"] = [intent.model_dump(mode="json") for intent in intents]
             decision.final_json = final_json
 
         event_type = "approved" if operation == "approve" else "rejected"
@@ -417,6 +551,9 @@ class DecisionService:
         final_action = original.get("final_action")
         selected = _validate_selection(snapshots, original.get("selected_evaluation_ids"), final_action)
         original["selected_evaluation_ids"] = [str(row.id) for row in selected]
+        intents = _validate_order_intents(selected, original, policy)
+        if intents:
+            original["order_intents"] = [intent.model_dump(mode="json") for intent in intents]
         hard_failures = risk.get("hard_failures")
         allowed_actions = risk.get("allowed_actions")
         if not isinstance(hard_failures, list):
@@ -645,13 +782,37 @@ class DecisionService:
             ],
         }
 
-    def is_execution_eligible(self, decision_id, expected_revision, as_of):
+    def validate_execution(self, decision_id, expected_revision, as_of):
         decision = self.session.get(DecisionRecord, decision_id)
         if decision is None:
+            raise DecisionNotFoundError("decision does not exist")
+        if decision.status != "approved":
+            raise DecisionConflictError("decision is not approved")
+        if decision.revision != expected_revision:
+            raise DecisionConflictError("decision revision changed")
+        if _stored_time(decision.valid_until, "valid_until") <= timestamp(as_of, "as_of"):
+            raise DecisionConflictError("decision has expired")
+        if not self._policy_is_current(decision):
+            raise DecisionConflictError("decision policy changed")
+
+        version = self.session.get(StrategyVersion, decision.strategy_version_id)
+        policy = DecisionPolicy.model_validate(version.policy_json)
+        if policy.reconciliation is None:
+            raise DecisionConflictError("execution requires an owner reconciliation policy")
+        try:
+            _, _, _, snapshots = verify_complete_run(self.session, decision.evaluation_run_id)
+            selected = _validate_selection(
+                snapshots,
+                decision.final_json.get("selected_evaluation_ids"),
+                decision.final_json.get("final_action"),
+            )
+            return _validate_order_intents(selected, decision.final_json, policy)
+        except ValidationError as error:
+            raise DecisionConflictError(str(error)) from error
+
+    def is_execution_eligible(self, decision_id, expected_revision, as_of):
+        try:
+            self.validate_execution(decision_id, expected_revision, as_of)
+        except (DecisionNotFoundError, DecisionConflictError, PydanticValidationError):
             return False
-        return (
-            decision.status == "approved"
-            and decision.revision == expected_revision
-            and _stored_time(decision.valid_until, "valid_until") > timestamp(as_of, "as_of")
-            and self._policy_is_current(decision)
-        )
+        return True

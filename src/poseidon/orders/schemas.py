@@ -36,8 +36,22 @@ class Order:
     # can distinguish "missing wiring" (origin=signal + signal_id IS NULL →
     # breach) from "by-design protective close" (origin=stop_loss/
     # liquidation + signal_id IS NULL → legitimate protective exit).
-    order_origin: Literal["signal", "stop_loss", "liquidation", "manual"] = "signal"
+    order_origin: Literal["signal", "stop_loss", "liquidation", "manual", "manual_emergency"] = "signal"
     id: str = field(default_factory=lambda: _uuid.uuid4().hex)
+    decision_id: uuid.UUID | None = None
+    account_scope: str | None = None
+    account_generation: str | None = None
+    execution_key: uuid.UUID | None = None
+    client_order_ref: str | None = None
+    instrument: str | None = None
+    intent_json: dict[str, Any] | None = None
+    intent_sha256: str | None = None
+    reserved_cash_json: dict[str, Any] | None = None
+    reserved_quantity: float | None = None
+    reservation_status: str | None = None
+    reconciliation_status: str | None = None
+    submit_attempted_at: datetime | None = None
+    protective_context_json: dict[str, Any] | None = None
 
 
 @dataclass
@@ -49,6 +63,7 @@ class Fill:
     fill_quantity: float
     fill_time: datetime
     broker_fill_id: str | None = None
+    projection_status: str | None = None
 
 
 @dataclass

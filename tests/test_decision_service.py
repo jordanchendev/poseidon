@@ -25,6 +25,8 @@ from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
+from poseidon.orders.schemas import Fill, Order
+from poseidon.orders.state_machine import OrderStatus, transition_order
 
 
 @compiles(JSONB, "sqlite")
@@ -79,10 +81,41 @@ def synthetic_policy(**changes):
     return policy
 
 
-def manifest_request():
-    payload = {"close": 100.0, "symbol": "2330"}
-    return {
+def synthetic_reconciliation_policy(**changes):
+    policy = {
+        "account_generation": "synthetic-generation-1",
+        "opening_cash": 100000.0,
+        "currency": "TWD",
+        "max_reconciliation_age_seconds": 300,
+        "cash_tolerance": 0.01,
+        "position_tolerance": 0.0,
+        "fill_tolerance": 0.0,
+        "tw_stock_quantity_rounding": "whole_share_floor",
+        "perp_instrument_rules": {},
+    }
+    policy.update(changes)
+    return policy
+
+
+def executable_intent(snapshot_id, symbol="2330", **changes):
+    intent = {
+        "evaluation_snapshot_id": snapshot_id,
+        "symbol": symbol,
         "market": "tw_stock",
+        "instrument": "spot",
+        "action": "enter",
+        "side": "long",
+        "target_weight": 0.1,
+        "order_type": "market",
+    }
+    intent.update(changes)
+    return intent
+
+
+def manifest_request(*, market="tw_stock", symbol="2330"):
+    payload = {"close": 100.0, "symbol": symbol}
+    return {
+        "market": market,
         "interval": "1d",
         "as_of": "2026-09-26T12:00:00Z",
         "account_scope": "paper:pilot",
@@ -104,8 +137,12 @@ def manifest_request():
     }
 
 
-def decision_inputs(db, *, policy=None, non_evaluated_status="no_trade"):
-    manifest = ManifestService(db).freeze(manifest_request())
+def decision_inputs(db, *, policy=None, non_evaluated_status="no_trade", market="tw_stock", universe=None):
+    universe = universe or [
+        {"symbol": "2330", "market": "tw_stock", "instrument": "spot"},
+        {"symbol": "2317", "market": "tw_stock", "instrument": "spot"},
+    ]
+    manifest = ManifestService(db).freeze(manifest_request(market=market, symbol=universe[0]["symbol"]))
     policy = synthetic_policy() if policy is None else policy
     version = StrategyVersion(
         strategy_id=uuid.uuid4(),
@@ -118,30 +155,20 @@ def decision_inputs(db, *, policy=None, non_evaluated_status="no_trade"):
     )
     db.add(version)
     db.flush()
-    universe = [
-        {"symbol": "2330", "market": "tw_stock", "instrument": "spot"},
-        {"symbol": "2317", "market": "tw_stock", "instrument": "spot"},
-    ]
     snapshots = [
         {
-            **universe[0],
-            "status": "evaluated",
-            "recommendation_json": {"research_status": "not_required"},
-            "reason_codes": [],
+            **member,
+            "status": "evaluated" if index == 0 else non_evaluated_status,
+            "recommendation_json": {"research_status": "not_required", "side": "long"},
+            "reason_codes": [] if index == 0 else ["synthetic_no_trade"],
             "valid_until": "2026-09-26T15:00:00Z",
-        },
-        {
-            **universe[1],
-            "status": non_evaluated_status,
-            "recommendation_json": {"research_status": "not_required"},
-            "reason_codes": ["synthetic_no_trade"],
-            "valid_until": "2026-09-26T15:00:00Z",
-        },
+        }
+        for index, member in enumerate(universe)
     ]
     run = EvaluationService(db).evaluate_run(version.id, manifest.id, universe, snapshots)
     rows = db.query(EvaluationSnapshot).filter_by(evaluation_run_id=run.id).all()
     snapshot_by_symbol = {row.symbol: row for row in rows}
-    snapshot_ids = [str(snapshot_by_symbol[symbol].id) for symbol in ("2330", "2317")]
+    snapshot_ids = [str(snapshot_by_symbol[member["symbol"]].id) for member in universe]
     return run, version, snapshot_ids
 
 
@@ -202,6 +229,100 @@ def test_policy_rejects_invalid_freshness_rules(rule):
         DecisionPolicy.model_validate(synthetic_policy(required_data={"ohlcv": rule}))
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"cash_tolerance": -0.01},
+        {"position_tolerance": float("inf")},
+        {"fill_tolerance": True},
+        {"max_reconciliation_age_seconds": 0},
+        {"opening_cash": float("nan")},
+        {"currency": " twd"},
+        {"unknown": "forbidden"},
+    ],
+)
+def test_reconciliation_policy_is_optional_but_strict_without_tolerance_defaults(change):
+    historical = DecisionPolicy.model_validate(synthetic_policy())
+    assert historical.reconciliation is None
+
+    current = DecisionPolicy.model_validate(synthetic_policy(reconciliation=synthetic_reconciliation_policy()))
+    assert current.reconciliation.cash_tolerance == 0.01
+    assert current.reconciliation.position_tolerance == 0.0
+    assert current.reconciliation.fill_tolerance == 0.0
+
+    invalid = synthetic_reconciliation_policy(**change)
+    with pytest.raises(PydanticValidationError):
+        DecisionPolicy.model_validate(synthetic_policy(reconciliation=invalid))
+
+
+def test_sizing_policy_requires_whole_share_floor_and_complete_perp_rules():
+    with pytest.raises(PydanticValidationError):
+        DecisionPolicy.model_validate(
+            synthetic_policy(reconciliation=synthetic_reconciliation_policy(tw_stock_quantity_rounding="nearest_lot"))
+        )
+
+    crypto_policy = synthetic_policy(
+        market="crypto_perp",
+        reconciliation=synthetic_reconciliation_policy(currency="USDT"),
+    )
+    with pytest.raises(PydanticValidationError, match="perp_instrument_rules"):
+        DecisionPolicy.model_validate(crypto_policy)
+
+    crypto_policy["reconciliation"]["perp_instrument_rules"] = {
+        "BTC/USDT:USDT": {
+            "quantity_step": 0.001,
+            "contract_multiplier": 1.0,
+            "margin_semantics": "synthetic-isolated",
+            "funding_semantics": "synthetic-periodic-cashflow",
+        }
+    }
+    parsed = DecisionPolicy.model_validate(crypto_policy)
+    assert parsed.reconciliation.perp_instrument_rules["BTC/USDT:USDT"].quantity_step == 0.001
+
+
+def test_sizing_policy_requires_a_rule_for_each_perp_intent_instrument(db):
+    crypto_policy = synthetic_policy(
+        market="crypto_perp",
+        reconciliation=synthetic_reconciliation_policy(
+            currency="USDT",
+            perp_instrument_rules={
+                "BTC/USDT:USDT": {
+                    "quantity_step": 0.001,
+                    "contract_multiplier": 1.0,
+                    "margin_semantics": "synthetic-isolated",
+                    "funding_semantics": "synthetic-periodic-cashflow",
+                }
+            },
+        ),
+    )
+    universe = [{"symbol": "ETH/USDT", "market": "crypto_perp", "instrument": "ETH/USDT:USDT"}]
+    run, _, snapshot_ids = decision_inputs(
+        db,
+        policy=crypto_policy,
+        market="crypto_perp",
+        universe=universe,
+    )
+    with pytest.raises(ValidationError, match="perp instrument rule"):
+        create_decision(
+            db,
+            run.id,
+            snapshot_ids,
+            original_json={
+                "selected_evaluation_ids": snapshot_ids,
+                "final_action": "enter",
+                "order_intents": [
+                    executable_intent(
+                        snapshot_ids[0],
+                        symbol="ETH/USDT",
+                        market="crypto_perp",
+                        instrument="ETH/USDT:USDT",
+                    )
+                ],
+            },
+            risk_snapshot_json={"hard_failures": [], "allowed_actions": ["enter"]},
+        )
+
+
 @pytest.mark.parametrize("kind", ["", " ohlcv", "ohlcv "])
 def test_policy_rejects_invalid_required_data_kind(kind):
     with pytest.raises(PydanticValidationError):
@@ -232,6 +353,180 @@ def test_create_decision_is_replay_safe_and_appends_one_event(db):
     assert first.revision == 1
     assert first.original_json == first.final_json
     assert db.query(DecisionEvent).filter_by(decision_id=first.id).count() == 1
+
+
+@pytest.mark.parametrize(
+    "order_intents",
+    [
+        None,
+        [],
+        [{"extra": "forbidden"}],
+    ],
+)
+def test_order_intent_is_required_and_extra_forbidden_for_executable_actions(db, order_intents):
+    run, _, snapshot_ids = decision_inputs(db)
+    original = {"selected_evaluation_ids": [snapshot_ids[0]], "final_action": "enter"}
+    if order_intents is not None:
+        original["order_intents"] = (
+            [executable_intent(snapshot_ids[0], extra="forbidden")] if order_intents else order_intents
+        )
+    with pytest.raises(ValidationError, match="order_intents"):
+        create_decision(
+            db,
+            run.id,
+            snapshot_ids,
+            original_json=original,
+            risk_snapshot_json={"hard_failures": [], "allowed_actions": ["enter"]},
+        )
+
+
+@pytest.mark.parametrize("action", ["watch", "hold"])
+def test_order_intent_is_absent_for_non_executable_action(db, action):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(
+        db,
+        run.id,
+        snapshot_ids,
+        original_json={"selected_evaluation_ids": [snapshot_ids[0]], "final_action": action},
+        risk_snapshot_json={"hard_failures": [], "allowed_actions": [action]},
+    )
+    assert "order_intents" not in decision.final_json
+
+    with pytest.raises(ValidationError, match="must not contain order_intents"):
+        create_decision(
+            db,
+            run.id,
+            snapshot_ids,
+            original_json={
+                "selected_evaluation_ids": [snapshot_ids[0]],
+                "final_action": action,
+                "order_intents": [executable_intent(snapshot_ids[0])],
+            },
+            risk_snapshot_json={"hard_failures": [], "allowed_actions": [action]},
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate,reason",
+    [
+        (lambda intent: intent.update(evaluation_snapshot_id=str(uuid.uuid4())), "selected snapshot"),
+        (lambda intent: intent.update(symbol="2317"), "snapshot identity"),
+        (lambda intent: intent.update(market="crypto_perp"), "snapshot identity"),
+        (lambda intent: intent.update(instrument="perpetual"), "snapshot identity"),
+        (lambda intent: intent.update(side="short"), "snapshot side"),
+        (lambda intent: intent.update(target_weight=float("inf")), "finite JSON"),
+        (lambda intent: intent.update(unknown="forbidden"), "order_intents"),
+    ],
+)
+def test_order_intent_rejects_foreign_mismatched_nonfinite_or_extra_values(db, mutate, reason):
+    run, _, snapshot_ids = decision_inputs(db)
+    intent = executable_intent(snapshot_ids[0])
+    mutate(intent)
+    with pytest.raises(ValidationError, match=reason):
+        create_decision(
+            db,
+            run.id,
+            snapshot_ids,
+            original_json={
+                "selected_evaluation_ids": [snapshot_ids[0]],
+                "final_action": "enter",
+                "order_intents": [intent],
+            },
+            risk_snapshot_json={"hard_failures": [], "allowed_actions": ["enter"]},
+        )
+
+
+def test_order_intent_is_unique_per_snapshot_and_canonical_across_two_symbols(db):
+    run, _, snapshot_ids = decision_inputs(db, non_evaluated_status="evaluated")
+    original = {
+        "selected_evaluation_ids": snapshot_ids,
+        "final_action": "enter",
+        "order_intents": [
+            executable_intent(snapshot_ids[1], symbol="2317", target_weight=0.2),
+            executable_intent(snapshot_ids[0], symbol="2330", target_weight=0.1),
+        ],
+    }
+    decision = create_decision(
+        db,
+        run.id,
+        snapshot_ids,
+        original_json=original,
+        risk_snapshot_json={"hard_failures": [], "allowed_actions": ["enter"]},
+    )
+    assert [intent["symbol"] for intent in decision.final_json["order_intents"]] == ["2317", "2330"]
+    assert len({intent["evaluation_snapshot_id"] for intent in decision.final_json["order_intents"]}) == 2
+
+    duplicate = copy.deepcopy(original)
+    duplicate["order_intents"][1] = copy.deepcopy(duplicate["order_intents"][0])
+    with pytest.raises(ValidationError, match="unique selected snapshot"):
+        create_decision(
+            db,
+            run.id,
+            snapshot_ids,
+            original_json=duplicate,
+            risk_snapshot_json={"hard_failures": [], "allowed_actions": ["enter"]},
+        )
+
+
+@pytest.mark.parametrize(
+    "action,intent_action,target_weight",
+    [("enter", "add", 0.1), ("add", "add", 0.0), ("exit", "exit", 0.1)],
+)
+def test_action_consistency_and_target_weight_fail_closed(db, action, intent_action, target_weight):
+    run, _, snapshot_ids = decision_inputs(db)
+    with pytest.raises(ValidationError):
+        create_decision(
+            db,
+            run.id,
+            snapshot_ids,
+            original_json={
+                "selected_evaluation_ids": [snapshot_ids[0]],
+                "final_action": action,
+                "order_intents": [
+                    executable_intent(snapshot_ids[0], action=intent_action, target_weight=target_weight)
+                ],
+            },
+            risk_snapshot_json={"hard_failures": [], "allowed_actions": [action]},
+        )
+
+
+def test_order_intent_state_machine_preserves_unknown_attempt_and_dto_compatibility():
+    assert transition_order(OrderStatus.PENDING, OrderStatus.PENDING_SUBMIT) == OrderStatus.PENDING_SUBMIT
+    assert (
+        transition_order(OrderStatus.PENDING_SUBMIT, OrderStatus.RECONCILIATION_REQUIRED)
+        == OrderStatus.RECONCILIATION_REQUIRED
+    )
+    with pytest.raises(ValueError):
+        transition_order(OrderStatus.PENDING_SUBMIT, OrderStatus.REJECTED)
+    with pytest.raises(ValueError):
+        transition_order(OrderStatus.RECONCILIATION_REQUIRED, OrderStatus.PENDING_SUBMIT)
+
+    legacy_order = Order("2330", "tw_stock", "buy", "market", 0.1, 1.0, "legacy", "paper")
+    legacy_fill = Fill(legacy_order.id, 100.0, 1.0, datetime(2026, 9, 26, tzinfo=UTC))
+    assert legacy_order.decision_id is None
+    assert legacy_order.client_order_ref is None
+    assert legacy_fill.projection_status is None
+
+    fully_positional = Order(
+        "2330",
+        "tw_stock",
+        "buy",
+        "market",
+        0.1,
+        1.0,
+        "legacy",
+        "paper",
+        "long",
+        None,
+        OrderStatus.PENDING,
+        None,
+        None,
+        None,
+        "manual",
+        "legacy-order-id",
+    )
+    assert fully_positional.id == "legacy-order-id"
+    assert fully_positional.decision_id is None
 
 
 @pytest.mark.parametrize("uuid_format", ["uppercase", "hex"])
@@ -302,7 +597,10 @@ def test_changed_frozen_input_supersedes_the_previous_candidate_once(db):
 
 
 def test_expiry_is_one_transition_and_eligibility_is_fail_closed(db):
-    run, version, snapshot_ids = decision_inputs(db)
+    run, version, snapshot_ids = decision_inputs(
+        db,
+        policy=synthetic_policy(reconciliation=synthetic_reconciliation_policy()),
+    )
     decision = create_decision(db, run.id, snapshot_ids)
     service = DecisionService(db)
     decision.status = "approved"
@@ -319,6 +617,40 @@ def test_expiry_is_one_transition_and_eligibility_is_fail_closed(db):
 
     version.policy_json = copy.deepcopy(version.policy_json) | {"decision_ttl_seconds": 7200}
     assert not service.is_execution_eligible(decision.id, 2, datetime(2026, 9, 26, 12, 30, tzinfo=UTC))
+
+
+def test_legacy_executable_decision_remains_traceable_but_validator_reports_missing_intents(db):
+    run, _, snapshot_ids = decision_inputs(
+        db,
+        policy=synthetic_policy(reconciliation=synthetic_reconciliation_policy()),
+    )
+    decision = create_decision(db, run.id, snapshot_ids)
+    decision.status = "approved"
+    decision.revision = 2
+    decision.final_json = {"selected_evaluation_ids": [snapshot_ids[0]], "final_action": "enter"}
+
+    trace = DecisionService(db).trace(decision.id, principal=manager())
+    assert trace["decision"]["final_json"]["final_action"] == "enter"
+    with pytest.raises(DecisionConflictError, match="requires order_intents"):
+        DecisionService(db).validate_execution(
+            decision.id,
+            2,
+            datetime(2026, 9, 26, 12, 30, tzinfo=UTC),
+        )
+
+
+def test_legacy_executable_validator_reports_missing_reconciliation_policy(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    decision.status = "approved"
+    decision.revision = 2
+
+    with pytest.raises(DecisionConflictError, match="reconciliation policy"):
+        DecisionService(db).validate_execution(
+            decision.id,
+            2,
+            datetime(2026, 9, 26, 12, 30, tzinfo=UTC),
+        )
 
 
 @pytest.mark.parametrize("operation", ["superseded", "expired"])
@@ -471,27 +803,22 @@ def test_authorization_runs_before_stored_idempotency_replay(db):
         assert error.value.status_code == 403
 
 
-def test_soft_override_replaces_final_json_and_preserves_original(db):
+def test_action_consistency_rejects_override_without_matching_frozen_intents(db):
     run, _, snapshot_ids = decision_inputs(db)
     decision = create_decision(db, run.id, snapshot_ids)
     original = copy.deepcopy(decision.original_json)
-    response = DecisionService(db).approve(
-        decision.id,
-        {"expected_revision": 1, "final_action": "reduce", "override_reason": "Synthetic review"},
-        principal=manager(),
-        idempotency_key="override",
-        now=datetime(2026, 9, 26, 12, 30, tzinfo=UTC),
-    )
+    with pytest.raises(DecisionConflictError, match="order_intents"):
+        DecisionService(db).approve(
+            decision.id,
+            {"expected_revision": 1, "final_action": "reduce", "override_reason": "Synthetic review"},
+            principal=manager(),
+            idempotency_key="override",
+            now=datetime(2026, 9, 26, 12, 30, tzinfo=UTC),
+        )
 
     assert decision.original_json == original
-    assert decision.final_json == {
-        **original,
-        "final_action": "reduce",
-        "override_reason": "Synthetic review",
-    }
-    assert response["final_json"] == decision.final_json
-    db.expire(decision, ["final_json"])
-    assert decision.final_json["final_action"] == "reduce"
+    assert decision.final_json == original
+    assert decision.status == "pending_approval"
 
 
 @pytest.mark.parametrize("status", ["failed", "excluded", "no_trade"])
