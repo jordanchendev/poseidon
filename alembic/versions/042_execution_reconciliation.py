@@ -402,6 +402,74 @@ def upgrade():
 
 
 def downgrade():
+    connection = op.get_bind()
+    connection.execute(
+        sa.text(
+            """
+            LOCK TABLE
+                position_lots,
+                fill_allocations,
+                account_reconciliations,
+                paper_broker_accounts,
+                paper_broker_orders,
+                paper_broker_fills,
+                paper_cash_movements,
+                decision_records,
+                orders,
+                order_fills
+            IN SHARE MODE
+            """
+        )
+    )
+    has_execution_history = connection.execute(
+        sa.text(
+            """
+            SELECT
+                EXISTS (SELECT 1 FROM position_lots LIMIT 1)
+                OR EXISTS (SELECT 1 FROM fill_allocations LIMIT 1)
+                OR EXISTS (SELECT 1 FROM account_reconciliations LIMIT 1)
+                OR EXISTS (SELECT 1 FROM paper_broker_accounts LIMIT 1)
+                OR EXISTS (SELECT 1 FROM paper_broker_orders LIMIT 1)
+                OR EXISTS (SELECT 1 FROM paper_broker_fills LIMIT 1)
+                OR EXISTS (SELECT 1 FROM paper_cash_movements LIMIT 1)
+                OR EXISTS (
+                    SELECT 1
+                    FROM decision_records
+                    WHERE decision_records.execution_key IS NOT NULL
+                       OR decision_records.claimed_at IS NOT NULL
+                    LIMIT 1
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM orders
+                    WHERE orders.decision_id IS NOT NULL
+                       OR orders.account_scope IS NOT NULL
+                       OR orders.account_generation IS NOT NULL
+                       OR orders.execution_key IS NOT NULL
+                       OR orders.client_order_ref IS NOT NULL
+                       OR orders.instrument IS NOT NULL
+                       OR orders.intent_json IS NOT NULL
+                       OR orders.intent_sha256 IS NOT NULL
+                       OR orders.reserved_cash_json IS NOT NULL
+                       OR orders.reserved_quantity IS NOT NULL
+                       OR orders.reservation_status IS NOT NULL
+                       OR orders.reconciliation_status IS NOT NULL
+                       OR orders.submit_attempted_at IS NOT NULL
+                       OR orders.protective_context_json IS NOT NULL
+                    LIMIT 1
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM order_fills
+                    WHERE order_fills.projection_status IS NOT NULL
+                    LIMIT 1
+                )
+            """
+        )
+    ).scalar()
+    if has_execution_history:
+        raise RuntimeError("migration 042 downgrade refused: execution or audit history exists")
+
     op.drop_table("paper_cash_movements")
     op.drop_table("paper_broker_fills")
     op.drop_table("paper_broker_orders")

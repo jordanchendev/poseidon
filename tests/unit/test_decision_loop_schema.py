@@ -27,25 +27,30 @@ def _compile_uuid_sqlite(type_, compiler, **kw):
 
 
 class _Result:
-    def __init__(self, row=None):
+    def __init__(self, row=None, scalar_value=False):
         self.row = row
+        self.scalar_value = scalar_value
 
     def first(self):
         return self.row
 
+    def scalar(self):
+        return self.scalar_value
+
 
 class _Connection:
-    def __init__(self, row=None):
+    def __init__(self, row=None, scalar_value=False):
         self.row = row
+        self.scalar_value = scalar_value
         self.statements = []
 
     def execute(self, statement):
         self.statements.append(str(statement))
-        return _Result(self.row)
+        return _Result(self.row, self.scalar_value)
 
 
 class MigrationOperations:
-    def __init__(self, *, seed_execution_dependencies=False, duplicate_fill=None):
+    def __init__(self, *, seed_execution_dependencies=False, duplicate_fill=None, downgrade_history=False):
         self.metadata = sa.MetaData()
         self.dropped = []
         self.dropped_operations = []
@@ -55,7 +60,7 @@ class MigrationOperations:
         self.created_check_constraints = []
         self.executed = []
         self.mutation_calls = []
-        self.connection = _Connection(duplicate_fill)
+        self.connection = _Connection(duplicate_fill, downgrade_history)
         if seed_execution_dependencies:
             sa.Table(
                 "decision_records",
@@ -292,6 +297,58 @@ def test_execution_migration_aborts_dirty_fill_history_before_mutation(monkeypat
 
     assert operations.mutation_calls == []
     assert "broker_fill_id IS NOT NULL" in operations.connection.statements[0]
+
+
+def test_execution_migration_refuses_destructive_downgrade_before_any_drop(monkeypatch):
+    migration = _load_execution_migration()
+    operations = MigrationOperations(downgrade_history=True)
+    monkeypatch.setattr(migration, "op", operations)
+
+    with pytest.raises(RuntimeError, match="execution or audit history"):
+        migration.downgrade()
+
+    assert operations.dropped_operations == []
+    checked_tables = (
+        "position_lots",
+        "fill_allocations",
+        "account_reconciliations",
+        "paper_broker_accounts",
+        "paper_broker_orders",
+        "paper_broker_fills",
+        "paper_cash_movements",
+        "decision_records",
+        "orders",
+        "order_fills",
+    )
+    lock_statement = operations.connection.statements[0]
+    assert lock_statement.lstrip().startswith("LOCK TABLE")
+    assert "IN SHARE MODE" in lock_statement
+    for table_name in checked_tables:
+        assert table_name in lock_statement
+
+    statement = operations.connection.statements[1]
+    for table_name in checked_tables[:7]:
+        assert f"FROM {table_name}" in statement
+    for field_name in ("execution_key", "claimed_at"):
+        assert f"decision_records.{field_name} IS NOT NULL" in statement
+    for field_name in (
+        "decision_id",
+        "account_scope",
+        "account_generation",
+        "execution_key",
+        "client_order_ref",
+        "instrument",
+        "intent_json",
+        "intent_sha256",
+        "reserved_cash_json",
+        "reserved_quantity",
+        "reservation_status",
+        "reconciliation_status",
+        "submit_attempted_at",
+        "protective_context_json",
+    ):
+        assert f"orders.{field_name} IS NOT NULL" in statement
+    assert "order_fills.projection_status IS NOT NULL" in statement
 
 
 def test_execution_migration_matches_exact_orm_contract_and_downgrade_order(monkeypatch):
