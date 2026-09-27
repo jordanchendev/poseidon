@@ -636,6 +636,50 @@ def test_zero_fill_terminal_generation_precedes_later_projected_close(seed, firs
         assert session.get(OrderFillRecord, fill_id).projection_status == "applied"
 
 
+def test_later_legacy_fill_preserves_historical_source_close_date(seed):
+    first_id, _account_id = _legacy_holding(seed, shares=2, holding_id=uuid.UUID(int=1))
+    second_id, _account_id = _legacy_holding(seed, shares=3, holding_id=uuid.UUID(int=2))
+
+    def close(holding_id, quantity, minute):
+        materialized = _materialize_legacy(
+            seed,
+            holding_id,
+            trigger=f"legacy:close-date:{holding_id}",
+            now=NOW.replace(minute=minute),
+        )
+        order_id = uuid.UUID(materialized["order_ids"][0])
+        fill_id = uuid.uuid4()
+        with seed.sessions() as session, session.begin():
+            order = session.get(OrderRecord, order_id)
+            order.status = "filled"
+            order.broker_order_id = f"PAPER-{uuid.uuid4().hex}"
+            order.submit_attempted_at = NOW.replace(minute=minute)
+            order.reconciliation_status = "resolved"
+            session.add(
+                OrderFillRecord(
+                    id=fill_id,
+                    order_id=order.id,
+                    broker_fill_id=f"fill-{uuid.uuid4().hex}",
+                    fill_price=79,
+                    fill_quantity=quantity,
+                    fill_time=NOW.replace(minute=minute + 1),
+                    projection_status="projection_pending",
+                    created_at=NOW.replace(minute=minute + 1),
+                )
+            )
+        project(seed, fill_id)
+
+    close(first_id, 2, 0)
+    with seed.sessions() as session:
+        assert session.get(PortfolioHoldingRecord, first_id).close_date == NOW.replace(minute=1)
+
+    close(second_id, 3, 2)
+
+    with seed.sessions() as session:
+        assert session.get(PortfolioHoldingRecord, first_id).close_date == NOW.replace(minute=1)
+        assert session.get(PortfolioHoldingRecord, second_id).close_date == NOW.replace(minute=3)
+
+
 def test_legacy_holding_partial_cancel_releases_unfilled_remainder(seed):
     holding_id, _account_id = _legacy_holding(seed, shares=5)
     result = _materialize_legacy(seed, holding_id)

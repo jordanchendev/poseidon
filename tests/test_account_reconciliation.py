@@ -350,6 +350,46 @@ def test_full_legacy_short_close_reconstructs_frozen_basis_and_reconciles(monkey
     assert row.broker_snapshot_json["positions"] == row.internal_snapshot_json["positions"] == {}
 
 
+def test_ordinary_position_survives_legacy_close_and_reconciles(monkeypatch, account):
+    trade(account, quantity=5, price=100, action="enter", side="long")
+    legacy_close(account, monkeypatch, shares=5, entry_price=80, fill_price=80, side="long")
+
+    result = reconcile(account)
+
+    row = stored(account, result)
+    assert result["status"] == "matched", row.difference_json
+    assert row.broker_snapshot_json["positions"] == row.internal_snapshot_json["positions"]
+    assert list(row.broker_snapshot_json["positions"].values()) == [5.0]
+
+
+def test_ordinary_materialization_after_legacy_close_uses_compatible_nav(monkeypatch, account):
+    from poseidon.workers import cpu_tasks
+
+    trade(account, quantity=5, price=100, action="enter", side="long")
+    legacy_close(account, monkeypatch, shares=5, entry_price=80, fill_price=80, side="long")
+    unresolved = reconcile(account)
+    with account.sessions() as session, session.begin():
+        reconciliation = session.get(AccountReconciliation, uuid.UUID(unresolved["reconciliation_id"]))
+        reconciliation.status = "matched"
+        decision = session.get(DecisionRecord, account.decision_id)
+        decision.valid_until = NOW + timedelta(hours=1)
+
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", account.sessions)
+    monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", lambda _market: account.adapter)
+    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": 100.0})
+    monkeypatch.setattr(cpu_tasks.settings, "decision_loop_execution_mode", "decision")
+    monkeypatch.setattr(cpu_tasks.settings, "decision_loop_execution_enabled", True)
+    monkeypatch.setattr(cpu_tasks.settings, "decision_loop_approved_account_scope", account.scope)
+    monkeypatch.setattr(cpu_tasks.settings, "decision_loop_approved_account_generation", "generation-1")
+    monkeypatch.setattr(cpu_tasks.settings, "decision_loop_approved_market", "tw_stock")
+    monkeypatch.setattr("poseidon.decision_loop.execution.timestamp", lambda _value, _field: NOW)
+
+    result = cpu_tasks.materialize_execution_claim.run(str(account.decision_id))
+
+    assert result["status"] == "pending_submit"
+    assert len(result["order_ids"]) == 1
+
+
 def test_partial_legacy_close_baseline_remains_honest_unresolved(monkeypatch, account):
     legacy_partial_close(account, monkeypatch)
 

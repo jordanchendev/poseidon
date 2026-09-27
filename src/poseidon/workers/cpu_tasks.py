@@ -44,10 +44,16 @@ def _decision_paper_adapter(market):
     raise ValueError("decision execution requires a supported paper market")
 
 
-def _decision_liquidation_nav(snapshot, policy, prices, ledger):
+def _decision_liquidation_nav(snapshot, policy, prices, ledger, *, position_economics=None):
     from poseidon.decision_loop.reconciliation import paper_liquidation_nav
 
-    return paper_liquidation_nav(snapshot, policy, prices, ledger)
+    return paper_liquidation_nav(
+        snapshot,
+        policy,
+        prices,
+        ledger,
+        position_economics=position_economics,
+    )
 
 
 def _ordinary_execution_authorized(scope, market, generation):
@@ -474,6 +480,7 @@ def materialize_execution_claim(decision_id: str) -> dict:
     from sqlalchemy import select
 
     from poseidon.api.auth import AuthPrincipal
+    from poseidon.broker.paper_adapter import validated_position_economics
     from poseidon.decision_loop.execution import DecisionExecutionService
     from poseidon.models.decision_record import DecisionRecord
     from poseidon.models.paper_broker_fill import PaperBrokerFill
@@ -511,6 +518,12 @@ def materialize_execution_claim(decision_id: str) -> dict:
             )
             .order_by(PaperBrokerFill.state_version, PaperBrokerFill.id)
         ).all()
+        position_economics = validated_position_economics(
+            session,
+            account_scope,
+            reconciliation.account_generation,
+            snapshot.state_version,
+        )
     identities = {(intent.market, intent.symbol, intent.instrument) for intent in intents}
     identities.update(reservation_identities)
     identities.update((position.market, position.symbol, position.instrument) for position in snapshot.positions)
@@ -529,7 +542,13 @@ def materialize_execution_claim(decision_id: str) -> dict:
                 if mark is None or isinstance(mark, bool) or not math.isfinite(mark) or mark <= 0:
                     raise ValueError("materialization requires every current mark")
                 prices[identity] = mark
-    nav = _decision_liquidation_nav(snapshot, reconciliation, prices, ledger)
+    nav = _decision_liquidation_nav(
+        snapshot,
+        reconciliation,
+        prices,
+        ledger,
+        position_economics=position_economics,
+    )
     principal = AuthPrincipal("system:decision-worker", frozenset({"decision-worker"}), frozenset({account_scope}))
     with SessionLocal() as session, session.begin():
         execution = DecisionExecutionService(session)

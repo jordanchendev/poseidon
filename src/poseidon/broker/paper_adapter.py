@@ -589,7 +589,7 @@ def _position_state_for_identity(
     side,
     *,
     state_version=None,
-) -> tuple[Decimal, Decimal, Decimal]:
+) -> tuple[Decimal, Decimal, Decimal, Decimal]:
     baselines = _validated_baselines(
         session,
         account_scope,
@@ -612,6 +612,7 @@ def _position_state_for_identity(
         raise BrokerCapabilityError("legacy position control ledger exceeds account watermark")
     attribution_groups: dict[str, list[PaperBrokerOrder]] = {}
     attribution_remaining: dict[uuid.UUID, Decimal] = {}
+    baseline_prices = {_baseline_holding_id(row): Decimal(str(row.price)) for row in baselines}
     holding_remaining: dict[uuid.UUID, Decimal] = {}
     for row in attributions:
         holding_id, execution_ref = _attribution_identity(row)
@@ -634,6 +635,7 @@ def _position_state_for_identity(
     events = [(row.state_version, 0, row.client_order_ref, row, None) for row in baselines]
     events.extend((fill.state_version, 1, str(fill.id), broker_order, fill) for broker_order, fill in rows)
     legacy_quantity = Decimal("0")
+    legacy_entry_cost = Decimal("0")
     ordinary_quantity = Decimal("0")
     ordinary_entry_cost = Decimal("0")
     opening_action = "buy" if side == "long" else "sell"
@@ -645,11 +647,21 @@ def _position_state_for_identity(
                 raise BrokerCapabilityError("independent paper broker ledger contains a duplicate baseline")
             holding_remaining[holding_id] = baseline_quantity
             legacy_quantity += baseline_quantity
+            legacy_entry_cost += baseline_quantity * Decimal(str(broker_order.price))
             continue
+        if (
+            broker_order.action not in {"buy", "sell"}
+            or not math.isfinite(fill.fill_quantity)
+            or fill.fill_quantity <= 0
+            or not math.isfinite(fill.fill_price)
+            or fill.fill_price <= 0
+        ):
+            raise BrokerCapabilityError("independent paper broker ledger contains invalid fill economics")
         fill_quantity = Decimal(str(fill.fill_quantity))
         group = attribution_groups.get(broker_order.client_order_ref)
         if group is not None:
             remaining_fill = fill_quantity
+            attributed_cost = Decimal("0")
             for attribution in sorted(group, key=lambda item: item.client_order_ref):
                 holding_id, _execution_ref = _attribution_identity(attribution)
                 available = attribution_remaining[attribution.id]
@@ -658,12 +670,14 @@ def _position_state_for_identity(
                     raise BrokerCapabilityError("legacy close exceeds its attributed holding")
                 attribution_remaining[attribution.id] -= consumed
                 holding_remaining[holding_id] -= consumed
+                attributed_cost += baseline_prices[holding_id] * consumed
                 remaining_fill -= consumed
             if remaining_fill:
                 raise BrokerCapabilityError("legacy close exceeds its frozen attribution")
             if fill_quantity > legacy_quantity:
                 raise BrokerCapabilityError("independent paper broker ledger contains a negative position")
             legacy_quantity -= fill_quantity
+            legacy_entry_cost -= attributed_cost
             continue
         if broker_order.action == opening_action:
             ordinary_quantity += fill_quantity
@@ -674,10 +688,15 @@ def _position_state_for_identity(
         average_entry = ordinary_entry_cost / ordinary_quantity
         ordinary_entry_cost -= average_entry * fill_quantity
         ordinary_quantity -= fill_quantity
-    return legacy_quantity + ordinary_quantity, ordinary_quantity, ordinary_entry_cost
+    return (
+        legacy_quantity + ordinary_quantity,
+        legacy_entry_cost + ordinary_entry_cost,
+        ordinary_quantity,
+        ordinary_entry_cost,
+    )
 
 
-def _position_state(session, order: Order) -> tuple[Decimal, Decimal, Decimal]:
+def _position_state(session, order: Order) -> tuple[Decimal, Decimal, Decimal, Decimal]:
     return _position_state_for_identity(
         session,
         order.account_scope,
@@ -687,6 +706,42 @@ def _position_state(session, order: Order) -> tuple[Decimal, Decimal, Decimal]:
         order.instrument,
         order.side,
     )
+
+
+def validated_position_economics(session, account_scope, account_generation, state_version):
+    """Return watermark-bounded position quantity/cost after strict control validation."""
+    if isinstance(state_version, bool) or not isinstance(state_version, int) or state_version < 0:
+        raise BrokerCapabilityError("paper position watermark is invalid")
+    baselines = _validated_baselines(session, account_scope, account_generation)
+    attributions = _validated_attributions(session, account_scope, account_generation)
+    rows = session.execute(
+        select(PaperBrokerOrder, PaperBrokerFill)
+        .join(PaperBrokerFill, PaperBrokerFill.paper_broker_order_id == PaperBrokerOrder.id)
+        .where(
+            PaperBrokerOrder.account_scope == account_scope,
+            PaperBrokerOrder.account_generation == account_generation,
+        )
+    ).all()
+    if any(row.state_version > state_version for row in [*baselines, *attributions]) or any(
+        fill.state_version > state_version for _order, fill in rows
+    ):
+        raise BrokerCapabilityError("paper position ledger exceeds account watermark")
+    identities = {(row.market, row.symbol, row.instrument, row.side) for row in baselines}
+    identities.update(
+        (fill.market, fill.symbol, fill.instrument, fill.side)
+        for _order, fill in rows
+        if fill.state_version <= state_version
+    )
+    return {
+        identity: _position_state_for_identity(
+            session,
+            account_scope,
+            account_generation,
+            *identity,
+            state_version=state_version,
+        )[:2]
+        for identity in sorted(identities)
+    }
 
 
 def _validate_action(order: Order, intent_action: str) -> None:
@@ -757,7 +812,7 @@ def _accept_decision_order(
             ),
             start=Decimal("0"),
         )
-        position_quantity, ordinary_quantity, ordinary_entry_cost = _position_state(session, order)
+        position_quantity, _entry_cost, ordinary_quantity, ordinary_entry_cost = _position_state(session, order)
         quantity = Decimal(str(order.quantity))
         price = Decimal(str(fill_price))
         multiplier = Decimal(str(contract_multiplier))

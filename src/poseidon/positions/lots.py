@@ -284,20 +284,29 @@ class FillProjectionService:
         if fill.projection_status == "applied":
             return self._response(fill, [], [])
         current_ids = [uuid.UUID(value) for value in order.protective_context_json["source_holding_ids"]]
+        previous_balances = dict(balances)
+        consumed_ids = set()
         remaining = quantity
         for holding_id in current_ids:
             consumed = min(balances[holding_id], remaining)
             balances[holding_id] -= consumed
             remaining -= consumed
+            if consumed:
+                consumed_ids.add(holding_id)
         if remaining:
             raise FillProjectionConflictError("closing fill exceeds open legacy inventory")
         pending = any(row.id != fill.id and row.projection_status == "projection_pending" for row in order_fills)
         release = order.status in {"filled", "rejected", "cancelled"} and not pending
         now = datetime.now(UTC)
         for row in holdings:
+            if row.id not in consumed_ids:
+                continue
             row.shares = float(balances[row.id])
             row.closed = balances[row.id] == 0
-            row.close_date = _utc(fill.fill_time) if row.closed else None
+            if previous_balances[row.id] > 0 and row.closed:
+                row.close_date = _utc(fill.fill_time)
+            elif not row.closed:
+                row.close_date = None
             row.updated_at = now
         fill.projection_status = "applied"
         if release:

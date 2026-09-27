@@ -45,44 +45,64 @@ class ReconciliationConflictError(RuntimeError):
     """Broker and internal state cannot be reconciled without guessing."""
 
 
-def paper_liquidation_nav(snapshot, policy, prices, ledger):
+def paper_liquidation_nav(snapshot, policy, prices, ledger, *, position_economics=None):
     """Value independent inventory at current marks, including short collateral."""
     if not isinstance(snapshot.positions, (tuple, list)):
         raise ValueError("paper snapshot requires complete positions")
 
     def number(value):
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)) or not math.isfinite(value):
             raise ValueError("paper valuation requires finite numeric economics")
         return Decimal(str(value))
 
     inventory = {}
     multipliers = {}
-    for order, fill in ledger:
-        identity = (order.market, order.symbol, order.instrument, order.side)
-        if order.side not in {"long", "short"} or order.action not in {"buy", "sell"}:
+
+    def multiplier_for(identity):
+        market, _symbol, instrument, side = identity
+        if side not in {"long", "short"}:
             raise ValueError("paper ledger has invalid side or action")
         multiplier = Decimal(1)
-        if order.market == "crypto_perp":
-            rule = policy.perp_instrument_rules.get(order.instrument)
+        if market == "crypto_perp":
+            rule = policy.perp_instrument_rules.get(instrument)
             if rule is None or rule.margin_semantics != "full_notional" or rule.funding_semantics != "excluded":
                 raise ValueError("unsupported paper collateral semantics")
             multiplier = Decimal(str(rule.contract_multiplier))
             if not multiplier.is_finite() or multiplier <= 0:
                 raise ValueError("paper multiplier must be positive and finite")
-        elif order.market != "tw_stock" or order.instrument != "spot":
+        elif market != "tw_stock" or instrument != "spot":
             raise ValueError("unsupported paper position identity")
-        multipliers[identity] = multiplier
-        quantity, cost = inventory.get(identity, (Decimal(0), Decimal(0)))
-        amount, price = number(fill.fill_quantity), number(fill.fill_price)
-        if not amount.is_finite() or amount <= 0 or not price.is_finite() or price <= 0:
-            raise ValueError("paper ledger has invalid fill economics")
-        if order.action == ("buy" if order.side == "long" else "sell"):
-            quantity, cost = quantity + amount, cost + price * amount
-        else:
-            if amount > quantity or quantity <= 0:
-                raise ValueError("paper ledger contains negative inventory")
-            cost, quantity = cost - cost / quantity * amount, quantity - amount
-        inventory[identity] = quantity, cost
+        return multiplier
+
+    if position_economics is not None:
+        if not isinstance(position_economics, dict):
+            raise ValueError("paper position economics are invalid")
+        for identity, economics in position_economics.items():
+            if not isinstance(identity, tuple) or len(identity) != 4 or not isinstance(economics, tuple):
+                raise ValueError("paper position economics are invalid")
+            quantity, cost = map(number, economics)
+            if quantity < 0 or cost < 0 or (quantity == 0) != (cost == 0):
+                raise ValueError("paper position economics are invalid")
+            inventory[identity] = quantity, cost
+            multipliers[identity] = multiplier_for(identity)
+    else:
+        for order, fill in ledger:
+            identity = (order.market, order.symbol, order.instrument, order.side)
+            if order.action not in {"buy", "sell"}:
+                raise ValueError("paper ledger has invalid side or action")
+            multiplier = multiplier_for(identity)
+            multipliers[identity] = multiplier
+            quantity, cost = inventory.get(identity, (Decimal(0), Decimal(0)))
+            amount, price = number(fill.fill_quantity), number(fill.fill_price)
+            if not amount.is_finite() or amount <= 0 or not price.is_finite() or price <= 0:
+                raise ValueError("paper ledger has invalid fill economics")
+            if order.action == ("buy" if order.side == "long" else "sell"):
+                quantity, cost = quantity + amount, cost + price * amount
+            else:
+                if amount > quantity or quantity <= 0:
+                    raise ValueError("paper ledger contains negative inventory")
+                cost, quantity = cost - cost / quantity * amount, quantity - amount
+            inventory[identity] = quantity, cost
     positions = {position.identity: number(position.quantity) for position in snapshot.positions}
     if len(positions) != len(snapshot.positions) or any(
         not value.is_finite() or value <= 0 for value in positions.values()
@@ -912,13 +932,23 @@ class ReconciliationService:
         nav = None
         if policy is not None and isinstance(snapshot, BrokerAccountSnapshot):
             try:
+                from poseidon.broker.paper_adapter import validated_position_economics
+
                 ledger = [(broker_by_id[row.paper_broker_order_id], row) for row in broker_fills]
-                nav = (
-                    paper_liquidation_nav(snapshot, policy, prices or {}, ledger)
-                    if snapshot.positions or (ledger and not control_ids)
-                    else float(_number(snapshot.cash))
+                position_economics = validated_position_economics(
+                    self.session,
+                    scope,
+                    generation,
+                    snapshot.state_version,
                 )
-            except (ValueError, KeyError, ReconciliationConflictError) as error:
+                nav = paper_liquidation_nav(
+                    snapshot,
+                    policy,
+                    prices or {},
+                    ledger,
+                    position_economics=position_economics,
+                )
+            except (BrokerCapabilityError, ValueError, KeyError, ReconciliationConflictError) as error:
                 reasons.append(f"valuation unresolved: {error}")
         from poseidon.strategies.portfolio.position_tracker import PositionTracker
 
