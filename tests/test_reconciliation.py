@@ -302,7 +302,7 @@ def test_future_task_seams_fail_observably(sessions, monkeypatch):
     monkeypatch.setattr(cpu_tasks, "SessionLocal", sessions)
     with pytest.raises(FillProjectionConflictError, match="fill does not exist"):
         cpu_tasks.project_decision_fill.run(str(uuid.uuid4()))
-    with pytest.raises(ImportError):
+    with pytest.raises(ValueError, match="paper account does not exist"):
         cpu_tasks.reconcile_paper_account.run(str(uuid.uuid4()))
 
 

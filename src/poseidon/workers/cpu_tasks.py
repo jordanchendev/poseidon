@@ -9,7 +9,6 @@ import logging
 import math
 import uuid
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 
 import pandas as pd
 
@@ -46,56 +45,9 @@ def _decision_paper_adapter(market):
 
 
 def _decision_liquidation_nav(snapshot, policy, prices, ledger):
-    """Value independent inventory at current marks, including short collateral."""
-    inventory = {}
-    multipliers = {}
-    for order, fill in ledger:
-        identity = (order.market, order.symbol, order.instrument, order.side)
-        if order.side not in {"long", "short"} or order.action not in {"buy", "sell"}:
-            raise ValueError("paper ledger has invalid side or action")
-        multiplier = Decimal(1)
-        if order.market == "crypto_perp":
-            rule = policy.perp_instrument_rules.get(order.instrument)
-            if rule is None or rule.margin_semantics != "full_notional" or rule.funding_semantics != "excluded":
-                raise ValueError("unsupported paper collateral semantics")
-            multiplier = Decimal(str(rule.contract_multiplier))
-            if not multiplier.is_finite() or multiplier <= 0:
-                raise ValueError("paper multiplier must be positive and finite")
-        elif order.market != "tw_stock" or order.instrument != "spot":
-            raise ValueError("unsupported paper position identity")
-        multipliers[identity] = multiplier
-        quantity, cost = inventory.get(identity, (Decimal(0), Decimal(0)))
-        amount, price = Decimal(str(fill.fill_quantity)), Decimal(str(fill.fill_price))
-        if not amount.is_finite() or amount <= 0 or not price.is_finite() or price <= 0:
-            raise ValueError("paper ledger has invalid fill economics")
-        if order.action == ("buy" if order.side == "long" else "sell"):
-            quantity, cost = quantity + amount, cost + price * amount
-        else:
-            if amount > quantity or quantity <= 0:
-                raise ValueError("paper ledger contains negative inventory")
-            cost, quantity = cost - cost / quantity * amount, quantity - amount
-        inventory[identity] = quantity, cost
-    positions = {position.identity: Decimal(str(position.quantity)) for position in snapshot.positions}
-    if len(positions) != len(snapshot.positions) or any(
-        not value.is_finite() or value <= 0 for value in positions.values()
-    ):
-        raise ValueError("paper snapshot has duplicate or invalid inventory")
-    if {key: value[0] for key, value in inventory.items() if value[0]} != positions:
-        raise ValueError("paper snapshot and inventory ledger disagree")
-    nav = Decimal(str(snapshot.cash))
-    if not nav.is_finite():
-        raise ValueError("paper cash must be finite")
-    for (market, symbol, instrument, side), (quantity, cost) in inventory.items():
-        if not quantity:
-            continue
-        mark = Decimal(str(prices.get((market, symbol, instrument), "NaN")))
-        if not mark.is_finite() or mark <= 0:
-            raise ValueError("materialization requires a positive finite mark")
-        multiplier = multipliers[(market, symbol, instrument, side)]
-        nav += (mark * quantity if side == "long" else 2 * cost - mark * quantity) * multiplier
-    if not nav.is_finite() or nav <= 0 or not math.isfinite(float(nav)):
-        raise ValueError("materialization requires positive finite NAV")
-    return float(nav)
+    from poseidon.decision_loop.reconciliation import paper_liquidation_nav
+
+    return paper_liquidation_nav(snapshot, policy, prices, ledger)
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.materialize_execution_claim", max_retries=0)
@@ -229,6 +181,8 @@ def reconcile_paper_account(account_id: str) -> dict:
     from poseidon.decision_loop.reconciliation import reconcile_account
     from poseidon.models.decision_record import DecisionRecord
     from poseidon.models.paper_broker_account import PaperBrokerAccount
+    from poseidon.models.paper_broker_order import PaperBrokerOrder
+    from poseidon.models.position_lot import PositionLot
     from poseidon.models.strategy_version import StrategyVersion
 
     with SessionLocal() as session:
@@ -243,10 +197,45 @@ def reconcile_paper_account(account_id: str) -> dict:
         ):
             version = session.get(StrategyVersion, decision.strategy_version_id)
             policy = {} if version is None else version.policy_json
-            if policy.get("reconciliation", {}).get("account_generation") == account.account_generation:
+            reconciliation_policy = policy.get("reconciliation") if isinstance(policy, dict) else None
+            if (
+                isinstance(reconciliation_policy, dict)
+                and reconciliation_policy.get("account_generation") == account.account_generation
+            ):
                 market = policy.get("market")
                 break
-    return reconcile_account(SessionLocal, persisted_id, _decision_paper_adapter(market))
+        identities = set(
+            session.execute(
+                select(PaperBrokerOrder.market, PaperBrokerOrder.symbol, PaperBrokerOrder.instrument).where(
+                    PaperBrokerOrder.account_scope == account.account_scope,
+                    PaperBrokerOrder.account_generation == account.account_generation,
+                )
+            ).all()
+        )
+        identities.update(
+            session.execute(
+                select(PositionLot.market, PositionLot.symbol, PositionLot.instrument).where(
+                    PositionLot.account_scope == account.account_scope,
+                    PositionLot.account_generation == account.account_generation,
+                    PositionLot.open_quantity > 0,
+                )
+            ).all()
+        )
+    prices = {}
+    for position_market in sorted({identity[0] for identity in identities}):
+        symbols = sorted({identity[1] for identity in identities if identity[0] == position_market})
+        marks = (
+            _get_latest_prices(symbols)
+            if position_market == "tw_stock"
+            else (_get_perp_mark_prices(symbols) if position_market == "crypto_perp" else {})
+        )
+        for identity in identities:
+            if identity[0] == position_market and identity[1] in marks:
+                prices[tuple(identity)] = marks[identity[1]]
+    # Snapshot reads use the generic independent ledger even when owner policy is missing.
+    # This does not authorize order placement or supply missing policy/tolerance values.
+    adapter = _decision_paper_adapter(market if market in {"tw_stock", "crypto_perp"} else "tw_stock")
+    return reconcile_account(SessionLocal, persisted_id, adapter, prices=prices)
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.recover_decision_execution", max_retries=0)

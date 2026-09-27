@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from decimal import ROUND_FLOOR, Decimal
 
 from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy import func, select, text
+from sqlalchemy import Float, func, select, text
 
 from poseidon.api.auth import AuthPrincipal
 from poseidon.decision_loop.decisions import (
@@ -21,6 +21,7 @@ from poseidon.decision_loop.manifest import ValidationError, canonical_json, con
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
+from poseidon.models.fill_allocation import FillAllocation
 from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
 from poseidon.models.paper_broker_account import PaperBrokerAccount
@@ -54,31 +55,45 @@ def _floor_step(value, step):
 
 
 def internal_state_watermark(session, account_scope, account_generation):
-    """Return the latest durable internal-state timestamp for reconciliation."""
-    values = (
-        session.scalar(
-            select(func.max(OrderRecord.updated_at)).where(
-                OrderRecord.account_scope == account_scope,
-                OrderRecord.account_generation == account_generation,
-            )
-        ),
-        session.scalar(
-            select(func.max(OrderFillRecord.created_at))
-            .join(OrderRecord, OrderRecord.id == OrderFillRecord.order_id)
-            .where(
-                OrderRecord.account_scope == account_scope,
-                OrderRecord.account_generation == account_generation,
-            )
-        ),
-        session.scalar(
-            select(func.max(PositionLot.updated_at)).where(
-                PositionLot.account_scope == account_scope,
-                PositionLot.account_generation == account_generation,
-            )
-        ),
+    """Fingerprint complete internal economic state, including timestamp-neutral corruption."""
+    orders = session.scalars(
+        select(OrderRecord)
+        .where(OrderRecord.account_scope == account_scope, OrderRecord.account_generation == account_generation)
+        .order_by(OrderRecord.id)
+    ).all()
+    order_ids = [row.id for row in orders]
+    fills = session.scalars(
+        select(OrderFillRecord).where(OrderFillRecord.order_id.in_(order_ids)).order_by(OrderFillRecord.id)
+    ).all()
+    lots = session.scalars(
+        select(PositionLot)
+        .where(PositionLot.account_scope == account_scope, PositionLot.account_generation == account_generation)
+        .order_by(PositionLot.id)
+    ).all()
+    allocations = session.scalars(
+        select(FillAllocation)
+        .where(FillAllocation.position_lot_id.in_([row.id for row in lots]))
+        .order_by(FillAllocation.id)
+    ).all()
+    if not orders and not fills and not lots and not allocations:
+        return "internal:0"
+
+    def normalized(row):
+        values = {}
+        for column in row.__table__.columns:
+            value = getattr(row, column.key)
+            if isinstance(value, datetime):
+                value = iso_time(_aware(value), column.key)
+            elif isinstance(value, uuid.UUID):
+                value = str(value)
+            elif isinstance(column.type, Float) and isinstance(value, (int, float)) and not isinstance(value, bool):
+                value = float(value)
+            values[column.key] = value
+        return values
+
+    return "internal:" + content_sha256(
+        [[normalized(row) for row in rows] for rows in (orders, fills, lots, allocations)]
     )
-    latest = max((_aware(value) for value in values if value is not None), default=None)
-    return "internal:0" if latest is None else f"internal:{iso_time(latest, 'internal_state_watermark')}"
 
 
 class DecisionExecutionService:
