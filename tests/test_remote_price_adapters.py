@@ -97,3 +97,8 @@ def test_paper_broker_raises_when_remote_price_missing(mock_from_settings):
 
     with pytest.raises(ValueError, match="No price data for 2330"):
         adapter.place_order(order)
+
+
+def test_capability_value_does_not_change_remote_price_legacy_path():
+    assert PaperBrokerAdapter.capabilities.supports_reconciliation is True
+    assert PerpPaperAdapter.capabilities.supports_reconciliation is True

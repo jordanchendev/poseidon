@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from poseidon.broker.base import BrokerAdapter
+from poseidon.broker.base import BrokerAdapter, BrokerCapabilities, BrokerCapabilityError
 from poseidon.orders.schemas import Fill, Order
 from poseidon.orders.state_machine import OrderStatus
 
@@ -31,6 +31,8 @@ class ShioajiBrokerAdapter(BrokerAdapter):
     Shioaji is imported lazily inside methods so the module loads
     cleanly on systems without the SDK installed.
     """
+
+    capabilities = BrokerCapabilities()
 
     def __init__(
         self,
@@ -64,12 +66,14 @@ class ShioajiBrokerAdapter(BrokerAdapter):
             )
         return True
 
-    def place_order(self, order: Order) -> str:
+    def place_order(self, order: Order, *, client_order_ref: str | None = None) -> str:
         """Submit order via Shioaji SDK.
 
         Quantity is divided by 1000 because Shioaji uses lots
         (1 lot = 1000 shares for TW stocks).
         """
+        if order.order_origin == "decision" or client_order_ref is not None:
+            raise BrokerCapabilityError("Shioaji does not support decision execution")
         import shioaji as sj
 
         if self._api is None:
@@ -90,8 +94,16 @@ class ShioajiBrokerAdapter(BrokerAdapter):
         trade = self._api.place_order(contract=contract, order=sj_order)
         return str(trade.status.id) if hasattr(trade.status, "id") else str(trade.order.id)
 
-    def query_fills(self, broker_order_id: str) -> list[Fill]:
+    def query_fills(
+        self,
+        broker_order_id: str,
+        *,
+        account_scope: str | None = None,
+        account_generation: str | None = None,
+    ) -> list[Fill]:
         """Query fills from Shioaji trade list."""
+        if account_scope is not None or account_generation is not None:
+            raise BrokerCapabilityError("Shioaji does not support normalized fill recovery")
         if self._api is None:
             return []
 

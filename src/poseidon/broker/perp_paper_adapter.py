@@ -8,11 +8,19 @@ rates, and monitors margin ratio. Never calls any real exchange API.
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 
-from poseidon.broker.base import BrokerAdapter
+from poseidon.broker.base import BrokerAdapter, BrokerCapabilityError, BrokerFillSnapshot
+from poseidon.broker.paper_adapter import (
+    PAPER_RECONCILIATION_CAPABILITIES,
+    PaperBrokerAdapter,
+    _accept_decision_order,
+    _existing_replay,
+)
 from poseidon.orders.schemas import Fill, Order
 
 logger = logging.getLogger(__name__)
@@ -78,6 +86,8 @@ class PerpPaperAdapter(BrokerAdapter):
     this subclass only -- they are NOT part of the BrokerAdapter ABC.
     """
 
+    capabilities = PAPER_RECONCILIATION_CAPABILITIES
+
     def __init__(
         self,
         session_factory,
@@ -105,7 +115,7 @@ class PerpPaperAdapter(BrokerAdapter):
         """No-op for paper trading."""
         return True
 
-    def place_order(self, order: Order) -> str:
+    def place_order(self, order: Order, *, client_order_ref: str | None = None):
         """Fill order at the latest perpetual mark price from Thalassa.
 
         Creates or updates a PerpPosition with margin tracking and
@@ -114,6 +124,34 @@ class PerpPaperAdapter(BrokerAdapter):
 
         Raises ValueError if no perpetual price data exists for the symbol.
         """
+        if order.order_origin == "decision" and client_order_ref is None:
+            raise BrokerCapabilityError("decision execution requires the stored client reference")
+        if client_order_ref is not None:
+            self._require_decision_submission(order, client_order_ref)
+            if order.market != "crypto_perp":
+                raise BrokerCapabilityError("perpetual paper execution requires crypto_perp")
+
+        rules = (order.intent_json or {}).get("economics", {}).get("sizing_rules", {})
+        if client_order_ref is not None:
+            required = {"quantity_step", "contract_multiplier", "margin_semantics", "funding_semantics"}
+            if not required.issubset(rules):
+                raise BrokerCapabilityError("owner-frozen perp rules are required before acceptance")
+            numeric = (rules["quantity_step"], rules["contract_multiplier"])
+            if any(not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0 for value in numeric):
+                raise BrokerCapabilityError("owner-frozen perp rules are invalid")
+            if any(
+                not isinstance(rules[name], str) or not rules[name].strip()
+                for name in ("margin_semantics", "funding_semantics")
+            ):
+                raise BrokerCapabilityError("owner-frozen perp rules are invalid")
+            if rules["margin_semantics"] != "full_notional" or rules["funding_semantics"] != "excluded":
+                raise BrokerCapabilityError("unsupported perp margin or funding semantics")
+            if Decimal(str(order.quantity)) % Decimal(str(rules["quantity_step"])) != 0:
+                raise BrokerCapabilityError("perpetual quantity must align to owner quantity_step")
+            replay = _existing_replay(self._session_factory, order, client_order_ref, "PERP-PAPER")
+            if replay is not None:
+                return replay
+
         from poseidon.data.remote_repository import RemoteDataRepository
 
         repo = RemoteDataRepository.from_settings()
@@ -122,6 +160,15 @@ class PerpPaperAdapter(BrokerAdapter):
             raise ValueError(f"No perpetual price data for {order.symbol}")
 
         fill_price = float(latest_price)
+        if client_order_ref is not None:
+            return _accept_decision_order(
+                self._session_factory,
+                order,
+                client_order_ref,
+                fill_price,
+                broker_prefix="PERP-PAPER",
+                contract_multiplier=float(rules["contract_multiplier"]),
+            )
         session = self._session_factory()
         try:
             leverage = self._leverage_per_symbol.get(order.symbol, self._default_leverage)
@@ -200,9 +247,26 @@ class PerpPaperAdapter(BrokerAdapter):
         finally:
             session.close()
 
-    def query_fills(self, broker_order_id: str) -> list[Fill]:
+    def query_fills(
+        self,
+        broker_order_id: str,
+        *,
+        account_scope: str | None = None,
+        account_generation: str | None = None,
+    ) -> list[Fill] | list[BrokerFillSnapshot]:
         """Return fills for a given broker order ID."""
-        return self._fills.get(broker_order_id, [])
+        if account_scope is None and account_generation is None:
+            return self._fills.get(broker_order_id, [])
+        return PaperBrokerAdapter.query_fills(
+            self,
+            broker_order_id,
+            account_scope=account_scope,
+            account_generation=account_generation,
+        )
+
+    find_order_by_client_ref = PaperBrokerAdapter.find_order_by_client_ref
+    query_order = PaperBrokerAdapter.query_order
+    query_account_snapshot = PaperBrokerAdapter.query_account_snapshot
 
     def query_positions(self) -> list[dict]:
         """Return all open perpetual positions as dicts."""

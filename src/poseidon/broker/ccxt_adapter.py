@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from poseidon.broker.base import BrokerAdapter
+from poseidon.broker.base import BrokerAdapter, BrokerCapabilities, BrokerCapabilityError
 from poseidon.orders.schemas import Fill, Order
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,8 @@ class CCXTBrokerAdapter(BrokerAdapter):
     Perp-specific methods (set_leverage, set_margin_mode, etc.) live
     on this subclass only -- they are NOT part of the BrokerAdapter ABC.
     """
+
+    capabilities = BrokerCapabilities()
 
     def __init__(
         self,
@@ -69,12 +71,14 @@ class CCXTBrokerAdapter(BrokerAdapter):
             logger.exception("Failed to load CCXT markets")
             return False
 
-    def place_order(self, order: Order) -> str:
+    def place_order(self, order: Order, *, client_order_ref: str | None = None) -> str:
         """Submit a market/limit order to Binance perps.
 
         Maps ``order.action`` ('buy'/'sell') to CCXT side and uses
         ``order.quantity`` (float) as the contract amount.
         """
+        if order.order_origin == "decision" or client_order_ref is not None:
+            raise BrokerCapabilityError("CCXT does not support decision execution")
         side = "buy" if order.action == "buy" else "sell"
         logger.info(
             "Placing %s %s order: %s qty=%.6f",
@@ -115,8 +119,16 @@ class CCXTBrokerAdapter(BrokerAdapter):
 
         return broker_order_id
 
-    def query_fills(self, broker_order_id: str) -> list[Fill]:
+    def query_fills(
+        self,
+        broker_order_id: str,
+        *,
+        account_scope: str | None = None,
+        account_generation: str | None = None,
+    ) -> list[Fill]:
         """Return cached fills for a given broker order ID."""
+        if account_scope is not None or account_generation is not None:
+            raise BrokerCapabilityError("CCXT does not support normalized fill recovery")
         return self._fills.get(broker_order_id, [])
 
     def query_positions(self) -> list[dict]:

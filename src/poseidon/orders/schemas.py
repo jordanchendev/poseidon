@@ -36,7 +36,7 @@ class Order:
     # can distinguish "missing wiring" (origin=signal + signal_id IS NULL →
     # breach) from "by-design protective close" (origin=stop_loss/
     # liquidation + signal_id IS NULL → legitimate protective exit).
-    order_origin: Literal["signal", "stop_loss", "liquidation", "manual", "manual_emergency"] = "signal"
+    order_origin: Literal["signal", "stop_loss", "liquidation", "manual", "manual_emergency", "decision"] = "signal"
     id: str = field(default_factory=lambda: _uuid.uuid4().hex)
     decision_id: uuid.UUID | None = None
     account_scope: str | None = None
