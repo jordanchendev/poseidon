@@ -531,6 +531,20 @@ class DecisionExecutionService:
 
         pending = self._pending_orders(decision, reconciliation.account_generation)
         reservations = {order.id: self._outstanding_reservation(order, reconciliation.currency) for order in pending}
+        lot_pending = []
+        protective = ProtectiveExecutionService(self.session)
+        for order in pending:
+            if order.order_origin in PROTECTIVE_ORIGINS:
+                protective.validate_order(order, lock_fills=False)
+            context = order.protective_context_json
+            if (
+                order.decision_id is None
+                and order.order_origin in PROTECTIVE_ORIGINS
+                and isinstance(context, dict)
+                and context.get("legacy_exception") is True
+            ):
+                continue
+            lot_pending.append(order)
         cash_movements = self.session.scalar(
             select(func.coalesce(func.sum(PaperCashMovement.amount), 0.0)).where(
                 PaperCashMovement.account_scope == decision.account_scope,
@@ -574,7 +588,7 @@ class DecisionExecutionService:
             pending_increase = sum(
                 (
                     reservations[order.id][0]
-                    for order in pending
+                    for order in lot_pending
                     if self._identity(order) == identity
                     and (order.intent_json or {}).get("frozen_intent", {}).get("action") in {"enter", "add"}
                 ),
@@ -583,7 +597,7 @@ class DecisionExecutionService:
             pending_close = sum(
                 (
                     reservations[order.id][0]
-                    for order in pending
+                    for order in lot_pending
                     if self._identity(order) == identity
                     and (order.intent_json or {}).get("frozen_intent", {}).get("action") in {"reduce", "exit"}
                 ),
@@ -631,7 +645,7 @@ class DecisionExecutionService:
         projected_failures = self._projected_risk_failures(
             decision,
             reconciliation,
-            pending,
+            lot_pending,
             specs,
             prices,
             nav,

@@ -22,6 +22,8 @@ from poseidon.decision_loop.reconciliation import (
     _order_dto,
     submit_or_reconcile_order,
 )
+from poseidon.decision_loop.recovery import RecoverySelector
+from poseidon.decision_loop.transactions import materialize_order_intents
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
@@ -680,6 +682,77 @@ def test_later_legacy_fill_preserves_historical_source_close_date(seed):
         assert session.get(PortfolioHoldingRecord, second_id).close_date == NOW.replace(minute=3)
 
 
+def test_out_of_order_legacy_fills_defer_and_preserve_source_close_chronology(seed):
+    first_id, _account_id = _legacy_holding(seed, shares=2, holding_id=uuid.UUID(int=1))
+    second_id, _account_id = _legacy_holding(seed, shares=3, holding_id=uuid.UUID(int=2))
+    materialized = _materialize(
+        seed,
+        trigger="legacy:multi-fill-chronology",
+        source_holding_ids=[first_id, second_id],
+        allow_legacy_holdings=True,
+    )
+    order_id = uuid.UUID(materialized["order_ids"][0])
+    first_fill_id = uuid.uuid4()
+    later_fill_id = uuid.uuid4()
+    with seed.sessions() as session, session.begin():
+        order = session.get(OrderRecord, order_id)
+        order.status = "filled"
+        order.broker_order_id = f"PAPER-{uuid.uuid4().hex}"
+        order.submit_attempted_at = NOW
+        order.reconciliation_status = "resolved"
+        session.add_all(
+            [
+                OrderFillRecord(
+                    id=first_fill_id,
+                    order_id=order.id,
+                    broker_fill_id=f"fill-{first_fill_id.hex}",
+                    fill_price=79,
+                    fill_quantity=2,
+                    fill_time=NOW.replace(minute=1),
+                    projection_status="projection_pending",
+                    created_at=NOW.replace(minute=1),
+                ),
+                OrderFillRecord(
+                    id=later_fill_id,
+                    order_id=order.id,
+                    broker_fill_id=f"fill-{later_fill_id.hex}",
+                    fill_price=79,
+                    fill_quantity=3,
+                    fill_time=NOW.replace(minute=2),
+                    projection_status="projection_pending",
+                    created_at=NOW.replace(minute=2),
+                ),
+            ]
+        )
+
+    with pytest.raises(FillProjectionConflictError, match="earlier legacy fill projection is pending"):
+        project(seed, later_fill_id)
+    with seed.sessions() as session:
+        pending = {
+            action.persisted_id
+            for action in RecoverySelector(session).select(now=NOW)
+            if action.operation == "project_fill"
+        }
+        assert {first_fill_id, later_fill_id} <= pending
+
+    first = project(seed, first_fill_id)
+    with seed.sessions() as session:
+        pending = {
+            action.persisted_id
+            for action in RecoverySelector(session).select(now=NOW)
+            if action.operation == "project_fill"
+        }
+        assert first_fill_id not in pending
+        assert later_fill_id in pending
+    later = project(seed, later_fill_id)
+    assert project(seed, first_fill_id) == first
+    assert project(seed, later_fill_id) == later
+
+    with seed.sessions() as session:
+        assert session.get(PortfolioHoldingRecord, first_id).close_date == NOW.replace(minute=1)
+        assert session.get(PortfolioHoldingRecord, second_id).close_date == NOW.replace(minute=2)
+
+
 def test_legacy_holding_partial_cancel_releases_unfilled_remainder(seed):
     holding_id, _account_id = _legacy_holding(seed, shares=5)
     result = _materialize_legacy(seed, holding_id)
@@ -753,6 +826,42 @@ def test_durable_lot_and_legacy_holding_fills_project_without_cross_reservation(
         holding = session.get(PortfolioHoldingRecord, holding_id)
         assert (lot.open_quantity, lot.reserved_close_quantity) == (0, 0)
         assert (holding.shares, holding.closed) == (0, True)
+
+
+def test_ordinary_exit_sizing_excludes_pending_legacy_holding_close(seed):
+    _opening(seed, quantity=10)
+    holding_id, _account_id = _legacy_holding(seed, shares=5)
+    legacy = _materialize_legacy(seed, holding_id, trigger="legacy:ordinary-sizing")
+    target_fill_id = seed.fill(quantity=1, action="exit")
+
+    with seed.sessions() as session, session.begin():
+        target_fill = session.get(OrderFillRecord, target_fill_id)
+        target_order = session.get(OrderRecord, target_fill.order_id)
+        decision_id = target_order.decision_id
+        materialize_at = target_order.created_at
+        session.delete(target_fill)
+        session.flush()
+        session.delete(target_order)
+        for lot in session.scalars(select(PositionLot).where(PositionLot.account_scope == seed.account)):
+            lot.reserved_close_quantity = 0
+
+    result = materialize_order_intents(
+        seed.sessions,
+        decision_id,
+        principal=worker(seed.account),
+        account_nav=1_000,
+        prices={("tw_stock", "2330", "spot"): 100},
+        now=materialize_at,
+    )
+
+    with seed.sessions() as session:
+        ordinary = session.get(OrderRecord, uuid.UUID(result["order_ids"][0]))
+        legacy_order = session.get(OrderRecord, uuid.UUID(legacy["order_ids"][0]))
+        lot = session.scalar(select(PositionLot).where(PositionLot.account_scope == seed.account))
+        assert ordinary.quantity == 10
+        assert ordinary.reserved_quantity == 10
+        assert lot.reserved_close_quantity == 10
+        assert legacy_order.reserved_cash_json == {"amount": 0.0, "currency": "TWD"}
 
 
 def test_legacy_holding_projection_rejects_overfill(seed):

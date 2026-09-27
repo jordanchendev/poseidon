@@ -234,6 +234,14 @@ class FillProjectionService:
                 .order_by(OrderFillRecord.fill_time, OrderFillRecord.id)
                 .with_for_update()
             ).all()
+        fill_key = (_utc(fill.fill_time), fill.id)
+        if any(
+            row.id != fill.id
+            and row.projection_status == "projection_pending"
+            and (_utc(row.fill_time), row.id) < fill_key
+            for row in fills_by_order[order.id]
+        ):
+            raise FillProjectionConflictError("earlier legacy fill projection is pending")
 
         def generation_key(legacy_order):
             return _utc(legacy_order.created_at), legacy_order.id
