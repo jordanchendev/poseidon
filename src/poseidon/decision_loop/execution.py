@@ -348,7 +348,43 @@ class DecisionExecutionService:
     def _identity(order):
         return (order.market, order.symbol, order.instrument, order.side)
 
-    def _projected_risk_failures(self, decision, reconciliation, pending, specs, prices, nav, policy):
+    def _outstanding_reservation(self, order, currency):
+        original = Decimal(str(_finite_positive(order.reserved_quantity, "reserved_quantity")))
+        fills = self.session.scalars(
+            select(OrderFillRecord).where(OrderFillRecord.order_id == order.id).with_for_update()
+        ).all()
+        applied = Decimal("0")
+        total = Decimal("0")
+        for fill in fills:
+            if fill.projection_status not in {"projection_pending", "applied"}:
+                raise ExecutionConflictError("pending reservation has invalid fill projection status")
+            quantity = Decimal(str(_finite_positive(fill.fill_quantity, "reserved fill quantity")))
+            total += quantity
+            if fill.projection_status == "applied":
+                applied += quantity
+        if total > original:
+            raise ExecutionConflictError("reserved fills exceed original reservation")
+        cash = order.reserved_cash_json
+        if (
+            not isinstance(cash, dict)
+            or cash.get("currency") != currency
+            or isinstance(cash.get("amount"), bool)
+            or not isinstance(cash.get("amount"), (int, float))
+            or not math.isfinite(cash["amount"])
+            or cash["amount"] < 0
+        ):
+            raise ExecutionConflictError("pending reservation has invalid reserved cash")
+        if not isinstance(order.intent_json, dict) or not isinstance(order.intent_json.get("frozen_intent"), dict):
+            raise ExecutionConflictError("pending reservation has invalid frozen action")
+        action = order.intent_json["frozen_intent"].get("action")
+        if not isinstance(action, str) or action not in {"enter", "add", "reduce", "exit"}:
+            raise ExecutionConflictError("pending reservation has invalid frozen action")
+        if action in {"reduce", "exit"} and cash["amount"] != 0:
+            raise ExecutionConflictError("reserved cash disagrees with frozen action")
+        outstanding = original - applied
+        return outstanding, Decimal(str(cash["amount"])) * outstanding / original
+
+    def _projected_risk_failures(self, decision, reconciliation, pending, specs, prices, nav, policy, reservations):
         quantities = {}
         lots = self.session.scalars(
             select(PositionLot).where(
@@ -365,9 +401,7 @@ class DecisionExecutionService:
             if action not in {"enter", "add", "reduce", "exit"}:
                 raise ExecutionConflictError("pending reservation has invalid frozen action")
             direction = Decimal("1") if action in {"enter", "add"} else Decimal("-1")
-            quantities[identity] = quantities.get(identity, Decimal("0")) + direction * Decimal(
-                str(order.reserved_quantity or 0.0)
-            )
+            quantities[identity] = quantities.get(identity, Decimal("0")) + direction * reservations[order.id][0]
         for _, intent, quantity, _, _, _, _ in specs:
             identity = (intent.market, intent.symbol, intent.instrument, intent.side)
             direction = Decimal("1") if intent.action in {"enter", "add"} else Decimal("-1")
@@ -442,6 +476,7 @@ class DecisionExecutionService:
             self._require_reconciled(decision, reconciliation, account, current_time)
 
         pending = self._pending_orders(decision, reconciliation.account_generation)
+        reservations = {order.id: self._outstanding_reservation(order, reconciliation.currency) for order in pending}
         cash_movements = self.session.scalar(
             select(func.coalesce(func.sum(PaperCashMovement.amount), 0.0)).where(
                 PaperCashMovement.account_scope == decision.account_scope,
@@ -450,7 +485,7 @@ class DecisionExecutionService:
             )
         )
         reserved_cash = sum(
-            (Decimal(str((order.reserved_cash_json or {}).get("amount", 0.0))) for order in pending),
+            (reservations[order.id][1] for order in pending),
             start=Decimal("0"),
         )
         available_cash = Decimal(str(account.opening_cash)) + Decimal(str(cash_movements)) - reserved_cash
@@ -484,7 +519,7 @@ class DecisionExecutionService:
             )
             pending_increase = sum(
                 (
-                    Decimal(str(order.reserved_quantity or 0.0))
+                    reservations[order.id][0]
                     for order in pending
                     if self._identity(order) == identity
                     and (order.intent_json or {}).get("frozen_intent", {}).get("action") in {"enter", "add"}
@@ -493,7 +528,7 @@ class DecisionExecutionService:
             ) + planned_quantity.get((identity, "increase"), Decimal("0"))
             pending_close = sum(
                 (
-                    Decimal(str(order.reserved_quantity or 0.0))
+                    reservations[order.id][0]
                     for order in pending
                     if self._identity(order) == identity
                     and (order.intent_json or {}).get("frozen_intent", {}).get("action") in {"reduce", "exit"}
@@ -547,6 +582,7 @@ class DecisionExecutionService:
             prices,
             nav,
             policy,
+            reservations,
         )
         if projected_failures:
             return self._record_risk_block(decision, projected_failures, principal)

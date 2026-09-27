@@ -295,12 +295,15 @@ def test_recovery_sweep_repeated_execution_keeps_one_effective_order_fill(sessio
         assert session.query(OrderFillRecord).count() == 1
 
 
-def test_future_task_seams_fail_observably(monkeypatch):
+def test_future_task_seams_fail_observably(sessions, monkeypatch):
+    from poseidon.positions.lots import FillProjectionConflictError
     from poseidon.workers import cpu_tasks
 
-    for task in (cpu_tasks.project_decision_fill, cpu_tasks.reconcile_paper_account):
-        with pytest.raises(ImportError):
-            task.run(str(uuid.uuid4()))
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", sessions)
+    with pytest.raises(FillProjectionConflictError, match="fill does not exist"):
+        cpu_tasks.project_decision_fill.run(str(uuid.uuid4()))
+    with pytest.raises(ImportError):
+        cpu_tasks.reconcile_paper_account.run(str(uuid.uuid4()))
 
 
 def test_recovery_sweep_deduplicates_orders_of_one_decision(sessions, monkeypatch):

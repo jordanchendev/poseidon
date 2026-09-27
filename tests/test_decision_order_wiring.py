@@ -2,7 +2,7 @@
 
 import copy
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine, select, update
@@ -27,6 +27,7 @@ from poseidon.models.paper_broker_order import PaperBrokerOrder
 from poseidon.models.paper_cash_movement import PaperCashMovement
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
+from tests import test_position_lot_allocation as lot_tests
 from tests.test_decision_service import (
     create_decision,
     decision_inputs,
@@ -48,6 +49,11 @@ def sessions(tmp_path):
     factory = sessionmaker(engine, expire_on_commit=False)
     yield factory
     engine.dispose()
+
+
+@pytest.fixture
+def projection_seed():
+    yield from lot_tests.seed.__wrapped__()
 
 
 def _claimed(
@@ -777,6 +783,219 @@ def test_pending_reservation_reduces_nav_target_delta(sessions):
         order = session.get(OrderRecord, uuid.UUID(response["order_ids"][0]))
         assert order.quantity == 50.0
         assert order.intent_json["economics"]["pending_increase_quantity"] == 50.0
+
+
+@pytest.mark.parametrize("action", ["enter", "exit"])
+@pytest.mark.parametrize("projection_status", ["applied", "projection_pending"])
+def test_partial_projection_reservation_target_capacity_and_cash(sessions, action, projection_status):
+    applied = projection_status == "applied"
+    with sessions() as session:
+        decision_id, _ = _claimed(session, action=action, target_weight=0 if action == "exit" else 0.1)
+        prior = OrderRecord(
+            id=uuid.uuid4(),
+            strategy_name="partial-prior",
+            symbol="2330",
+            market="tw_stock",
+            action="buy" if action == "enter" else "sell",
+            order_type="market",
+            target_weight=0.05,
+            quantity=5,
+            price=100,
+            side="long",
+            status="partially_filled",
+            broker_mode="paper",
+            order_origin="decision",
+            account_scope="paper:pilot",
+            account_generation="generation-1",
+            client_order_ref="DL-partial-prior",
+            instrument="spot",
+            intent_json={"frozen_intent": {"action": action}},
+            intent_sha256="0" * 64,
+            reserved_cash_json={"currency": "TWD", "amount": 500 if action == "enter" else 0},
+            reserved_quantity=5,
+            reservation_status="reserved",
+            reconciliation_status="pending",
+            created_at=datetime(2026, 9, 26, 12, 43, tzinfo=UTC),
+            updated_at=datetime(2026, 9, 26, 12, 43, tzinfo=UTC),
+        )
+        session.add(prior)
+        session.flush()
+        session.add(
+            OrderFillRecord(
+                id=uuid.uuid4(),
+                order_id=prior.id,
+                fill_quantity=2,
+                fill_price=100,
+                fill_time=NOW,
+                projection_status=projection_status,
+                created_at=datetime(2026, 9, 26, 12, 43, tzinfo=UTC),
+            )
+        )
+        settled = (2 if applied else 0) if action == "enter" else (8 if applied else 10)
+        if settled:
+            session.add(
+                PositionLot(
+                    account_scope="paper:pilot",
+                    account_generation="generation-1",
+                    market="tw_stock",
+                    symbol="2330",
+                    instrument="spot",
+                    side="long",
+                    opening_fill_id=uuid.uuid4(),
+                    opening_decision_id=decision_id,
+                    original_quantity=10,
+                    open_quantity=settled,
+                    reserved_close_quantity=(3 if applied else 5) if action == "exit" else 0,
+                    cost_basis_json={},
+                    opened_at=NOW,
+                    updated_at=datetime(2026, 9, 26, 12, 43, tzinfo=UTC),
+                )
+            )
+        if action == "enter":
+            session.add(
+                PaperCashMovement(
+                    account_scope="paper:pilot",
+                    account_generation="generation-1",
+                    currency="TWD",
+                    amount=-99000 - (200 if applied else 0),
+                    movement_type="fill",
+                    state_version=1,
+                    occurred_at=datetime(2026, 9, 26, 12, 43, tzinfo=UTC),
+                    created_at=datetime(2026, 9, 26, 12, 43, tzinfo=UTC),
+                )
+            )
+        _reconcile_current(session)
+        session.commit()
+    if action == "enter" and not applied:
+        # Pending projection deliberately blocks new increases before reservation sizing.
+        with pytest.raises(ExecutionConflictError, match="predates outstanding state"):
+            materialize_order_intents(
+                sessions, decision_id, principal=worker(), account_nav=10000, prices=PRICE_2330, now=NOW
+            )
+        return
+    result = materialize_order_intents(
+        sessions, decision_id, principal=worker(), account_nav=10000, prices=PRICE_2330, now=NOW
+    )
+    with sessions() as session:
+        order = session.get(OrderRecord, uuid.UUID(result["order_ids"][0]))
+        assert order.quantity == 5
+        assert session.get(OrderRecord, prior.id).reserved_quantity == 5
+
+
+@pytest.mark.parametrize("action", ["enter", "exit"])
+def test_postgres_fill_projection_then_materialization(projection_seed, action):
+    seed = projection_seed
+    project = lot_tests.project
+    if action == "exit":
+        project(seed, seed.fill(quantity=10))
+    partial = seed.fill(
+        quantity=5, fill_quantity=2, status="partially_filled", action="enter" if action == "enter" else "reduce"
+    )
+    with seed.sessions() as session, session.begin():
+        prior = session.get(OrderRecord, session.get(OrderFillRecord, partial).order_id)
+        if action == "enter":
+            prior.reserved_cash_json = {"currency": "TWD", "amount": 500}
+    project(seed, partial)
+    target_fill = seed.fill(quantity=1, action=action)
+    snapshot_id, movement_id = uuid.uuid4(), uuid.uuid4()
+    try:
+        with seed.sessions() as session, session.begin():
+            target = session.get(OrderFillRecord, target_fill)
+            order = session.get(OrderRecord, target.order_id)
+            decision_id = order.decision_id
+            session.delete(target)
+            session.flush()
+            session.delete(order)
+            for lot in session.scalars(select(PositionLot).where(PositionLot.account_scope == seed.account)):
+                lot.updated_at = NOW
+                if action == "exit":
+                    lot.reserved_close_quantity = 3
+            for prior in session.scalars(select(OrderRecord).where(OrderRecord.account_scope == seed.account)):
+                prior.updated_at = NOW
+            session.scalar(
+                select(PaperBrokerAccount).where(PaperBrokerAccount.account_scope == seed.account)
+            ).updated_at = NOW
+            if action == "enter":
+                session.add(
+                    PaperCashMovement(
+                        id=movement_id,
+                        account_scope=seed.account,
+                        account_generation="generation-1",
+                        currency="TWD",
+                        amount=-99200,
+                        movement_type="fill",
+                        state_version=1,
+                        occurred_at=NOW,
+                        created_at=NOW,
+                    )
+                )
+            session.flush()
+            decision = session.get(DecisionRecord, decision_id)
+            session.add(
+                AccountReconciliation(
+                    id=snapshot_id,
+                    account_scope=seed.account,
+                    account_generation="generation-1",
+                    as_of=NOW + timedelta(minutes=1),
+                    broker_state_watermark="broker:0",
+                    internal_state_watermark=internal_state_watermark(session, seed.account, "generation-1"),
+                    broker_snapshot_sha256="a" * 64,
+                    broker_snapshot_json={},
+                    internal_snapshot_json={},
+                    difference_json={},
+                    policy_sha256=decision.policy_sha256,
+                    status="matched",
+                )
+            )
+        result = materialize_order_intents(
+            seed.sessions,
+            decision_id,
+            principal=worker(seed.account),
+            account_nav=10000,
+            prices=PRICE_2330,
+            now=NOW + timedelta(minutes=1),
+        )
+        with seed.sessions() as session:
+            assert session.get(OrderRecord, uuid.UUID(result["order_ids"][0])).quantity == 5
+    finally:
+        with seed.sessions() as session, session.begin():
+            snapshot = session.get(AccountReconciliation, snapshot_id)
+            movement = session.get(PaperCashMovement, movement_id)
+            if snapshot is not None:
+                session.delete(snapshot)
+            if movement is not None:
+                session.delete(movement)
+
+
+@pytest.mark.parametrize("corruption", ["status", "fill_quantity", "over_applied", "reservation", "cash", "currency"])
+def test_outstanding_reservation_fails_closed(sessions, corruption):
+    with sessions() as session:
+        decision_id, _ = _claimed(session)
+    result = materialize_order_intents(
+        sessions, decision_id, principal=worker(), account_nav=100000, prices=PRICE_2330, now=NOW
+    )
+    with sessions() as session:
+        order = session.get(OrderRecord, uuid.UUID(result["order_ids"][0]))
+        if corruption in {"status", "fill_quantity", "over_applied"}:
+            session.add(
+                OrderFillRecord(
+                    id=uuid.uuid4(),
+                    order_id=order.id,
+                    fill_price=100,
+                    fill_quantity=0 if corruption == "fill_quantity" else (101 if corruption == "over_applied" else 1),
+                    fill_time=NOW,
+                    created_at=NOW,
+                    projection_status="unknown" if corruption == "status" else "applied",
+                )
+            )
+        elif corruption == "reservation":
+            order.reserved_quantity = 0
+        elif corruption == "cash":
+            order.reserved_cash_json = {"currency": "TWD", "amount": "100"}
+        else:
+            order.reserved_cash_json = {"currency": "USD", "amount": 100}
+        with pytest.raises(ExecutionConflictError):
+            DecisionExecutionService(session)._outstanding_reservation(order, "TWD")
 
 
 def test_planned_cash_fails_closed_before_partial_intents(sessions):
