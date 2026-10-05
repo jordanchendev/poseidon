@@ -493,6 +493,32 @@ def test_concurrent_legacy_holding_origins_reserve_one_net_close(seed):
         assert orders[0].reserved_quantity == 5
 
 
+def test_protective_materialize_reads_implicit_time_after_account_lock(monkeypatch, seed):
+    holding_id, _account_id = _legacy_holding(seed)
+    events = []
+
+    class ObservedTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            events.append("clock")
+            return NOW
+
+    def observe_lock(_connection, _cursor, statement, _parameters, _context, _many):
+        if "pg_advisory_xact_lock" in " ".join(statement.lower().split()):
+            events.append("account")
+
+    monkeypatch.setattr("poseidon.decision_loop.execution.datetime", ObservedTime)
+    with seed.sessions() as session:
+        engine = session.get_bind()
+    event.listen(engine, "before_cursor_execute", observe_lock)
+    try:
+        _materialize_legacy(seed, holding_id, trigger="legacy:implicit-time", now=None)
+    finally:
+        event.remove(engine, "before_cursor_execute", observe_lock)
+
+    assert events == ["account", "clock"]
+
+
 @pytest.mark.parametrize(("status", "fill_quantity"), [("cancelled", 2), ("filled", 5)])
 def test_terminal_legacy_order_with_pending_projection_blocks_sibling_reservation(seed, status, fill_quantity):
     holding_id, _account_id = _legacy_holding(seed, shares=5)
@@ -637,6 +663,65 @@ def test_zero_fill_terminal_generation_precedes_later_projected_close(seed, firs
         holding = session.get(PortfolioHoldingRecord, holding_id)
         assert (holding.shares, holding.closed) == (0, True)
         assert session.get(OrderFillRecord, fill_id).projection_status == "applied"
+
+
+def test_legacy_successor_projection_uses_predecessor_order_when_timestamps_invert(seed):
+    holding_id, _account_id = _legacy_holding(seed, shares=5)
+    trigger = "legacy:inverted-successor-time"
+    first = _materialize_legacy(seed, holding_id, trigger=trigger, now=NOW)
+    first_order_id = uuid.UUID(first["order_ids"][0])
+    first_fill_id = uuid.uuid4()
+    with seed.sessions() as session, session.begin():
+        first_order = session.get(OrderRecord, first_order_id)
+        first_order.status = "cancelled"
+        first_order.broker_order_id = f"PAPER-{uuid.uuid4().hex}"
+        first_order.submit_attempted_at = NOW
+        first_order.reconciliation_status = "resolved"
+        session.add(
+            OrderFillRecord(
+                id=first_fill_id,
+                order_id=first_order.id,
+                broker_fill_id=f"fill-{first_fill_id.hex}",
+                fill_price=79,
+                fill_quantity=2,
+                fill_time=NOW.replace(minute=1),
+                projection_status="projection_pending",
+                created_at=NOW.replace(minute=1),
+            )
+        )
+    project(seed, first_fill_id)
+
+    second = _materialize_legacy(seed, holding_id, trigger=trigger, now=NOW.replace(hour=8, minute=59))
+    second_order_id = uuid.UUID(second["order_ids"][0])
+    second_fill_id = uuid.uuid4()
+    with seed.sessions() as session, session.begin():
+        first_order = session.get(OrderRecord, first_order_id)
+        second_order = session.get(OrderRecord, second_order_id)
+        assert second_order.created_at < first_order.created_at
+        assert second_order.protective_context_json["predecessor_order_ids"] == [str(first_order_id)]
+        second_order.status = "filled"
+        second_order.broker_order_id = f"PAPER-{uuid.uuid4().hex}"
+        second_order.submit_attempted_at = NOW.replace(minute=1)
+        second_order.reconciliation_status = "resolved"
+        session.add(
+            OrderFillRecord(
+                id=second_fill_id,
+                order_id=second_order.id,
+                broker_fill_id=f"fill-{second_fill_id.hex}",
+                fill_price=78,
+                fill_quantity=3,
+                fill_time=NOW.replace(minute=2),
+                projection_status="projection_pending",
+                created_at=NOW.replace(minute=2),
+            )
+        )
+
+    projection = project(seed, second_fill_id)
+    assert project(seed, second_fill_id) == projection
+    with seed.sessions() as session:
+        holding = session.get(PortfolioHoldingRecord, holding_id)
+        assert (holding.shares, holding.closed, holding.close_date) == (0, True, NOW.replace(minute=2))
+        assert session.get(OrderFillRecord, second_fill_id).projection_status == "applied"
 
 
 def test_later_legacy_fill_preserves_historical_source_close_date(seed):

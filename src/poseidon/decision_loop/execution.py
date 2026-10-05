@@ -1415,9 +1415,11 @@ class ProtectiveExecutionService(DecisionExecutionService):
             raise ExecutionConflictError("protective trigger generation must be non-empty trimmed text")
         if market not in {"tw_stock", "crypto_perp"} or side not in {"long", "short"}:
             raise ExecutionConflictError("protective identity is invalid")
-        current_time = timestamp(now if now is not None else datetime.now(UTC), "now")
+        current_time = None if now is None else timestamp(now, "now")
         current_price = _finite_positive(price, "protective price")
         self._advisory_lock(account_scope, account_generation)
+        if current_time is None:
+            current_time = timestamp(datetime.now(UTC), "now")
         account = self.session.scalar(
             select(PaperBrokerAccount)
             .where(

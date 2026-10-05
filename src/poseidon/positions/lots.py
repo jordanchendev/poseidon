@@ -1,5 +1,6 @@
 """One account-locked, replay-safe FIFO fill projection."""
 
+import heapq
 import math
 import uuid
 from datetime import UTC, datetime
@@ -246,7 +247,49 @@ class FillProjectionService:
         def generation_key(legacy_order):
             return _utc(legacy_order.created_at), legacy_order.id
 
-        legacy_orders.sort(key=generation_key)
+        by_id = {row.id: row for row in legacy_orders}
+        child_by_parent = {}
+        predecessor_by_child = {}
+        groups = {}
+        for legacy_order in legacy_orders:
+            context = legacy_order.protective_context_json
+            group = (
+                legacy_order.order_origin,
+                context["trigger_generation"],
+                tuple(context["source_holding_ids"]),
+            )
+            groups.setdefault(group, set()).add(legacy_order.id)
+            predecessors = context.get("predecessor_order_ids", [])
+            if not predecessors:
+                continue
+            predecessor_id = uuid.UUID(predecessors[0])
+            predecessor = by_id.get(predecessor_id)
+            if predecessor is None:
+                raise FillProjectionConflictError("legacy holding generation topology is invalid")
+            predecessor_context = predecessor.protective_context_json
+            predecessor_group = (
+                predecessor.order_origin,
+                predecessor_context["trigger_generation"],
+                tuple(predecessor_context["source_holding_ids"]),
+            )
+            if predecessor_group != group or predecessor_id in child_by_parent:
+                raise FillProjectionConflictError("legacy holding generation topology is invalid")
+            child_by_parent[predecessor_id] = legacy_order.id
+            predecessor_by_child[legacy_order.id] = predecessor_id
+        if any(len(order_ids - predecessor_by_child.keys()) != 1 for order_ids in groups.values()):
+            raise FillProjectionConflictError("legacy holding generation topology is invalid")
+        ready = [(generation_key(row), row) for row in legacy_orders if row.id not in predecessor_by_child]
+        heapq.heapify(ready)
+        legacy_orders = []
+        while ready:
+            _key, current = heapq.heappop(ready)
+            legacy_orders.append(current)
+            child_id = child_by_parent.get(current.id)
+            if child_id is not None:
+                child = by_id[child_id]
+                heapq.heappush(ready, (generation_key(child), child))
+        if len(legacy_orders) != len(by_id):
+            raise FillProjectionConflictError("legacy holding generation topology is invalid")
         ordered_source_ids = sorted(source_ids)
         holdings = self.session.scalars(
             select(PortfolioHoldingRecord)
