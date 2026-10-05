@@ -12,10 +12,11 @@ import pytest
 from sqlalchemy import delete, event, func, select, update
 
 from poseidon.broker.base import BrokerAdapter, BrokerCapabilities, BrokerCapabilityError, BrokerOrderSnapshot
-from poseidon.broker.paper_adapter import PaperBrokerAdapter
+from poseidon.broker.paper_adapter import PaperBrokerAdapter, _ensure_legacy_baselines
 from poseidon.core.config import settings
 from poseidon.decision_loop.decisions import DecisionService
 from poseidon.decision_loop.execution import ExecutionConflictError, ProtectiveExecutionService
+from poseidon.decision_loop.manifest import content_sha256
 from poseidon.decision_loop.reconciliation import (
     ReconciliationConflictError,
     ReconciliationService,
@@ -1561,6 +1562,97 @@ def test_same_trigger_rearms_after_terminal_zero_fill(seed, source_kind, status)
     assert materialize() == second
     with seed.sessions() as session:
         assert session.get(OrderRecord, uuid.UUID(second["order_ids"][0])).quantity == 5
+
+
+@pytest.mark.parametrize("source_kind", ["durable", "legacy"])
+def test_same_trigger_rearm_chain_keeps_only_immediate_predecessor(seed, source_kind):
+    holding_id = None
+    if source_kind == "durable":
+        _opening(seed, quantity=5)
+    else:
+        holding_id, _account_id = _legacy_holding(seed, shares=5)
+
+    def materialize():
+        if holding_id is None:
+            return _materialize(seed, trigger="same-trigger:immediate-predecessor")
+        return _materialize_legacy(seed, holding_id, trigger="same-trigger:immediate-predecessor")
+
+    completed_ids = []
+    for status in ("cancelled", "rejected", "cancelled", "rejected"):
+        result = materialize()
+        order_id = uuid.UUID(result["order_ids"][0])
+        with seed.sessions() as session, session.begin():
+            order = session.get(OrderRecord, order_id)
+            if completed_ids:
+                assert order.protective_context_json["predecessor_order_ids"] == [str(completed_ids[-1])]
+            else:
+                assert "predecessor_order_ids" not in order.protective_context_json
+            ProtectiveExecutionService(session).validate_order(order)
+            order.status = status
+            order.reservation_status = "released"
+            order.reconciliation_status = "resolved"
+            if source_kind == "durable":
+                session.scalar(
+                    select(PositionLot).where(PositionLot.account_scope == seed.account)
+                ).reserved_close_quantity = 0
+        completed_ids.append(order_id)
+
+    current = materialize()
+    current_id = uuid.UUID(current["order_ids"][0])
+    with seed.sessions() as session:
+        order = session.get(OrderRecord, current_id)
+        assert order.protective_context_json["predecessor_order_ids"] == [str(completed_ids[-1])]
+        ProtectiveExecutionService(session).validate_order(order)
+    assert materialize() == current
+
+
+def test_generic_broker_rejects_multiple_generation_predecessors(seed):
+    _opening(seed, quantity=5)
+    first = _materialize(seed, trigger="same-trigger:broker-boundary")
+    first_id = uuid.UUID(first["order_ids"][0])
+    with seed.sessions() as session, session.begin():
+        order = session.get(OrderRecord, first_id)
+        order.status = "cancelled"
+        order.reservation_status = "released"
+        order.reconciliation_status = "resolved"
+        session.scalar(select(PositionLot).where(PositionLot.account_scope == seed.account)).reserved_close_quantity = 0
+    second = _materialize(seed, trigger="same-trigger:broker-boundary")
+    second_id = uuid.UUID(second["order_ids"][0])
+    with seed.sessions() as session:
+        order = _order_dto(session.get(OrderRecord, second_id))
+    context = copy.deepcopy(order.protective_context_json)
+    context["predecessor_order_ids"] = sorted([str(first_id), str(uuid.uuid4())])
+    changed = replace(order, protective_context_json=context)
+
+    with pytest.raises(BrokerCapabilityError, match="exactly one predecessor"):
+        _MarkerAdapter(seed.sessions, second_id)._require_decision_submission(changed, changed.client_order_ref)
+
+
+def test_paper_adapter_rejects_multiple_generation_predecessors(seed):
+    holding_id, _account_id = _legacy_holding(seed, shares=5)
+    first = _materialize_legacy(seed, holding_id, trigger="same-trigger:adapter-boundary")
+    first_id = uuid.UUID(first["order_ids"][0])
+    with seed.sessions() as session, session.begin():
+        order = session.get(OrderRecord, first_id)
+        order.status = "cancelled"
+        order.reservation_status = "released"
+        order.reconciliation_status = "resolved"
+    second = _materialize_legacy(seed, holding_id, trigger="same-trigger:adapter-boundary")
+    second_id = uuid.UUID(second["order_ids"][0])
+    with seed.sessions() as session:
+        order = _order_dto(session.get(OrderRecord, second_id))
+    context = copy.deepcopy(order.protective_context_json)
+    context["predecessor_order_ids"] = sorted([str(first_id), str(uuid.uuid4())])
+    context["dedupe_sha256"] = content_sha256(ProtectiveExecutionService._dedupe_input(order.order_origin, context))
+    changed = replace(order, protective_context_json=context)
+
+    with (
+        seed.sessions() as session,
+        session.begin(),
+        pytest.raises(BrokerCapabilityError, match="exactly one predecessor"),
+    ):
+        account = session.scalar(select(PaperBrokerAccount).where(PaperBrokerAccount.account_scope == seed.account))
+        _ensure_legacy_baselines(session, account, changed, changed.client_order_ref, allow_create=True)
 
 
 @pytest.mark.parametrize("source_kind", ["durable", "legacy"])

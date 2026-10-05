@@ -812,7 +812,38 @@ class ProtectiveExecutionService(DecisionExecutionService):
             (completed if self._generation_complete(candidate, fills) else incomplete).append(candidate)
         if len(incomplete) > 1:
             raise ExecutionConflictError("protective generation has multiple incomplete orders")
-        return (incomplete[0] if incomplete else None), sorted(str(order.id) for order in completed)
+        if not completed:
+            return (incomplete[0] if incomplete else None), []
+        completed_ids = {str(order.id) for order in completed}
+        parent_by_child = {}
+        parent_ids = []
+        for order in completed:
+            predecessors = order.protective_context_json.get("predecessor_order_ids", [])
+            if not predecessors:
+                continue
+            predecessor_id = predecessors[0]
+            if predecessor_id not in completed_ids:
+                raise ExecutionConflictError("protective generation topology is invalid")
+            parent_by_child[str(order.id)] = predecessor_id
+            parent_ids.append(predecessor_id)
+        heads = completed_ids - set(parent_ids)
+        roots = completed_ids - set(parent_by_child)
+        if len(parent_ids) != len(set(parent_ids)) or len(heads) != 1 or len(roots) != 1:
+            raise ExecutionConflictError("protective generation topology is invalid")
+        head = heads.pop()
+        visited = set()
+        current = head
+        while current in parent_by_child and current not in visited:
+            visited.add(current)
+            current = parent_by_child[current]
+        visited.add(current)
+        if visited != completed_ids:
+            raise ExecutionConflictError("protective generation topology is invalid")
+        if incomplete:
+            predecessors = incomplete[0].protective_context_json.get("predecessor_order_ids", [])
+            if predecessors != [head]:
+                raise ExecutionConflictError("protective generation topology is invalid")
+        return (incomplete[0] if incomplete else None), [head]
 
     def validate_order(self, order, *, lock_fills=True):
         """Revalidate a stored protective intent before attempt or projection."""
@@ -894,7 +925,9 @@ class ProtectiveExecutionService(DecisionExecutionService):
             predecessors = context["predecessor_order_ids"]
             remaining = context["remaining_source_quantities"]
             try:
-                predecessor_ids = [uuid.UUID(value) for value in predecessors]
+                predecessor_id = (
+                    uuid.UUID(predecessors[0]) if isinstance(predecessors, list) and len(predecessors) == 1 else None
+                )
                 valid_remaining = (
                     isinstance(remaining, dict)
                     and set(remaining) == set(context[source_field])
@@ -908,20 +941,17 @@ class ProtectiveExecutionService(DecisionExecutionService):
                     and sum((Decimal(str(value)) for value in remaining.values()), Decimal(0)) > 0
                 )
             except (TypeError, ValueError):
-                predecessor_ids = []
+                predecessor_id = None
                 valid_remaining = False
             if (
-                not predecessor_ids
-                or order.id in predecessor_ids
-                or predecessors != sorted(predecessors)
-                or len(predecessor_ids) != len(set(predecessor_ids))
+                predecessor_id is None
+                or predecessors != [str(predecessor_id)]
+                or order.id == predecessor_id
                 or not valid_remaining
             ):
                 raise ExecutionConflictError("protective generation provenance is invalid")
-            predecessor_orders = self.session.scalars(
-                select(OrderRecord).where(OrderRecord.id.in_(predecessor_ids)).order_by(OrderRecord.id)
-            ).all()
-            if [row.id for row in predecessor_orders] != predecessor_ids:
+            predecessor_orders = self.session.scalars(select(OrderRecord).where(OrderRecord.id == predecessor_id)).all()
+            if [row.id for row in predecessor_orders] != [predecessor_id]:
                 raise ExecutionConflictError("protective generation predecessor set changed")
             for predecessor in predecessor_orders:
                 predecessor_context = predecessor.protective_context_json

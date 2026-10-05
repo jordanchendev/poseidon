@@ -1,5 +1,6 @@
 """Abstract broker adapter interface."""
 
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
@@ -143,8 +144,23 @@ class BrokerAdapter(ABC):
             raise BrokerCapabilityError("decision execution requires durable decision identity")
         if order.order_origin in DURABLE_PROTECTIVE_ORIGINS:
             frozen = (order.intent_json or {}).get("frozen_intent", {})
-            if frozen.get("action") not in {"reduce", "exit"} or not order.protective_context_json:
+            context = order.protective_context_json
+            if frozen.get("action") not in {"reduce", "exit"} or not context:
                 raise BrokerCapabilityError("protective execution requires reduction-only durable context")
+            generation_context = {"predecessor_order_ids", "remaining_source_quantities"}
+            generation_keys = set(context) & generation_context
+            predecessors = context.get("predecessor_order_ids")
+            try:
+                valid_predecessor = (
+                    generation_keys == generation_context
+                    and isinstance(predecessors, list)
+                    and len(predecessors) == 1
+                    and str(uuid.UUID(predecessors[0])) == predecessors[0]
+                )
+            except (TypeError, ValueError):
+                valid_predecessor = False
+            if generation_keys and not valid_predecessor:
+                raise BrokerCapabilityError("protective successor requires exactly one predecessor UUID")
             if legacy_protective:
                 base_context = {
                     "account_scope",
@@ -161,8 +177,7 @@ class BrokerAdapter(ABC):
                     "legacy_exception",
                     "dedupe_sha256",
                 }
-                generation_context = {"predecessor_order_ids", "remaining_source_quantities"}
-                if set(order.protective_context_json) not in (base_context, base_context | generation_context):
+                if set(context) not in (base_context, base_context | generation_context):
                     raise BrokerCapabilityError("legacy protective execution requires complete durable context")
         try:
             valid_intent = bool(order.intent_json) and order.intent_sha256 == content_sha256(order.intent_json)

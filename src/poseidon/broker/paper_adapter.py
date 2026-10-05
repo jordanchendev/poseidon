@@ -461,17 +461,17 @@ def _ensure_legacy_baselines(
     predecessors = context.get("predecessor_order_ids")
     remaining_sources = context.get("remaining_source_quantities")
     try:
-        valid_generation = generation_keys == set() or (
+        valid_predecessor = (
             generation_keys == generation_context
             and isinstance(predecessors, list)
-            and bool(predecessors)
-            and predecessors == sorted(predecessors)
-            and len(predecessors) == len(set(predecessors))
-            and all(str(uuid.UUID(value)) == value for value in predecessors)
-            and remaining_sources == quantities
+            and len(predecessors) == 1
+            and str(uuid.UUID(predecessors[0])) == predecessors[0]
         )
     except (TypeError, ValueError):
-        valid_generation = False
+        valid_predecessor = False
+    if generation_keys and not valid_predecessor:
+        raise BrokerCapabilityError("protective successor requires exactly one predecessor UUID")
+    valid_generation = generation_keys == set() or remaining_sources == quantities
     try:
         legacy_context_sha256 = content_sha256({"source_holding_quantities": quantities, "source_holding_risk": risks})
         dedupe_input = {
