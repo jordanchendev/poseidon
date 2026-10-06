@@ -463,13 +463,16 @@ class TestFixedRiskSizingIntegration:
     def test_fixed_risk_sizing_integration(self):
         """Limit order with FIXED_RISK sizing produces correct position size.
 
-        order_price=50000, SL=49000, risk_pct=0.02, equity=1M:
-        qty = (1M * 0.02) / |50000 - 49000| = 20_000 / 1000 = 20 units
+        order_price=50000, SL=49000, risk_pct=0.0199, equity=1M:
+        qty = (1M * 0.0199) / |50000 - 49000| = 19_900 / 1000 = 19.9 units
+
+        The small cash reserve covers the maker fee without invoking the
+        max-notional cap.
         """
         strategy = FixedRiskLimitStrategy()
         sizing_cfg = SizingConfig(
             mode=SizingMode.FIXED_RISK,
-            risk_pct=0.02,
+            risk_pct=0.0199,
             max_notional_pct=1.5,  # high cap to not interfere
         )
         runner = _make_runner(
@@ -490,9 +493,9 @@ class TestFixedRiskSizingIntegration:
         assert len(entry_trades) >= 1, f"Expected a LONG trade, got {result.trades}"
 
         fill_trade = entry_trades[0]
-        # Expected qty ~20 (= 1M * 0.02 / 1000)
-        assert fill_trade["quantity"] == pytest.approx(20.0, rel=0.01), (
-            f"Expected qty ~20, got {fill_trade['quantity']}"
+        # Expected qty 19.9 (= 1M * 0.0199 / 1000)
+        assert fill_trade["quantity"] == pytest.approx(19.9, rel=1e-6), (
+            f"Expected qty 19.9, got {fill_trade['quantity']}"
         )
         assert fill_trade["entry_price"] == pytest.approx(50000.0, abs=1e-2)
 

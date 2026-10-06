@@ -4,7 +4,7 @@ import copy
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from types import SimpleNamespace
 
@@ -368,11 +368,13 @@ def test_ordinary_materialization_after_legacy_close_uses_compatible_nav(monkeyp
     trade(account, quantity=5, price=100, action="enter", side="long")
     legacy_close(account, monkeypatch, shares=5, entry_price=80, fill_price=80, side="long")
     unresolved = reconcile(account)
+    execution_now = datetime.now(UTC) + timedelta(seconds=1)
     with account.sessions() as session, session.begin():
         reconciliation = session.get(AccountReconciliation, uuid.UUID(unresolved["reconciliation_id"]))
         reconciliation.status = "matched"
+        reconciliation.as_of = execution_now
         decision = session.get(DecisionRecord, account.decision_id)
-        decision.valid_until = NOW + timedelta(hours=1)
+        decision.valid_until = execution_now + timedelta(hours=1)
 
     monkeypatch.setattr(cpu_tasks, "SessionLocal", account.sessions)
     monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", lambda _market: account.adapter)
@@ -382,7 +384,7 @@ def test_ordinary_materialization_after_legacy_close_uses_compatible_nav(monkeyp
     monkeypatch.setattr(cpu_tasks.settings, "decision_loop_approved_account_scope", account.scope)
     monkeypatch.setattr(cpu_tasks.settings, "decision_loop_approved_account_generation", "generation-1")
     monkeypatch.setattr(cpu_tasks.settings, "decision_loop_approved_market", "tw_stock")
-    monkeypatch.setattr("poseidon.decision_loop.execution.timestamp", lambda _value, _field: NOW)
+    monkeypatch.setattr("poseidon.decision_loop.execution.timestamp", lambda _value, _field: execution_now)
 
     result = cpu_tasks.materialize_execution_claim.run(str(account.decision_id))
 
@@ -683,15 +685,17 @@ def test_matched_account_terminalizes_only_canonical_ordinary_orders_with_anchor
 def test_freshness_exposure_gate_invalidates_match_on_new_broker_watermark(account):
     result = reconcile(account)
     assert result["status"] == "matched"
+    gate_now = datetime.now(UTC) + timedelta(seconds=1)
     with account.sessions() as session, session.begin():
+        session.get(AccountReconciliation, uuid.UUID(result["reconciliation_id"])).as_of = gate_now
         decision = session.get(DecisionRecord, account.decision_id)
         execution = DecisionExecutionService(session)
         _, policy, _ = execution._policy_and_intents(decision)
         broker_account = session.get(PaperBrokerAccount, account.id)
-        execution._require_reconciled(decision, policy.reconciliation, broker_account, NOW)
+        execution._require_reconciled(decision, policy.reconciliation, broker_account, gate_now)
         broker_account.state_version += 1
         with pytest.raises(ExecutionConflictError):
-            execution._require_reconciled(decision, policy.reconciliation, broker_account, NOW)
+            execution._require_reconciled(decision, policy.reconciliation, broker_account, gate_now)
 
 
 @pytest.mark.parametrize("side", ["long", "short"])
