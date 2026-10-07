@@ -361,8 +361,10 @@ def test_review_runner_consumes_before_read_and_replays_or_appends(phase99_sessi
     with phase99_session_factory() as session:
         incumbent, candidate, _ = _seed_strategy_versions(session, marker=marker)
         contract = _complete_campaign_contract(incumbent, candidate, marker=marker)
-        contract["contract_json"]["gates"].update(_review_contract()["gates"])
-        contract["contract_json"]["label"]["horizons"] = _review_contract()["label"]["horizons"]
+        review_contract = _review_contract()
+        contract["contract_json"]["gates"].update(review_contract["gates"])
+        contract["contract_json"]["label"]["horizons"] = review_contract["label"]["horizons"]
+        contract["contract_json"]["uncertainty_estimator"] = review_contract["uncertainty_estimator"]
         campaign = CampaignService(session).create_frozen_campaign(contract)
         tracker = ExperimentTracker(session)
         for index, (role, arm) in enumerate(product(ROLES, ARMS)):
