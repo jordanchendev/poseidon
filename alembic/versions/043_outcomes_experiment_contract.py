@@ -552,7 +552,7 @@ def upgrade():
     op.create_check_constraint(
         "ck_experiments_campaign_link_complete",
         "experiments",
-        "campaign_id IS NULL OR (original_trial_id IS NOT NULL AND trial_role IS NOT NULL "
+        "campaign_id IS NULL OR (campaign_id IS NOT NULL AND original_trial_id IS NOT NULL AND trial_role IS NOT NULL "
         "AND strategy_version_id IS NOT NULL AND ablation_arm IS NOT NULL "
         "AND paired_sample_key_sha256 IS NOT NULL AND input_sha256 IS NOT NULL "
         "AND result_sha256 IS NOT NULL AND started_at IS NOT NULL AND completed_at IS NOT NULL "

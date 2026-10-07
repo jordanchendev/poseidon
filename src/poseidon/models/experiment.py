@@ -92,8 +92,7 @@ class ExperimentRecord(Base):
             name="ck_experiments_trial_role",
         ),
         CheckConstraint(
-            "ablation_arm IS NULL OR ablation_arm IN "
-            "('fundamental_only', 'technical_only', 'combined')",
+            "ablation_arm IS NULL OR ablation_arm IN ('fundamental_only', 'technical_only', 'combined')",
             name="ck_experiments_ablation_arm",
         ),
         CheckConstraint(
@@ -109,7 +108,7 @@ class ExperimentRecord(Base):
             name="ck_experiments_phase99_hashes",
         ),
         CheckConstraint(
-            "campaign_id IS NULL OR (original_trial_id IS NOT NULL AND trial_role IS NOT NULL "
+            "campaign_id IS NULL OR (campaign_id IS NOT NULL AND original_trial_id IS NOT NULL AND trial_role IS NOT NULL "
             "AND strategy_version_id IS NOT NULL AND ablation_arm IS NOT NULL "
             "AND paired_sample_key_sha256 IS NOT NULL AND input_sha256 IS NOT NULL "
             "AND result_sha256 IS NOT NULL AND started_at IS NOT NULL AND completed_at IS NOT NULL "
