@@ -23,7 +23,8 @@ def _assert_sqlstate(session, expected, statement, **params):
     try:
         with pytest.raises(DBAPIError) as error:
             session.execute(text(statement), params)
-        assert getattr(error.value.orig, "sqlstate", None) == expected
+        sqlstate = getattr(error.value.orig, "sqlstate", None) or getattr(error.value.orig, "pgcode", None)
+        assert sqlstate == expected
     finally:
         savepoint.rollback()
 
