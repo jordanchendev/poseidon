@@ -9,6 +9,12 @@ from poseidon.models.decision_record import DecisionRecord  # noqa: F401
 from poseidon.models.evaluation_run import EvaluationRun  # noqa: F401
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot  # noqa: F401
 from poseidon.models.experiment import ExperimentRecord  # noqa: F401
+from poseidon.models.experiment_campaign import (  # noqa: F401
+    CampaignEvent,
+    CampaignReview,
+    ExperimentCampaign,
+    HoldoutUse,
+)
 from poseidon.models.factor_analysis_run import FactorAnalysisRun  # noqa: F401
 from poseidon.models.fill_allocation import FillAllocation  # noqa: F401
 from poseidon.models.fundamentals import Fundamentals  # noqa: F401

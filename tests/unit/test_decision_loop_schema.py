@@ -792,3 +792,109 @@ def test_phase99_research_assessment_and_economic_reconciliation_are_bounded_fac
         "provisional",
         "unavailable",
     ))
+
+
+def test_phase99_campaign_models_keep_identity_frozen_and_state_append_only():
+    import poseidon.models as models
+
+    names = ("ExperimentCampaign", "CampaignEvent", "HoldoutUse", "CampaignReview")
+    assert all(hasattr(models, name) for name in names)
+
+    campaign = models.ExperimentCampaign.__table__
+    assert not {"status", "trial_count", "release", "active_version_id"} & set(campaign.c.keys())
+    assert _unique_constraints(campaign) == {
+        ("uq_experiment_campaigns_contract_sha256", ("contract_sha256",))
+    }
+    assert {
+        fk.target_fullname
+        for column in campaign.c
+        for fk in column.foreign_keys
+    } == {"strategy_versions.id"}
+
+    event = models.CampaignEvent.__table__
+    assert _unique_constraints(event) == {
+        ("uq_campaign_events_idempotency", ("campaign_id", "idempotency_sha256"))
+    }
+    review = models.CampaignReview.__table__
+    assert _unique_constraints(review) == {
+        ("uq_campaign_reviews_replay", ("campaign_id", "input_sha256"))
+    }
+    assert all(token in _check_sql(review, "ck_campaign_reviews_status") for token in (
+        "passed",
+        "failed",
+        "inconclusive",
+        "unavailable",
+    ))
+
+
+def test_phase99_holdout_identity_has_one_global_owner():
+    import poseidon.models as models
+
+    holdout = models.HoldoutUse.__table__
+    identities = [
+        tuple(constraint.columns.keys())
+        for constraint in holdout.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    ]
+    identities.extend(tuple(index.columns.keys()) for index in holdout.indexes if index.unique)
+    assert identities == [("holdout_identity_sha256",)]
+    assert all(
+        "campaign_id" not in columns and "strategy" not in " ".join(columns) and "candidate" not in " ".join(columns)
+        for columns in identities
+    )
+
+
+def test_phase99_linked_trials_are_nullable_for_legacy_and_complete_when_bound():
+    import poseidon.models as models
+
+    experiment = models.ExperimentRecord.__table__
+    phase99_columns = (
+        "campaign_id",
+        "original_trial_id",
+        "trial_role",
+        "strategy_version_id",
+        "ablation_arm",
+        "paired_sample_key_sha256",
+        "input_sha256",
+        "result_sha256",
+        "started_at",
+        "completed_at",
+        "terminal_state",
+        "terminal_reason_json",
+    )
+    assert all(experiment.c[name].nullable for name in phase99_columns)
+    linked_check = _check_sql(experiment, "ck_experiments_campaign_link_complete")
+    for name in phase99_columns[:-1]:
+        assert f"{name} IS NOT NULL" in linked_check
+    for terminal in (
+        "succeeded",
+        "optimizer_failed",
+        "constraint_rejected",
+        "insufficient_data",
+        "statistically_inconclusive",
+        "capability_unavailable",
+    ):
+        assert terminal in linked_check
+    assert _index_contracts(experiment) >= {
+        (
+            "uq_experiments_campaign_paired_cell",
+            (
+                "campaign_id",
+                "original_trial_id",
+                "strategy_version_id",
+                "ablation_arm",
+                "paired_sample_key_sha256",
+            ),
+            True,
+            "campaign_id IS NOT NULL",
+        )
+    }
+
+    legacy = models.ExperimentRecord(
+        study_name="legacy",
+        config_json={},
+        market="tw_stock",
+        interval="1d",
+    )
+    assert legacy.campaign_id is None
+    assert legacy.terminal_state is None
