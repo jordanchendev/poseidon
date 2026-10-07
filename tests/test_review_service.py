@@ -62,8 +62,8 @@ def test_cross_sectional_and_time_series_ic_are_distinct_estimands() -> None:
             {"date": date, "symbol": symbol, "signal": signal, "forward_return": scale * signal}
             for date, scale, signals in (
                 ("2026-01-02", 10.0, (1.0, 2.0, 3.0)),
-                ("2026-01-05", 1.0, (2.0, 4.0, 6.0)),
-                ("2026-01-06", 5.0, (3.0, 6.0, 9.0)),
+                ("2026-01-05", 0.1, (2.0, 4.0, 6.0)),
+                ("2026-01-06", 1.0, (3.0, 6.0, 9.0)),
             )
             for symbol, signal in zip(("0050", "2317", "2330"), signals, strict=True)
         ]
