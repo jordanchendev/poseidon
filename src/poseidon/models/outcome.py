@@ -22,7 +22,6 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from poseidon.decision_loop.manifest import content_sha256
 from poseidon.models.base import Base
 
 _LABEL_CONTRACT_FIELDS = (
@@ -42,6 +41,10 @@ _OUTCOME_KINDS = ("signal", "trade", "research")
 
 def outcome_label_contract_sha256(contract_json: dict) -> str:
     """Return the canonical identity of a complete label contract."""
+
+    # Import lazily so manifest can load model metadata without a models ->
+    # decision_loop.manifest -> models import cycle.
+    from poseidon.decision_loop.manifest import content_sha256
 
     return content_sha256(contract_json)
 
