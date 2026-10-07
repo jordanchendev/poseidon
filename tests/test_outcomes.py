@@ -6,6 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 
 from poseidon.decision_loop.evaluation import snapshot_payload
 from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256
@@ -15,9 +16,9 @@ from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_run import EvaluationRun
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
+from poseidon.models.fill_allocation import FillAllocation
 from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
-from poseidon.models.fill_allocation import FillAllocation
 from poseidon.models.outcome import EconomicReconciliation, OutcomeLabelContract, OutcomeRecord, ResearchAssessment
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.research_revision import ResearchRevision
@@ -300,7 +301,7 @@ def test_weekend_calendar_does_not_mature_signal_by_wall_clock(outcome_session):
 @pytest.mark.parametrize("execution_state", ["open", "early_full_exit"])
 def test_trade_mark_horizon_ignores_open_or_early_exit_state(outcome_session, execution_state):
     def add_execution(seed):
-        snapshot, decision, _contract, _manifest = seed
+        _snapshot, decision, _contract, _manifest = seed
         stored_intent = {"frozen_intent": decision.final_json["order_intents"][0], "economics": {}}
         order = OrderRecord(
             id=uuid.uuid4(),

@@ -23,7 +23,6 @@ from poseidon.models.data_manifest import DataManifest
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_run import EvaluationRun
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
-from poseidon.models.order import OrderRecord
 from poseidon.models.outcome import OutcomeLabelContract, OutcomeRecord, ResearchAssessment
 from poseidon.models.research_revision import ResearchRevision
 
@@ -272,15 +271,6 @@ class OutcomeService:
                 matched.append(decision)
         return matched
 
-    @staticmethod
-    def _order_matches(order, snapshot_id):
-        stored = order.intent_json
-        if not isinstance(stored, dict):
-            return False
-        direct = stored.get("evaluation_snapshot_id")
-        frozen = stored.get("frozen_intent")
-        return direct == snapshot_id or (isinstance(frozen, dict) and frozen.get("evaluation_snapshot_id") == snapshot_id)
-
     def _research_assessment(self, snapshot, as_of):
         rows = self.session.scalars(
             select(ResearchAssessment)
@@ -337,24 +327,14 @@ class OutcomeService:
         }
         return "available", "available", {"actual": actual, "counterfactual": []}
 
-    def _trade_metrics(self, snapshot, decision, counterfactuals):
-        orders = self.session.scalars(select(OrderRecord).where(OrderRecord.decision_id == decision.id)).all()
-        exact = [order for order in orders if self._order_matches(order, str(snapshot.id))]
-        if not exact:
-            return (
-                "available",
-                "no_execution",
-                {"actual": {"status": "not_applicable", "reason": "no_execution"}, "counterfactual": counterfactuals},
-                {},
-            )
-        return (
-            "provisional",
-            "economic_reconciliation_missing",
-            {
-                "actual": {"status": "provisional", "reason": "economic_reconciliation_missing"},
-                "counterfactual": counterfactuals,
-            },
-            {"order_ids": [str(order.id) for order in exact]},
+    def _trade_metrics(self, snapshot, decision, contract, counterfactuals):
+        from poseidon.decision_loop.outcome_accounting import OutcomeAccounting
+
+        return OutcomeAccounting(self.session).compute_trade(
+            evaluation_snapshot_id=snapshot.id,
+            decision=decision,
+            label_contract=contract,
+            counterfactuals=counterfactuals,
         )
 
     def _research_metrics(self, snapshot, assessment, manifest, by_id):
@@ -454,7 +434,7 @@ class OutcomeService:
         manifest = self.session.get(DataManifest, _uuid(outcome_manifest_id, "outcome_manifest_id"))
         if manifest is None:
             raise ValidationError("outcome manifest does not exist")
-        payload, by_id, sessions, counterfactuals = _manifest_facts(manifest, contract, as_of)
+        _payload, by_id, sessions, counterfactuals = _manifest_facts(manifest, contract, as_of)
 
         candidates = []
         for snapshot_id in evaluation_snapshot_ids:
@@ -478,7 +458,7 @@ class OutcomeService:
                             references = {}
                         elif kind == "trade":
                             status, reason, metrics, references = self._trade_metrics(
-                                snapshot, decision, counterfactuals
+                                snapshot, decision, contract, counterfactuals
                             )
                         else:
                             status, reason, metrics, references = self._research_metrics(

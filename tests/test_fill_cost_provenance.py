@@ -76,13 +76,14 @@ def _component(
     source=None,
     fx_source=None,
     fx_rate=None,
+    reporting_amount=None,
     reason=None,
 ):
     return {
         "component_type": component_type,
         "native_amount": amount,
         "native_currency": native_currency,
-        "reporting_amount": amount,
+        "reporting_amount": amount if reporting_amount is None else reporting_amount,
         "reporting_currency": reporting_currency,
         "classification": classification,
         "source": source or f"phase99:{component_type}",
@@ -102,11 +103,12 @@ def test_fill_cost_replay_correction_and_all_component_provenance(cost_session):
         _component("borrow", "0.125"),
         _component(
             "fx",
-            "1.1",
+            "1",
             native_currency="EUR",
             reporting_currency="USD",
             fx_source="wm-close-v1",
             fx_rate="1.1",
+            reporting_amount="1.1",
         ),
         _component("other", None, classification="not_applicable"),
         _component(
@@ -182,7 +184,6 @@ def test_cost_and_pnl_implementation_is_decimal_and_caller_transaction_owned():
     import poseidon.decision_loop.outcome_accounting as accounting
 
     source = inspect.getsource(accounting)
-    tree = ast.parse(source)
     assert "Decimal" in source
     assert "float(" not in source
     for service in (FillCostService, OutcomeAccounting):
