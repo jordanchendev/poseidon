@@ -19,6 +19,14 @@ from poseidon.models.nav_snapshot import NavSnapshotRecord  # noqa: F401
 from poseidon.models.nonprice_timeseries import NonpriceTimeseries  # noqa: F401
 from poseidon.models.order import OrderRecord  # noqa: F401
 from poseidon.models.order_fill import OrderFillRecord  # noqa: F401
+from poseidon.models.outcome import (  # noqa: F401
+    EconomicReconciliation,
+    FillCostComponent,
+    FillCostRevision,
+    OutcomeLabelContract,
+    OutcomeRecord,
+    ResearchAssessment,
+)
 from poseidon.models.paper_broker_account import PaperBrokerAccount  # noqa: F401
 from poseidon.models.paper_broker_fill import PaperBrokerFill  # noqa: F401
 from poseidon.models.paper_broker_order import PaperBrokerOrder  # noqa: F401

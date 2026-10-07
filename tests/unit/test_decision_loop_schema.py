@@ -604,3 +604,191 @@ def test_execution_models_enforce_replay_quantity_and_independent_broker_truth()
     assert {"broker_state_watermark", "internal_state_watermark", "policy_sha256", "status"} <= set(
         reconciliation.c.keys()
     )
+
+
+def _index_contracts(table):
+    return {
+        (
+            index.name,
+            tuple(index.columns.keys()),
+            index.unique,
+            str(index.dialect_options["postgresql"].get("where")),
+        )
+        for index in table.indexes
+    }
+
+
+def test_phase99_outcome_model_exports_and_revision_contracts():
+    import poseidon.models as models
+
+    names = (
+        "OutcomeLabelContract",
+        "ResearchAssessment",
+        "FillCostRevision",
+        "FillCostComponent",
+        "EconomicReconciliation",
+        "OutcomeRecord",
+    )
+    assert all(hasattr(models, name) for name in names)
+    assert models.OutcomeRecord.__tablename__ == "outcome_records"
+
+    outcome = models.OutcomeRecord.__table__
+    assert _unique_constraints(outcome) >= {
+        ("uq_outcome_records_replay", ("logical_key_sha256", "input_sha256")),
+        ("uq_outcome_records_revision", ("logical_key_sha256", "revision_no")),
+        ("uq_outcome_records_previous", ("previous_outcome_id",)),
+    }
+    assert (
+        "fk_outcome_records_previous_key_revision",
+        ("logical_key_sha256", "previous_revision_no"),
+        ("outcome_records.logical_key_sha256", "outcome_records.revision_no"),
+    ) in _foreign_key_constraints(outcome)
+    assert "revision_no = 1" in _check_sql(outcome, "ck_outcome_records_revision_chain")
+    assert "previous_revision_no = revision_no - 1" in _check_sql(
+        outcome, "ck_outcome_records_revision_chain"
+    )
+    identity_check = _check_sql(outcome, "ck_outcome_records_kind_decision")
+    assert all(token in identity_check for token in ("signal", "trade", "research", "decision_id"))
+    assert all(token in _check_sql(outcome, "ck_outcome_records_status") for token in (
+        "available",
+        "provisional",
+        "unavailable",
+    ))
+
+
+def test_phase99_outcome_label_contract_requires_complete_explicit_json():
+    import poseidon.models as models
+    from poseidon.models.outcome import outcome_label_contract_sha256
+
+    valid = {
+        "calendar": {"name": "XNYS", "version": "2026a"},
+        "horizons": {
+            "signal": [{"key": "5d", "bars": 5}],
+            "trade": [{"key": "5d", "bars": 5}],
+            "research": [{"key": "expiry", "rule": "assessment"}],
+        },
+        "benchmark": "SPY",
+        "reporting_currency": "USD",
+        "required_cost_components": ["commission", "tax"],
+        "cost_model_version": "paper-cost-v1",
+        "fx_model_version": "wm-close-v1",
+        "pnl_tolerance": "0.000000000000000001",
+        "research_assessment": {"types": ["expiry", "invalidation"]},
+        "counterfactual_assumption_versions": ["paper-execution-v1"],
+    }
+    record = models.OutcomeLabelContract(
+        version="pilot-v1",
+        contract_json=valid,
+        contract_sha256=outcome_label_contract_sha256(valid),
+    )
+    record.verify_contract()
+
+    for missing in valid:
+        incomplete = dict(valid)
+        incomplete.pop(missing)
+        invalid = models.OutcomeLabelContract(
+            version="pilot-v1",
+            contract_json=incomplete,
+            contract_sha256="0" * 64,
+        )
+        with pytest.raises(ValueError, match=missing):
+            invalid.verify_contract()
+
+
+def test_phase99_fill_cost_metadata_preserves_decimal_fx_and_unbranched_revisions():
+    import poseidon.models as models
+
+    revision = models.FillCostRevision.__table__
+    component = models.FillCostComponent.__table__
+    assert revision.c.fill_key_sha256.nullable is False
+    assert revision.c.previous_revision_no.nullable is True
+    assert _unique_constraints(revision) >= {
+        ("uq_fill_cost_revisions_replay", ("fill_key_sha256", "input_sha256")),
+        ("uq_fill_cost_revisions_revision", ("fill_key_sha256", "revision_no")),
+        ("uq_fill_cost_revisions_previous", ("previous_fill_cost_revision_id",)),
+    }
+    assert (
+        "fk_fill_cost_revisions_previous_key_revision",
+        ("fill_key_sha256", "previous_revision_no"),
+        ("fill_cost_revisions.fill_key_sha256", "fill_cost_revisions.revision_no"),
+    ) in _foreign_key_constraints(revision)
+    chain_check = _check_sql(revision, "ck_fill_cost_revisions_revision_chain")
+    assert "revision_no = 1" in chain_check
+    assert "previous_revision_no = revision_no - 1" in chain_check
+    assert "order_fill_id IS NULL" in _check_sql(revision, "ck_fill_cost_revisions_fill_xor")
+    assert _index_contracts(revision) >= {
+        (
+            "uq_fill_cost_revisions_order_fill_revision",
+            ("order_fill_id", "revision_no"),
+            True,
+            "order_fill_id IS NOT NULL",
+        ),
+        (
+            "uq_fill_cost_revisions_paper_fill_revision",
+            ("paper_broker_fill_id", "revision_no"),
+            True,
+            "paper_broker_fill_id IS NOT NULL",
+        ),
+    }
+
+    for field in ("native_amount", "reporting_amount", "fx_rate"):
+        assert isinstance(component.c[field].type, sa.Numeric)
+        assert (component.c[field].type.precision, component.c[field].type.scale) == (38, 18)
+    assert all(token in _check_sql(component, "ck_fill_cost_components_type") for token in (
+        "commission",
+        "tax",
+        "funding",
+        "borrow",
+        "fx",
+        "other",
+    ))
+    assert all(token in _check_sql(component, "ck_fill_cost_components_classification") for token in (
+        "actual",
+        "estimated",
+        "not_applicable",
+        "unavailable",
+    ))
+    assert "fx_source IS NOT NULL" in _check_sql(component, "ck_fill_cost_components_cross_currency_fx")
+
+    forbidden = ("amount", "cost", "fx_rate", "gross", "net")
+    for model in (models.FillCostRevision, models.FillCostComponent, models.EconomicReconciliation, models.OutcomeRecord):
+        for column in model.__table__.c:
+            if any(token in column.name for token in forbidden):
+                assert not isinstance(column.type, sa.Float)
+
+
+def test_phase99_research_assessment_and_economic_reconciliation_are_bounded_facts():
+    import poseidon.models as models
+
+    assessment = models.ResearchAssessment.__table__
+    targets = {fk.target_fullname for column in assessment.c for fk in column.foreign_keys}
+    assert {"evaluation_snapshots.id", "research_revisions.id", "data_manifests.id"} <= targets
+    assert _unique_constraints(assessment) == {
+        ("uq_research_assessments_replay", ("evaluation_snapshot_id", "input_sha256"))
+    }
+    assert all(token in _check_sql(assessment, "ck_research_assessments_type") for token in (
+        "expiry",
+        "invalidation",
+    ))
+    assert all(token in _check_sql(assessment, "ck_research_assessments_status") for token in (
+        "confirmed",
+        "not_confirmed",
+        "unavailable",
+    ))
+    assert "jsonb_array_length" in _check_sql(assessment, "ck_research_assessments_citations")
+
+    reconciliation = models.EconomicReconciliation.__table__
+    assert {fk.target_fullname for fk in reconciliation.c.account_reconciliation_id.foreign_keys} == {
+        "account_reconciliations.id"
+    }
+    assert _unique_constraints(reconciliation) == {
+        (
+            "uq_economic_reconciliations_replay",
+            ("account_reconciliation_id", "input_sha256"),
+        )
+    }
+    assert all(token in _check_sql(reconciliation, "ck_economic_reconciliations_status") for token in (
+        "matched",
+        "provisional",
+        "unavailable",
+    ))
