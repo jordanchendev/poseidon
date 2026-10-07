@@ -287,53 +287,58 @@ def test_weekend_calendar_does_not_mature_signal_by_wall_clock(outcome_session):
 
 @pytest.mark.parametrize("execution_state", ["open", "early_full_exit"])
 def test_trade_mark_horizon_ignores_open_or_early_exit_state(outcome_session, execution_state):
-    seed = _seed(outcome_session, TUESDAY)
-    snapshot, decision, _contract, _manifest = seed
-    stored_intent = {"frozen_intent": decision.final_json["order_intents"][0], "economics": {}}
-    order = OrderRecord(
-        id=uuid.uuid4(),
-        strategy_name="phase99",
-        symbol="PH99",
-        market="tw_stock",
-        action="buy",
-        order_type="market",
-        target_weight=0.1,
-        quantity=1,
-        price=100,
-        side="long",
-        status="filled" if execution_state == "early_full_exit" else "partially_filled",
-        broker_mode="paper",
-        order_origin="decision",
-        decision_id=decision.id,
-        account_scope=decision.account_scope,
-        account_generation="phase99-generation",
-        client_order_ref=f"PH99-{uuid.uuid4().hex}",
-        instrument="spot",
-        intent_json=stored_intent,
-        intent_sha256=content_sha256(stored_intent),
-        reserved_cash_json={"currency": "USD", "amount": 0},
-        reserved_quantity=0,
-        reservation_status="released",
-        reconciliation_status="resolved",
-    )
-    outcome_session.add(order)
-    outcome_session.flush()
-    if execution_state == "early_full_exit":
-        outcome_session.add(
-            OrderFillRecord(
-                id=uuid.uuid4(),
-                order_id=order.id,
-                fill_price=101,
-                fill_quantity=1,
-                fill_time=MONDAY,
-                broker_fill_id=f"fill-{uuid.uuid4().hex}",
-                projection_status="applied",
-            )
+    def add_execution(seed):
+        snapshot, decision, _contract, _manifest = seed
+        stored_intent = {"frozen_intent": decision.final_json["order_intents"][0], "economics": {}}
+        order = OrderRecord(
+            id=uuid.uuid4(),
+            strategy_name="phase99",
+            symbol="PH99",
+            market="tw_stock",
+            action="buy",
+            order_type="market",
+            target_weight=0.1,
+            quantity=1,
+            price=100,
+            side="long",
+            status="filled" if execution_state == "early_full_exit" else "partially_filled",
+            broker_mode="paper",
+            order_origin="decision",
+            decision_id=decision.id,
+            account_scope=decision.account_scope,
+            account_generation="phase99-generation",
+            client_order_ref=f"PH99-{uuid.uuid4().hex}",
+            instrument="spot",
+            intent_json=stored_intent,
+            intent_sha256=content_sha256(stored_intent),
+            reserved_cash_json={"currency": "USD", "amount": 0},
+            reserved_quantity=0,
+            reservation_status="released",
+            reconciliation_status="resolved",
         )
+        outcome_session.add(order)
         outcome_session.flush()
+        if execution_state == "early_full_exit":
+            outcome_session.add(
+                OrderFillRecord(
+                    id=uuid.uuid4(),
+                    order_id=order.id,
+                    fill_price=101,
+                    fill_quantity=1,
+                    fill_time=MONDAY,
+                    broker_fill_id=f"fill-{uuid.uuid4().hex}",
+                    projection_status="applied",
+                )
+            )
+            outcome_session.flush()
 
-    assert not [row for row in _label(outcome_session, seed, MONDAY) if row.kind == "trade"]
-    trade = next(row for row in _label(outcome_session, seed, TUESDAY) if row.kind == "trade")
+    early_seed = _seed(outcome_session, MONDAY)
+    add_execution(early_seed)
+    assert not [row for row in _label(outcome_session, early_seed, MONDAY) if row.kind == "trade"]
+
+    mature_seed = _seed(outcome_session, TUESDAY)
+    add_execution(mature_seed)
+    trade = next(row for row in _label(outcome_session, mature_seed, TUESDAY) if row.kind == "trade")
     assert trade.maturity_at == TUESDAY
     assert trade.metrics_json["actual"]["status"] == "provisional"
 
