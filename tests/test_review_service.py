@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import uuid
 from itertools import product
 
 import pandas as pd
 import pytest
 
+from poseidon.backtest.experiment_tracker import ExperimentTracker
 from poseidon.decision_loop.manifest import content_sha256
+from poseidon.models.experiment import ExperimentRecord
+from poseidon.models.experiment_campaign import CampaignEvent, CampaignReview
 from poseidon.research import paired_review
+from poseidon.research.campaign import CampaignService, build_holdout_identity, run_paired_review_in_transactions
 from poseidon.research.ic_analysis import (
     compute_cross_sectional_rank_ic,
     compute_time_series_rank_ic,
 )
 from poseidon.research.paired_review import PairedReview, paired_hac_effect
+from tests.test_campaign_contract import _complete_campaign_contract, _seed_strategy_versions, _terminal_trial_kwargs
+from tests.test_holdout_consumption_postgres import _holdout_contract
 
 ARMS = ("fundamental_only", "technical_only", "combined")
 ROLES = ("incumbent", "candidate")
@@ -39,6 +46,22 @@ def _review_contract() -> dict:
             "minimum_dates_per_symbol": 3,
             "minimum_effective_paired_dates": 4,
             "minimum_coverage": "0.80",
+            "minimum_net_effect": "0.0001",
+            "maximum_drawdown": "0.20",
+            "minimum_capacity": "1000",
+        },
+        "cost_fx_contract": {
+            "cost_scenarios": [
+                {"name": "base", "commission_bps": "0.5", "tax_bps": "0.25", "slippage_bps": "0.25"},
+                {"name": "stress", "commission_bps": "1", "tax_bps": "0.5", "slippage_bps": "0.5"},
+            ]
+        },
+        "turnover": {"formula": "0.5*sum(abs(w_t-w_t_minus_1))", "cash_included": True},
+        "capacity": {
+            "adv_lookback_sessions": 20,
+            "participation_cap": "0.05",
+            "price_volume_adjustment": "split_adjusted",
+            "aggregation": "min_symbol_capacity",
         },
     }
 
@@ -196,3 +219,214 @@ def test_paired_hac_effect_is_inconclusive_below_frozen_minimum() -> None:
     assert result["status"] == "inconclusive"
     assert result["reason_code"] == "insufficient_effective_observations"
     assert result["effect"] is None
+
+
+def _review_panel(*, periods: int = 20) -> pd.DataFrame:
+    rows = []
+    dates = pd.date_range("2026-01-02", periods=periods, freq="B")
+    symbols = ("0050", "2317", "2330")
+    for date_index, date in enumerate(dates):
+        for horizon in ("1_session", "5_sessions"):
+            for role, arm in product(ROLES, ARMS):
+                active_symbol = symbols[date_index % len(symbols)]
+                for rank, symbol in enumerate(symbols, start=1):
+                    candidate = role == "candidate"
+                    rows.append(
+                        {
+                            "date": date.strftime("%Y-%m-%d"),
+                            "symbol": symbol,
+                            "horizon": horizon,
+                            "regime": "risk_on" if date_index < periods // 2 else "risk_off",
+                            "version_role": role,
+                            "ablation_arm": arm,
+                            "signal": float(rank),
+                            "forward_return": rank / 1000,
+                            "gross_return": 0.003 if candidate else 0.001,
+                            "weight": float(symbol == active_symbol) if candidate else 1 / 3,
+                            "price": float(100 + rank),
+                            "volume": 1_000_000.0,
+                            "volume_reliable": True,
+                            "outcome_status": "available",
+                        }
+                    )
+    return pd.DataFrame(rows)
+
+
+def _panel_membership(panel: pd.DataFrame) -> list[dict]:
+    return (
+        panel[["date", "symbol", "horizon"]]
+        .drop_duplicates()
+        .sort_values(["date", "symbol", "horizon"])
+        .to_dict("records")
+    )
+
+
+def _panel_cells(panel: pd.DataFrame) -> list[dict]:
+    membership = _panel_membership(panel)
+    return [
+        {
+            "version_role": role,
+            "ablation_arm": arm,
+            "terminal_state": "succeeded",
+            "paired_sample_key_sha256": "b" * 64,
+            "sample_membership": membership,
+            "result_sha256": content_sha256({"role": role, "arm": arm}),
+        }
+        for role, arm in product(ROLES, ARMS)
+    ]
+
+
+def test_complete_review_reports_every_frozen_dimension() -> None:
+    panel = _review_panel()
+
+    result = PairedReview(_review_contract(), _panel_cells(panel)).run(panel)
+
+    assert result["status"] == "passed"
+    assert {
+        "coverage_matrix",
+        "paired_sample_digest",
+        "cross_sectional_ic",
+        "time_series_ic",
+        "horizon_decay",
+        "slices",
+        "hac",
+        "gross",
+        "net",
+        "drawdown",
+        "turnover",
+        "capacity",
+        "cost_sensitivity",
+    } <= result.keys()
+    assert set(result["cost_sensitivity"]) == {"base", "stress"}
+    assert set(result["horizon_decay"]) == {"1_session", "5_sessions"}
+    assert set(result["slices"]) == {"time", "symbol", "regime"}
+    assert result["gross"]["effect"] > 0
+    assert result["net"]["minimum_effect"] > 0
+    assert result["capacity"]["status"] == "available"
+
+
+def test_high_gross_but_negative_net_fails_every_frozen_cost_gate() -> None:
+    contract = _review_contract()
+    contract["cost_fx_contract"]["cost_scenarios"] = [
+        {"name": "base", "commission_bps": "100", "tax_bps": "100", "slippage_bps": "100"},
+        {"name": "stress", "commission_bps": "150", "tax_bps": "150", "slippage_bps": "150"},
+    ]
+    panel = _review_panel()
+
+    result = PairedReview(contract, _panel_cells(panel)).run(panel)
+
+    assert result["gross"]["effect"] > 0
+    assert all(item["effect"] < 0 for item in result["cost_sensitivity"].values())
+    assert result["status"] == "failed"
+    assert "minimum_net_effect" in result["failed_gates"]
+
+
+def test_missing_reliable_volume_is_capacity_unavailable_not_zero() -> None:
+    panel = _review_panel()
+    panel["volume_reliable"] = False
+
+    result = PairedReview(_review_contract(), _panel_cells(panel)).run(panel)
+
+    assert result["status"] == "unavailable"
+    assert result["reason_code"] == "capacity_unavailable"
+    assert result["capacity"]["value"] is None
+
+
+def test_insufficient_paired_dates_is_inconclusive() -> None:
+    panel = _review_panel(periods=3)
+
+    result = PairedReview(_review_contract(), _panel_cells(panel)).run(panel)
+
+    assert result["status"] == "inconclusive"
+    assert result["reason_code"] == "insufficient_effective_observations"
+
+
+def test_complete_powered_capacity_gate_miss_is_failed() -> None:
+    contract = _review_contract()
+    contract["gates"]["minimum_capacity"] = "999999999999"
+    panel = _review_panel()
+
+    result = PairedReview(contract, _panel_cells(panel)).run(panel)
+
+    assert result["status"] == "failed"
+    assert result["reason_code"] == "frozen_gate_miss"
+    assert result["failed_gates"] == ["minimum_capacity"]
+
+
+@pytest.mark.postgresql
+def test_review_runner_consumes_before_read_and_replays_or_appends(phase99_session_factory) -> None:
+    panel = _review_panel()
+    membership = _panel_membership(panel)
+    marker = uuid.uuid4().hex
+    with phase99_session_factory() as session:
+        incumbent, candidate, _ = _seed_strategy_versions(session, marker=marker)
+        contract = _complete_campaign_contract(incumbent, candidate, marker=marker)
+        contract["contract_json"]["gates"].update(_review_contract()["gates"])
+        campaign = CampaignService(session).create_frozen_campaign(contract)
+        tracker = ExperimentTracker(session)
+        for index, (role, arm) in enumerate(product(ROLES, ARMS)):
+            version = incumbent if role == "incumbent" else candidate
+            kwargs = _terminal_trial_kwargs(campaign, version, arm=arm)
+            kwargs.update(
+                original_trial_id=f"{role}-{arm}",
+                paired_sample_key_sha256="b" * 64,
+                input_sha256=f"{100 + index:064x}",
+                result_sha256=content_sha256({"role": role, "arm": arm, "marker": marker}),
+                metrics_json={"sample_membership": membership},
+            )
+            tracker.append_campaign_terminal_trial(**kwargs)
+        campaign_id = campaign.id
+        session.commit()
+
+    identity = build_holdout_identity(_holdout_contract(marker))
+    observations = []
+
+    def loader(*, permit):
+        with phase99_session_factory() as observer:
+            committed = (
+                observer.query(CampaignEvent)
+                .filter_by(
+                    campaign_id=campaign_id,
+                    event_type="holdout_consumed",
+                )
+                .count()
+            )
+        observations.append((committed, permit.campaign_id))
+        return panel.copy()
+
+    first = run_paired_review_in_transactions(phase99_session_factory, campaign_id, identity, loader)
+    replay = run_paired_review_in_transactions(phase99_session_factory, campaign_id, identity, loader)
+
+    changed_panel = panel.copy()
+    selector = (changed_panel["version_role"] == "candidate") & (changed_panel["ablation_arm"] == "combined")
+    changed_panel.loc[selector, "gross_return"] += 0.001
+    changed = run_paired_review_in_transactions(
+        phase99_session_factory,
+        campaign_id,
+        identity,
+        lambda *, permit: changed_panel,
+    )
+
+    assert observations == [(1, campaign_id), (1, campaign_id)]
+    assert (replay.id, replay.input_sha256, replay.result_sha256) == (
+        first.id,
+        first.input_sha256,
+        first.result_sha256,
+    )
+    assert changed.id != first.id
+    assert changed.input_sha256 != first.input_sha256
+    assert changed.result_sha256 != first.result_sha256
+    with phase99_session_factory() as session:
+        reviews = session.query(CampaignReview).filter_by(campaign_id=campaign_id).all()
+        events = (
+            session.query(CampaignEvent)
+            .filter_by(
+                campaign_id=campaign_id,
+                event_type="campaign_review_recorded",
+            )
+            .all()
+        )
+        assert len(reviews) == 2
+        assert len(events) == 2
+        assert session.query(ExperimentRecord).filter_by(campaign_id=campaign_id).count() == 6
+        assert not any("release" in event.event_type or "active" in event.event_type for event in events)
