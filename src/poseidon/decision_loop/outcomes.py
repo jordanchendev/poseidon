@@ -280,6 +280,56 @@ class OutcomeService:
         eligible = [row for row in rows if _stored_time(row.assessment_at, "assessment_at") <= as_of]
         return eligible[0] if eligible else None
 
+    def _validate_references(self, candidates):
+        from poseidon.decision_loop.outcome_accounting import _account_reconciliation_sha256
+        from poseidon.models.account_reconciliation import AccountReconciliation
+        from poseidon.models.outcome import EconomicReconciliation, FillCostRevision
+
+        for item in candidates:
+            references = item.get("_references", {})
+            costs = references.get("fill_cost_revisions", [])
+            for reference in costs:
+                row = self.session.get(
+                    FillCostRevision,
+                    _uuid(reference.get("id"), "fill_cost_revision_id"),
+                )
+                if row is None or row.content_sha256 != reference.get("content_sha256"):
+                    raise ValidationError("fill cost revision hash drift")
+            economic_id = references.get("economic_reconciliation_id")
+            if economic_id is not None:
+                economic = self.session.get(
+                    EconomicReconciliation,
+                    _uuid(economic_id, "economic_reconciliation_id"),
+                )
+                if (
+                    economic is None
+                    or economic.content_sha256 != references.get("economic_reconciliation_sha256")
+                    or economic.cost_revision_ids_json != costs
+                ):
+                    raise ValidationError("economic reconciliation hash drift")
+            account_id = references.get("account_reconciliation_id")
+            if account_id is not None:
+                reconciliation = self.session.get(
+                    AccountReconciliation,
+                    _uuid(account_id, "account_reconciliation_id"),
+                )
+                if (
+                    reconciliation is None
+                    or _account_reconciliation_sha256(reconciliation)
+                    != references.get("account_reconciliation_sha256")
+                ):
+                    raise ValidationError("account reconciliation hash drift")
+            assessment_id = references.get("assessment_id")
+            if assessment_id is not None:
+                assessment = self.session.get(
+                    ResearchAssessment,
+                    _uuid(assessment_id, "research_assessment_id"),
+                )
+                if assessment is None or assessment.content_sha256 != references.get(
+                    "assessment_content_sha256"
+                ):
+                    raise ValidationError("research assessment hash drift")
+
     @staticmethod
     def _signal_metrics(snapshot, anchor, maturity, by_id, contract, sessions):
         price_items = [item for item in by_id.values() if item.get("kind") == "price"]
@@ -380,6 +430,7 @@ class OutcomeService:
         return "available", reason, {"actual": actual, "counterfactual": []}, actual
 
     def _append(self, item):
+        item = {key: value for key, value in item.items() if key != "_references"}
         query = select(OutcomeRecord).where(
             OutcomeRecord.logical_key_sha256 == item["logical_key_sha256"],
             OutcomeRecord.input_sha256 == item["input_sha256"],
@@ -500,14 +551,18 @@ class OutcomeService:
                                 "status": status,
                                 "reason_code": reason,
                                 "metrics_json": metrics,
+                                "_references": references,
                             }
                         )
 
         self._lock_digests(item["logical_key_sha256"] for item in candidates)
-        validate_outcome_label_contract(contract_row)
-        verify_manifest(manifest)
+        contract = validate_outcome_label_contract(contract_row)
+        _payload, _by_id, _sessions, locked_counterfactuals = _manifest_facts(manifest, contract, as_of)
+        if locked_counterfactuals != counterfactuals:
+            raise ValidationError("counterfactual contract drift")
         for snapshot_id in evaluation_snapshot_ids:
             self._snapshot(snapshot_id)
+        self._validate_references(candidates)
         return [self._append(item) for item in candidates]
 
 

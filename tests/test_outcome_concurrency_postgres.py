@@ -185,12 +185,8 @@ def test_concurrent_same_input_returns_one_identical_outcome(
     dependencies = _seed_dependencies(phase99_session_factory)
     item = _item(dependencies, "same")
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = [
-            future.result(timeout=20)
-            for future in (
-                pool.submit(_append, session, item, phase99_barrier) for session in phase99_two_sessions
-            )
-        ]
+        futures = [pool.submit(_append, session, item, phase99_barrier) for session in phase99_two_sessions]
+        results = [future.result(timeout=20) for future in futures]
     assert results[0] == results[1]
     with phase99_session_factory() as session:
         assert session.scalar(
@@ -213,13 +209,11 @@ def test_concurrent_outcome_corrections_form_one_unbranched_chain(
         service._append(initial)
     corrections = [_item(dependencies, marker) for marker in ("correction-a", "correction-b")]
     with ThreadPoolExecutor(max_workers=2) as pool:
-        inserted = [
-            future.result(timeout=20)
-            for future in (
-                pool.submit(_append, session, item, phase99_barrier)
-                for session, item in zip(phase99_two_sessions, corrections, strict=True)
-            )
+        futures = [
+            pool.submit(_append, session, item, phase99_barrier)
+            for session, item in zip(phase99_two_sessions, corrections, strict=True)
         ]
+        inserted = [future.result(timeout=20) for future in futures]
     with phase99_session_factory() as session:
         rows = session.scalars(
             select(OutcomeRecord)

@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from poseidon.decision_loop.evaluation import snapshot_payload
 from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256
@@ -21,7 +21,6 @@ from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
 from poseidon.models.outcome import (
     EconomicReconciliation,
-    FillCostRevision,
     OutcomeLabelContract,
     OutcomeRecord,
     ResearchAssessment,
@@ -359,7 +358,10 @@ def test_trade_mark_horizon_ignores_open_or_early_exit_state(outcome_session, ex
     add_execution(mature_seed)
     trade = next(row for row in _label(outcome_session, mature_seed, TUESDAY) if row.kind == "trade")
     assert trade.maturity_at == TUESDAY
-    assert trade.metrics_json["actual"]["status"] == "provisional"
+    expected = "not_applicable" if execution_state == "open" else "provisional"
+    assert trade.metrics_json["actual"]["status"] == expected
+    if execution_state == "open":
+        assert trade.metrics_json["actual"]["reason"] == "no_execution"
 
 
 def test_research_not_confirmed_is_available_negative_label(outcome_session):
@@ -828,16 +830,18 @@ def test_cost_correction_appends_outcome_and_pins_exact_revision(outcome_session
 
 def test_outcome_revalidates_cost_hash_after_lock(outcome_session):
     seed = _seed(outcome_session, TUESDAY)
-    _closing_fill, revision, _reconciliation = _add_reconciled_trade(outcome_session, seed)
+    _add_reconciled_trade(outcome_session, seed)
 
     class TamperingOutcomeService(OutcomeService):
-        def _lock_digests(self, logical_digests):
-            super()._lock_digests(logical_digests)
-            self.session.execute(
-                update(FillCostRevision)
-                .where(FillCostRevision.id == revision.id)
-                .values(content_sha256="f" * 64)
+        def _trade_metrics(self, snapshot, decision, contract, counterfactuals):
+            status, reason, metrics, references = super()._trade_metrics(
+                snapshot,
+                decision,
+                contract,
+                counterfactuals,
             )
+            references["fill_cost_revisions"][0]["content_sha256"] = "f" * 64
+            return status, reason, metrics, references
 
     snapshot, _decision, contract, manifest = seed
     with pytest.raises(ValidationError, match="fill cost revision hash drift"):
