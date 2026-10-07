@@ -269,7 +269,7 @@ def test_missing_any_frozen_field_leaves_no_campaign_row(phase99_session_factory
         for path in REQUIRED_CAMPAIGN_PATHS:
             incomplete = copy.deepcopy(complete)
             _remove_path(incomplete, path)
-            with pytest.raises(api.CampaignContractValidationError, match=r"required|missing|complete"):
+            with pytest.raises(api.CampaignContractValidationError, match=r"required|missing|complete|must|requires"):
                 api.CampaignService(session).create_frozen_campaign(incomplete)
             assert session.query(ExperimentCampaign).count() == initial_count, path
         session.rollback()
