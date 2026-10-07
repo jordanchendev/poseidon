@@ -31,9 +31,10 @@ def _iso(value):
     return value.isoformat().replace("+00:00", "Z")
 
 
-def _contract_json():
+def _contract_json(marker=None):
+    calendar_identity = "XNYS:2026a" if marker is None else f"XNYS:2026a:{marker}"
     return {
-        "calendar": {"identity": "XNYS:2026a", "evidence_id": "calendar"},
+        "calendar": {"identity": calendar_identity, "evidence_id": "calendar"},
         "horizons": {
             "signal": [{"key": "signal-next-session", "anchor": "decision_as_of", "session_offset": 1}],
             "trade": [{"key": "trade-second-session", "anchor": "decision_as_of", "session_offset": 2}],
@@ -66,7 +67,13 @@ def _evidence(evidence_id, kind, payload, event_time):
     }
 
 
-def _outcome_manifest_request(cutoff, *, include_horizon_price=True, counterfactuals=None):
+def _outcome_manifest_request(
+    cutoff,
+    *,
+    calendar_identity="XNYS:2026a",
+    include_horizon_price=True,
+    counterfactuals=None,
+):
     visible = [session for session in SESSIONS if session <= cutoff]
     prices = {
         _iso(session): value
@@ -94,7 +101,7 @@ def _outcome_manifest_request(cutoff, *, include_horizon_price=True, counterfact
             _evidence(
                 "calendar",
                 "calendar",
-                {"identity": "XNYS:2026a", "sessions": [_iso(value) for value in SESSIONS]},
+                {"identity": calendar_identity, "sessions": [_iso(value) for value in SESSIONS]},
                 ANCHOR,
             ),
             _evidence("price", "price", {"symbol": "PH99", "values": prices}, visible[-1]),
@@ -158,11 +165,12 @@ def _seed(outcome_session, cutoff, *, include_horizon_price=True, with_decision=
     outcome_manifest = ManifestService(outcome_session).freeze(
         _outcome_manifest_request(
             cutoff,
+            calendar_identity=f"XNYS:2026a:{marker}",
             include_horizon_price=include_horizon_price,
             counterfactuals=counterfactuals,
         )
     )
-    contract_json = _contract_json()
+    contract_json = _contract_json(marker)
     contract = OutcomeLabelContract(
         version=f"label-{marker}",
         contract_json=contract_json,
