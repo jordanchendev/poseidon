@@ -6,11 +6,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from poseidon.decision_loop.evaluation import snapshot_payload
 from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256
-from poseidon.decision_loop.outcome_accounting import FillCostService
+from poseidon.decision_loop.outcome_accounting import FillCostService, _account_reconciliation_sha256
 from poseidon.decision_loop.outcomes import OutcomeService, validate_outcome_label_contract
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_record import DecisionRecord
@@ -19,7 +19,13 @@ from poseidon.models.evaluation_snapshot import EvaluationSnapshot
 from poseidon.models.fill_allocation import FillAllocation
 from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
-from poseidon.models.outcome import EconomicReconciliation, OutcomeLabelContract, OutcomeRecord, ResearchAssessment
+from poseidon.models.outcome import (
+    EconomicReconciliation,
+    FillCostRevision,
+    OutcomeLabelContract,
+    OutcomeRecord,
+    ResearchAssessment,
+)
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.research_revision import ResearchRevision
 from poseidon.models.strategy import StrategyRecord
@@ -757,3 +763,87 @@ def test_legacy_fill_without_cost_provenance_never_becomes_zero_cost_actual(outc
     trade = next(row for row in _label(outcome_session, seed, TUESDAY) if row.kind == "trade")
     assert (trade.status, trade.reason_code) == ("provisional", "fill_cost_provenance_missing")
     assert "gross" not in trade.metrics_json["actual"]
+
+
+def test_cost_correction_appends_outcome_and_pins_exact_revision(outcome_session):
+    seed = _seed(outcome_session, TUESDAY)
+    snapshot, _decision, contract, manifest = seed
+    closing_fill, first_cost, reconciliation = _add_reconciled_trade(outcome_session, seed)
+    first = next(row for row in _label(outcome_session, seed, TUESDAY) if row.kind == "trade")
+    second_cost = FillCostService(outcome_session).append_revision(
+        order_fill_id=closing_fill.id,
+        reporting_currency="USD",
+        cost_model_version="paper-cost-v1",
+        components=[
+            {
+                "component_type": component,
+                "native_amount": amount,
+                "native_currency": "USD",
+                "reporting_amount": amount,
+                "reporting_currency": "USD",
+                "classification": "actual",
+                "source": "broker-statement",
+            }
+            for component, amount in (("commission", "2"), ("tax", "0.5"))
+        ],
+    )
+    order = outcome_session.get(OrderRecord, closing_fill.order_id)
+    intent = dict(order.intent_json)
+    intent["economics"] = {"reported_net": "7.500000000000000000"}
+    order.intent_json = intent
+    order.intent_sha256 = content_sha256(intent)
+    outcome_session.flush()
+    second = next(row for row in _label(outcome_session, seed, TUESDAY) if row.kind == "trade")
+    assert (second.revision_no, second.previous_outcome_id, second.previous_revision_no) == (2, first.id, 1)
+    assert second.input_sha256 != first.input_sha256
+
+    economic = next(
+        row
+        for row in outcome_session.scalars(select(EconomicReconciliation)).all()
+        if row.cost_revision_ids_json == [{"id": str(second_cost.id), "content_sha256": second_cost.content_sha256}]
+    )
+    references = {
+        "order_ids": [str(order.id)],
+        "fill_ids": [str(closing_fill.id)],
+        "fill_cost_revisions": [{"id": str(second_cost.id), "content_sha256": second_cost.content_sha256}],
+        "account_reconciliation_id": str(reconciliation.id),
+        "account_reconciliation_sha256": _account_reconciliation_sha256(reconciliation),
+        "economic_reconciliation_id": str(economic.id),
+        "economic_reconciliation_sha256": economic.content_sha256,
+    }
+    assert second.input_sha256 == content_sha256(
+        {
+            "logical_key_sha256": second.logical_key_sha256,
+            "evaluation_snapshot_sha256": snapshot.content_sha256,
+            "outcome_manifest_id": str(manifest.id),
+            "outcome_manifest_sha256": manifest.content_sha256,
+            "label_contract_id": str(contract.id),
+            "label_contract_sha256": contract.contract_sha256,
+            "references": references,
+            "counterfactual": [],
+        }
+    )
+    assert first_cost.id != second_cost.id
+
+
+def test_outcome_revalidates_cost_hash_after_lock(outcome_session):
+    seed = _seed(outcome_session, TUESDAY)
+    _closing_fill, revision, _reconciliation = _add_reconciled_trade(outcome_session, seed)
+
+    class TamperingOutcomeService(OutcomeService):
+        def _lock_digests(self, logical_digests):
+            super()._lock_digests(logical_digests)
+            self.session.execute(
+                update(FillCostRevision)
+                .where(FillCostRevision.id == revision.id)
+                .values(content_sha256="f" * 64)
+            )
+
+    snapshot, _decision, contract, manifest = seed
+    with pytest.raises(ValidationError, match="fill cost revision hash drift"):
+        TamperingOutcomeService(outcome_session).label_mature_outcomes(
+            evaluation_snapshot_ids=[snapshot.id],
+            as_of=TUESDAY,
+            label_definition_version=contract.version,
+            outcome_manifest_id=manifest.id,
+        )
