@@ -499,12 +499,18 @@ def test_label_contract_and_static_service_boundaries():
 
 def test_outcome_rows_are_append_only_and_same_input_replays(outcome_session):
     seed = _seed(outcome_session, MONDAY)
+    snapshot, _decision, _contract, _manifest = seed
     first = _label(outcome_session, seed, MONDAY)
     second = _label(outcome_session, seed, MONDAY)
     assert [(row.id, row.content_sha256) for row in first] == [
         (row.id, row.content_sha256) for row in second
     ]
-    assert outcome_session.query(OutcomeRecord).count() == len(first)
+    assert (
+        outcome_session.query(OutcomeRecord)
+        .filter(OutcomeRecord.evaluation_snapshot_id == snapshot.id)
+        .count()
+        == len(first)
+    )
 
 
 def _add_reconciled_trade(
