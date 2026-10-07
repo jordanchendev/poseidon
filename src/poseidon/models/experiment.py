@@ -106,7 +106,7 @@ class ExperimentRecord(Base):
             "AND (input_sha256 IS NULL OR char_length(input_sha256) = 64) "
             "AND (result_sha256 IS NULL OR char_length(result_sha256) = 64)",
             name="ck_experiments_phase99_hashes",
-        ),
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint(
             "campaign_id IS NULL OR (campaign_id IS NOT NULL AND original_trial_id IS NOT NULL AND trial_role IS NOT NULL "
             "AND strategy_version_id IS NOT NULL AND ablation_arm IS NOT NULL "

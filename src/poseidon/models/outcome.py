@@ -58,11 +58,11 @@ class OutcomeLabelContract(Base):
     __tablename__ = "outcome_label_contracts"
     __table_args__ = (
         UniqueConstraint("contract_sha256", name="uq_outcome_label_contracts_sha256"),
-        CheckConstraint("btrim(version) <> ''", name="ck_outcome_label_contracts_version"),
+        CheckConstraint("btrim(version) <> ''", name="ck_outcome_label_contracts_version").ddl_if(dialect="postgresql"),
         CheckConstraint(
             "char_length(contract_sha256) = 64",
             name="ck_outcome_label_contracts_sha256",
-        ),
+        ).ddl_if(dialect="postgresql"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -137,11 +137,11 @@ class ResearchAssessment(Base):
         CheckConstraint(
             "jsonb_typeof(citation_ids_json) = 'array' AND jsonb_array_length(citation_ids_json) > 0",
             name="ck_research_assessments_citations",
-        ),
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint(
             "char_length(input_sha256) = 64 AND char_length(content_sha256) = 64",
             name="ck_research_assessments_hashes",
-        ),
+        ).ddl_if(dialect="postgresql"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -210,7 +210,7 @@ class FillCostRevision(Base):
         CheckConstraint(
             "char_length(fill_key_sha256) = 64 AND char_length(input_sha256) = 64 AND char_length(content_sha256) = 64",
             name="ck_fill_cost_revisions_hashes",
-        ),
+        ).ddl_if(dialect="postgresql"),
         Index(
             "uq_fill_cost_revisions_order_fill_revision",
             "order_fill_id",
@@ -275,13 +275,13 @@ class FillCostComponent(Base):
         CheckConstraint(
             "classification <> 'unavailable' OR (reason IS NOT NULL AND btrim(reason) <> '')",
             name="ck_fill_cost_components_unavailable_reason",
-        ),
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint(
             "classification NOT IN ('actual', 'estimated') OR native_currency = reporting_currency OR "
             "(fx_source IS NOT NULL AND btrim(fx_source) <> '' AND fx_rate IS NOT NULL "
             "AND fx_rate > 0 AND fx_as_of IS NOT NULL)",
             name="ck_fill_cost_components_cross_currency_fx",
-        ),
+        ).ddl_if(dialect="postgresql"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -320,7 +320,7 @@ class EconomicReconciliation(Base):
         CheckConstraint(
             "char_length(input_sha256) = 64 AND char_length(content_sha256) = 64",
             name="ck_economic_reconciliations_hashes",
-        ),
+        ).ddl_if(dialect="postgresql"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -386,7 +386,7 @@ class OutcomeRecord(Base):
             "char_length(logical_key_sha256) = 64 AND char_length(input_sha256) = 64 "
             "AND char_length(content_sha256) = 64",
             name="ck_outcome_records_hashes",
-        ),
+        ).ddl_if(dialect="postgresql"),
         Index(
             "ix_outcome_records_evaluation_kind",
             "evaluation_snapshot_id",

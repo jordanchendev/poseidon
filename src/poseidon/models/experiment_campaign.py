@@ -51,9 +51,13 @@ class ExperimentCampaign(Base):
             "AND char_length(candidate_content_sha256) = 64 "
             "AND char_length(contract_sha256) = 64",
             name="ck_experiment_campaigns_hashes",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint("btrim(hypothesis) <> ''", name="ck_experiment_campaigns_hypothesis").ddl_if(
+            dialect="postgresql"
         ),
-        CheckConstraint("btrim(hypothesis) <> ''", name="ck_experiment_campaigns_hypothesis"),
-        CheckConstraint("btrim(created_by) <> ''", name="ck_experiment_campaigns_created_by"),
+        CheckConstraint("btrim(created_by) <> ''", name="ck_experiment_campaigns_created_by").ddl_if(
+            dialect="postgresql"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -108,11 +112,11 @@ class CampaignEvent(Base):
             "idempotency_sha256",
             name="uq_campaign_events_idempotency",
         ),
-        CheckConstraint("btrim(event_type) <> ''", name="ck_campaign_events_type"),
+        CheckConstraint("btrim(event_type) <> ''", name="ck_campaign_events_type").ddl_if(dialect="postgresql"),
         CheckConstraint(
             "char_length(idempotency_sha256) = 64",
             name="ck_campaign_events_idempotency_sha256",
-        ),
+        ).ddl_if(dialect="postgresql"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -137,7 +141,7 @@ class HoldoutUse(Base):
         CheckConstraint(
             "char_length(holdout_identity_sha256) = 64 AND char_length(campaign_contract_sha256) = 64",
             name="ck_holdout_uses_hashes",
-        ),
+        ).ddl_if(dialect="postgresql"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -167,7 +171,7 @@ class CampaignReview(Base):
         CheckConstraint(
             "char_length(input_sha256) = 64 AND char_length(result_sha256) = 64",
             name="ck_campaign_reviews_hashes",
-        ),
+        ).ddl_if(dialect="postgresql"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
