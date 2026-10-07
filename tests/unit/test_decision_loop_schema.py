@@ -2,6 +2,7 @@
 
 import importlib
 import importlib.util
+import uuid
 from collections import defaultdict
 from hashlib import sha256
 from pathlib import Path
@@ -713,12 +714,20 @@ def test_phase99_outcome_model_exports_and_revision_contracts():
     assert _unique_constraints(outcome) >= {
         ("uq_outcome_records_replay", ("logical_key_sha256", "input_sha256")),
         ("uq_outcome_records_revision", ("logical_key_sha256", "revision_no")),
+        (
+            "uq_outcome_records_identity_key_revision",
+            ("id", "logical_key_sha256", "revision_no"),
+        ),
         ("uq_outcome_records_previous", ("previous_outcome_id",)),
     }
     assert (
-        "fk_outcome_records_previous_key_revision",
-        ("logical_key_sha256", "previous_revision_no"),
-        ("outcome_records.logical_key_sha256", "outcome_records.revision_no"),
+        "fk_outcome_records_previous_identity_key_revision",
+        ("previous_outcome_id", "logical_key_sha256", "previous_revision_no"),
+        (
+            "outcome_records.id",
+            "outcome_records.logical_key_sha256",
+            "outcome_records.revision_no",
+        ),
     ) in _foreign_key_constraints(outcome)
     assert "revision_no = 1" in _check_sql(outcome, "ck_outcome_records_revision_chain")
     assert "previous_revision_no = revision_no - 1" in _check_sql(
@@ -782,12 +791,20 @@ def test_phase99_fill_cost_metadata_preserves_decimal_fx_and_unbranched_revision
     assert _unique_constraints(revision) >= {
         ("uq_fill_cost_revisions_replay", ("fill_key_sha256", "input_sha256")),
         ("uq_fill_cost_revisions_revision", ("fill_key_sha256", "revision_no")),
+        (
+            "uq_fill_cost_revisions_identity_key_revision",
+            ("id", "fill_key_sha256", "revision_no"),
+        ),
         ("uq_fill_cost_revisions_previous", ("previous_fill_cost_revision_id",)),
     }
     assert (
-        "fk_fill_cost_revisions_previous_key_revision",
-        ("fill_key_sha256", "previous_revision_no"),
-        ("fill_cost_revisions.fill_key_sha256", "fill_cost_revisions.revision_no"),
+        "fk_fill_cost_revisions_previous_identity_key_revision",
+        ("previous_fill_cost_revision_id", "fill_key_sha256", "previous_revision_no"),
+        (
+            "fill_cost_revisions.id",
+            "fill_cost_revisions.fill_key_sha256",
+            "fill_cost_revisions.revision_no",
+        ),
     ) in _foreign_key_constraints(revision)
     chain_check = _check_sql(revision, "ck_fill_cost_revisions_revision_chain")
     assert "revision_no = 1" in chain_check
@@ -902,6 +919,41 @@ def test_phase99_campaign_models_keep_identity_frozen_and_state_append_only():
         "inconclusive",
         "unavailable",
     ))
+
+
+def test_phase99_campaign_digest_covers_every_frozen_identity_field():
+    import poseidon.models as models
+    from poseidon.models.experiment_campaign import experiment_campaign_contract_sha256
+
+    base = {
+        "incumbent_strategy_version_id": uuid.uuid4(),
+        "candidate_strategy_version_id": uuid.uuid4(),
+        "incumbent_content_sha256": "a" * 64,
+        "candidate_content_sha256": "b" * 64,
+        "declared_difference_json": {"parameter": "lookback", "from": 20, "to": 30},
+        "hypothesis": "A longer lookback improves stability.",
+        "contract_json": {"optimizer": "tpe", "trials": 50, "holdout": "2026-Q3"},
+    }
+    expected = experiment_campaign_contract_sha256(**base)
+    changes = {
+        "incumbent_strategy_version_id": uuid.uuid4(),
+        "candidate_strategy_version_id": uuid.uuid4(),
+        "incumbent_content_sha256": "c" * 64,
+        "candidate_content_sha256": "d" * 64,
+        "declared_difference_json": {"parameter": "lookback", "from": 20, "to": 40},
+        "hypothesis": "A different hypothesis.",
+        "contract_json": {"optimizer": "random", "trials": 50, "holdout": "2026-Q3"},
+    }
+    for field, changed_value in changes.items():
+        changed = dict(base)
+        changed[field] = changed_value
+        assert experiment_campaign_contract_sha256(**changed) != expected
+
+    campaign = models.ExperimentCampaign(**base, contract_sha256=expected, created_by="phase99")
+    campaign.verify_contract()
+    campaign.hypothesis = changes["hypothesis"]
+    with pytest.raises(ValueError, match="contract hash mismatch"):
+        campaign.verify_contract()
 
 
 def test_phase99_holdout_identity_has_one_global_owner():

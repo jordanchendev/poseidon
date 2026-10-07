@@ -15,11 +15,15 @@ def _execute(session, statement, **params):
 
 
 def _assert_sqlstate_23514(session, statement, **params):
+    _assert_sqlstate(session, "23514", statement, **params)
+
+
+def _assert_sqlstate(session, expected, statement, **params):
     savepoint = session.begin_nested()
     try:
         with pytest.raises(DBAPIError) as error:
             session.execute(text(statement), params)
-        assert getattr(error.value.orig, "sqlstate", None) == "23514"
+        assert getattr(error.value.orig, "sqlstate", None) == expected
     finally:
         savepoint.rollback()
 
@@ -144,4 +148,89 @@ def test_campaign_linked_experiment_is_immutable_but_unbound_legacy_remains_muta
         assert session.execute(text("SELECT status FROM experiments WHERE id = :id"), {"id": legacy}).scalar_one() == "complete"
         _execute(session, "DELETE FROM experiments WHERE id = :id", id=legacy)
         assert session.execute(text("SELECT count(*) FROM experiments WHERE id = :id"), {"id": legacy}).scalar_one() == 0
+        session.rollback()
+
+
+def test_predecessor_uuid_key_and_revision_must_resolve_to_the_same_row(phase99_session_factory):
+    with phase99_session_factory() as session:
+        ids = _seed_phase99_graph(session)
+        second_order = uuid.uuid4()
+        second_fill = uuid.uuid4()
+        second_cost = uuid.uuid4()
+        second_outcome = uuid.uuid4()
+        key_a = "a" * 64
+        key_b = "c" * 64
+        digest = "d" * 64
+
+        _execute(
+            session,
+            "INSERT INTO orders (id,strategy_name,symbol,market,action,target_weight,quantity,broker_mode) "
+            "VALUES (:id,'phase99-2','TEST','test','buy',1,1,'paper')",
+            id=second_order,
+        )
+        _execute(
+            session,
+            "INSERT INTO order_fills (id,order_id,fill_price,fill_quantity,fill_time,broker_fill_id) "
+            "VALUES (:id,:order,1,1,now(),'phase99-fill-2')",
+            id=second_fill,
+            order=second_order,
+        )
+        _execute(
+            session,
+            "INSERT INTO fill_cost_revisions "
+            "(id,order_fill_id,fill_key_sha256,reporting_currency,cost_model_version,input_sha256,"
+            "content_sha256,revision_no) VALUES (:id,:fill,:key,'USD','v1',:input,:content,1)",
+            id=second_cost,
+            fill=second_fill,
+            key=key_b,
+            input=digest,
+            content="e" * 64,
+        )
+        _assert_sqlstate(
+            session,
+            "23503",
+            "INSERT INTO fill_cost_revisions "
+            "(id,order_fill_id,fill_key_sha256,reporting_currency,cost_model_version,input_sha256,"
+            "content_sha256,revision_no,previous_fill_cost_revision_id,previous_revision_no) "
+            "VALUES (:id,:fill,:key,'USD','v1',:input,:content,2,:previous,1)",
+            id=uuid.uuid4(),
+            fill=ids["fill"],
+            key=key_a,
+            input="f" * 64,
+            content="0" * 64,
+            previous=second_cost,
+        )
+
+        _execute(
+            session,
+            "INSERT INTO outcome_records "
+            "(id,evaluation_snapshot_id,kind,label_contract_id,horizon_key,manifest_id,logical_key_sha256,"
+            "input_sha256,content_sha256,revision_no,maturity_at,status,reason_code,metrics_json) "
+            "VALUES (:id,:evaluation,'signal',:label,'2d',:manifest,:key,:input,:content,1,now(),"
+            "'available','mature','{}')",
+            id=second_outcome,
+            evaluation=ids["evaluation"],
+            label=ids["label"],
+            manifest=ids["manifest"],
+            key=key_b,
+            input=digest,
+            content="e" * 64,
+        )
+        _assert_sqlstate(
+            session,
+            "23503",
+            "INSERT INTO outcome_records "
+            "(id,evaluation_snapshot_id,kind,label_contract_id,horizon_key,manifest_id,logical_key_sha256,"
+            "input_sha256,content_sha256,revision_no,previous_outcome_id,previous_revision_no,maturity_at,"
+            "status,reason_code,metrics_json) VALUES (:id,:evaluation,'signal',:label,'1d',:manifest,:key,"
+            ":input,:content,2,:previous,1,now(),'available','mature','{}')",
+            id=uuid.uuid4(),
+            evaluation=ids["evaluation"],
+            label=ids["label"],
+            manifest=ids["manifest"],
+            key=key_a,
+            input="f" * 64,
+            content="0" * 64,
+            previous=second_outcome,
+        )
         session.rollback()
