@@ -36,10 +36,11 @@ def _holdout_api():
     return module
 
 
-def _holdout_contract() -> dict:
+def _holdout_contract(marker: str | None = None) -> dict:
+    marker = marker or uuid.uuid4().hex
     return {
-        "manifest_set": [{"manifest_id": "manifest-phase99", "content_sha256": "8" * 64}],
-        "evidence_slice": {"fold": "holdout", "slice": "2025-H2", "sample_ids_sha256": "9" * 64},
+        "manifest_set": [{"manifest_id": f"manifest-{marker}", "content_sha256": marker * 2}],
+        "evidence_slice": {"fold": "holdout", "slice": "2025-H2", "sample_ids_sha256": marker[::-1] * 2},
         "window": {"start": "2025-07-01", "end": "2025-12-31"},
         "universe": ["0050", "2317", "2330"],
         "label": {"version": "forward-return-v1", "horizons": ["1_session", "5_sessions", "20_sessions"]},
