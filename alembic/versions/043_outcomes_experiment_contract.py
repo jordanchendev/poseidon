@@ -145,10 +145,6 @@ def upgrade():
         sa.Column(
             "previous_fill_cost_revision_id",
             UUID(as_uuid=True),
-            sa.ForeignKey(
-                "fill_cost_revisions.id",
-                name="fk_fill_cost_revisions_previous_id",
-            ),
             nullable=True,
         ),
         sa.Column("previous_revision_no", sa.Integer, nullable=True),
@@ -164,13 +160,23 @@ def upgrade():
             name="uq_fill_cost_revisions_revision",
         ),
         sa.UniqueConstraint(
+            "id",
+            "fill_key_sha256",
+            "revision_no",
+            name="uq_fill_cost_revisions_identity_key_revision",
+        ),
+        sa.UniqueConstraint(
             "previous_fill_cost_revision_id",
             name="uq_fill_cost_revisions_previous",
         ),
         sa.ForeignKeyConstraint(
-            ["fill_key_sha256", "previous_revision_no"],
-            ["fill_cost_revisions.fill_key_sha256", "fill_cost_revisions.revision_no"],
-            name="fk_fill_cost_revisions_previous_key_revision",
+            ["previous_fill_cost_revision_id", "fill_key_sha256", "previous_revision_no"],
+            [
+                "fill_cost_revisions.id",
+                "fill_cost_revisions.fill_key_sha256",
+                "fill_cost_revisions.revision_no",
+            ],
+            name="fk_fill_cost_revisions_previous_identity_key_revision",
         ),
         sa.CheckConstraint(
             "(order_fill_id IS NOT NULL AND paper_broker_fill_id IS NULL) OR "
@@ -184,8 +190,7 @@ def upgrade():
             name="ck_fill_cost_revisions_revision_chain",
         ),
         sa.CheckConstraint(
-            "char_length(fill_key_sha256) = 64 AND char_length(input_sha256) = 64 "
-            "AND char_length(content_sha256) = 64",
+            "char_length(fill_key_sha256) = 64 AND char_length(input_sha256) = 64 AND char_length(content_sha256) = 64",
             name="ck_fill_cost_revisions_hashes",
         ),
     )
@@ -325,7 +330,6 @@ def upgrade():
         sa.Column(
             "previous_outcome_id",
             UUID(as_uuid=True),
-            sa.ForeignKey("outcome_records.id", name="fk_outcome_records_previous_id"),
             nullable=True,
         ),
         sa.Column("previous_revision_no", sa.Integer, nullable=True),
@@ -344,16 +348,21 @@ def upgrade():
             "revision_no",
             name="uq_outcome_records_revision",
         ),
+        sa.UniqueConstraint(
+            "id",
+            "logical_key_sha256",
+            "revision_no",
+            name="uq_outcome_records_identity_key_revision",
+        ),
         sa.UniqueConstraint("previous_outcome_id", name="uq_outcome_records_previous"),
         sa.ForeignKeyConstraint(
-            ["logical_key_sha256", "previous_revision_no"],
-            ["outcome_records.logical_key_sha256", "outcome_records.revision_no"],
-            name="fk_outcome_records_previous_key_revision",
+            ["previous_outcome_id", "logical_key_sha256", "previous_revision_no"],
+            ["outcome_records.id", "outcome_records.logical_key_sha256", "outcome_records.revision_no"],
+            name="fk_outcome_records_previous_identity_key_revision",
         ),
         sa.CheckConstraint("kind IN ('signal', 'trade', 'research')", name="ck_outcome_records_kind"),
         sa.CheckConstraint(
-            "(kind = 'trade' AND decision_id IS NOT NULL) OR "
-            "(kind IN ('signal', 'research') AND decision_id IS NULL)",
+            "(kind = 'trade' AND decision_id IS NOT NULL) OR (kind IN ('signal', 'research') AND decision_id IS NULL)",
             name="ck_outcome_records_kind_decision",
         ),
         sa.CheckConstraint(
@@ -452,8 +461,7 @@ def upgrade():
         sa.Column("consumed_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint("holdout_identity_sha256", name="uq_holdout_uses_identity"),
         sa.CheckConstraint(
-            "char_length(holdout_identity_sha256) = 64 "
-            "AND char_length(campaign_contract_sha256) = 64",
+            "char_length(holdout_identity_sha256) = 64 AND char_length(campaign_contract_sha256) = 64",
             name="ck_holdout_uses_hashes",
         ),
     )
@@ -525,8 +533,7 @@ def upgrade():
     op.create_check_constraint(
         "ck_experiments_ablation_arm",
         "experiments",
-        "ablation_arm IS NULL OR ablation_arm IN "
-        "('fundamental_only', 'technical_only', 'combined')",
+        "ablation_arm IS NULL OR ablation_arm IN ('fundamental_only', 'technical_only', 'combined')",
     )
     op.create_check_constraint(
         "ck_experiments_terminal_state",

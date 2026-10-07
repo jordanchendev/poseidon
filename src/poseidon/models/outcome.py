@@ -25,7 +25,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 from poseidon.decision_loop.manifest import content_sha256
 from poseidon.models.base import Base
 
-
 _LABEL_CONTRACT_FIELDS = (
     "calendar",
     "horizons",
@@ -151,9 +150,7 @@ class ResearchAssessment(Base):
     research_revision_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("research_revisions.id"), nullable=False
     )
-    manifest_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("data_manifests.id"), nullable=False
-    )
+    manifest_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("data_manifests.id"), nullable=False)
     assessment_type: Mapped[str] = mapped_column(String(24), nullable=False)
     assessment_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
@@ -178,13 +175,23 @@ class FillCostRevision(Base):
             name="uq_fill_cost_revisions_revision",
         ),
         UniqueConstraint(
+            "id",
+            "fill_key_sha256",
+            "revision_no",
+            name="uq_fill_cost_revisions_identity_key_revision",
+        ),
+        UniqueConstraint(
             "previous_fill_cost_revision_id",
             name="uq_fill_cost_revisions_previous",
         ),
         ForeignKeyConstraint(
-            ["fill_key_sha256", "previous_revision_no"],
-            ["fill_cost_revisions.fill_key_sha256", "fill_cost_revisions.revision_no"],
-            name="fk_fill_cost_revisions_previous_key_revision",
+            ["previous_fill_cost_revision_id", "fill_key_sha256", "previous_revision_no"],
+            [
+                "fill_cost_revisions.id",
+                "fill_cost_revisions.fill_key_sha256",
+                "fill_cost_revisions.revision_no",
+            ],
+            name="fk_fill_cost_revisions_previous_identity_key_revision",
         ),
         CheckConstraint(
             "(order_fill_id IS NOT NULL AND paper_broker_fill_id IS NULL) OR "
@@ -198,8 +205,7 @@ class FillCostRevision(Base):
             name="ck_fill_cost_revisions_revision_chain",
         ),
         CheckConstraint(
-            "char_length(fill_key_sha256) = 64 AND char_length(input_sha256) = 64 "
-            "AND char_length(content_sha256) = 64",
+            "char_length(fill_key_sha256) = 64 AND char_length(input_sha256) = 64 AND char_length(content_sha256) = 64",
             name="ck_fill_cost_revisions_hashes",
         ),
         Index(
@@ -235,7 +241,6 @@ class FillCostRevision(Base):
     revision_no: Mapped[int] = mapped_column(Integer, nullable=False)
     previous_fill_cost_revision_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("fill_cost_revisions.id", name="fk_fill_cost_revisions_previous_id"),
         nullable=True,
     )
     previous_revision_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -344,19 +349,24 @@ class OutcomeRecord(Base):
             "revision_no",
             name="uq_outcome_records_revision",
         ),
+        UniqueConstraint(
+            "id",
+            "logical_key_sha256",
+            "revision_no",
+            name="uq_outcome_records_identity_key_revision",
+        ),
         UniqueConstraint("previous_outcome_id", name="uq_outcome_records_previous"),
         ForeignKeyConstraint(
-            ["logical_key_sha256", "previous_revision_no"],
-            ["outcome_records.logical_key_sha256", "outcome_records.revision_no"],
-            name="fk_outcome_records_previous_key_revision",
+            ["previous_outcome_id", "logical_key_sha256", "previous_revision_no"],
+            ["outcome_records.id", "outcome_records.logical_key_sha256", "outcome_records.revision_no"],
+            name="fk_outcome_records_previous_identity_key_revision",
         ),
         CheckConstraint(
             "kind IN ('signal', 'trade', 'research')",
             name="ck_outcome_records_kind",
         ),
         CheckConstraint(
-            "(kind = 'trade' AND decision_id IS NOT NULL) OR "
-            "(kind IN ('signal', 'research') AND decision_id IS NULL)",
+            "(kind = 'trade' AND decision_id IS NOT NULL) OR (kind IN ('signal', 'research') AND decision_id IS NULL)",
             name="ck_outcome_records_kind_decision",
         ),
         CheckConstraint(
@@ -392,9 +402,7 @@ class OutcomeRecord(Base):
         UUID(as_uuid=True), ForeignKey("outcome_label_contracts.id"), nullable=False
     )
     horizon_key: Mapped[str] = mapped_column(String(128), nullable=False)
-    manifest_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("data_manifests.id"), nullable=False
-    )
+    manifest_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("data_manifests.id"), nullable=False)
     decision_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("decision_records.id"), nullable=True
     )
@@ -404,7 +412,6 @@ class OutcomeRecord(Base):
     revision_no: Mapped[int] = mapped_column(Integer, nullable=False)
     previous_outcome_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("outcome_records.id", name="fk_outcome_records_previous_id"),
         nullable=True,
     )
     previous_revision_no: Mapped[int | None] = mapped_column(Integer, nullable=True)

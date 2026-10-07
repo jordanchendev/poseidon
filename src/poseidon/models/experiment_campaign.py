@@ -11,6 +11,31 @@ from poseidon.decision_loop.manifest import content_sha256
 from poseidon.models.base import Base
 
 
+def experiment_campaign_contract_sha256(
+    *,
+    incumbent_strategy_version_id: uuid.UUID,
+    candidate_strategy_version_id: uuid.UUID,
+    incumbent_content_sha256: str,
+    candidate_content_sha256: str,
+    declared_difference_json: dict,
+    hypothesis: str,
+    contract_json: dict,
+) -> str:
+    """Return the canonical identity of every frozen campaign field."""
+
+    return content_sha256(
+        {
+            "incumbent_strategy_version_id": str(incumbent_strategy_version_id),
+            "candidate_strategy_version_id": str(candidate_strategy_version_id),
+            "incumbent_content_sha256": incumbent_content_sha256,
+            "candidate_content_sha256": candidate_content_sha256,
+            "declared_difference_json": declared_difference_json,
+            "hypothesis": hypothesis,
+            "contract_json": contract_json,
+        }
+    )
+
+
 class ExperimentCampaign(Base):
     __tablename__ = "experiment_campaigns"
     __table_args__ = (
@@ -59,7 +84,16 @@ class ExperimentCampaign(Base):
             value = getattr(self, field)
             if not isinstance(value, str) or len(value) != 64:
                 raise ValueError(f"{field} must be a 64-character digest")
-        if self.contract_sha256 != content_sha256(self.contract_json):
+        expected = experiment_campaign_contract_sha256(
+            incumbent_strategy_version_id=self.incumbent_strategy_version_id,
+            candidate_strategy_version_id=self.candidate_strategy_version_id,
+            incumbent_content_sha256=self.incumbent_content_sha256,
+            candidate_content_sha256=self.candidate_content_sha256,
+            declared_difference_json=self.declared_difference_json,
+            hypothesis=self.hypothesis,
+            contract_json=self.contract_json,
+        )
+        if self.contract_sha256 != expected:
             raise ValueError("experiment campaign contract hash mismatch")
 
 
@@ -98,8 +132,7 @@ class HoldoutUse(Base):
             name="uq_holdout_uses_identity",
         ),
         CheckConstraint(
-            "char_length(holdout_identity_sha256) = 64 "
-            "AND char_length(campaign_contract_sha256) = 64",
+            "char_length(holdout_identity_sha256) = 64 AND char_length(campaign_contract_sha256) = 64",
             name="ck_holdout_uses_hashes",
         ),
     )
