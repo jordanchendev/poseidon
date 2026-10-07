@@ -20,7 +20,6 @@ from tests.test_campaign_contract import (
     _terminal_trial_kwargs,
 )
 
-
 pytestmark = pytest.mark.postgresql
 
 

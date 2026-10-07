@@ -14,7 +14,6 @@ from poseidon.models.experiment_campaign import ExperimentCampaign
 from poseidon.models.strategy_version import StrategyVersion
 from tests.test_campaign_contract import _campaign_api, _complete_campaign_contract, _seed_strategy_versions
 
-
 pytestmark = pytest.mark.postgresql
 
 

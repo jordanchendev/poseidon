@@ -19,7 +19,6 @@ from tests.test_campaign_contract import (
     _terminal_trial_kwargs,
 )
 
-
 pytestmark = pytest.mark.postgresql
 
 
@@ -154,7 +153,10 @@ def test_competing_campaign_race_has_one_owner_committed_denial_and_zero_loser_r
         return "owner", campaign_id, materialized
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = [future.result(timeout=30) for future in (pool.submit(compete, campaigns[0]), pool.submit(compete, campaigns[1]))]
+        results = [
+            future.result(timeout=30)
+            for future in (pool.submit(compete, campaigns[0]), pool.submit(compete, campaigns[1]))
+        ]
 
     assert sorted(status for status, _campaign_id, _result in results) == ["denied", "owner"]
     owner_id = next(campaign_id for status, campaign_id, _result in results if status == "owner")
@@ -163,10 +165,14 @@ def test_competing_campaign_race_has_one_owner_committed_denial_and_zero_loser_r
     with phase99_session_factory() as session:
         use = session.query(HoldoutUse).filter_by(holdout_identity_sha256=identity).one()
         assert use.campaign_id == owner_id
-        denial = session.query(CampaignEvent).filter_by(
-            campaign_id=loser_id,
-            event_type="holdout_reuse_denied",
-        ).one()
+        denial = (
+            session.query(CampaignEvent)
+            .filter_by(
+                campaign_id=loser_id,
+                event_type="holdout_reuse_denied",
+            )
+            .one()
+        )
         assert denial.payload_json["owner_campaign_id"] == str(owner_id)
 
 

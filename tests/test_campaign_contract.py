@@ -17,7 +17,6 @@ from poseidon.models.experiment_campaign import CampaignEvent, ExperimentCampaig
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 
-
 pytestmark = pytest.mark.postgresql
 
 TERMINAL_STATES = (
@@ -270,7 +269,7 @@ def test_missing_any_frozen_field_leaves_no_campaign_row(phase99_session_factory
         for path in REQUIRED_CAMPAIGN_PATHS:
             incomplete = copy.deepcopy(complete)
             _remove_path(incomplete, path)
-            with pytest.raises(api.CampaignContractValidationError, match="required|missing|complete"):
+            with pytest.raises(api.CampaignContractValidationError, match=r"required|missing|complete"):
                 api.CampaignService(session).create_frozen_campaign(incomplete)
             assert session.query(ExperimentCampaign).count() == initial_count, path
         session.rollback()
