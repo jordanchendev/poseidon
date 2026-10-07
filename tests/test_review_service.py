@@ -103,6 +103,7 @@ def test_cross_sectional_and_time_series_ic_are_distinct_estimands() -> None:
             lambda cells: cells[-1].update(sample_membership=SAMPLE_MEMBERSHIP[:-1]),
             "sample_membership_mismatch",
         ),
+        (lambda cells: cells[-1].pop("sample_membership"), "sample_membership_mismatch"),
         (lambda cells: cells[-1].update(terminal_state="optimizer_failed"), "required_cell_unavailable"),
     ],
 )
