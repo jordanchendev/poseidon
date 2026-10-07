@@ -13,6 +13,66 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 
+def _grouped_rank_ic(
+    panel: pd.DataFrame,
+    signal_col: str,
+    return_col: str,
+    group_col: str,
+    minimum_observations: int,
+) -> dict:
+    if minimum_observations <= 0:
+        raise ValueError("minimum observations must be positive")
+    missing = {signal_col, return_col, group_col} - set(panel.columns)
+    if missing:
+        raise ValueError(f"panel missing required columns: {sorted(missing)}")
+
+    series: dict[str, float] = {}
+    sample_counts: dict[str, int] = {}
+    groups = list(panel.dropna(subset=[group_col]).groupby(group_col, sort=True))
+    for group, frame in groups:
+        paired = frame[[signal_col, return_col]].dropna()
+        key = str(group)
+        sample_counts[key] = len(paired)
+        if len(paired) < minimum_observations:
+            continue
+        correlation, _ = spearmanr(paired[signal_col], paired[return_col])
+        if not pd.isna(correlation):
+            series[key] = float(correlation)
+
+    total = len(groups)
+    return {
+        "series": series,
+        "sample_counts": sample_counts,
+        "eligible_group_count": len(series),
+        "total_group_count": total,
+        "coverage": len(series) / total if total else 0.0,
+    }
+
+
+def compute_cross_sectional_rank_ic(
+    panel: pd.DataFrame,
+    signal_col: str,
+    return_col: str,
+    date_col: str,
+    min_symbols: int,
+) -> dict:
+    """Return per-date cross-sectional Spearman IC with coverage metadata."""
+
+    return _grouped_rank_ic(panel, signal_col, return_col, date_col, min_symbols)
+
+
+def compute_time_series_rank_ic(
+    panel: pd.DataFrame,
+    signal_col: str,
+    return_col: str,
+    symbol_col: str,
+    min_dates: int,
+) -> dict:
+    """Return per-symbol time-series Spearman IC with coverage metadata."""
+
+    return _grouped_rank_ic(panel, signal_col, return_col, symbol_col, min_dates)
+
+
 def compute_forward_returns(close_series: pd.Series, horizons: list[int] | None = None) -> dict[int, pd.Series]:
     """Compute forward returns for each requested horizon."""
     horizon_list = [1, 5, 20] if horizons is None else horizons
