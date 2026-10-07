@@ -290,6 +290,9 @@ def test_exact_replay_returns_same_campaign_and_contract_changes_change_identity
         changed_candidate = copy.deepcopy(complete)
         changed_candidate["candidate_strategy_version_id"] = alternate.id
         changed_candidate["candidate_content_sha256"] = alternate.content_sha256
+        for trial in changed_candidate["contract_json"]["declared_trials"]:
+            if trial["version_role"] == "candidate":
+                trial["strategy_version_id"] = str(alternate.id)
         mutations.append(changed_candidate)
         for path, replacement in (
             (("contract_json", "uncertainty_estimator", "alpha"), "0.01"),
