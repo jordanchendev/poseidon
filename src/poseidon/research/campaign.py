@@ -12,13 +12,16 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
+from poseidon.models.experiment import ExperimentRecord
 from poseidon.models.experiment_campaign import (
     CampaignEvent,
+    CampaignReview,
     ExperimentCampaign,
     HoldoutUse,
     experiment_campaign_contract_sha256,
 )
 from poseidon.models.strategy_version import StrategyVersion
+from poseidon.research.paired_review import PairedReview
 
 
 class CampaignContractValidationError(ValueError):
@@ -489,3 +492,93 @@ def consume_holdout_in_committed_transaction(
     if denied_owner is not None:
         raise HoldoutReuseDenied(identity, denied_owner)
     return HoldoutReadPermit(_PERMIT_TOKEN, use_id, identity, campaign_id, contract_digest)
+
+
+def run_paired_review_in_transactions(
+    session_factory,
+    campaign_id,
+    holdout_identity,
+    holdout_loader,
+) -> CampaignReview:
+    """Consume, materialize, compute, then persist one append-only paired review."""
+
+    campaign_id = _uuid(campaign_id, "campaign_id")
+    identity = _digest(holdout_identity, "holdout_identity_sha256")
+    with session_factory() as session:
+        campaign = session.get(ExperimentCampaign, campaign_id)
+        if campaign is None:
+            raise CampaignContractValidationError("campaign does not exist")
+        contract_digest = campaign.contract_sha256
+
+    permit = consume_holdout_in_committed_transaction(
+        session_factory,
+        campaign_id,
+        contract_digest,
+        identity,
+    )
+    loader = holdout_loader.materialize if hasattr(holdout_loader, "materialize") else holdout_loader
+    panel = permit.materialize(loader)
+
+    with session_factory() as session:
+        campaign = session.get(ExperimentCampaign, campaign_id)
+        trials = session.query(ExperimentRecord).filter_by(campaign_id=campaign_id).all()
+        cells = [
+            {
+                "version_role": "incumbent"
+                if trial.strategy_version_id == campaign.incumbent_strategy_version_id
+                else "candidate",
+                "ablation_arm": trial.ablation_arm,
+                "terminal_state": trial.terminal_state,
+                "paired_sample_key_sha256": trial.paired_sample_key_sha256,
+                "sample_membership": (trial.metrics_json or {}).get("sample_membership"),
+                "result_sha256": trial.result_sha256,
+            }
+            for trial in trials
+        ]
+        contract = json.loads(canonical_json(campaign.contract_json))
+        trial_hashes = sorted(trial.result_sha256 for trial in trials)
+
+    if not hasattr(panel, "to_json"):
+        raise CampaignContractValidationError("holdout loader must return a pandas DataFrame")
+    panel_records = json.loads(panel.to_json(orient="records", date_format="iso", double_precision=15))
+    panel_digest = content_sha256(sorted(panel_records, key=canonical_json))
+    input_digest = content_sha256(
+        {
+            "campaign_contract_sha256": contract_digest,
+            "holdout_identity_sha256": identity,
+            "trial_result_sha256": trial_hashes,
+            "panel_sha256": panel_digest,
+        }
+    )
+    result = PairedReview(contract, cells).run(panel)
+    result_digest = content_sha256(result)
+
+    with session_factory() as session, session.begin():
+        _lock(session, "phase99:review:", f"{campaign_id}:{input_digest}")
+        review = (
+            session.query(CampaignReview).filter_by(campaign_id=campaign_id, input_sha256=input_digest).one_or_none()
+        )
+        if review is None:
+            review = CampaignReview(
+                campaign_id=campaign_id,
+                input_sha256=input_digest,
+                result_sha256=result_digest,
+                status=result["status"],
+                result_json=result,
+            )
+            session.add(review)
+            session.flush()
+        elif review.result_sha256 != result_digest or review.status != result["status"] or review.result_json != result:
+            raise FrozenCampaignIdentityConflict("review input identifies different immutable content")
+        CampaignService(session).append_event(
+            campaign_id,
+            event_type="campaign_review_recorded",
+            payload_json={
+                "campaign_review_id": str(review.id),
+                "input_sha256": input_digest,
+                "result_sha256": result_digest,
+                "status": result["status"],
+            },
+        )
+        session.expunge(review)
+    return review
