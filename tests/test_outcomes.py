@@ -9,13 +9,17 @@ import pytest
 
 from poseidon.decision_loop.evaluation import snapshot_payload
 from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256
+from poseidon.decision_loop.outcome_accounting import FillCostService
 from poseidon.decision_loop.outcomes import OutcomeService, validate_outcome_label_contract
+from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_run import EvaluationRun
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
 from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
-from poseidon.models.outcome import OutcomeLabelContract, OutcomeRecord, ResearchAssessment
+from poseidon.models.fill_allocation import FillAllocation
+from poseidon.models.outcome import EconomicReconciliation, OutcomeLabelContract, OutcomeRecord, ResearchAssessment
+from poseidon.models.position_lot import PositionLot
 from poseidon.models.research_revision import ResearchRevision
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
@@ -492,3 +496,263 @@ def test_outcome_rows_are_append_only_and_same_input_replays(outcome_session):
         (row.id, row.content_sha256) for row in second
     ]
     assert outcome_session.query(OutcomeRecord).count() == len(first)
+
+
+def _add_reconciled_trade(
+    outcome_session,
+    seed,
+    *,
+    classifications=("actual", "actual"),
+    component_types=("commission", "tax"),
+    other_symbol=False,
+    with_cost=True,
+):
+    snapshot, decision, _contract, _manifest = seed
+    generation = f"phase99-generation-{uuid.uuid4().hex}"
+    opening_order = OrderRecord(
+        id=uuid.uuid4(),
+        strategy_name="phase99",
+        symbol="PH99",
+        market="tw_stock",
+        action="buy",
+        order_type="market",
+        target_weight=0.1,
+        quantity=1,
+        price=100,
+        side="long",
+        status="filled",
+        broker_mode="paper",
+        order_origin="decision",
+        decision_id=decision.id,
+        account_scope=decision.account_scope,
+        account_generation=generation,
+        client_order_ref=f"PH99-open-{uuid.uuid4().hex}",
+        instrument="spot",
+        intent_json={"evaluation_snapshot_id": str(uuid.uuid4())},
+        intent_sha256=content_sha256({"opening": str(snapshot.id)}),
+    )
+    exact_intent = {
+        "frozen_intent": decision.final_json["order_intents"][0],
+        "economics": {"reported_net": "8.500000000000000000"},
+    }
+    closing_order = OrderRecord(
+        id=uuid.uuid4(),
+        strategy_name="phase99",
+        symbol="PH99",
+        market="tw_stock",
+        action="sell",
+        order_type="market",
+        target_weight=0,
+        quantity=1,
+        price=110,
+        side="long",
+        status="filled",
+        broker_mode="paper",
+        order_origin="decision",
+        decision_id=decision.id,
+        account_scope=decision.account_scope,
+        account_generation=generation,
+        client_order_ref=f"PH99-close-{uuid.uuid4().hex}",
+        instrument="spot",
+        intent_json=exact_intent,
+        intent_sha256=content_sha256(exact_intent),
+    )
+    outcome_session.add_all([opening_order, closing_order])
+    outcome_session.flush()
+    opening_fill = OrderFillRecord(
+        id=uuid.uuid4(),
+        order_id=opening_order.id,
+        fill_price=100,
+        fill_quantity=1,
+        fill_time=MONDAY,
+        broker_fill_id=f"open-{uuid.uuid4().hex}",
+        projection_status="applied",
+    )
+    closing_fill = OrderFillRecord(
+        id=uuid.uuid4(),
+        order_id=closing_order.id,
+        fill_price=110,
+        fill_quantity=1,
+        fill_time=TUESDAY,
+        broker_fill_id=f"close-{uuid.uuid4().hex}",
+        projection_status="applied",
+    )
+    outcome_session.add_all([opening_fill, closing_fill])
+    outcome_session.flush()
+    lot = PositionLot(
+        id=uuid.uuid4(),
+        account_scope=decision.account_scope,
+        account_generation=generation,
+        market="tw_stock",
+        symbol="PH99",
+        instrument="spot",
+        side="long",
+        opening_fill_id=opening_fill.id,
+        opening_decision_id=decision.id,
+        original_quantity=1,
+        open_quantity=0,
+        reserved_close_quantity=0,
+        cost_basis_json={"unit_price": 100, "contract_multiplier": 1, "currency": "USD"},
+        opened_at=MONDAY,
+    )
+    outcome_session.add(lot)
+    outcome_session.flush()
+    outcome_session.add(
+        FillAllocation(
+            id=uuid.uuid4(),
+            closing_fill_id=closing_fill.id,
+            position_lot_id=lot.id,
+            closing_decision_id=decision.id,
+            quantity=1,
+            realized_cost_json={
+                "entry_price": 100,
+                "entry_cost": 100,
+                "contract_multiplier": 1,
+                "currency": "USD",
+                "projection_sha256": content_sha256({"allocation": str(closing_fill.id)}),
+            },
+        )
+    )
+    reconciliation = AccountReconciliation(
+        account_scope=decision.account_scope,
+        account_generation=generation,
+        as_of=TUESDAY,
+        broker_state_watermark=f"broker:{uuid.uuid4().hex}",
+        internal_state_watermark=f"internal:{uuid.uuid4().hex}",
+        broker_snapshot_sha256=content_sha256({"broker": str(closing_fill.id)}),
+        broker_snapshot_json={},
+        internal_snapshot_json={},
+        difference_json={},
+        policy_sha256=decision.policy_sha256,
+        status="matched",
+    )
+    outcome_session.add(reconciliation)
+    outcome_session.flush()
+    revision = None
+    if with_cost:
+        amounts = {"commission": "1", "tax": "0.5"}
+        revision = FillCostService(outcome_session).append_revision(
+            order_fill_id=closing_fill.id,
+            reporting_currency="USD",
+            cost_model_version="paper-cost-v1",
+            components=[
+                {
+                    "component_type": component,
+                    "native_amount": amounts[component],
+                    "native_currency": "USD",
+                    "reporting_amount": amounts[component],
+                    "reporting_currency": "USD",
+                    "classification": classification,
+                    "source": "paper-model" if classification == "estimated" else "broker-statement",
+                }
+                for component, classification in zip(component_types, classifications, strict=True)
+            ],
+        )
+    if other_symbol:
+        unrelated = OrderRecord(
+            id=uuid.uuid4(),
+            strategy_name="phase99",
+            symbol="OTHER",
+            market="tw_stock",
+            action="sell",
+            order_type="market",
+            target_weight=0,
+            quantity=99,
+            price=999,
+            side="long",
+            status="filled",
+            broker_mode="paper",
+            order_origin="decision",
+            decision_id=decision.id,
+            account_scope=decision.account_scope,
+            account_generation=generation,
+            client_order_ref=f"OTHER-{uuid.uuid4().hex}",
+            instrument="spot",
+            intent_json={"evaluation_snapshot_id": str(uuid.uuid4())},
+            intent_sha256=content_sha256({"unrelated": str(snapshot.id)}),
+        )
+        outcome_session.add(unrelated)
+        outcome_session.flush()
+        outcome_session.add(
+            OrderFillRecord(
+                id=uuid.uuid4(),
+                order_id=unrelated.id,
+                fill_price=999,
+                fill_quantity=99,
+                fill_time=TUESDAY,
+                broker_fill_id=f"unrelated-{uuid.uuid4().hex}",
+                projection_status="applied",
+            )
+        )
+        outcome_session.flush()
+    return closing_fill, revision, reconciliation
+
+
+@pytest.mark.parametrize("classifications", [("actual", "actual"), ("estimated", "estimated")])
+def test_trade_pnl_uses_exact_cost_revision_and_reconciliation(outcome_session, classifications):
+    seed = _seed(
+        outcome_session,
+        TUESDAY,
+        counterfactuals=[{"assumption_version": "paper-execution-v1", "net": "7"}],
+    )
+    _closing_fill, revision, reconciliation = _add_reconciled_trade(
+        outcome_session,
+        seed,
+        classifications=classifications,
+        other_symbol=True,
+    )
+    trade = next(row for row in _label(outcome_session, seed, TUESDAY) if row.kind == "trade")
+    assert (trade.status, trade.reason_code) == ("available", "pnl_reconciled")
+    assert trade.metrics_json["actual"]["gross"] == "10.000000000000000000"
+    assert trade.metrics_json["actual"]["cost_total"] == "1.500000000000000000"
+    assert trade.metrics_json["actual"]["net"] == "8.500000000000000000"
+    assert {item["classification"] for item in trade.metrics_json["actual"]["cost_components"]} == set(
+        classifications
+    )
+    assert trade.metrics_json["counterfactual"] == [
+        {"assumption_version": "paper-execution-v1", "net": "7"}
+    ]
+    economic = outcome_session.scalar(
+        select(EconomicReconciliation).where(EconomicReconciliation.account_reconciliation_id == reconciliation.id)
+    )
+    assert economic is not None
+    assert economic.cost_revision_ids_json == [
+        {"id": str(revision.id), "content_sha256": revision.content_sha256}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason"),
+    [
+        ("missing_cost", "required_cost_component_missing"),
+        ("missing_reconciliation", "account_reconciliation_missing"),
+        ("equation_mismatch", "pnl_equation_mismatch"),
+    ],
+)
+def test_trade_pnl_is_provisional_when_economics_are_incomplete(outcome_session, mutation, reason):
+    seed = _seed(outcome_session, TUESDAY)
+    kwargs = {"component_types": ("commission",), "classifications": ("actual",)} if mutation == "missing_cost" else {}
+    closing_fill, _revision, reconciliation = _add_reconciled_trade(outcome_session, seed, **kwargs)
+    if mutation == "missing_cost":
+        pass
+    elif mutation == "missing_reconciliation":
+        outcome_session.delete(reconciliation)
+        outcome_session.flush()
+    else:
+        order = outcome_session.get(OrderRecord, closing_fill.order_id)
+        intent = dict(order.intent_json)
+        intent["economics"] = {"reported_net": "999"}
+        order.intent_json = intent
+        order.intent_sha256 = content_sha256(intent)
+        outcome_session.flush()
+    trade = next(row for row in _label(outcome_session, seed, TUESDAY) if row.kind == "trade")
+    assert (trade.status, trade.reason_code) == ("provisional", reason)
+    assert trade.metrics_json["actual"] == {"status": "provisional", "reason": reason}
+
+
+def test_legacy_fill_without_cost_provenance_never_becomes_zero_cost_actual(outcome_session):
+    seed = _seed(outcome_session, TUESDAY)
+    _add_reconciled_trade(outcome_session, seed, with_cost=False)
+    trade = next(row for row in _label(outcome_session, seed, TUESDAY) if row.kind == "trade")
+    assert (trade.status, trade.reason_code) == ("provisional", "fill_cost_provenance_missing")
+    assert "gross" not in trade.metrics_json["actual"]
