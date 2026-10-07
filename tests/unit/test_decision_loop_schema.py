@@ -50,7 +50,14 @@ class _Connection:
 
 
 class MigrationOperations:
-    def __init__(self, *, seed_execution_dependencies=False, duplicate_fill=None, downgrade_history=False):
+    def __init__(
+        self,
+        *,
+        seed_execution_dependencies=False,
+        seed_phase99_dependencies=False,
+        duplicate_fill=None,
+        downgrade_history=False,
+    ):
         self.metadata = sa.MetaData()
         self.dropped = []
         self.dropped_operations = []
@@ -58,10 +65,11 @@ class MigrationOperations:
         self.created_indexes = []
         self.created_unique_constraints = []
         self.created_check_constraints = []
+        self.created_foreign_keys = []
         self.executed = []
         self.mutation_calls = []
         self.connection = _Connection(duplicate_fill, downgrade_history)
-        if seed_execution_dependencies:
+        if seed_execution_dependencies or seed_phase99_dependencies:
             sa.Table(
                 "decision_records",
                 self.metadata,
@@ -83,6 +91,38 @@ class MigrationOperations:
                 sa.Column("order_id", UUID(as_uuid=True), nullable=False),
                 sa.Column("broker_fill_id", sa.String(64), nullable=True),
             )
+        if seed_phase99_dependencies:
+            for table_name in (
+                "evaluation_snapshots",
+                "research_revisions",
+                "data_manifests",
+                "paper_broker_fills",
+                "account_reconciliations",
+                "strategy_versions",
+            ):
+                sa.Table(
+                    table_name,
+                    self.metadata,
+                    sa.Column("id", UUID(as_uuid=True), primary_key=True),
+                )
+            sa.Table(
+                "experiments",
+                self.metadata,
+                sa.Column("id", UUID(as_uuid=True), primary_key=True),
+                sa.Column("study_name", sa.String(128), nullable=False),
+                sa.Column("config_json", JSONB, nullable=False),
+                sa.Column("metrics_json", JSONB, nullable=True),
+                sa.Column("composite_score", sa.Numeric, nullable=True),
+                sa.Column("wfe_score", sa.Numeric, nullable=True),
+                sa.Column("status", sa.String(16), nullable=False, server_default="running"),
+                sa.Column("market", sa.String(32), nullable=False),
+                sa.Column("interval", sa.String(8), nullable=False),
+                sa.Column("optuna_study_name", sa.String(128), nullable=True),
+                sa.Column("optuna_trial_number", sa.Integer, nullable=True),
+                sa.Column("holdout_boundary", sa.DateTime(timezone=True), nullable=True),
+                sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+                sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            )
 
     def get_bind(self):
         return self.connection
@@ -91,19 +131,42 @@ class MigrationOperations:
         self.mutation_calls.append(("create_table", name))
         return sa.Table(name, self.metadata, *columns)
 
-    def create_index(self, name, table, columns):
+    def create_index(self, name, table, columns, unique=False, **kwargs):
         self.mutation_calls.append(("create_index", name))
-        self.created_indexes.append((name, table, tuple(columns)))
+        where = kwargs.get("postgresql_where")
+        self.created_indexes.append((name, table, tuple(columns), unique, str(where)))
         if table in self.metadata.tables:
-            sa.Index(name, *(self.metadata.tables[table].c[column] for column in columns))
+            sa.Index(
+                name,
+                *(self.metadata.tables[table].c[column] for column in columns),
+                unique=unique,
+                postgresql_where=where,
+            )
 
     def create_unique_constraint(self, name, table, columns):
         self.mutation_calls.append(("create_unique_constraint", name))
         self.created_unique_constraints.append((name, table, tuple(columns)))
+        self.metadata.tables[table].append_constraint(
+            sa.UniqueConstraint(*(self.metadata.tables[table].c[column] for column in columns), name=name)
+        )
 
     def create_check_constraint(self, name, table, condition):
         self.mutation_calls.append(("create_check_constraint", name))
         self.created_check_constraints.append((name, table, str(condition)))
+        self.metadata.tables[table].append_constraint(sa.CheckConstraint(condition, name=name))
+
+    def create_foreign_key(self, name, source, referent, local_columns, remote_columns):
+        self.mutation_calls.append(("create_foreign_key", name))
+        self.created_foreign_keys.append(
+            (name, source, referent, tuple(local_columns), tuple(remote_columns))
+        )
+        self.metadata.tables[source].append_constraint(
+            sa.ForeignKeyConstraint(
+                local_columns,
+                [f"{referent}.{column}" for column in remote_columns],
+                name=name,
+            )
+        )
 
     def add_column(self, table, column):
         self.mutation_calls.append(("add_column", f"{table}.{column.name}"))
@@ -144,8 +207,22 @@ def _assert_migration_matches_models(operations, models):
             assert (str(column.server_default.arg) if column.server_default else None) == (
                 str(other.server_default.arg) if other.server_default else None
             )
-        assert {(index.name, tuple(index.columns.keys())) for index in table.indexes} == {
-            (index.name, tuple(index.columns.keys())) for index in migrated.indexes
+        assert {
+            (
+                index.name,
+                tuple(index.columns.keys()),
+                bool(index.unique),
+                str(index.dialect_options["postgresql"].get("where")),
+            )
+            for index in table.indexes
+        } == {
+            (
+                index.name,
+                tuple(index.columns.keys()),
+                bool(index.unique),
+                str(index.dialect_options["postgresql"].get("where")),
+            )
+            for index in migrated.indexes
         }
         assert {
             (constraint.name, tuple(constraint.columns.keys()))
@@ -898,3 +975,180 @@ def test_phase99_linked_trials_are_nullable_for_legacy_and_complete_when_bound()
     )
     assert legacy.campaign_id is None
     assert legacy.terminal_state is None
+
+
+def _load_phase99_migration():
+    path = Path(__file__).resolve().parents[2] / "alembic/versions/043_outcomes_experiment_contract.py"
+    assert path.is_file(), "outcomes/experiment migration 043 is missing"
+    spec = importlib.util.spec_from_file_location("phase99_migration", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    return migration
+
+
+def test_phase99_migration_matches_exact_orm_contract_and_nullable_legacy_extensions(monkeypatch):
+    migration = _load_phase99_migration()
+    assert (migration.revision, migration.down_revision) == ("043", "042")
+    operations = MigrationOperations(seed_phase99_dependencies=True)
+    monkeypatch.setattr(migration, "op", operations)
+    migration.upgrade()
+
+    import poseidon.models as models
+
+    phase99_models = (
+        models.OutcomeLabelContract,
+        models.ResearchAssessment,
+        models.FillCostRevision,
+        models.FillCostComponent,
+        models.EconomicReconciliation,
+        models.OutcomeRecord,
+        models.ExperimentCampaign,
+        models.CampaignEvent,
+        models.HoldoutUse,
+        models.CampaignReview,
+    )
+    assert [model.__tablename__ for model in phase99_models] == [
+        "outcome_label_contracts",
+        "research_assessments",
+        "fill_cost_revisions",
+        "fill_cost_components",
+        "economic_reconciliations",
+        "outcome_records",
+        "experiment_campaigns",
+        "campaign_events",
+        "holdout_uses",
+        "campaign_reviews",
+    ]
+    _assert_migration_matches_models(operations, phase99_models)
+
+    experiment_columns = (
+        "campaign_id",
+        "original_trial_id",
+        "trial_role",
+        "strategy_version_id",
+        "ablation_arm",
+        "paired_sample_key_sha256",
+        "input_sha256",
+        "result_sha256",
+        "started_at",
+        "completed_at",
+        "terminal_state",
+        "terminal_reason_json",
+    )
+    assert [column.name for column in operations.added_columns["experiments"]] == list(experiment_columns)
+    for column in operations.added_columns["experiments"]:
+        model_column = models.ExperimentRecord.__table__.c[column.name]
+        assert column.nullable is True
+        assert column.server_default is None
+        assert str(column.type.compile(dialect=postgresql.dialect())) == str(
+            model_column.type.compile(dialect=postgresql.dialect())
+        )
+    assert (
+        "uq_experiments_campaign_paired_cell",
+        "experiments",
+        (
+            "campaign_id",
+            "original_trial_id",
+            "strategy_version_id",
+            "ablation_arm",
+            "paired_sample_key_sha256",
+        ),
+        True,
+        "campaign_id IS NOT NULL",
+    ) in operations.created_indexes
+    assert (
+        "ck_experiments_campaign_link_complete",
+        "experiments",
+        _check_sql(models.ExperimentRecord.__table__, "ck_experiments_campaign_link_complete"),
+    ) in operations.created_check_constraints
+
+
+def test_phase99_migration_installs_database_append_only_guards(monkeypatch):
+    migration = _load_phase99_migration()
+    operations = MigrationOperations(seed_phase99_dependencies=True)
+    monkeypatch.setattr(migration, "op", operations)
+    migration.upgrade()
+    sql = "\n".join(operations.executed).lower()
+
+    for table_name in (
+        "outcome_label_contracts",
+        "research_assessments",
+        "fill_cost_revisions",
+        "fill_cost_components",
+        "economic_reconciliations",
+        "outcome_records",
+        "experiment_campaigns",
+        "campaign_events",
+        "holdout_uses",
+        "campaign_reviews",
+    ):
+        assert f"before update or delete on {table_name}" in sql
+    assert "raise exception using errcode = '23514'" in sql
+    assert "old.campaign_id is null and new.campaign_id is null" in sql
+    assert "before update or delete on experiments" in sql
+
+
+def test_phase99_migration_refuses_populated_downgrade_before_mutation(monkeypatch):
+    migration = _load_phase99_migration()
+    operations = MigrationOperations(seed_phase99_dependencies=True, downgrade_history=True)
+    monkeypatch.setattr(migration, "op", operations)
+
+    with pytest.raises(RuntimeError, match="outcome or experiment history exists"):
+        migration.downgrade()
+
+    assert operations.mutation_calls == []
+    assert operations.dropped_operations == []
+    lock_statement = operations.connection.statements[0]
+    assert lock_statement.lstrip().startswith("LOCK TABLE")
+    for table_name in (
+        "outcome_label_contracts",
+        "research_assessments",
+        "fill_cost_revisions",
+        "fill_cost_components",
+        "economic_reconciliations",
+        "outcome_records",
+        "experiment_campaigns",
+        "campaign_events",
+        "holdout_uses",
+        "campaign_reviews",
+        "experiments",
+    ):
+        assert table_name in lock_statement
+    history_statement = operations.connection.statements[1]
+    for table_name in migration.PHASE99_TABLES:
+        assert f"FROM {table_name}" in history_statement
+    for column_name in migration.EXPERIMENT_COLUMNS:
+        assert f"experiments.{column_name} IS NOT NULL" in history_statement
+
+
+def test_phase99_empty_or_legacy_only_schema_can_downgrade_and_reupgrade(monkeypatch):
+    migration = _load_phase99_migration()
+    downgrade_operations = MigrationOperations(seed_phase99_dependencies=True)
+    monkeypatch.setattr(migration, "op", downgrade_operations)
+    migration.downgrade()
+    assert downgrade_operations.dropped == list(reversed(migration.PHASE99_TABLES))
+    assert [
+        operation
+        for operation in downgrade_operations.dropped_operations
+        if operation[0] == "column" and operation[1] == "experiments"
+    ] == [("column", "experiments", name) for name in reversed(migration.EXPERIMENT_COLUMNS)]
+
+    reupgrade_operations = MigrationOperations(seed_phase99_dependencies=True)
+    monkeypatch.setattr(migration, "op", reupgrade_operations)
+    migration.upgrade()
+    assert set(migration.PHASE99_TABLES).issubset(reupgrade_operations.metadata.tables)
+
+
+def test_phase99_upgrade_has_no_legacy_backfill_or_release_surface():
+    migration = _load_phase99_migration()
+    source = Path(migration.__file__).read_text()
+    upgrade_source = source.split("def downgrade", 1)[0].lower()
+    assert "update experiments set" not in upgrade_source
+    assert "insert into experiments" not in upgrade_source
+    assert "strategy_release_events" not in source
+    assert "active_version_id" not in source
+    assert "release_service" not in source
+    assert "kairos" not in source
+    assert "deep_search" not in source
+    assert "openai" not in source
+    assert "litellm" not in source

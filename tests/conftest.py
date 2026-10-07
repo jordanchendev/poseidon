@@ -392,6 +392,7 @@ def pytest_configure(config):
         "markers",
         "stormtrooper: requires stormtrooper qlib-research container (set STORMTROOPER=1 inside docker compose exec)",
     )
+    config.addinivalue_line("markers", "postgresql: requires an explicitly selected real PostgreSQL database")
 
 
 @pytest.fixture
@@ -515,6 +516,69 @@ def db_session():
         session.rollback()
         session.close()
         engine.dispose()
+
+
+@pytest.fixture
+def phase99_session_factory():
+    """Create sessions only for the explicitly selected Phase 99 database."""
+    import os
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    real_dsn = os.environ.get("POSEIDON_REAL_DATABASE_URL")
+    if not real_dsn:
+        pytest.fail("POSEIDON_REAL_DATABASE_URL is required for Phase 99 PostgreSQL tests")
+    engine = create_engine(real_dsn, future=True)
+    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    try:
+        yield factory
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def phase99_two_sessions(phase99_session_factory):
+    """Yield two independent sessions for transaction and race tests."""
+    sessions = (phase99_session_factory(), phase99_session_factory())
+    try:
+        yield sessions
+    finally:
+        for session in sessions:
+            session.rollback()
+            session.close()
+
+
+@pytest.fixture
+def phase99_barrier():
+    """Provide a reusable two-party synchronization point."""
+    from threading import Barrier
+
+    return Barrier(2)
+
+
+@pytest.fixture
+def phase99_loader_spy():
+    """Record commit/materialization order and reject premature loading."""
+
+    class LoaderSpy:
+        def __init__(self):
+            self.events = []
+            self.call_count = 0
+            self.commit_count = 0
+
+        def record_commit(self):
+            self.commit_count += 1
+            self.events.append("commit")
+
+        def __call__(self, *args, **kwargs):
+            if self.commit_count == 0:
+                raise AssertionError("materialization started before commit")
+            self.call_count += 1
+            self.events.append("materialize")
+            return {"args": args, "kwargs": kwargs}
+
+    return LoaderSpy()
 
 
 @pytest.fixture
