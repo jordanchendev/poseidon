@@ -283,7 +283,7 @@ def _validate_complete_contract(value: dict) -> dict:
 
     turnover = _json_object(contract["turnover"], "contract_json.turnover")
     if turnover.get("formula") != "0.5*sum(abs(w_t-w_t_minus_1))":
-        raise CampaignContractValidationError("contract_json.turnover.formula is unsupported")
+        raise CampaignContractValidationError("contract_json.turnover.formula must be 0.5*sum(abs(w_t-w_t_minus_1))")
     if not isinstance(turnover.get("cash_included"), bool):
         raise CampaignContractValidationError("contract_json.turnover.cash_included must be boolean")
     capacity = _json_object(contract["capacity"], "contract_json.capacity")
@@ -294,9 +294,9 @@ def _validate_complete_contract(value: dict) -> dict:
         maximum=Decimal("1"),
     )
     if capacity.get("price_volume_adjustment") != "split_adjusted":
-        raise CampaignContractValidationError("contract_json.capacity.price_volume_adjustment is unsupported")
+        raise CampaignContractValidationError("contract_json.capacity.price_volume_adjustment must be split_adjusted")
     if capacity.get("aggregation") != "min_symbol_capacity":
-        raise CampaignContractValidationError("contract_json.capacity.aggregation is unsupported")
+        raise CampaignContractValidationError("contract_json.capacity.aggregation must be min_symbol_capacity")
 
     expected_cells = {(str(incumbent_id), arm) for arm in _ARMS} | {(str(candidate_id), arm) for arm in _ARMS}
     actual_cells = set()
