@@ -217,7 +217,10 @@ class PairedReview:
 
         frozen_membership = _normalized_membership(self.cells[0])
         expected_digest = content_sha256(
-            [{field: item[field] for field in MEMBERSHIP_FIELDS} for item in frozen_membership]
+            sorted(
+                ({field: item[field] for field in MEMBERSHIP_FIELDS} for item in frozen_membership),
+                key=canonical_json,
+            )
         )
         frames = {}
         for role, arm in REQUIRED_CELLS:
