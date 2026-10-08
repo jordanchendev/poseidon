@@ -341,6 +341,7 @@ def test_campaign_freeze_rejects_unimplemented_capacity_aggregation(phase99_sess
 @pytest.mark.parametrize(
     ("section", "field"),
     (
+        ("purge_gap", "gap_eligible_sessions"),
         ("gates", "minimum_symbols_per_date"),
         ("gates", "minimum_dates_per_symbol"),
         ("gates", "minimum_effective_paired_dates"),
@@ -357,6 +358,31 @@ def test_campaign_freeze_rejects_fractional_session_counts(
         incumbent, candidate, _ = _seed_strategy_versions(session)
         contract = _complete_campaign_contract(incumbent, candidate)
         contract["contract_json"][section][field] = 1.5
+
+        with pytest.raises(api.CampaignContractValidationError):
+            api.CampaignService(session).create_frozen_campaign(contract)
+        session.rollback()
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    (
+        ("uncertainty_estimator", "alpha", "1"),
+        ("turnover", "formula", "gross_exposure_turnover"),
+        ("capacity", "price_volume_adjustment", "raw"),
+    ),
+)
+def test_campaign_freeze_rejects_unsupported_fixed_review_semantics(
+    phase99_session_factory,
+    section,
+    field,
+    value,
+):
+    api = _campaign_api()
+    with phase99_session_factory() as session:
+        incumbent, candidate, _ = _seed_strategy_versions(session)
+        contract = _complete_campaign_contract(incumbent, candidate)
+        contract["contract_json"][section][field] = value
 
         with pytest.raises(api.CampaignContractValidationError):
             api.CampaignService(session).create_frozen_campaign(contract)
