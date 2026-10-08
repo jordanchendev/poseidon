@@ -115,8 +115,7 @@ def _normalized_membership(cell: Any) -> list:
         not isinstance(item, dict) or any(item.get(field) is None for field in MEMBERSHIP_FIELDS) for item in membership
     ):
         return []
-    normalized = [{field: item[field] for field in MEMBERSHIP_FIELDS} for item in membership]
-    return sorted(normalized, key=canonical_json)
+    return sorted(membership, key=canonical_json)
 
 
 def _maximum_horizon(contract: dict) -> int:
@@ -216,7 +215,10 @@ class PairedReview:
         if not panel["outcome_status"].eq("available").all():
             return self._with_status(result, "unavailable", "outcome_unavailable")
 
-        expected_digest = validation["paired_sample_digest"]
+        frozen_membership = _normalized_membership(self.cells[0])
+        expected_digest = content_sha256(
+            [{field: item[field] for field in MEMBERSHIP_FIELDS} for item in frozen_membership]
+        )
         frames = {}
         for role, arm in REQUIRED_CELLS:
             frame = panel[(panel["version_role"] == role) & (panel["ablation_arm"] == arm)].copy()
