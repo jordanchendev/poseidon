@@ -152,6 +152,18 @@ def test_six_cell_validation_returns_one_membership_digest() -> None:
     assert set(result["coverage_matrix"]) == {f"{role}:{arm}" for role, arm in product(ROLES, ARMS)}
 
 
+def test_six_cells_preserve_every_frozen_membership_dimension() -> None:
+    cells = _paired_cells()
+    for cell in cells:
+        cell["sample_membership"] = [{**item, "fold": "fold-a"} for item in SAMPLE_MEMBERSHIP]
+    cells[-1]["sample_membership"] = [{**item, "fold": "fold-b"} for item in SAMPLE_MEMBERSHIP]
+
+    result = PairedReview(_review_contract(), cells).validate()
+
+    assert result["status"] == "unavailable"
+    assert result["reason_code"] == "sample_membership_mismatch"
+
+
 def test_paired_hac_effect_uses_frozen_statsmodels_settings() -> None:
     index = pd.date_range("2026-01-02", periods=5, freq="B")
     incumbent = pd.Series([0.01, 0.02, -0.01, 0.00, 0.01], index=index)
