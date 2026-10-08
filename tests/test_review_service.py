@@ -164,6 +164,19 @@ def test_six_cells_preserve_every_frozen_membership_dimension() -> None:
     assert result["reason_code"] == "sample_membership_mismatch"
 
 
+def test_panel_binding_resorts_projected_extended_membership() -> None:
+    panel = _review_panel()
+    cells = _panel_cells(panel)
+    for cell in cells:
+        cell["sample_membership"] = [
+            {**item, "fold": "z" if item["symbol"] == "0050" else "a"} for item in cell["sample_membership"]
+        ]
+
+    result = PairedReview(_review_contract(), cells).run(panel)
+
+    assert result["status"] == "passed"
+
+
 def test_paired_hac_effect_uses_frozen_statsmodels_settings() -> None:
     index = pd.date_range("2026-01-02", periods=5, freq="B")
     incumbent = pd.Series([0.01, 0.02, -0.01, 0.00, 0.01], index=index)
