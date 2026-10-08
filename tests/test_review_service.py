@@ -24,9 +24,9 @@ from tests.test_holdout_consumption_postgres import _holdout_contract
 ARMS = ("fundamental_only", "technical_only", "combined")
 ROLES = ("incumbent", "candidate")
 SAMPLE_MEMBERSHIP = [
-    {"date": "2026-01-02", "symbol": "0050"},
-    {"date": "2026-01-02", "symbol": "2317"},
-    {"date": "2026-01-02", "symbol": "2330"},
+    {"date": "2026-01-02", "symbol": "0050", "horizon": "1_session", "regime": "risk_on"},
+    {"date": "2026-01-02", "symbol": "2317", "horizon": "1_session", "regime": "risk_on"},
+    {"date": "2026-01-02", "symbol": "2330", "horizon": "1_session", "regime": "risk_on"},
 ]
 
 
@@ -255,9 +255,9 @@ def _review_panel(*, periods: int = 20) -> pd.DataFrame:
 
 def _panel_membership(panel: pd.DataFrame) -> list[dict]:
     return (
-        panel[["date", "symbol", "horizon"]]
+        panel[["date", "symbol", "horizon", "regime"]]
         .drop_duplicates()
-        .sort_values(["date", "symbol", "horizon"])
+        .sort_values(["date", "symbol", "horizon", "regime"])
         .to_dict("records")
     )
 

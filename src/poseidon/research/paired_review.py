@@ -16,6 +16,7 @@ from poseidon.research.ic_analysis import compute_cross_sectional_rank_ic, compu
 ARMS = ("fundamental_only", "technical_only", "combined")
 ROLES = ("incumbent", "candidate")
 REQUIRED_CELLS = tuple(product(ROLES, ARMS))
+MEMBERSHIP_FIELDS = ("date", "symbol", "horizon", "regime")
 
 
 class ReviewCapabilityUnavailable(RuntimeError):
@@ -110,7 +111,12 @@ def _normalized_membership(cell: Any) -> list:
         membership = metrics.get("sample_membership")
     if not isinstance(membership, list) or not membership:
         return []
-    return sorted(membership, key=canonical_json)
+    if any(
+        not isinstance(item, dict) or any(item.get(field) is None for field in MEMBERSHIP_FIELDS) for item in membership
+    ):
+        return []
+    normalized = [{field: item[field] for field in MEMBERSHIP_FIELDS} for item in membership]
+    return sorted(normalized, key=canonical_json)
 
 
 def _maximum_horizon(contract: dict) -> int:
@@ -196,6 +202,13 @@ class PairedReview:
         }
         if not isinstance(panel, pd.DataFrame) or required - set(panel.columns):
             return self._with_status(result, "unavailable", "review_panel_incomplete")
+        key_fields = ("date", "symbol", "horizon", "regime", "version_role", "ablation_arm")
+        numeric_fields = ("signal", "forward_return", "gross_return", "weight", "price", "volume")
+        numeric = panel[list(numeric_fields)].apply(pd.to_numeric, errors="coerce")
+        if panel[list(key_fields)].isna().any().any() or not np.isfinite(numeric.to_numpy(dtype=float)).all():
+            return self._with_status(result, "unavailable", "review_panel_invalid_values")
+        panel = panel.copy()
+        panel[list(numeric_fields)] = numeric
         if panel.duplicated(["date", "symbol", "horizon", "version_role", "ablation_arm"]).any():
             return self._with_status(result, "unavailable", "review_panel_duplicate_rows")
         if set(panel["regime"].dropna()) - set(self.contract["regimes"]):
@@ -208,7 +221,7 @@ class PairedReview:
         for role, arm in REQUIRED_CELLS:
             frame = panel[(panel["version_role"] == role) & (panel["ablation_arm"] == arm)].copy()
             membership = sorted(
-                frame[["date", "symbol", "horizon"]].drop_duplicates().to_dict("records"),
+                frame[list(MEMBERSHIP_FIELDS)].drop_duplicates().to_dict("records"),
                 key=canonical_json,
             )
             if not membership or content_sha256(membership) != expected_digest:
@@ -453,8 +466,8 @@ def _slices(frames: dict, horizon: str, effects: pd.Series) -> dict:
 
 
 def _maximum_drawdown(returns: pd.Series) -> float:
-    wealth = (1.0 + returns.astype(float)).cumprod()
-    return float((1.0 - wealth / wealth.cummax()).max())
+    wealth = np.concatenate(([1.0], (1.0 + returns.astype(float)).cumprod().to_numpy()))
+    return float(np.max(1.0 - wealth / np.maximum.accumulate(wealth)))
 
 
 def _capacity(frame: pd.DataFrame, contract: dict) -> dict:

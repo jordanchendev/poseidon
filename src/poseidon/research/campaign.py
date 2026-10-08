@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import text
@@ -137,6 +138,41 @@ def _positive_number(value, field: str, *, maximum: Decimal | None = None) -> De
     return number
 
 
+def _positive_integer(value, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise CampaignContractValidationError(f"{field} must be a positive integer")
+    return value
+
+
+def _canonical_panel_scalar(value, *, missing: bool) -> dict:
+    if value is None:
+        return {"null": "none"}
+    if isinstance(value, bool):
+        return {"bool": value}
+    if isinstance(value, int):
+        return {"int": str(value)}
+    if isinstance(value, float):
+        if math.isnan(value):
+            return {"float": "nan"}
+        if math.isinf(value):
+            return {"float": "+inf" if value > 0 else "-inf"}
+        return {"float": value.hex()}
+    if isinstance(value, Decimal):
+        return {"decimal": str(value)}
+    if isinstance(value, (datetime, date, time)):
+        return {"datetime": value.isoformat()}
+    if isinstance(value, str):
+        return {"string": value}
+    if missing:
+        return {"null": f"{type(value).__module__}.{type(value).__qualname__}"}
+    item = getattr(value, "item", None)
+    if callable(item):
+        unboxed = item()
+        if unboxed is not value:
+            return _canonical_panel_scalar(unboxed, missing=False)
+    raise CampaignContractValidationError(f"holdout panel contains unsupported scalar {type(value).__name__}")
+
+
 def _advisory_keys(domain: str, identity: str) -> tuple[int, int]:
     digest = hashlib.sha256(f"{domain}{identity}".encode()).digest()
     return int.from_bytes(digest[:4], "big", signed=True), int.from_bytes(digest[4:8], "big", signed=True)
@@ -187,10 +223,18 @@ def _validate_complete_contract(value: dict) -> dict:
     scenarios = costs.get("cost_scenarios")
     if not isinstance(scenarios, list) or len(scenarios) < 2:
         raise CampaignContractValidationError("contract_json.cost_fx_contract.cost_scenarios requires base and stress")
+    scenario_names = set()
+    amount_fields = ("commission_bps", "tax_bps", "slippage_bps")
     for index, scenario in enumerate(scenarios):
         item = _json_object(scenario, f"contract_json.cost_fx_contract.cost_scenarios[{index}]")
-        _required_text(item.get("name"), f"contract_json.cost_fx_contract.cost_scenarios[{index}].name")
-        amounts = [item.get(name) for name in ("commission_bps", "tax_bps", "slippage_bps") if name in item]
+        name = _required_text(item.get("name"), f"contract_json.cost_fx_contract.cost_scenarios[{index}].name")
+        if name in scenario_names:
+            raise CampaignContractValidationError("frozen cost scenario names must be unique")
+        scenario_names.add(name)
+        missing_amounts = [field for field in amount_fields if field not in item]
+        if missing_amounts:
+            raise CampaignContractValidationError(f"frozen cost scenario missing required amounts: {missing_amounts}")
+        amounts = [item[field] for field in amount_fields]
         try:
             parsed_amounts = [Decimal(str(amount)) for amount in amounts]
         except (InvalidOperation, TypeError, ValueError) as error:
@@ -201,12 +245,14 @@ def _validate_complete_contract(value: dict) -> dict:
             raise CampaignContractValidationError("each frozen cost scenario must be non-zero")
 
     purge_gap = _json_object(contract["purge_gap"], "contract_json.purge_gap")
-    _positive_number(purge_gap.get("gap_eligible_sessions"), "contract_json.purge_gap.gap_eligible_sessions")
+    _positive_integer(purge_gap.get("gap_eligible_sessions"), "contract_json.purge_gap.gap_eligible_sessions")
     _required_text(purge_gap.get("overlap_method"), "contract_json.purge_gap.overlap_method")
 
     estimator = _json_object(contract["uncertainty_estimator"], "contract_json.uncertainty_estimator")
-    _required_text(estimator.get("name"), "contract_json.uncertainty_estimator.name")
-    _required_text(estimator.get("kernel"), "contract_json.uncertainty_estimator.kernel")
+    if estimator.get("name") != "ols_hac_intercept":
+        raise CampaignContractValidationError("uncertainty estimator must be ols_hac_intercept")
+    if estimator.get("kernel") != "bartlett":
+        raise CampaignContractValidationError("uncertainty estimator kernel must be bartlett")
     if not isinstance(estimator.get("maxlags_by_horizon"), dict) or set(estimator["maxlags_by_horizon"]) != set(
         label["horizons"]
     ):
@@ -218,13 +264,15 @@ def _validate_complete_contract(value: dict) -> dict:
         raise CampaignContractValidationError("maxlags_by_horizon values must be non-negative integers")
     if estimator.get("small_sample_correction") is not True:
         raise CampaignContractValidationError("small_sample_correction must be explicitly frozen")
-    _positive_number(estimator.get("alpha"), "contract_json.uncertainty_estimator.alpha", maximum=Decimal("1"))
+    alpha = _positive_number(estimator.get("alpha"), "contract_json.uncertainty_estimator.alpha")
+    if alpha >= 1:
+        raise CampaignContractValidationError("contract_json.uncertainty_estimator.alpha must be less than 1")
 
     if contract["ablation_arms"] != list(_ARMS):
         raise CampaignContractValidationError("ablation_arms must declare fundamental_only, technical_only, combined")
     gates = _json_object(contract["gates"], "contract_json.gates")
     for field in ("minimum_symbols_per_date", "minimum_dates_per_symbol", "minimum_effective_paired_dates"):
-        _positive_number(gates.get(field), f"contract_json.gates.{field}")
+        _positive_integer(gates.get(field), f"contract_json.gates.{field}")
     _positive_number(gates.get("minimum_coverage"), "contract_json.gates.minimum_coverage", maximum=Decimal("1"))
 
     runtime = _json_object(contract["runtime_artifact_identity"], "contract_json.runtime_artifact_identity")
@@ -234,18 +282,21 @@ def _validate_complete_contract(value: dict) -> dict:
         raise CampaignContractValidationError("contract_json.seed must be an integer")
 
     turnover = _json_object(contract["turnover"], "contract_json.turnover")
-    _required_text(turnover.get("formula"), "contract_json.turnover.formula")
+    if turnover.get("formula") != "0.5*sum(abs(w_t-w_t_minus_1))":
+        raise CampaignContractValidationError("contract_json.turnover.formula is unsupported")
     if not isinstance(turnover.get("cash_included"), bool):
         raise CampaignContractValidationError("contract_json.turnover.cash_included must be boolean")
     capacity = _json_object(contract["capacity"], "contract_json.capacity")
-    _positive_number(capacity.get("adv_lookback_sessions"), "contract_json.capacity.adv_lookback_sessions")
+    _positive_integer(capacity.get("adv_lookback_sessions"), "contract_json.capacity.adv_lookback_sessions")
     _positive_number(
         capacity.get("participation_cap"),
         "contract_json.capacity.participation_cap",
         maximum=Decimal("1"),
     )
-    _required_text(capacity.get("price_volume_adjustment"), "contract_json.capacity.price_volume_adjustment")
-    _required_text(capacity.get("aggregation"), "contract_json.capacity.aggregation")
+    if capacity.get("price_volume_adjustment") != "split_adjusted":
+        raise CampaignContractValidationError("contract_json.capacity.price_volume_adjustment is unsupported")
+    if capacity.get("aggregation") != "min_symbol_capacity":
+        raise CampaignContractValidationError("contract_json.capacity.aggregation is unsupported")
 
     expected_cells = {(str(incumbent_id), arm) for arm in _ARMS} | {(str(candidate_id), arm) for arm in _ARMS}
     actual_cells = set()
@@ -538,9 +589,16 @@ def run_paired_review_in_transactions(
         contract = json.loads(canonical_json(campaign.contract_json))
         trial_hashes = sorted(trial.result_sha256 for trial in trials)
 
-    if not hasattr(panel, "to_json"):
+    if not hasattr(panel, "to_dict") or not hasattr(panel, "isna"):
         raise CampaignContractValidationError("holdout loader must return a pandas DataFrame")
-    panel_records = json.loads(panel.to_json(orient="records", date_format="iso", double_precision=15))
+    panel_records = [
+        {field: _canonical_panel_scalar(value, missing=bool(missing[field])) for field, value in record.items()}
+        for record, missing in zip(
+            panel.to_dict(orient="records"),
+            panel.isna().to_dict(orient="records"),
+            strict=True,
+        )
+    ]
     panel_digest = content_sha256(sorted(panel_records, key=canonical_json))
     input_digest = content_sha256(
         {
