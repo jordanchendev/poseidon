@@ -275,6 +275,94 @@ def test_missing_any_frozen_field_leaves_no_campaign_row(phase99_session_factory
         session.rollback()
 
 
+def test_campaign_freeze_rejects_duplicate_cost_scenario_names(phase99_session_factory):
+    api = _campaign_api()
+    with phase99_session_factory() as session:
+        incumbent, candidate, _ = _seed_strategy_versions(session)
+        contract = _complete_campaign_contract(incumbent, candidate)
+        scenarios = contract["contract_json"]["cost_fx_contract"]["cost_scenarios"]
+        scenarios[1]["name"] = scenarios[0]["name"]
+
+        with pytest.raises(api.CampaignContractValidationError):
+            api.CampaignService(session).create_frozen_campaign(contract)
+        session.rollback()
+
+
+@pytest.mark.parametrize("scenario_index", (0, 1))
+@pytest.mark.parametrize("field", ("commission_bps", "tax_bps", "slippage_bps"))
+def test_campaign_freeze_requires_every_cost_scenario_amount(
+    phase99_session_factory,
+    scenario_index,
+    field,
+):
+    api = _campaign_api()
+    with phase99_session_factory() as session:
+        incumbent, candidate, _ = _seed_strategy_versions(session)
+        contract = _complete_campaign_contract(incumbent, candidate)
+        del contract["contract_json"]["cost_fx_contract"]["cost_scenarios"][scenario_index][field]
+
+        with pytest.raises(api.CampaignContractValidationError):
+            api.CampaignService(session).create_frozen_campaign(contract)
+        session.rollback()
+
+
+@pytest.mark.parametrize(
+    ("field", "unsupported"),
+    (("name", "newey_west_mean"), ("kernel", "parzen")),
+)
+def test_campaign_freeze_rejects_unimplemented_uncertainty_estimator(
+    phase99_session_factory,
+    field,
+    unsupported,
+):
+    api = _campaign_api()
+    with phase99_session_factory() as session:
+        incumbent, candidate, _ = _seed_strategy_versions(session)
+        contract = _complete_campaign_contract(incumbent, candidate)
+        contract["contract_json"]["uncertainty_estimator"][field] = unsupported
+
+        with pytest.raises(api.CampaignContractValidationError):
+            api.CampaignService(session).create_frozen_campaign(contract)
+        session.rollback()
+
+
+def test_campaign_freeze_rejects_unimplemented_capacity_aggregation(phase99_session_factory):
+    api = _campaign_api()
+    with phase99_session_factory() as session:
+        incumbent, candidate, _ = _seed_strategy_versions(session)
+        contract = _complete_campaign_contract(incumbent, candidate)
+        contract["contract_json"]["capacity"]["aggregation"] = "mean_symbol_capacity"
+
+        with pytest.raises(api.CampaignContractValidationError):
+            api.CampaignService(session).create_frozen_campaign(contract)
+        session.rollback()
+
+
+@pytest.mark.parametrize(
+    ("section", "field"),
+    (
+        ("gates", "minimum_symbols_per_date"),
+        ("gates", "minimum_dates_per_symbol"),
+        ("gates", "minimum_effective_paired_dates"),
+        ("capacity", "adv_lookback_sessions"),
+    ),
+)
+def test_campaign_freeze_rejects_fractional_session_counts(
+    phase99_session_factory,
+    section,
+    field,
+):
+    api = _campaign_api()
+    with phase99_session_factory() as session:
+        incumbent, candidate, _ = _seed_strategy_versions(session)
+        contract = _complete_campaign_contract(incumbent, candidate)
+        contract["contract_json"][section][field] = 1.5
+
+        with pytest.raises(api.CampaignContractValidationError):
+            api.CampaignService(session).create_frozen_campaign(contract)
+        session.rollback()
+
+
 def test_exact_replay_returns_same_campaign_and_contract_changes_change_identity(phase99_session_factory):
     api = _campaign_api()
     with phase99_session_factory() as session:

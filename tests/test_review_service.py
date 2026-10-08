@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import uuid
 from itertools import product
 
@@ -305,6 +306,66 @@ def test_complete_review_reports_every_frozen_dimension() -> None:
     assert result["capacity"]["status"] == "available"
 
 
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("regime", None),
+        ("signal", float("nan")),
+        ("forward_return", float("inf")),
+        ("gross_return", float("nan")),
+        ("weight", float("inf")),
+        ("price", float("nan")),
+        ("volume", float("inf")),
+    ],
+)
+def test_review_panel_rejects_null_and_non_finite_required_values(column: str, value) -> None:
+    panel = _review_panel()
+    panel.loc[panel.index[0], column] = value
+
+    result = PairedReview(_review_contract(), _panel_cells(_review_panel())).run(panel)
+
+    assert result["status"] == "unavailable"
+    assert result["gross"] is None
+
+
+def test_maximum_drawdown_includes_initial_wealth() -> None:
+    contract = _review_contract()
+    for scenario in contract["cost_fx_contract"]["cost_scenarios"]:
+        scenario.update(commission_bps="0", tax_bps="0", slippage_bps="0")
+    panel = _review_panel()
+    candidate = (panel["version_role"] == "candidate") & (panel["ablation_arm"] == "combined")
+    primary = panel["horizon"] == "1_session"
+    panel.loc[candidate & primary, "gross_return"] = 0.0
+    panel.loc[candidate & primary & panel["date"].eq(panel["date"].min()), "gross_return"] = -0.10
+
+    result = PairedReview(contract, _panel_cells(panel)).run(panel)
+
+    assert result["drawdown"]["maximum"] == pytest.approx(0.10)
+
+
+def test_review_rejects_allowed_post_hoc_regime_relabeling() -> None:
+    panel = _review_panel()
+    cells = _panel_cells(panel)
+    frozen_membership = (
+        panel[["date", "symbol", "horizon", "regime"]]
+        .drop_duplicates()
+        .sort_values(["date", "symbol", "horizon", "regime"])
+        .to_dict("records")
+    )
+    for cell in cells:
+        cell["sample_membership"] = frozen_membership
+    baseline = PairedReview(_review_contract(), cells).run(panel)
+    relabeled = panel.copy()
+    first_date = relabeled["date"].min()
+    relabeled.loc[relabeled["date"].eq(first_date), "regime"] = "risk_off"
+
+    result = PairedReview(_review_contract(), cells).run(relabeled)
+
+    assert baseline["status"] == "passed"
+    assert result["status"] == "unavailable"
+    assert result["reason_code"] == "panel_sample_membership_mismatch"
+
+
 def test_high_gross_but_negative_net_fails_every_frozen_cost_gate() -> None:
     contract = _review_contract()
     contract["cost_fx_contract"]["cost_scenarios"] = [
@@ -353,11 +414,7 @@ def test_complete_powered_capacity_gate_miss_is_failed() -> None:
     assert result["failed_gates"] == ["minimum_capacity"]
 
 
-@pytest.mark.postgresql
-def test_review_runner_consumes_before_read_and_replays_or_appends(phase99_session_factory) -> None:
-    panel = _review_panel()
-    membership = _panel_membership(panel)
-    marker = uuid.uuid4().hex
+def _seed_review_campaign(phase99_session_factory, panel: pd.DataFrame, marker: str):
     with phase99_session_factory() as session:
         incumbent, candidate, _ = _seed_strategy_versions(session, marker=marker)
         contract = _complete_campaign_contract(incumbent, candidate, marker=marker)
@@ -375,11 +432,19 @@ def test_review_runner_consumes_before_read_and_replays_or_appends(phase99_sessi
                 paired_sample_key_sha256="b" * 64,
                 input_sha256=f"{100 + index:064x}",
                 result_sha256=content_sha256({"role": role, "arm": arm, "marker": marker}),
-                metrics_json={"sample_membership": membership},
+                metrics_json={"sample_membership": _panel_membership(panel)},
             )
             tracker.append_campaign_terminal_trial(**kwargs)
         campaign_id = campaign.id
         session.commit()
+    return campaign_id
+
+
+@pytest.mark.postgresql
+def test_review_runner_consumes_before_read_and_replays_or_appends(phase99_session_factory) -> None:
+    panel = _review_panel()
+    marker = uuid.uuid4().hex
+    campaign_id = _seed_review_campaign(phase99_session_factory, panel, marker)
 
     identity = build_holdout_identity(_holdout_contract(marker))
     observations = []
@@ -433,3 +498,30 @@ def test_review_runner_consumes_before_read_and_replays_or_appends(phase99_sessi
         assert len(events) == 2
         assert session.query(ExperimentRecord).filter_by(campaign_id=campaign_id).count() == 6
         assert not any("release" in event.event_type or "active" in event.event_type for event in events)
+
+
+@pytest.mark.postgresql
+def test_review_input_hash_distinguishes_adjacent_floats(phase99_session_factory) -> None:
+    panel = _review_panel()
+    marker = uuid.uuid4().hex
+    campaign_id = _seed_review_campaign(phase99_session_factory, panel, marker)
+    identity = build_holdout_identity(_holdout_contract(marker))
+    first = run_paired_review_in_transactions(
+        phase99_session_factory,
+        campaign_id,
+        identity,
+        lambda *, permit: panel.copy(),
+    )
+    adjacent = panel.copy()
+    row = adjacent.index[(adjacent["version_role"] == "candidate") & (adjacent["ablation_arm"] == "combined")][0]
+    adjacent.loc[row, "gross_return"] = math.nextafter(float(adjacent.loc[row, "gross_return"]), math.inf)
+
+    changed = run_paired_review_in_transactions(
+        phase99_session_factory,
+        campaign_id,
+        identity,
+        lambda *, permit: adjacent,
+    )
+
+    assert changed.id != first.id
+    assert changed.input_sha256 != first.input_sha256
