@@ -18,6 +18,7 @@ from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from tests.test_strategy_release import NOW, _seed_gate_graph, release_manager
+from tests.test_decision_service import synthetic_reconciliation_policy
 
 
 DATABASE_URL = os.environ["POSEIDON_DATABASE_URL"]
@@ -30,7 +31,14 @@ if ENGINE.dialect.name != "postgresql":
 def graph():
     with Session(ENGINE) as session:
         with session.begin():
-            value = _seed_gate_graph(session)
+            value = _seed_gate_graph(
+                session,
+                policy_changes={
+                    "reconciliation": synthetic_reconciliation_policy(
+                        account_generation=f"phase100-concurrency-{uuid.uuid4().hex}",
+                    )
+                },
+            )
     return value
 
 
