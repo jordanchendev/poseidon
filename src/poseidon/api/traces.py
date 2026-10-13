@@ -26,14 +26,12 @@ from poseidon.decision_loop.decisions import (
 from poseidon.decision_loop.decisions import (
     project_outcome_rows as _project_outcome_rows,
 )
+from poseidon.decision_loop.evaluation import verify_complete_run
 from poseidon.decision_loop.manifest import canonical_json, content_sha256, iso_time
-from poseidon.models.data_manifest import DataManifest
 from poseidon.models.decision_record import DecisionRecord
-from poseidon.models.evaluation_run import EvaluationRun
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
 from poseidon.models.research_revision import ResearchRevision
 from poseidon.models.signal import SignalRecord
-from poseidon.models.strategy_version import StrategyVersion
 from poseidon.signals.schemas import SignalTraceMetadata
 
 router = APIRouter()
@@ -108,6 +106,8 @@ class TraceResponse(BaseModel):
 
 class TraceAPIError(BaseModel):
     detail: str
+    error_code: str
+    status_code: int
 
 
 TRACE_ERROR_RESPONSES = {status: {"model": TraceAPIError} for status in (403, 404, 422)}
@@ -195,21 +195,17 @@ class TraceService:
         snapshot = self.session.get(EvaluationSnapshot, snapshot_id)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Evaluation snapshot not found")
-        run = self.session.get(EvaluationRun, snapshot.evaluation_run_id)
-        version = None if run is None else self.session.get(StrategyVersion, run.strategy_version_id)
-        manifest = None if run is None else self.session.get(DataManifest, run.manifest_id)
-        if run is None or version is None or manifest is None:
-            raise HTTPException(status_code=422, detail="Evaluation trace identity is incomplete")
+        try:
+            run, version, manifest, snapshots = verify_complete_run(self.session, snapshot.evaluation_run_id)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="Evaluation trace identity is invalid") from error
+        if snapshot.id not in {row.id for row in snapshots}:
+            raise HTTPException(status_code=422, detail="Evaluation snapshot is outside the frozen run")
         try:
             policy = DecisionPolicy.model_validate(version.policy_json)
         except PydanticValidationError as error:
             raise HTTPException(status_code=422, detail="Evaluation policy identity is invalid") from error
         principal.require_account_scope(policy.account_scope)
-        snapshots = self.session.scalars(
-            select(EvaluationSnapshot)
-            .where(EvaluationSnapshot.evaluation_run_id == run.id)
-            .order_by(EvaluationSnapshot.symbol, EvaluationSnapshot.instrument, EvaluationSnapshot.id)
-        ).all()
         decisions = self.session.scalars(
             select(DecisionRecord)
             .where(DecisionRecord.evaluation_run_id == run.id, DecisionRecord.account_scope == policy.account_scope)
