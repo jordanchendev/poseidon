@@ -100,7 +100,9 @@ def _seed_gate_graph(
         incumbent = session.get(StrategyVersion, incumbent_id)
         if strategy is None or incumbent is None or incumbent.strategy_id != strategy.id:
             raise ValueError("follow-up campaign requires its strategy-owned incumbent")
-        policy = incumbent.policy_json
+        policy = copy.deepcopy(incumbent.policy_json)
+        policy.update(copy.deepcopy(policy_changes or {}))
+        DecisionPolicy.model_validate(policy)
         next_version = (
             session.query(func.max(StrategyVersion.version_no))
             .filter(StrategyVersion.strategy_id == strategy.id)
@@ -769,6 +771,86 @@ def test_rollback_blocks_outstanding_ordinary_work(phase99_session_factory, work
         model = DecisionRecord if work_kind.endswith("decision") else OrderRecord
         assert session.get(model, work_id) is not None
         assert session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).count() == 2
+        session.rollback()
+
+
+@pytest.mark.postgresql
+@pytest.mark.parametrize("identity_change", ("account_scope", "account_generation"))
+def test_rollback_rejects_active_version_with_different_account_identity(
+    phase99_session_factory,
+    identity_change,
+):
+    with phase99_session_factory() as session:
+        target = _seed_gate_graph(session)
+        service = ReleaseService(session)
+        _release(service, target)
+
+        target_version = session.get(StrategyVersion, target.candidate_id)
+        active_scope = target_version.policy_json["account_scope"]
+        active_reconciliation = copy.deepcopy(target_version.policy_json["reconciliation"])
+        policy_changes = {}
+        if identity_change == "account_scope":
+            active_scope = "paper:phase100-other"
+            policy_changes["account_scope"] = active_scope
+        else:
+            active_reconciliation["account_generation"] = f"phase100-other-{uuid.uuid4().hex}"
+            policy_changes["reconciliation"] = active_reconciliation
+
+        active = _seed_gate_graph(
+            session,
+            strategy_id=target.strategy_id,
+            incumbent_id=target.candidate_id,
+            policy_changes=policy_changes,
+        )
+        principal = AuthPrincipal(
+            "human:phase100-release-manager",
+            frozenset({"release_manager"}),
+            frozenset({target_version.policy_json["account_scope"], active_scope}),
+        )
+        _release(
+            service,
+            active,
+            key=f"release-cross-account-{identity_change}",
+            expected_revision=1,
+            expected_active_version_id=target.candidate_id,
+            principal=principal,
+        )
+        active_version = session.get(StrategyVersion, active.candidate_id)
+        order = OrderRecord(
+            strategy_name="phase100-cross-account-order",
+            symbol="2330",
+            market="tw_stock",
+            action="buy",
+            order_type="market",
+            target_weight=0.1,
+            quantity=1.0,
+            side="long",
+            status="pending",
+            broker_mode="paper",
+            order_origin="signal",
+            account_scope=active_version.policy_json["account_scope"],
+            account_generation=active_version.policy_json["reconciliation"]["account_generation"],
+        )
+        session.add(order)
+        session.flush()
+
+        with pytest.raises(DecisionConflictError, match="rollback_policy"):
+            service.rollback(
+                target.strategy_id,
+                target.candidate_id,
+                target.reconciliation_id,
+                expected_revision=2,
+                expected_active_version_id=active.candidate_id,
+                principal=principal,
+                idempotency_key=f"rollback-cross-account-{identity_change}",
+                reason="do not abandon active account work",
+                now=NOW,
+            )
+
+        strategy = session.get(StrategyRecord, target.strategy_id)
+        assert (strategy.active_version_id, strategy.release_revision) == (active.candidate_id, 2)
+        assert session.get(OrderRecord, order.id) is not None
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=target.strategy_id).count() == 2
         session.rollback()
 
 
