@@ -271,17 +271,23 @@ def answers(packet: dict, *, route: str = "update", injection: bool = False) -> 
     return values
 
 
-class Phase100BoundaryTests(unittest.TestCase):
+class Phase100DshBoundaryTests(unittest.TestCase):
     def test_detector_rejects_new_runtime_profile_dependency_credential_and_authority_path(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             fixtures = {
                 "src/poseidon/research/dsh_runtime.py": "from poseidon.decision_loop.releases import ReleaseService\n",
+                "src/poseidon/research/provider.py": "class DeepSeekRuntime:\n    pass\n",
+                "src/poseidon/research/campaign.py": ("from poseidon.decision_loop.releases import ReleaseService\n"),
                 "src/poseidon/autoresearch/new_writer.py": "active_version_id = candidate\n",
-                "src/poseidon/workers/cpu_tasks.py": "def autoresearch_run():\n    return None\n",
+                "src/poseidon/workers/cpu_tasks.py": (
+                    "from poseidon.api import decisions as decision_api\n"
+                    "def _promote():\n    return decision_api.approve_decision(None)\n"
+                    "def autoresearch_run():\n    return _promote()\n"
+                ),
                 "docker-compose.yml": "services:\n  dsh:\n    profiles: [dsh]\n",
                 "pyproject.toml": 'dependencies = ["deepseek_harness"]\n',
-                ".env.example": "JEV_DSH_ANALYSIS_API_KEY=\n",
+                ".env.example": "DSH_API_KEY=\n",
             }
             for relative, content in fixtures.items():
                 path = root / relative
@@ -292,9 +298,11 @@ class Phase100BoundaryTests(unittest.TestCase):
             "unexpected DSH artifact",
             "production DSH Compose service/profile",
             "production DSH dependency",
-            "JEV_DSH_ANALYSIS_API_KEY",
+            "DeepSeekRuntime",
+            "DSH_API_KEY",
             "authority name ReleaseService",
             "authority name active_version_id",
+            "authority import poseidon.api.decisions",
         ):
             self.assertIn(expected, issues)
 
