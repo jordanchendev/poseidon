@@ -42,7 +42,6 @@ from poseidon.research.campaign import (
     _validate_complete_contract,
     build_review_input_identity,
 )
-from poseidon.strategies.dsl.schema import RuleEntry
 
 PredicateState = Literal["passed", "blocked", "unavailable", "inconclusive"]
 _ARMS = ("fundamental_only", "technical_only", "combined")
@@ -69,6 +68,151 @@ _PASSED_REVIEW_OBJECTS = (
 )
 
 
+class _ExecutableConditionModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+
+class IndicatorParameters(_ExecutableConditionModel):
+    period: Annotated[int, Field(strict=True, gt=0)] | None = None
+    fast_period: Annotated[int, Field(strict=True, gt=0)] | None = None
+    slow_period: Annotated[int, Field(strict=True, gt=0)] | None = None
+    signal_period: Annotated[int, Field(strict=True, gt=0)] | None = None
+
+
+class CrossParameters(_ExecutableConditionModel):
+    fast: Annotated[int, Field(strict=True, gt=0)]
+    slow: Annotated[int, Field(strict=True, gt=0)]
+
+
+class ComparisonParameters(_ExecutableConditionModel):
+    period_a: Annotated[int, Field(strict=True, gt=0)]
+    period_b: Annotated[int, Field(strict=True, gt=0)]
+
+
+class VolumeParameters(_ExecutableConditionModel):
+    period: Annotated[int, Field(strict=True, gt=0)] = 20
+    multiplier: Annotated[int | float, Field(gt=0)] = 2.0
+
+
+class BollingerParameters(_ExecutableConditionModel):
+    period: Annotated[int, Field(strict=True, gt=0)] = 20
+    lookback: Annotated[int, Field(strict=True, gt=1)] = 168
+
+
+class IndicatorThresholdCondition(_ExecutableConditionModel):
+    type: Literal["indicator_above", "indicator_below"]
+    indicator: Annotated[str, Field(min_length=1)]
+    params: IndicatorParameters = Field(default_factory=IndicatorParameters)
+    threshold: int | float
+
+
+class PriceCrossesCondition(_ExecutableConditionModel):
+    type: Literal["price_crosses"]
+    indicator: Annotated[str, Field(min_length=1)]
+    params: IndicatorParameters = Field(default_factory=IndicatorParameters)
+    direction: Literal["up", "down"] = "up"
+
+
+class IndicatorCrossesCondition(_ExecutableConditionModel):
+    type: Literal["indicator_crosses"]
+    indicator: Annotated[str, Field(min_length=1)] = "sma"
+    params: CrossParameters
+    direction: Literal["up", "down"] = "up"
+
+
+class PriceChangeCondition(_ExecutableConditionModel):
+    type: Literal["price_change_pct"]
+    threshold: int | float
+    direction: Literal["up", "down", "absolute"] = "up"
+
+
+class VolumeSpikeCondition(_ExecutableConditionModel):
+    type: Literal["volume_spike"]
+    params: VolumeParameters = Field(default_factory=VolumeParameters)
+
+
+class BollingerCondition(_ExecutableConditionModel):
+    type: Literal["bollinger_width_percentile"]
+    params: BollingerParameters = Field(default_factory=BollingerParameters)
+    threshold: Annotated[int | float, Field(ge=0, le=1)] = 0.85
+
+
+class IndicatorComparisonCondition(_ExecutableConditionModel):
+    type: Literal["indicator_comparison"]
+    indicator_a: Annotated[str, Field(min_length=1)]
+    indicator_b: Annotated[str, Field(min_length=1)]
+    params: ComparisonParameters
+    direction: Literal["above", "below"] = "above"
+
+
+class FeatureThresholdCondition(_ExecutableConditionModel):
+    type: Literal["feature_above", "feature_below"]
+    column: Annotated[str, Field(min_length=1)]
+    threshold: int | float
+
+
+class ModelPredictionCondition(_ExecutableConditionModel):
+    type: Literal["ml_prediction"]
+    threshold: Annotated[int | float, Field(ge=0)] = 0.5
+    direction: Literal["long", "short"] = "long"
+
+
+class AllCondition(_ExecutableConditionModel):
+    all: Annotated[list[ExecutableCondition], Field(min_length=1)]
+
+
+class AnyCondition(_ExecutableConditionModel):
+    any: Annotated[list[ExecutableCondition], Field(min_length=1)]
+
+
+class NoneCondition(_ExecutableConditionModel):
+    none: Annotated[list[ExecutableCondition], Field(min_length=1)]
+
+
+class VoteConditionBody(_ExecutableConditionModel):
+    conditions: Annotated[list[ExecutableCondition], Field(min_length=1)]
+    min_votes: Annotated[int, Field(strict=True, ge=1)] = 4
+
+    @model_validator(mode="after")
+    def require_reachable_threshold(self):
+        if self.min_votes > len(self.conditions):
+            raise ValueError("vote min_votes cannot exceed conditions")
+        return self
+
+
+class VoteCondition(_ExecutableConditionModel):
+    vote: VoteConditionBody
+
+
+ExecutableCondition = (
+    AllCondition
+    | AnyCondition
+    | NoneCondition
+    | VoteCondition
+    | IndicatorThresholdCondition
+    | PriceCrossesCondition
+    | IndicatorCrossesCondition
+    | PriceChangeCondition
+    | VolumeSpikeCondition
+    | BollingerCondition
+    | IndicatorComparisonCondition
+    | FeatureThresholdCondition
+    | ModelPredictionCondition
+)
+
+for _recursive_model in (AllCondition, AnyCondition, NoneCondition, VoteConditionBody, VoteCondition):
+    _recursive_model.model_rebuild(_types_namespace={"ExecutableCondition": ExecutableCondition})
+
+
+class RuleExecutableEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    condition: ExecutableCondition
+    action: Literal["long", "short", "close"]
+    quantity_pct: Annotated[int | float, Field(ge=0.0, le=1.0)] | None = None
+    confidence: Annotated[int | float, Field(ge=0.0, le=1.0)] = 1.0
+
+
 class RuleExecutablePayload(BaseModel):
     """Frozen payload accepted by the live rule strategy constructor."""
 
@@ -76,7 +220,7 @@ class RuleExecutablePayload(BaseModel):
 
     name: Annotated[str, Field(min_length=1)]
     description: str = ""
-    rules: Annotated[list[RuleEntry], Field(min_length=1)]
+    rules: Annotated[list[RuleExecutableEntry], Field(min_length=1)]
 
     @field_validator("name")
     @classmethod
@@ -92,10 +236,10 @@ class VotingExecutablePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     name: Annotated[str, Field(min_length=1)] = "voting_strategy"
-    sub_signals: Annotated[list[dict[str, object]], Field(min_length=1)]
+    sub_signals: Annotated[list[ExecutableCondition], Field(min_length=1)]
     min_votes: Annotated[int, Field(strict=True, ge=1)] = 4
     position_pct: Annotated[float, Field(strict=True, gt=0.0, le=1.0)] = 0.08
-    bear_sub_signals: list[dict[str, object]] = Field(default_factory=list)
+    bear_sub_signals: list[ExecutableCondition] = Field(default_factory=list)
     bear_min_votes: Annotated[int, Field(strict=True, ge=1)] = 4
     bear_position_pct: Annotated[float, Field(strict=True, gt=0.0, le=1.0)] = 0.06
     cooldown_bars: Annotated[int, Field(strict=True, ge=0)] = 12
@@ -128,6 +272,7 @@ class ExecutableStrategyConfig(BaseModel):
     strategy_type: Literal["rule", "voting", "liquidity_sweep", "model"]
     symbol: Annotated[str, Field(min_length=1)]
     market: Literal["tw_stock", "crypto_spot", "crypto_perp"]
+    instrument: Literal["spot", "perpetual"]
     interval: Annotated[str, Field(min_length=1)]
     payload: ExecutablePayload
 
@@ -154,6 +299,13 @@ class ExecutableStrategyConfig(BaseModel):
         if value != value.strip():
             raise ValueError("executable identity must be non-empty trimmed text")
         return value
+
+    @model_validator(mode="after")
+    def require_market_instrument_identity(self):
+        expected = "perpetual" if self.market == "crypto_perp" else "spot"
+        if self.instrument != expected:
+            raise ValueError("executable instrument does not match market")
+        return self
 
     def routing_matches(self, strategy) -> bool:
         return self.symbol == strategy.symbol and self.market == strategy.market and self.interval == strategy.interval
@@ -267,6 +419,7 @@ class ReleaseService:
             strategy_type=executable.strategy_type,
             symbol=executable.symbol,
             market=executable.market,
+            instrument=executable.instrument,
             interval=executable.interval,
         )
         if not executable.routing_matches(strategy):
@@ -330,6 +483,13 @@ class ReleaseService:
             return _predicate(
                 "policy_identity", "unavailable", "frozen reconciliation policy is missing", **evidence
             ), policy
+        if executable.market == "crypto_perp" and executable.symbol not in policy.reconciliation.perp_instrument_rules:
+            return _predicate(
+                "policy_identity",
+                "blocked",
+                "executable perp contract lacks an owner-frozen reconciliation rule",
+                **evidence,
+            ), policy
         return _predicate("policy_identity", "passed", "frozen release policy matches", **evidence), policy
 
     def _campaign_predicate(self, strategy, candidate, campaign):
@@ -381,6 +541,7 @@ class ReleaseService:
             isinstance(member, dict)
             and member.get("symbol") == executable.symbol
             and member.get("market") == executable.market
+            and member.get("instrument") == executable.instrument
             for member in universe
         ):
             return _predicate(

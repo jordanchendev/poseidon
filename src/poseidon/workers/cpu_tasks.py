@@ -2101,6 +2101,7 @@ def evaluate_active_strategies(
     from poseidon.decision_loop.releases import ExecutableStrategyConfig
     from poseidon.models.strategy_version import StrategyVersion
     from poseidon.risk.pipeline import SignalPipeline
+    from poseidon.signals.schemas import InstrumentType
     from poseidon.strategies.voting_strategy import VotingStrategy
 
     # Extract market/interval from fetch_result if not provided directly
@@ -2130,9 +2131,17 @@ def evaluate_active_strategies(
             try:
                 executable = ExecutableStrategyConfig.model_validate(version.config_json)
                 if executable.strategy_type == "rule":
-                    strategy = RuleStrategy(config=executable.runtime_config(), strategy_id=record.id)
+                    strategy = RuleStrategy(
+                        config=executable.runtime_config(),
+                        instrument=InstrumentType(executable.instrument),
+                        strategy_id=record.id,
+                    )
                 elif executable.strategy_type == "voting":
-                    strategy = VotingStrategy(config=executable.runtime_config(), strategy_id=record.id)
+                    strategy = VotingStrategy(
+                        config=executable.runtime_config(),
+                        instrument=InstrumentType(executable.instrument),
+                        strategy_id=record.id,
+                    )
                 elif executable.strategy_type == "liquidity_sweep":
                     # supports_live = False -> deferred to backtest/research path only.
                     logger.debug(
@@ -2214,6 +2223,8 @@ def portfolio_monthly_rebalance(signal_id: str | None = None) -> dict:
         return {"skipped": "execution_halted"}
     if mode == "decision":
         return _execute_approved_decision("tw_stock")
+    if mode in {"legacy", "shadow"}:
+        return {"skipped": "release_authority_required"}
     if mode not in {"legacy", "shadow"}:
         raise ValueError("unknown ordinary execution mode")
     import yaml
@@ -2941,6 +2952,8 @@ def perp_rebalance(signal_id: str | None = None) -> dict:
         return {"skipped": "execution_halted"}
     if mode == "decision":
         return _execute_approved_decision("crypto_perp")
+    if mode in {"legacy", "shadow"}:
+        return {"skipped": "release_authority_required"}
     if mode not in {"legacy", "shadow"}:
         raise ValueError("unknown ordinary execution mode")
     import yaml

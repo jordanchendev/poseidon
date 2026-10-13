@@ -191,6 +191,8 @@ def claim_seed():
             session.flush()
         finally:
             session.execute(text("ALTER TABLE strategies ENABLE TRIGGER trg_strategies_release_authority"))
+        for strategy_id in value.strategy_ids:
+            _delete_pause_event(session, strategy_id)
         session.execute(delete(StrategyVersion).where(StrategyVersion.id.in_(value.version_ids)))
         session.execute(delete(DataManifest).where(DataManifest.id == value.manifest_id))
         session.execute(delete(StrategyRecord).where(StrategyRecord.id.in_(value.strategy_ids)))
