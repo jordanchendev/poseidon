@@ -347,7 +347,7 @@ class ReleaseService:
             return _predicate("holdout_ownership", "unavailable", "committed holdout consume event is missing", **evidence)
         return _predicate("holdout_ownership", "passed", "same-campaign committed holdout use matches", **evidence)
 
-    def _reconciliation_predicate(self, reconciliation, policy, now):
+    def _reconciliation_predicate(self, reconciliation, policy, policy_sha256, now):
         evidence = {"reconciliation_id": None if reconciliation is None else str(reconciliation.id)}
         if policy is None or policy.reconciliation is None:
             return _predicate("reconciliation", "unavailable", "reconciliation policy is unavailable", **evidence)
@@ -358,13 +358,12 @@ class ReleaseService:
         )
         if reconciliation is None:
             return _predicate("reconciliation", "unavailable", "account reconciliation does not exist", **evidence)
-        expected_policy_sha256 = content_sha256(policy.model_dump(mode="json"))
         current_time = timestamp(now if now is not None else datetime.now(UTC), "now")
         age = (current_time - _stored_time(reconciliation.as_of)).total_seconds()
         if (
             reconciliation.account_scope != policy.account_scope
             or reconciliation.account_generation != policy.reconciliation.account_generation
-            or reconciliation.policy_sha256 != expected_policy_sha256
+            or reconciliation.policy_sha256 != policy_sha256
         ):
             return _predicate("reconciliation", "blocked", "reconciliation policy identity changed", **evidence)
         if reconciliation.status != "matched":
@@ -431,7 +430,13 @@ class ReleaseService:
         cells_predicate, trials = self._cells_predicate(campaign)
         review_predicate = self._review_predicate(campaign, trials, review, policy)
         holdout_predicate = self._holdout_predicate(campaign, review)
-        reconciliation_predicate = self._reconciliation_predicate(reconciliation, policy, now)
+        policy_sha256 = None if candidate is None else content_sha256(candidate.policy_json)
+        reconciliation_predicate = self._reconciliation_predicate(
+            reconciliation,
+            policy,
+            policy_sha256,
+            now,
+        )
         authority_predicate = self._authority_predicate(principal, policy)
         return ReleaseGateResult(
             (
