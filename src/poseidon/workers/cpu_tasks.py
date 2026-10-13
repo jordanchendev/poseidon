@@ -2114,8 +2114,8 @@ def evaluate_active_strategies(
             .join(StrategyVersion, StrategyVersion.id == StrategyRecord.active_version_id)
             .filter(
                 StrategyRecord.active_version_id.is_not(None),
-                StrategyRecord.market == market,
-                StrategyRecord.interval == interval,
+                StrategyVersion.config_json["market"].as_string() == market,
+                StrategyVersion.config_json["interval"].as_string() == interval,
             )
             .all()
         )
@@ -2127,17 +2127,13 @@ def evaluate_active_strategies(
 
         for record, version in strategies:
             try:
-                if record.strategy_type == "rule":
-                    strategy = RuleStrategy(config=version.config_json, strategy_id=record.id)
-                elif record.strategy_type == "voting":
-                    config = {
-                        **version.config_json,
-                        "symbol": record.symbol,
-                        "market": record.market,
-                        "interval": record.interval,
-                    }
+                config = version.config_json
+                strategy_type = config["strategy_type"]
+                if strategy_type == "rule":
+                    strategy = RuleStrategy(config=config, strategy_id=record.id)
+                elif strategy_type == "voting":
                     strategy = VotingStrategy(config=config, strategy_id=record.id)
-                elif record.strategy_type == "liquidity_sweep":
+                elif strategy_type == "liquidity_sweep":
                     # supports_live = False -> deferred to backtest/research path only.
                     logger.debug(
                         "Skipping live signal eval for liquidity_sweep strategy %s "
@@ -2149,7 +2145,7 @@ def evaluate_active_strategies(
                     # model strategies use GPU predict path
                     continue
 
-                features = engine.compute(record.symbol, record.market, record.interval)
+                features = engine.compute(config["symbol"], config["market"], config["interval"])
                 raw_signals = strategy.evaluate(features)
                 for sig in raw_signals:
                     pipeline.process(sig)
