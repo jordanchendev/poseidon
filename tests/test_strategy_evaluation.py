@@ -31,7 +31,14 @@ def mock_strategy_record():
         record.config = config or {"conditions": []}
         version = MagicMock()
         version.id = uuid.uuid4()
-        version.config_json = {"immutable": True, **(config or {"conditions": []})}
+        version.config_json = {
+            "immutable": True,
+            "strategy_type": strategy_type,
+            "symbol": symbol,
+            "market": market,
+            "interval": interval,
+            **(config or {"conditions": []}),
+        }
         record.active_version_id = version.id
         return record, version
 
@@ -99,10 +106,14 @@ def test_evaluate_active_strategies_processes_voting_strategy(
     mock_strategy_record,
     mock_signal,
 ):
-    """Voting strategy gets symbol/market/interval merged into config."""
+    """Voting strategy uses only immutable version execution fields."""
     from poseidon.workers.cpu_tasks import evaluate_active_strategies
 
     record, version = mock_strategy_record(strategy_type="voting", config={"rules": []})
+    record.strategy_type = "model"
+    record.symbol = "MUTABLE"
+    record.market = "mutable_market"
+    record.interval = "5m"
     session = MagicMock()
     session.query.return_value.join.return_value.filter.return_value.all.return_value = [(record, version)]
     mock_db_session.return_value.__enter__ = MagicMock(return_value=session)
@@ -120,16 +131,37 @@ def test_evaluate_active_strategies_processes_voting_strategy(
         result = evaluate_active_strategies(market="crypto_spot", interval="1h")
 
         assert result["strategies_evaluated"] == 1
-        # Verify config includes symbol/market/interval keys
+        # Mutable strategy fields cannot alter released live behavior.
+        mock_voting_cls.assert_called_once()
         call_kwargs = mock_voting_cls.call_args
         passed_config = call_kwargs[1]["config"] if "config" in call_kwargs[1] else call_kwargs[0][0]
-        assert passed_config["immutable"] is True
-        assert "symbol" in passed_config
-        assert passed_config["symbol"] == record.symbol
-        assert "market" in passed_config
-        assert passed_config["market"] == record.market
-        assert "interval" in passed_config
-        assert passed_config["interval"] == record.interval
+        assert passed_config == version.config_json
+        mock_engine.compute.assert_called_once_with("BTCUSDT", "crypto_spot", "1h")
+
+
+@patch("poseidon.workers.cpu_tasks.db_session")
+@patch("poseidon.workers.cpu_tasks.FeatureEngine")
+@patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
+def test_evaluate_active_strategies_filters_by_immutable_version_market_interval(
+    mock_pipeline_init,
+    mock_engine_cls,
+    mock_db_session,
+):
+    """Scheduled selection cannot use mutable strategy routing fields."""
+    from poseidon.workers.cpu_tasks import evaluate_active_strategies
+
+    session = MagicMock()
+    session.query.return_value.join.return_value.filter.return_value.all.return_value = []
+    mock_db_session.return_value.__enter__ = MagicMock(return_value=session)
+    mock_db_session.return_value.__exit__ = MagicMock(return_value=False)
+
+    evaluate_active_strategies(market="crypto_spot", interval="1h")
+
+    predicates = session.query.return_value.join.return_value.filter.call_args.args
+    rendered = " ".join(str(predicate) for predicate in predicates)
+    assert "strategy_versions.config_json" in rendered
+    assert "strategies.market" not in rendered
+    assert "strategies.interval" not in rendered
 
 
 @patch("poseidon.workers.cpu_tasks.db_session")
