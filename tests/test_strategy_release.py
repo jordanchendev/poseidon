@@ -269,7 +269,9 @@ def test_gate_passes_candidate_policy_campaign_six_cell_review_and_own_committed
         graph = _seed_gate_graph(session)
         result = _evaluate(session, graph)
 
-        assert result.allowed is True, result.as_json()
+        assert result.allowed is True, [
+            predicate.as_json() for predicate in result.predicates if predicate.state != "passed"
+        ]
         assert [predicate.state for predicate in result.predicates] == ["passed"] * len(GATE_CODES)
         assert _by_code(result, "holdout_ownership").reason == "same-campaign committed holdout use matches"
         session.rollback()
