@@ -5,7 +5,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.orm import sessionmaker
 
 from poseidon.decision_loop.decisions import DecisionService
@@ -46,6 +46,12 @@ PRICE_2330 = {("tw_stock", "2330", "spot"): 100.0}
 @pytest.fixture
 def sessions(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'execution.db'}")
+
+    @event.listens_for(engine, "connect")
+    def sqlite_phase100_functions(connection, _record):
+        connection.create_function("char_length", 1, len)
+        connection.create_function("btrim", 1, lambda value: value.strip())
+
     Base.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     yield factory

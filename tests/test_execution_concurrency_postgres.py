@@ -177,6 +177,15 @@ def claim_seed():
         session.execute(delete(DecisionRecord).where(DecisionRecord.id.in_(value.decision_ids)))
         session.execute(delete(EvaluationSnapshot).where(EvaluationSnapshot.evaluation_run_id.in_(value.run_ids)))
         session.execute(delete(EvaluationRun).where(EvaluationRun.id.in_(value.run_ids)))
+        session.execute(text("ALTER TABLE strategies DISABLE TRIGGER trg_strategies_release_authority"))
+        try:
+            for strategy_id in value.strategy_ids:
+                strategy = session.get(StrategyRecord, strategy_id)
+                if strategy is not None:
+                    strategy.active_version_id = None
+            session.flush()
+        finally:
+            session.execute(text("ALTER TABLE strategies ENABLE TRIGGER trg_strategies_release_authority"))
         session.execute(delete(StrategyVersion).where(StrategyVersion.id.in_(value.version_ids)))
         session.execute(delete(DataManifest).where(DataManifest.id == value.manifest_id))
         session.execute(delete(StrategyRecord).where(StrategyRecord.id.in_(value.strategy_ids)))
@@ -228,11 +237,10 @@ def test_claim_fails_closed_after_pointer_is_cleared(claim_seed):
         finally:
             session.execute(text("ALTER TABLE strategies ENABLE TRIGGER trg_strategies_release_authority"))
 
-    with Session(ENGINE) as session, session.begin():
-        with pytest.raises(DecisionConflictError, match="active pointer"):
-            DecisionService(session).claim_execution(
-                claim_seed.decision_ids[0], 2, principal=claim_seed.worker, now=CLAIM_TIME
-            )
+    with Session(ENGINE) as session, session.begin(), pytest.raises(DecisionConflictError, match="active pointer"):
+        DecisionService(session).claim_execution(
+            claim_seed.decision_ids[0], 2, principal=claim_seed.worker, now=CLAIM_TIME
+        )
 
     with Session(ENGINE) as session:
         decision = session.get(DecisionRecord, claim_seed.decision_ids[0])
