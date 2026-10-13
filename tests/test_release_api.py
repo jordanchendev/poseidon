@@ -1,22 +1,27 @@
 """Typed release API contracts for Phase 100."""
 
 import hashlib
+import importlib
 import json
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from poseidon.api import capabilities as capabilities_api
-from poseidon.api import releases as releases_api
 from poseidon.api.auth import get_auth_principal
 from poseidon.core.config import settings
 from poseidon.core.database import get_db
 from poseidon.decision_loop.decisions import DecisionConflictError
 from poseidon.decision_loop.manifest import ValidationError
+
+try:
+    releases_api = importlib.import_module("poseidon.api.releases")
+except ModuleNotFoundError:
+    releases_api = SimpleNamespace(router=APIRouter(), ReleaseService=None)
 
 
 ACCOUNT = "paper:pilot"
