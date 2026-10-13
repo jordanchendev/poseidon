@@ -27,6 +27,7 @@ from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
 from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
+from poseidon.models.outcome import OutcomeRecord
 from poseidon.models.signal import SignalRecord
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 from poseidon.orders.schemas import Fill, Order
@@ -1215,6 +1216,73 @@ def test_signal_trace_rejects_dual_identity_when_decision_did_not_select_snapsho
         TraceService(db).by_signal(signal.id, principal=manager())
 
     assert error.value.status_code == 422
+
+
+def _trace_outcome(run, snapshot_id, *, marker, kind="signal", decision_id=None):
+    metrics = {"actual": {"marker": marker}}
+    return OutcomeRecord(
+        id=uuid.uuid4(),
+        evaluation_snapshot_id=uuid.UUID(snapshot_id),
+        kind=kind,
+        label_contract_id=uuid.uuid4(),
+        horizon_key="1_session",
+        manifest_id=run.manifest_id,
+        decision_id=decision_id,
+        logical_key_sha256=content_sha256({"logical": marker}),
+        input_sha256=content_sha256({"input": marker}),
+        content_sha256=content_sha256({"content": marker}),
+        revision_no=1,
+        maturity_at=datetime(2026, 9, 27, 12, 0, tzinfo=UTC),
+        status="available",
+        reason_code="matured",
+        metrics_json=metrics,
+    )
+
+
+def test_decision_trace_outcomes_exclude_unselected_snapshots(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    selected = _trace_outcome(run, snapshot_ids[0], marker="selected")
+    unselected = _trace_outcome(run, snapshot_ids[1], marker="unselected")
+    db.add_all([selected, unselected])
+    db.flush()
+
+    rows = DecisionService(db).trace(decision.id, principal=manager())["stages"][6]["rows"]
+
+    assert [row["identities"]["outcome_id"] for row in rows] == [str(selected.id)]
+    assert rows[0]["values"]["marker"] == "selected"
+
+
+def test_decision_trace_trade_outcomes_require_the_anchor_decision(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    first = create_decision(db, run.id, snapshot_ids)
+    second = create_decision(
+        db,
+        run.id,
+        snapshot_ids,
+        portfolio_snapshot_json={"cash": 90000.0, "positions": []},
+    )
+    first_outcome = _trace_outcome(
+        run,
+        snapshot_ids[0],
+        marker="first-decision",
+        kind="trade",
+        decision_id=first.id,
+    )
+    second_outcome = _trace_outcome(
+        run,
+        snapshot_ids[0],
+        marker="second-decision",
+        kind="trade",
+        decision_id=second.id,
+    )
+    db.add_all([first_outcome, second_outcome])
+    db.flush()
+
+    rows = DecisionService(db).trace(first.id, principal=manager())["stages"][6]["rows"]
+
+    assert [row["identities"]["outcome_id"] for row in rows] == [str(first_outcome.id)]
+    assert rows[0]["values"]["marker"] == "first-decision"
 
 
 def test_transition_body_rejects_actor_identity(db):
