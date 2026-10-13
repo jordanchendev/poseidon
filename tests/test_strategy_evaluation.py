@@ -31,13 +31,13 @@ def mock_strategy_record():
         record.config = config or {"conditions": []}
         version = MagicMock()
         version.id = uuid.uuid4()
+        payload = config or {"conditions": []}
         version.config_json = {
-            "immutable": True,
             "strategy_type": strategy_type,
             "symbol": symbol,
             "market": market,
             "interval": interval,
-            **(config or {"conditions": []}),
+            "payload": payload,
         }
         record.active_version_id = version.id
         return record, version
@@ -89,7 +89,7 @@ def test_evaluate_active_strategies_processes_rule_strategy(
     assert result["strategies_evaluated"] == 1
     assert result["signals_generated"] == 1
     assert result["errors"] == []
-    mock_rule_cls.assert_called_once_with(config=version.config_json, strategy_id=record.id)
+    mock_rule_cls.assert_called_once_with(config=version.config_json["payload"], strategy_id=record.id)
     mock_pipeline_process.assert_called_once_with(mock_signal)
 
 
@@ -135,7 +135,12 @@ def test_evaluate_active_strategies_processes_voting_strategy(
         mock_voting_cls.assert_called_once()
         call_kwargs = mock_voting_cls.call_args
         passed_config = call_kwargs[1]["config"] if "config" in call_kwargs[1] else call_kwargs[0][0]
-        assert passed_config == version.config_json
+        assert passed_config == {
+            **version.config_json["payload"],
+            "symbol": version.config_json["symbol"],
+            "market": version.config_json["market"],
+            "interval": version.config_json["interval"],
+        }
         mock_engine.compute.assert_called_once_with("BTCUSDT", "crypto_spot", "1h")
 
 
@@ -276,3 +281,64 @@ def test_evaluate_active_strategies_continues_on_error(
     assert result["signals_generated"] == 1
     assert len(result["errors"]) == 1
     assert "fail-strat" in result["errors"]
+
+
+@pytest.mark.postgresql
+def test_released_executable_envelope_drives_scheduled_evaluation(phase99_session_factory):
+    from poseidon.decision_loop.releases import ReleaseService
+    from poseidon.models.strategy import StrategyRecord
+    from poseidon.models.strategy_version import StrategyVersion
+    from poseidon.workers.cpu_tasks import evaluate_active_strategies
+    from tests.test_strategy_release import _release, _seed_gate_graph
+
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        _release(ReleaseService(session), graph)
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        version = session.get(StrategyVersion, graph.candidate_id)
+        assert strategy.active_version_id == version.id
+
+        context = MagicMock()
+        context.__enter__.return_value = session
+        context.__exit__.return_value = False
+        engine = MagicMock()
+        engine.compute.return_value = pd.DataFrame({"close": [100.0]})
+        rule = MagicMock()
+        rule.evaluate.return_value = []
+        with (
+            patch("poseidon.workers.cpu_tasks.db_session", return_value=context),
+            patch("poseidon.workers.cpu_tasks.FeatureEngine", return_value=engine),
+            patch("poseidon.workers.cpu_tasks.RuleStrategy", return_value=rule) as rule_cls,
+            patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None),
+        ):
+            result = evaluate_active_strategies(market="tw_stock", interval="1d")
+
+        assert result["strategies_evaluated"] == 1
+        assert result["errors"] == []
+        rule_cls.assert_called_once_with(config=version.config_json["payload"], strategy_id=strategy.id)
+        engine.compute.assert_called_once_with("2330", "tw_stock", "1d")
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_release_rejects_incomplete_executable_config_before_pointer_mutation(phase99_session_factory):
+    from poseidon.decision_loop.releases import ReleaseGateRejected, ReleaseService
+    from poseidon.models.strategy import StrategyRecord
+    from poseidon.models.strategy_release_event import StrategyReleaseEvent
+    from tests.test_strategy_release import _release, _seed_gate_graph
+
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session, candidate_config_json={"marker": "not-executable"})
+
+        with pytest.raises(ReleaseGateRejected) as rejected:
+            _release(ReleaseService(session), graph)
+
+        candidate = next(
+            predicate for predicate in rejected.value.result.predicates if predicate.code == "candidate_identity"
+        )
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        assert candidate.state == "blocked"
+        assert "executable config" in candidate.reason
+        assert (strategy.active_version_id, strategy.release_revision) == (None, 0)
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=strategy.id).count() == 0
+        session.rollback()

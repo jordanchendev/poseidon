@@ -18,10 +18,10 @@ from poseidon.decision_loop.manifest import content_sha256
 from poseidon.decision_loop.releases import ReleaseGateResult, ReleasePredicate, ReleaseService
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.data_manifest import DataManifest
-from poseidon.models.experiment_campaign import CampaignReview, HoldoutUse
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_run import EvaluationRun
 from poseidon.models.experiment import ExperimentRecord
+from poseidon.models.experiment_campaign import CampaignReview, HoldoutUse
 from poseidon.models.order import OrderRecord
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy import StrategyRecord
@@ -30,7 +30,6 @@ from poseidon.models.strategy_version import StrategyVersion, strategy_version_d
 from poseidon.research.campaign import CampaignService, build_review_input_identity
 from tests.test_campaign_contract import _complete_campaign_contract, _terminal_trial_kwargs
 from tests.test_decision_service import synthetic_policy, synthetic_reconciliation_policy
-
 
 NOW = datetime(2026, 10, 13, 2, 0, tzinfo=UTC)
 GATE_CODES = (
@@ -70,6 +69,7 @@ def _seed_gate_graph(
     policy_changes=None,
     strategy_id=None,
     incumbent_id=None,
+    candidate_config_json=None,
 ):
     marker = uuid.uuid4().hex
     if (strategy_id is None) != (incumbent_id is None):
@@ -112,7 +112,15 @@ def _seed_gate_graph(
     versions = [] if incumbent is None else [incumbent]
     roles = ("incumbent", "candidate") if incumbent is None else ("candidate",)
     for offset, role in enumerate(roles):
-        config = {"marker": marker, "role": role}
+        config = {
+            "strategy_type": "rule",
+            "symbol": "2330",
+            "market": "tw_stock",
+            "interval": "1d",
+            "payload": {"conditions": [], "marker": marker, "role": role},
+        }
+        if role == "candidate" and candidate_config_json is not None:
+            config = copy.deepcopy(candidate_config_json)
         artifact = {"uri": f"fixture://phase100/{marker}/{role}"}
         version = StrategyVersion(
             strategy_id=strategy.id,
@@ -178,10 +186,7 @@ def _seed_gate_graph(
         for role in ("incumbent", "candidate")
         for arm in ("fundamental_only", "technical_only", "combined")
     }
-    review_cells = {
-        cell: {"1_session": {"status": "available", "estimate": 0.1, "coverage": 1.0}}
-        for cell in coverage
-    }
+    review_cells = {cell: {"1_session": {"status": "available", "estimate": 0.1, "coverage": 1.0}} for cell in coverage}
     result = {
         "status": review_status,
         "reason_code": None if review_status == "passed" else f"fixture_{review_status}",
@@ -453,9 +458,7 @@ def test_gate_blocks_incumbent_pointer_drift(phase99_session_factory):
         session.flush()
         session.execute(text("SELECT set_config('poseidon.release_event_id', :id, true)"), {"id": str(event.id)})
         session.execute(
-            text(
-                "UPDATE strategies SET active_version_id=:candidate,release_revision=1 WHERE id=:strategy"
-            ),
+            text("UPDATE strategies SET active_version_id=:candidate,release_revision=1 WHERE id=:strategy"),
             {"candidate": graph.candidate_id, "strategy": graph.strategy_id},
         )
         session.expire_all()
@@ -895,8 +898,7 @@ def test_rollback_rejects_active_version_with_different_account_identity(
         assert (strategy.active_version_id, strategy.release_revision) == (expected_pointer, expected_revision)
         assert session.get(OrderRecord, order.id) is not None
         assert (
-            session.query(StrategyReleaseEvent).filter_by(strategy_id=target.strategy_id).count()
-            == expected_revision
+            session.query(StrategyReleaseEvent).filter_by(strategy_id=target.strategy_id).count() == expected_revision
         )
         session.rollback()
 
