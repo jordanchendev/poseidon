@@ -98,6 +98,8 @@ def test_trace_openapi_publishes_three_typed_reads_and_error_models():
 
     stage = schema["components"]["schemas"]["TraceStage"]
     assert stage["properties"]["name"]["enum"] == list(STAGE_NAMES)
+    error = schema["components"]["schemas"]["TraceAPIError"]
+    assert set(error["required"]) == {"detail", "error_code", "status_code"}
 
 
 def test_trace_stage_order_is_a_closed_nine_stage_contract():
@@ -171,7 +173,11 @@ def test_formal_decision_trace_maps_corrupt_frozen_chain_to_422(phase99_session_
             app.dependency_overrides.pop(get_auth_principal, None)
 
         assert response.status_code == 422
-        assert response.json() == {"detail": "Trace identity is invalid"}
+        assert response.json() == {
+            "detail": "Trace identity is invalid",
+            "error_code": "HTTP_422",
+            "status_code": 422,
+        }
         session.rollback()
 
 
