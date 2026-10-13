@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy import create_engine, update
+from sqlalchemy import create_engine, event, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
@@ -37,6 +37,12 @@ def compile_jsonb_sqlite(type_, compiler, **kw):
 @pytest.fixture
 def db():
     engine = create_engine("sqlite://")
+
+    @event.listens_for(engine, "connect")
+    def register_postgres_text_functions(dbapi_connection, _connection_record):
+        dbapi_connection.create_function("char_length", 1, len)
+        dbapi_connection.create_function("btrim", 1, lambda value: value.strip())
+
     tables = [
         Base.metadata.tables[name]
         for name in (
