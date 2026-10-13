@@ -108,6 +108,7 @@ def test_evaluate_active_strategies_processes_rule_strategy(
         instrument="spot",
         strategy_id=record.id,
     )
+    mock_engine.compute.assert_called_once_with("BTCUSDT", "crypto_spot", "1h", feature_specs=[])
     mock_pipeline_process.assert_called_once_with(mock_signal)
 
 
@@ -151,7 +152,6 @@ def test_evaluate_active_strategies_processes_voting_strategy(
     with patch("poseidon.strategies.voting_strategy.VotingStrategy") as mock_voting_cls:
         mock_strategy = MagicMock()
         mock_strategy.evaluate.return_value = [mock_signal]
-        mock_strategy.get_feature_specs.return_value = [("cum_return", {"period": 6})]
         mock_voting_cls.return_value = mock_strategy
 
         result = evaluate_active_strategies(market="crypto_spot", interval="1h")
@@ -172,7 +172,7 @@ def test_evaluate_active_strategies_processes_voting_strategy(
             "BTCUSDT",
             "crypto_spot",
             "1h",
-            feature_specs=[("cum_return", {"period": 6})],
+            feature_specs=[("atr", {"period": 14}), ("returns", {})],
         )
 
 
@@ -195,24 +195,28 @@ def test_evaluate_active_voting_strategy_uses_frozen_feature_specs(
             "name": "scheduled-voting-features",
             "sub_signals": [
                 {
-                    "type": "indicator_above",
-                    "indicator": "cum_return",
-                    "params": {"period": 6},
-                    "threshold": 0.0,
-                },
-                {
-                    "type": "indicator_above",
-                    "indicator": "rsi",
-                    "params": {"period": 8},
-                    "threshold": 50.0,
-                },
-                {
-                    "type": "indicator_comparison",
-                    "indicator_a": "ema",
-                    "indicator_b": "ema",
-                    "params": {"period_a": 7, "period_b": 26},
-                    "direction": "above",
-                },
+                    "any": [
+                        {
+                            "type": "indicator_above",
+                            "indicator": "cum_return",
+                            "params": {"period": 6},
+                            "threshold": 0.0,
+                        },
+                        {
+                            "type": "indicator_above",
+                            "indicator": "rsi",
+                            "params": {"period": 8},
+                            "threshold": 50.0,
+                        },
+                        {
+                            "type": "indicator_comparison",
+                            "indicator_a": "ema",
+                            "indicator_b": "ema",
+                            "params": {"period_a": 7, "period_b": 26},
+                            "direction": "above",
+                        },
+                    ]
+                }
             ],
             "min_votes": 1,
             "conviction_gap": 1,
@@ -407,7 +411,35 @@ def test_released_executable_envelope_drives_scheduled_evaluation(phase99_sessio
     from tests.test_strategy_release import _release, _seed_gate_graph
 
     with phase99_session_factory() as session:
-        graph = _seed_gate_graph(session)
+        graph = _seed_gate_graph(
+            session,
+            candidate_config_json={
+                "strategy_type": "rule",
+                "symbol": "2330",
+                "market": "tw_stock",
+                "instrument": "spot",
+                "interval": "1d",
+                "payload": {
+                    "name": "released-nested-rule",
+                    "rules": [
+                        {
+                            "condition": {
+                                "all": [
+                                    {
+                                        "type": "indicator_above",
+                                        "indicator": "rsi",
+                                        "params": {"period": 8},
+                                        "threshold": 50.0,
+                                    },
+                                    {"type": "price_change_pct", "threshold": 0.01},
+                                ]
+                            },
+                            "action": "long",
+                        }
+                    ],
+                },
+            },
+        )
         _release(ReleaseService(session), graph)
         strategy = session.get(StrategyRecord, graph.strategy_id)
         version = session.get(StrategyVersion, graph.candidate_id)
@@ -421,17 +453,25 @@ def test_released_executable_envelope_drives_scheduled_evaluation(phase99_sessio
         context.__enter__.return_value = session
         context.__exit__.return_value = False
         engine = MagicMock()
-        engine.compute.return_value = pd.DataFrame({"close": [100.0]})
+        engine.compute.return_value = pd.DataFrame({"close": [100.0], "rsi_8": [60.0], "return_1d": [0.02]})
+        emitted = []
         with (
             patch("poseidon.workers.cpu_tasks.db_session", return_value=context),
             patch("poseidon.workers.cpu_tasks.FeatureEngine", return_value=engine),
             patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None),
+            patch("poseidon.risk.pipeline.SignalPipeline.process", side_effect=emitted.append),
         ):
             result = evaluate_active_strategies(market="tw_stock", interval="1d")
 
         assert result["strategies_evaluated"] == 1
         assert result["errors"] == []
-        engine.compute.assert_called_once_with("2330", "tw_stock", "1d")
+        assert len(emitted) == 1
+        engine.compute.assert_called_once_with(
+            "2330",
+            "tw_stock",
+            "1d",
+            feature_specs=[("rsi", {"period": 8}), ("returns", {})],
+        )
         session.rollback()
 
 
@@ -513,5 +553,5 @@ def test_released_perp_envelope_emits_owner_frozen_instrument(phase99_session_fa
         assert emitted[0].symbol == symbol
         assert emitted[0].market == "crypto_perp"
         assert emitted[0].instrument is InstrumentType.PERPETUAL
-        engine.compute.assert_called_once_with(symbol, "crypto_perp", "4h")
+        engine.compute.assert_called_once_with(symbol, "crypto_perp", "4h", feature_specs=[])
         session.rollback()

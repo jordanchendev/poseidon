@@ -1111,6 +1111,7 @@ def test_release_rejects_non_executable_nested_dsl_before_pointer_mutation(
 
 
 def test_executable_voting_config_accepts_canonical_model_prediction_identity():
+    model_version_id = str(uuid.uuid4())
     params = {
         "rsi_period": 10,
         "ema_short": 7,
@@ -1133,7 +1134,7 @@ def test_executable_voting_config_accepts_canonical_model_prediction_identity():
         symbol="BTCUSDT",
         market="crypto_spot",
         interval="1h",
-        model_version_id=73,
+        model_version_id=model_version_id,
     )
     for key in ("symbol", "market", "interval"):
         payload.pop(key)
@@ -1155,7 +1156,7 @@ def test_executable_voting_config_accepts_canonical_model_prediction_identity():
         if condition.type == "ml_prediction"
     ]
     assert ml_conditions
-    assert {condition.model_version_id for condition in ml_conditions} == {73}
+    assert {condition.model_version_id for condition in ml_conditions} == {model_version_id}
 
 
 def test_executable_voting_config_rejects_unbound_model_prediction():
@@ -1180,6 +1181,134 @@ def test_executable_voting_config_rejects_unbound_model_prediction():
                 },
             }
         )
+
+
+def test_executable_feature_plan_recurses_rule_and_voting_conditions():
+    rule = ExecutableStrategyConfig.model_validate(
+        {
+            "strategy_type": "rule",
+            "symbol": "BTCUSDT",
+            "market": "crypto_spot",
+            "instrument": "spot",
+            "interval": "1h",
+            "payload": {
+                "name": "nested-rule",
+                "rules": [
+                    {
+                        "condition": {
+                            "all": [
+                                {
+                                    "type": "indicator_above",
+                                    "indicator": "rsi",
+                                    "params": {"period": 8},
+                                    "threshold": 50.0,
+                                },
+                                {
+                                    "type": "indicator_crosses",
+                                    "indicator": "ema",
+                                    "params": {"fast": 7, "slow": 26},
+                                    "direction": "up",
+                                },
+                                {"type": "price_change_pct", "threshold": 0.01},
+                            ]
+                        },
+                        "action": "long",
+                    }
+                ],
+            },
+        }
+    )
+    voting = ExecutableStrategyConfig.model_validate(
+        {
+            "strategy_type": "voting",
+            "symbol": "BTCUSDT",
+            "market": "crypto_spot",
+            "instrument": "spot",
+            "interval": "1h",
+            "payload": {
+                "name": "nested-voting",
+                "sub_signals": [
+                    {
+                        "vote": {
+                            "conditions": [
+                                {
+                                    "type": "indicator_above",
+                                    "indicator": "cum_return",
+                                    "params": {"period": 6},
+                                    "threshold": 0.0,
+                                },
+                                {
+                                    "type": "bollinger_width_percentile",
+                                    "params": {"period": 20, "lookback": 168},
+                                },
+                            ],
+                            "min_votes": 1,
+                        }
+                    }
+                ],
+                "min_votes": 1,
+            },
+        }
+    )
+
+    assert rule.live_feature_specs() == [
+        ("rsi", {"period": 8}),
+        ("ema", {"period": 7}),
+        ("ema", {"period": 26}),
+        ("returns", {}),
+    ]
+    assert voting.live_feature_specs() == [
+        ("cum_return", {"period": 6}),
+        ("bollinger", {"period": 20, "num_std": 2.0}),
+        ("atr", {"period": 14}),
+        ("returns", {}),
+    ]
+
+
+@pytest.mark.postgresql
+@pytest.mark.parametrize(
+    "unsupported_condition",
+    [
+        {"type": "feature_above", "column": "funding_rate_daily", "threshold": 0.0},
+        {
+            "type": "ml_prediction",
+            "model_version_id": str(uuid.uuid4()),
+            "threshold": 0.5,
+            "direction": "long",
+        },
+    ],
+)
+def test_release_rejects_non_live_feature_conditions_before_pointer_mutation(
+    phase99_session_factory,
+    unsupported_condition,
+):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(
+            session,
+            candidate_config_json={
+                "strategy_type": "voting",
+                "symbol": "2330",
+                "market": "tw_stock",
+                "instrument": "spot",
+                "interval": "1d",
+                "payload": {
+                    "name": "unsupported-live-feature",
+                    "sub_signals": [unsupported_condition],
+                    "min_votes": 1,
+                },
+            },
+        )
+
+        with pytest.raises(ReleaseGateRejected) as rejected:
+            _release(ReleaseService(session), graph, key=f"unsupported-live-{unsupported_condition['type']}")
+
+        predicates = {predicate.code: predicate for predicate in rejected.value.result.predicates}
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        assert predicates["candidate_identity"].state == "blocked"
+        assert predicates["candidate_identity"].reason == "candidate executable config is not live-capable"
+        assert (strategy.active_version_id, strategy.release_revision) == (None, 0)
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=strategy.id).count() == 0
+        session.rollback()
 
 
 @pytest.mark.postgresql
