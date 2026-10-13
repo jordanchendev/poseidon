@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
 from poseidon.decision_loop.decisions import DecisionConflictError
@@ -130,7 +130,12 @@ def test_pause_waits_for_ordinary_strategy_lock_holder(graph):
 
     holder_ready = Event()
     pause_started = Event()
+    pause_lock_attempted = Event()
     release_holder = Event()
+
+    def observe_pause_lock(connection, cursor, statement, parameters, context, executemany):
+        if connection.info.get("phase100_pause_waiter") and "FOR UPDATE" in statement:
+            pause_lock_attempted.set()
 
     def hold_strategy_lock():
         with Session(ENGINE) as session, session.begin():
@@ -144,24 +149,34 @@ def test_pause_waits_for_ordinary_strategy_lock_holder(graph):
     def pause():
         assert holder_ready.wait(timeout=10)
         with Session(ENGINE) as session, session.begin():
+            session.connection().info["phase100_pause_waiter"] = True
             pause_started.set()
-            response = ReleaseService(session).pause(
-                graph.strategy_id,
-                expected_revision=1,
-                expected_active_version_id=graph.candidate_id,
-                principal=release_manager(),
-                idempotency_key="pause-after-ordinary-lock",
-                reason="serialize behind ordinary authority reader",
-            )
-            return response
+            try:
+                return ReleaseService(session).pause(
+                    graph.strategy_id,
+                    expected_revision=1,
+                    expected_active_version_id=graph.candidate_id,
+                    principal=release_manager(),
+                    idempotency_key="pause-after-ordinary-lock",
+                    reason="serialize behind ordinary authority reader",
+                )
+            finally:
+                session.connection().info.pop("phase100_pause_waiter", None)
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        holder = pool.submit(hold_strategy_lock)
-        waiter = pool.submit(pause)
-        assert pause_started.wait(timeout=10)
+    event.listen(ENGINE, "before_cursor_execute", observe_pause_lock)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            holder = pool.submit(hold_strategy_lock)
+            waiter = pool.submit(pause)
+            assert pause_started.wait(timeout=10)
+            assert pause_lock_attempted.wait(timeout=10)
+            assert waiter.done() is False
+            release_holder.set()
+            holder.result(timeout=20)
+            response = waiter.result(timeout=20)
+    finally:
         release_holder.set()
-        holder.result(timeout=20)
-        response = waiter.result(timeout=20)
+        event.remove(ENGINE, "before_cursor_execute", observe_pause_lock)
 
     assert response["event_type"] == "pause"
     with Session(ENGINE) as session:
