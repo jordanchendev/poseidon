@@ -297,6 +297,10 @@ def test_released_executable_envelope_drives_scheduled_evaluation(phase99_sessio
         strategy = session.get(StrategyRecord, graph.strategy_id)
         version = session.get(StrategyVersion, graph.candidate_id)
         assert strategy.active_version_id == version.id
+        session.query(StrategyRecord).filter(StrategyRecord.id != strategy.id).update(
+            {StrategyRecord.active_version_id: None}, synchronize_session=False
+        )
+        session.flush()
 
         context = MagicMock()
         context.__enter__.return_value = session
