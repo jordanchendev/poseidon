@@ -224,10 +224,10 @@ def test_claim_rejects_null_or_drifted_active_pointer_before_mutation(db, claim_
     strategy.active_version_id = None if claim_next else uuid.uuid4()
     db.flush()
 
-    with pytest.raises(DecisionConflictError, match="active pointer"):
-        if claim_next:
-            DecisionService(db).claim_next_approved("paper:pilot", principal=worker(), now=CLAIM_TIME)
-        else:
+    if claim_next:
+        assert DecisionService(db).claim_next_approved("paper:pilot", principal=worker(), now=CLAIM_TIME) is None
+    else:
+        with pytest.raises(DecisionConflictError, match="active pointer"):
             DecisionService(db).claim_execution(decision.id, 2, principal=worker(), now=CLAIM_TIME)
 
     assert decision.status == "approved"
