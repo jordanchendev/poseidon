@@ -342,7 +342,23 @@ def test_gate_passes_candidate_policy_campaign_six_cell_review_and_own_committed
 @pytest.mark.postgresql
 def test_gate_blocks_candidate_policy_market_outside_strategy_market(phase99_session_factory):
     with phase99_session_factory() as session:
-        graph = _seed_gate_graph(session, policy_changes={"market": "crypto_perp"})
+        graph = _seed_gate_graph(
+            session,
+            policy_changes={
+                "market": "crypto_perp",
+                "reconciliation": synthetic_reconciliation_policy(
+                    currency="USDT",
+                    perp_instrument_rules={
+                        "BTC/USDT:USDT": {
+                            "quantity_step": 0.001,
+                            "contract_multiplier": 1.0,
+                            "margin_semantics": "synthetic-isolated",
+                            "funding_semantics": "synthetic-periodic-cashflow",
+                        }
+                    },
+                ),
+            },
+        )
 
         result = _evaluate(session, graph)
 
