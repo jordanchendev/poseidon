@@ -15,7 +15,7 @@ from poseidon.api.auth import AuthPrincipal
 from poseidon.backtest.experiment_tracker import ExperimentTracker
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionPolicy
 from poseidon.decision_loop.manifest import content_sha256
-from poseidon.decision_loop.releases import ReleaseGateResult, ReleasePredicate, ReleaseService
+from poseidon.decision_loop.releases import ReleaseGateRejected, ReleaseGateResult, ReleasePredicate, ReleaseService
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.data_manifest import DataManifest
 from poseidon.models.decision_record import DecisionRecord
@@ -117,7 +117,22 @@ def _seed_gate_graph(
             "symbol": "2330",
             "market": "tw_stock",
             "interval": "1d",
-            "payload": {"conditions": [], "marker": marker, "role": role},
+            "payload": {
+                "name": f"phase100-{marker}-{role}",
+                "description": "Phase 100 executable release fixture",
+                "rules": [
+                    {
+                        "condition": {
+                            "type": "feature_above",
+                            "column": "close",
+                            "threshold": 200.0,
+                        },
+                        "action": "long",
+                        "quantity_pct": 0.1,
+                        "confidence": 0.9,
+                    }
+                ],
+            },
         }
         if role == "candidate" and candidate_config_json is not None:
             config = copy.deepcopy(candidate_config_json)
@@ -976,6 +991,82 @@ def test_four_transitions_preserve_pointer_semantics_and_rollback_creates_no_wor
             session.query(OrderRecord).count(),
             session.query(PositionLot).count(),
         ) == baseline
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_release_rejects_executable_market_outside_policy_and_campaign_scope(phase99_session_factory):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(
+            session,
+            candidate_config_json={
+                "strategy_type": "rule",
+                "symbol": "2330",
+                "market": "crypto_spot",
+                "interval": "1d",
+                "payload": {
+                    "name": "wrong-market",
+                    "rules": [
+                        {
+                            "condition": {"type": "feature_above", "column": "close", "threshold": 200.0},
+                            "action": "long",
+                        }
+                    ],
+                },
+            },
+        )
+
+        with pytest.raises(ReleaseGateRejected) as rejected:
+            _release(ReleaseService(session), graph, key="wrong-executable-market")
+
+        predicates = {predicate.code: predicate for predicate in rejected.value.result.predicates}
+        assert predicates["candidate_identity"].state == "blocked"
+        assert "routing identity" in predicates["candidate_identity"].reason
+        assert predicates["campaign_identity"].state == "blocked"
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        assert (strategy.active_version_id, strategy.release_revision) == (None, 0)
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).count() == 0
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_rollback_rejects_target_whose_executable_interval_no_longer_matches_strategy(phase99_session_factory):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        service = ReleaseService(session)
+        _release(service, graph)
+        service.pause(
+            graph.strategy_id,
+            expected_revision=1,
+            expected_active_version_id=graph.candidate_id,
+            principal=release_manager(),
+            idempotency_key="pause-before-routing-drift",
+            reason="pause before validating rollback target",
+        )
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        strategy.interval = "1h"
+        session.flush()
+
+        with pytest.raises(ReleaseGateRejected) as rejected:
+            service.rollback(
+                graph.strategy_id,
+                graph.candidate_id,
+                graph.reconciliation_id,
+                expected_revision=2,
+                expected_active_version_id=None,
+                principal=release_manager(),
+                idempotency_key="rollback-routing-drift",
+                reason="must not restore mismatched executable routing",
+                now=NOW,
+            )
+
+        target = next(
+            predicate for predicate in rejected.value.result.predicates if predicate.code == "rollback_target"
+        )
+        assert target.state == "blocked"
+        assert "routing identity" in target.reason
+        assert (strategy.active_version_id, strategy.release_revision) == (None, 2)
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).count() == 2
         session.rollback()
 
 

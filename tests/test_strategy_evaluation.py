@@ -31,7 +31,15 @@ def mock_strategy_record():
         record.config = config or {"conditions": []}
         version = MagicMock()
         version.id = uuid.uuid4()
-        payload = config or {"conditions": []}
+        payload = config or {
+            "name": "scheduled-rule",
+            "rules": [
+                {
+                    "condition": {"type": "feature_above", "column": "close", "threshold": 200.0},
+                    "action": "long",
+                }
+            ],
+        }
         version.config_json = {
             "strategy_type": strategy_type,
             "symbol": symbol,
@@ -89,7 +97,15 @@ def test_evaluate_active_strategies_processes_rule_strategy(
     assert result["strategies_evaluated"] == 1
     assert result["signals_generated"] == 1
     assert result["errors"] == []
-    mock_rule_cls.assert_called_once_with(config=version.config_json["payload"], strategy_id=record.id)
+    mock_rule_cls.assert_called_once_with(
+        config={
+            **version.config_json["payload"],
+            "symbol": version.config_json["symbol"],
+            "market": version.config_json["market"],
+            "interval": version.config_json["interval"],
+        },
+        strategy_id=record.id,
+    )
     mock_pipeline_process.assert_called_once_with(mock_signal)
 
 
@@ -109,7 +125,14 @@ def test_evaluate_active_strategies_processes_voting_strategy(
     """Voting strategy uses only immutable version execution fields."""
     from poseidon.workers.cpu_tasks import evaluate_active_strategies
 
-    record, version = mock_strategy_record(strategy_type="voting", config={"rules": []})
+    record, version = mock_strategy_record(
+        strategy_type="voting",
+        config={
+            "name": "scheduled-voting",
+            "sub_signals": [{"type": "feature_above", "column": "close", "threshold": 200.0}],
+            "min_votes": 1,
+        },
+    )
     record.strategy_type = "model"
     record.symbol = "MUTABLE"
     record.market = "mutable_market"
@@ -307,19 +330,15 @@ def test_released_executable_envelope_drives_scheduled_evaluation(phase99_sessio
         context.__exit__.return_value = False
         engine = MagicMock()
         engine.compute.return_value = pd.DataFrame({"close": [100.0]})
-        rule = MagicMock()
-        rule.evaluate.return_value = []
         with (
             patch("poseidon.workers.cpu_tasks.db_session", return_value=context),
             patch("poseidon.workers.cpu_tasks.FeatureEngine", return_value=engine),
-            patch("poseidon.workers.cpu_tasks.RuleStrategy", return_value=rule) as rule_cls,
             patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None),
         ):
             result = evaluate_active_strategies(market="tw_stock", interval="1d")
 
         assert result["strategies_evaluated"] == 1
         assert result["errors"] == []
-        rule_cls.assert_called_once_with(config=version.config_json["payload"], strategy_id=strategy.id)
         engine.compute.assert_called_once_with("2330", "tw_stock", "1d")
         session.rollback()
 
