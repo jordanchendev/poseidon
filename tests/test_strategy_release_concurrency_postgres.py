@@ -3,6 +3,8 @@
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+from queue import Queue
 from threading import Barrier, Event
 
 import pytest
@@ -10,7 +12,9 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
 from poseidon.decision_loop.decisions import DecisionConflictError
+from poseidon.decision_loop.execution import DecisionExecutionService
 from poseidon.decision_loop.releases import ReleaseService
+from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from tests.test_strategy_release import NOW, _seed_gate_graph, release_manager
@@ -182,3 +186,116 @@ def test_pause_waits_for_ordinary_strategy_lock_holder(graph):
     with Session(ENGINE) as session:
         strategy = session.get(StrategyRecord, graph.strategy_id)
         assert (strategy.active_version_id, strategy.release_revision) == (None, 2)
+
+
+@pytest.mark.parametrize("operation", ("release", "rollback"))
+def test_release_transition_waits_for_current_account_reconciliation(graph, operation):
+    if operation == "rollback":
+        with Session(ENGINE) as session, session.begin():
+            _release(session, graph, key="reconciliation-lock-initial-release")
+            ReleaseService(session).pause(
+                graph.strategy_id,
+                expected_revision=1,
+                expected_active_version_id=graph.candidate_id,
+                principal=release_manager(),
+                idempotency_key="reconciliation-lock-pause",
+                reason="prepare rollback reconciliation race",
+            )
+
+    holder_ready = Event()
+    newer_committed = Event()
+    progress = Queue()
+
+    def observe_before(connection, cursor, statement, parameters, context, executemany):
+        if not connection.info.get("phase100_reconciliation_waiter"):
+            return
+        normalized = " ".join(statement.lower().split())
+        if "pg_advisory_xact_lock" in normalized:
+            progress.put("account_lock")
+        elif "insert into strategy_release_events" in normalized:
+            assert newer_committed.wait(timeout=10)
+
+    def observe_after(connection, cursor, statement, parameters, context, executemany):
+        if not connection.info.get("phase100_reconciliation_waiter"):
+            return
+        normalized = " ".join(statement.lower().split())
+        if (
+            "from account_reconciliations" in normalized
+            and "order by account_reconciliations.as_of desc" in normalized
+        ):
+            progress.put("stale_read")
+
+    def append_newer_reconciliation():
+        observed = None
+        with Session(ENGINE) as session, session.begin():
+            current = session.get(AccountReconciliation, graph.reconciliation_id)
+            DecisionExecutionService(session)._advisory_lock(
+                current.account_scope,
+                current.account_generation,
+            )
+            session.add(
+                AccountReconciliation(
+                    account_scope=current.account_scope,
+                    account_generation=current.account_generation,
+                    as_of=NOW + timedelta(seconds=1),
+                    broker_state_watermark=f"broker:concurrent-{operation}",
+                    internal_state_watermark=f"internal:concurrent-{operation}",
+                    broker_snapshot_sha256=("6" if operation == "release" else "7") * 64,
+                    broker_snapshot_json={},
+                    internal_snapshot_json={},
+                    difference_json={"unresolved": ["concurrent fixture"]},
+                    policy_sha256=current.policy_sha256,
+                    status="unresolved",
+                )
+            )
+            session.flush()
+            holder_ready.set()
+            observed = progress.get(timeout=10)
+        newer_committed.set()
+        return observed
+
+    def transition():
+        assert holder_ready.wait(timeout=10)
+        try:
+            with Session(ENGINE) as session, session.begin():
+                session.connection().info["phase100_reconciliation_waiter"] = True
+                try:
+                    if operation == "release":
+                        _release(session, graph, key="release-after-reconciliation-lock")
+                    else:
+                        ReleaseService(session).rollback(
+                            graph.strategy_id,
+                            graph.candidate_id,
+                            graph.reconciliation_id,
+                            expected_revision=2,
+                            expected_active_version_id=None,
+                            principal=release_manager(),
+                            idempotency_key="rollback-after-reconciliation-lock",
+                            reason="reject stale reconciliation race",
+                            now=NOW + timedelta(seconds=2),
+                        )
+                finally:
+                    session.connection().info.pop("phase100_reconciliation_waiter", None)
+            return "ok"
+        except DecisionConflictError:
+            return "conflict"
+
+    event.listen(ENGINE, "before_cursor_execute", observe_before)
+    event.listen(ENGINE, "after_cursor_execute", observe_after)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            holder = pool.submit(append_newer_reconciliation)
+            waiter = pool.submit(transition)
+            observed = holder.result(timeout=20)
+            result = waiter.result(timeout=20)
+    finally:
+        newer_committed.set()
+        event.remove(ENGINE, "after_cursor_execute", observe_after)
+        event.remove(ENGINE, "before_cursor_execute", observe_before)
+
+    assert observed == "account_lock"
+    assert result == "conflict"
+    with Session(ENGINE) as session:
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        expected = (None, 2) if operation == "rollback" else (None, 0)
+        assert (strategy.active_version_id, strategy.release_revision) == expected

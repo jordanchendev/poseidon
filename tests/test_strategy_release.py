@@ -21,6 +21,7 @@ from poseidon.models.data_manifest import DataManifest
 from poseidon.models.experiment_campaign import CampaignReview, HoldoutUse
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_run import EvaluationRun
+from poseidon.models.experiment import ExperimentRecord
 from poseidon.models.order import OrderRecord
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy import StrategyRecord
@@ -550,6 +551,34 @@ def test_gate_blocks_incomplete_passed_review_output(phase99_session_factory, fi
 
 
 @pytest.mark.postgresql
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("original_trial_id", "undeclared-trial"), ("trial_role", "search")),
+)
+def test_gate_blocks_terminal_trial_identity_outside_frozen_declaration(
+    phase99_session_factory,
+    field,
+    value,
+):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        trial = (
+            session.query(ExperimentRecord)
+            .filter_by(campaign_id=graph.campaign_id)
+            .order_by(ExperimentRecord.id)
+            .first()
+        )
+        setattr(trial, field, value)
+
+        with session.no_autoflush:
+            result = _evaluate(session, graph)
+
+        assert _by_code(result, "six_cell_evidence").state == "blocked"
+        assert "declared" in _by_code(result, "six_cell_evidence").reason
+        session.rollback()
+
+
+@pytest.mark.postgresql
 def test_gate_blocks_foreign_candidate_review_and_holdout_consumption(phase99_session_factory):
     with phase99_session_factory() as session:
         own = _seed_gate_graph(session)
@@ -639,7 +668,7 @@ def test_release_replay_rechecks_retained_account_scope(phase99_session_factory)
 
 def _seed_rollback_work(session, graph, work_kind):
     candidate = session.get(StrategyVersion, graph.candidate_id)
-    if work_kind == "standalone_order":
+    if work_kind in {"standalone_order", "pending_order"}:
         row = OrderRecord(
             strategy_name="phase100-legacy-order",
             symbol="2330",
@@ -649,7 +678,7 @@ def _seed_rollback_work(session, graph, work_kind):
             target_weight=0.1,
             quantity=1.0,
             side="long",
-            status="pending_submit",
+            status="pending" if work_kind == "pending_order" else "pending_submit",
             broker_mode="paper",
             order_origin="signal",
             account_scope="paper:pilot",
@@ -687,7 +716,7 @@ def _seed_rollback_work(session, graph, work_kind):
         account_scope="paper:pilot",
         decision_as_of=NOW,
         valid_until=NOW + timedelta(hours=1),
-        status="approved",
+        status="pending_approval" if work_kind == "pending_approval_decision" else "approved",
         creation_sha256=content_sha256({"decision": uuid.uuid4().hex}),
         policy_sha256=candidate.content_sha256,
         original_json={"order_intents": [{"symbol": "2330"}]},
@@ -701,7 +730,10 @@ def _seed_rollback_work(session, graph, work_kind):
 
 
 @pytest.mark.postgresql
-@pytest.mark.parametrize("work_kind", ("approved_decision", "standalone_order"))
+@pytest.mark.parametrize(
+    "work_kind",
+    ("pending_approval_decision", "approved_decision", "pending_order", "standalone_order"),
+)
 def test_rollback_blocks_outstanding_ordinary_work(phase99_session_factory, work_kind):
     with phase99_session_factory() as session:
         graph = _seed_gate_graph(session)
@@ -732,7 +764,8 @@ def test_rollback_blocks_outstanding_ordinary_work(phase99_session_factory, work
 
         strategy = session.get(StrategyRecord, graph.strategy_id)
         assert (strategy.active_version_id, strategy.release_revision) == (None, 2)
-        assert session.get(DecisionRecord if work_kind == "approved_decision" else OrderRecord, work_id) is not None
+        model = DecisionRecord if work_kind.endswith("decision") else OrderRecord
+        assert session.get(model, work_id) is not None
         assert session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).count() == 2
         session.rollback()
 
