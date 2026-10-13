@@ -131,7 +131,7 @@ def build_trace_stages(trace):
     decisions = trace.get("decisions", [])
     if not decisions and trace.get("decision") is not None:
         decisions = [trace["decision"]]
-    no_trade = any(row["status"] == "no_trade" for row in evaluations)
+    no_trade = not decisions and any(row["status"] == "no_trade" for row in evaluations)
     if signals:
         signal_state, signal_reason = "Available", "Stored signal carries exact trace identity"
     elif no_trade:
