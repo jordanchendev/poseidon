@@ -153,9 +153,20 @@ class FeatureThresholdCondition(_ExecutableConditionModel):
 
 class ModelPredictionCondition(_ExecutableConditionModel):
     type: Literal["ml_prediction"]
-    model_version_id: Annotated[int, Field(strict=True, gt=0)]
+    model_version_id: Annotated[str, Field(min_length=36, max_length=36)]
     threshold: Annotated[int | float, Field(ge=0)] = 0.5
     direction: Literal["long", "short"] = "long"
+
+    @field_validator("model_version_id")
+    @classmethod
+    def require_canonical_model_version_id(cls, value):
+        try:
+            canonical = str(uuid.UUID(value))
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise ValueError("model_version_id must be a canonical UUID") from exc
+        if value != canonical:
+            raise ValueError("model_version_id must be a canonical UUID")
+        return value
 
 
 class AllCondition(_ExecutableConditionModel):
@@ -203,6 +214,74 @@ ExecutableCondition = (
 
 for _recursive_model in (AllCondition, AnyCondition, NoneCondition, VoteConditionBody, VoteCondition):
     _recursive_model.model_rebuild(_types_namespace={"ExecutableCondition": ExecutableCondition})
+
+
+class LiveFeaturePlanError(ValueError):
+    """Frozen executable condition cannot be evaluated by the live feature path."""
+
+
+def _condition_feature_specs(condition: ExecutableCondition) -> list[tuple[str, dict]]:
+    if isinstance(condition, (AllCondition, AnyCondition, NoneCondition)):
+        children = (
+            condition.all
+            if isinstance(condition, AllCondition)
+            else (condition.any if isinstance(condition, AnyCondition) else condition.none)
+        )
+        return [spec for child in children for spec in _condition_feature_specs(child)]
+    if isinstance(condition, VoteCondition):
+        return [spec for child in condition.vote.conditions for spec in _condition_feature_specs(child)]
+    if isinstance(condition, IndicatorThresholdCondition):
+        params = condition.params.model_dump(exclude_none=True)
+        indicator = "sma" if condition.indicator == "ma" else condition.indicator
+        if indicator == "price_vs_ma":
+            indicator = "sma"
+        if indicator in {"sma", "ema", "rsi", "cum_return"}:
+            period = params.get("period")
+            if period is None:
+                raise LiveFeaturePlanError(f"{condition.indicator} requires an explicit live period")
+            return [(indicator, {"period": period})]
+        if indicator in {"macd", "macd_histogram", "macd_line", "macd_signal"}:
+            return [("macd", params)]
+        raise LiveFeaturePlanError(f"indicator {condition.indicator} is not live-capable")
+    if isinstance(condition, PriceCrossesCondition):
+        params = condition.params.model_dump(exclude_none=True)
+        indicator = "sma" if condition.indicator == "ma" else condition.indicator
+        period = params.get("period")
+        if indicator not in {"sma", "ema"} or period is None:
+            raise LiveFeaturePlanError(f"price_crosses {condition.indicator} is not live-capable")
+        return [(indicator, {"period": period})]
+    if isinstance(condition, IndicatorCrossesCondition):
+        indicator = "sma" if condition.indicator == "ma" else condition.indicator
+        if indicator not in {"sma", "ema", "rsi"}:
+            raise LiveFeaturePlanError(f"indicator_crosses {condition.indicator} is not live-capable")
+        return [
+            (indicator, {"period": condition.params.fast}),
+            (indicator, {"period": condition.params.slow}),
+        ]
+    if isinstance(condition, PriceChangeCondition):
+        return [("returns", {})]
+    if isinstance(condition, VolumeSpikeCondition):
+        return []
+    if isinstance(condition, BollingerCondition):
+        return [("bollinger", {"period": condition.params.period, "num_std": 2.0})]
+    if isinstance(condition, IndicatorComparisonCondition):
+        specs = []
+        for indicator, period in (
+            (condition.indicator_a, condition.params.period_a),
+            (condition.indicator_b, condition.params.period_b),
+        ):
+            indicator = "sma" if indicator == "ma" else indicator
+            if indicator not in {"sma", "ema", "rsi"}:
+                raise LiveFeaturePlanError(f"indicator comparison {indicator} is not live-capable")
+            specs.append((indicator, {"period": period}))
+        return specs
+    if isinstance(condition, FeatureThresholdCondition):
+        if condition.column in {"open", "high", "low", "close", "volume"}:
+            return []
+        raise LiveFeaturePlanError(f"feature {condition.column} is not live-capable")
+    if isinstance(condition, ModelPredictionCondition):
+        raise LiveFeaturePlanError("model prediction features are not live-capable")
+    raise LiveFeaturePlanError("condition is not live-capable")
 
 
 class RuleExecutableEntry(BaseModel):
@@ -318,6 +397,31 @@ class ExecutableStrategyConfig(BaseModel):
             "interval": self.interval,
         }
 
+    def live_feature_specs(self) -> list[tuple[str, dict]]:
+        conditions: list[ExecutableCondition]
+        if isinstance(self.payload, RuleExecutablePayload):
+            conditions = [rule.condition for rule in self.payload.rules]
+        elif isinstance(self.payload, VotingExecutablePayload):
+            conditions = [*self.payload.sub_signals, *self.payload.bear_sub_signals]
+        else:
+            return []
+
+        specs: list[tuple[str, dict]] = []
+        seen: set[tuple[str, tuple[tuple[str, object], ...]]] = set()
+        for condition in conditions:
+            for name, params in _condition_feature_specs(condition):
+                key = (name, tuple(sorted(params.items())))
+                if key not in seen:
+                    seen.add(key)
+                    specs.append((name, params))
+        if isinstance(self.payload, VotingExecutablePayload):
+            for name, params in (("atr", {"period": 14}), ("returns", {})):
+                key = (name, tuple(sorted(params.items())))
+                if key not in seen:
+                    seen.add(key)
+                    specs.append((name, params))
+        return specs
+
 
 @dataclass(frozen=True)
 class ReleasePredicate:
@@ -413,6 +517,15 @@ class ReleaseService:
                 "candidate_identity",
                 "blocked",
                 "candidate executable config is invalid",
+                **evidence,
+            )
+        try:
+            executable.live_feature_specs()
+        except LiveFeaturePlanError:
+            return _predicate(
+                "candidate_identity",
+                "blocked",
+                "candidate executable config is not live-capable",
                 **evidence,
             )
         evidence.update(
@@ -1329,9 +1442,12 @@ class ReleaseService:
             "source_release_event_id": None if source is None else str(source.id),
         }
         executable = None
+        live_capable = False
         try:
             target.verify_content()
             executable = ExecutableStrategyConfig.model_validate(target.config_json)
+            executable.live_feature_specs()
+            live_capable = True
             valid_target = (
                 target.strategy_id == strategy.id and source is not None and executable.routing_matches(strategy)
             )
@@ -1339,6 +1455,8 @@ class ReleaseService:
             valid_target = False
         if executable is None:
             target_reason = "rollback target executable config is invalid"
+        elif not live_capable:
+            target_reason = "rollback target executable config is not live-capable"
         elif not executable.routing_matches(strategy):
             target_reason = "rollback target executable routing identity does not match strategy"
         elif source is None or target.strategy_id != strategy.id:
