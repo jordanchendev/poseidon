@@ -31,6 +31,18 @@ DecisionStatus = Literal[
     "execution_claimed",
     "risk_blocked",
 ]
+ExecutionStatus = Literal[
+    "not_started",
+    "pending",
+    "pending_submit",
+    "submitted",
+    "partially_filled",
+    "filled",
+    "rejected",
+    "cancelled",
+    "reconciliation_required",
+    "mixed",
+]
 ReconciliationStatus = Literal["not_required", "pending", "required", "resolved", "mixed"]
 ActionReason = Literal[
     "available",
@@ -149,7 +161,7 @@ class DecisionResponse(BaseModel):
     final_action: DecisionAction
     portfolio_snapshot_json: dict[str, JsonValue]
     risk_snapshot_json: DecisionRiskSnapshotResponse
-    execution_status: DecisionStatus
+    execution_status: ExecutionStatus
     reconciliation_status: ReconciliationStatus
     event_history: list[DecisionEventHistoryResponse]
     action_metadata: DecisionCapabilityMetadata
@@ -198,6 +210,25 @@ def _decision_response(record, *, principal: AuthPrincipal, db: Session):
     orders = db.scalars(
         select(OrderRecord).where(OrderRecord.decision_id == record.id).order_by(OrderRecord.created_at, OrderRecord.id)
     ).all()
+    execution_values = sorted({order.status for order in orders})
+    execution_status = (
+        "not_started"
+        if not execution_values
+        else execution_values[0]
+        if len(execution_values) == 1
+        and execution_values[0]
+        in {
+            "pending",
+            "pending_submit",
+            "submitted",
+            "partially_filled",
+            "filled",
+            "rejected",
+            "cancelled",
+            "reconciliation_required",
+        }
+        else "mixed"
+    )
     reconciliation_values = sorted(
         {order.reconciliation_status for order in orders if order.reconciliation_status is not None}
     )
@@ -227,7 +258,7 @@ def _decision_response(record, *, principal: AuthPrincipal, db: Session):
         "updated_at": record.updated_at,
         "original_action": original.final_action,
         "final_action": final.final_action,
-        "execution_status": record.status,
+        "execution_status": execution_status,
         "reconciliation_status": reconciliation_status,
         "event_history": [
             DecisionEventHistoryResponse(
@@ -266,9 +297,9 @@ def create_decision(
             body.evaluation_run_id,
             principal=principal,
             account_scope=body.account_scope,
-            original_json=body.original_json,
+            original_json=body.original_json.model_dump(mode="json"),
             portfolio_snapshot_json=body.portfolio_snapshot_json,
-            risk_snapshot_json=body.risk_snapshot_json,
+            risk_snapshot_json=body.risk_snapshot_json.model_dump(mode="json"),
         )
         db.commit()
         db.refresh(record)

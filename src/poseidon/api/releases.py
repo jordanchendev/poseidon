@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Annotated, Literal, NoReturn
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -61,7 +61,7 @@ class ReleasePredicateEvidence(BaseModel):
     market: Literal["tw_stock", "crypto_perp"] | None = None
     strategy_market: str | None = None
     mode: Literal["human", "assisted", "automatic"] | None = None
-    status: Literal["passed", "blocked", "unavailable", "inconclusive"] | None = None
+    status: Literal["passed", "failed", "blocked", "unavailable", "inconclusive"] | None = None
     policy_state: Literal["passed", "blocked", "unavailable", "inconclusive"] | None = None
     requires_human_release: bool | None = None
     protective_exit: bool | None = None
@@ -123,11 +123,26 @@ class ReleaseUnprocessableResponse(BaseModel):
     detail: ReleaseGateFailureDetail | ReleaseValidationFailureDetail
 
 
+class RequestValidationIssue(BaseModel):
+    loc: list[str | int]
+    msg: str
+    type: str
+    input: JsonValue | None = None
+    ctx: dict[str, JsonValue] | None = None
+
+
+class RequestValidationResponse(BaseModel):
+    detail: Literal["Validation error"]
+    error_code: Literal["VALIDATION_ERROR"]
+    status_code: Literal[422]
+    errors: list[RequestValidationIssue]
+
+
 ERROR_RESPONSES = {
     403: {"model": ReleaseAPIError},
     404: {"model": ReleaseAPIError},
     409: {"model": ReleaseAPIError},
-    422: {"model": ReleaseUnprocessableResponse},
+    422: {"model": ReleaseUnprocessableResponse | RequestValidationResponse},
 }
 
 
@@ -347,6 +362,8 @@ def list_rollback_targets(
         .order_by(StrategyReleaseEvent.resulting_revision.desc(), StrategyReleaseEvent.id)
     ).all()
     _authorize_strategy_read(db, strategy, principal, events)
+    if not events:
+        return []
     service = ReleaseService(db)
     authority_version = service._current_or_paused_authority_version(strategy)
     source_policy = service._policy_for_version(authority_version, strategy, principal)
@@ -354,7 +371,7 @@ def list_rollback_targets(
     targets = []
     seen = set()
     for event in events:
-        if event.to_version_id in seen:
+        if event.to_version_id in seen or event.to_version_id == strategy.active_version_id:
             continue
         version = _version_scope(db, strategy, event.to_version_id, principal)
         seen.add(event.to_version_id)
