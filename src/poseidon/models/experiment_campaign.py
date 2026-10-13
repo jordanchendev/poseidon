@@ -3,7 +3,17 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, event, func, inspect
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    String,
+    UniqueConstraint,
+    event,
+    func,
+    inspect,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -138,6 +148,7 @@ class HoldoutUse(Base):
             "holdout_identity_sha256",
             name="uq_holdout_uses_identity",
         ),
+        UniqueConstraint("campaign_id", "id", name="uq_holdout_uses_campaign_id_id"),
         CheckConstraint(
             "char_length(holdout_identity_sha256) = 64 AND char_length(campaign_contract_sha256) = 64",
             name="ck_holdout_uses_hashes",
@@ -164,6 +175,12 @@ class CampaignReview(Base):
             "input_sha256",
             name="uq_campaign_reviews_replay",
         ),
+        UniqueConstraint("campaign_id", "id", name="uq_campaign_reviews_campaign_id_id"),
+        ForeignKeyConstraint(
+            ["campaign_id", "holdout_use_id"],
+            ["holdout_uses.campaign_id", "holdout_uses.id"],
+            name="fk_campaign_reviews_holdout_use",
+        ),
         CheckConstraint(
             "status IN ('passed', 'failed', 'inconclusive', 'unavailable')",
             name="ck_campaign_reviews_status",
@@ -171,6 +188,11 @@ class CampaignReview(Base):
         CheckConstraint(
             "char_length(input_sha256) = 64 AND char_length(result_sha256) = 64",
             name="ck_campaign_reviews_hashes",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "(holdout_use_id IS NULL AND input_identity_json IS NULL) OR "
+            "(holdout_use_id IS NOT NULL AND input_identity_json IS NOT NULL)",
+            name="ck_campaign_reviews_release_binding",
         ).ddl_if(dialect="postgresql"),
     )
 
@@ -184,6 +206,8 @@ class CampaignReview(Base):
     result_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     result_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    holdout_use_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    input_identity_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 

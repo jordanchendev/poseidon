@@ -29,6 +29,7 @@ class StrategyVersion(Base):
     __table_args__ = (
         UniqueConstraint("strategy_id", "version_no", name="uq_strategy_versions_number"),
         UniqueConstraint("strategy_id", "content_sha256", name="uq_strategy_versions_content"),
+        UniqueConstraint("strategy_id", "id", name="uq_strategy_versions_strategy_id_id"),
         Index("ix_strategy_versions_strategy_status", "strategy_id", "status"),
     )
 

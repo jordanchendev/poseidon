@@ -47,6 +47,7 @@ from poseidon.models.rl_execution_run import RLExecutionRun  # noqa: F401
 from poseidon.models.sentiment import Sentiment  # noqa: F401
 from poseidon.models.signal import SignalRecord  # noqa: F401
 from poseidon.models.strategy import StrategyRecord  # noqa: F401
+from poseidon.models.strategy_release_event import StrategyReleaseEvent  # noqa: F401
 from poseidon.models.strategy_version import StrategyVersion  # noqa: F401
 from poseidon.models.trade_log import TradeLogRecord  # noqa: F401
 from poseidon.models.virtual_position import VirtualPositionRecord  # noqa: F401
