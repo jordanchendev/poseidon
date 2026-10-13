@@ -116,7 +116,7 @@ def _seed_gate_graph(
         )
         trials.append(tracker.append_campaign_terminal_trial(**kwargs))
 
-    holdout_identity = "d" * 64
+    holdout_identity = content_sha256({"holdout": marker})
     holdout = HoldoutUse(
         holdout_identity_sha256=holdout_identity,
         campaign_id=campaign.id,
@@ -423,4 +423,53 @@ def test_gate_blocks_newer_unresolved_reconciliation(phase99_session_factory):
 
         assert _by_code(result, "reconciliation").state == "blocked"
         assert "newer" in _by_code(result, "reconciliation").reason
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_gate_blocks_foreign_candidate_review_and_holdout_consumption(phase99_session_factory):
+    with phase99_session_factory() as session:
+        own = _seed_gate_graph(session)
+        foreign = _seed_gate_graph(session)
+
+        result = _evaluate(
+            session,
+            own,
+            candidate_version_id=foreign.candidate_id,
+            review_id=foreign.review_id,
+        )
+
+        assert _by_code(result, "candidate_identity").state == "blocked"
+        assert _by_code(result, "review_identity").state == "blocked"
+        assert _by_code(result, "holdout_ownership").state == "blocked"
+        assert "another campaign" in _by_code(result, "holdout_ownership").reason
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_gate_keeps_legacy_unbound_review_readable_but_ineligible(phase99_session_factory):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        bound = session.get(CampaignReview, graph.review_id)
+        legacy = CampaignReview(
+            campaign_id=graph.campaign_id,
+            input_sha256="1" * 64,
+            result_sha256=bound.result_sha256,
+            status="passed",
+            result_json=bound.result_json,
+            holdout_use_id=None,
+            input_identity_json=None,
+        )
+        session.execute(text("ALTER TABLE campaign_reviews DISABLE TRIGGER trg_campaign_reviews_phase100_binding"))
+        try:
+            session.add(legacy)
+            session.flush()
+        finally:
+            session.execute(text("ALTER TABLE campaign_reviews ENABLE TRIGGER trg_campaign_reviews_phase100_binding"))
+
+        result = _evaluate(session, graph, review_id=legacy.id)
+
+        assert _by_code(result, "review_identity").state == "unavailable"
+        assert "legacy" in _by_code(result, "review_identity").reason
+        assert _by_code(result, "holdout_ownership").state == "unavailable"
         session.rollback()
