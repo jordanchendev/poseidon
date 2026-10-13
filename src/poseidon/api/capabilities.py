@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel as PydanticBaseModel
 
 from poseidon.capabilities.registry import get_all_capabilities
+from poseidon.api.auth import AuthPrincipal, get_auth_principal, verify_api_key
 
 router = APIRouter()
 
@@ -28,12 +29,34 @@ class CapabilitiesResponse(PydanticBaseModel):
     total: int
 
 
+class PrincipalResponse(PydanticBaseModel):
+    actor_id: str
+    kind: str
+    roles: list[str]
+    account_scopes: list[str]
+    can_approve: bool
+    can_release: bool
+
+
+@router.get("/principal", response_model=PrincipalResponse)
+def get_principal(principal: AuthPrincipal = Depends(get_auth_principal)) -> PrincipalResponse:
+    return PrincipalResponse(
+        actor_id=principal.actor_id,
+        kind="worker" if "decision-worker" in principal.roles else "human",
+        roles=sorted(principal.roles),
+        account_scopes=sorted(principal.account_scopes),
+        can_approve="portfolio_manager" in principal.roles and "decision-worker" not in principal.roles,
+        can_release="release_manager" in principal.roles and "decision-worker" not in principal.roles,
+    )
+
+
 @router.get("/capabilities", response_model=CapabilitiesResponse)
 def get_capabilities(
     live_safe: bool | None = Query(None, description="Filter to live-safe components only"),
     component_type: str | None = Query(
         None, description="Filter by type: feature|strategy|model|rule|portfolio_strategy"
     ),
+    _principal: AuthPrincipal = Depends(verify_api_key),
 ) -> CapabilitiesResponse:
     """Return capability flags matrix for all registered components.
 

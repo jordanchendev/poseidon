@@ -66,7 +66,7 @@ class TrackingSession:
     def get(self, model, identity):
         if model.__name__ == "StrategyRecord" and identity == self.strategy.id:
             return self.strategy
-        if model.__name__ == "StrategyVersion" and identity == self.strategy.active_version_id:
+        if model.__name__ == "StrategyVersion":
             return SimpleNamespace(
                 id=identity,
                 strategy_id=self.strategy.id,

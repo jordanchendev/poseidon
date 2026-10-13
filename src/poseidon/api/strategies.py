@@ -21,6 +21,10 @@ from poseidon.models.strategy import StrategyRecord
 
 router = APIRouter()
 
+_LEGACY_RELEASE_CONFLICT = (
+    "Legacy strategy activation is disabled; use /api/v1/strategies/{strategy_id}/release"
+)
+
 _VALID_STRATEGY_TYPES = {
     "model",
     "rule",
@@ -215,14 +219,8 @@ async def activate_strategy(
     strategy_id: uuid.UUID,
     db: Session = Depends(get_db),
 ) -> StrategyResponse:
-    """Activate a strategy (set active=True)."""
-    record = db.get(StrategyRecord, strategy_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Strategy not found")
-    record.active = True
-    db.commit()
-    db.refresh(record)
-    return record
+    """Retained migration route; release authority lives under ``/api/v1``."""
+    raise HTTPException(status_code=409, detail=_LEGACY_RELEASE_CONFLICT)
 
 
 @router.post("/{strategy_id}/deactivate", response_model=StrategyResponse)
@@ -230,14 +228,8 @@ async def deactivate_strategy(
     strategy_id: uuid.UUID,
     db: Session = Depends(get_db),
 ) -> StrategyResponse:
-    """Deactivate a strategy (set active=False)."""
-    record = db.get(StrategyRecord, strategy_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Strategy not found")
-    record.active = False
-    db.commit()
-    db.refresh(record)
-    return record
+    """Retained migration route; pause authority lives under ``/api/v1``."""
+    raise HTTPException(status_code=409, detail=_LEGACY_RELEASE_CONFLICT)
 
 
 # --------------- Performance aggregation ---------------

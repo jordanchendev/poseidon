@@ -16,6 +16,7 @@ from poseidon.api import (
     notifications,
     portfolio,
     protections,
+    releases,
     rdagent,
     research_api,
     risk,
@@ -55,6 +56,8 @@ app.add_middleware(
 # --- Health endpoint: NO authentication (used by Docker healthcheck) ---
 app.include_router(health.router, tags=["health"])
 app.include_router(decisions.router, prefix="/api/v1/decisions", tags=["decisions"])
+app.include_router(releases.router, prefix="/api/v1/strategies", tags=["releases"])
+app.include_router(capabilities.router, prefix="/api/v1", tags=["capabilities"])
 
 # --- Secured endpoints: require valid X-API-Key header ---
 secured = [Depends(verify_api_key)]
@@ -69,7 +72,6 @@ app.include_router(autoresearch.router, prefix="/api/autoresearch", tags=["autor
 app.include_router(risk_metrics.router, prefix="/api/risk", tags=["risk-metrics"], dependencies=secured)
 app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"], dependencies=secured)
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"], dependencies=secured)
-app.include_router(capabilities.router, prefix="/api/v1", tags=["capabilities"], dependencies=secured)
 app.include_router(protections.router, prefix="/api/v1/protections", tags=["protections"], dependencies=secured)
 app.include_router(
     factor_analysis.router, prefix="/api/v1/factor-analysis", tags=["factor-analysis"], dependencies=secured

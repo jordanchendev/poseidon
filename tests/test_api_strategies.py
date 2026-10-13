@@ -3,7 +3,7 @@
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 
 # --- SQLite compatibility: register before any model import ---
 from sqlalchemy.dialects.postgresql import JSONB
@@ -38,6 +38,12 @@ _engine = create_engine(
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
 )
+
+
+@event.listens_for(_engine, "connect")
+def _sqlite_phase100_functions(connection, _record):
+    connection.create_function("char_length", 1, len)
+    connection.create_function("btrim", 1, lambda value: value.strip())
 
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
 
