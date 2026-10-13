@@ -29,7 +29,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from poseidon.api.strategies import router as strategies_router  # noqa: E402
 from poseidon.models.base import Base, get_db  # noqa: E402
-from poseidon.models.strategy import StrategyRecord  # noqa: E402,F401
+from poseidon.models.strategy import StrategyRecord  # noqa: E402
+from poseidon.models.strategy_release_event import StrategyReleaseEvent  # noqa: E402
 
 # --------------- Test DB setup (SQLite in-memory, shared connection) ---------------
 
@@ -44,6 +45,7 @@ _engine = create_engine(
 def _sqlite_phase100_functions(connection, _record):
     connection.create_function("char_length", 1, len)
     connection.create_function("btrim", 1, lambda value: value.strip())
+
 
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
 
@@ -100,6 +102,17 @@ def _create_strategy(
     if model_version_id:
         body["model_version_id"] = model_version_id
     return client.post(PREFIX, json=body)
+
+
+def _release_authority_state(strategy_id):
+    with TestingSessionLocal() as db:
+        strategy = db.get(StrategyRecord, uuid.UUID(strategy_id))
+        return (
+            strategy.active,
+            strategy.active_version_id,
+            strategy.release_revision,
+            db.query(StrategyReleaseEvent).filter_by(strategy_id=strategy.id).count(),
+        )
 
 
 # --------------- Tests ---------------
@@ -284,6 +297,7 @@ def test_activate_strategy_is_stable_no_write_conflict():
     assert create_resp.status_code == 201
     strategy_id = create_resp.json()["id"]
     assert create_resp.json()["active"] is False
+    before = _release_authority_state(strategy_id)
 
     resp = client.post(f"{PREFIX}/{strategy_id}/activate")
     assert resp.status_code == 409
@@ -291,12 +305,14 @@ def test_activate_strategy_is_stable_no_write_conflict():
         "detail": "Legacy strategy activation is disabled; use /api/v1/strategies/{strategy_id}/release"
     }
     assert client.get(f"{PREFIX}/{strategy_id}").json()["active"] is False
+    assert _release_authority_state(strategy_id) == before
 
 
 def test_deactivate_strategy_is_same_stable_no_write_conflict():
     create_resp = _create_strategy(name="deactivate-test")
     assert create_resp.status_code == 201
     strategy_id = create_resp.json()["id"]
+    before = _release_authority_state(strategy_id)
 
     resp = client.post(f"{PREFIX}/{strategy_id}/deactivate")
     assert resp.status_code == 409
@@ -304,6 +320,7 @@ def test_deactivate_strategy_is_same_stable_no_write_conflict():
         "detail": "Legacy strategy activation is disabled; use /api/v1/strategies/{strategy_id}/release"
     }
     assert client.get(f"{PREFIX}/{strategy_id}").json()["active"] is False
+    assert _release_authority_state(strategy_id) == before
 
 
 def test_activate_not_found_is_still_stable_conflict_without_lookup():

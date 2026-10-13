@@ -16,6 +16,8 @@ from poseidon.core.database import get_db
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionNotFoundError
 from poseidon.decision_loop.manifest import ValidationError
 from poseidon.main import app as poseidon_app
+from poseidon.models.decision_event import DecisionEvent
+from poseidon.models.order import OrderRecord
 
 ACCOUNT = "paper:pilot"
 OTHER_ACCOUNT = "paper:other"
@@ -31,6 +33,8 @@ class TrackingSession:
         self.commits = 0
         self.rollbacks = 0
         self.refreshes = 0
+        self.events = []
+        self.orders = []
 
     def commit(self):
         self.commits += 1
@@ -40,6 +44,11 @@ class TrackingSession:
 
     def refresh(self, _record):
         self.refreshes += 1
+
+    def scalars(self, statement):
+        entity = statement.column_descriptions[0].get("entity")
+        values = self.events if entity is DecisionEvent else self.orders if entity is OrderRecord else []
+        return SimpleNamespace(all=lambda: list(values))
 
 
 def _record(decision_id=None):
@@ -55,8 +64,8 @@ def _record(decision_id=None):
         revision=1,
         creation_sha256="a" * 64,
         policy_sha256="b" * 64,
-        original_json={"final_action": "hold"},
-        final_json={"final_action": "hold"},
+        original_json={"selected_evaluation_ids": [str(uuid.uuid4())], "final_action": "hold"},
+        final_json={"selected_evaluation_ids": [str(uuid.uuid4())], "final_action": "hold"},
         portfolio_snapshot_json={"cash": 1000},
         risk_snapshot_json={"hard_failures": [], "allowed_actions": ["hold"]},
         created_at=now,
@@ -340,6 +349,79 @@ def test_missing_read_is_404_without_commit(api):
     assert session.commits == 0
 
 
+def test_decision_projection_uses_principal_expiry_events_and_order_reconciliation(api):
+    client, session, service = api
+    now = datetime.now(UTC)
+    session.events.append(
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            decision_id=service.decision.id,
+            event_type="created",
+            actor_id="service:decision-worker",
+            expected_revision=0,
+            idempotency_key=None,
+            request_sha256=None,
+            payload_json={"response": {"status": "pending_approval"}},
+            created_at=now,
+        )
+    )
+    session.orders.append(
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            decision_id=service.decision.id,
+            status="reconciliation_required",
+            reconciliation_status="required",
+            created_at=now,
+        )
+    )
+
+    manager = client.get(
+        f"/api/v1/decisions/{service.decision.id}",
+        headers=_headers(MANAGER_KEY),
+    )
+    viewer = client.get(
+        f"/api/v1/decisions/{service.decision.id}",
+        headers=_headers(VIEWER_KEY),
+    )
+    assert manager.status_code == viewer.status_code == 200
+    assert manager.json()["execution_status"] == "pending_approval"
+    assert manager.json()["reconciliation_status"] == "required"
+    assert manager.json()["event_history"] == [
+        {
+            "id": str(session.events[0].id),
+            "event_type": "created",
+            "actor_id": "service:decision-worker",
+            "expected_revision": 0,
+            "created_at": now.isoformat().replace("+00:00", "Z"),
+        }
+    ]
+    assert manager.json()["action_metadata"] == {
+        "can_approve": True,
+        "approve_reason": "available",
+        "can_modify": True,
+        "modify_reason": "available",
+        "can_reject": True,
+        "reject_reason": "available",
+    }
+    assert viewer.json()["action_metadata"] == {
+        "can_approve": False,
+        "approve_reason": "role_not_authorized",
+        "can_modify": False,
+        "modify_reason": "role_not_authorized",
+        "can_reject": False,
+        "reject_reason": "role_not_authorized",
+    }
+
+    service.decision.valid_until = now - timedelta(seconds=1)
+    expired = client.get(
+        f"/api/v1/decisions/{service.decision.id}",
+        headers=_headers(MANAGER_KEY),
+    )
+    assert expired.status_code == 200
+    assert expired.json()["action_metadata"]["approve_reason"] == "decision_expired"
+    assert expired.json()["action_metadata"]["can_approve"] is False
+
+
 @pytest.mark.parametrize(
     ("path", "body"),
     [
@@ -380,11 +462,27 @@ def test_openapi_exposes_typed_decision_responses_and_errors(real_api):
         "DecisionResponse",
         "DecisionMutationResponse",
         "DecisionCapabilityMetadata",
+        "DecisionEventHistoryResponse",
+        "DecisionDocumentResponse",
         "DecisionAPIError",
     ):
         assert model in schema["components"]["schemas"]
     approve = schema["paths"]["/api/v1/decisions/{decision_id}/approve"]["post"]
     assert {"403", "404", "409", "422"}.issubset(approve["responses"])
+    response = schema["components"]["schemas"]["DecisionResponse"]
+    assert response["properties"]["status"]["enum"] == [
+        "pending_approval",
+        "approved",
+        "rejected",
+        "superseded",
+        "expired",
+        "execution_claimed",
+        "risk_blocked",
+    ]
+    assert response["properties"]["event_history"]["items"] == {
+        "$ref": "#/components/schemas/DecisionEventHistoryResponse"
+    }
+    assert response["properties"]["original_json"] == {"$ref": "#/components/schemas/DecisionDocumentResponse"}
 
 
 @pytest.mark.parametrize("path", ["approve", "reject"])
