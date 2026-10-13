@@ -12,11 +12,12 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel as PydanticBase
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from poseidon.models.base import get_db
 from poseidon.models.signal import SignalRecord
+from poseidon.signals.schemas import SignalTraceMetadata
 
 router = APIRouter()
 
@@ -48,6 +49,7 @@ class SignalResponse(PydanticBase):
     take_profit_price: float | None = None
     status: str
     reject_reason: str | None
+    metadata: SignalTraceMetadata = Field(validation_alias="metadata_")
     created_at: datetime
 
 

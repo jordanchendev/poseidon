@@ -29,7 +29,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from poseidon.api.signals import router as signals_router  # noqa: E402
-from poseidon.models.base import Base, get_db  # noqa: E402
+from poseidon.models.base import get_db  # noqa: E402
 from poseidon.models.signal import SignalRecord  # noqa: E402
 
 # --------------- Test DB setup (SQLite in-memory, shared connection) ---------------
@@ -60,9 +60,9 @@ _test_app.dependency_overrides[get_db] = override_get_db
 @pytest.fixture(autouse=True)
 def setup_db():
     """Create tables before each test, drop after."""
-    Base.metadata.create_all(bind=_engine)
+    SignalRecord.__table__.create(bind=_engine, checkfirst=True)
     yield
-    Base.metadata.drop_all(bind=_engine)
+    SignalRecord.__table__.drop(bind=_engine, checkfirst=True)
 
 
 client = TestClient(_test_app)

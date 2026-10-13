@@ -16,8 +16,8 @@ from poseidon.api import (
     notifications,
     portfolio,
     protections,
-    releases,
     rdagent,
+    releases,
     research_api,
     risk,
     risk_metrics,
@@ -25,6 +25,7 @@ from poseidon.api import (
     sentiment,
     signals,
     strategies,
+    traces,
 )
 from poseidon.api import models as models_api
 from poseidon.api.auth import verify_api_key
@@ -58,6 +59,7 @@ app.include_router(health.router, tags=["health"])
 app.include_router(decisions.router, prefix="/api/v1/decisions", tags=["decisions"])
 app.include_router(releases.router, prefix="/api/v1/strategies", tags=["releases"])
 app.include_router(capabilities.router, prefix="/api/v1", tags=["capabilities"])
+app.include_router(traces.router, prefix="/api/v1/traces", tags=["traces"])
 
 # --- Secured endpoints: require valid X-API-Key header ---
 secured = [Depends(verify_api_key)]

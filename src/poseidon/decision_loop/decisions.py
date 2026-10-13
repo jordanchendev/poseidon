@@ -34,12 +34,16 @@ from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_run import EvaluationRun
+from poseidon.models.experiment_campaign import CampaignReview, ExperimentCampaign
 from poseidon.models.fill_allocation import FillAllocation
 from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
+from poseidon.models.outcome import OutcomeRecord
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.research_revision import ResearchRevision
+from poseidon.models.signal import SignalRecord
 from poseidon.models.strategy import StrategyRecord
+from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from poseidon.models.strategy_version import StrategyVersion
 
 ACTION_VALUES = frozenset({"watch", "hold", "enter", "add", "reduce", "exit", "reject"})
@@ -51,6 +55,334 @@ PositiveStrictInt = Annotated[int, Field(strict=True, gt=0)]
 PositiveFiniteFloat = Annotated[float, Field(gt=0, allow_inf_nan=False)]
 PositiveStrictFiniteFloat = Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
 NonNegativeStrictFiniteFloat = Annotated[float, Field(strict=True, ge=0, allow_inf_nan=False)]
+TRACE_STAGE_NAMES = (
+    "signal_or_no_trade",
+    "manifest",
+    "research_revision",
+    "evaluation",
+    "decision_events",
+    "execution",
+    "outcomes",
+    "campaign_review",
+    "release",
+)
+
+
+def _trace_row(label, state, *, timestamp_value=None, identities=None, values=None):
+    return {
+        "label": label,
+        "state": state,
+        "timestamp": timestamp_value,
+        "identities": identities or {},
+        "values": values or {},
+    }
+
+
+def project_outcome_rows(outcomes):
+    rows = []
+    state_by_status = {"available": "Available", "provisional": "Provisional", "unavailable": "Unavailable"}
+    for outcome in outcomes:
+        state = state_by_status.get(outcome.status, "Unavailable")
+        base = {
+            "kind": outcome.kind,
+            "horizon_key": outcome.horizon_key,
+            "reason_code": outcome.reason_code,
+        }
+        actual = json.loads(canonical_json((outcome.metrics_json or {}).get("actual", {})))
+        confidence = actual.pop("narrative_confidence", None)
+        if confidence is not None:
+            actual["Narrative confidence"] = confidence
+            actual["confidence_note"] = "Not a probability of profit"
+        rows.append(
+            _trace_row(
+                "Actual",
+                state,
+                timestamp_value=outcome.maturity_at,
+                identities={"outcome_id": str(outcome.id), "content_sha256": outcome.content_sha256},
+                values={**base, **actual},
+            )
+        )
+        counterfactuals = (outcome.metrics_json or {}).get("counterfactual", [])
+        if isinstance(counterfactuals, list):
+            for item in sorted(
+                (item for item in counterfactuals if isinstance(item, dict)),
+                key=lambda value: str(value.get("assumption_version", "")),
+            ):
+                assumption_version = item.get("assumption_version")
+                if not isinstance(assumption_version, str) or not assumption_version:
+                    continue
+                values = json.loads(canonical_json(item))
+                values.pop("assumption_version", None)
+                rows.append(
+                    _trace_row(
+                        f"Counterfactual · {assumption_version}",
+                        state,
+                        timestamp_value=outcome.maturity_at,
+                        identities={"outcome_id": str(outcome.id), "content_sha256": outcome.content_sha256},
+                        values={**base, "assumption_version": assumption_version, **values},
+                    )
+                )
+    return rows
+
+
+def build_trace_stages(trace):
+    evaluations = trace["evaluations"]
+    signals = trace.get("signals", [])
+    decisions = trace.get("decisions", [])
+    if not decisions and trace.get("decision") is not None:
+        decisions = [trace["decision"]]
+    no_trade = any(row["status"] == "no_trade" for row in evaluations)
+    if signals:
+        signal_state, signal_reason = "Available", "Stored signal carries exact trace identity"
+    elif no_trade:
+        signal_state, signal_reason = "No trade", "Evaluation completed without an executable trade"
+    else:
+        signal_state, signal_reason = "Legacy unresolved", "No stored signal or no-trade identity links this trace"
+    research_rows = [
+        _trace_row(
+            "Research revision",
+            "Available",
+            identities={"research_revision_id": revision["id"], "content_sha256": revision["content_sha256"]},
+        )
+        for evaluation in evaluations
+        for revision in evaluation["research"].get("revisions", [])
+    ]
+    if research_rows:
+        research_state, research_reason = "Available", "Exact stored research revisions are linked"
+    elif all(evaluation["research"].get("research_status") == "not_required" for evaluation in evaluations):
+        research_state, research_reason = "Not required", "Research was explicitly not required"
+    else:
+        research_state, research_reason = "Unavailable", "Research evidence is unavailable"
+    outcome_rows = trace.get("outcome_rows", [])
+    outcome_state = (
+        "Unavailable"
+        if not outcome_rows
+        else "Provisional"
+        if any(row["state"] == "Provisional" for row in outcome_rows)
+        else "Unavailable"
+        if all(row["state"] == "Unavailable" for row in outcome_rows)
+        else "Available"
+    )
+    reviews = trace.get("campaign_reviews", [])
+    campaign_state = (
+        "Unavailable"
+        if not trace.get("campaigns")
+        else "Inconclusive"
+        if any(row["status"] == "inconclusive" for row in reviews)
+        else "Blocked"
+        if any(row["status"] == "failed" for row in reviews)
+        else "Available"
+    )
+    release_events = trace.get("release_events", [])
+    last_release = release_events[-1] if release_events else None
+    release_state = {
+        "release": "Released",
+        "pause": "Paused",
+        "rollback": "Rolled back",
+        "reject": "Rejected",
+    }.get(None if last_release is None else last_release["event_type"], "Unavailable")
+    stages = [
+        {
+            "position": 1,
+            "name": "signal_or_no_trade",
+            "state": signal_state,
+            "reason": signal_reason,
+            "timestamp": signals[0]["timestamp"] if signals else None,
+            "identities": {},
+            "rows": signals,
+            "raw_payload": None,
+        },
+        {
+            "position": 2,
+            "name": "manifest",
+            "state": "Available",
+            "reason": "Frozen manifest identity is available",
+            "timestamp": trace["manifest"].get("created_at"),
+            "identities": {
+                "manifest_id": trace["manifest"]["id"],
+                "content_sha256": trace["manifest"]["content_sha256"],
+            },
+            "rows": [],
+            "raw_payload": None,
+        },
+        {
+            "position": 3,
+            "name": "research_revision",
+            "state": research_state,
+            "reason": research_reason,
+            "timestamp": None,
+            "identities": {},
+            "rows": research_rows,
+            "raw_payload": None,
+        },
+        {
+            "position": 4,
+            "name": "evaluation",
+            "state": "Available",
+            "reason": "Immutable evaluation run and snapshots are available",
+            "timestamp": trace["evaluation_run"]["decision_as_of"],
+            "identities": {
+                "evaluation_run_id": trace["evaluation_run"]["id"],
+                "input_sha256": trace["evaluation_run"]["input_sha256"],
+            },
+            "rows": [],
+            "raw_payload": evaluations,
+        },
+        {
+            "position": 5,
+            "name": "decision_events",
+            "state": "Not required" if not decisions else "Available",
+            "reason": "No decision was required" if not decisions else "Decisions and ordered events are available",
+            "timestamp": None if not decisions else decisions[0]["decision_as_of"],
+            "identities": {} if len(decisions) != 1 else {"decision_id": decisions[0]["id"]},
+            "rows": [
+                *[
+                    _trace_row(
+                        "Decision",
+                        "Available",
+                        timestamp_value=row["decision_as_of"],
+                        identities={"decision_id": row["id"]},
+                        values={
+                            "status": row["status"],
+                            "revision": row["revision"],
+                            "account_scope": row["account_scope"],
+                        },
+                    )
+                    for row in decisions
+                ],
+                *[
+                    _trace_row(
+                        "Decision event",
+                        "Available",
+                        timestamp_value=row["created_at"],
+                        identities={"decision_event_id": row["id"]},
+                        values={key: value for key, value in row.items() if key not in {"id", "created_at"}},
+                    )
+                    for row in trace["events"]
+                ],
+            ],
+            "raw_payload": None,
+        },
+        {
+            "position": 6,
+            "name": "execution",
+            "state": "Not required" if not trace["orders"] else "Filled" if trace["fills"] else "Available",
+            "reason": "No order was required"
+            if not trace["orders"]
+            else "Orders, fills, and reconciliation remain separate",
+            "timestamp": None,
+            "identities": {},
+            "rows": [
+                *[
+                    _trace_row(
+                        "Order",
+                        "Filled" if row["status"] == "filled" else "Available",
+                        identities={"order_id": row["id"]},
+                        values={key: value for key, value in row.items() if key != "id"},
+                    )
+                    for row in trace["orders"]
+                ],
+                *[
+                    _trace_row(
+                        "Fill",
+                        "Filled",
+                        timestamp_value=row["fill_time"],
+                        identities={"fill_id": row["id"], "order_id": row["order_id"]},
+                        values={key: value for key, value in row.items() if key not in {"id", "order_id", "fill_time"}},
+                    )
+                    for row in trace["fills"]
+                ],
+                *[
+                    _trace_row(
+                        "Reconciliation",
+                        "Available" if row["status"] == "matched" else "Provisional",
+                        timestamp_value=row["as_of"],
+                        identities={"reconciliation_id": row["id"]},
+                        values={key: value for key, value in row.items() if key not in {"id", "as_of"}},
+                    )
+                    for row in trace["reconciliations"]
+                ],
+            ],
+            "raw_payload": None,
+        },
+        {
+            "position": 7,
+            "name": "outcomes",
+            "state": outcome_state,
+            "reason": "Outcome facts are unavailable"
+            if not outcome_rows
+            else "Actual and counterfactual facts remain separate",
+            "timestamp": None,
+            "identities": {},
+            "rows": outcome_rows,
+            "raw_payload": None,
+        },
+        {
+            "position": 8,
+            "name": "campaign_review",
+            "state": campaign_state,
+            "reason": "No frozen campaign is linked"
+            if not trace.get("campaigns")
+            else "Frozen campaigns and reviews are ordered",
+            "timestamp": None,
+            "identities": {},
+            "rows": [
+                *[
+                    _trace_row(
+                        "Campaign",
+                        "Available",
+                        timestamp_value=row["created_at"],
+                        identities={"campaign_id": row["id"], "contract_sha256": row["contract_sha256"]},
+                        values={key: value for key, value in row.items() if key not in {"id", "created_at"}},
+                    )
+                    for row in trace.get("campaigns", [])
+                ],
+                *[
+                    _trace_row(
+                        "Campaign review",
+                        "Inconclusive"
+                        if row["status"] == "inconclusive"
+                        else "Blocked"
+                        if row["status"] == "failed"
+                        else "Unavailable"
+                        if row["status"] == "unavailable"
+                        else "Available",
+                        timestamp_value=row["created_at"],
+                        identities={"review_id": row["id"], "campaign_id": row["campaign_id"]},
+                        values={key: value for key, value in row.items() if key not in {"id", "created_at"}},
+                    )
+                    for row in reviews
+                ],
+            ],
+            "raw_payload": None,
+        },
+        {
+            "position": 9,
+            "name": "release",
+            "state": release_state,
+            "reason": "No release event is linked" if last_release is None else "Immutable release history is ordered",
+            "timestamp": None if last_release is None else last_release["created_at"],
+            "identities": {},
+            "rows": [
+                _trace_row(
+                    "Release event",
+                    {
+                        "release": "Released",
+                        "pause": "Paused",
+                        "rollback": "Rolled back",
+                        "reject": "Rejected",
+                    }[row["event_type"]],
+                    timestamp_value=row["created_at"],
+                    identities={"release_event_id": row["id"]},
+                    values={key: value for key, value in row.items() if key not in {"id", "created_at"}},
+                )
+                for row in release_events
+            ],
+            "raw_payload": None,
+        },
+    ]
+    assert tuple(stage["name"] for stage in stages) == TRACE_STAGE_NAMES
+    return stages
 
 
 class DecisionNotFoundError(LookupError):
@@ -816,7 +1148,60 @@ class DecisionService:
             if account_generations
             else []
         )
-        return {
+        selected_snapshot_ids = [snapshot.id for snapshot in snapshots if snapshot.id in selected_ids]
+        signal_predicates = [SignalRecord.metadata_["decision_id"].as_string() == str(decision.id)]
+        signal_predicates.extend(
+            SignalRecord.metadata_["evaluation_snapshot_id"].as_string() == str(snapshot_id)
+            for snapshot_id in selected_snapshot_ids
+        )
+        signals = self.session.scalars(
+            select(SignalRecord).where(or_(*signal_predicates)).order_by(SignalRecord.signal_time, SignalRecord.id)
+        ).all()
+        outcomes = self.session.scalars(
+            select(OutcomeRecord)
+            .where(OutcomeRecord.evaluation_snapshot_id.in_([snapshot.id for snapshot in snapshots]))
+            .order_by(
+                OutcomeRecord.maturity_at,
+                OutcomeRecord.kind,
+                OutcomeRecord.horizon_key,
+                OutcomeRecord.revision_no,
+                OutcomeRecord.id,
+            )
+        ).all()
+        campaigns = self.session.scalars(
+            select(ExperimentCampaign)
+            .where(
+                or_(
+                    ExperimentCampaign.incumbent_strategy_version_id == version.id,
+                    ExperimentCampaign.candidate_strategy_version_id == version.id,
+                )
+            )
+            .order_by(ExperimentCampaign.created_at, ExperimentCampaign.id)
+        ).all()
+        campaign_ids = [campaign.id for campaign in campaigns]
+        reviews = (
+            self.session.scalars(
+                select(CampaignReview)
+                .where(CampaignReview.campaign_id.in_(campaign_ids))
+                .order_by(CampaignReview.created_at, CampaignReview.id)
+            ).all()
+            if campaign_ids
+            else []
+        )
+        release_events = self.session.scalars(
+            select(StrategyReleaseEvent)
+            .where(
+                StrategyReleaseEvent.strategy_id == version.strategy_id,
+                StrategyReleaseEvent.account_scope == decision.account_scope,
+                or_(
+                    StrategyReleaseEvent.candidate_version_id == version.id,
+                    StrategyReleaseEvent.from_version_id == version.id,
+                    StrategyReleaseEvent.to_version_id == version.id,
+                ),
+            )
+            .order_by(StrategyReleaseEvent.resulting_revision, StrategyReleaseEvent.id)
+        ).all()
+        trace = {
             "decision": {
                 **_decision_response(decision),
                 "evaluation_run_id": str(decision.evaluation_run_id),
@@ -827,6 +1212,17 @@ class DecisionService:
                 "portfolio_snapshot_json": json.loads(canonical_json(decision.portfolio_snapshot_json)),
                 "risk_snapshot_json": json.loads(canonical_json(decision.risk_snapshot_json)),
             },
+            "decisions": [
+                {
+                    **_decision_response(decision),
+                    "evaluation_run_id": str(decision.evaluation_run_id),
+                    "strategy_version_id": str(decision.strategy_version_id),
+                    "account_scope": decision.account_scope,
+                    "decision_as_of": iso_time(
+                        _stored_time(decision.decision_as_of, "decision_as_of"), "decision_as_of"
+                    ),
+                }
+            ],
             "strategy_version": {
                 "id": str(version.id),
                 "content_sha256": version.content_sha256,
@@ -838,7 +1234,15 @@ class DecisionService:
                 "coverage_json": json.loads(canonical_json(run.coverage_json)),
                 "decision_as_of": iso_time(_stored_time(run.decision_as_of, "decision_as_of"), "decision_as_of"),
             },
-            "manifest": {"id": str(manifest.id), "content_sha256": manifest.content_sha256},
+            "manifest": {
+                "id": str(manifest.id),
+                "content_sha256": manifest.content_sha256,
+                "created_at": (
+                    iso_time(_stored_time(manifest.created_at, "manifest.created_at"), "manifest.created_at")
+                    if manifest.created_at is not None
+                    else None
+                ),
+            },
             "evaluations": evaluations,
             "execution_key": str(decision.execution_key) if decision.execution_key is not None else None,
             "execution_keys": sorted(
@@ -943,7 +1347,61 @@ class DecisionService:
                 }
                 for event in events
             ],
+            "signals": [
+                _trace_row(
+                    "Signal",
+                    "Available",
+                    timestamp_value=iso_time(_stored_time(row.signal_time, "signal.signal_time"), "signal.signal_time"),
+                    identities={"signal_id": str(row.id)},
+                    values={
+                        "symbol": row.symbol,
+                        "market": row.market,
+                        "action": row.action,
+                        "status": row.status,
+                        "metadata": json.loads(canonical_json(row.metadata_)),
+                    },
+                )
+                for row in signals
+            ],
+            "outcome_rows": project_outcome_rows(outcomes),
+            "campaigns": [
+                {
+                    "id": str(campaign.id),
+                    "contract_sha256": campaign.contract_sha256,
+                    "incumbent_strategy_version_id": str(campaign.incumbent_strategy_version_id),
+                    "candidate_strategy_version_id": str(campaign.candidate_strategy_version_id),
+                    "created_at": iso_time(
+                        _stored_time(campaign.created_at, "campaign.created_at"), "campaign.created_at"
+                    ),
+                }
+                for campaign in campaigns
+            ],
+            "campaign_reviews": [
+                {
+                    "id": str(review.id),
+                    "campaign_id": str(review.campaign_id),
+                    "status": review.status,
+                    "input_sha256": review.input_sha256,
+                    "result_sha256": review.result_sha256,
+                    "created_at": iso_time(_stored_time(review.created_at, "review.created_at"), "review.created_at"),
+                }
+                for review in reviews
+            ],
+            "release_events": [
+                {
+                    "id": str(event.id),
+                    "event_type": event.event_type,
+                    "from_version_id": None if event.from_version_id is None else str(event.from_version_id),
+                    "to_version_id": None if event.to_version_id is None else str(event.to_version_id),
+                    "reason": event.reason,
+                    "resulting_revision": event.resulting_revision,
+                    "created_at": iso_time(_stored_time(event.created_at, "release.created_at"), "release.created_at"),
+                }
+                for event in release_events
+            ],
         }
+        trace["stages"] = build_trace_stages(trace)
+        return trace
 
     def _validate_execution_record(self, decision, expected_revision, as_of):
         if decision.status != "approved":

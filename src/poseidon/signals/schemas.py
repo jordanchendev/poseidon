@@ -8,7 +8,25 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+class SignalTraceMetadata(BaseModel):
+    """Explicit stored identities used by the read-only trace API."""
+
+    model_config = ConfigDict(extra="allow")
+
+    account_scope: str | None = None
+    evaluation_snapshot_id: UUID | None = None
+    decision_id: UUID | None = None
+    narrative_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @field_validator("account_scope")
+    @classmethod
+    def require_account_scope_identity(cls, value):
+        if value is not None and (not value.strip() or value != value.strip()):
+            raise ValueError("account_scope must be non-empty trimmed text")
+        return value
 
 
 class SignalAction(StrEnum):
@@ -84,6 +102,14 @@ class Signal(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
     model_config = {"from_attributes": True}
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_explicit_trace_identity(cls, value):
+        trace_fields = {"account_scope", "evaluation_snapshot_id", "decision_id", "narrative_confidence"}
+        if trace_fields.intersection(value):
+            SignalTraceMetadata.model_validate(value)
+        return value
 
     @model_validator(mode="after")
     def validate_limit_order_fields(self) -> "Signal":
