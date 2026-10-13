@@ -75,9 +75,11 @@ def _seed_gate_graph(
     if (strategy_id is None) != (incumbent_id is None):
         raise ValueError("strategy_id and incumbent_id must be provided together")
     if strategy_id is None:
+        policy_changes = dict(policy_changes or {})
+        reconciliation = policy_changes.pop("reconciliation", synthetic_reconciliation_policy())
         policy = synthetic_policy(
-            reconciliation=synthetic_reconciliation_policy(),
-            **(policy_changes or {}),
+            reconciliation=reconciliation,
+            **policy_changes,
         )
         DecisionPolicy.model_validate(policy)
         strategy = StrategyRecord(
