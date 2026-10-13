@@ -97,6 +97,12 @@ def seed():
             )
             session.add(version)
             session.flush()
+            session.execute(text("ALTER TABLE strategies DISABLE TRIGGER trg_strategies_release_authority"))
+            try:
+                strategy.active_version_id = version.id
+                session.flush()
+            finally:
+                session.execute(text("ALTER TABLE strategies ENABLE TRIGGER trg_strategies_release_authority"))
             request = manifest_request(market=market, symbol=symbol)
             request.update(account_scope=account, universe_id=policy["universe_id"])
             request["evidence"][0]["payload"]["marker"] = strategy.name
@@ -251,6 +257,15 @@ def seed():
         session.execute(delete(DecisionRecord).where(DecisionRecord.id.in_(ids["decisions"])))
         session.execute(delete(EvaluationSnapshot).where(EvaluationSnapshot.evaluation_run_id.in_(ids["runs"])))
         session.execute(delete(EvaluationRun).where(EvaluationRun.id.in_(ids["runs"])))
+        session.execute(text("ALTER TABLE strategies DISABLE TRIGGER trg_strategies_release_authority"))
+        try:
+            for strategy_id in ids["strategies"]:
+                strategy = session.get(StrategyRecord, strategy_id)
+                if strategy is not None:
+                    strategy.active_version_id = None
+            session.flush()
+        finally:
+            session.execute(text("ALTER TABLE strategies ENABLE TRIGGER trg_strategies_release_authority"))
         session.execute(delete(StrategyVersion).where(StrategyVersion.id.in_(ids["versions"])))
         session.execute(delete(StrategyRecord).where(StrategyRecord.id.in_(ids["strategies"])))
         session.execute(delete(DataManifest).where(DataManifest.id.in_(ids["manifests"])))
