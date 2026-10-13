@@ -340,6 +340,18 @@ def test_gate_passes_candidate_policy_campaign_six_cell_review_and_own_committed
 
 
 @pytest.mark.postgresql
+def test_gate_blocks_candidate_policy_market_outside_strategy_market(phase99_session_factory):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session, policy_changes={"market": "crypto_perp"})
+
+        result = _evaluate(session, graph)
+
+        assert _by_code(result, "policy_identity").state == "blocked"
+        assert "market" in _by_code(result, "policy_identity").reason
+        session.rollback()
+
+
+@pytest.mark.postgresql
 @pytest.mark.parametrize(
     ("variant", "code", "state"),
     (
