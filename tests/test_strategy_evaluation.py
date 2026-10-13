@@ -29,7 +29,11 @@ def mock_strategy_record():
         record.market = market
         record.interval = interval
         record.config = config or {"conditions": []}
-        return record
+        version = MagicMock()
+        version.id = uuid.uuid4()
+        version.config_json = {"immutable": True, **(config or {"conditions": []})}
+        record.active_version_id = version.id
+        return record, version
 
     return _make
 
@@ -59,9 +63,9 @@ def test_evaluate_active_strategies_processes_rule_strategy(
     """Rule strategy is evaluated and signals piped through SignalPipeline."""
     from poseidon.workers.cpu_tasks import evaluate_active_strategies
 
-    record = mock_strategy_record(strategy_type="rule")
+    record, version = mock_strategy_record(strategy_type="rule")
     session = MagicMock()
-    session.query.return_value.filter.return_value.all.return_value = [record]
+    session.query.return_value.join.return_value.filter.return_value.all.return_value = [(record, version)]
     mock_db_session.return_value.__enter__ = MagicMock(return_value=session)
     mock_db_session.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -78,7 +82,7 @@ def test_evaluate_active_strategies_processes_rule_strategy(
     assert result["strategies_evaluated"] == 1
     assert result["signals_generated"] == 1
     assert result["errors"] == []
-    mock_rule_cls.assert_called_once_with(config=record.config, strategy_id=record.id)
+    mock_rule_cls.assert_called_once_with(config=version.config_json, strategy_id=record.id)
     mock_pipeline_process.assert_called_once_with(mock_signal)
 
 
@@ -98,9 +102,9 @@ def test_evaluate_active_strategies_processes_voting_strategy(
     """Voting strategy gets symbol/market/interval merged into config."""
     from poseidon.workers.cpu_tasks import evaluate_active_strategies
 
-    record = mock_strategy_record(strategy_type="voting", config={"rules": []})
+    record, version = mock_strategy_record(strategy_type="voting", config={"rules": []})
     session = MagicMock()
-    session.query.return_value.filter.return_value.all.return_value = [record]
+    session.query.return_value.join.return_value.filter.return_value.all.return_value = [(record, version)]
     mock_db_session.return_value.__enter__ = MagicMock(return_value=session)
     mock_db_session.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -119,6 +123,7 @@ def test_evaluate_active_strategies_processes_voting_strategy(
         # Verify config includes symbol/market/interval keys
         call_kwargs = mock_voting_cls.call_args
         passed_config = call_kwargs[1]["config"] if "config" in call_kwargs[1] else call_kwargs[0][0]
+        assert passed_config["immutable"] is True
         assert "symbol" in passed_config
         assert passed_config["symbol"] == record.symbol
         assert "market" in passed_config
@@ -139,9 +144,9 @@ def test_evaluate_active_strategies_skips_model_type(
     """Model-type strategies are skipped (use GPU predict path)."""
     from poseidon.workers.cpu_tasks import evaluate_active_strategies
 
-    record = mock_strategy_record(strategy_type="model")
+    record, version = mock_strategy_record(strategy_type="model")
     session = MagicMock()
-    session.query.return_value.filter.return_value.all.return_value = [record]
+    session.query.return_value.join.return_value.filter.return_value.all.return_value = [(record, version)]
     mock_db_session.return_value.__enter__ = MagicMock(return_value=session)
     mock_db_session.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -173,9 +178,9 @@ def test_evaluate_active_strategies_from_fetch_result(
     """market/interval are extracted from fetch_result when not provided directly."""
     from poseidon.workers.cpu_tasks import evaluate_active_strategies
 
-    record = mock_strategy_record(strategy_type="rule")
+    record, version = mock_strategy_record(strategy_type="rule")
     session = MagicMock()
-    session.query.return_value.filter.return_value.all.return_value = [record]
+    session.query.return_value.join.return_value.filter.return_value.all.return_value = [(record, version)]
     mock_db_session.return_value.__enter__ = MagicMock(return_value=session)
     mock_db_session.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -212,10 +217,13 @@ def test_evaluate_active_strategies_continues_on_error(
     """If one strategy fails, the next still evaluates (errors are isolated)."""
     from poseidon.workers.cpu_tasks import evaluate_active_strategies
 
-    record_fail = mock_strategy_record(strategy_type="rule", name="fail-strat")
-    record_ok = mock_strategy_record(strategy_type="rule", name="ok-strat")
+    record_fail, version_fail = mock_strategy_record(strategy_type="rule", name="fail-strat")
+    record_ok, version_ok = mock_strategy_record(strategy_type="rule", name="ok-strat")
     session = MagicMock()
-    session.query.return_value.filter.return_value.all.return_value = [record_fail, record_ok]
+    session.query.return_value.join.return_value.filter.return_value.all.return_value = [
+        (record_fail, version_fail),
+        (record_ok, version_ok),
+    ]
     mock_db_session.return_value.__enter__ = MagicMock(return_value=session)
     mock_db_session.return_value.__exit__ = MagicMock(return_value=False)
 

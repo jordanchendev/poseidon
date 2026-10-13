@@ -26,6 +26,7 @@ from poseidon.models.paper_broker_fill import PaperBrokerFill
 from poseidon.models.paper_broker_order import PaperBrokerOrder
 from poseidon.models.paper_cash_movement import PaperCashMovement
 from poseidon.models.position_lot import PositionLot
+from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 from tests import test_position_lot_allocation as lot_tests
 from tests.test_decision_service import (
@@ -82,6 +83,20 @@ def _claimed(
         universe=universe,
         market=market,
     )
+    session.add(
+        StrategyRecord(
+            id=version.strategy_id,
+            name=f"execution-{version.strategy_id}",
+            strategy_type="rule",
+            config={"mutable": "must-not-authorize"},
+            symbol=symbols[0],
+            market=market,
+            interval="1d",
+            active=True,
+            active_version_id=version.id,
+        )
+    )
+    session.flush()
     intents = [
         executable_intent(
             snapshot_id,
@@ -219,6 +234,27 @@ def test_two_symbol_intents_are_canonical_and_replay_keeps_first_economics(sessi
         assert [order.intent_json["economics"]["materialized_quantity"] for order in orders] == [200.0, 100.0]
         assert all(not (order.signal_id is None and order.order_origin == "signal") for order in orders)
         assert all(len(order.intent_sha256) == 64 for order in orders)
+
+
+def test_pointer_drift_blocks_materialization_before_order_creation(sessions):
+    with sessions() as session:
+        decision_id, version_id = _claimed(session)
+        version = session.get(StrategyVersion, version_id)
+        session.get(StrategyRecord, version.strategy_id).active_version_id = None
+        session.commit()
+
+    with pytest.raises(ExecutionConflictError, match="active pointer"):
+        materialize_order_intents(
+            sessions,
+            decision_id,
+            principal=worker(),
+            account_nav=100_000.0,
+            prices=PRICE_2330,
+            now=NOW,
+        )
+
+    with sessions() as session:
+        assert session.query(OrderRecord).filter_by(decision_id=decision_id).count() == 0
 
 
 @pytest.mark.parametrize(

@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from threading import Barrier
 
 import pytest
-from sqlalchemy import create_engine, delete, select
+from sqlalchemy import create_engine, delete, select, text
 from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal
@@ -105,6 +105,12 @@ def claim_seed():
             )
             session.add(version)
             session.flush()
+            session.execute(text("ALTER TABLE strategies DISABLE TRIGGER trg_strategies_release_authority"))
+            try:
+                strategy.active_version_id = version.id
+                session.flush()
+            finally:
+                session.execute(text("ALTER TABLE strategies ENABLE TRIGGER trg_strategies_release_authority"))
             universe = [{"symbol": "2330", "market": "tw_stock", "instrument": "spot"}]
             run = EvaluationService(session).evaluate_run(
                 version.id,
@@ -211,6 +217,27 @@ def test_concurrent_named_claim_has_one_key_revision_and_event(claim_seed):
         )
         assert events.count() == 1
         assert events.one().expected_revision == 2
+
+
+def test_claim_fails_closed_after_pointer_is_cleared(claim_seed):
+    with Session(ENGINE) as session, session.begin():
+        session.execute(text("ALTER TABLE strategies DISABLE TRIGGER trg_strategies_release_authority"))
+        try:
+            session.get(StrategyRecord, claim_seed.strategy_ids[0]).active_version_id = None
+            session.flush()
+        finally:
+            session.execute(text("ALTER TABLE strategies ENABLE TRIGGER trg_strategies_release_authority"))
+
+    with Session(ENGINE) as session, session.begin():
+        with pytest.raises(DecisionConflictError, match="active pointer"):
+            DecisionService(session).claim_execution(
+                claim_seed.decision_ids[0], 2, principal=claim_seed.worker, now=CLAIM_TIME
+            )
+
+    with Session(ENGINE) as session:
+        decision = session.get(DecisionRecord, claim_seed.decision_ids[0])
+        assert decision.status == "approved"
+        assert decision.execution_key is None
 
 
 def test_claim_next_skips_an_older_ineligible_approved_row(claim_seed):

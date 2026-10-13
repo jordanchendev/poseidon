@@ -13,6 +13,7 @@ from poseidon.api.auth import AuthPrincipal
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionService
 from poseidon.models.base import Base
 from poseidon.models.decision_event import DecisionEvent
+from poseidon.models.strategy import StrategyRecord
 from tests.test_decision_service import (
     create_decision,
     decision_inputs,
@@ -34,6 +35,7 @@ def db():
         for name in (
             "data_manifests",
             "research_revisions",
+            "strategies",
             "strategy_versions",
             "evaluation_runs",
             "evaluation_snapshots",
@@ -52,6 +54,20 @@ def approved_execution(db, *, reconciliation=True):
         reconciliation=synthetic_reconciliation_policy() if reconciliation else None,
     )
     run, version, snapshot_ids = decision_inputs(db, policy=policy)
+    db.add(
+        StrategyRecord(
+            id=version.strategy_id,
+            name=f"claim-{version.strategy_id}",
+            strategy_type="rule",
+            config={"mutable": "must-not-authorize"},
+            symbol="2330",
+            market="tw_stock",
+            interval="1d",
+            active=True,
+            active_version_id=version.id,
+        )
+    )
+    db.flush()
     decision = create_decision(
         db,
         run.id,
@@ -199,3 +215,21 @@ def test_claim_next_selects_only_the_authorized_account(db):
             now=CLAIM_TIME,
         )
     assert error.value.status_code == 403
+
+
+@pytest.mark.parametrize("claim_next", [False, True])
+def test_claim_rejects_null_or_drifted_active_pointer_before_mutation(db, claim_next):
+    decision, version = approved_execution(db)
+    strategy = db.get(StrategyRecord, version.strategy_id)
+    strategy.active_version_id = None if claim_next else uuid.uuid4()
+    db.flush()
+
+    with pytest.raises(DecisionConflictError, match="active pointer"):
+        if claim_next:
+            DecisionService(db).claim_next_approved("paper:pilot", principal=worker(), now=CLAIM_TIME)
+        else:
+            DecisionService(db).claim_execution(decision.id, 2, principal=worker(), now=CLAIM_TIME)
+
+    assert decision.status == "approved"
+    assert decision.execution_key is None
+    assert db.query(DecisionEvent).filter_by(event_type="execution_claimed").count() == 0
