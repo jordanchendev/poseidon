@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Barrier, Event
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine, delete, event, select, text
@@ -29,6 +30,7 @@ from poseidon.models.order_fill import OrderFillRecord
 from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.paper_cash_movement import PaperCashMovement
 from poseidon.models.position_lot import PositionLot
+from poseidon.models.signal import SignalRecord
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
@@ -179,6 +181,7 @@ def claim_seed():
         session.execute(delete(DecisionRecord).where(DecisionRecord.id.in_(value.decision_ids)))
         session.execute(delete(EvaluationSnapshot).where(EvaluationSnapshot.evaluation_run_id.in_(value.run_ids)))
         session.execute(delete(EvaluationRun).where(EvaluationRun.id.in_(value.run_ids)))
+        session.execute(delete(SignalRecord).where(SignalRecord.strategy_id.in_(value.strategy_ids)))
         session.execute(text("ALTER TABLE strategies DISABLE TRIGGER trg_strategies_release_authority"))
         try:
             for strategy_id in value.strategy_ids:
@@ -248,6 +251,48 @@ def test_claim_fails_closed_after_pointer_is_cleared(claim_seed):
         decision = session.get(DecisionRecord, claim_seed.decision_ids[0])
         assert decision.status == "approved"
         assert decision.execution_key is None
+
+
+@pytest.mark.parametrize("mode", ["legacy", "shadow"])
+def test_pause_with_fresh_signal_cannot_reach_ordinary_legacy_writer(monkeypatch, claim_seed, mode):
+    from poseidon.signals.repository import SignalRepository
+    from poseidon.workers import cpu_tasks
+
+    with Session(ENGINE) as session, session.begin():
+        _pause(session, claim_seed, key=f"pause-fresh-signal-{mode}")
+        session.add(
+            SignalRecord(
+                strategy_id=claim_seed.strategy_ids[0],
+                symbol="2330",
+                market="tw_stock",
+                instrument="spot",
+                action="long",
+                confidence=0.9,
+                quantity_pct=0.1,
+                signal_time=CLAIM_TIME,
+                interval="1d",
+                status="passed",
+            )
+        )
+
+    monkeypatch.setattr(
+        cpu_tasks,
+        "settings",
+        SimpleNamespace(decision_loop_execution_mode=mode),
+    )
+    monkeypatch.setattr(
+        SignalRepository,
+        "latest_passed",
+        lambda *args, **kwargs: pytest.fail("paused ordinary writer read a fresh signal"),
+    )
+    with Session(ENGINE) as session:
+        baseline_orders = session.query(OrderRecord).count()
+
+    result = cpu_tasks.portfolio_monthly_rebalance.run()
+
+    assert result == {"skipped": "release_authority_required"}
+    with Session(ENGINE) as session:
+        assert session.query(OrderRecord).count() == baseline_orders
 
 
 def _release_manager(claim_seed):

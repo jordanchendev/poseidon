@@ -277,12 +277,14 @@ def test_ordinary_mode_matrix_single_writer(request, monkeypatch, task_name, fix
     if mode in {"decision", "halted"}:
         monkeypatch.setattr(SignalRepository, "latest_passed", lambda *a, **k: pytest.fail("legacy signals touched"))
     result = getattr(cpu_tasks, task_name).run()
-    assert bool(env["captured"]) == (mode in {"legacy", "shadow"})
-    assert env["captured"].get("call_count", 0) == (1 if mode in {"legacy", "shadow"} else 0)
+    assert bool(env["captured"]) is False
+    assert env["captured"].get("call_count", 0) == 0
     assert decisions == ([market] if mode == "decision" else [])
-    assert len(audits) == (1 if mode == "shadow" else 0)
+    assert audits == []
     if mode == "halted":
         assert result == {"skipped": "execution_halted"}
+    elif mode in {"legacy", "shadow"}:
+        assert result == {"skipped": "release_authority_required"}
 
 
 from tests.test_perp_rebalance_wiring import _make_signal_record, patched_perp_env  # noqa: E402,F401
@@ -529,7 +531,7 @@ def test_preflight_lock_wait_rechecks_current_time_before_claim(cutover_account,
     assert cutover_account.calls == []
 
 
-def test_shadow_task_submits_legacy_once_and_records_real_audit(patched_monthly_env, cutover_account):
+def test_shadow_task_cannot_submit_legacy_after_release_authority(patched_monthly_env, cutover_account):
     from sqlalchemy import select
 
     from poseidon.models.decision_event import DecisionEvent
@@ -541,10 +543,10 @@ def test_shadow_task_submits_legacy_once_and_records_real_audit(patched_monthly_
     cutover_account.config.decision_loop_execution_enabled = False
     patched_monthly_env["signals"] = [_make_signal(symbol="2330", quantity_pct=0.1)]
     result = cpu_tasks.portfolio_monthly_rebalance.run()
-    assert result["orders"] == 1
-    assert patched_monthly_env["captured"]["call_count"] == 1
+    assert result == {"skipped": "release_authority_required"}
+    assert patched_monthly_env["captured"] == {}
     with cutover_account.sessions() as session:
-        assert len([row for row in session.scalars(select(DecisionEvent)) if row.event_type.startswith("shadow")]) == 1
+        assert len([row for row in session.scalars(select(DecisionEvent)) if row.event_type.startswith("shadow")]) == 0
         assert session.get(DecisionRecord, cutover_account.decision_id).status == "approved"
         assert session.query(OrderRecord).count() == 0
     assert cutover_account.calls == []

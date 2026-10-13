@@ -44,6 +44,7 @@ def mock_strategy_record():
             "strategy_type": strategy_type,
             "symbol": symbol,
             "market": market,
+            "instrument": "perpetual" if market == "crypto_perp" else "spot",
             "interval": interval,
             "payload": payload,
         }
@@ -104,6 +105,7 @@ def test_evaluate_active_strategies_processes_rule_strategy(
             "market": version.config_json["market"],
             "interval": version.config_json["interval"],
         },
+        instrument="spot",
         strategy_id=record.id,
     )
     mock_pipeline_process.assert_called_once_with(mock_signal)
@@ -164,6 +166,7 @@ def test_evaluate_active_strategies_processes_voting_strategy(
             "market": version.config_json["market"],
             "interval": version.config_json["interval"],
         }
+        assert call_kwargs[1]["instrument"] == "spot"
         mock_engine.compute.assert_called_once_with("BTCUSDT", "crypto_spot", "1h")
 
 
@@ -364,4 +367,62 @@ def test_release_rejects_incomplete_executable_config_before_pointer_mutation(ph
         assert "executable config" in candidate.reason
         assert (strategy.active_version_id, strategy.release_revision) == (None, 0)
         assert session.query(StrategyReleaseEvent).filter_by(strategy_id=strategy.id).count() == 0
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_released_perp_envelope_emits_owner_frozen_instrument(phase99_session_factory):
+    from poseidon.decision_loop.releases import ReleaseService
+    from poseidon.models.strategy import StrategyRecord
+    from poseidon.signals.schemas import InstrumentType
+    from poseidon.workers.cpu_tasks import evaluate_active_strategies
+    from tests.test_decision_service import synthetic_reconciliation_policy
+    from tests.test_strategy_release import _release, _seed_gate_graph
+
+    symbol = "BTC/USDT:USDT"
+    reconciliation = synthetic_reconciliation_policy(
+        currency="USDT",
+        perp_instrument_rules={
+            symbol: {
+                "quantity_step": 0.001,
+                "contract_multiplier": 1.0,
+                "margin_semantics": "synthetic-isolated",
+                "funding_semantics": "synthetic-periodic-cashflow",
+            }
+        },
+    )
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(
+            session,
+            strategy_changes={"symbol": symbol, "market": "crypto_perp", "interval": "4h"},
+            policy_changes={"market": "crypto_perp", "reconciliation": reconciliation},
+            campaign_universe=[{"symbol": symbol, "market": "crypto_perp", "instrument": "perpetual"}],
+        )
+        _release(ReleaseService(session), graph, key="release-perp-executable")
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        session.query(StrategyRecord).filter(StrategyRecord.id != strategy.id).update(
+            {StrategyRecord.active_version_id: None}, synchronize_session=False
+        )
+        session.flush()
+
+        context = MagicMock()
+        context.__enter__.return_value = session
+        context.__exit__.return_value = False
+        engine = MagicMock()
+        engine.compute.return_value = pd.DataFrame({"close": [250.0]})
+        emitted = []
+        with (
+            patch("poseidon.workers.cpu_tasks.db_session", return_value=context),
+            patch("poseidon.workers.cpu_tasks.FeatureEngine", return_value=engine),
+            patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None),
+            patch("poseidon.risk.pipeline.SignalPipeline.process", side_effect=emitted.append),
+        ):
+            result = evaluate_active_strategies(market="crypto_perp", interval="4h")
+
+        assert result["errors"] == []
+        assert len(emitted) == 1
+        assert emitted[0].symbol == symbol
+        assert emitted[0].market == "crypto_perp"
+        assert emitted[0].instrument is InstrumentType.PERPETUAL
+        engine.compute.assert_called_once_with(symbol, "crypto_perp", "4h")
         session.rollback()

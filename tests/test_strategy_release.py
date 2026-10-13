@@ -70,6 +70,8 @@ def _seed_gate_graph(
     strategy_id=None,
     incumbent_id=None,
     candidate_config_json=None,
+    strategy_changes=None,
+    campaign_universe=None,
 ):
     marker = uuid.uuid4().hex
     if (strategy_id is None) != (incumbent_id is None):
@@ -82,14 +84,18 @@ def _seed_gate_graph(
             **policy_changes,
         )
         DecisionPolicy.model_validate(policy)
+        strategy_values = {
+            "name": f"phase100-gate-{marker}",
+            "strategy_type": "technical",
+            "config": {},
+            "symbol": "2330",
+            "market": "tw_stock",
+            "interval": "1d",
+            "active": False,
+        }
+        strategy_values.update(strategy_changes or {})
         strategy = StrategyRecord(
-            name=f"phase100-gate-{marker}",
-            strategy_type="technical",
-            config={},
-            symbol="2330",
-            market="tw_stock",
-            interval="1d",
-            active=False,
+            **strategy_values,
         )
         session.add(strategy)
         session.flush()
@@ -114,9 +120,10 @@ def _seed_gate_graph(
     for offset, role in enumerate(roles):
         config = {
             "strategy_type": "rule",
-            "symbol": "2330",
-            "market": "tw_stock",
-            "interval": "1d",
+            "symbol": strategy.symbol,
+            "market": strategy.market,
+            "instrument": "perpetual" if strategy.market == "crypto_perp" else "spot",
+            "interval": strategy.interval,
             "payload": {
                 "name": f"phase100-{marker}-{role}",
                 "description": "Phase 100 executable release fixture",
@@ -150,9 +157,10 @@ def _seed_gate_graph(
         session.flush()
         versions.append(version)
     incumbent, candidate = versions
-    campaign = CampaignService(session).create_frozen_campaign(
-        _complete_campaign_contract(incumbent, candidate, marker=marker)
-    )
+    campaign_contract = _complete_campaign_contract(incumbent, candidate, marker=marker)
+    if campaign_universe is not None:
+        campaign_contract["contract_json"]["universe"] = copy.deepcopy(campaign_universe)
+    campaign = CampaignService(session).create_frozen_campaign(campaign_contract)
     tracker = ExperimentTracker(session)
     trials = []
     for index, ((role, version), arm) in enumerate(
@@ -1003,6 +1011,7 @@ def test_release_rejects_executable_market_outside_policy_and_campaign_scope(pha
                 "strategy_type": "rule",
                 "symbol": "2330",
                 "market": "crypto_spot",
+                "instrument": "spot",
                 "interval": "1d",
                 "payload": {
                     "name": "wrong-market",
@@ -1026,6 +1035,136 @@ def test_release_rejects_executable_market_outside_policy_and_campaign_scope(pha
         strategy = session.get(StrategyRecord, graph.strategy_id)
         assert (strategy.active_version_id, strategy.release_revision) == (None, 0)
         assert session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).count() == 0
+        session.rollback()
+
+
+@pytest.mark.postgresql
+@pytest.mark.parametrize(
+    "candidate_config",
+    [
+        {
+            "strategy_type": "rule",
+            "symbol": "2330",
+            "market": "tw_stock",
+            "instrument": "spot",
+            "interval": "1d",
+            "payload": {
+                "name": "unknown-condition",
+                "rules": [{"condition": {"type": "not_registered"}, "action": "long"}],
+            },
+        },
+        {
+            "strategy_type": "rule",
+            "symbol": "2330",
+            "market": "tw_stock",
+            "instrument": "spot",
+            "interval": "1d",
+            "payload": {
+                "name": "unknown-action",
+                "rules": [
+                    {
+                        "condition": {"type": "feature_above", "column": "close", "threshold": 200.0},
+                        "action": "launch",
+                    }
+                ],
+            },
+        },
+        {
+            "strategy_type": "voting",
+            "symbol": "2330",
+            "market": "tw_stock",
+            "instrument": "spot",
+            "interval": "1d",
+            "payload": {
+                "name": "invalid-vote",
+                "sub_signals": [{"type": "not_registered"}],
+                "min_votes": 1,
+            },
+        },
+    ],
+)
+def test_release_rejects_non_executable_nested_dsl_before_pointer_mutation(
+    phase99_session_factory,
+    candidate_config,
+):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session, candidate_config_json=candidate_config)
+
+        with pytest.raises(ReleaseGateRejected) as rejected:
+            _release(ReleaseService(session), graph, key=f"invalid-dsl-{candidate_config['payload']['name']}")
+
+        predicates = {predicate.code: predicate for predicate in rejected.value.result.predicates}
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        assert predicates["candidate_identity"].state == "blocked"
+        assert "executable config" in predicates["candidate_identity"].reason
+        assert (strategy.active_version_id, strategy.release_revision) == (None, 0)
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=strategy.id).count() == 0
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_release_requires_exact_campaign_instrument_for_perp_candidate(phase99_session_factory):
+    symbol = "BTC/USDT:USDT"
+    reconciliation = synthetic_reconciliation_policy(
+        currency="USDT",
+        perp_instrument_rules={
+            symbol: {
+                "quantity_step": 0.001,
+                "contract_multiplier": 1.0,
+                "margin_semantics": "synthetic-isolated",
+                "funding_semantics": "synthetic-periodic-cashflow",
+            }
+        },
+    )
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(
+            session,
+            strategy_changes={"symbol": symbol, "market": "crypto_perp", "interval": "4h"},
+            policy_changes={"market": "crypto_perp", "reconciliation": reconciliation},
+            campaign_universe=[{"symbol": symbol, "market": "crypto_perp", "instrument": "spot"}],
+        )
+
+        with pytest.raises(ReleaseGateRejected) as rejected:
+            _release(ReleaseService(session), graph, key="wrong-campaign-instrument")
+
+        predicates = {predicate.code: predicate for predicate in rejected.value.result.predicates}
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        assert predicates["campaign_identity"].state == "blocked"
+        assert (strategy.active_version_id, strategy.release_revision) == (None, 0)
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=strategy.id).count() == 0
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_release_requires_exact_perp_contract_rule_for_executable_symbol(phase99_session_factory):
+    symbol = "BTC/USDT:USDT"
+    reconciliation = synthetic_reconciliation_policy(
+        currency="USDT",
+        perp_instrument_rules={
+            "ETH/USDT:USDT": {
+                "quantity_step": 0.001,
+                "contract_multiplier": 1.0,
+                "margin_semantics": "synthetic-isolated",
+                "funding_semantics": "synthetic-periodic-cashflow",
+            }
+        },
+    )
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(
+            session,
+            strategy_changes={"symbol": symbol, "market": "crypto_perp", "interval": "4h"},
+            policy_changes={"market": "crypto_perp", "reconciliation": reconciliation},
+            campaign_universe=[{"symbol": symbol, "market": "crypto_perp", "instrument": "perpetual"}],
+        )
+
+        with pytest.raises(ReleaseGateRejected) as rejected:
+            _release(ReleaseService(session), graph, key="missing-perp-contract-rule")
+
+        predicates = {predicate.code: predicate for predicate in rejected.value.result.predicates}
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        assert predicates["policy_identity"].state == "blocked"
+        assert (strategy.active_version_id, strategy.release_revision) == (None, 0)
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=strategy.id).count() == 0
         session.rollback()
 
 
