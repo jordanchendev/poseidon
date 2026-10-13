@@ -27,6 +27,7 @@ from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
 from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
+from poseidon.models.signal import SignalRecord
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 from poseidon.orders.schemas import Fill, Order
 from poseidon.orders.state_machine import OrderStatus, transition_order
@@ -1097,6 +1098,123 @@ def test_evaluation_trace_returns_multiple_linked_decisions_in_stable_order(db):
 
     assert {first.id, second.id} == {uuid.UUID(row.identities["decision_id"]) for row in decision_rows}
     assert [row.identities["decision_id"] for row in decision_rows] == [str(row.id) for row in ordered]
+
+
+def test_direct_evaluation_trace_projects_its_exact_account_scoped_signal(db):
+    _, version, snapshot_ids = decision_inputs(db)
+    signal = SignalRecord(
+        id=uuid.uuid4(),
+        strategy_id=version.strategy_id,
+        symbol="2330",
+        market="tw_stock",
+        instrument="spot",
+        action="long",
+        confidence=0.8,
+        quantity_pct=0.1,
+        signal_time=datetime(2026, 9, 26, 12, 5, tzinfo=UTC),
+        interval="1d",
+        params={},
+        status="passed",
+        metadata_={
+            "account_scope": "paper:pilot",
+            "evaluation_snapshot_id": snapshot_ids[0],
+            "narrative_confidence": 0.72,
+        },
+    )
+    db.add(signal)
+    db.flush()
+
+    response = TraceService(db).by_evaluation(uuid.UUID(snapshot_ids[0]), principal=manager())
+
+    assert response.stages[0].state == "Available"
+    assert [row.identities["signal_id"] for row in response.stages[0].rows] == [str(signal.id)]
+    assert response.stages[0].rows[0].values["Narrative confidence"] == 0.72
+    assert response.stages[0].rows[0].values["confidence_note"] == "Not a probability of profit"
+
+
+def test_decision_trace_rejects_cross_account_signal_metadata(db):
+    run, version, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    db.add(
+        SignalRecord(
+            id=uuid.uuid4(),
+            strategy_id=version.strategy_id,
+            symbol="2330",
+            market="tw_stock",
+            instrument="spot",
+            action="long",
+            confidence=0.8,
+            quantity_pct=0.1,
+            signal_time=datetime(2026, 9, 26, 12, 5, tzinfo=UTC),
+            interval="1d",
+            params={},
+            status="passed",
+            metadata_={
+                "account_scope": "paper:other",
+                "decision_id": str(decision.id),
+                "evaluation_snapshot_id": snapshot_ids[0],
+            },
+        )
+    )
+    db.flush()
+
+    with pytest.raises(ValidationError, match="account scope"):
+        DecisionService(db).trace(decision.id, principal=manager())
+
+
+def test_evaluation_trace_rejects_malformed_signal_metadata(db):
+    _, version, snapshot_ids = decision_inputs(db)
+    db.add(
+        SignalRecord(
+            id=uuid.uuid4(),
+            strategy_id=version.strategy_id,
+            symbol="2330",
+            market="tw_stock",
+            instrument="spot",
+            action="long",
+            confidence=0.8,
+            quantity_pct=0.1,
+            signal_time=datetime(2026, 9, 26, 12, 5, tzinfo=UTC),
+            interval="1d",
+            params={},
+            status="passed",
+            metadata_={"account_scope": "", "evaluation_snapshot_id": snapshot_ids[0]},
+        )
+    )
+    db.flush()
+
+    with pytest.raises(ValidationError, match="metadata"):
+        TraceService(db).by_evaluation(uuid.UUID(snapshot_ids[0]), principal=manager())
+
+
+def test_signal_trace_rejects_dual_identity_when_decision_did_not_select_snapshot(db):
+    run, version, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    signal = SignalRecord(
+        id=uuid.uuid4(),
+        strategy_id=version.strategy_id,
+        symbol="2317",
+        market="tw_stock",
+        instrument="spot",
+        action="hold",
+        confidence=0.5,
+        signal_time=datetime(2026, 9, 26, 12, 5, tzinfo=UTC),
+        interval="1d",
+        params={},
+        status="passed",
+        metadata_={
+            "account_scope": "paper:pilot",
+            "decision_id": str(decision.id),
+            "evaluation_snapshot_id": snapshot_ids[1],
+        },
+    )
+    db.add(signal)
+    db.flush()
+
+    with pytest.raises(HTTPException) as error:
+        TraceService(db).by_signal(signal.id, principal=manager())
+
+    assert error.value.status_code == 422
 
 
 def test_transition_body_rejects_actor_identity(db):
