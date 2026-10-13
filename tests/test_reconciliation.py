@@ -44,7 +44,8 @@ from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.paper_broker_fill import PaperBrokerFill
 from poseidon.models.paper_broker_order import PaperBrokerOrder
 from poseidon.models.position_lot import PositionLot
-from poseidon.models.strategy_version import StrategyVersion
+from poseidon.models.strategy import StrategyRecord
+from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 from poseidon.orders.schemas import Order
 from tests.test_decision_order_wiring import NOW, PRICE_2330, _claimed
 from tests.test_decision_service import synthetic_reconciliation_policy, worker
@@ -496,6 +497,34 @@ def _intent(sessions):
     return decision_id, uuid.UUID(response["order_ids"][0])
 
 
+def _move_release_pointer(sessions, decision_id, state):
+    with sessions() as session, session.begin():
+        decision = session.get(DecisionRecord, decision_id)
+        version = session.get(StrategyVersion, decision.strategy_version_id)
+        strategy = session.get(StrategyRecord, version.strategy_id)
+        target_id = None
+        if state == "rolled_back":
+            config = {**version.config_json, "pointer_test": uuid.uuid4().hex}
+            replacement = StrategyVersion(
+                strategy_id=strategy.id,
+                version_no=(
+                    session.scalar(
+                        select(func.max(StrategyVersion.version_no)).where(StrategyVersion.strategy_id == strategy.id)
+                    )
+                    + 1
+                ),
+                config_json=config,
+                policy_json=copy.deepcopy(version.policy_json),
+                artifact_json=copy.deepcopy(version.artifact_json),
+                content_sha256=strategy_version_digest(config, version.policy_json, version.artifact_json),
+            )
+            session.add(replacement)
+            session.flush()
+            target_id = replacement.id
+        strategy.active_version_id = target_id
+        return target_id
+
+
 @pytest.fixture
 def postgres_intent(claim_seed):  # noqa: F811
     sessions = sessionmaker(ENGINE, expire_on_commit=False)
@@ -643,6 +672,30 @@ class SnapshotAdapter(BrokerAdapter):
 
     def logout(self):
         return None
+
+
+@pytest.mark.parametrize("pointer_state", ("paused", "rolled_back"))
+def test_committed_broker_reconciliation_continues_after_pointer_change(sessions, pointer_state):
+    decision_id, order_id = _intent(sessions)
+    adapter = SnapshotAdapter(sessions)
+    with sessions() as session, session.begin():
+        prepared = ReconciliationService(session).prepare_attempt(order_id, adapter, now=NOW)
+    adapter.snapshot = _snapshot(prepared.order)
+    adapter.fills = [_fill(prepared.order, adapter.snapshot)]
+    target_id = _move_release_pointer(sessions, decision_id, pointer_state)
+
+    result = submit_or_reconcile_order(sessions, order_id, adapter, now=NOW)
+
+    assert result["status"] == "filled"
+    assert (adapter.place_calls, adapter.lookup_calls) == (0, 1)
+    with sessions() as session:
+        decision = session.get(DecisionRecord, decision_id)
+        version = session.get(StrategyVersion, decision.strategy_version_id)
+        strategy = session.get(StrategyRecord, version.strategy_id)
+        order = session.get(OrderRecord, order_id)
+        assert strategy.active_version_id == target_id
+        assert order.reconciliation_status == "resolved"
+        assert session.query(OrderFillRecord).filter_by(order_id=order_id).count() == 1
 
 
 def test_runner_commits_attempt_before_io_and_service_flushes_only(sessions, monkeypatch):

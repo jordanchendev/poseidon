@@ -9,7 +9,7 @@ from threading import Barrier
 
 import pandas as pd
 import pytest
-from sqlalchemy import delete, event, func, select, update
+from sqlalchemy import delete, event, func, select, text, update
 
 from poseidon.broker.base import BrokerAdapter, BrokerCapabilities, BrokerCapabilityError, BrokerOrderSnapshot
 from poseidon.broker.paper_adapter import PaperBrokerAdapter, _ensure_legacy_baselines
@@ -36,6 +36,7 @@ from poseidon.models.paper_broker_order import PaperBrokerOrder
 from poseidon.models.paper_cash_movement import PaperCashMovement
 from poseidon.models.portfolio_holding import PortfolioHoldingRecord
 from poseidon.models.position_lot import PositionLot
+from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 from poseidon.positions.lots import FillProjectionConflictError
 from poseidon.strategies.portfolio.position_tracker import PositionTracker
@@ -235,6 +236,71 @@ def _materialize_legacy(seed, holding_id, origin="stop_loss", trigger="legacy:pr
         allow_legacy_holdings=True,
         **changes,
     )
+
+
+def _move_release_pointer(seed, decision_id, state):
+    with seed.sessions() as session, session.begin():
+        decision = session.get(DecisionRecord, decision_id)
+        version = session.get(StrategyVersion, decision.strategy_version_id)
+        strategy = session.get(StrategyRecord, version.strategy_id)
+        replacement = None
+        if state == "rolled_back":
+            config = {**version.config_json, "pointer_test": uuid.uuid4().hex}
+            replacement = StrategyVersion(
+                strategy_id=strategy.id,
+                version_no=(
+                    session.scalar(
+                        select(func.max(StrategyVersion.version_no)).where(StrategyVersion.strategy_id == strategy.id)
+                    )
+                    + 1
+                ),
+                config_json=config,
+                policy_json=copy.deepcopy(version.policy_json),
+                artifact_json=copy.deepcopy(version.artifact_json),
+                content_sha256=strategy_version_digest(config, version.policy_json, version.artifact_json),
+            )
+            session.add(replacement)
+            session.flush()
+        session.execute(text("ALTER TABLE strategies DISABLE TRIGGER trg_strategies_release_authority"))
+        try:
+            strategy.active_version_id = None if replacement is None else replacement.id
+            session.flush()
+        finally:
+            session.execute(text("ALTER TABLE strategies ENABLE TRIGGER trg_strategies_release_authority"))
+        return strategy.id, None if replacement is None else replacement.id
+
+
+def _delete_pointer_test_version(seed, strategy_id, version_id):
+    if version_id is None:
+        return
+    with seed.sessions() as session, session.begin():
+        strategy = session.get(StrategyRecord, strategy_id)
+        session.execute(text("ALTER TABLE strategies DISABLE TRIGGER trg_strategies_release_authority"))
+        try:
+            strategy.active_version_id = None
+            session.flush()
+        finally:
+            session.execute(text("ALTER TABLE strategies ENABLE TRIGGER trg_strategies_release_authority"))
+        session.execute(delete(StrategyVersion).where(StrategyVersion.id == version_id))
+
+
+@pytest.mark.parametrize("pointer_state", ("paused", "rolled_back"))
+def test_reduction_only_protective_exit_continues_after_pointer_change(seed, pointer_state):
+    lot_id, decision_id = _opening(seed)
+    strategy_id, replacement_id = _move_release_pointer(seed, decision_id, pointer_state)
+    try:
+        result = _materialize(seed, trigger=f"release-pointer:{pointer_state}")
+
+        with seed.sessions() as session:
+            strategy = session.get(StrategyRecord, strategy_id)
+            order = session.get(OrderRecord, uuid.UUID(result["order_ids"][0]))
+            assert strategy.active_version_id == replacement_id
+            assert order.order_origin == "stop_loss"
+            assert order.intent_json["frozen_intent"]["action"] == "exit"
+            assert order.reserved_quantity == 5.0
+            assert order.protective_context_json["source_lot_ids"] == [str(lot_id)]
+    finally:
+        _delete_pointer_test_version(seed, strategy_id, replacement_id)
 
 
 def _paper_price(monkeypatch, price=79.0):
