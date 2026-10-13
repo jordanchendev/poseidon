@@ -85,6 +85,17 @@ _HOLDOUT_FIELDS = (
     "purge_gap",
 )
 _PERMIT_TOKEN = object()
+_REVIEW_ESTIMATOR_FIELDS = (
+    "label",
+    "purge_gap",
+    "regimes",
+    "uncertainty_estimator",
+    "ablation_arms",
+    "gates",
+    "cost_fx_contract",
+    "turnover",
+    "capacity",
+)
 
 
 def _json_object(value, field: str, *, nonempty: bool = True) -> dict:
@@ -448,6 +459,62 @@ def build_holdout_identity(value: dict) -> str:
     return content_sha256(evidence)
 
 
+def build_review_input_identity(
+    campaign: ExperimentCampaign,
+    trials: list[ExperimentRecord],
+    *,
+    holdout_identity_sha256: str,
+    panel_sha256: str,
+) -> dict:
+    """Return every canonical component that gives a new review its identity."""
+
+    holdout_digest = _digest(holdout_identity_sha256, "holdout_identity_sha256")
+    panel_digest = _digest(panel_sha256, "panel_sha256")
+    contract = _json_object(campaign.contract_json, "campaign.contract_json")
+    memberships = []
+    terminal_trials = []
+    for trial in trials:
+        membership = (trial.metrics_json or {}).get("sample_membership")
+        canonical_membership = [] if not isinstance(membership, list) else sorted(membership, key=canonical_json)
+        membership_digest = content_sha256(canonical_membership)
+        memberships.append(membership_digest)
+        terminal_trials.append(
+            {
+                "experiment_id": str(trial.id),
+                "original_trial_id": trial.original_trial_id,
+                "trial_role": trial.trial_role,
+                "strategy_version_id": str(trial.strategy_version_id),
+                "ablation_arm": trial.ablation_arm,
+                "paired_sample_key_sha256": trial.paired_sample_key_sha256,
+                "input_sha256": trial.input_sha256,
+                "result_sha256": trial.result_sha256,
+                "terminal_state": trial.terminal_state,
+                "sample_membership_sha256": membership_digest,
+            }
+        )
+    ordered_trials = sorted(terminal_trials, key=canonical_json)
+    membership_digests = sorted(set(memberships))
+    return json.loads(
+        canonical_json(
+            {
+                "campaign_id": str(campaign.id),
+                "campaign_contract_sha256": campaign.contract_sha256,
+                "holdout_identity_sha256": holdout_digest,
+                "terminal_trials": ordered_trials,
+                "paired_sample_sha256": (
+                    membership_digests[0]
+                    if len(membership_digests) == 1
+                    else content_sha256(membership_digests)
+                ),
+                "panel_sha256": panel_digest,
+                "review_estimator_inputs": {
+                    field: contract.get(field) for field in _REVIEW_ESTIMATOR_FIELDS
+                },
+            }
+        )
+    )
+
+
 class HoldoutReadPermit:
     """Non-forgeable in-process proof that holdout ownership already committed."""
 
@@ -587,7 +654,6 @@ def run_paired_review_in_transactions(
             for trial in trials
         ]
         contract = json.loads(canonical_json(campaign.contract_json))
-        trial_hashes = sorted(trial.result_sha256 for trial in trials)
 
     if not hasattr(panel, "to_dict") or not hasattr(panel, "isna"):
         raise CampaignContractValidationError("holdout loader must return a pandas DataFrame")
@@ -600,14 +666,13 @@ def run_paired_review_in_transactions(
         )
     ]
     panel_digest = content_sha256(sorted(panel_records, key=canonical_json))
-    input_digest = content_sha256(
-        {
-            "campaign_contract_sha256": contract_digest,
-            "holdout_identity_sha256": identity,
-            "trial_result_sha256": trial_hashes,
-            "panel_sha256": panel_digest,
-        }
+    input_identity = build_review_input_identity(
+        campaign,
+        trials,
+        holdout_identity_sha256=identity,
+        panel_sha256=panel_digest,
     )
+    input_digest = content_sha256(input_identity)
     result = PairedReview(contract, cells).run(panel)
     result_digest = content_sha256(result)
 
@@ -623,10 +688,18 @@ def run_paired_review_in_transactions(
                 result_sha256=result_digest,
                 status=result["status"],
                 result_json=result,
+                holdout_use_id=permit.holdout_use_id,
+                input_identity_json=input_identity,
             )
             session.add(review)
             session.flush()
-        elif review.result_sha256 != result_digest or review.status != result["status"] or review.result_json != result:
+        elif (
+            review.result_sha256 != result_digest
+            or review.status != result["status"]
+            or review.result_json != result
+            or review.holdout_use_id != permit.holdout_use_id
+            or review.input_identity_json != input_identity
+        ):
             raise FrozenCampaignIdentityConflict("review input identifies different immutable content")
         CampaignService(session).append_event(
             campaign_id,
