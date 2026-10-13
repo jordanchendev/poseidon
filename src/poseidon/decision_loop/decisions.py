@@ -142,6 +142,8 @@ def load_trace_signals(session, *, account_scope, version, snapshots, decision=N
             metadata = SignalTraceMetadata.model_validate(signal.metadata_)
         except PydanticValidationError as error:
             raise ValidationError("signal trace metadata is invalid") from error
+        if decision is not None and metadata.decision_id is not None and metadata.decision_id != decision.id:
+            continue
         if metadata.account_scope != account_scope:
             raise ValidationError("signal trace account scope mismatch")
         if signal.strategy_id != version.strategy_id:
@@ -151,10 +153,7 @@ def load_trace_signals(session, *, account_scope, version, snapshots, decision=N
             linked_snapshot = snapshot_by_id.get(metadata.evaluation_snapshot_id)
             if linked_snapshot is None:
                 raise ValidationError("signal trace snapshot identity mismatch")
-        if decision is not None:
-            if metadata.decision_id is not None and metadata.decision_id != decision.id:
-                raise ValidationError("signal trace decision identity mismatch")
-        elif metadata.decision_id is not None:
+        if decision is None and metadata.decision_id is not None:
             linked_decision = session.get(DecisionRecord, metadata.decision_id)
             selected_ids = (
                 set()
