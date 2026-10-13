@@ -516,7 +516,22 @@ def test_non_release_principals_receive_403_and_transaction_rolls_back(api, key)
     ("failure", "status"),
     [
         (DecisionConflictError("strategy release revision changed"), 409),
-        (DecisionConflictError("release gate did not pass: review_identity"), 422),
+        (
+            ReleaseGateRejected(
+                "release",
+                ReleaseGateResult(
+                    (
+                        ReleasePredicate(
+                            "review_identity",
+                            "blocked",
+                            "review is unsafe",
+                            {"review_id": str(uuid.uuid4())},
+                        ),
+                    )
+                ),
+            ),
+            422,
+        ),
         (ValidationError("invalid release input"), 422),
     ],
 )

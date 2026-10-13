@@ -258,7 +258,7 @@ def _raise_release_error(error: Exception) -> NoReturn:
         detail = ReleaseGateFailureDetail(
             message="Release gate did not pass",
             gate=ReleaseGateResponse.model_validate(error.result.as_json()),
-        ).model_dump(mode="json")
+        ).model_dump(mode="json", exclude_none=True)
         raise HTTPException(status_code=422, detail=detail) from error
     if isinstance(error, DecisionConflictError):
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -278,6 +278,7 @@ def _mutate(db: Session, operation):
 @router.get(
     "/{strategy_id}/release-gate",
     response_model=ReleaseGateResponse,
+    response_model_exclude_none=True,
     responses=ERROR_RESPONSES,
 )
 def get_release_gate(
@@ -305,6 +306,7 @@ def get_release_gate(
 @router.get(
     "/{strategy_id}/release-events",
     response_model=list[ReleaseEventResponse],
+    response_model_exclude_none=True,
     responses=ERROR_RESPONSES,
 )
 def list_release_events(
@@ -325,6 +327,7 @@ def list_release_events(
 @router.get(
     "/{strategy_id}/rollback-targets",
     response_model=list[RollbackTargetResponse],
+    response_model_exclude_none=True,
     responses=ERROR_RESPONSES,
 )
 def list_rollback_targets(
