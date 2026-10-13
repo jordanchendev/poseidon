@@ -10,11 +10,12 @@ from fastapi.testclient import TestClient
 
 from poseidon.api.auth import AuthPrincipal, get_auth_principal
 from poseidon.api.traces import TraceService
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.database import get_db
+from poseidon.decision_loop.decisions import DecisionService
+from poseidon.decision_loop.evaluation import EvaluationService
+from poseidon.decision_loop.manifest import ManifestService, content_sha256
 from poseidon.decision_loop.releases import ReleaseService
 from poseidon.main import app
-from poseidon.models.data_manifest import DataManifest
-from poseidon.models.evaluation_run import EvaluationRun
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
 from poseidon.models.experiment_campaign import CampaignReview
 from poseidon.models.signal import SignalRecord
@@ -38,46 +39,51 @@ STAGE_NAMES = (
 )
 
 
-def _seed_no_trade_snapshot(session, version_id):
+def _seed_no_trade_snapshot(session, version_id, *, status="no_trade"):
     marker = uuid.uuid4().hex
-    manifest = DataManifest(
-        content_sha256=content_sha256({"manifest": marker}),
-        market="tw_stock",
-        interval="1d",
-        as_of=NOW,
-        capability_json={},
-        sources_json=[],
-        payload_json={"marker": marker},
+    evidence_payload = {"close": 100.0, "symbol": "2330", "marker": marker}
+    manifest = ManifestService(session).freeze(
+        {
+            "market": "tw_stock",
+            "interval": "1d",
+            "as_of": NOW.isoformat(),
+            "account_scope": "paper:pilot",
+            "universe_id": "tw-stock-pilot-v1",
+            "capability_json": {"ohlcv": True},
+            "required_data": {"ohlcv": {"max_age_seconds": 86400}},
+            "evidence": [
+                {
+                    "id": "ohlcv",
+                    "event_time": NOW.isoformat(),
+                    "available_at": NOW.isoformat(),
+                    "recorded_at": NOW.isoformat(),
+                    "source_uri": "fixture://trace/ohlcv",
+                    "kind": "ohlcv",
+                    "payload": evidence_payload,
+                    "content_sha256": content_sha256(evidence_payload),
+                }
+            ],
+        }
     )
-    session.add(manifest)
-    session.flush()
-    run = EvaluationRun(
-        strategy_version_id=version_id,
-        manifest_id=manifest.id,
+    universe = [{"symbol": "2330", "market": "tw_stock", "instrument": "spot"}]
+    run = EvaluationService(session).evaluate_run(
+        version_id,
+        manifest.id,
+        universe,
+        [
+            {
+                **universe[0],
+                "status": status,
+                "recommendation_json": {"research_status": "not_required"},
+                "technical_json": {},
+                "research_revision_ids": [],
+                "reason_codes": [] if status == "evaluated" else ["no_executable_signal"],
+                "valid_until": NOW + timedelta(hours=1),
+            }
+        ],
         decision_as_of=NOW,
-        universe_json=[{"symbol": "2330", "market": "tw_stock", "instrument": "spot"}],
-        input_sha256=content_sha256({"run": marker}),
-        status="succeeded",
-        coverage_json={"total": 1, "terminal": 1, "by_status": {"no_trade": 1}},
     )
-    session.add(run)
-    session.flush()
-    snapshot = EvaluationSnapshot(
-        evaluation_run_id=run.id,
-        symbol="2330",
-        market="tw_stock",
-        instrument="spot",
-        status="no_trade",
-        recommendation_json={"research_status": "not_required"},
-        technical_json={},
-        research_revision_ids=[],
-        reason_codes=["no_executable_signal"],
-        valid_until=NOW + timedelta(hours=1),
-        content_sha256=content_sha256({"snapshot": marker}),
-    )
-    session.add(snapshot)
-    session.flush()
-    return snapshot
+    return session.query(EvaluationSnapshot).filter_by(evaluation_run_id=run.id).one()
 
 
 def test_trace_openapi_publishes_three_typed_reads_and_error_models():
@@ -119,6 +125,54 @@ def test_formal_trace_routes_reject_unknown_identities_without_guessing():
             assert response.status_code == 404
     finally:
         app.dependency_overrides.pop(get_auth_principal, None)
+
+
+@pytest.mark.postgresql
+def test_evaluation_trace_rejects_a_corrupt_frozen_chain(phase99_session_factory):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        snapshot = _seed_no_trade_snapshot(session, graph.candidate_id)
+        snapshot.content_sha256 = "0" * 64
+        session.flush()
+
+        with pytest.raises(HTTPException) as error:
+            TraceService(session).by_evaluation(snapshot.id, principal=release_manager())
+
+        assert error.value.status_code == 422
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_formal_decision_trace_maps_corrupt_frozen_chain_to_422(phase99_session_factory):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        snapshot = _seed_no_trade_snapshot(session, graph.candidate_id)
+        decision = DecisionService(session).create_decision(
+            snapshot.evaluation_run_id,
+            principal=AuthPrincipal(
+                "worker:trace-test",
+                frozenset({"decision-worker"}),
+                frozenset({"paper:pilot"}),
+            ),
+            account_scope="paper:pilot",
+            original_json={"selected_evaluation_ids": [str(snapshot.id)], "final_action": "hold"},
+            portfolio_snapshot_json={"cash": 100000.0, "positions": []},
+            risk_snapshot_json={"hard_failures": [], "allowed_actions": ["hold"]},
+            now=NOW,
+        )
+        snapshot.content_sha256 = "0" * 64
+        session.flush()
+        app.dependency_overrides[get_db] = lambda: session
+        app.dependency_overrides[get_auth_principal] = release_manager
+        try:
+            response = TestClient(app, raise_server_exceptions=False).get(f"/api/v1/traces/decisions/{decision.id}")
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+            app.dependency_overrides.pop(get_auth_principal, None)
+
+        assert response.status_code == 422
+        assert response.json() == {"detail": "Trace identity is invalid"}
+        session.rollback()
 
 
 def test_outcome_projection_keeps_actual_and_assumption_versions_separate():
