@@ -149,10 +149,11 @@ def test_cross_strategy_version_cannot_enter_release_event_or_active_pointer(pha
             session,
             "23503",
             "INSERT INTO strategy_release_events "
-            "(strategy_id,event_type,candidate_version_id,to_version_id,actor_id,account_scope,expected_revision,"
-            "resulting_revision,idempotency_key,request_sha256,reason,gate_json,response_json) "
-            "VALUES (:strategy,'release',:other_version,:other_version,'release-manager','paper',0,1,"
-            "'cross-strategy',:digest,'invalid','[]','{}')",
+            "(strategy_id,event_type,candidate_version_id,to_version_id,campaign_id,review_id,holdout_use_id,"
+            "reconciliation_id,actor_id,account_scope,expected_revision,resulting_revision,idempotency_key,"
+            "request_sha256,reason,gate_json,response_json) "
+            "VALUES (:strategy,'release',:other_version,:other_version,:campaign,:review,:holdout,:reconciliation,"
+            "'release-manager','paper',0,1,'cross-strategy',:digest,'invalid','[]','{}')",
             **ids,
             digest="8" * 64,
         )
