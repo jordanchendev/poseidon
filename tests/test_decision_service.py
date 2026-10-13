@@ -1149,6 +1149,53 @@ def test_evaluation_trace_returns_multiple_linked_decisions_in_stable_order(db):
     assert [row.identities["decision_id"] for row in decision_rows] == [str(row.id) for row in ordered]
 
 
+def test_shared_snapshot_dual_id_signals_stay_with_their_decision_and_aggregate_for_evaluation(db):
+    run, version, snapshot_ids = decision_inputs(db)
+    first = create_decision(db, run.id, snapshot_ids)
+    second = create_decision(
+        db,
+        run.id,
+        snapshot_ids,
+        portfolio_snapshot_json={"cash": 90000.0, "positions": []},
+    )
+    signals = []
+    for index, decision in enumerate((first, second)):
+        signals.append(
+            SignalRecord(
+                id=uuid.uuid4(),
+                strategy_id=version.strategy_id,
+                symbol="2330",
+                market="tw_stock",
+                instrument="spot",
+                action="long",
+                confidence=0.8,
+                quantity_pct=0.1,
+                signal_time=datetime(2026, 9, 26, 12, 5 + index, tzinfo=UTC),
+                interval="1d",
+                params={},
+                status="passed",
+                metadata_={
+                    "account_scope": "paper:pilot",
+                    "decision_id": str(decision.id),
+                    "evaluation_snapshot_id": snapshot_ids[0],
+                },
+            )
+        )
+    db.add_all(signals)
+    db.flush()
+
+    first_trace = DecisionService(db).trace(first.id, principal=manager())
+    second_trace = DecisionService(db).trace(second.id, principal=manager())
+    evaluation = TraceService(db).by_evaluation(uuid.UUID(snapshot_ids[0]), principal=manager())
+
+    assert [row["identities"]["signal_id"] for row in first_trace["signals"]] == [str(signals[0].id)]
+    assert [row["identities"]["signal_id"] for row in second_trace["signals"]] == [str(signals[1].id)]
+    assert [row.identities["signal_id"] for row in evaluation.stages[0].rows] == [
+        str(signals[0].id),
+        str(signals[1].id),
+    ]
+
+
 def test_direct_evaluation_trace_projects_its_exact_account_scoped_signal(db):
     _, version, snapshot_ids = decision_inputs(db)
     signal = SignalRecord(
