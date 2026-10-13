@@ -61,6 +61,7 @@ class ReleasePredicateEvidence(BaseModel):
     strategy_type: Literal["rule", "voting", "liquidity_sweep", "model"] | None = None
     symbol: str | None = None
     market: Literal["tw_stock", "crypto_spot", "crypto_perp"] | None = None
+    instrument: Literal["spot", "perpetual"] | None = None
     interval: str | None = None
     strategy_market: str | None = None
     mode: Literal["human", "assisted", "automatic"] | None = None
