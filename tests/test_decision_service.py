@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy import create_engine, event, update
+from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
@@ -24,6 +24,8 @@ from poseidon.models.base import Base
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
+from poseidon.models.order import OrderRecord
+from poseidon.models.order_fill import OrderFillRecord
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 from poseidon.orders.schemas import Fill, Order
 from poseidon.orders.state_machine import OrderStatus, transition_order
@@ -944,6 +946,75 @@ def test_get_pending_and_trace_are_account_scoped_and_frozen(db):
     with pytest.raises(HTTPException) as error:
         service.trace(decision.id, principal=manager(scope="paper:other"))
     assert error.value.status_code == 403
+
+
+def test_trace_execution_stage_reports_real_filled_order(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    order = OrderRecord(
+        id=uuid.uuid4(),
+        strategy_name="trace-filled",
+        symbol="2330",
+        market="tw_stock",
+        action="buy",
+        order_type="market",
+        target_weight=0.1,
+        quantity=1.0,
+        side="long",
+        status="filled",
+        broker_mode="paper",
+        order_origin="signal",
+        decision_id=decision.id,
+        account_scope="paper:pilot",
+        account_generation="trace-generation",
+        execution_key=uuid.uuid4(),
+    )
+    db.add(order)
+    db.flush()
+    fill = OrderFillRecord(
+        id=uuid.uuid4(),
+        order_id=order.id,
+        broker_fill_id="trace-fill",
+        fill_price=100.0,
+        fill_quantity=1.0,
+        fill_time=datetime(2026, 9, 26, 12, 45, tzinfo=UTC),
+        projection_status="projected",
+    )
+    db.add(fill)
+    db.flush()
+
+    execution = DecisionService(db).trace(decision.id, principal=manager())["stages"][5]
+
+    assert execution["state"] == "Filled"
+    assert [row["label"] for row in execution["rows"]] == ["Order", "Fill"]
+    assert execution["rows"][1]["identities"] == {
+        "fill_id": str(fill.id),
+        "order_id": str(order.id),
+    }
+
+
+def test_evaluation_trace_returns_multiple_linked_decisions_in_stable_order(db):
+    from poseidon.api.traces import TraceService
+
+    run, _, snapshot_ids = decision_inputs(db)
+    first = create_decision(db, run.id, snapshot_ids)
+    second = create_decision(
+        db,
+        run.id,
+        snapshot_ids,
+        portfolio_snapshot_json={"cash": 90000.0, "positions": []},
+    )
+    ordered = db.scalars(
+        select(DecisionRecord)
+        .where(DecisionRecord.evaluation_run_id == run.id)
+        .order_by(DecisionRecord.created_at, DecisionRecord.id)
+    ).all()
+
+    response = TraceService(db).by_evaluation(uuid.UUID(snapshot_ids[0]), principal=manager())
+    decision_rows = [row for row in response.stages[4].rows if row.label == "Decision"]
+
+    assert {first.id, second.id} == {uuid.UUID(row.identities["decision_id"]) for row in decision_rows}
+    assert [row.identities["decision_id"] for row in decision_rows] == [str(row.id) for row in ordered]
 
 
 def test_transition_body_rejects_actor_identity(db):
