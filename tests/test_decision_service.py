@@ -1266,6 +1266,143 @@ def test_signal_trace_rejects_dual_identity_when_decision_did_not_select_snapsho
     assert error.value.status_code == 422
 
 
+def test_linked_evaluation_filters_sibling_signals_and_preserves_anchor_no_trade(db):
+    run, version, snapshot_ids = decision_inputs(db)
+    decision = create_decision(
+        db,
+        run.id,
+        snapshot_ids,
+        original_json={"selected_evaluation_ids": snapshot_ids, "final_action": "hold"},
+        risk_snapshot_json={"hard_failures": [], "allowed_actions": ["hold"]},
+    )
+    signals = []
+    for snapshot_id, symbol, action in (
+        (snapshot_ids[0], "2330", "long"),
+        (snapshot_ids[1], "2317", "hold"),
+    ):
+        signals.append(
+            SignalRecord(
+                id=uuid.uuid4(),
+                strategy_id=version.strategy_id,
+                symbol=symbol,
+                market="tw_stock",
+                instrument="spot",
+                action=action,
+                confidence=0.8,
+                quantity_pct=0.1 if action == "long" else None,
+                signal_time=datetime(2026, 9, 26, 12, 5, tzinfo=UTC),
+                interval="1d",
+                params={},
+                status="passed",
+                metadata_={
+                    "account_scope": "paper:pilot",
+                    "decision_id": str(decision.id),
+                    "evaluation_snapshot_id": snapshot_id,
+                },
+            )
+        )
+    db.add_all(signals)
+    db.flush()
+
+    stage = TraceService(db).by_evaluation(uuid.UUID(snapshot_ids[1]), principal=manager()).stages[0]
+
+    assert stage.state == "No trade"
+    assert [row.label for row in stage.rows] == ["Signal", "No trade"]
+    assert stage.rows[0].identities["signal_id"] == str(signals[1].id)
+    assert str(signals[0].id) not in {row.identities.get("signal_id") for row in stage.rows}
+    assert stage.rows[1].identities["evaluation_snapshot_id"] == snapshot_ids[1]
+
+
+@pytest.mark.parametrize(
+    ("decision_status", "expected_state"),
+    [("risk_blocked", "Blocked"), ("execution_claimed", "Provisional")],
+)
+def test_execution_stage_uses_stored_pre_materialization_decision_status(db, decision_status, expected_state):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(
+        db,
+        run.id,
+        snapshot_ids,
+        original_json={
+            "selected_evaluation_ids": [snapshot_ids[0]],
+            "final_action": "enter",
+            "order_intents": [executable_intent(snapshot_ids[0])],
+        },
+        risk_snapshot_json={"hard_failures": [], "allowed_actions": ["enter"]},
+    )
+    decision.status = decision_status
+    db.flush()
+
+    execution = DecisionService(db).trace(decision.id, principal=manager())["stages"][5]
+
+    assert execution["state"] == expected_state
+
+
+@pytest.mark.parametrize(
+    ("statuses", "fill_statuses", "expected_state", "expected_row_states"),
+    [
+        (["partially_filled"], [0], "Provisional", ["Provisional"]),
+        (["filled", "pending"], [0], "Provisional", ["Filled", "Provisional"]),
+        (["filled", "rejected"], [0], "Blocked", ["Filled", "Blocked"]),
+        (["reconciliation_required"], [], "Provisional", ["Provisional"]),
+    ],
+)
+def test_execution_stage_aggregates_all_order_lifecycle_states(
+    db,
+    statuses,
+    fill_statuses,
+    expected_state,
+    expected_row_states,
+):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(db, run.id, snapshot_ids)
+    orders = []
+    for index, status in enumerate(statuses):
+        order = OrderRecord(
+            id=uuid.uuid4(),
+            strategy_name=f"trace-order-{index}",
+            symbol="2330",
+            market="tw_stock",
+            action="buy",
+            order_type="market",
+            target_weight=0.1,
+            quantity=1.0,
+            side="long",
+            status=status,
+            broker_mode="paper",
+            order_origin="signal",
+            decision_id=decision.id,
+            account_scope="paper:pilot",
+            account_generation="trace-generation",
+            execution_key=uuid.uuid4(),
+            created_at=datetime(2026, 9, 26, 12, 40 + index, tzinfo=UTC),
+            updated_at=datetime(2026, 9, 26, 12, 40 + index, tzinfo=UTC),
+        )
+        orders.append(order)
+    db.add_all(orders)
+    db.flush()
+    for index in fill_statuses:
+        db.add(
+            OrderFillRecord(
+                id=uuid.uuid4(),
+                order_id=orders[index].id,
+                broker_fill_id=f"trace-fill-{index}",
+                fill_price=100.0,
+                fill_quantity=0.5,
+                fill_time=datetime(2026, 9, 26, 12, 50 + index, tzinfo=UTC),
+                projection_status="projected",
+                created_at=datetime(2026, 9, 26, 12, 50 + index, tzinfo=UTC),
+            )
+        )
+    db.flush()
+
+    execution = DecisionService(db).trace(decision.id, principal=manager())["stages"][5]
+    order_rows = [row for row in execution["rows"] if row["label"] == "Order"]
+
+    assert execution["state"] == expected_state
+    assert [row["state"] for row in order_rows] == expected_row_states
+
+
 def _trace_outcome(run, snapshot_id, *, marker, kind="signal", decision_id=None):
     metrics = {"actual": {"marker": marker}}
     return OutcomeRecord(
