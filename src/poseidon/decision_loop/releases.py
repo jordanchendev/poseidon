@@ -153,6 +153,7 @@ class FeatureThresholdCondition(_ExecutableConditionModel):
 
 class ModelPredictionCondition(_ExecutableConditionModel):
     type: Literal["ml_prediction"]
+    model_version_id: Annotated[int, Field(strict=True, gt=0)]
     threshold: Annotated[int | float, Field(ge=0)] = 0.5
     direction: Literal["long", "short"] = "long"
 
@@ -269,7 +270,7 @@ class ExecutableStrategyConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    strategy_type: Literal["rule", "voting", "liquidity_sweep", "model"]
+    strategy_type: Literal["rule", "voting", "liquidity_sweep"]
     symbol: Annotated[str, Field(min_length=1)]
     market: Literal["tw_stock", "crypto_spot", "crypto_perp"]
     instrument: Literal["spot", "perpetual"]
@@ -285,7 +286,6 @@ class ExecutableStrategyConfig(BaseModel):
             "rule": RuleExecutablePayload,
             "voting": VotingExecutablePayload,
             "liquidity_sweep": DeferredExecutablePayload,
-            "model": DeferredExecutablePayload,
         }.get(value.get("strategy_type"))
         if payload_type is None:
             return value

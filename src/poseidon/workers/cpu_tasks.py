@@ -2154,7 +2154,15 @@ def evaluate_active_strategies(
                     # model strategies use GPU predict path
                     continue
 
-                features = engine.compute(executable.symbol, executable.market, executable.interval)
+                if executable.strategy_type == "voting":
+                    features = engine.compute(
+                        executable.symbol,
+                        executable.market,
+                        executable.interval,
+                        feature_specs=strategy.get_feature_specs(),
+                    )
+                else:
+                    features = engine.compute(executable.symbol, executable.market, executable.interval)
                 raw_signals = strategy.evaluate(features)
                 for sig in raw_signals:
                     pipeline.process(sig)
