@@ -230,6 +230,14 @@ class TraceService:
                 raw[key] = [unique[key] for key in sorted(unique)]
             signals = {row["identities"]["signal_id"]: row for trace in traces for row in trace["signals"]}
             raw["signals"] = [signals[key] for key in sorted(signals)]
+            raw.update(
+                _evidence(
+                    self.session,
+                    version=version,
+                    snapshots=[snapshot],
+                    account_scope=policy.account_scope,
+                )
+            )
             raw["stages"] = build_trace_stages(raw)
             return self._response("evaluation", snapshot.id, policy.account_scope, raw)
 

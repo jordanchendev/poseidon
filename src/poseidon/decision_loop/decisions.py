@@ -211,11 +211,17 @@ def project_outcome_rows(outcomes):
     return rows
 
 
-def load_trace_evidence(session, *, version, snapshots, account_scope):
+def load_trace_evidence(session, *, version, snapshots, account_scope, decision_id=None):
     snapshot_ids = [snapshot.id for snapshot in snapshots]
+    outcome_scope = OutcomeRecord.evaluation_snapshot_id.in_(snapshot_ids)
+    if decision_id is not None:
+        outcome_scope = and_(
+            outcome_scope,
+            or_(OutcomeRecord.kind != "trade", OutcomeRecord.decision_id == decision_id),
+        )
     outcomes = session.scalars(
         select(OutcomeRecord)
-        .where(OutcomeRecord.evaluation_snapshot_id.in_(snapshot_ids))
+        .where(outcome_scope)
         .order_by(
             OutcomeRecord.maturity_at,
             OutcomeRecord.kind,
@@ -1632,8 +1638,9 @@ class DecisionService:
         evidence = load_trace_evidence(
             self.session,
             version=version,
-            snapshots=snapshots,
+            snapshots=selected_snapshots,
             account_scope=decision.account_scope,
+            decision_id=decision.id,
         )
         trace = {
             "decision": {
