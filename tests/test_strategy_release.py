@@ -57,7 +57,7 @@ def _seed_gate_graph(
     terminal_state="succeeded",
     review_status="passed",
     reconciliation_status="matched",
-    mature_samples=3,
+    mature_samples=10,
     policy_changes=None,
 ):
     marker = uuid.uuid4().hex
