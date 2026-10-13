@@ -911,6 +911,21 @@ def test_get_pending_and_trace_are_account_scoped_and_frozen(db):
     assert trace["lots"] == []
     assert trace["allocations"] == []
     assert trace["reconciliations"] == []
+    assert [stage["name"] for stage in trace["stages"]] == [
+        "signal_or_no_trade",
+        "manifest",
+        "research_revision",
+        "evaluation",
+        "decision_events",
+        "execution",
+        "outcomes",
+        "campaign_review",
+        "release",
+    ]
+    assert all(stage["state"] and stage["reason"] for stage in trace["stages"])
+    assert trace["stages"][0]["state"] == "Legacy unresolved"
+    assert trace["stages"][5]["state"] == "Not required"
+    assert trace["stages"][6]["state"] == "Unavailable"
 
     with pytest.raises(HTTPException) as error:
         service.trace(decision.id, principal=manager(scope="paper:other"))

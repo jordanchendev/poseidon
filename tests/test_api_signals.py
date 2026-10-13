@@ -159,11 +159,19 @@ def test_list_signals_filter_by_symbol():
 
 
 def test_get_signal_detail():
+    evaluation_snapshot_id = uuid.uuid4()
+    decision_id = uuid.uuid4()
     signal_id = _insert_signal(
         symbol="BTCUSDT",
         market="crypto_spot",
         status="passed",
         confidence=0.92,
+        metadata_={
+            "account_scope": "paper:pilot",
+            "evaluation_snapshot_id": str(evaluation_snapshot_id),
+            "decision_id": str(decision_id),
+            "narrative_confidence": 0.72,
+        },
     )
 
     resp = client.get(f"{PREFIX}/{signal_id}")
@@ -174,6 +182,30 @@ def test_get_signal_detail():
     assert data["market"] == "crypto_spot"
     assert data["status"] == "passed"
     assert data["confidence"] == 0.92
+    assert data["metadata"] == {
+        "account_scope": "paper:pilot",
+        "evaluation_snapshot_id": str(evaluation_snapshot_id),
+        "decision_id": str(decision_id),
+        "narrative_confidence": 0.72,
+    }
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"evaluation_snapshot_id": "nearest-by-time"},
+        {"decision_id": "latest"},
+        {"account_scope": ""},
+        {"narrative_confidence": 1.01},
+    ],
+)
+def test_signal_trace_metadata_rejects_implicit_or_invalid_identity(metadata):
+    from pydantic import ValidationError
+
+    from poseidon.signals.schemas import SignalTraceMetadata
+
+    with pytest.raises(ValidationError):
+        SignalTraceMetadata.model_validate(metadata)
 
 
 def test_list_signals_respects_limit():
