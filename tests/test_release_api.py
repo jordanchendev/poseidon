@@ -16,7 +16,14 @@ from poseidon.core.config import settings
 from poseidon.core.database import get_db
 from poseidon.decision_loop.decisions import DecisionConflictError
 from poseidon.decision_loop.manifest import ValidationError
-from poseidon.decision_loop.releases import ReleaseService as DomainReleaseService
+from poseidon.decision_loop.releases import (
+    ReleaseGateRejected,
+    ReleaseGateResult,
+    ReleasePredicate,
+)
+from poseidon.decision_loop.releases import (
+    ReleaseService as DomainReleaseService,
+)
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from poseidon.models.strategy_version import StrategyVersion
 
@@ -318,9 +325,21 @@ def test_pause_exact_replay_is_resolved_before_active_pointer_lookup(api):
 
 def test_gate_failure_returns_all_typed_predicates(api):
     client, session, service, strategy = api
-    service.failure = DecisionConflictError("release gate did not pass: candidate_identity")
     service.gate_allowed = False
     candidate, campaign, review, reconciliation = (uuid.uuid4() for _ in range(4))
+    service.failure = ReleaseGateRejected(
+        "release",
+        ReleaseGateResult(
+            (
+                ReleasePredicate(
+                    "candidate_identity",
+                    "blocked",
+                    "candidate is unsafe",
+                    {"candidate_version_id": str(candidate)},
+                ),
+            )
+        ),
+    )
     session.versions[candidate] = SimpleNamespace(
         id=candidate,
         strategy_id=strategy.id,

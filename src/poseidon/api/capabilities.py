@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel as PydanticBaseModel
 
-from poseidon.capabilities.registry import get_all_capabilities
 from poseidon.api.auth import AuthPrincipal, get_auth_principal, verify_api_key
+from poseidon.capabilities.registry import get_all_capabilities
 
 router = APIRouter()
 
@@ -31,7 +33,7 @@ class CapabilitiesResponse(PydanticBaseModel):
 
 class PrincipalResponse(PydanticBaseModel):
     actor_id: str
-    kind: str
+    kind: Literal["human", "worker", "legacy"]
     roles: list[str]
     account_scopes: list[str]
     can_approve: bool
@@ -40,9 +42,16 @@ class PrincipalResponse(PydanticBaseModel):
 
 @router.get("/principal", response_model=PrincipalResponse)
 def get_principal(principal: AuthPrincipal = Depends(get_auth_principal)) -> PrincipalResponse:
+    kind = (
+        "legacy"
+        if principal.actor_id == "legacy-api-key"
+        else "worker"
+        if "decision-worker" in principal.roles
+        else "human"
+    )
     return PrincipalResponse(
         actor_id=principal.actor_id,
-        kind="worker" if "decision-worker" in principal.roles else "human",
+        kind=kind,
         roles=sorted(principal.roles),
         account_scopes=sorted(principal.account_scopes),
         can_approve="portfolio_manager" in principal.roles and "decision-worker" not in principal.roles,

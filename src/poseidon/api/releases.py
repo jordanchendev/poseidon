@@ -15,7 +15,8 @@ from poseidon.api.auth import AuthPrincipal, get_auth_principal
 from poseidon.core.database import get_db
 from poseidon.decision_loop.decisions import DecisionConflictError
 from poseidon.decision_loop.manifest import ValidationError
-from poseidon.decision_loop.releases import ReleaseService
+from poseidon.decision_loop.releases import ReleaseGateRejected, ReleaseService
+from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from poseidon.models.strategy_version import StrategyVersion
@@ -26,24 +27,108 @@ Reason = Annotated[str, Field(min_length=1, max_length=1024)]
 
 
 class ReleaseAPIError(BaseModel):
-    detail: str | dict
-    error_code: str
-    status_code: int
+    detail: str
 
 
-ERROR_RESPONSES = {status: {"model": ReleaseAPIError} for status in (403, 404, 409, 422)}
+class ReleasePredicateEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_version_id: uuid.UUID | None = None
+    strategy_version_id: uuid.UUID | None = None
+    strategy_id: uuid.UUID | None = None
+    active_version_id: uuid.UUID | None = None
+    campaign_incumbent_version_id: uuid.UUID | None = None
+    campaign_id: uuid.UUID | None = None
+    review_id: uuid.UUID | None = None
+    holdout_use_id: uuid.UUID | None = None
+    owner_campaign_id: uuid.UUID | None = None
+    reconciliation_id: uuid.UUID | None = None
+    source_release_event_id: uuid.UUID | None = None
+    content_sha256: str | None = None
+    policy_sha256: str | None = None
+    contract_sha256: str | None = None
+    input_sha256: str | None = None
+    result_sha256: str | None = None
+    holdout_identity_sha256: str | None = None
+    declared_trial_identity_sha256: str | None = None
+    actual_trial_identity_sha256: str | None = None
+    paired_sample_sha256: str | None = None
+    paired_sample_key_sha256: str | None = None
+    account_scope: str | None = None
+    source_account_scope: str | None = None
+    account_generation: str | None = None
+    source_account_generation: str | None = None
+    market: Literal["tw_stock", "crypto_perp"] | None = None
+    strategy_market: str | None = None
+    mode: Literal["human", "assisted", "automatic"] | None = None
+    status: Literal["passed", "blocked", "unavailable", "inconclusive"] | None = None
+    policy_state: Literal["passed", "blocked", "unavailable", "inconclusive"] | None = None
+    requires_human_release: bool | None = None
+    protective_exit: bool | None = None
+    age_seconds: float | None = None
+    broker_state_watermark: str | None = None
+    internal_state_watermark: str | None = None
+    actor_id: str | None = None
+    trial_ids: list[uuid.UUID] | None = None
+    terminal_states: list[str] | None = None
+    newer_reconciliation_ids: list[uuid.UUID] | None = None
+    position_lot_ids: list[uuid.UUID] | None = None
+    claimed_decision_ids: list[uuid.UUID] | None = None
+    active_order_ids: list[uuid.UUID] | None = None
+
+
+ReleasePredicateCode = Literal[
+    "candidate_identity",
+    "policy_identity",
+    "campaign_identity",
+    "incumbent_pointer",
+    "six_cell_evidence",
+    "review_identity",
+    "holdout_ownership",
+    "reconciliation",
+    "release_authority",
+    "rollback_target",
+    "rollback_policy",
+    "rollback_holdings",
+    "rollback_outstanding_work",
+    "rollback_reconciliation",
+]
 
 
 class ReleasePredicateResponse(BaseModel):
-    code: str
+    code: ReleasePredicateCode
     state: Literal["passed", "blocked", "unavailable", "inconclusive"]
     reason: str
-    evidence: dict
+    evidence: ReleasePredicateEvidence
 
 
 class ReleaseGateResponse(BaseModel):
     allowed: bool
     predicates: list[ReleasePredicateResponse]
+
+
+class ReleaseGateFailureDetail(BaseModel):
+    code: Literal["release_gate_failed"] = "release_gate_failed"
+    message: str
+    gate: ReleaseGateResponse
+
+
+class ReleaseValidationFailureDetail(BaseModel):
+    code: Literal["validation_failed"] = "validation_failed"
+    message: str
+    gate: None = None
+
+
+class ReleaseUnprocessableResponse(BaseModel):
+    detail: ReleaseGateFailureDetail | ReleaseValidationFailureDetail
+
+
+ERROR_RESPONSES = {
+    403: {"model": ReleaseAPIError},
+    404: {"model": ReleaseAPIError},
+    409: {"model": ReleaseAPIError},
+    422: {"model": ReleaseUnprocessableResponse},
+}
 
 
 class ReleaseEventResponse(BaseModel):
@@ -65,7 +150,7 @@ class ReleaseEventResponse(BaseModel):
     expected_revision: int
     resulting_revision: int
     reason: str
-    gate_json: dict | list
+    gate_json: ReleaseGateResponse
     created_at: datetime
 
 
@@ -75,6 +160,8 @@ class RollbackTargetResponse(BaseModel):
     content_sha256: str
     source_release_event_id: uuid.UUID
     released_revision: int
+    eligible: Literal[True]
+    predicates: list[ReleasePredicateResponse]
 
 
 class TransitionRequest(BaseModel):
@@ -137,14 +224,44 @@ def _version_scope(
     return version
 
 
+def _authorize_strategy_read(
+    db: Session,
+    strategy: StrategyRecord,
+    principal: AuthPrincipal,
+    events: list[StrategyReleaseEvent],
+) -> None:
+    scopes = {event.account_scope for event in events}
+    if not scopes:
+        versions = db.scalars(
+            select(StrategyVersion)
+            .where(StrategyVersion.strategy_id == strategy.id)
+            .order_by(StrategyVersion.version_no, StrategyVersion.id)
+        ).all()
+        scopes = {
+            version.policy_json.get("account_scope")
+            for version in versions
+            if isinstance(version.policy_json, dict) and version.policy_json.get("account_scope")
+        }
+    if not scopes:
+        raise HTTPException(status_code=404, detail="Strategy release scope not found")
+    for account_scope in sorted(scopes):
+        principal.require_account_scope(account_scope)
+
+
 def _raise_release_error(error: Exception) -> NoReturn:
     if isinstance(error, HTTPException):
         raise error
     if isinstance(error, ValidationError):
-        raise HTTPException(status_code=422, detail=str(error)) from error
+        detail = ReleaseValidationFailureDetail(message=str(error)).model_dump(mode="json")
+        raise HTTPException(status_code=422, detail=detail) from error
+    if isinstance(error, ReleaseGateRejected):
+        detail = ReleaseGateFailureDetail(
+            message="Release gate did not pass",
+            gate=ReleaseGateResponse.model_validate(error.result.as_json()),
+        ).model_dump(mode="json")
+        raise HTTPException(status_code=422, detail=detail) from error
     if isinstance(error, DecisionConflictError):
-        status = 422 if "gate did not pass" in str(error) else 409
-        raise HTTPException(status_code=status, detail=str(error)) from error
+        raise HTTPException(status_code=409, detail=str(error)) from error
     raise error
 
 
@@ -195,14 +312,13 @@ def list_release_events(
     principal: AuthPrincipal = Depends(get_auth_principal),
     db: Session = Depends(get_db),
 ) -> list[StrategyReleaseEvent]:
-    _strategy(db, strategy_id)
+    strategy = _strategy(db, strategy_id)
     events = db.scalars(
         select(StrategyReleaseEvent)
         .where(StrategyReleaseEvent.strategy_id == strategy_id)
         .order_by(StrategyReleaseEvent.resulting_revision, StrategyReleaseEvent.id)
     ).all()
-    for event in events:
-        principal.require_account_scope(event.account_scope)
+    _authorize_strategy_read(db, strategy, principal, events)
     return events
 
 
@@ -213,6 +329,7 @@ def list_release_events(
 )
 def list_rollback_targets(
     strategy_id: uuid.UUID,
+    reconciliation_id: uuid.UUID = Query(...),
     principal: AuthPrincipal = Depends(get_auth_principal),
     db: Session = Depends(get_db),
 ) -> list[RollbackTargetResponse]:
@@ -226,21 +343,37 @@ def list_rollback_targets(
         )
         .order_by(StrategyReleaseEvent.resulting_revision.desc(), StrategyReleaseEvent.id)
     ).all()
+    _authorize_strategy_read(db, strategy, principal, events)
+    service = ReleaseService(db)
+    authority_version = service._current_or_paused_authority_version(strategy)
+    source_policy = service._policy_for_version(authority_version, strategy, principal)
+    reconciliation = db.get(AccountReconciliation, reconciliation_id)
     targets = []
     seen = set()
     for event in events:
-        principal.require_account_scope(event.account_scope)
         if event.to_version_id in seen:
             continue
         version = _version_scope(db, strategy, event.to_version_id, principal)
         seen.add(event.to_version_id)
+        gate, source, _policy = service._rollback_gate(
+            strategy,
+            version,
+            reconciliation,
+            source_policy,
+            principal,
+            None,
+        )
+        if not gate.allowed or source is None:
+            continue
         targets.append(
             RollbackTargetResponse(
                 strategy_version_id=version.id,
                 version_no=version.version_no,
                 content_sha256=version.content_sha256,
-                source_release_event_id=event.id,
-                released_revision=event.resulting_revision,
+                source_release_event_id=source.id,
+                released_revision=source.resulting_revision,
+                eligible=True,
+                predicates=[ReleasePredicateResponse.model_validate(item.as_json()) for item in gate.predicates],
             )
         )
     return targets
@@ -288,8 +421,7 @@ def pause_strategy(
 ) -> ReleaseMutationResponse:
     def operation(service):
         principal.require_role("release_manager")
-        strategy = _strategy(db, strategy_id)
-        _version_scope(db, strategy, strategy.active_version_id, principal)
+        _strategy(db, strategy_id)
         return service.pause(
             strategy_id,
             expected_revision=body.expected_revision,
