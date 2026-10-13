@@ -198,9 +198,11 @@ def _assert_migration_matches_models(
     *,
     later_columns=None,
     later_constraints=None,
+    later_foreign_keys=None,
 ):
     later_columns = later_columns or {}
     later_constraints = later_constraints or set()
+    later_foreign_keys = later_foreign_keys or {}
     dialect = postgresql.dialect()
     for model in models:
         table = model.__table__
@@ -213,7 +215,10 @@ def _assert_migration_matches_models(
             other = migrated.c[column.name]
             assert str(column.type.compile(dialect=dialect)) == str(other.type.compile(dialect=dialect))
             assert (column.nullable, column.primary_key) == (other.nullable, other.primary_key)
-            assert {fk.target_fullname for fk in column.foreign_keys} == {
+            model_foreign_keys = {fk.target_fullname for fk in column.foreign_keys} - later_foreign_keys.get(
+                (table.name, column.name), set()
+            )
+            assert model_foreign_keys == {
                 fk.target_fullname for fk in other.foreign_keys
             }
             assert (str(column.server_default.arg) if column.server_default else None) == (
@@ -1097,6 +1102,9 @@ def test_phase99_migration_matches_exact_orm_contract_and_nullable_legacy_extens
         operations,
         phase99_models,
         later_columns={"campaign_reviews": {"holdout_use_id", "input_identity_json"}},
+        later_foreign_keys={
+            ("campaign_reviews", "campaign_id"): {"holdout_uses.campaign_id"},
+        },
         later_constraints={
             ("holdout_uses", "uq_holdout_uses_campaign_id_id"),
             ("campaign_reviews", "uq_campaign_reviews_campaign_id_id"),
