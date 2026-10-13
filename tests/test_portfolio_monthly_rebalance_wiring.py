@@ -173,8 +173,8 @@ def patched_monthly_env(monkeypatch):
 class TestPortfolioMonthlyRebalanceWiring:
     """portfolio_monthly_rebalance must consume fresh tw_stock PASSED signals."""
 
-    def test_fresh_signals_dispatch_orders(self, patched_monthly_env):
-        """3 fresh PASSED signals → 3 RebalanceOrders + signal_ids dict."""
+    def test_fresh_signals_cannot_dispatch_after_release_authority(self, patched_monthly_env):
+        """Fresh legacy signals cannot bypass the release-authority writer fence."""
         from poseidon.workers import cpu_tasks
 
         sig_ids = {sym: uuid.uuid4() for sym in ("2330", "2454", "2317")}
@@ -186,19 +186,11 @@ class TestPortfolioMonthlyRebalanceWiring:
 
         result = cpu_tasks.portfolio_monthly_rebalance()
 
-        captured = patched_monthly_env["captured"]
-        assert "rebalance_orders" in captured, f"expected execute_rebalance to be called, got result={result}"
-        assert len(captured["rebalance_orders"]) == 3, (
-            f"expected 3 RebalanceOrders, got {len(captured['rebalance_orders'])}"
-        )
-        assert set(captured["signal_ids"].keys()) == {"2330", "2454", "2317"}
-        for sym, sid in sig_ids.items():
-            assert captured["signal_ids"][sym] == sid
-        assert result.get("rebalanced") is True
-        assert result.get("orders") == 3
+        assert result == {"skipped": "release_authority_required"}
+        assert patched_monthly_env["captured"] == {}
 
-    def test_only_stale_signals_returns_skipped(self, patched_monthly_env):
-        """13 legacy signals (>7d) → no_recent_signals skip, no execute_rebalance call."""
+    def test_only_stale_signals_remain_behind_release_authority(self, patched_monthly_env):
+        """Stale legacy signals are never read after release authority applies."""
         from poseidon.workers import cpu_tasks
 
         # 13 frozen 2026-03-19 cluster — all >7d old
@@ -206,13 +198,11 @@ class TestPortfolioMonthlyRebalanceWiring:
 
         result = cpu_tasks.portfolio_monthly_rebalance()
 
-        assert result.get("skipped") == "no_recent_signals", f"expected skipped=no_recent_signals, got {result}"
-        assert "rebalance_orders" not in patched_monthly_env["captured"], (
-            "execute_rebalance must NOT be called when no fresh signals"
-        )
+        assert result == {"skipped": "release_authority_required"}
+        assert patched_monthly_env["captured"] == {}
 
-    def test_mixed_fresh_stale_only_fresh_honoured(self, patched_monthly_env):
-        """Fresh + stale → only fresh dispatched (latest_passed already filters)."""
+    def test_mixed_fresh_stale_signals_cannot_bypass_release_authority(self, patched_monthly_env):
+        """Mixed legacy signals cannot reach the retired ordinary writer."""
         from poseidon.workers import cpu_tasks
 
         # The repository's `since` filter mechanically excludes stale; in this
@@ -223,26 +213,23 @@ class TestPortfolioMonthlyRebalanceWiring:
             _make_signal(symbol="5678", action="long", quantity_pct=0.3, age_days=3, signal_id=sig_b),
         ]
 
-        cpu_tasks.portfolio_monthly_rebalance()
+        result = cpu_tasks.portfolio_monthly_rebalance()
 
-        captured = patched_monthly_env["captured"]
-        assert len(captured["rebalance_orders"]) == 2
-        assert set(captured["signal_ids"].keys()) == {"1234", "5678"}
+        assert result == {"skipped": "release_authority_required"}
+        assert patched_monthly_env["captured"] == {}
 
-    def test_order_origin_defaults_to_signal(self, patched_monthly_env):
-        """Orders dispatched by monthly task must carry order_origin='signal'."""
+    def test_legacy_order_origin_path_is_unreachable(self, patched_monthly_env):
+        """The retired signal writer cannot create an order of any origin."""
         from poseidon.workers import cpu_tasks
 
         patched_monthly_env["signals"] = [
             _make_signal(symbol="2330", action="long", quantity_pct=0.25, age_days=1),
         ]
 
-        cpu_tasks.portfolio_monthly_rebalance()
+        result = cpu_tasks.portfolio_monthly_rebalance()
 
-        results = patched_monthly_env["captured"].get("results", [])
-        assert len(results) >= 1
-        for r in results:
-            assert r.order.order_origin == "signal", f"Expected order_origin='signal', got {r.order.order_origin}"
+        assert result == {"skipped": "release_authority_required"}
+        assert patched_monthly_env["captured"] == {}
 
 
 @pytest.mark.parametrize(

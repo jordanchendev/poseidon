@@ -201,8 +201,8 @@ def patched_perp_env(monkeypatch):
 class TestPerpRebalanceWiring:
     """perp_rebalance must read PASSED signals and propagate signal_ids."""
 
-    def test_perp_rebalance_propagates_signal_ids(self, patched_perp_env):
-        """Fresh PASSED ETHUSDT signal → signal_ids dict reaches execute_rebalance."""
+    def test_perp_rebalance_rejects_fresh_legacy_signals(self, patched_perp_env):
+        """Fresh PASSED signals cannot bypass release authority."""
         from poseidon.workers import cpu_tasks
 
         sig_id = uuid.uuid4()
@@ -210,11 +210,10 @@ class TestPerpRebalanceWiring:
             _make_signal_record(symbol="ETHUSDT", action="long", quantity_pct=0.5, age_minutes=30, signal_id=sig_id),
         ]
 
-        cpu_tasks.perp_rebalance()
+        result = cpu_tasks.perp_rebalance()
 
-        captured = patched_perp_env["captured"]
-        assert "signal_ids" in captured, "execute_rebalance must be called with signal_ids kwarg"
-        assert captured["signal_ids"] == {"ETHUSDT": sig_id}
+        assert result == {"skipped": "release_authority_required"}
+        assert patched_perp_env["captured"] == {}
 
     def test_perp_rebalance_ignores_stale_signals_beyond_8h(self, patched_perp_env):
         """Signals older than 8h must not produce orders."""
@@ -231,8 +230,8 @@ class TestPerpRebalanceWiring:
             assert len(captured["rebalance_orders"]) == 0
         # Else: the early-return path before any execute_rebalance — also acceptable.
 
-    def test_perp_rebalance_dedupes_per_symbol_newest_wins(self, patched_perp_env):
-        """Multiple signals for the same symbol → newest signal_id wins (latest_passed orders DESC)."""
+    def test_perp_rebalance_rejects_duplicate_legacy_signals(self, patched_perp_env):
+        """Duplicate legacy signals remain outside the only ordinary writer."""
         from poseidon.workers import cpu_tasks
 
         newer_id = uuid.uuid4()
@@ -243,12 +242,10 @@ class TestPerpRebalanceWiring:
             _make_signal_record(symbol="ETHUSDT", age_minutes=60, signal_id=older_id),
         ]
 
-        cpu_tasks.perp_rebalance()
+        result = cpu_tasks.perp_rebalance()
 
-        captured = patched_perp_env["captured"]
-        assert captured.get("signal_ids", {}).get("ETHUSDT") == newer_id, (
-            f"Expected newer signal id {newer_id}, got {captured.get('signal_ids', {}).get('ETHUSDT')}"
-        )
+        assert result == {"skipped": "release_authority_required"}
+        assert patched_perp_env["captured"] == {}
 
     def test_perp_rebalance_zero_recent_signals_returns_no_orders(self, patched_perp_env):
         """Empty fresh window → early return, no execute_rebalance call."""
@@ -262,22 +259,18 @@ class TestPerpRebalanceWiring:
             f"Expected zero-order/skipped result, got {result}"
         )
 
-    def test_perp_rebalance_order_origin_defaults_to_signal(self, patched_perp_env):
-        """Orders dispatched by perp_rebalance must carry order_origin='signal' (default)."""
+    def test_perp_legacy_order_origin_path_is_unreachable(self, patched_perp_env):
+        """The retired perp signal writer cannot create an order of any origin."""
         from poseidon.workers import cpu_tasks
 
         patched_perp_env["signals"] = [
             _make_signal_record(symbol="ETHUSDT", action="long", quantity_pct=0.3),
         ]
 
-        cpu_tasks.perp_rebalance()
+        result = cpu_tasks.perp_rebalance()
 
-        results = patched_perp_env["captured"].get("results", [])
-        assert len(results) >= 1, "expected at least one Order produced"
-        for r in results:
-            assert r.order.order_origin == "signal", (
-                f"Expected order_origin='signal' (default), got {r.order.order_origin}"
-            )
+        assert result == {"skipped": "release_authority_required"}
+        assert patched_perp_env["captured"] == {}
 
 
 # ---------------------------------------------------------------------------
