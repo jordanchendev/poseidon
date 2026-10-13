@@ -160,7 +160,7 @@ class ExecutableStrategyConfig(BaseModel):
 
     def runtime_config(self) -> dict[str, object]:
         return {
-            **self.payload.model_dump(mode="json"),
+            **self.payload.model_dump(mode="json", exclude_unset=True),
             "symbol": self.symbol,
             "market": self.market,
             "interval": self.interval,
