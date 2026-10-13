@@ -209,6 +209,22 @@ def _autoresearch_worker_source(root: Path) -> str:
                     pending.append(name)
     used_names = {node.id for name in reachable for node in ast.walk(functions[name]) if isinstance(node, ast.Name)}
     nodes: list[ast.AST] = [functions[name] for name in sorted(reachable)]
+    assignments = [node for node in tree.body if isinstance(node, (ast.Assign, ast.AnnAssign))]
+    included_assignments: set[int] = set()
+    changed = True
+    while changed:
+        changed = False
+        for node in assignments:
+            if id(node) in included_assignments:
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            bound = {child.id for target in targets for child in ast.walk(target) if isinstance(child, ast.Name)}
+            if not bound & used_names:
+                continue
+            included_assignments.add(id(node))
+            nodes.append(node)
+            used_names.update(child.id for child in ast.walk(node) if isinstance(child, ast.Name))
+            changed = True
     for node in tree.body:
         if isinstance(node, ast.Import):
             bound = {alias.asname or alias.name.split(".", 1)[0] for alias in node.names}
@@ -226,13 +242,15 @@ def _root_evidence_issues(aquarium_root: Path) -> list[str]:
         aquarium_root
         / ".planning/workstreams/investment-decision-loop/phases/100-release-gate-kairos-and-dsh-gate/evidence"
     )
-    if not evidence.is_dir():
-        return []
-    actual = {
-        f"../{path.relative_to(aquarium_root).as_posix()}"
-        for path in evidence.iterdir()
-        if path.is_file() and "dsh" in path.name.lower()
-    }
+    actual = (
+        {
+            f"../{path.relative_to(aquarium_root).as_posix()}"
+            for path in evidence.iterdir()
+            if path.is_file() and "dsh" in path.name.lower()
+        }
+        if evidence.is_dir()
+        else set()
+    )
     return [
         *(f"missing root DSH evidence: {path}" for path in sorted(ALLOWED_ROOT_EVIDENCE - actual)),
         *(f"unexpected root DSH evidence: {path}" for path in sorted(actual - ALLOWED_ROOT_EVIDENCE)),
