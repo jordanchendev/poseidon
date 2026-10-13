@@ -401,7 +401,7 @@ class Phase100DshBoundaryTests(unittest.TestCase):
             "production DSH dependency",
             "DeepSeekRuntime",
             "DSH_API_KEY",
-            "authority name ReleaseService",
+            "authority import poseidon.decision_loop.releases.ReleaseService",
             "authority name active_version_id",
             "authority import poseidon.api.decisions",
         ):
