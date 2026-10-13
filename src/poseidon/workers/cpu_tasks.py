@@ -2098,6 +2098,7 @@ def evaluate_active_strategies(
     Returns:
         Dict with evaluation summary.
     """
+    from poseidon.decision_loop.releases import ExecutableStrategyConfig
     from poseidon.models.strategy_version import StrategyVersion
     from poseidon.risk.pipeline import SignalPipeline
     from poseidon.strategies.voting_strategy import VotingStrategy
@@ -2127,13 +2128,18 @@ def evaluate_active_strategies(
 
         for record, version in strategies:
             try:
-                config = version.config_json
-                strategy_type = config["strategy_type"]
-                if strategy_type == "rule":
-                    strategy = RuleStrategy(config=config, strategy_id=record.id)
-                elif strategy_type == "voting":
+                executable = ExecutableStrategyConfig.model_validate(version.config_json)
+                if executable.strategy_type == "rule":
+                    strategy = RuleStrategy(config=executable.payload, strategy_id=record.id)
+                elif executable.strategy_type == "voting":
+                    config = {
+                        **executable.payload,
+                        "symbol": executable.symbol,
+                        "market": executable.market,
+                        "interval": executable.interval,
+                    }
                     strategy = VotingStrategy(config=config, strategy_id=record.id)
-                elif strategy_type == "liquidity_sweep":
+                elif executable.strategy_type == "liquidity_sweep":
                     # supports_live = False -> deferred to backtest/research path only.
                     logger.debug(
                         "Skipping live signal eval for liquidity_sweep strategy %s "
@@ -2145,7 +2151,7 @@ def evaluate_active_strategies(
                     # model strategies use GPU predict path
                     continue
 
-                features = engine.compute(config["symbol"], config["market"], config["interval"])
+                features = engine.compute(executable.symbol, executable.market, executable.interval)
                 raw_signals = strategy.evaluate(features)
                 for sig in raw_signals:
                     pipeline.process(sig)

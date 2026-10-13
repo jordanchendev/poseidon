@@ -6,9 +6,10 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import HTTPException
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select, text
 
@@ -65,6 +66,25 @@ _PASSED_REVIEW_OBJECTS = (
     "capacity",
     "cost_sensitivity",
 )
+
+
+class ExecutableStrategyConfig(BaseModel):
+    """Immutable live execution identity plus strategy-specific payload."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    strategy_type: Literal["rule", "voting", "liquidity_sweep", "model"]
+    symbol: Annotated[str, Field(min_length=1)]
+    market: Literal["tw_stock", "crypto_spot", "crypto_perp"]
+    interval: Annotated[str, Field(min_length=1)]
+    payload: dict[str, object]
+
+    @field_validator("symbol", "interval")
+    @classmethod
+    def require_trimmed_identity(cls, value):
+        if value != value.strip():
+            raise ValueError("executable identity must be non-empty trimmed text")
+        return value
 
 
 @dataclass(frozen=True)
@@ -154,7 +174,27 @@ class ReleaseService:
             return _predicate("candidate_identity", "blocked", "candidate immutable content hash changed", **evidence)
         if candidate.strategy_id != strategy.id:
             return _predicate("candidate_identity", "blocked", "candidate belongs to another strategy", **evidence)
-        return _predicate("candidate_identity", "passed", "candidate content and ownership match", **evidence)
+        try:
+            executable = ExecutableStrategyConfig.model_validate(candidate.config_json)
+        except (PydanticValidationError, TypeError, ValueError):
+            return _predicate(
+                "candidate_identity",
+                "blocked",
+                "candidate executable config is invalid",
+                **evidence,
+            )
+        evidence.update(
+            strategy_type=executable.strategy_type,
+            symbol=executable.symbol,
+            market=executable.market,
+            interval=executable.interval,
+        )
+        return _predicate(
+            "candidate_identity",
+            "passed",
+            "candidate content, ownership, and executable config match",
+            **evidence,
+        )
 
     def _policy_predicate(self, strategy, candidate):
         evidence = {"candidate_version_id": None if candidate is None else str(candidate.id)}
@@ -1012,8 +1052,9 @@ class ReleaseService:
         }
         try:
             target.verify_content()
+            ExecutableStrategyConfig.model_validate(target.config_json)
             valid_target = target.strategy_id == strategy.id and source is not None
-        except (TypeError, ValueError):
+        except (PydanticValidationError, TypeError, ValueError):
             valid_target = False
         target_predicate = _predicate(
             "rollback_target",
