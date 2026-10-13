@@ -14,6 +14,7 @@ from sqlalchemy import select, text
 
 from poseidon.api.auth import AuthPrincipal
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionPolicy
+from poseidon.decision_loop.execution import DecisionExecutionService
 from poseidon.decision_loop.manifest import (
     ValidationError,
     canonical_json,
@@ -46,7 +47,13 @@ from poseidon.research.campaign import (
 PredicateState = Literal["passed", "blocked", "unavailable", "inconclusive"]
 _ARMS = ("fundamental_only", "technical_only", "combined")
 _ROLES = ("incumbent", "candidate")
-_OUTSTANDING_ORDER_STATES = ("pending_submit", "reconciliation_required", "submitted", "partially_filled")
+_OUTSTANDING_ORDER_STATES = (
+    "pending",
+    "pending_submit",
+    "reconciliation_required",
+    "submitted",
+    "partially_filled",
+)
 _PASSED_REVIEW_OBJECTS = (
     "cross_sectional_ic",
     "time_series_ic",
@@ -222,6 +229,55 @@ class ReleaseService:
             .order_by(ExperimentRecord.id)
         ).all()
         evidence["trial_ids"] = [str(trial.id) for trial in trials]
+        declared = campaign.contract_json.get("declared_trials") if isinstance(campaign.contract_json, dict) else None
+        if not isinstance(declared, list) or len(declared) != 6 or not all(isinstance(item, dict) for item in declared):
+            return _predicate(
+                "six_cell_evidence",
+                "unavailable",
+                "frozen declared trial identity is unavailable",
+                **evidence,
+            ), trials
+        version_roles = {
+            campaign.incumbent_strategy_version_id: "incumbent",
+            campaign.candidate_strategy_version_id: "candidate",
+        }
+        identity_fields = (
+            "original_trial_id",
+            "trial_role",
+            "strategy_version_id",
+            "version_role",
+            "ablation_arm",
+        )
+        declared_identity = sorted(
+            ({field: item.get(field) for field in identity_fields} for item in declared),
+            key=canonical_json,
+        )
+        actual_identity = sorted(
+            (
+                {
+                    "original_trial_id": trial.original_trial_id,
+                    "trial_role": trial.trial_role,
+                    "strategy_version_id": None
+                    if trial.strategy_version_id is None
+                    else str(trial.strategy_version_id),
+                    "version_role": version_roles.get(trial.strategy_version_id),
+                    "ablation_arm": trial.ablation_arm,
+                }
+                for trial in trials
+            ),
+            key=canonical_json,
+        )
+        evidence.update(
+            declared_trial_identity_sha256=content_sha256(declared_identity),
+            actual_trial_identity_sha256=content_sha256(actual_identity),
+        )
+        if actual_identity != declared_identity:
+            return _predicate(
+                "six_cell_evidence",
+                "blocked",
+                "terminal trials do not match frozen declared identities",
+                **evidence,
+            ), trials
         cells = {
             (
                 "incumbent"
@@ -551,6 +607,14 @@ class ReleaseService:
             raise DecisionConflictError("strategy does not exist")
         return strategy
 
+    def _lock_reconciliation_authority(self, policy):
+        if policy.reconciliation is None:
+            return
+        DecisionExecutionService(self.session)._advisory_lock(
+            policy.account_scope,
+            policy.reconciliation.account_generation,
+        )
+
     @staticmethod
     def _compare_expected(strategy, expected_revision, expected_pointer):
         if strategy.release_revision != expected_revision:
@@ -721,6 +785,7 @@ class ReleaseService:
             return replay
         candidate = self.session.get(StrategyVersion, candidate_version_id)
         policy = self._policy_for_version(candidate, strategy, principal)
+        self._lock_reconciliation_authority(policy)
         gate = self.evaluate_gate(
             strategy_id,
             candidate_version_id,
@@ -960,7 +1025,7 @@ class ReleaseService:
                 select(DecisionRecord).where(
                     DecisionRecord.strategy_version_id.in_(strategy_versions),
                     DecisionRecord.account_scope == policy.account_scope,
-                    DecisionRecord.status.in_(("approved", "execution_claimed")),
+                    DecisionRecord.status.in_(("pending_approval", "approved", "execution_claimed")),
                 )
             ).all()
             orders = self.session.scalars(
@@ -983,9 +1048,9 @@ class ReleaseService:
         work_predicate = _predicate(
             "rollback_outstanding_work",
             "passed" if work_clear else "blocked",
-            "no ordinary approved or claimed intent or active order requires takeover"
+            "no ordinary pending, approved, or claimed intent or active order requires takeover"
             if work_clear
-            else "ordinary approved or claimed intent or active order is outstanding",
+            else "ordinary pending, approved, or claimed intent or active order is outstanding",
             claimed_decision_ids=[str(row.id) for row in claimed],
             active_order_ids=[str(row.id) for row in orders],
         )
@@ -1046,6 +1111,8 @@ class ReleaseService:
         target = self.session.get(StrategyVersion, target_version_id)
         if target is None:
             raise DecisionConflictError("rollback target does not exist")
+        target_policy = self._policy_for_version(target, strategy, principal)
+        self._lock_reconciliation_authority(target_policy)
         reconciliation = self.session.get(AccountReconciliation, reconciliation_id)
         gate, source, policy = self._rollback_gate(strategy, target, reconciliation, principal, now)
         self._require_allowed(gate, "rollback")
