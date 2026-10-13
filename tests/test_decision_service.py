@@ -61,6 +61,9 @@ def db():
             "signals",
             "outcome_records",
             "experiment_campaigns",
+            "experiments",
+            "campaign_events",
+            "holdout_uses",
             "campaign_reviews",
             "strategy_release_events",
         )

@@ -34,7 +34,13 @@ from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_run import EvaluationRun
-from poseidon.models.experiment_campaign import CampaignReview, ExperimentCampaign
+from poseidon.models.experiment import ExperimentRecord
+from poseidon.models.experiment_campaign import (
+    CampaignEvent,
+    CampaignReview,
+    ExperimentCampaign,
+    HoldoutUse,
+)
 from poseidon.models.fill_allocation import FillAllocation
 from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
@@ -125,6 +131,191 @@ def project_outcome_rows(outcomes):
     return rows
 
 
+def load_trace_evidence(session, *, version, snapshots, account_scope):
+    snapshot_ids = [snapshot.id for snapshot in snapshots]
+    outcomes = session.scalars(
+        select(OutcomeRecord)
+        .where(OutcomeRecord.evaluation_snapshot_id.in_(snapshot_ids))
+        .order_by(
+            OutcomeRecord.maturity_at,
+            OutcomeRecord.kind,
+            OutcomeRecord.horizon_key,
+            OutcomeRecord.revision_no,
+            OutcomeRecord.id,
+        )
+    ).all()
+    campaigns = session.scalars(
+        select(ExperimentCampaign)
+        .where(
+            or_(
+                ExperimentCampaign.incumbent_strategy_version_id == version.id,
+                ExperimentCampaign.candidate_strategy_version_id == version.id,
+            )
+        )
+        .order_by(ExperimentCampaign.created_at, ExperimentCampaign.id)
+    ).all()
+    campaign_ids = [campaign.id for campaign in campaigns]
+    trials = (
+        session.scalars(
+            select(ExperimentRecord)
+            .where(ExperimentRecord.campaign_id.in_(campaign_ids))
+            .order_by(
+                ExperimentRecord.campaign_id,
+                ExperimentRecord.original_trial_id,
+                ExperimentRecord.strategy_version_id,
+                ExperimentRecord.ablation_arm,
+                ExperimentRecord.id,
+            )
+        ).all()
+        if campaign_ids
+        else []
+    )
+    campaign_events = (
+        session.scalars(
+            select(CampaignEvent)
+            .where(CampaignEvent.campaign_id.in_(campaign_ids))
+            .order_by(CampaignEvent.campaign_id, CampaignEvent.created_at, CampaignEvent.id)
+        ).all()
+        if campaign_ids
+        else []
+    )
+    holdouts = (
+        session.scalars(
+            select(HoldoutUse)
+            .where(HoldoutUse.campaign_id.in_(campaign_ids))
+            .order_by(HoldoutUse.campaign_id, HoldoutUse.consumed_at, HoldoutUse.id)
+        ).all()
+        if campaign_ids
+        else []
+    )
+    reviews = (
+        session.scalars(
+            select(CampaignReview)
+            .where(CampaignReview.campaign_id.in_(campaign_ids))
+            .order_by(CampaignReview.campaign_id, CampaignReview.created_at, CampaignReview.id)
+        ).all()
+        if campaign_ids
+        else []
+    )
+    release_events = session.scalars(
+        select(StrategyReleaseEvent)
+        .where(
+            StrategyReleaseEvent.strategy_id == version.strategy_id,
+            StrategyReleaseEvent.account_scope == account_scope,
+            or_(
+                StrategyReleaseEvent.candidate_version_id == version.id,
+                StrategyReleaseEvent.from_version_id == version.id,
+                StrategyReleaseEvent.to_version_id == version.id,
+            ),
+        )
+        .order_by(StrategyReleaseEvent.resulting_revision, StrategyReleaseEvent.id)
+    ).all()
+    return {
+        "outcome_rows": project_outcome_rows(outcomes),
+        "campaigns": [
+            {
+                "id": str(campaign.id),
+                "contract_sha256": campaign.contract_sha256,
+                "incumbent_strategy_version_id": str(campaign.incumbent_strategy_version_id),
+                "candidate_strategy_version_id": str(campaign.candidate_strategy_version_id),
+                "hypothesis": campaign.hypothesis,
+                "declared_difference_json": json.loads(canonical_json(campaign.declared_difference_json)),
+                "contract_json": json.loads(canonical_json(campaign.contract_json)),
+                "created_by": campaign.created_by,
+                "created_at": iso_time(_stored_time(campaign.created_at, "campaign.created_at"), "campaign.created_at"),
+            }
+            for campaign in campaigns
+        ],
+        "campaign_trials": [
+            {
+                "id": str(trial.id),
+                "campaign_id": str(trial.campaign_id),
+                "strategy_version_id": str(trial.strategy_version_id),
+                "original_trial_id": trial.original_trial_id,
+                "trial_role": trial.trial_role,
+                "ablation_arm": trial.ablation_arm,
+                "paired_sample_key_sha256": trial.paired_sample_key_sha256,
+                "input_sha256": trial.input_sha256,
+                "result_sha256": trial.result_sha256,
+                "terminal_state": trial.terminal_state,
+                "terminal_reason_json": json.loads(canonical_json(trial.terminal_reason_json or {})),
+                "metrics_json": json.loads(canonical_json(trial.metrics_json or {})),
+                "completed_at": (
+                    iso_time(_stored_time(trial.completed_at, "trial.completed_at"), "trial.completed_at")
+                    if trial.completed_at is not None
+                    else None
+                ),
+            }
+            for trial in trials
+        ],
+        "campaign_events": [
+            {
+                "id": str(event.id),
+                "campaign_id": str(event.campaign_id),
+                "event_type": event.event_type,
+                "payload_json": json.loads(canonical_json(event.payload_json)),
+                "idempotency_sha256": event.idempotency_sha256,
+                "created_at": iso_time(
+                    _stored_time(event.created_at, "campaign_event.created_at"), "campaign_event.created_at"
+                ),
+            }
+            for event in campaign_events
+        ],
+        "holdout_uses": [
+            {
+                "id": str(holdout.id),
+                "campaign_id": str(holdout.campaign_id),
+                "holdout_identity_sha256": holdout.holdout_identity_sha256,
+                "campaign_contract_sha256": holdout.campaign_contract_sha256,
+                "audit_json": json.loads(canonical_json(holdout.audit_json)),
+                "consumed_at": iso_time(
+                    _stored_time(holdout.consumed_at, "holdout.consumed_at"), "holdout.consumed_at"
+                ),
+            }
+            for holdout in holdouts
+        ],
+        "campaign_reviews": [
+            {
+                "id": str(review.id),
+                "campaign_id": str(review.campaign_id),
+                "status": review.status,
+                "input_sha256": review.input_sha256,
+                "result_sha256": review.result_sha256,
+                "holdout_use_id": None if review.holdout_use_id is None else str(review.holdout_use_id),
+                "input_identity_json": json.loads(canonical_json(review.input_identity_json or {})),
+                "result_json": json.loads(canonical_json(review.result_json)),
+                "created_at": iso_time(_stored_time(review.created_at, "review.created_at"), "review.created_at"),
+            }
+            for review in reviews
+        ],
+        "release_events": [
+            {
+                "id": str(event.id),
+                "event_type": event.event_type,
+                "candidate_version_id": (
+                    None if event.candidate_version_id is None else str(event.candidate_version_id)
+                ),
+                "from_version_id": None if event.from_version_id is None else str(event.from_version_id),
+                "to_version_id": None if event.to_version_id is None else str(event.to_version_id),
+                "source_release_event_id": (
+                    None if event.source_release_event_id is None else str(event.source_release_event_id)
+                ),
+                "campaign_id": None if event.campaign_id is None else str(event.campaign_id),
+                "review_id": None if event.review_id is None else str(event.review_id),
+                "holdout_use_id": None if event.holdout_use_id is None else str(event.holdout_use_id),
+                "reconciliation_id": (None if event.reconciliation_id is None else str(event.reconciliation_id)),
+                "actor_id": event.actor_id,
+                "request_sha256": event.request_sha256,
+                "reason": event.reason,
+                "gate_json": json.loads(canonical_json(event.gate_json)),
+                "resulting_revision": event.resulting_revision,
+                "created_at": iso_time(_stored_time(event.created_at, "release.created_at"), "release.created_at"),
+            }
+            for event in release_events
+        ],
+    }
+
+
 def build_trace_stages(trace):
     evaluations = trace["evaluations"]
     signals = trace.get("signals", [])
@@ -164,13 +355,28 @@ def build_trace_stages(trace):
         else "Available"
     )
     reviews = trace.get("campaign_reviews", [])
+    campaign_events = trace.get("campaign_events", [])
+    terminal_states = {row["terminal_state"] for row in trace.get("campaign_trials", [])}
     campaign_state = (
         "Unavailable"
         if not trace.get("campaigns")
-        else "Inconclusive"
-        if any(row["status"] == "inconclusive" for row in reviews)
         else "Blocked"
         if any(row["status"] == "failed" for row in reviews)
+        or any(row["event_type"] == "holdout_reuse_denied" for row in campaign_events)
+        or bool(
+            terminal_states
+            - {
+                "succeeded",
+                "statistically_inconclusive",
+                "capability_unavailable",
+            }
+        )
+        else "Inconclusive"
+        if any(row["status"] == "inconclusive" for row in reviews) or "statistically_inconclusive" in terminal_states
+        else "Unavailable"
+        if not reviews
+        or any(row["status"] == "unavailable" for row in reviews)
+        or "capability_unavailable" in terminal_states
         else "Available"
     )
     release_events = trace.get("release_events", [])
@@ -339,6 +545,69 @@ def build_trace_stages(trace):
                 ],
                 *[
                     _trace_row(
+                        "Paired cell",
+                        {
+                            "succeeded": "Available",
+                            "statistically_inconclusive": "Inconclusive",
+                            "capability_unavailable": "Unavailable",
+                        }.get(row["terminal_state"], "Blocked"),
+                        timestamp_value=row["completed_at"],
+                        identities={
+                            "experiment_id": row["id"],
+                            "campaign_id": row["campaign_id"],
+                            "strategy_version_id": row["strategy_version_id"],
+                            "paired_sample_key_sha256": row["paired_sample_key_sha256"],
+                            "input_sha256": row["input_sha256"],
+                            "result_sha256": row["result_sha256"],
+                        },
+                        values={
+                            key: value
+                            for key, value in row.items()
+                            if key
+                            not in {
+                                "id",
+                                "campaign_id",
+                                "strategy_version_id",
+                                "paired_sample_key_sha256",
+                                "input_sha256",
+                                "result_sha256",
+                                "completed_at",
+                            }
+                        },
+                    )
+                    for row in trace.get("campaign_trials", [])
+                ],
+                *[
+                    _trace_row(
+                        "Campaign event",
+                        "Blocked" if row["event_type"] == "holdout_reuse_denied" else "Available",
+                        timestamp_value=row["created_at"],
+                        identities={
+                            "campaign_event_id": row["id"],
+                            "campaign_id": row["campaign_id"],
+                            "idempotency_sha256": row["idempotency_sha256"],
+                        },
+                        values={"event_type": row["event_type"], "payload_json": row["payload_json"]},
+                    )
+                    for row in trace.get("campaign_events", [])
+                ],
+                *[
+                    _trace_row(
+                        "Holdout use",
+                        "Available",
+                        timestamp_value=row["consumed_at"],
+                        identities={
+                            "holdout_use_id": row["id"],
+                            "campaign_id": row["campaign_id"],
+                            "holdout_identity_sha256": row["holdout_identity_sha256"],
+                            "campaign_contract_sha256": row["campaign_contract_sha256"],
+                        },
+                        values={"audit_json": row["audit_json"]},
+                    )
+                    for row in trace.get("holdout_uses", [])
+                ],
+                *[
+                    _trace_row(
                         "Campaign review",
                         "Inconclusive"
                         if row["status"] == "inconclusive"
@@ -348,8 +617,30 @@ def build_trace_stages(trace):
                         if row["status"] == "unavailable"
                         else "Available",
                         timestamp_value=row["created_at"],
-                        identities={"review_id": row["id"], "campaign_id": row["campaign_id"]},
-                        values={key: value for key, value in row.items() if key not in {"id", "created_at"}},
+                        identities={
+                            key: value
+                            for key, value in {
+                                "review_id": row["id"],
+                                "campaign_id": row["campaign_id"],
+                                "input_sha256": row["input_sha256"],
+                                "result_sha256": row["result_sha256"],
+                                "holdout_use_id": row["holdout_use_id"],
+                            }.items()
+                            if value is not None
+                        },
+                        values={
+                            key: value
+                            for key, value in row.items()
+                            if key
+                            not in {
+                                "id",
+                                "campaign_id",
+                                "input_sha256",
+                                "result_sha256",
+                                "holdout_use_id",
+                                "created_at",
+                            }
+                        },
                     )
                     for row in reviews
                 ],
@@ -362,7 +653,10 @@ def build_trace_stages(trace):
             "state": release_state,
             "reason": "No release event is linked" if last_release is None else "Immutable release history is ordered",
             "timestamp": None if last_release is None else last_release["created_at"],
-            "identities": {},
+            "identities": {
+                "strategy_version_id": trace["strategy_version"]["id"],
+                "content_sha256": trace["strategy_version"]["content_sha256"],
+            },
             "rows": [
                 _trace_row(
                     "Release event",
@@ -373,8 +667,40 @@ def build_trace_stages(trace):
                         "reject": "Rejected",
                     }[row["event_type"]],
                     timestamp_value=row["created_at"],
-                    identities={"release_event_id": row["id"]},
-                    values={key: value for key, value in row.items() if key not in {"id", "created_at"}},
+                    identities={
+                        key: value
+                        for key, value in {
+                            "release_event_id": row["id"],
+                            "candidate_version_id": row["candidate_version_id"],
+                            "from_version_id": row["from_version_id"],
+                            "to_version_id": row["to_version_id"],
+                            "source_release_event_id": row["source_release_event_id"],
+                            "campaign_id": row["campaign_id"],
+                            "review_id": row["review_id"],
+                            "holdout_use_id": row["holdout_use_id"],
+                            "reconciliation_id": row["reconciliation_id"],
+                            "request_sha256": row["request_sha256"],
+                        }.items()
+                        if value is not None
+                    },
+                    values={
+                        key: value
+                        for key, value in row.items()
+                        if key
+                        not in {
+                            "id",
+                            "candidate_version_id",
+                            "from_version_id",
+                            "to_version_id",
+                            "source_release_event_id",
+                            "campaign_id",
+                            "review_id",
+                            "holdout_use_id",
+                            "reconciliation_id",
+                            "request_sha256",
+                            "created_at",
+                        }
+                    },
                 )
                 for row in release_events
             ],
@@ -1157,50 +1483,12 @@ class DecisionService:
         signals = self.session.scalars(
             select(SignalRecord).where(or_(*signal_predicates)).order_by(SignalRecord.signal_time, SignalRecord.id)
         ).all()
-        outcomes = self.session.scalars(
-            select(OutcomeRecord)
-            .where(OutcomeRecord.evaluation_snapshot_id.in_([snapshot.id for snapshot in snapshots]))
-            .order_by(
-                OutcomeRecord.maturity_at,
-                OutcomeRecord.kind,
-                OutcomeRecord.horizon_key,
-                OutcomeRecord.revision_no,
-                OutcomeRecord.id,
-            )
-        ).all()
-        campaigns = self.session.scalars(
-            select(ExperimentCampaign)
-            .where(
-                or_(
-                    ExperimentCampaign.incumbent_strategy_version_id == version.id,
-                    ExperimentCampaign.candidate_strategy_version_id == version.id,
-                )
-            )
-            .order_by(ExperimentCampaign.created_at, ExperimentCampaign.id)
-        ).all()
-        campaign_ids = [campaign.id for campaign in campaigns]
-        reviews = (
-            self.session.scalars(
-                select(CampaignReview)
-                .where(CampaignReview.campaign_id.in_(campaign_ids))
-                .order_by(CampaignReview.created_at, CampaignReview.id)
-            ).all()
-            if campaign_ids
-            else []
+        evidence = load_trace_evidence(
+            self.session,
+            version=version,
+            snapshots=snapshots,
+            account_scope=decision.account_scope,
         )
-        release_events = self.session.scalars(
-            select(StrategyReleaseEvent)
-            .where(
-                StrategyReleaseEvent.strategy_id == version.strategy_id,
-                StrategyReleaseEvent.account_scope == decision.account_scope,
-                or_(
-                    StrategyReleaseEvent.candidate_version_id == version.id,
-                    StrategyReleaseEvent.from_version_id == version.id,
-                    StrategyReleaseEvent.to_version_id == version.id,
-                ),
-            )
-            .order_by(StrategyReleaseEvent.resulting_revision, StrategyReleaseEvent.id)
-        ).all()
         trace = {
             "decision": {
                 **_decision_response(decision),
@@ -1363,42 +1651,7 @@ class DecisionService:
                 )
                 for row in signals
             ],
-            "outcome_rows": project_outcome_rows(outcomes),
-            "campaigns": [
-                {
-                    "id": str(campaign.id),
-                    "contract_sha256": campaign.contract_sha256,
-                    "incumbent_strategy_version_id": str(campaign.incumbent_strategy_version_id),
-                    "candidate_strategy_version_id": str(campaign.candidate_strategy_version_id),
-                    "created_at": iso_time(
-                        _stored_time(campaign.created_at, "campaign.created_at"), "campaign.created_at"
-                    ),
-                }
-                for campaign in campaigns
-            ],
-            "campaign_reviews": [
-                {
-                    "id": str(review.id),
-                    "campaign_id": str(review.campaign_id),
-                    "status": review.status,
-                    "input_sha256": review.input_sha256,
-                    "result_sha256": review.result_sha256,
-                    "created_at": iso_time(_stored_time(review.created_at, "review.created_at"), "review.created_at"),
-                }
-                for review in reviews
-            ],
-            "release_events": [
-                {
-                    "id": str(event.id),
-                    "event_type": event.event_type,
-                    "from_version_id": None if event.from_version_id is None else str(event.from_version_id),
-                    "to_version_id": None if event.to_version_id is None else str(event.to_version_id),
-                    "reason": event.reason,
-                    "resulting_revision": event.resulting_revision,
-                    "created_at": iso_time(_stored_time(event.created_at, "release.created_at"), "release.created_at"),
-                }
-                for event in release_events
-            ],
+            **evidence,
         }
         trace["stages"] = build_trace_stages(trace)
         return trace

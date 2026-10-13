@@ -10,7 +10,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal, get_auth_principal
@@ -21,6 +21,7 @@ from poseidon.decision_loop.decisions import (
     DecisionPolicy,
     DecisionService,
     build_trace_stages,
+    load_trace_evidence,
 )
 from poseidon.decision_loop.decisions import (
     project_outcome_rows as _project_outcome_rows,
@@ -30,11 +31,8 @@ from poseidon.models.data_manifest import DataManifest
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_run import EvaluationRun
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
-from poseidon.models.experiment_campaign import CampaignReview, ExperimentCampaign
-from poseidon.models.outcome import OutcomeRecord
 from poseidon.models.research_revision import ResearchRevision
 from poseidon.models.signal import SignalRecord
-from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from poseidon.models.strategy_version import StrategyVersion
 from poseidon.signals.schemas import SignalTraceMetadata
 
@@ -167,87 +165,12 @@ def _evaluation_rows(session, snapshots):
 
 
 def _evidence(session, *, version, snapshots, account_scope):
-    snapshot_ids = [snapshot.id for snapshot in snapshots]
-    outcomes = session.scalars(
-        select(OutcomeRecord)
-        .where(OutcomeRecord.evaluation_snapshot_id.in_(snapshot_ids))
-        .order_by(
-            OutcomeRecord.maturity_at,
-            OutcomeRecord.kind,
-            OutcomeRecord.horizon_key,
-            OutcomeRecord.revision_no,
-            OutcomeRecord.id,
-        )
-    ).all()
-    campaigns = session.scalars(
-        select(ExperimentCampaign)
-        .where(
-            or_(
-                ExperimentCampaign.incumbent_strategy_version_id == version.id,
-                ExperimentCampaign.candidate_strategy_version_id == version.id,
-            )
-        )
-        .order_by(ExperimentCampaign.created_at, ExperimentCampaign.id)
-    ).all()
-    campaign_ids = [campaign.id for campaign in campaigns]
-    reviews = (
-        session.scalars(
-            select(CampaignReview)
-            .where(CampaignReview.campaign_id.in_(campaign_ids))
-            .order_by(CampaignReview.created_at, CampaignReview.id)
-        ).all()
-        if campaign_ids
-        else []
+    return load_trace_evidence(
+        session,
+        version=version,
+        snapshots=snapshots,
+        account_scope=account_scope,
     )
-    events = session.scalars(
-        select(StrategyReleaseEvent)
-        .where(
-            StrategyReleaseEvent.strategy_id == version.strategy_id,
-            StrategyReleaseEvent.account_scope == account_scope,
-            or_(
-                StrategyReleaseEvent.candidate_version_id == version.id,
-                StrategyReleaseEvent.from_version_id == version.id,
-                StrategyReleaseEvent.to_version_id == version.id,
-            ),
-        )
-        .order_by(StrategyReleaseEvent.resulting_revision, StrategyReleaseEvent.id)
-    ).all()
-    return {
-        "outcome_rows": _project_outcome_rows(outcomes),
-        "campaigns": [
-            {
-                "id": str(campaign.id),
-                "contract_sha256": campaign.contract_sha256,
-                "incumbent_strategy_version_id": str(campaign.incumbent_strategy_version_id),
-                "candidate_strategy_version_id": str(campaign.candidate_strategy_version_id),
-                "created_at": _stored_time(campaign.created_at),
-            }
-            for campaign in campaigns
-        ],
-        "campaign_reviews": [
-            {
-                "id": str(review.id),
-                "campaign_id": str(review.campaign_id),
-                "status": review.status,
-                "input_sha256": review.input_sha256,
-                "result_sha256": review.result_sha256,
-                "created_at": _stored_time(review.created_at),
-            }
-            for review in reviews
-        ],
-        "release_events": [
-            {
-                "id": str(event.id),
-                "event_type": event.event_type,
-                "from_version_id": None if event.from_version_id is None else str(event.from_version_id),
-                "to_version_id": None if event.to_version_id is None else str(event.to_version_id),
-                "reason": event.reason,
-                "resulting_revision": event.resulting_revision,
-                "created_at": _stored_time(event.created_at),
-            }
-            for event in events
-        ],
-    }
 
 
 class TraceService:
@@ -385,7 +308,40 @@ class TraceService:
             )
         if response.account_scope != metadata.account_scope:
             raise HTTPException(status_code=422, detail="Signal account scope identity changed")
-        return response.model_copy(update={"anchor_type": "signal", "anchor_id": signal.id})
+        metadata_values = metadata.model_dump(mode="json", exclude_none=True)
+        values = {
+            "symbol": signal.symbol,
+            "market": signal.market,
+            "action": signal.action,
+            "status": signal.status,
+            "metadata": metadata_values,
+        }
+        if metadata.narrative_confidence is not None:
+            values["Narrative confidence"] = metadata.narrative_confidence
+            values["confidence_note"] = "Not a probability of profit"
+        signal_row = TraceRow(
+            label="Signal",
+            state="Available",
+            timestamp=signal.signal_time,
+            identities={"signal_id": str(signal.id)},
+            values=values,
+        )
+        signal_stage = response.stages[0].model_copy(
+            update={
+                "state": "Available",
+                "reason": "Stored signal carries exact trace identity",
+                "timestamp": signal.signal_time,
+                "identities": {"signal_id": str(signal.id)},
+                "rows": [signal_row],
+            }
+        )
+        return response.model_copy(
+            update={
+                "anchor_type": "signal",
+                "anchor_id": signal.id,
+                "stages": [signal_stage, *response.stages[1:]],
+            }
+        )
 
 
 def _map_trace_error(error):
