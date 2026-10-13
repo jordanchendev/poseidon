@@ -53,7 +53,7 @@ def db():
             "fill_allocations",
             "account_reconciliations",
             "signals",
-            "outcomes",
+            "outcome_records",
             "experiment_campaigns",
             "campaign_reviews",
             "strategy_release_events",
