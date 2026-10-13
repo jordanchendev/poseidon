@@ -571,6 +571,33 @@ def test_modify_via_approve_requires_nonblank_override_reason(api):
     assert service.calls == []
 
 
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("approve", {"expected_revision": 1, "final_action": "enter", "override_reason": "   "}),
+        ("reject", {"expected_revision": 1, "reason": "   "}),
+    ],
+)
+def test_formal_app_serializes_custom_validation_errors(api, path, body):
+    _client, session, service = api
+    poseidon_app.dependency_overrides[get_db] = lambda: session
+    try:
+        client = TestClient(poseidon_app, raise_server_exceptions=False)
+        response = client.post(
+            f"/api/v1/decisions/{service.decision.id}/{path}",
+            json=body,
+            headers=_headers(MANAGER_KEY, f"formal-invalid-{path}"),
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == "Validation error"
+        assert response.json()["error_code"] == "VALIDATION_ERROR"
+        assert response.json()["status_code"] == 422
+        assert response.json()["errors"][0]["type"] == "value_error"
+    finally:
+        poseidon_app.dependency_overrides.pop(get_db, None)
+
+
 def test_openapi_exposes_typed_decision_responses_and_errors(real_api):
     client, _session, _service = real_api
     schema = client.get("/openapi.json").json()
