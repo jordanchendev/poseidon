@@ -652,6 +652,41 @@ def build_trace_stages(trace):
                 ],
                 *[
                     _trace_row(
+                        "Position lot",
+                        "Available",
+                        timestamp_value=row["opened_at"],
+                        identities={
+                            "position_lot_id": row["id"],
+                            "opening_fill_id": row["opening_fill_id"],
+                            "opening_decision_id": row["opening_decision_id"],
+                            "cost_basis_sha256": row["cost_basis_sha256"],
+                        },
+                        values={
+                            "original_quantity": row["original_quantity"],
+                            "open_quantity": row["open_quantity"],
+                            "reserved_close_quantity": row["reserved_close_quantity"],
+                        },
+                    )
+                    for row in trace["lots"]
+                ],
+                *[
+                    _trace_row(
+                        "Fill allocation",
+                        "Available",
+                        timestamp_value=row["created_at"],
+                        identities={
+                            "fill_allocation_id": row["id"],
+                            "closing_fill_id": row["closing_fill_id"],
+                            "position_lot_id": row["position_lot_id"],
+                            "closing_decision_id": row["closing_decision_id"],
+                            "realized_cost_sha256": row["realized_cost_sha256"],
+                        },
+                        values={"quantity": row["quantity"]},
+                    )
+                    for row in trace["allocations"]
+                ],
+                *[
+                    _trace_row(
                         "Reconciliation",
                         "Available" if row["status"] == "matched" else "Provisional",
                         timestamp_value=row["as_of"],
@@ -1746,6 +1781,7 @@ class DecisionService:
                     "open_quantity": lot.open_quantity,
                     "reserved_close_quantity": lot.reserved_close_quantity,
                     "cost_basis_sha256": content_sha256(lot.cost_basis_json),
+                    "opened_at": iso_time(_stored_time(lot.opened_at, "lot.opened_at"), "lot.opened_at"),
                 }
                 for lot in lots
             ],
@@ -1757,6 +1793,10 @@ class DecisionService:
                     "closing_decision_id": str(allocation.closing_decision_id),
                     "quantity": allocation.quantity,
                     "realized_cost_sha256": content_sha256(allocation.realized_cost_json),
+                    "created_at": iso_time(
+                        _stored_time(allocation.created_at, "allocation.created_at"),
+                        "allocation.created_at",
+                    ),
                 }
                 for allocation in allocations
             ],
