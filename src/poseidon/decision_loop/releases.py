@@ -134,7 +134,7 @@ class ReleaseService:
             return _predicate("candidate_identity", "blocked", "candidate belongs to another strategy", **evidence)
         return _predicate("candidate_identity", "passed", "candidate content and ownership match", **evidence)
 
-    def _policy_predicate(self, candidate):
+    def _policy_predicate(self, strategy, candidate):
         evidence = {"candidate_version_id": None if candidate is None else str(candidate.id)}
         if candidate is None:
             return _predicate("policy_identity", "unavailable", "candidate policy is unavailable", **evidence), None
@@ -145,9 +145,19 @@ class ReleaseService:
             return _predicate("policy_identity", "unavailable", "frozen strategy policy is incomplete", **evidence), None
         evidence.update(
             account_scope=policy.account_scope,
+            market=policy.market,
             mode=policy.mode,
             requires_human_release=policy.release_gate.requires_human_release,
+            strategy_market=None if strategy is None else strategy.market,
         )
+        if strategy is None:
+            return _predicate(
+                "policy_identity", "unavailable", "owning strategy market is unavailable", **evidence
+            ), policy
+        if policy.market != strategy.market:
+            return _predicate(
+                "policy_identity", "blocked", "frozen policy market does not match strategy market", **evidence
+            ), policy
         if policy.mode != "human" or policy.release_gate.requires_human_release is not True:
             return _predicate(
                 "policy_identity", "blocked", "pilot policy must remain human-release-only", **evidence
@@ -516,7 +526,7 @@ class ReleaseService:
         reconciliation = self.session.get(AccountReconciliation, reconciliation_id)
 
         candidate_predicate = self._candidate_predicate(strategy, candidate, candidate_version_id)
-        policy_predicate, policy = self._policy_predicate(candidate)
+        policy_predicate, policy = self._policy_predicate(strategy, candidate)
         campaign_predicate = self._campaign_predicate(strategy, candidate, campaign)
         incumbent_predicate = self._incumbent_predicate(strategy, campaign)
         cells_predicate, trials = self._cells_predicate(campaign)
@@ -978,7 +988,7 @@ class ReleaseService:
             **target_evidence,
         )
 
-        policy_predicate, policy = self._policy_predicate(target)
+        policy_predicate, policy = self._policy_predicate(strategy, target)
         if policy is None or policy.reconciliation is None:
             rollback_policy = _predicate(
                 "rollback_policy",
