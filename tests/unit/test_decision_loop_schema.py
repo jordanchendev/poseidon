@@ -1204,3 +1204,78 @@ def test_phase99_upgrade_has_no_legacy_backfill_or_release_surface():
     assert "deep_search" not in source
     assert "openai" not in source
     assert "litellm" not in source
+
+
+def _load_phase100_migration():
+    path = Path(__file__).resolve().parents[2] / "alembic/versions/044_strategy_release.py"
+    assert path.is_file(), "release migration 044 is missing"
+    spec = importlib.util.spec_from_file_location("phase100_migration", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    return migration
+
+
+def test_phase100_release_models_encode_one_composite_pointer_authority():
+    import poseidon.models as models
+
+    assert hasattr(models, "StrategyReleaseEvent")
+    strategy = models.StrategyRecord.__table__
+    version = models.StrategyVersion.__table__
+    event = models.StrategyReleaseEvent.__table__
+    review = models.CampaignReview.__table__
+
+    assert strategy.c.active_version_id.nullable is True
+    assert strategy.c.release_revision.nullable is False
+    assert str(strategy.c.release_revision.server_default.arg) == "0"
+    assert (
+        "fk_strategies_active_version",
+        ("id", "active_version_id"),
+        ("strategy_versions.strategy_id", "strategy_versions.id"),
+    ) in _foreign_key_constraints(strategy)
+    assert ("uq_strategy_versions_strategy_id_id", ("strategy_id", "id")) in _unique_constraints(version)
+
+    assert _unique_constraints(event) >= {
+        ("uq_strategy_release_events_idempotency", ("strategy_id", "idempotency_key")),
+        ("uq_strategy_release_events_revision", ("strategy_id", "resulting_revision")),
+        ("uq_strategy_release_events_strategy_id_id", ("strategy_id", "id")),
+    }
+    event_type = _check_sql(event, "ck_strategy_release_events_type")
+    assert all(value in event_type for value in ("release", "pause", "rollback", "reject"))
+    assert (
+        "fk_strategy_release_events_to_version",
+        ("strategy_id", "to_version_id"),
+        ("strategy_versions.strategy_id", "strategy_versions.id"),
+    ) in _foreign_key_constraints(event)
+    assert (
+        "fk_strategy_release_events_source_release",
+        ("strategy_id", "source_release_event_id"),
+        ("strategy_release_events.strategy_id", "strategy_release_events.id"),
+    ) in _foreign_key_constraints(event)
+
+    assert review.c.holdout_use_id.nullable is True
+    assert review.c.input_identity_json.nullable is True
+    binding = _check_sql(review, "ck_campaign_reviews_release_binding")
+    assert "holdout_use_id IS NULL" in binding
+    assert "input_identity_json IS NULL" in binding
+
+
+def test_phase100_migration_is_exact_044_without_inferred_authority(monkeypatch):
+    migration = _load_phase100_migration()
+    assert (migration.revision, migration.down_revision) == ("044", "043")
+    source = Path(migration.__file__).read_text()
+    upgrade_source = source.split("def downgrade", 1)[0].lower()
+    assert "update strategies set" not in upgrade_source
+    assert "update campaign_reviews set" not in upgrade_source
+    assert "insert into strategy_release_events" not in upgrade_source
+    assert "phase101" not in upgrade_source
+
+    operations = MigrationOperations(downgrade_history=True)
+    monkeypatch.setattr(migration, "op", operations)
+    with pytest.raises(RuntimeError, match="release authority history exists"):
+        migration.downgrade()
+    assert operations.mutation_calls == []
+    assert operations.dropped_operations == []
+    assert operations.connection.statements[0].lstrip().startswith("LOCK TABLE")
+    assert "strategy_release_events" in operations.connection.statements[0]
+    assert "active_version_id IS NOT NULL" in operations.connection.statements[1]
+    assert "release_revision <> 0" in operations.connection.statements[1]
