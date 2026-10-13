@@ -322,13 +322,75 @@ def build_trace_stages(trace):
     decisions = trace.get("decisions", [])
     if not decisions and trace.get("decision") is not None:
         decisions = [trace["decision"]]
-    no_trade = not decisions and any(row["status"] == "no_trade" for row in evaluations)
+    relevant_ids = set(trace.get("trace_evaluation_ids", []))
+    if not relevant_ids:
+        relevant_ids = {row["id"] for row in evaluations if row.get("selected")}
+    relevant_evaluations = [row for row in evaluations if not relevant_ids or row["id"] in relevant_ids]
+    no_trade_evaluations = [row for row in relevant_evaluations if row["status"] == "no_trade"]
+    no_trade = bool(no_trade_evaluations)
     if signals:
         signal_state, signal_reason = "Available", "Stored signal carries exact trace identity"
     elif no_trade:
         signal_state, signal_reason = "No trade", "Evaluation completed without an executable trade"
+    elif not decisions and relevant_evaluations:
+        signal_state, signal_reason = "Unavailable", "No stored signal is linked to the evaluated evidence"
     else:
         signal_state, signal_reason = "Legacy unresolved", "No stored signal or no-trade identity links this trace"
+    no_trade_rows = [
+        _trace_row(
+            "No trade",
+            "No trade",
+            timestamp_value=trace["evaluation_run"]["decision_as_of"],
+            identities={
+                "evaluation_snapshot_id": evaluation["id"],
+                "content_sha256": evaluation["content_sha256"],
+            },
+            values={
+                "status": evaluation["status"],
+                "reason_codes": evaluation["reason_codes"],
+            },
+        )
+        for evaluation in no_trade_evaluations
+    ]
+    if not decisions:
+        decision_state = "Not required" if no_trade else "Unavailable"
+        decision_reason = (
+            "No decision was required for no-trade evidence"
+            if no_trade
+            else "No decision is linked to the evaluated evidence"
+        )
+    elif any(row["status"] == "pending_approval" for row in decisions):
+        decision_state = "Provisional"
+        decision_reason = "Decision approval is pending"
+    elif all(row["status"] in {"rejected", "expired", "superseded"} for row in decisions):
+        decision_state = "Blocked"
+        decision_reason = "Decision terminal state prevents execution"
+    else:
+        decision_state = "Available"
+        decision_reason = "Decisions and ordered events are available"
+    executable_decisions = [
+        row for row in decisions if row.get("final_json", {}).get("final_action") in EXECUTABLE_ACTIONS
+    ]
+    if trace["orders"]:
+        execution_state = "Filled" if trace["fills"] else "Available"
+        execution_reason = "Orders, fills, and reconciliation remain separate"
+    elif not decisions:
+        execution_state = "Not required" if no_trade else "Unavailable"
+        execution_reason = (
+            "No order was required for no-trade evidence" if no_trade else "No decision is linked to execution evidence"
+        )
+    elif not executable_decisions:
+        execution_state = "Not required"
+        execution_reason = "The final decision action is not executable"
+    elif any(row["status"] == "pending_approval" for row in executable_decisions):
+        execution_state = "Provisional"
+        execution_reason = "Executable decision is awaiting approval"
+    elif any(row["status"] in {"rejected", "expired", "superseded"} for row in executable_decisions):
+        execution_state = "Blocked"
+        execution_reason = "Executable decision cannot proceed"
+    else:
+        execution_state = "Unavailable"
+        execution_reason = "Approved executable decision has no stored order"
     research_rows = [
         _trace_row(
             "Research revision",
@@ -393,9 +455,15 @@ def build_trace_stages(trace):
             "name": "signal_or_no_trade",
             "state": signal_state,
             "reason": signal_reason,
-            "timestamp": signals[0]["timestamp"] if signals else None,
-            "identities": {},
-            "rows": signals,
+            "timestamp": signals[0]["timestamp"]
+            if signals
+            else no_trade_rows[0]["timestamp"]
+            if no_trade_rows
+            else None,
+            "identities": (
+                {} if len(no_trade_evaluations) != 1 else {"evaluation_snapshot_id": no_trade_evaluations[0]["id"]}
+            ),
+            "rows": signals if signals else no_trade_rows,
             "raw_payload": None,
         },
         {
@@ -437,8 +505,8 @@ def build_trace_stages(trace):
         {
             "position": 5,
             "name": "decision_events",
-            "state": "Not required" if not decisions else "Available",
-            "reason": "No decision was required" if not decisions else "Decisions and ordered events are available",
+            "state": decision_state,
+            "reason": decision_reason,
             "timestamp": None if not decisions else decisions[0]["decision_as_of"],
             "identities": {} if len(decisions) != 1 else {"decision_id": decisions[0]["id"]},
             "rows": [
@@ -472,10 +540,8 @@ def build_trace_stages(trace):
         {
             "position": 6,
             "name": "execution",
-            "state": "Not required" if not trace["orders"] else "Filled" if trace["fills"] else "Available",
-            "reason": "No order was required"
-            if not trace["orders"]
-            else "Orders, fills, and reconciliation remain separate",
+            "state": execution_state,
+            "reason": execution_reason,
             "timestamp": None,
             "identities": {},
             "rows": [
@@ -1532,6 +1598,7 @@ class DecisionService:
                 ),
             },
             "evaluations": evaluations,
+            "trace_evaluation_ids": [str(snapshot_id) for snapshot_id in selected_snapshot_ids],
             "execution_key": str(decision.execution_key) if decision.execution_key is not None else None,
             "execution_keys": sorted(
                 {

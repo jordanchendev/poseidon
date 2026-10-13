@@ -222,6 +222,7 @@ class TraceService:
             raw = traces[0]
             raw["decision"] = traces[0]["decision"] if len(traces) == 1 else None
             raw["decisions"] = decision_rows
+            raw["trace_evaluation_ids"] = [str(snapshot.id)]
             for key in ("events", "orders", "fills", "lots", "allocations", "reconciliations"):
                 unique = {row["id"]: row for trace in traces for row in trace[key]}
                 raw[key] = [unique[key] for key in sorted(unique)]
@@ -251,6 +252,7 @@ class TraceService:
                 "created_at": _stored_time(manifest.created_at),
             },
             "evaluations": evaluations,
+            "trace_evaluation_ids": [str(snapshot.id)],
             "events": [],
             "orders": [],
             "fills": [],
