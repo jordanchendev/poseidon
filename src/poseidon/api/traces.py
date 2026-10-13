@@ -22,6 +22,8 @@ from poseidon.decision_loop.decisions import (
     DecisionService,
     build_trace_stages,
     load_trace_evidence,
+    load_trace_signals,
+    project_trace_signal,
 )
 from poseidon.decision_loop.decisions import (
     project_outcome_rows as _project_outcome_rows,
@@ -259,7 +261,12 @@ class TraceService:
             "lots": [],
             "allocations": [],
             "reconciliations": [],
-            "signals": [],
+            "signals": load_trace_signals(
+                self.session,
+                account_scope=policy.account_scope,
+                version=version,
+                snapshots=[snapshot],
+            ),
             **_evidence(
                 self.session,
                 version=version,
@@ -280,11 +287,16 @@ class TraceService:
         if metadata.account_scope is None:
             raise HTTPException(status_code=422, detail="Legacy signal account scope is unresolved")
         principal.require_account_scope(metadata.account_scope)
-        if metadata.decision_id is not None:
-            response = self.by_decision(metadata.decision_id, principal=principal)
-        elif metadata.evaluation_snapshot_id is not None:
-            response = self.by_evaluation(metadata.evaluation_snapshot_id, principal=principal)
-        else:
+        try:
+            if metadata.decision_id is not None:
+                response = self.by_decision(metadata.decision_id, principal=principal)
+            elif metadata.evaluation_snapshot_id is not None:
+                response = self.by_evaluation(metadata.evaluation_snapshot_id, principal=principal)
+            else:
+                response = None
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="Signal trace identity is invalid") from error
+        if response is None:
             stages = [
                 TraceStage(
                     position=index,
@@ -307,24 +319,7 @@ class TraceService:
             )
         if response.account_scope != metadata.account_scope:
             raise HTTPException(status_code=422, detail="Signal account scope identity changed")
-        metadata_values = metadata.model_dump(mode="json", exclude_none=True)
-        values = {
-            "symbol": signal.symbol,
-            "market": signal.market,
-            "action": signal.action,
-            "status": signal.status,
-            "metadata": metadata_values,
-        }
-        if metadata.narrative_confidence is not None:
-            values["Narrative confidence"] = metadata.narrative_confidence
-            values["confidence_note"] = "Not a probability of profit"
-        signal_row = TraceRow(
-            label="Signal",
-            state="Available",
-            timestamp=signal.signal_time,
-            identities={"signal_id": str(signal.id)},
-            values=values,
-        )
+        signal_row = TraceRow.model_validate(project_trace_signal(signal, metadata))
         signal_stage = response.stages[0].model_copy(
             update={
                 "state": "Available",

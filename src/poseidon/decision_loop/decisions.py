@@ -51,6 +51,7 @@ from poseidon.models.signal import SignalRecord
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from poseidon.models.strategy_version import StrategyVersion
+from poseidon.signals.schemas import SignalTraceMetadata
 
 ACTION_VALUES = frozenset({"watch", "hold", "enter", "add", "reduce", "exit", "reject"})
 EXECUTABLE_ACTIONS = frozenset({"enter", "add", "reduce", "exit"})
@@ -82,6 +83,85 @@ def _trace_row(label, state, *, timestamp_value=None, identities=None, values=No
         "identities": identities or {},
         "values": values or {},
     }
+
+
+def project_trace_signal(signal, metadata=None):
+    try:
+        metadata = metadata or SignalTraceMetadata.model_validate(signal.metadata_)
+    except PydanticValidationError as error:
+        raise ValidationError("signal trace metadata is invalid") from error
+    values = {
+        "symbol": signal.symbol,
+        "market": signal.market,
+        "action": signal.action,
+        "status": signal.status,
+        "metadata": metadata.model_dump(mode="json", exclude_none=True),
+    }
+    if metadata.narrative_confidence is not None:
+        values["Narrative confidence"] = metadata.narrative_confidence
+        values["confidence_note"] = "Not a probability of profit"
+    return _trace_row(
+        "Signal",
+        "Available",
+        timestamp_value=iso_time(_stored_time(signal.signal_time, "signal.signal_time"), "signal.signal_time"),
+        identities={"signal_id": str(signal.id)},
+        values=values,
+    )
+
+
+def load_trace_signals(session, *, account_scope, version, snapshots, decision=None):
+    snapshot_by_id = {snapshot.id: snapshot for snapshot in snapshots}
+    snapshot_ids = list(snapshot_by_id)
+    predicates = [SignalRecord.metadata_["evaluation_snapshot_id"].as_string() == str(value) for value in snapshot_ids]
+    if decision is not None:
+        predicates.append(SignalRecord.metadata_["decision_id"].as_string() == str(decision.id))
+    if not predicates:
+        return []
+    signals = session.scalars(
+        select(SignalRecord).where(or_(*predicates)).order_by(SignalRecord.signal_time, SignalRecord.id)
+    ).all()
+    rows = []
+    for signal in signals:
+        try:
+            metadata = SignalTraceMetadata.model_validate(signal.metadata_)
+        except PydanticValidationError as error:
+            raise ValidationError("signal trace metadata is invalid") from error
+        if metadata.account_scope != account_scope:
+            raise ValidationError("signal trace account scope mismatch")
+        if signal.strategy_id != version.strategy_id:
+            raise ValidationError("signal trace strategy identity mismatch")
+        linked_snapshot = None
+        if metadata.evaluation_snapshot_id is not None:
+            linked_snapshot = snapshot_by_id.get(metadata.evaluation_snapshot_id)
+            if linked_snapshot is None:
+                raise ValidationError("signal trace snapshot identity mismatch")
+        if decision is not None:
+            if metadata.decision_id is not None and metadata.decision_id != decision.id:
+                raise ValidationError("signal trace decision identity mismatch")
+        elif metadata.decision_id is not None:
+            linked_decision = session.get(DecisionRecord, metadata.decision_id)
+            selected_ids = (
+                set()
+                if linked_decision is None
+                else set(linked_decision.original_json.get("selected_evaluation_ids", []))
+            )
+            if (
+                linked_decision is None
+                or linked_decision.account_scope != account_scope
+                or linked_decision.strategy_version_id != version.id
+                or metadata.evaluation_snapshot_id is None
+                or str(metadata.evaluation_snapshot_id) not in selected_ids
+            ):
+                raise ValidationError("signal trace dual identity mismatch")
+        matching_snapshots = [linked_snapshot] if linked_snapshot is not None else snapshots
+        if not any(
+            row is not None
+            and (signal.symbol, signal.market, signal.instrument) == (row.symbol, row.market, row.instrument)
+            for row in matching_snapshots
+        ):
+            raise ValidationError("signal trace snapshot identity mismatch")
+        rows.append(project_trace_signal(signal, metadata))
+    return rows
 
 
 def project_outcome_rows(outcomes):
@@ -1540,15 +1620,15 @@ class DecisionService:
             if account_generations
             else []
         )
-        selected_snapshot_ids = [snapshot.id for snapshot in snapshots if snapshot.id in selected_ids]
-        signal_predicates = [SignalRecord.metadata_["decision_id"].as_string() == str(decision.id)]
-        signal_predicates.extend(
-            SignalRecord.metadata_["evaluation_snapshot_id"].as_string() == str(snapshot_id)
-            for snapshot_id in selected_snapshot_ids
+        selected_snapshots = [snapshot for snapshot in snapshots if snapshot.id in selected_ids]
+        selected_snapshot_ids = [snapshot.id for snapshot in selected_snapshots]
+        signals = load_trace_signals(
+            self.session,
+            account_scope=decision.account_scope,
+            version=version,
+            snapshots=selected_snapshots,
+            decision=decision,
         )
-        signals = self.session.scalars(
-            select(SignalRecord).where(or_(*signal_predicates)).order_by(SignalRecord.signal_time, SignalRecord.id)
-        ).all()
         evidence = load_trace_evidence(
             self.session,
             version=version,
@@ -1702,22 +1782,7 @@ class DecisionService:
                 }
                 for event in events
             ],
-            "signals": [
-                _trace_row(
-                    "Signal",
-                    "Available",
-                    timestamp_value=iso_time(_stored_time(row.signal_time, "signal.signal_time"), "signal.signal_time"),
-                    identities={"signal_id": str(row.id)},
-                    values={
-                        "symbol": row.symbol,
-                        "market": row.market,
-                        "action": row.action,
-                        "status": row.status,
-                        "metadata": json.loads(canonical_json(row.metadata_)),
-                    },
-                )
-                for row in signals
-            ],
+            "signals": signals,
             **evidence,
         }
         trace["stages"] = build_trace_stages(trace)
