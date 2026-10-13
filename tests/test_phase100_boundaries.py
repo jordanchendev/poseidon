@@ -173,7 +173,14 @@ def scan_boundary(root: Path) -> list[str]:
             issues.append("production DSH dependency: pyproject.toml")
 
     bounded_sources = [
-        path for path in files if path.relative_to(root).as_posix() in ALLOWED_DSH_ARTIFACTS and path.suffix == ".py"
+        path
+        for path in files
+        if path.suffix == ".py"
+        and (
+            path.relative_to(root).as_posix() in ALLOWED_DSH_ARTIFACTS
+            or "dsh" in path.relative_to(root).as_posix().lower()
+            or "/jev_" in f"/{path.relative_to(root).as_posix().lower()}"
+        )
     ]
     bounded_sources.extend((root / "src/poseidon/autoresearch").rglob("*.py"))
     api = root / "src/poseidon/api/autoresearch.py"
@@ -303,7 +310,7 @@ class Phase100BoundaryTests(unittest.TestCase):
                 "answers": answers(packet, injection=True),
                 "usage": {"input_tokens": 1, "output_tokens": 1},
             },
-            "malformed": lambda _provider, _packet: {},
+            "malformed": lambda _provider, _packet: (_ for _ in ()).throw(ProviderError(None, "non_json_response")),
             "drift": lambda _provider, packet: {
                 "model": JEV_MODEL,
                 "answers": answers(packet, route="create"),
