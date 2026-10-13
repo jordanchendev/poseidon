@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import ast
-import copy
 import importlib
 import json
+import re
 import sys
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -52,19 +53,19 @@ ALLOWED_ROOT_EVIDENCE = {
     "../.planning/workstreams/investment-decision-loop/phases/100-release-gate-kairos-and-dsh-gate/"
     "evidence/phase100-dsh-acceptance.json",
 }
-RUNTIME_MARKERS = (
-    "ResearchRuntime",
-    "JEV_DSH_ANALYSIS_API_KEY",
-    "DSH_POC_",
-    "deepseek_harness",
-    "dsh_enabled",
-    "dsh_profile",
+PRODUCTION_DSH_PATTERN = re.compile(
+    r"(?i)(?<![a-z0-9])(?:(?:dsh|jev|deepseek)[a-z0-9_-]*|research_?runtime)(?![a-z0-9])"
 )
 FORBIDDEN_AUTHORITY_MODULES = (
+    "poseidon.api.decisions",
+    "poseidon.api.releases",
+    "poseidon.api.risk",
+    "poseidon.api.strategy_releases",
     "poseidon.decision_loop.releases",
     "poseidon.decision_loop.decisions",
     "poseidon.decision_loop.execution",
     "poseidon.decision_loop.transactions",
+    "poseidon.orders.manager",
     "poseidon.research.campaign",
     "poseidon.models.decision",
     "poseidon.models.strategy_release",
@@ -77,8 +78,13 @@ FORBIDDEN_AUTHORITY_NAMES = (
     "ReleaseService",
     "DecisionService",
     "DecisionExecutionService",
+    "approve_decision",
     "run_paired_review_in_transactions",
     "materialize_order_intents",
+    "_record_risk_block",
+    "OrderManager",
+    "execute_rebalance",
+    "_persist_order",
     "active_version_id",
     "release_revision",
     "StrategyReleaseEvent",
@@ -91,16 +97,28 @@ FORBIDDEN_AUTHORITY_NAMES = (
     "PaperBrokerOrder",
     "PaperBrokerFill",
 )
-AUTHORITY_STATE = {
-    "decision_approvals": 0,
-    "hard_risk_states": 0,
-    "campaign_reviews": 0,
-    "release_events": 0,
-    "active_version_id": "retained-version",
-    "release_revision": 7,
-    "orders": 0,
-    "fills": 0,
-}
+RELEASE_POINTER_MODULES = (
+    "poseidon.decision_loop.releases",
+    "poseidon.models.strategy",
+    "poseidon.models.strategy_release_event",
+)
+RELEASE_POINTER_NAMES = (
+    "ReleaseService",
+    "StrategyReleaseEvent",
+    "active_version_id",
+    "release_revision",
+)
+AUTHORITY_WRITERS = (
+    "poseidon.api.decisions.approve_decision",
+    "poseidon.decision_loop.decisions.DecisionService.approve",
+    "poseidon.decision_loop.execution.DecisionExecutionService._record_risk_block",
+    "poseidon.decision_loop.execution.DecisionExecutionService.materialize",
+    "poseidon.research.campaign.run_paired_review_in_transactions",
+    "poseidon.decision_loop.releases.ReleaseService._append_transition",
+    "poseidon.decision_loop.releases.ReleaseService.release",
+    "poseidon.orders.manager.OrderManager.execute_rebalance",
+    "poseidon.orders.manager.OrderManager._persist_order",
+)
 
 
 def _text_files(root: Path) -> list[Path]:
@@ -109,6 +127,18 @@ def _text_files(root: Path) -> list[Path]:
         for path in root.rglob("*")
         if path.is_file() and not {".git", ".venv", "__pycache__", ".pytest_cache"} & set(path.relative_to(root).parts)
     ]
+
+
+def _module_name(label: str) -> str | None:
+    path = Path(label.split(":", 1)[0])
+    try:
+        relative = path.relative_to("src").with_suffix("")
+    except ValueError:
+        return None
+    parts = list(relative.parts)
+    if parts[-1:] == ["__init__"]:
+        parts.pop()
+    return ".".join(parts)
 
 
 def _imports(text: str, label: str) -> set[str]:
@@ -121,14 +151,39 @@ def _imports(text: str, label: str) -> set[str]:
         if isinstance(node, ast.Import):
             imports.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
-            imports.update(f"{node.module}.{alias.name}" if node.module else alias.name for alias in node.names)
+            module = node.module or ""
+            if node.level:
+                current = _module_name(label)
+                if current:
+                    package = current.split(".")[:-1]
+                    keep = len(package) - (node.level - 1)
+                    module = ".".join(package[:keep] + ([module] if module else []))
+            imports.update(f"{module}.{alias.name}" if module else alias.name for alias in node.names)
     return imports
 
 
-def _authority_issues(label: str, text: str) -> list[str]:
-    issues = [f"authority name {name}: {label}" for name in FORBIDDEN_AUTHORITY_NAMES if name in text]
+def _authority_issues(
+    label: str,
+    text: str,
+    *,
+    modules: tuple[str, ...] = FORBIDDEN_AUTHORITY_MODULES,
+    names: tuple[str, ...] = FORBIDDEN_AUTHORITY_NAMES,
+) -> list[str]:
+    try:
+        tree = ast.parse(text, filename=label)
+    except SyntaxError:
+        return []
+    referenced = {
+        value
+        for node in ast.walk(tree)
+        for value in (
+            node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None,
+        )
+        if value is not None
+    }
+    issues = [f"authority name {name}: {label}" for name in names if name in referenced]
     for imported in _imports(text, label):
-        if any(imported == module or imported.startswith(f"{module}.") for module in FORBIDDEN_AUTHORITY_MODULES):
+        if any(imported == module or imported.startswith(f"{module}.") for module in modules):
             issues.append(f"authority import {imported}: {label}")
     return issues
 
@@ -139,12 +194,49 @@ def _autoresearch_worker_source(root: Path) -> str:
         return ""
     text = path.read_text(encoding="utf-8")
     tree = ast.parse(text, filename=str(path))
-    matches = [
-        node
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "autoresearch_run"
+    functions = {node.name: node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    if "autoresearch_run" not in functions:
+        return ""
+    reachable = {"autoresearch_run"}
+    pending = ["autoresearch_run"]
+    while pending:
+        node = functions[pending.pop()]
+        for child in ast.walk(node):
+            if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
+                name = child.func.id
+                if name in functions and name not in reachable:
+                    reachable.add(name)
+                    pending.append(name)
+    used_names = {node.id for name in reachable for node in ast.walk(functions[name]) if isinstance(node, ast.Name)}
+    nodes: list[ast.AST] = [functions[name] for name in sorted(reachable)]
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            bound = {alias.asname or alias.name.split(".", 1)[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            bound = {alias.asname or alias.name for alias in node.names}
+        else:
+            continue
+        if bound & used_names:
+            nodes.append(node)
+    return "\n".join(filter(None, (ast.get_source_segment(text, node) for node in nodes)))
+
+
+def _root_evidence_issues(aquarium_root: Path) -> list[str]:
+    evidence = (
+        aquarium_root
+        / ".planning/workstreams/investment-decision-loop/phases/100-release-gate-kairos-and-dsh-gate/evidence"
+    )
+    if not evidence.is_dir():
+        return []
+    actual = {
+        f"../{path.relative_to(aquarium_root).as_posix()}"
+        for path in evidence.iterdir()
+        if path.is_file() and "dsh" in path.name.lower()
+    }
+    return [
+        *(f"missing root DSH evidence: {path}" for path in sorted(ALLOWED_ROOT_EVIDENCE - actual)),
+        *(f"unexpected root DSH evidence: {path}" for path in sorted(actual - ALLOWED_ROOT_EVIDENCE)),
     ]
-    return ast.get_source_segment(text, matches[0]) if len(matches) == 1 else ""
 
 
 def scan_boundary(root: Path) -> list[str]:
@@ -164,9 +256,8 @@ def scan_boundary(root: Path) -> list[str]:
     for path in dict.fromkeys(production_files):
         relative = path.relative_to(root).as_posix()
         text = path.read_text(encoding="utf-8", errors="replace")
-        for marker in RUNTIME_MARKERS:
-            if marker in text:
-                issues.append(f"production DSH marker {marker}: {relative}")
+        for match in PRODUCTION_DSH_PATTERN.finditer(text):
+            issues.append(f"production DSH semantic {match.group(0)}: {relative}")
         if relative == "docker-compose.yml" and "dsh" in text.lower():
             issues.append("production DSH Compose service/profile: docker-compose.yml")
         if relative == "pyproject.toml" and ("dsh" in text.lower() or "deepseek" in text.lower()):
@@ -188,6 +279,16 @@ def scan_boundary(root: Path) -> list[str]:
         bounded_sources.append(api)
     for path in dict.fromkeys(bounded_sources):
         issues.extend(_authority_issues(path.relative_to(root).as_posix(), path.read_text(encoding="utf-8")))
+    campaign = root / "src/poseidon/research/campaign.py"
+    if campaign.is_file():
+        issues.extend(
+            _authority_issues(
+                "src/poseidon/research/campaign.py",
+                campaign.read_text(encoding="utf-8"),
+                modules=RELEASE_POINTER_MODULES,
+                names=RELEASE_POINTER_NAMES,
+            )
+        )
     worker = _autoresearch_worker_source(root)
     if not worker:
         issues.append("missing unique autoresearch_run boundary")
@@ -308,7 +409,22 @@ class Phase100DshBoundaryTests(unittest.TestCase):
 
     def test_committed_tree_has_only_allowlisted_poc_and_no_authority_path(self) -> None:
         self.assertEqual(scan_boundary(POSEIDON_ROOT), [])
-        self.assertEqual(len(ALLOWED_ROOT_EVIDENCE), 4)
+
+    def test_dsh_root_evidence_allowlist_is_exact(self) -> None:
+        with TemporaryDirectory() as directory:
+            aquarium_root = Path(directory)
+            for relative in ALLOWED_ROOT_EVIDENCE:
+                path = aquarium_root / relative.removeprefix("../")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("bounded evidence\n", encoding="utf-8")
+            self.assertEqual(_root_evidence_issues(aquarium_root), [])
+            extra = (
+                aquarium_root
+                / ".planning/workstreams/investment-decision-loop/phases/100-release-gate-kairos-and-dsh-gate/"
+                "evidence/dsh-unexpected.py"
+            )
+            extra.write_text("unexpected\n", encoding="utf-8")
+            self.assertIn("unexpected root DSH evidence", "\n".join(_root_evidence_issues(aquarium_root)))
 
     def test_poc_failures_need_review_preserve_prior_revision_and_mutate_no_authority(self) -> None:
         cases = {
@@ -336,9 +452,23 @@ class Phase100DshBoundaryTests(unittest.TestCase):
                 q1 = select_snapshot(bundle(), "2026-q1")
                 prior, created = ledger.persist(research(q1), q1, "seed", "human", "manual")
                 self.assertTrue(created)
-                authority_before = copy.deepcopy(AUTHORITY_STATE)
-                with patch("dsh_research.call_provider", side_effect=provider):
-                    request = prepare(source, "2026-q2", ledger_path, root / "request.json")
+                with ExitStack() as stack:
+                    writer_sentinels = [
+                        stack.enter_context(
+                            patch(target, side_effect=AssertionError(f"authority writer called: {target}"))
+                        )
+                        for target in AUTHORITY_WRITERS
+                    ]
+                    authority_before = {
+                        target: sentinel.call_count
+                        for target, sentinel in zip(AUTHORITY_WRITERS, writer_sentinels, strict=True)
+                    }
+                    with patch("dsh_research.call_provider", side_effect=provider):
+                        request = prepare(source, "2026-q2", ledger_path, root / "request.json")
+                    authority_after = {
+                        target: sentinel.call_count
+                        for target, sentinel in zip(AUTHORITY_WRITERS, writer_sentinels, strict=True)
+                    }
                 self.assertEqual(request["type"], "review")
                 self.assertEqual("needs_review" if request["type"] == "review" else request["type"], "needs_review")
                 self.assertEqual(RevisionLedger(ledger_path).latest_before("2026-07-17T00:00:00Z"), prior)
@@ -352,7 +482,7 @@ class Phase100DshBoundaryTests(unittest.TestCase):
                     tables <= {"revisions", "decision_attempts", "prepared_requests"},
                     tables,
                 )
-                self.assertEqual(AUTHORITY_STATE, authority_before)
+                self.assertEqual(authority_after, authority_before)
                 self.assertFalse((root / "reports").exists())
 
 
