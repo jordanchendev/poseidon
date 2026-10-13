@@ -83,9 +83,6 @@ def _predicate(code: str, state: PredicateState, reason: str, **evidence) -> Rel
 class ReleaseService:
     """Read exact release evidence without owning the caller's transaction."""
 
-    predicate_type = ReleasePredicate
-    gate_result_type = ReleaseGateResult
-
     def __init__(self, session) -> None:
         self.session = session
 

@@ -13,7 +13,7 @@ from poseidon.api.auth import AuthPrincipal
 from poseidon.backtest.experiment_tracker import ExperimentTracker
 from poseidon.decision_loop.decisions import DecisionPolicy
 from poseidon.decision_loop.manifest import content_sha256
-from poseidon.decision_loop.releases import ReleaseService
+from poseidon.decision_loop.releases import ReleaseGateResult, ReleasePredicate, ReleaseService
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.experiment_campaign import CampaignReview, HoldoutUse
 from poseidon.models.strategy import StrategyRecord
@@ -246,15 +246,13 @@ def test_gate_retains_every_missing_predicate_in_stable_order(phase99_session_fa
 
 
 def test_gate_result_values_are_immutable_and_canonicalizable():
-    result_type = ReleaseService.gate_result_type
-    predicate_type = ReleaseService.predicate_type
-    predicate = predicate_type(
+    predicate = ReleasePredicate(
         code="candidate_identity",
         state="passed",
         reason="candidate content and ownership match",
         evidence={"candidate_version_id": str(uuid.uuid4()), "content_sha256": "a" * 64},
     )
-    result = result_type((predicate,))
+    result = ReleaseGateResult((predicate,))
 
     assert result.allowed is True
     assert content_sha256(result.as_json())
