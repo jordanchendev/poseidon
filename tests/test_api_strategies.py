@@ -273,41 +273,43 @@ def test_delete_strategy_not_found():
     assert resp.status_code == 404
 
 
-def test_activate_strategy():
+def test_activate_strategy_is_stable_no_write_conflict():
     create_resp = _create_strategy(name="activate-test")
     assert create_resp.status_code == 201
     strategy_id = create_resp.json()["id"]
     assert create_resp.json()["active"] is False
 
     resp = client.post(f"{PREFIX}/{strategy_id}/activate")
-    assert resp.status_code == 200
-    assert resp.json()["active"] is True
+    assert resp.status_code == 409
+    assert resp.json() == {
+        "detail": "Legacy strategy activation is disabled; use /api/v1/strategies/{strategy_id}/release"
+    }
+    assert client.get(f"{PREFIX}/{strategy_id}").json()["active"] is False
 
 
-def test_deactivate_strategy():
+def test_deactivate_strategy_is_same_stable_no_write_conflict():
     create_resp = _create_strategy(name="deactivate-test")
     assert create_resp.status_code == 201
     strategy_id = create_resp.json()["id"]
 
-    # Activate first
-    client.post(f"{PREFIX}/{strategy_id}/activate")
-
-    # Then deactivate
     resp = client.post(f"{PREFIX}/{strategy_id}/deactivate")
-    assert resp.status_code == 200
-    assert resp.json()["active"] is False
+    assert resp.status_code == 409
+    assert resp.json() == {
+        "detail": "Legacy strategy activation is disabled; use /api/v1/strategies/{strategy_id}/release"
+    }
+    assert client.get(f"{PREFIX}/{strategy_id}").json()["active"] is False
 
 
-def test_activate_not_found():
+def test_activate_not_found_is_still_stable_conflict_without_lookup():
     random_id = str(uuid.uuid4())
     resp = client.post(f"{PREFIX}/{random_id}/activate")
-    assert resp.status_code == 404
+    assert resp.status_code == 409
 
 
-def test_deactivate_not_found():
+def test_deactivate_not_found_is_still_stable_conflict_without_lookup():
     random_id = str(uuid.uuid4())
     resp = client.post(f"{PREFIX}/{random_id}/deactivate")
-    assert resp.status_code == 404
+    assert resp.status_code == 409
 
 
 def test_list_strategies_returns_created():

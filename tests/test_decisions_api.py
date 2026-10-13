@@ -361,6 +361,32 @@ def test_invalid_transition_body_is_422_before_service(api, path, body):
     assert service.calls == []
 
 
+def test_modify_via_approve_requires_nonblank_override_reason(api):
+    client, _session, service = api
+    for reason in (None, "", "   "):
+        response = client.post(
+            f"/api/v1/decisions/{service.decision.id}/approve",
+            json={"expected_revision": 1, "final_action": "enter", "override_reason": reason},
+            headers=_headers(MANAGER_KEY, "modify-requires-reason"),
+        )
+        assert response.status_code == 422
+    assert service.calls == []
+
+
+def test_openapi_exposes_typed_decision_responses_and_errors(real_api):
+    client, _session, _service = real_api
+    schema = client.get("/openapi.json").json()
+    for model in (
+        "DecisionResponse",
+        "DecisionMutationResponse",
+        "DecisionCapabilityMetadata",
+        "DecisionAPIError",
+    ):
+        assert model in schema["components"]["schemas"]
+    approve = schema["paths"]["/api/v1/decisions/{decision_id}/approve"]["post"]
+    assert {"403", "404", "409", "422"}.issubset(approve["responses"])
+
+
 @pytest.mark.parametrize("path", ["approve", "reject"])
 def test_transition_requires_idempotency_header(api, path):
     client, _session, service = api

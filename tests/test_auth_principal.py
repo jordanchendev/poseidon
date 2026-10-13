@@ -67,6 +67,14 @@ def test_worker_cannot_submit_research_approve_or_release():
         assert error.value.status_code == 403
 
 
+def test_principal_kind_and_capabilities_are_derived_from_roles():
+    configure(roles=["portfolio_manager", "release_manager"])
+    principal = resolve()
+    assert principal.actor_id == "human:operator"
+    assert "release_manager" in principal.roles
+    assert "paper:pilot" in principal.account_scopes
+
+
 def test_legacy_key_keeps_secured_endpoint_access_without_authority():
     configure(key="legacy-secret")
     app = FastAPI()
