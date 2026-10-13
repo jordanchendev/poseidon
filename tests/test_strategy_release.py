@@ -776,9 +776,11 @@ def test_rollback_blocks_outstanding_ordinary_work(phase99_session_factory, work
 
 @pytest.mark.postgresql
 @pytest.mark.parametrize("identity_change", ("account_scope", "account_generation"))
+@pytest.mark.parametrize("pause_before_rollback", (False, True))
 def test_rollback_rejects_active_version_with_different_account_identity(
     phase99_session_factory,
     identity_change,
+    pause_before_rollback,
 ):
     with phase99_session_factory() as session:
         target = _seed_gate_graph(session)
@@ -834,23 +836,40 @@ def test_rollback_rejects_active_version_with_different_account_identity(
         session.add(order)
         session.flush()
 
+        expected_revision = 2
+        expected_pointer = active.candidate_id
+        if pause_before_rollback:
+            service.pause(
+                target.strategy_id,
+                expected_revision=2,
+                expected_active_version_id=active.candidate_id,
+                principal=principal,
+                idempotency_key=f"pause-cross-account-{identity_change}",
+                reason="pause must not erase account identity",
+            )
+            expected_revision = 3
+            expected_pointer = None
+
         with pytest.raises(DecisionConflictError, match="rollback_policy"):
             service.rollback(
                 target.strategy_id,
                 target.candidate_id,
                 target.reconciliation_id,
-                expected_revision=2,
-                expected_active_version_id=active.candidate_id,
+                expected_revision=expected_revision,
+                expected_active_version_id=expected_pointer,
                 principal=principal,
-                idempotency_key=f"rollback-cross-account-{identity_change}",
+                idempotency_key=f"rollback-cross-account-{identity_change}-{pause_before_rollback}",
                 reason="do not abandon active account work",
                 now=NOW,
             )
 
         strategy = session.get(StrategyRecord, target.strategy_id)
-        assert (strategy.active_version_id, strategy.release_revision) == (active.candidate_id, 2)
+        assert (strategy.active_version_id, strategy.release_revision) == (expected_pointer, expected_revision)
         assert session.get(OrderRecord, order.id) is not None
-        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=target.strategy_id).count() == 2
+        assert (
+            session.query(StrategyReleaseEvent).filter_by(strategy_id=target.strategy_id).count()
+            == expected_revision
+        )
         session.rollback()
 
 
