@@ -78,8 +78,10 @@ def _seed_phase99_graph(session):
          "VALUES (:event,:campaign,'created','{}',:digest)", {**ids, "digest": digest}),
         ("INSERT INTO holdout_uses (id,holdout_identity_sha256,campaign_id,campaign_contract_sha256,audit_json,consumed_at) "
          "VALUES (:holdout,:digest_b,:campaign,:digest,'{}',now())", {**ids, "digest": digest, "digest_b": digest_b}),
-        ("INSERT INTO campaign_reviews (id,campaign_id,input_sha256,result_sha256,status,result_json) "
-         "VALUES (:review,:campaign,:digest,:digest_b,'passed','{}')", {**ids, "digest": digest, "digest_b": digest_b}),
+        ("INSERT INTO campaign_reviews "
+         "(id,campaign_id,input_sha256,result_sha256,status,result_json,holdout_use_id,input_identity_json) "
+         "VALUES (:review,:campaign,:digest,:digest_b,'passed','{}',:holdout,jsonb_build_object('phase','99'))",
+         {**ids, "digest": digest, "digest_b": digest_b}),
         ("INSERT INTO experiments (id,study_name,config_json,status,market,interval,campaign_id,original_trial_id,trial_role,strategy_version_id,ablation_arm,paired_sample_key_sha256,input_sha256,result_sha256,started_at,completed_at,terminal_state,terminal_reason_json) "
          "VALUES (:linked_experiment,'phase99','{}','complete','test','1d',:campaign,'trial-1','search',:version_b,'combined',:digest,:digest,:digest_b,now(),now(),'succeeded','{}')", {**ids, "digest": digest, "digest_b": digest_b}),
         ("INSERT INTO experiments (id,study_name,config_json,status,market,interval) "

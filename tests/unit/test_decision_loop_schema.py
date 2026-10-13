@@ -192,13 +192,24 @@ class MigrationOperations:
         self.dropped_operations.append(("table", name))
 
 
-def _assert_migration_matches_models(operations, models):
+def _assert_migration_matches_models(
+    operations,
+    models,
+    *,
+    later_columns=None,
+    later_constraints=None,
+):
+    later_columns = later_columns or {}
+    later_constraints = later_constraints or set()
     dialect = postgresql.dialect()
     for model in models:
         table = model.__table__
         migrated = operations.metadata.tables[table.name]
-        assert list(table.c.keys()) == list(migrated.c.keys())
-        for column in table.c:
+        model_columns = [
+            column for column in table.c if column.name not in later_columns.get(table.name, set())
+        ]
+        assert [column.name for column in model_columns] == list(migrated.c.keys())
+        for column in model_columns:
             other = migrated.c[column.name]
             assert str(column.type.compile(dialect=dialect)) == str(other.type.compile(dialect=dialect))
             assert (column.nullable, column.primary_key) == (other.nullable, other.primary_key)
@@ -229,6 +240,7 @@ def _assert_migration_matches_models(operations, models):
             (constraint.name, tuple(constraint.columns.keys()))
             for constraint in table.constraints
             if isinstance(constraint, sa.UniqueConstraint)
+            and (table.name, constraint.name) not in later_constraints
         } == {
             (constraint.name, tuple(constraint.columns.keys()))
             for constraint in migrated.constraints
@@ -238,6 +250,7 @@ def _assert_migration_matches_models(operations, models):
             (constraint.name, str(constraint.sqltext))
             for constraint in table.constraints
             if isinstance(constraint, sa.CheckConstraint)
+            and (table.name, constraint.name) not in later_constraints
         } == {
             (constraint.name, str(constraint.sqltext))
             for constraint in migrated.constraints
@@ -258,7 +271,11 @@ def test_foundation_migration_matches_orm_and_reverses_dependency_order(monkeypa
     migration.upgrade()
 
     models = (DataManifest, ResearchRevision, StrategyVersion, EvaluationRun, EvaluationSnapshot)
-    _assert_migration_matches_models(operations, models)
+    _assert_migration_matches_models(
+        operations,
+        models,
+        later_constraints={("strategy_versions", "uq_strategy_versions_strategy_id_id")},
+    )
 
     migration.downgrade()
     assert operations.dropped == [model.__tablename__ for model in reversed(models)]
@@ -911,7 +928,8 @@ def test_phase99_campaign_models_keep_identity_frozen_and_state_append_only():
     }
     review = models.CampaignReview.__table__
     assert _unique_constraints(review) == {
-        ("uq_campaign_reviews_replay", ("campaign_id", "input_sha256"))
+        ("uq_campaign_reviews_replay", ("campaign_id", "input_sha256")),
+        ("uq_campaign_reviews_campaign_id_id", ("campaign_id", "id")),
     }
     assert all(token in _check_sql(review, "ck_campaign_reviews_status") for token in (
         "passed",
@@ -966,10 +984,14 @@ def test_phase99_holdout_identity_has_one_global_owner():
         if isinstance(constraint, sa.UniqueConstraint)
     ]
     identities.extend(tuple(index.columns.keys()) for index in holdout.indexes if index.unique)
-    assert identities == [("holdout_identity_sha256",)]
+    assert set(identities) == {
+        ("holdout_identity_sha256",),
+        ("campaign_id", "id"),
+    }
     assert all(
         "campaign_id" not in columns and "strategy" not in " ".join(columns) and "candidate" not in " ".join(columns)
         for columns in identities
+        if columns == ("holdout_identity_sha256",)
     )
 
 
@@ -1071,7 +1093,16 @@ def test_phase99_migration_matches_exact_orm_contract_and_nullable_legacy_extens
         "holdout_uses",
         "campaign_reviews",
     ]
-    _assert_migration_matches_models(operations, phase99_models)
+    _assert_migration_matches_models(
+        operations,
+        phase99_models,
+        later_columns={"campaign_reviews": {"holdout_use_id", "input_identity_json"}},
+        later_constraints={
+            ("holdout_uses", "uq_holdout_uses_campaign_id_id"),
+            ("campaign_reviews", "uq_campaign_reviews_campaign_id_id"),
+            ("campaign_reviews", "ck_campaign_reviews_release_binding"),
+        },
+    )
 
     experiment_columns = (
         "campaign_id",
