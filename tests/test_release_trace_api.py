@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from poseidon.api.auth import AuthPrincipal, get_auth_principal
 from poseidon.main import app
 
 TRACE_PATHS = (
@@ -50,14 +51,21 @@ def test_trace_stage_order_is_a_closed_nine_stage_contract():
 
 def test_formal_trace_routes_reject_unknown_identities_without_guessing():
     client = TestClient(app, raise_server_exceptions=False)
-
-    for path in (
-        "/api/v1/traces/decisions/00000000-0000-0000-0000-000000000001",
-        "/api/v1/traces/signals/00000000-0000-0000-0000-000000000001",
-        "/api/v1/traces/evaluations/00000000-0000-0000-0000-000000000001",
-    ):
-        response = client.get(path)
-        assert response.status_code in {403, 404}
+    app.dependency_overrides[get_auth_principal] = lambda: AuthPrincipal(
+        "viewer:trace-test",
+        frozenset({"viewer"}),
+        frozenset({"paper:pilot"}),
+    )
+    try:
+        for path in (
+            "/api/v1/traces/decisions/00000000-0000-0000-0000-000000000001",
+            "/api/v1/traces/signals/00000000-0000-0000-0000-000000000001",
+            "/api/v1/traces/evaluations/00000000-0000-0000-0000-000000000001",
+        ):
+            response = client.get(path)
+            assert response.status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_auth_principal, None)
 
 
 def test_outcome_projection_keeps_actual_and_assumption_versions_separate():

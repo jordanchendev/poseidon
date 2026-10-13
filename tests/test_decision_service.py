@@ -52,6 +52,11 @@ def db():
             "position_lots",
             "fill_allocations",
             "account_reconciliations",
+            "signals",
+            "outcomes",
+            "experiment_campaigns",
+            "campaign_reviews",
+            "strategy_release_events",
         )
     ]
     Base.metadata.create_all(engine, tables=tables)
