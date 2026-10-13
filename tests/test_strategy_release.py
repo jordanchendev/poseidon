@@ -1,5 +1,6 @@
 """Fail-closed release gate contracts."""
 
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -451,23 +452,27 @@ def test_gate_keeps_legacy_unbound_review_readable_but_ineligible(phase99_sessio
     with phase99_session_factory() as session:
         graph = _seed_gate_graph(session)
         bound = session.get(CampaignReview, graph.review_id)
-        legacy = CampaignReview(
-            campaign_id=graph.campaign_id,
-            input_sha256="1" * 64,
-            result_sha256=bound.result_sha256,
-            status="passed",
-            result_json=bound.result_json,
-            holdout_use_id=None,
-            input_identity_json=None,
-        )
+        legacy_id = uuid.uuid4()
         session.execute(text("ALTER TABLE campaign_reviews DISABLE TRIGGER trg_campaign_reviews_phase100_binding"))
         try:
-            session.add(legacy)
-            session.flush()
+            session.execute(
+                text(
+                    "INSERT INTO campaign_reviews "
+                    "(id,campaign_id,input_sha256,result_sha256,status,result_json) "
+                    "VALUES (:id,:campaign,:input,:result,'passed',CAST(:result_json AS jsonb))"
+                ),
+                {
+                    "id": legacy_id,
+                    "campaign": graph.campaign_id,
+                    "input": "1" * 64,
+                    "result": bound.result_sha256,
+                    "result_json": json.dumps(bound.result_json),
+                },
+            )
         finally:
             session.execute(text("ALTER TABLE campaign_reviews ENABLE TRIGGER trg_campaign_reviews_phase100_binding"))
 
-        result = _evaluate(session, graph, review_id=legacy.id)
+        result = _evaluate(session, graph, review_id=legacy_id)
 
         assert _by_code(result, "review_identity").state == "unavailable"
         assert "legacy" in _by_code(result, "review_identity").reason
