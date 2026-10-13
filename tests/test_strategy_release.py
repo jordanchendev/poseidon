@@ -638,6 +638,7 @@ def test_release_replay_rechecks_retained_account_scope(phase99_session_factory)
 
 
 def _seed_rollback_work(session, graph, work_kind):
+    candidate = session.get(StrategyVersion, graph.candidate_id)
     if work_kind == "standalone_order":
         row = OrderRecord(
             strategy_name="phase100-legacy-order",
@@ -652,7 +653,7 @@ def _seed_rollback_work(session, graph, work_kind):
             broker_mode="paper",
             order_origin="signal",
             account_scope="paper:pilot",
-            account_generation="generation-1",
+            account_generation=candidate.policy_json["reconciliation"]["account_generation"],
         )
         session.add(row)
         session.flush()
@@ -688,7 +689,7 @@ def _seed_rollback_work(session, graph, work_kind):
         valid_until=NOW + timedelta(hours=1),
         status="approved",
         creation_sha256=content_sha256({"decision": uuid.uuid4().hex}),
-        policy_sha256=session.get(StrategyVersion, graph.candidate_id).content_sha256,
+        policy_sha256=candidate.content_sha256,
         original_json={"order_intents": [{"symbol": "2330"}]},
         final_json={"order_intents": [{"symbol": "2330"}]},
         portfolio_snapshot_json={},
