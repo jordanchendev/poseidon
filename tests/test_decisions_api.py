@@ -17,6 +17,7 @@ from poseidon.decision_loop.decisions import DecisionConflictError, DecisionNotF
 from poseidon.decision_loop.manifest import ValidationError
 from poseidon.main import app as poseidon_app
 from poseidon.models.decision_event import DecisionEvent
+from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.order import OrderRecord
 
 ACCOUNT = "paper:pilot"
@@ -384,7 +385,7 @@ def test_decision_projection_uses_principal_expiry_events_and_order_reconciliati
         headers=_headers(VIEWER_KEY),
     )
     assert manager.status_code == viewer.status_code == 200
-    assert manager.json()["execution_status"] == "pending_approval"
+    assert manager.json()["execution_status"] == "reconciliation_required"
     assert manager.json()["reconciliation_status"] == "required"
     assert manager.json()["event_history"] == [
         {
@@ -420,6 +421,76 @@ def test_decision_projection_uses_principal_expiry_events_and_order_reconciliati
     assert expired.status_code == 200
     assert expired.json()["action_metadata"]["approve_reason"] == "decision_expired"
     assert expired.json()["action_metadata"]["can_approve"] is False
+
+
+def test_execution_status_is_a_deterministic_order_aggregate(api):
+    client, session, service = api
+    path = f"/api/v1/decisions/{service.decision.id}"
+
+    not_started = client.get(path, headers=_headers(MANAGER_KEY))
+    assert not_started.status_code == 200
+    assert not_started.json()["execution_status"] == "not_started"
+
+    session.orders.append(
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            decision_id=service.decision.id,
+            status="filled",
+            reconciliation_status="resolved",
+            created_at=datetime.now(UTC),
+        )
+    )
+    filled = client.get(path, headers=_headers(MANAGER_KEY))
+    assert filled.json()["execution_status"] == "filled"
+
+    session.orders.insert(
+        0,
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            decision_id=service.decision.id,
+            status="rejected",
+            reconciliation_status="resolved",
+            created_at=datetime.now(UTC) - timedelta(seconds=1),
+        ),
+    )
+    mixed = client.get(path, headers=_headers(MANAGER_KEY))
+    assert mixed.json()["execution_status"] == "mixed"
+
+
+@pytest.mark.postgresql
+def test_real_decision_service_accepts_typed_create_body_through_api(
+    monkeypatch,
+    phase99_session_factory,
+):
+    from tests.test_decision_service import decision_inputs
+
+    _configure_auth(monkeypatch)
+    with phase99_session_factory() as session:
+        run, _version, snapshot_ids = decision_inputs(session)
+        session.commit()
+        app = FastAPI()
+        app.include_router(decisions_api.router, prefix="/api/v1/decisions")
+        app.dependency_overrides[get_db] = lambda: session
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/v1/decisions/",
+            json={
+                "evaluation_run_id": str(run.id),
+                "account_scope": ACCOUNT,
+                "original_json": {
+                    "selected_evaluation_ids": [snapshot_ids[0]],
+                    "final_action": "hold",
+                },
+                "portfolio_snapshot_json": {"cash": 100000.0, "positions": []},
+                "risk_snapshot_json": {"hard_failures": [], "allowed_actions": ["hold"]},
+            },
+            headers=_headers(WORKER_KEY),
+        )
+
+        assert response.status_code == 200
+        stored = session.get(DecisionRecord, uuid.UUID(response.json()["id"]))
+        assert stored.original_json["selected_evaluation_ids"] == [snapshot_ids[0]]
 
 
 @pytest.mark.parametrize(
@@ -483,6 +554,18 @@ def test_openapi_exposes_typed_decision_responses_and_errors(real_api):
         "$ref": "#/components/schemas/DecisionEventHistoryResponse"
     }
     assert response["properties"]["original_json"] == {"$ref": "#/components/schemas/DecisionDocumentResponse"}
+    assert response["properties"]["execution_status"]["enum"] == [
+        "not_started",
+        "pending",
+        "pending_submit",
+        "submitted",
+        "partially_filled",
+        "filled",
+        "rejected",
+        "cancelled",
+        "reconciliation_required",
+        "mixed",
+    ]
 
 
 @pytest.mark.parametrize("path", ["approve", "reject"])

@@ -24,6 +24,7 @@ from poseidon.decision_loop.releases import (
 from poseidon.decision_loop.releases import (
     ReleaseService as DomainReleaseService,
 )
+from poseidon.main import app as poseidon_app
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from poseidon.models.strategy_version import StrategyVersion
 
@@ -380,7 +381,14 @@ def test_gate_failure_returns_all_typed_predicates(api):
 
 def test_release_reads_authorize_empty_results_and_filter_unsafe_rollback_targets(api):
     client, session, _service, strategy = api
-    released, unsafe = strategy.active_version_id, uuid.uuid4()
+    current, released, unsafe = strategy.active_version_id, uuid.uuid4(), uuid.uuid4()
+    session.versions[released] = SimpleNamespace(
+        id=released,
+        strategy_id=strategy.id,
+        version_no=1,
+        content_sha256="a" * 64,
+        policy_json={"account_scope": ACCOUNT},
+    )
     session.versions[unsafe] = SimpleNamespace(
         id=unsafe,
         strategy_id=strategy.id,
@@ -425,6 +433,7 @@ def test_release_reads_authorize_empty_results_and_filter_unsafe_rollback_target
     assert [event["resulting_revision"] for event in history.json()] == [1, 2]
     assert targets.status_code == 200
     assert [target["strategy_version_id"] for target in targets.json()] == [str(released)]
+    assert all(target["strategy_version_id"] != str(current) for target in targets.json())
     assert targets.json()[0]["eligible"] is True
     assert targets.json()[0]["predicates"][0]["code"] == "rollback_target"
 
@@ -497,6 +506,93 @@ def test_real_release_service_pause_replay_and_conflicts_through_api(
             session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id, event_type="pause").count()
             == 1
         )
+
+
+@pytest.mark.postgresql
+def test_real_failed_review_gate_and_never_released_targets_are_serializable(
+    monkeypatch,
+    phase99_session_factory,
+):
+    from tests.test_strategy_release import _seed_gate_graph
+
+    _configure_auth(monkeypatch)
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session, review_status="failed")
+        session.commit()
+        app = FastAPI()
+        app.include_router(releases_api.router, prefix="/api/v1/strategies")
+        app.dependency_overrides[get_db] = lambda: session
+        client = TestClient(app, raise_server_exceptions=False)
+
+        gate = client.get(
+            f"/api/v1/strategies/{graph.strategy_id}/release-gate",
+            params={
+                "candidate_version_id": str(graph.candidate_id),
+                "campaign_id": str(graph.campaign_id),
+                "review_id": str(graph.review_id),
+                "reconciliation_id": str(graph.reconciliation_id),
+            },
+            headers=_headers(MANAGER_KEY),
+        )
+        targets = client.get(
+            f"/api/v1/strategies/{graph.strategy_id}/rollback-targets",
+            params={"reconciliation_id": str(graph.reconciliation_id)},
+            headers=_headers(MANAGER_KEY),
+        )
+        mutation = client.post(
+            f"/api/v1/strategies/{graph.strategy_id}/release",
+            json={
+                "expected_revision": 0,
+                "expected_active_version_id": None,
+                "reason": "reviewed",
+                "candidate_version_id": str(graph.candidate_id),
+                "campaign_id": str(graph.campaign_id),
+                "review_id": str(graph.review_id),
+                "reconciliation_id": str(graph.reconciliation_id),
+            },
+            headers=_headers(MANAGER_KEY, "failed-review"),
+        )
+
+        assert gate.status_code == 200
+        review_gate = next(item for item in gate.json()["predicates"] if item["code"] == "review_identity")
+        assert review_gate["evidence"]["status"] == "failed"
+        assert targets.status_code == 200
+        assert targets.json() == []
+        assert mutation.status_code == 422
+        failed_review = next(
+            item for item in mutation.json()["detail"]["gate"]["predicates"] if item["code"] == "review_identity"
+        )
+        assert failed_review["evidence"]["status"] == "failed"
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).count() == 0
+
+
+def test_formal_app_422_contract_covers_request_and_gate_validation(api):
+    _client, session, _service, strategy = api
+    poseidon_app.dependency_overrides[get_db] = lambda: session
+    poseidon_app.openapi_schema = None
+    try:
+        client = TestClient(poseidon_app)
+        schema = client.get("/openapi.json").json()
+        response_schema = schema["paths"]["/api/v1/strategies/{strategy_id}/release"]["post"]["responses"]["422"][
+            "content"
+        ]["application/json"]["schema"]
+        refs = {branch["$ref"] for branch in response_schema["anyOf"]}
+        assert refs == {
+            "#/components/schemas/ReleaseUnprocessableResponse",
+            "#/components/schemas/RequestValidationResponse",
+        }
+
+        invalid = client.post(
+            f"/api/v1/strategies/{strategy.id}/release",
+            json={},
+            headers=_headers(MANAGER_KEY, "invalid-body"),
+        )
+        assert invalid.status_code == 422
+        assert isinstance(invalid.json()["detail"], list)
+        assert {"loc", "msg", "type"} <= set(invalid.json()["detail"][0])
+    finally:
+        poseidon_app.dependency_overrides.pop(get_db, None)
+        poseidon_app.openapi_schema = None
 
 
 @pytest.mark.parametrize("key", [WORKER_KEY, VIEWER_KEY, LEGACY_KEY])
