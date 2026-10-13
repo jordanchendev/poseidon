@@ -383,7 +383,8 @@ class Phase100DshBoundaryTests(unittest.TestCase):
                 "src/poseidon/autoresearch/new_writer.py": "active_version_id = candidate\n",
                 "src/poseidon/workers/cpu_tasks.py": (
                     "from poseidon.api import decisions as decision_api\n"
-                    "def _promote():\n    return decision_api.approve_decision(None)\n"
+                    "APPROVE = decision_api.approve_decision\n"
+                    "def _promote():\n    return APPROVE(None)\n"
                     "def autoresearch_run():\n    return _promote()\n"
                 ),
                 "docker-compose.yml": "services:\n  dsh:\n    profiles: [dsh]\n",
@@ -413,6 +414,7 @@ class Phase100DshBoundaryTests(unittest.TestCase):
     def test_dsh_root_evidence_allowlist_is_exact(self) -> None:
         with TemporaryDirectory() as directory:
             aquarium_root = Path(directory)
+            self.assertIn("missing root DSH evidence", "\n".join(_root_evidence_issues(aquarium_root)))
             for relative in ALLOWED_ROOT_EVIDENCE:
                 path = aquarium_root / relative.removeprefix("../")
                 path.parent.mkdir(parents=True, exist_ok=True)
