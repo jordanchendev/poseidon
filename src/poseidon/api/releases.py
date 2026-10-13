@@ -58,7 +58,10 @@ class ReleasePredicateEvidence(BaseModel):
     source_account_scope: str | None = None
     account_generation: str | None = None
     source_account_generation: str | None = None
-    market: Literal["tw_stock", "crypto_perp"] | None = None
+    strategy_type: Literal["rule", "voting", "liquidity_sweep", "model"] | None = None
+    symbol: str | None = None
+    market: Literal["tw_stock", "crypto_spot", "crypto_perp"] | None = None
+    interval: str | None = None
     strategy_market: str | None = None
     mode: Literal["human", "assisted", "automatic"] | None = None
     status: Literal["passed", "failed", "blocked", "unavailable", "inconclusive"] | None = None
