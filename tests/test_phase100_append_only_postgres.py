@@ -127,7 +127,7 @@ def test_release_event_is_append_only_and_guard_allows_exact_same_transaction_up
     (
         "active = true",
         "release_revision = release_revision + 1",
-        "active_version_id = NULL",
+        "active_version_id = :version",
     ),
 )
 def test_raw_strategy_authority_writes_fail_closed(phase99_session_factory, assignment):
