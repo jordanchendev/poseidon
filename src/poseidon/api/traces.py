@@ -222,9 +222,10 @@ class TraceService:
         ]
         if linked:
             traces = [DecisionService(self.session).trace(decision.id, principal=principal) for decision in linked]
+            decision_rows = [trace["decision"] for trace in traces]
             raw = traces[0]
             raw["decision"] = traces[0]["decision"] if len(traces) == 1 else None
-            raw["decisions"] = [trace["decision"] for trace in traces]
+            raw["decisions"] = decision_rows
             for key in ("events", "orders", "fills", "lots", "allocations", "reconciliations"):
                 unique = {row["id"]: row for trace in traces for row in trace[key]}
                 raw[key] = [unique[key] for key in sorted(unique)]

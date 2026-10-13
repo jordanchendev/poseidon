@@ -968,6 +968,8 @@ def test_trace_execution_stage_reports_real_filled_order(db):
         account_scope="paper:pilot",
         account_generation="trace-generation",
         execution_key=uuid.uuid4(),
+        created_at=datetime(2026, 9, 26, 12, 40, tzinfo=UTC),
+        updated_at=datetime(2026, 9, 26, 12, 40, tzinfo=UTC),
     )
     db.add(order)
     db.flush()
@@ -979,6 +981,7 @@ def test_trace_execution_stage_reports_real_filled_order(db):
         fill_quantity=1.0,
         fill_time=datetime(2026, 9, 26, 12, 45, tzinfo=UTC),
         projection_status="projected",
+        created_at=datetime(2026, 9, 26, 12, 45, tzinfo=UTC),
     )
     db.add(fill)
     db.flush()
