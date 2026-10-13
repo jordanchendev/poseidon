@@ -151,6 +151,7 @@ def test_evaluate_active_strategies_processes_voting_strategy(
     with patch("poseidon.strategies.voting_strategy.VotingStrategy") as mock_voting_cls:
         mock_strategy = MagicMock()
         mock_strategy.evaluate.return_value = [mock_signal]
+        mock_strategy.get_feature_specs.return_value = [("cum_return", {"period": 6})]
         mock_voting_cls.return_value = mock_strategy
 
         result = evaluate_active_strategies(market="crypto_spot", interval="1h")
@@ -167,7 +168,95 @@ def test_evaluate_active_strategies_processes_voting_strategy(
             "interval": version.config_json["interval"],
         }
         assert call_kwargs[1]["instrument"] == "spot"
-        mock_engine.compute.assert_called_once_with("BTCUSDT", "crypto_spot", "1h")
+        mock_engine.compute.assert_called_once_with(
+            "BTCUSDT",
+            "crypto_spot",
+            "1h",
+            feature_specs=[("cum_return", {"period": 6})],
+        )
+
+
+@patch("poseidon.workers.cpu_tasks.db_session")
+@patch("poseidon.workers.cpu_tasks.FeatureEngine")
+@patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
+@patch("poseidon.risk.pipeline.SignalPipeline.process")
+def test_evaluate_active_voting_strategy_uses_frozen_feature_specs(
+    mock_pipeline_process,
+    mock_pipeline_init,
+    mock_engine_cls,
+    mock_db_session,
+    mock_strategy_record,
+):
+    from poseidon.workers.cpu_tasks import evaluate_active_strategies
+
+    record, version = mock_strategy_record(
+        strategy_type="voting",
+        config={
+            "name": "scheduled-voting-features",
+            "sub_signals": [
+                {
+                    "type": "indicator_above",
+                    "indicator": "cum_return",
+                    "params": {"period": 6},
+                    "threshold": 0.0,
+                },
+                {
+                    "type": "indicator_above",
+                    "indicator": "rsi",
+                    "params": {"period": 8},
+                    "threshold": 50.0,
+                },
+                {
+                    "type": "indicator_comparison",
+                    "indicator_a": "ema",
+                    "indicator_b": "ema",
+                    "params": {"period_a": 7, "period_b": 26},
+                    "direction": "above",
+                },
+            ],
+            "min_votes": 1,
+            "conviction_gap": 1,
+            "cooldown_bars": 0,
+        },
+    )
+    session = MagicMock()
+    session.query.return_value.join.return_value.filter.return_value.all.return_value = [(record, version)]
+    mock_db_session.return_value.__enter__ = MagicMock(return_value=session)
+    mock_db_session.return_value.__exit__ = MagicMock(return_value=False)
+
+    engine = MagicMock()
+    engine.compute.return_value = pd.DataFrame(
+        {
+            "close": [100.0],
+            "cum_return_6d": [0.01],
+            "rsi_8": [60.0],
+            "ema_7": [101.0],
+            "ema_26": [99.0],
+            "atr_14": [1.0],
+            "return_1d": [0.01],
+        }
+    )
+    mock_engine_cls.return_value = engine
+
+    result = evaluate_active_strategies(market="crypto_spot", interval="1h")
+
+    expected_specs = [
+        ("cum_return", {"period": 6}),
+        ("rsi", {"period": 8}),
+        ("ema", {"period": 7}),
+        ("ema", {"period": 26}),
+        ("atr", {"period": 14}),
+        ("returns", {}),
+    ]
+    engine.compute.assert_called_once_with(
+        "BTCUSDT",
+        "crypto_spot",
+        "1h",
+        feature_specs=expected_specs,
+    )
+    assert result["errors"] == []
+    assert result["signals_generated"] == 1
+    mock_pipeline_process.assert_called_once()
 
 
 @patch("poseidon.workers.cpu_tasks.db_session")

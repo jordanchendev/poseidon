@@ -9,13 +9,21 @@ from itertools import product
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import func, text
 
 from poseidon.api.auth import AuthPrincipal
 from poseidon.backtest.experiment_tracker import ExperimentTracker
+from poseidon.backtest.voting_strategy_factory import _build_config_from_params
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionPolicy
 from poseidon.decision_loop.manifest import content_sha256
-from poseidon.decision_loop.releases import ReleaseGateRejected, ReleaseGateResult, ReleasePredicate, ReleaseService
+from poseidon.decision_loop.releases import (
+    ExecutableStrategyConfig,
+    ReleaseGateRejected,
+    ReleaseGateResult,
+    ReleasePredicate,
+    ReleaseService,
+)
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.data_manifest import DataManifest
 from poseidon.models.decision_record import DecisionRecord
@@ -1092,6 +1100,105 @@ def test_release_rejects_non_executable_nested_dsl_before_pointer_mutation(
 
         with pytest.raises(ReleaseGateRejected) as rejected:
             _release(ReleaseService(session), graph, key=f"invalid-dsl-{candidate_config['payload']['name']}")
+
+        predicates = {predicate.code: predicate for predicate in rejected.value.result.predicates}
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        assert predicates["candidate_identity"].state == "blocked"
+        assert "executable config" in predicates["candidate_identity"].reason
+        assert (strategy.active_version_id, strategy.release_revision) == (None, 0)
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=strategy.id).count() == 0
+        session.rollback()
+
+
+def test_executable_voting_config_accepts_canonical_model_prediction_identity():
+    params = {
+        "rsi_period": 10,
+        "ema_short": 7,
+        "ema_long": 26,
+        "macd_fast": 14,
+        "macd_slow": 23,
+        "macd_signal": 9,
+        "bollinger_period": 20,
+        "momentum_short": 6,
+        "momentum_long": 12,
+        "min_votes": 4,
+        "position_pct": 0.08,
+        "bear_min_votes": 4,
+        "bear_position_pct": 0.06,
+        "cooldown_bars": 12,
+        "conviction_gap": 2,
+    }
+    payload = _build_config_from_params(
+        params,
+        symbol="BTCUSDT",
+        market="crypto_spot",
+        interval="1h",
+        model_version_id=73,
+    )
+    for key in ("symbol", "market", "interval"):
+        payload.pop(key)
+
+    executable = ExecutableStrategyConfig.model_validate(
+        {
+            "strategy_type": "voting",
+            "symbol": "BTCUSDT",
+            "market": "crypto_spot",
+            "instrument": "spot",
+            "interval": "1h",
+            "payload": payload,
+        }
+    )
+
+    ml_conditions = [
+        condition
+        for condition in (*executable.payload.sub_signals, *executable.payload.bear_sub_signals)
+        if condition.type == "ml_prediction"
+    ]
+    assert ml_conditions
+    assert {condition.model_version_id for condition in ml_conditions} == {73}
+
+
+def test_executable_voting_config_rejects_unbound_model_prediction():
+    with pytest.raises(PydanticValidationError):
+        ExecutableStrategyConfig.model_validate(
+            {
+                "strategy_type": "voting",
+                "symbol": "BTCUSDT",
+                "market": "crypto_spot",
+                "instrument": "spot",
+                "interval": "1h",
+                "payload": {
+                    "name": "unbound-model-vote",
+                    "sub_signals": [
+                        {
+                            "type": "ml_prediction",
+                            "threshold": 0.5,
+                            "direction": "long",
+                        }
+                    ],
+                    "min_votes": 1,
+                },
+            }
+        )
+
+
+@pytest.mark.postgresql
+def test_release_rejects_model_candidate_without_pointer_mutation(phase99_session_factory):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(
+            session,
+            candidate_config_json={
+                "strategy_type": "model",
+                "symbol": "2330",
+                "market": "tw_stock",
+                "instrument": "spot",
+                "interval": "1d",
+                "payload": {"model_version_id": str(uuid.uuid4())},
+            },
+        )
+
+        with pytest.raises(ReleaseGateRejected) as rejected:
+            _release(ReleaseService(session), graph, key="model-release-ineligible")
 
         predicates = {predicate.code: predicate for predicate in rejected.value.result.predicates}
         strategy = session.get(StrategyRecord, graph.strategy_id)
