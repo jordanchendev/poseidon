@@ -3,22 +3,71 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Literal, NoReturn
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal, get_auth_principal
 from poseidon.core.database import get_db
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionNotFoundError, DecisionService
 from poseidon.decision_loop.manifest import ValidationError
+from poseidon.models.decision_event import DecisionEvent
+from poseidon.models.order import OrderRecord
 
 router = APIRouter()
 PositiveRevision = Annotated[int, Field(strict=True, ge=1)]
 DecisionAction = Literal["watch", "hold", "enter", "add", "reduce", "exit", "reject"]
+DecisionStatus = Literal[
+    "pending_approval",
+    "approved",
+    "rejected",
+    "superseded",
+    "expired",
+    "execution_claimed",
+    "risk_blocked",
+]
+ReconciliationStatus = Literal["not_required", "pending", "required", "resolved", "mixed"]
+ActionReason = Literal[
+    "available",
+    "status_not_pending",
+    "decision_expired",
+    "role_not_authorized",
+    "account_scope_not_authorized",
+]
+
+
+class DecisionIntentResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evaluation_snapshot_id: uuid.UUID
+    symbol: str
+    market: Literal["tw_stock", "crypto_perp"]
+    instrument: str
+    action: Literal["enter", "add", "reduce", "exit"]
+    side: Literal["long", "short"]
+    target_weight: float
+    order_type: Literal["market"] = "market"
+
+
+class DecisionDocumentResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    selected_evaluation_ids: list[uuid.UUID]
+    final_action: DecisionAction
+    order_intents: list[DecisionIntentResponse] = Field(default_factory=list)
+    override_reason: str | None = None
+
+
+class DecisionRiskSnapshotResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    hard_failures: list[str]
+    allowed_actions: list[DecisionAction]
 
 
 class DecisionCreateRequest(BaseModel):
@@ -26,9 +75,9 @@ class DecisionCreateRequest(BaseModel):
 
     evaluation_run_id: uuid.UUID
     account_scope: Annotated[str, Field(min_length=1)]
-    original_json: dict
-    portfolio_snapshot_json: dict
-    risk_snapshot_json: dict
+    original_json: DecisionDocumentResponse
+    portfolio_snapshot_json: dict[str, JsonValue]
+    risk_snapshot_json: DecisionRiskSnapshotResponse
 
 
 class DecisionApprovalRequest(BaseModel):
@@ -60,21 +109,27 @@ class DecisionRejectionRequest(BaseModel):
 
 
 class DecisionAPIError(BaseModel):
-    detail: str | dict
-    error_code: str
-    status_code: int
+    detail: str
 
 
-DECISION_ERROR_RESPONSES = {
-    status: {"model": DecisionAPIError}
-    for status in (403, 404, 409, 422)
-}
+DECISION_ERROR_RESPONSES = {status: {"model": DecisionAPIError} for status in (403, 404, 409, 422)}
 
 
 class DecisionCapabilityMetadata(BaseModel):
     can_approve: bool
+    approve_reason: ActionReason
     can_modify: bool
+    modify_reason: ActionReason
     can_reject: bool
+    reject_reason: ActionReason
+
+
+class DecisionEventHistoryResponse(BaseModel):
+    id: uuid.UUID
+    event_type: str
+    actor_id: str
+    expected_revision: int
+    created_at: datetime
 
 
 class DecisionResponse(BaseModel):
@@ -84,19 +139,19 @@ class DecisionResponse(BaseModel):
     account_scope: str
     decision_as_of: datetime
     valid_until: datetime
-    status: str
+    status: DecisionStatus
     revision: int
     creation_sha256: str
     policy_sha256: str
-    original_json: dict
-    final_json: dict
-    original_action: str | None
-    final_action: str | None
-    portfolio_snapshot_json: dict
-    risk_snapshot_json: dict
-    execution_status: str
-    reconciliation_status: str
-    event_history: list[dict]
+    original_json: DecisionDocumentResponse
+    final_json: DecisionDocumentResponse
+    original_action: DecisionAction
+    final_action: DecisionAction
+    portfolio_snapshot_json: dict[str, JsonValue]
+    risk_snapshot_json: DecisionRiskSnapshotResponse
+    execution_status: DecisionStatus
+    reconciliation_status: ReconciliationStatus
+    event_history: list[DecisionEventHistoryResponse]
     action_metadata: DecisionCapabilityMetadata
     created_at: datetime
     updated_at: datetime
@@ -104,15 +159,55 @@ class DecisionResponse(BaseModel):
 
 class DecisionMutationResponse(BaseModel):
     id: uuid.UUID
-    status: str
+    status: DecisionStatus
     revision: int
-    final_json: dict
+    final_json: DecisionDocumentResponse
 
 
-def _decision_response(record):
-    original = record.original_json if isinstance(record.original_json, dict) else {}
-    final = record.final_json if isinstance(record.final_json, dict) else {}
-    can_transition = record.status == "pending_approval"
+def _action_metadata(record, principal: AuthPrincipal) -> DecisionCapabilityMetadata:
+    valid_until = record.valid_until.replace(tzinfo=UTC) if record.valid_until.tzinfo is None else record.valid_until
+    if record.status != "pending_approval":
+        reason = "status_not_pending"
+    elif valid_until <= datetime.now(UTC):
+        reason = "decision_expired"
+    elif record.account_scope not in principal.account_scopes:
+        reason = "account_scope_not_authorized"
+    elif "portfolio_manager" not in principal.roles or "decision-worker" in principal.roles:
+        reason = "role_not_authorized"
+    else:
+        reason = "available"
+    allowed = reason == "available"
+    return DecisionCapabilityMetadata(
+        can_approve=allowed,
+        approve_reason=reason,
+        can_modify=allowed,
+        modify_reason=reason,
+        can_reject=allowed,
+        reject_reason=reason,
+    )
+
+
+def _decision_response(record, *, principal: AuthPrincipal, db: Session):
+    original = DecisionDocumentResponse.model_validate(record.original_json)
+    final = DecisionDocumentResponse.model_validate(record.final_json)
+    events = db.scalars(
+        select(DecisionEvent)
+        .where(DecisionEvent.decision_id == record.id)
+        .order_by(DecisionEvent.created_at, DecisionEvent.id)
+    ).all()
+    orders = db.scalars(
+        select(OrderRecord).where(OrderRecord.decision_id == record.id).order_by(OrderRecord.created_at, OrderRecord.id)
+    ).all()
+    reconciliation_values = sorted(
+        {order.reconciliation_status for order in orders if order.reconciliation_status is not None}
+    )
+    reconciliation_status = (
+        "not_required"
+        if not reconciliation_values
+        else reconciliation_values[0]
+        if len(reconciliation_values) == 1 and reconciliation_values[0] in {"pending", "required", "resolved"}
+        else "mixed"
+    )
     return {
         "id": record.id,
         "evaluation_run_id": record.evaluation_run_id,
@@ -124,22 +219,27 @@ def _decision_response(record):
         "revision": record.revision,
         "creation_sha256": record.creation_sha256,
         "policy_sha256": record.policy_sha256,
-        "original_json": record.original_json,
-        "final_json": record.final_json,
+        "original_json": original,
+        "final_json": final,
         "portfolio_snapshot_json": record.portfolio_snapshot_json,
         "risk_snapshot_json": record.risk_snapshot_json,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
-        "original_action": original.get("final_action") or original.get("action"),
-        "final_action": final.get("final_action") or final.get("action"),
-        "execution_status": getattr(record, "execution_status", record.status),
-        "reconciliation_status": getattr(record, "reconciliation_status", "not_required"),
-        "event_history": list(getattr(record, "event_history", [])),
-        "action_metadata": {
-            "can_approve": can_transition,
-            "can_modify": can_transition,
-            "can_reject": can_transition,
-        },
+        "original_action": original.final_action,
+        "final_action": final.final_action,
+        "execution_status": record.status,
+        "reconciliation_status": reconciliation_status,
+        "event_history": [
+            DecisionEventHistoryResponse(
+                id=event.id,
+                event_type=event.event_type,
+                actor_id=event.actor_id,
+                expected_revision=event.expected_revision,
+                created_at=event.created_at,
+            )
+            for event in events
+        ],
+        "action_metadata": _action_metadata(record, principal),
     }
 
 
@@ -172,7 +272,7 @@ def create_decision(
         )
         db.commit()
         db.refresh(record)
-        return _decision_response(record)
+        return _decision_response(record, principal=principal, db=db)
     except Exception as error:
         db.rollback()
         _raise_api_error(error)
@@ -186,7 +286,7 @@ def list_decisions(
 ):
     try:
         records = DecisionService(db).list_pending(principal=principal)
-        return [_decision_response(record) for record in records]
+        return [_decision_response(record, principal=principal, db=db) for record in records]
     except Exception as error:
         _raise_api_error(error)
 
@@ -199,7 +299,7 @@ def get_decision(
 ):
     try:
         record = DecisionService(db).get(decision_id, principal=principal)
-        return _decision_response(record)
+        return _decision_response(record, principal=principal, db=db)
     except Exception as error:
         _raise_api_error(error)
 

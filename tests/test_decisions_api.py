@@ -209,7 +209,7 @@ def _create_body(**overrides):
     body = {
         "evaluation_run_id": str(uuid.uuid4()),
         "account_scope": ACCOUNT,
-        "original_json": {"final_action": "hold"},
+        "original_json": {"selected_evaluation_ids": [str(uuid.uuid4())], "final_action": "hold"},
         "portfolio_snapshot_json": {"cash": 1000},
         "risk_snapshot_json": {"hard_failures": [], "allowed_actions": ["hold"]},
     }
