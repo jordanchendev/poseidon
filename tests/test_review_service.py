@@ -509,6 +509,16 @@ def test_review_runner_consumes_before_read_and_replays_or_appends(phase99_sessi
     assert changed.id != first.id
     assert changed.input_sha256 != first.input_sha256
     assert changed.result_sha256 != first.result_sha256
+    assert first.holdout_use_id is not None
+    assert replay.holdout_use_id == first.holdout_use_id == changed.holdout_use_id
+    assert first.input_sha256 == content_sha256(first.input_identity_json)
+    assert replay.input_identity_json == first.input_identity_json
+    assert changed.input_sha256 == content_sha256(changed.input_identity_json)
+    assert changed.input_identity_json["panel_sha256"] != first.input_identity_json["panel_sha256"]
+    assert first.input_identity_json["campaign_contract_sha256"]
+    assert first.input_identity_json["holdout_identity_sha256"] == identity
+    assert len(first.input_identity_json["terminal_trials"]) == 6
+    assert first.input_identity_json["review_estimator_inputs"]
     with phase99_session_factory() as session:
         reviews = session.query(CampaignReview).filter_by(campaign_id=campaign_id).all()
         events = (
