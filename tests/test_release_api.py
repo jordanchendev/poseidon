@@ -10,7 +10,6 @@ from types import SimpleNamespace
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
 from poseidon.api import capabilities as capabilities_api
 from poseidon.core.config import settings
@@ -248,6 +247,13 @@ def test_legacy_principal_kind_is_explicit_not_human(api):
 def test_release_gate_and_four_mutations_use_typed_identity_contract(api):
     client, session, service, strategy = api
     candidate, campaign, review, reconciliation = (uuid.uuid4() for _ in range(4))
+    session.versions[candidate] = SimpleNamespace(
+        id=candidate,
+        strategy_id=strategy.id,
+        version_no=3,
+        content_sha256="b" * 64,
+        policy_json={"account_scope": ACCOUNT},
+    )
     gate = client.get(
         f"/api/v1/strategies/{strategy.id}/release-gate",
         params={
@@ -428,58 +434,50 @@ def test_real_release_service_pause_replay_and_conflicts_through_api(
     from tests.test_strategy_release import _release, _seed_gate_graph
 
     _configure_auth(monkeypatch)
-    probe = phase99_session_factory()
-    engine = probe.get_bind()
-    probe.close()
-    with engine.connect() as connection:
-        outer = connection.begin()
-        session = Session(bind=connection, join_transaction_mode="create_savepoint")
-        try:
-            graph = _seed_gate_graph(session)
-            _release(DomainReleaseService(session), graph)
-            session.commit()
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        session.commit()
+        _release(DomainReleaseService(session), graph)
+        session.commit()
 
-            app = FastAPI()
-            app.include_router(releases_api.router, prefix="/api/v1/strategies")
-            app.dependency_overrides[get_db] = lambda: session
-            client = TestClient(app)
-            body = {
-                "expected_revision": 1,
-                "expected_active_version_id": str(graph.candidate_id),
-                "reason": "operator pause",
-            }
+        app = FastAPI()
+        app.include_router(releases_api.router, prefix="/api/v1/strategies")
+        app.dependency_overrides[get_db] = lambda: session
+        client = TestClient(app)
+        body = {
+            "expected_revision": 1,
+            "expected_active_version_id": str(graph.candidate_id),
+            "reason": "operator pause",
+        }
 
-            first = client.post(
-                f"/api/v1/strategies/{graph.strategy_id}/pause",
-                json=body,
-                headers=_headers(MANAGER_KEY, "real-pause"),
-            )
-            replay = client.post(
-                f"/api/v1/strategies/{graph.strategy_id}/pause",
-                json=body,
-                headers=_headers(MANAGER_KEY, "real-pause"),
-            )
-            reused = client.post(
-                f"/api/v1/strategies/{graph.strategy_id}/pause",
-                json=body | {"reason": "changed"},
-                headers=_headers(MANAGER_KEY, "real-pause"),
-            )
-            stale = client.post(
-                f"/api/v1/strategies/{graph.strategy_id}/pause",
-                json=body,
-                headers=_headers(MANAGER_KEY, "real-pause-stale"),
-            )
+        first = client.post(
+            f"/api/v1/strategies/{graph.strategy_id}/pause",
+            json=body,
+            headers=_headers(MANAGER_KEY, "real-pause"),
+        )
+        replay = client.post(
+            f"/api/v1/strategies/{graph.strategy_id}/pause",
+            json=body,
+            headers=_headers(MANAGER_KEY, "real-pause"),
+        )
+        reused = client.post(
+            f"/api/v1/strategies/{graph.strategy_id}/pause",
+            json=body | {"reason": "changed"},
+            headers=_headers(MANAGER_KEY, "real-pause"),
+        )
+        stale = client.post(
+            f"/api/v1/strategies/{graph.strategy_id}/pause",
+            json=body,
+            headers=_headers(MANAGER_KEY, "real-pause-stale"),
+        )
 
-            assert first.status_code == replay.status_code == 200
-            assert first.json() == replay.json()
-            assert reused.status_code == stale.status_code == 409
-            assert (
-                session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id, event_type="pause").count()
-                == 1
-            )
-        finally:
-            session.close()
-            outer.rollback()
+        assert first.status_code == replay.status_code == 200
+        assert first.json() == replay.json()
+        assert reused.status_code == stale.status_code == 409
+        assert (
+            session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id, event_type="pause").count()
+            == 1
+        )
 
 
 @pytest.mark.parametrize("key", [WORKER_KEY, VIEWER_KEY, LEGACY_KEY])
