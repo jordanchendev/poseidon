@@ -13,6 +13,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal
+from poseidon.api.traces import TraceService
 from poseidon.decision_loop.decisions import (
     DecisionConflictError,
     DecisionPolicy,
@@ -946,6 +947,84 @@ def test_get_pending_and_trace_are_account_scoped_and_frozen(db):
     with pytest.raises(HTTPException) as error:
         service.trace(decision.id, principal=manager(scope="paper:other"))
     assert error.value.status_code == 403
+
+
+def test_evaluation_trace_uses_only_the_anchor_snapshot_for_stage_truth(db):
+    _, _, snapshot_ids = decision_inputs(db)
+
+    response = TraceService(db).by_evaluation(uuid.UUID(snapshot_ids[0]), principal=manager())
+
+    assert response.stages[0].state == "Unavailable"
+    assert response.stages[4].state == "Unavailable"
+    assert response.stages[5].state == "Unavailable"
+
+
+def test_selected_no_trade_snapshot_keeps_exact_identity_with_a_decision(db):
+    run, _, snapshot_ids = decision_inputs(db)
+    decision = create_decision(
+        db,
+        run.id,
+        snapshot_ids,
+        original_json={"selected_evaluation_ids": [snapshot_ids[1]], "final_action": "hold"},
+        risk_snapshot_json={"hard_failures": [], "allowed_actions": ["hold"]},
+    )
+
+    trace = DecisionService(db).trace(decision.id, principal=manager())
+    stage = trace["stages"][0]
+
+    assert stage["state"] == "No trade"
+    assert stage["identities"] == {"evaluation_snapshot_id": snapshot_ids[1]}
+    assert len(stage["rows"]) == 1
+    assert stage["rows"][0]["label"] == "No trade"
+    assert stage["rows"][0]["identities"]["evaluation_snapshot_id"] == snapshot_ids[1]
+    assert len(stage["rows"][0]["identities"]["content_sha256"]) == 64
+    assert stage["rows"][0]["values"] == {
+        "status": "no_trade",
+        "reason_codes": ["synthetic_no_trade"],
+    }
+    assert stage["rows"][0]["timestamp"] == trace["evaluation_run"]["decision_as_of"]
+    assert trace["stages"][5]["state"] == "Not required"
+
+
+@pytest.mark.parametrize(
+    ("approved", "decision_state", "execution_state"),
+    [
+        (False, "Provisional", "Provisional"),
+        (True, "Available", "Unavailable"),
+    ],
+)
+def test_executable_decision_without_order_is_not_reported_not_required(
+    db,
+    approved,
+    decision_state,
+    execution_state,
+):
+    run, _, snapshot_ids = decision_inputs(db)
+    service = DecisionService(db)
+    decision = create_decision(
+        db,
+        run.id,
+        snapshot_ids,
+        original_json={
+            "selected_evaluation_ids": [snapshot_ids[0]],
+            "final_action": "enter",
+            "order_intents": [executable_intent(snapshot_ids[0])],
+        },
+        risk_snapshot_json={"hard_failures": [], "allowed_actions": ["enter"]},
+    )
+    if approved:
+        service.approve(
+            decision.id,
+            {"expected_revision": 1},
+            principal=manager(),
+            idempotency_key="trace-approved-enter",
+            now=datetime(2026, 9, 26, 12, 30, tzinfo=UTC),
+        )
+
+    trace = service.trace(decision.id, principal=manager())
+
+    assert trace["stages"][4]["state"] == decision_state
+    assert trace["stages"][5]["state"] == execution_state
 
 
 def test_trace_execution_stage_reports_real_filled_order(db):
