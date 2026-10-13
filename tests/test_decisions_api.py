@@ -14,11 +14,15 @@ from poseidon.api import decisions as decisions_api
 from poseidon.core.config import settings
 from poseidon.core.database import get_db
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionNotFoundError
-from poseidon.decision_loop.manifest import ValidationError
+from poseidon.decision_loop.evaluation import EvaluationService
+from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256
 from poseidon.main import app as poseidon_app
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
+from poseidon.models.evaluation_snapshot import EvaluationSnapshot
 from poseidon.models.order import OrderRecord
+from poseidon.models.strategy import StrategyRecord
+from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 
 ACCOUNT = "paper:pilot"
 OTHER_ACCOUNT = "paper:other"
@@ -462,11 +466,52 @@ def test_real_decision_service_accepts_typed_create_body_through_api(
     monkeypatch,
     phase99_session_factory,
 ):
-    from tests.test_decision_service import decision_inputs
+    from tests.test_decision_service import manifest_request, synthetic_policy
 
     _configure_auth(monkeypatch)
     with phase99_session_factory() as session:
-        run, _version, snapshot_ids = decision_inputs(session)
+        marker = uuid.uuid4().hex
+        manifest_payload = manifest_request()
+        manifest_payload["evidence"][0]["payload"]["marker"] = marker
+        manifest_payload["evidence"][0]["content_sha256"] = content_sha256(manifest_payload["evidence"][0]["payload"])
+        manifest = ManifestService(session).freeze(manifest_payload)
+        strategy = StrategyRecord(
+            name=f"phase100-api-{marker}",
+            strategy_type="technical",
+            symbol="2330",
+            market="tw_stock",
+            interval="1d",
+        )
+        session.add(strategy)
+        session.flush()
+        policy = synthetic_policy()
+        config = {"marker": marker}
+        version = StrategyVersion(
+            strategy_id=strategy.id,
+            version_no=1,
+            config_json=config,
+            policy_json=policy,
+            artifact_json={},
+            content_sha256=strategy_version_digest(config, policy, {}),
+        )
+        session.add(version)
+        session.flush()
+        universe = [{"symbol": "2330", "market": "tw_stock", "instrument": "spot"}]
+        run = EvaluationService(session).evaluate_run(
+            version.id,
+            manifest.id,
+            universe,
+            [
+                {
+                    **universe[0],
+                    "status": "evaluated",
+                    "recommendation_json": {"research_status": "not_required", "side": "long"},
+                    "reason_codes": [],
+                    "valid_until": "2026-09-26T15:00:00Z",
+                }
+            ],
+        )
+        snapshot_id = session.query(EvaluationSnapshot.id).filter_by(evaluation_run_id=run.id).scalar()
         session.commit()
         app = FastAPI()
         app.include_router(decisions_api.router, prefix="/api/v1/decisions")
@@ -479,7 +524,7 @@ def test_real_decision_service_accepts_typed_create_body_through_api(
                 "evaluation_run_id": str(run.id),
                 "account_scope": ACCOUNT,
                 "original_json": {
-                    "selected_evaluation_ids": [snapshot_ids[0]],
+                    "selected_evaluation_ids": [str(snapshot_id)],
                     "final_action": "hold",
                 },
                 "portfolio_snapshot_json": {"cash": 100000.0, "positions": []},
@@ -490,7 +535,7 @@ def test_real_decision_service_accepts_typed_create_body_through_api(
 
         assert response.status_code == 200
         stored = session.get(DecisionRecord, uuid.UUID(response.json()["id"]))
-        assert stored.original_json["selected_evaluation_ids"] == [snapshot_ids[0]]
+        assert stored.original_json["selected_evaluation_ids"] == [str(snapshot_id)]
 
 
 @pytest.mark.parametrize(

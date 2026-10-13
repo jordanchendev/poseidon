@@ -588,8 +588,10 @@ def test_formal_app_422_contract_covers_request_and_gate_validation(api):
             headers=_headers(MANAGER_KEY, "invalid-body"),
         )
         assert invalid.status_code == 422
-        assert isinstance(invalid.json()["detail"], list)
-        assert {"loc", "msg", "type"} <= set(invalid.json()["detail"][0])
+        assert invalid.json()["detail"] == "Validation error"
+        assert invalid.json()["error_code"] == "VALIDATION_ERROR"
+        assert invalid.json()["status_code"] == 422
+        assert {"loc", "msg", "type"} <= set(invalid.json()["errors"][0])
     finally:
         poseidon_app.dependency_overrides.pop(get_db, None)
         poseidon_app.openapi_schema = None
