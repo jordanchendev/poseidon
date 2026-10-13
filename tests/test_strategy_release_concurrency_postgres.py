@@ -25,8 +25,8 @@ if ENGINE.dialect.name != "postgresql":
 @pytest.fixture
 def graph():
     with Session(ENGINE) as session:
-        value = _seed_gate_graph(session)
-        session.commit()
+        with session.begin():
+            value = _seed_gate_graph(session)
     return value
 
 
@@ -50,15 +50,13 @@ def _concurrent(call_a, call_b):
     barrier = Barrier(2)
 
     def run(call):
-        with Session(ENGINE) as session:
-            barrier.wait(timeout=10)
-            try:
+        try:
+            with Session(ENGINE) as session, session.begin():
+                barrier.wait(timeout=10)
                 response = call(session)
-                session.commit()
-                return "ok", response
-            except DecisionConflictError as error:
-                session.rollback()
-                return "conflict", str(error)
+            return "ok", response
+        except DecisionConflictError as error:
+            return "conflict", str(error)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(run, call) for call in (call_a, call_b)]
@@ -91,14 +89,14 @@ def test_different_key_release_race_has_one_success_and_one_stale_conflict(graph
 
 def test_release_and_pause_serialize_to_one_revision_winner(graph):
     with Session(ENGINE) as session:
-        _release(session, graph, key="initial-release")
-        session.commit()
-        followup = _seed_gate_graph(
-            session,
-            strategy_id=graph.strategy_id,
-            incumbent_id=graph.candidate_id,
-        )
-        session.commit()
+        with session.begin():
+            _release(session, graph, key="initial-release")
+        with session.begin():
+            followup = _seed_gate_graph(
+                session,
+                strategy_id=graph.strategy_id,
+                incumbent_id=graph.candidate_id,
+            )
 
     results = _concurrent(
         lambda session: _release(
@@ -127,27 +125,25 @@ def test_release_and_pause_serialize_to_one_revision_winner(graph):
 
 
 def test_pause_waits_for_ordinary_strategy_lock_holder(graph):
-    with Session(ENGINE) as session:
+    with Session(ENGINE) as session, session.begin():
         _release(session, graph, key="pause-lock-initial-release")
-        session.commit()
 
     holder_ready = Event()
     pause_started = Event()
     release_holder = Event()
 
     def hold_strategy_lock():
-        with Session(ENGINE) as session:
+        with Session(ENGINE) as session, session.begin():
             session.scalar(
                 select(StrategyRecord).where(StrategyRecord.id == graph.strategy_id).with_for_update()
             )
             holder_ready.set()
             assert pause_started.wait(timeout=10)
             assert release_holder.wait(timeout=10)
-            session.commit()
 
     def pause():
         assert holder_ready.wait(timeout=10)
-        with Session(ENGINE) as session:
+        with Session(ENGINE) as session, session.begin():
             pause_started.set()
             response = ReleaseService(session).pause(
                 graph.strategy_id,
@@ -157,7 +153,6 @@ def test_pause_waits_for_ordinary_strategy_lock_holder(graph):
                 idempotency_key="pause-after-ordinary-lock",
                 reason="serialize behind ordinary authority reader",
             )
-            session.commit()
             return response
 
     with ThreadPoolExecutor(max_workers=2) as pool:
