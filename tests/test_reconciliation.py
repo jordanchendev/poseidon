@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-from sqlalchemy import create_engine, delete, func, select
+from sqlalchemy import create_engine, delete, event, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from poseidon.broker.base import (
@@ -470,6 +470,12 @@ def test_reconcile_task_processes_siblings_after_observable_failure(sessions, mo
 @pytest.fixture
 def sessions(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'reconciliation.db'}")
+
+    @event.listens_for(engine, "connect")
+    def sqlite_phase100_functions(connection, _record):
+        connection.create_function("char_length", 1, len)
+        connection.create_function("btrim", 1, lambda value: value.strip())
+
     Base.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     yield factory
