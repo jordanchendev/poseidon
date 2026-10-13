@@ -197,23 +197,22 @@ def _autoresearch_worker_source(root: Path) -> str:
     functions = {node.name: node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
     if "autoresearch_run" not in functions:
         return ""
-    reachable = {"autoresearch_run"}
-    pending = ["autoresearch_run"]
-    while pending:
-        node = functions[pending.pop()]
-        for child in ast.walk(node):
-            if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
-                name = child.func.id
-                if name in functions and name not in reachable:
-                    reachable.add(name)
-                    pending.append(name)
-    used_names = {node.id for name in reachable for node in ast.walk(functions[name]) if isinstance(node, ast.Name)}
-    nodes: list[ast.AST] = [functions[name] for name in sorted(reachable)]
     assignments = [node for node in tree.body if isinstance(node, (ast.Assign, ast.AnnAssign))]
+    used_names = {"autoresearch_run"}
+    included_functions: set[str] = set()
     included_assignments: set[int] = set()
+    nodes: list[ast.AST] = []
     changed = True
     while changed:
         changed = False
+        for name in sorted(used_names & functions.keys() - included_functions):
+            node = functions[name]
+            included_functions.add(name)
+            nodes.append(node)
+            used_names.update(
+                child.id for child in ast.walk(node) if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
+            )
+            changed = True
         for node in assignments:
             if id(node) in included_assignments:
                 continue
@@ -223,7 +222,9 @@ def _autoresearch_worker_source(root: Path) -> str:
                 continue
             included_assignments.add(id(node))
             nodes.append(node)
-            used_names.update(child.id for child in ast.walk(node) if isinstance(child, ast.Name))
+            used_names.update(
+                child.id for child in ast.walk(node) if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
+            )
             changed = True
     for node in tree.body:
         if isinstance(node, ast.Import):
