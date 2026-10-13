@@ -31,9 +31,9 @@ from poseidon.models.experiment_campaign import (
     ExperimentCampaign,
     HoldoutUse,
 )
-from poseidon.models.strategy import StrategyRecord
 from poseidon.models.order import OrderRecord
 from poseidon.models.position_lot import PositionLot
+from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from poseidon.models.strategy_version import StrategyVersion
 from poseidon.orders.schemas import DURABLE_PROTECTIVE_ORIGINS
@@ -42,7 +42,6 @@ from poseidon.research.campaign import (
     _validate_complete_contract,
     build_review_input_identity,
 )
-
 
 PredicateState = Literal["passed", "blocked", "unavailable", "inconclusive"]
 _ARMS = ("fundamental_only", "technical_only", "combined")
@@ -104,6 +103,16 @@ class ReleaseGateResult:
         }
 
 
+class ReleaseGateRejected(DecisionConflictError):
+    """Exact gate result that rejected a release mutation."""
+
+    def __init__(self, operation: str, result: ReleaseGateResult) -> None:
+        self.operation = operation
+        self.result = result
+        failed = ", ".join(predicate.code for predicate in result.predicates if predicate.state != "passed")
+        super().__init__(f"{operation} gate did not pass: {failed}")
+
+
 def _stored_time(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
@@ -142,7 +151,9 @@ class ReleaseService:
         try:
             policy = DecisionPolicy.model_validate(candidate.policy_json)
         except (PydanticValidationError, TypeError, ValueError):
-            return _predicate("policy_identity", "unavailable", "frozen strategy policy is incomplete", **evidence), None
+            return _predicate(
+                "policy_identity", "unavailable", "frozen strategy policy is incomplete", **evidence
+            ), None
         evidence.update(
             account_scope=policy.account_scope,
             market=policy.market,
@@ -226,7 +237,9 @@ class ReleaseService:
         if strategy.active_version_id is None:
             return _predicate("incumbent_pointer", "passed", "strategy has no released incumbent", **evidence)
         if strategy.active_version_id != campaign.incumbent_strategy_version_id:
-            return _predicate("incumbent_pointer", "blocked", "active pointer drifted from campaign incumbent", **evidence)
+            return _predicate(
+                "incumbent_pointer", "blocked", "active pointer drifted from campaign incumbent", **evidence
+            )
         return _predicate("incumbent_pointer", "passed", "active pointer matches campaign incumbent", **evidence)
 
     def _cells_predicate(self, campaign):
@@ -234,9 +247,7 @@ class ReleaseService:
         if campaign is None:
             return _predicate("six_cell_evidence", "unavailable", "campaign trials are unavailable", **evidence), []
         trials = self.session.scalars(
-            select(ExperimentRecord)
-            .where(ExperimentRecord.campaign_id == campaign.id)
-            .order_by(ExperimentRecord.id)
+            select(ExperimentRecord).where(ExperimentRecord.campaign_id == campaign.id).order_by(ExperimentRecord.id)
         ).all()
         evidence["trial_ids"] = [str(trial.id) for trial in trials]
         declared = campaign.contract_json.get("declared_trials") if isinstance(campaign.contract_json, dict) else None
@@ -290,9 +301,7 @@ class ReleaseService:
             ), trials
         cells = {
             (
-                "incumbent"
-                if trial.strategy_version_id == campaign.incumbent_strategy_version_id
-                else "candidate",
+                "incumbent" if trial.strategy_version_id == campaign.incumbent_strategy_version_id else "candidate",
                 trial.ablation_arm,
             )
             for trial in trials
@@ -301,7 +310,9 @@ class ReleaseService:
         }
         expected = {(role, arm) for role in _ROLES for arm in _ARMS}
         if len(trials) != 6 or cells != expected:
-            return _predicate("six_cell_evidence", "unavailable", "exact six terminal cells are missing", **evidence), trials
+            return _predicate(
+                "six_cell_evidence", "unavailable", "exact six terminal cells are missing", **evidence
+            ), trials
         terminal_states = {trial.terminal_state for trial in trials}
         evidence["terminal_states"] = sorted(str(state) for state in terminal_states)
         if "statistically_inconclusive" in terminal_states:
@@ -309,7 +320,9 @@ class ReleaseService:
                 "six_cell_evidence", "inconclusive", "paired trial evidence is inconclusive", **evidence
             ), trials
         if terminal_states != {"succeeded"}:
-            return _predicate("six_cell_evidence", "unavailable", "paired trial evidence is not complete", **evidence), trials
+            return _predicate(
+                "six_cell_evidence", "unavailable", "paired trial evidence is not complete", **evidence
+            ), trials
         memberships = []
         for trial in trials:
             membership = (trial.metrics_json or {}).get("sample_membership")
@@ -366,9 +379,7 @@ class ReleaseService:
             isinstance(coverage, dict)
             and set(coverage) == {f"{role}:{arm}" for role in _ROLES for arm in _ARMS}
             and all(
-                isinstance(value, dict)
-                and value.get("present") is True
-                and value.get("terminal_state") == "succeeded"
+                isinstance(value, dict) and value.get("present") is True and value.get("terminal_state") == "succeeded"
                 for value in coverage.values()
             )
         )
@@ -390,7 +401,9 @@ class ReleaseService:
             and review.result_json.get("failed_gates") == []
         )
         if not complete_coverage or not mature or not complete_outputs:
-            return _predicate("review_identity", "inconclusive", "passed review lacks mature complete evidence", **evidence)
+            return _predicate(
+                "review_identity", "inconclusive", "passed review lacks mature complete evidence", **evidence
+            )
         return _predicate("review_identity", "passed", "passed review identity and evidence match", **evidence)
 
     def _holdout_predicate(self, campaign, review):
@@ -421,11 +434,17 @@ class ReleaseService:
             or use.holdout_identity_sha256 != identity
         ):
             return _predicate("holdout_ownership", "blocked", "committed holdout ownership does not match", **evidence)
-        events = self.session.scalars(select(CampaignEvent).where(CampaignEvent.event_type.in_((
-            "holdout_consumed",
-            "holdout_replayed",
-            "holdout_reuse_denied",
-        )))).all()
+        events = self.session.scalars(
+            select(CampaignEvent).where(
+                CampaignEvent.event_type.in_(
+                    (
+                        "holdout_consumed",
+                        "holdout_replayed",
+                        "holdout_reuse_denied",
+                    )
+                )
+            )
+        ).all()
         own_use = any(
             event.campaign_id == campaign.id
             and event.event_type in {"holdout_consumed", "holdout_replayed"}
@@ -434,14 +453,15 @@ class ReleaseService:
             for event in events
         )
         denied = any(
-            event.event_type == "holdout_reuse_denied"
-            and event.payload_json.get("holdout_identity_sha256") == identity
+            event.event_type == "holdout_reuse_denied" and event.payload_json.get("holdout_identity_sha256") == identity
             for event in events
         )
         if denied:
             return _predicate("holdout_ownership", "blocked", "holdout reuse was denied", **evidence)
         if not own_use:
-            return _predicate("holdout_ownership", "unavailable", "committed holdout consume event is missing", **evidence)
+            return _predicate(
+                "holdout_ownership", "unavailable", "committed holdout consume event is missing", **evidence
+            )
         return _predicate("holdout_ownership", "passed", "same-campaign committed holdout use matches", **evidence)
 
     def _reconciliation_predicate(self, reconciliation, policy, policy_sha256, now):
@@ -471,7 +491,8 @@ class ReleaseService:
         if not reconciliation.broker_state_watermark or not reconciliation.internal_state_watermark:
             return _predicate("reconciliation", "unavailable", "reconciliation watermarks are missing", **evidence)
         latest = self.session.scalar(
-            select(AccountReconciliation).where(
+            select(AccountReconciliation)
+            .where(
                 AccountReconciliation.account_scope == reconciliation.account_scope,
                 AccountReconciliation.account_generation == reconciliation.account_generation,
             )
@@ -498,7 +519,9 @@ class ReleaseService:
             "account_scope": None if policy is None else policy.account_scope,
         }
         if principal is None or policy is None:
-            return _predicate("release_authority", "unavailable", "release principal or policy is unavailable", **evidence)
+            return _predicate(
+                "release_authority", "unavailable", "release principal or policy is unavailable", **evidence
+            )
         try:
             principal.require_role("release_manager")
             principal.require_account_scope(policy.account_scope)
@@ -638,10 +661,7 @@ class ReleaseService:
             select(StrategyReleaseEvent)
             .where(
                 StrategyReleaseEvent.strategy_id == strategy.id,
-                (
-                    StrategyReleaseEvent.from_version_id.is_not(None)
-                    | StrategyReleaseEvent.to_version_id.is_not(None)
-                ),
+                (StrategyReleaseEvent.from_version_id.is_not(None) | StrategyReleaseEvent.to_version_id.is_not(None)),
             )
             .order_by(StrategyReleaseEvent.resulting_revision.desc())
             .limit(1)
@@ -782,8 +802,7 @@ class ReleaseService:
     def _require_allowed(result, operation):
         if result.allowed:
             return
-        failed = ", ".join(predicate.code for predicate in result.predicates if predicate.state != "passed")
-        raise DecisionConflictError(f"{operation} gate did not pass: {failed}")
+        raise ReleaseGateRejected(operation, result)
 
     def release(
         self,
@@ -1015,9 +1034,7 @@ class ReleaseService:
                 account_generation=policy.reconciliation.account_generation,
                 source_account_scope=source_policy.account_scope,
                 source_account_generation=(
-                    None
-                    if source_policy.reconciliation is None
-                    else source_policy.reconciliation.account_generation
+                    None if source_policy.reconciliation is None else source_policy.reconciliation.account_generation
                 ),
                 market=policy.market,
                 protective_exit=policy.protective_exit.allowed_without_approval,
@@ -1053,8 +1070,7 @@ class ReleaseService:
             holdings_valid = (
                 len(source_decisions) == len(source_decision_ids)
                 and all(
-                    lot.account_generation == policy.reconciliation.account_generation
-                    and lot.market == policy.market
+                    lot.account_generation == policy.reconciliation.account_generation and lot.market == policy.market
                     for lot in lots
                 )
                 and all(
@@ -1110,16 +1126,20 @@ class ReleaseService:
             **reconciliation_predicate.evidence,
         )
         authority = self._authority_predicate(principal, policy)
-        return ReleaseGateResult(
-            (
-                target_predicate,
-                rollback_policy,
-                holdings_predicate,
-                work_predicate,
-                rollback_reconciliation,
-                authority,
-            )
-        ), source, policy
+        return (
+            ReleaseGateResult(
+                (
+                    target_predicate,
+                    rollback_policy,
+                    holdings_predicate,
+                    work_predicate,
+                    rollback_reconciliation,
+                    authority,
+                )
+            ),
+            source,
+            policy,
+        )
 
     def rollback(
         self,
