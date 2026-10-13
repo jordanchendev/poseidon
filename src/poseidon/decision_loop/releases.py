@@ -14,7 +14,6 @@ from sqlalchemy import select, text
 
 from poseidon.api.auth import AuthPrincipal
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionPolicy
-from poseidon.decision_loop.execution import DecisionExecutionService
 from poseidon.decision_loop.manifest import (
     ValidationError,
     canonical_json,
@@ -119,6 +118,20 @@ def _stored_time(value: datetime) -> datetime:
 
 def _predicate(code: str, state: PredicateState, reason: str, **evidence) -> ReleasePredicate:
     return ReleasePredicate(code, state, reason, json.loads(canonical_json(evidence)))
+
+
+def require_active_pointer(session, decision, *, lock: bool, error_type):
+    """Require a decision's immutable version to remain the active authority."""
+    version = session.get(StrategyVersion, decision.strategy_version_id)
+    if version is None:
+        raise error_type("decision active pointer is unavailable")
+    query = session.query(StrategyRecord).filter(StrategyRecord.id == version.strategy_id)
+    if lock:
+        query = query.with_for_update()
+    strategy = query.populate_existing().one_or_none()
+    if strategy is None or strategy.active_version_id != decision.strategy_version_id:
+        raise error_type("decision active pointer changed")
+    return strategy
 
 
 class ReleaseService:
@@ -643,6 +656,8 @@ class ReleaseService:
     def _lock_reconciliation_authority(self, policy):
         if policy.reconciliation is None:
             return
+        from poseidon.decision_loop.execution import DecisionExecutionService
+
         DecisionExecutionService(self.session)._advisory_lock(
             policy.account_scope,
             policy.reconciliation.account_generation,

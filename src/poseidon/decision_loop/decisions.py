@@ -39,6 +39,7 @@ from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.research_revision import ResearchRevision
+from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_version import StrategyVersion
 
 ACTION_VALUES = frozenset({"watch", "hold", "enter", "add", "reduce", "exit", "reject"})
@@ -1011,10 +1012,18 @@ class DecisionService:
         return response
 
     def claim_execution(self, decision_id, expected_revision, *, principal, now=None):
+        from poseidon.decision_loop.releases import require_active_pointer
+
         principal.require_role("decision-worker")
         if type(expected_revision) is not int or expected_revision <= 0:
             raise DecisionConflictError("expected revision is invalid")
-        self._authorized_decision(decision_id, principal)
+        candidate = self._authorized_decision(decision_id, principal)
+        require_active_pointer(
+            self.session,
+            candidate,
+            lock=True,
+            error_type=DecisionConflictError,
+        )
         decision = (
             self.session.query(DecisionRecord)
             .filter(DecisionRecord.id == decision_id)
@@ -1024,6 +1033,12 @@ class DecisionService:
         )
         if decision is None:
             raise DecisionConflictError("decision is locked")
+        require_active_pointer(
+            self.session,
+            decision,
+            lock=False,
+            error_type=DecisionConflictError,
+        )
         return self._claim_locked(
             decision,
             expected_revision,
@@ -1032,30 +1047,54 @@ class DecisionService:
         )
 
     def claim_next_approved(self, account_scope, *, principal, now=None):
+        from poseidon.decision_loop.releases import require_active_pointer
+
         principal.require_role("decision-worker")
         principal.require_account_scope(account_scope)
         current_time = timestamp(now if now is not None else datetime.now(UTC), "now")
         skipped_ids = []
         # ponytail: keep claim transactions bounded; quarantine invalid rows if this ceiling is reached.
         for _ in range(CLAIM_SCAN_LIMIT):
-            query = self.session.query(DecisionRecord).filter(
-                DecisionRecord.account_scope == account_scope,
-                DecisionRecord.status == "approved",
-                DecisionRecord.execution_key.is_(None),
-                DecisionRecord.claimed_at.is_(None),
-                DecisionRecord.valid_until > current_time,
+            query = (
+                self.session.query(DecisionRecord)
+                .join(StrategyVersion, StrategyVersion.id == DecisionRecord.strategy_version_id)
+                .join(StrategyRecord, StrategyRecord.id == StrategyVersion.strategy_id)
+                .filter(
+                    DecisionRecord.account_scope == account_scope,
+                    DecisionRecord.status == "approved",
+                    DecisionRecord.execution_key.is_(None),
+                    DecisionRecord.claimed_at.is_(None),
+                    DecisionRecord.valid_until > current_time,
+                    StrategyRecord.active_version_id == DecisionRecord.strategy_version_id,
+                )
             )
             if skipped_ids:
                 query = query.filter(DecisionRecord.id.notin_(skipped_ids))
-            decision = (
+            candidate = (
                 query.order_by(DecisionRecord.created_at, DecisionRecord.id)
-                .with_for_update(skip_locked=True)
+                .with_for_update(of=StrategyRecord, skip_locked=True)
                 .populate_existing()
                 .first()
             )
-            if decision is None:
+            if candidate is None:
                 return None
+            decision = (
+                self.session.query(DecisionRecord)
+                .filter(DecisionRecord.id == candidate.id)
+                .with_for_update(skip_locked=True)
+                .populate_existing()
+                .one_or_none()
+            )
+            if decision is None:
+                skipped_ids.append(candidate.id)
+                continue
             try:
+                require_active_pointer(
+                    self.session,
+                    decision,
+                    lock=False,
+                    error_type=DecisionConflictError,
+                )
                 return self._claim_locked(
                     decision,
                     decision.revision,

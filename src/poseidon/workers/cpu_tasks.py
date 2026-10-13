@@ -329,11 +329,13 @@ def _approved_ordinary_candidate(session, market, now):
     from sqlalchemy import select
 
     from poseidon.models.decision_record import DecisionRecord
+    from poseidon.models.strategy import StrategyRecord
     from poseidon.models.strategy_version import StrategyVersion
 
     return session.scalar(
         select(DecisionRecord)
         .join(StrategyVersion, StrategyVersion.id == DecisionRecord.strategy_version_id)
+        .join(StrategyRecord, StrategyRecord.id == StrategyVersion.strategy_id)
         .where(
             DecisionRecord.account_scope == settings.decision_loop_approved_account_scope,
             DecisionRecord.status == "approved",
@@ -343,6 +345,7 @@ def _approved_ordinary_candidate(session, market, now):
             StrategyVersion.policy_json["market"].as_string() == market,
             StrategyVersion.policy_json["reconciliation"]["account_generation"].as_string()
             == settings.decision_loop_approved_account_generation,
+            StrategyRecord.active_version_id == DecisionRecord.strategy_version_id,
         )
         .order_by(DecisionRecord.created_at, DecisionRecord.id)
         .limit(1)
@@ -555,11 +558,13 @@ def materialize_execution_claim(decision_id: str) -> dict:
         decision = session.get(DecisionRecord, persisted_id)
         if decision is None:
             raise ValueError("decision does not exist")
-        # Reuse the service's advisory/account lock order; marks never hold DB locks.
-        account = execution._lock_account(decision, policy)
-        if account.state_version != snapshot.state_version:
-            raise ValueError("paper account changed during materialization")
-        return execution.materialize(persisted_id, principal=principal, account_nav=nav, prices=prices)
+        return execution.materialize(
+            persisted_id,
+            principal=principal,
+            account_nav=nav,
+            prices=prices,
+            expected_account_state_version=snapshot.state_version,
+        )
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.submit_decision_order", max_retries=0)
@@ -747,13 +752,13 @@ def _build_portfolio_strategy(record, repo):
     from poseidon.strategies.portfolio.registry import get_portfolio_strategy
     from poseidon.strategies.portfolio.schemas import RevenueBreakoutConfig
 
-    raw_cfg = dict(record.config or {})
-    strategy_name = raw_cfg.get("strategy")
+    portfolio_cfg = dict(record.config or {})
+    strategy_name = portfolio_cfg.get("strategy")
     if not strategy_name:
         raise ValueError("portfolio_strategy config must include 'strategy'")
 
-    raw_cfg.setdefault("market", record.market)
-    raw_cfg.setdefault("symbols", [record.symbol] if record.symbol else [])
+    portfolio_cfg.setdefault("market", record.market)
+    portfolio_cfg.setdefault("symbols", [record.symbol] if record.symbol else [])
 
     config_models = {
         "fundamental_selection": FundamentalSelectionConfig,
@@ -765,7 +770,7 @@ def _build_portfolio_strategy(record, repo):
         raise ValueError(f"Unknown portfolio strategy: {strategy_name!r}")
 
     strategy_cls = get_portfolio_strategy(strategy_name)
-    strategy_cfg = config_models[strategy_name](**raw_cfg)
+    strategy_cfg = config_models[strategy_name](**portfolio_cfg)
 
     try:
         return strategy_cls(strategy_cfg, repo=repo)
@@ -2093,6 +2098,7 @@ def evaluate_active_strategies(
     Returns:
         Dict with evaluation summary.
     """
+    from poseidon.models.strategy_version import StrategyVersion
     from poseidon.risk.pipeline import SignalPipeline
     from poseidon.strategies.voting_strategy import VotingStrategy
 
@@ -2104,9 +2110,10 @@ def evaluate_active_strategies(
 
     with db_session() as session:
         strategies = (
-            session.query(StrategyRecord)
+            session.query(StrategyRecord, StrategyVersion)
+            .join(StrategyVersion, StrategyVersion.id == StrategyRecord.active_version_id)
             .filter(
-                StrategyRecord.active == True,  # noqa: E712
+                StrategyRecord.active_version_id.is_not(None),
                 StrategyRecord.market == market,
                 StrategyRecord.interval == interval,
             )
@@ -2118,13 +2125,13 @@ def evaluate_active_strategies(
         total_signals = 0
         errors = []
 
-        for record in strategies:
+        for record, version in strategies:
             try:
                 if record.strategy_type == "rule":
-                    strategy = RuleStrategy(config=record.config, strategy_id=record.id)
+                    strategy = RuleStrategy(config=version.config_json, strategy_id=record.id)
                 elif record.strategy_type == "voting":
                     config = {
-                        **record.config,
+                        **version.config_json,
                         "symbol": record.symbol,
                         "market": record.market,
                         "interval": record.interval,

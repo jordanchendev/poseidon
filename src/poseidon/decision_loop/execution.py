@@ -238,9 +238,16 @@ class DecisionExecutionService:
         """Validate the ordinary cutover gate before a caller claims the decision."""
         from poseidon.broker.base import BrokerCapabilities
         from poseidon.decision_loop.decisions import DecisionService
+        from poseidon.decision_loop.releases import require_active_pointer
 
         principal.require_role("decision-worker")
         principal.require_account_scope(decision.account_scope)
+        require_active_pointer(
+            self.session,
+            decision,
+            lock=True,
+            error_type=ExecutionConflictError,
+        )
         capabilities = adapter.capabilities
         if not isinstance(capabilities, BrokerCapabilities) or not capabilities.supports_reconciliation:
             raise ExecutionConflictError("paper adapter lacks full reconciliation capability")
@@ -255,6 +262,12 @@ class DecisionExecutionService:
             .where(DecisionRecord.id == decision.id)
             .with_for_update()
             .execution_options(populate_existing=True)
+        )
+        require_active_pointer(
+            self.session,
+            decision,
+            lock=False,
+            error_type=ExecutionConflictError,
         )
         current_time = now if now is not None else datetime.now(UTC)
         DecisionService(self.session).validate_execution(decision.id, decision.revision, current_time)
@@ -493,7 +506,10 @@ class DecisionExecutionService:
         account_nav,
         prices,
         now=None,
+        expected_account_state_version=None,
     ):
+        from poseidon.decision_loop.releases import require_active_pointer
+
         principal.require_role("decision-worker")
         current_time = timestamp(now if now is not None else datetime.now(UTC), "now")
         nav = _finite_positive(account_nav, "account_nav")
@@ -502,11 +518,25 @@ class DecisionExecutionService:
         if decision is None:
             raise ExecutionConflictError("decision does not exist")
         principal.require_account_scope(decision.account_scope)
+        require_active_pointer(
+            self.session,
+            decision,
+            lock=True,
+            error_type=ExecutionConflictError,
+        )
         _, policy, intents = self._policy_and_intents(decision)
         reconciliation = policy.reconciliation
         account = self._lock_account(decision, policy)
+        if expected_account_state_version is not None and account.state_version != expected_account_state_version:
+            raise ValueError("paper account changed during materialization")
         decision = (
             self.session.query(DecisionRecord).filter_by(id=decision.id).with_for_update().populate_existing().one()
+        )
+        require_active_pointer(
+            self.session,
+            decision,
+            lock=False,
+            error_type=ExecutionConflictError,
         )
         _, locked_policy, locked_intents = self._policy_and_intents(decision)
         if locked_policy.reconciliation.account_generation != reconciliation.account_generation:
