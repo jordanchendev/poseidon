@@ -47,6 +47,19 @@ PredicateState = Literal["passed", "blocked", "unavailable", "inconclusive"]
 _ARMS = ("fundamental_only", "technical_only", "combined")
 _ROLES = ("incumbent", "candidate")
 _OUTSTANDING_ORDER_STATES = ("pending_submit", "reconciliation_required", "submitted", "partially_filled")
+_PASSED_REVIEW_OBJECTS = (
+    "cross_sectional_ic",
+    "time_series_ic",
+    "horizon_decay",
+    "slices",
+    "hac",
+    "gross",
+    "net",
+    "drawdown",
+    "turnover",
+    "capacity",
+    "cost_sensitivity",
+)
 
 
 @dataclass(frozen=True)
@@ -278,8 +291,11 @@ class ReleaseService:
             return _predicate("review_identity", "unavailable", "campaign review is unavailable", **evidence)
         if review.status != "passed" or review.result_json.get("status") != "passed":
             return _predicate("review_identity", "blocked", "campaign review did not pass", **evidence)
+        if review.result_json.get("paired_sample_digest") != review.input_identity_json.get("paired_sample_sha256"):
+            return _predicate("review_identity", "blocked", "review result paired sample changed", **evidence)
         coverage = review.result_json.get("coverage_matrix")
         hac = review.result_json.get("hac")
+        capacity = review.result_json.get("capacity")
         complete_coverage = (
             isinstance(coverage, dict)
             and set(coverage) == {f"{role}:{arm}" for role in _ROLES for arm in _ARMS}
@@ -297,10 +313,16 @@ class ReleaseService:
             and type(hac.get("sample_count")) is int
             and hac["sample_count"] >= policy.release_gate.minimum_mature_samples
         )
-        complete_outputs = all(
-            review.result_json.get(field) is not None
-            for field in ("cross_sectional_ic", "time_series_ic", "capacity")
-        ) and review.result_json.get("failed_gates") == []
+        complete_outputs = (
+            review.result_json.get("reason_code") is None
+            and all(
+                isinstance(review.result_json.get(field), dict) and review.result_json[field]
+                for field in _PASSED_REVIEW_OBJECTS
+            )
+            and capacity.get("status") == "available"
+            and capacity.get("value") is not None
+            and review.result_json.get("failed_gates") == []
+        )
         if not complete_coverage or not mature or not complete_outputs:
             return _predicate("review_identity", "inconclusive", "passed review lacks mature complete evidence", **evidence)
         return _predicate("review_identity", "passed", "passed review identity and evidence match", **evidence)
@@ -382,15 +404,20 @@ class ReleaseService:
             return _predicate("reconciliation", "blocked", "reconciliation is stale", **evidence)
         if not reconciliation.broker_state_watermark or not reconciliation.internal_state_watermark:
             return _predicate("reconciliation", "unavailable", "reconciliation watermarks are missing", **evidence)
-        newer = self.session.scalars(
+        latest = self.session.scalar(
             select(AccountReconciliation).where(
                 AccountReconciliation.account_scope == reconciliation.account_scope,
                 AccountReconciliation.account_generation == reconciliation.account_generation,
-                AccountReconciliation.as_of > reconciliation.as_of,
             )
-        ).all()
-        if newer:
-            evidence["newer_reconciliation_ids"] = [str(row.id) for row in newer]
+            .order_by(
+                AccountReconciliation.as_of.desc(),
+                AccountReconciliation.created_at.desc(),
+                AccountReconciliation.id.desc(),
+            )
+            .limit(1)
+        )
+        if latest is not None and latest.id != reconciliation.id:
+            evidence["newer_reconciliation_ids"] = [str(latest.id)]
             return _predicate("reconciliation", "blocked", "a newer reconciliation state exists", **evidence)
         evidence.update(
             broker_state_watermark=reconciliation.broker_state_watermark,
@@ -505,9 +532,10 @@ class ReleaseService:
         )
 
     @staticmethod
-    def _replay_event(event, request_sha256):
+    def _replay_event(event, request_sha256, principal):
         if event.request_sha256 != request_sha256:
             raise DecisionConflictError("idempotency key was used for a different request")
+        principal.require_account_scope(event.account_scope)
         if not isinstance(event.response_json, dict):
             raise DecisionConflictError("stored idempotency response is invalid")
         return json.loads(canonical_json(event.response_json))
@@ -642,11 +670,11 @@ class ReleaseService:
         )
         replay = self._idempotency_event(strategy_id, idempotency_key)
         if replay is not None:
-            return None, digest, expected_pointer, normalized_body, self._replay_event(replay, digest)
+            return None, digest, expected_pointer, normalized_body, self._replay_event(replay, digest, principal)
         strategy = self._lock_strategy(strategy_id)
         replay = self._idempotency_event(strategy_id, idempotency_key)
         if replay is not None:
-            return None, digest, expected_pointer, normalized_body, self._replay_event(replay, digest)
+            return None, digest, expected_pointer, normalized_body, self._replay_event(replay, digest, principal)
         self._compare_expected(strategy, expected_revision, expected_pointer)
         return strategy, digest, expected_pointer, normalized_body, None
 
@@ -932,14 +960,11 @@ class ReleaseService:
                 select(DecisionRecord).where(
                     DecisionRecord.strategy_version_id.in_(strategy_versions),
                     DecisionRecord.account_scope == policy.account_scope,
-                    DecisionRecord.status == "execution_claimed",
+                    DecisionRecord.status.in_(("approved", "execution_claimed")),
                 )
             ).all()
             orders = self.session.scalars(
-                select(OrderRecord)
-                .join(DecisionRecord, DecisionRecord.id == OrderRecord.decision_id)
-                .where(
-                    DecisionRecord.strategy_version_id.in_(strategy_versions),
+                select(OrderRecord).where(
                     OrderRecord.account_scope == policy.account_scope,
                     OrderRecord.account_generation == policy.reconciliation.account_generation,
                     OrderRecord.status.in_(_OUTSTANDING_ORDER_STATES),
@@ -958,9 +983,9 @@ class ReleaseService:
         work_predicate = _predicate(
             "rollback_outstanding_work",
             "passed" if work_clear else "blocked",
-            "no ordinary claimed intent or active order requires takeover"
+            "no ordinary approved or claimed intent or active order requires takeover"
             if work_clear
-            else "ordinary claimed intent or active order is outstanding",
+            else "ordinary approved or claimed intent or active order is outstanding",
             claimed_decision_ids=[str(row.id) for row in claimed],
             active_order_ids=[str(row.id) for row in orders],
         )
