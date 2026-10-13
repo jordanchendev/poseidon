@@ -5,10 +5,10 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from threading import Barrier
+from threading import Barrier, Event
 
 import pytest
-from sqlalchemy import create_engine, delete, select, text
+from sqlalchemy import create_engine, delete, event, select, text
 from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal
@@ -16,6 +16,7 @@ from poseidon.decision_loop.decisions import DecisionConflictError, DecisionServ
 from poseidon.decision_loop.evaluation import EvaluationService
 from poseidon.decision_loop.execution import ExecutionConflictError, internal_state_watermark
 from poseidon.decision_loop.manifest import ManifestService, content_sha256
+from poseidon.decision_loop.releases import ReleaseService, require_active_pointer
 from poseidon.decision_loop.transactions import materialize_order_intents
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.data_manifest import DataManifest
@@ -29,6 +30,7 @@ from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.paper_cash_movement import PaperCashMovement
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy import StrategyRecord
+from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 from tests.test_decision_service import (
     executable_intent,
@@ -246,6 +248,227 @@ def test_claim_fails_closed_after_pointer_is_cleared(claim_seed):
         decision = session.get(DecisionRecord, claim_seed.decision_ids[0])
         assert decision.status == "approved"
         assert decision.execution_key is None
+
+
+def _release_manager(claim_seed):
+    return AuthPrincipal(
+        "human:phase100-release-manager",
+        frozenset({"release_manager"}),
+        frozenset({claim_seed.account}),
+    )
+
+
+def _pause(session, claim_seed, *, key):
+    return ReleaseService(session).pause(
+        claim_seed.strategy_ids[0],
+        expected_revision=0,
+        expected_active_version_id=claim_seed.version_ids[0],
+        principal=_release_manager(claim_seed),
+        idempotency_key=key,
+        reason="prove ordinary execution pause barrier",
+    )
+
+
+def _delete_pause_event(session, strategy_id):
+    session.execute(text("ALTER TABLE strategy_release_events DISABLE TRIGGER trg_strategy_release_events_append_only"))
+    try:
+        session.execute(delete(StrategyReleaseEvent).where(StrategyReleaseEvent.strategy_id == strategy_id))
+    finally:
+        session.execute(
+            text("ALTER TABLE strategy_release_events ENABLE TRIGGER trg_strategy_release_events_append_only")
+        )
+
+
+def test_pause_wins_strategy_lock_before_claim_without_execution_side_effects(monkeypatch, claim_seed):
+    pause_locked = Event()
+    claim_started = Event()
+    claim_lock_attempted = Event()
+    release_pause = Event()
+    original_lock = ReleaseService._lock_strategy
+
+    def hold_pause_lock(service, strategy_id):
+        strategy = original_lock(service, strategy_id)
+        if service.session.info.get("phase100_pause_winner"):
+            pause_locked.set()
+            assert claim_started.wait(timeout=10)
+            assert release_pause.wait(timeout=10)
+        return strategy
+
+    def observe_claim_lock(connection, cursor, statement, parameters, context, executemany):
+        if connection.info.get("phase100_claim_waiter") and "FOR UPDATE" in statement:
+            claim_lock_attempted.set()
+
+    def pause():
+        with Session(ENGINE) as session, session.begin():
+            session.info["phase100_pause_winner"] = True
+            return _pause(session, claim_seed, key="pause-before-claim")
+
+    def claim():
+        assert pause_locked.wait(timeout=10)
+        with Session(ENGINE) as session, session.begin():
+            session.connection().info["phase100_claim_waiter"] = True
+            claim_started.set()
+            try:
+                DecisionService(session).claim_execution(
+                    claim_seed.decision_ids[0],
+                    2,
+                    principal=claim_seed.worker,
+                    now=CLAIM_TIME,
+                )
+            except DecisionConflictError as error:
+                return str(error)
+            finally:
+                session.connection().info.pop("phase100_claim_waiter", None)
+        raise AssertionError("claim unexpectedly crossed a committed pause")
+
+    monkeypatch.setattr(ReleaseService, "_lock_strategy", hold_pause_lock)
+    event.listen(ENGINE, "before_cursor_execute", observe_claim_lock)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pause_future = pool.submit(pause)
+            claim_future = pool.submit(claim)
+            assert pause_locked.wait(timeout=10)
+            assert claim_lock_attempted.wait(timeout=10)
+            assert claim_future.done() is False
+            release_pause.set()
+            response = pause_future.result(timeout=20)
+            conflict = claim_future.result(timeout=20)
+
+        assert response["event_type"] == "pause"
+        assert conflict == "decision active pointer changed"
+        with Session(ENGINE) as session:
+            decision = session.get(DecisionRecord, claim_seed.decision_ids[0])
+            strategy = session.get(StrategyRecord, claim_seed.strategy_ids[0])
+            assert (strategy.active_version_id, strategy.release_revision) == (None, 1)
+            assert (decision.status, decision.revision, decision.execution_key) == ("approved", 2, None)
+            assert (
+                session.query(DecisionEvent).filter_by(decision_id=decision.id, event_type="execution_claimed").count()
+                == 0
+            )
+            assert session.query(OrderRecord).filter_by(decision_id=decision.id).count() == 0
+            assert session.query(PositionLot).filter_by(account_scope=claim_seed.account).count() == 0
+    finally:
+        release_pause.set()
+        event.remove(ENGINE, "before_cursor_execute", observe_claim_lock)
+        with Session(ENGINE) as session, session.begin():
+            _delete_pause_event(session, claim_seed.strategy_ids[0])
+
+
+def test_materialization_wins_strategy_lock_then_pause_blocks_replay(monkeypatch, claim_seed):
+    with Session(ENGINE) as session, session.begin():
+        decision = session.get(DecisionRecord, claim_seed.decision_ids[0])
+        generation = session.get(StrategyVersion, decision.strategy_version_id).policy_json["reconciliation"][
+            "account_generation"
+        ]
+        DecisionService(session).claim_execution(decision.id, 2, principal=claim_seed.worker, now=CLAIM_TIME)
+        session.add(
+            PaperBrokerAccount(
+                account_scope=claim_seed.account,
+                account_generation=generation,
+                opening_cash=100_000.0,
+                currency="TWD",
+                created_at=CLAIM_TIME,
+                updated_at=CLAIM_TIME,
+            )
+        )
+        session.flush()
+        session.add(
+            AccountReconciliation(
+                account_scope=claim_seed.account,
+                account_generation=generation,
+                as_of=CLAIM_TIME,
+                broker_state_watermark="broker:0",
+                internal_state_watermark=internal_state_watermark(session, claim_seed.account, generation),
+                broker_snapshot_sha256="d" * 64,
+                broker_snapshot_json={},
+                internal_snapshot_json={},
+                difference_json={},
+                policy_sha256=decision.policy_sha256,
+                status="matched",
+            )
+        )
+
+    materialize_locked = Event()
+    pause_started = Event()
+    pause_lock_attempted = Event()
+    release_materialize = Event()
+
+    def hold_materialize_lock(session, decision, *, lock, error_type):
+        strategy = require_active_pointer(session, decision, lock=lock, error_type=error_type)
+        if lock and session.info.get("phase100_materialize_winner"):
+            materialize_locked.set()
+            assert pause_started.wait(timeout=10)
+            assert release_materialize.wait(timeout=10)
+        return strategy
+
+    def observe_pause_lock(connection, cursor, statement, parameters, context, executemany):
+        if connection.info.get("phase100_pause_waiter") and "FOR UPDATE" in statement:
+            pause_lock_attempted.set()
+
+    def materialize_session():
+        session = Session(ENGINE)
+        session.info["phase100_materialize_winner"] = True
+        return session
+
+    def materialize():
+        return materialize_order_intents(
+            materialize_session,
+            claim_seed.decision_ids[0],
+            principal=claim_seed.worker,
+            account_nav=100_000.0,
+            prices={("tw_stock", "2330", "spot"): 100.0},
+            now=CLAIM_TIME,
+        )
+
+    def pause():
+        assert materialize_locked.wait(timeout=10)
+        with Session(ENGINE) as session, session.begin():
+            session.connection().info["phase100_pause_waiter"] = True
+            pause_started.set()
+            try:
+                return _pause(session, claim_seed, key="pause-after-materialize")
+            finally:
+                session.connection().info.pop("phase100_pause_waiter", None)
+
+    monkeypatch.setattr("poseidon.decision_loop.releases.require_active_pointer", hold_materialize_lock)
+    event.listen(ENGINE, "before_cursor_execute", observe_pause_lock)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            materialize_future = pool.submit(materialize)
+            pause_future = pool.submit(pause)
+            assert materialize_locked.wait(timeout=10)
+            assert pause_lock_attempted.wait(timeout=10)
+            assert pause_future.done() is False
+            release_materialize.set()
+            materialized = materialize_future.result(timeout=20)
+            paused = pause_future.result(timeout=20)
+
+        assert materialized["status"] == "pending_submit"
+        assert paused["event_type"] == "pause"
+        with pytest.raises(ExecutionConflictError, match="active pointer"):
+            materialize()
+
+        with Session(ENGINE) as session:
+            strategy = session.get(StrategyRecord, claim_seed.strategy_ids[0])
+            orders = session.scalars(
+                select(OrderRecord).where(OrderRecord.decision_id == claim_seed.decision_ids[0])
+            ).all()
+            assert (strategy.active_version_id, strategy.release_revision) == (None, 1)
+            assert len(orders) == 1
+            assert orders[0].reservation_status == "reserved"
+            assert orders[0].reserved_quantity == 100.0
+            assert orders[0].reserved_cash_json == {"currency": "TWD", "amount": 10_000.0}
+            assert session.query(PositionLot).filter_by(account_scope=claim_seed.account).count() == 0
+    finally:
+        release_materialize.set()
+        event.remove(ENGINE, "before_cursor_execute", observe_pause_lock)
+        with Session(ENGINE) as session, session.begin():
+            session.execute(delete(OrderRecord).where(OrderRecord.decision_id == claim_seed.decision_ids[0]))
+            session.execute(
+                delete(AccountReconciliation).where(AccountReconciliation.account_scope == claim_seed.account)
+            )
+            session.execute(delete(PaperBrokerAccount).where(PaperBrokerAccount.account_scope == claim_seed.account))
+            _delete_pause_event(session, claim_seed.strategy_ids[0])
 
 
 def test_claim_next_skips_an_older_ineligible_approved_row(claim_seed):
