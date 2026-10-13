@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select, text
 
@@ -42,6 +42,7 @@ from poseidon.research.campaign import (
     _validate_complete_contract,
     build_review_input_identity,
 )
+from poseidon.strategies.dsl.schema import RuleEntry
 
 PredicateState = Literal["passed", "blocked", "unavailable", "inconclusive"]
 _ARMS = ("fundamental_only", "technical_only", "combined")
@@ -68,6 +69,57 @@ _PASSED_REVIEW_OBJECTS = (
 )
 
 
+class RuleExecutablePayload(BaseModel):
+    """Frozen payload accepted by the live rule strategy constructor."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    name: Annotated[str, Field(min_length=1)]
+    description: str = ""
+    rules: Annotated[list[RuleEntry], Field(min_length=1)]
+
+    @field_validator("name")
+    @classmethod
+    def require_trimmed_name(cls, value):
+        if value != value.strip():
+            raise ValueError("rule name must be non-empty trimmed text")
+        return value
+
+
+class VotingExecutablePayload(BaseModel):
+    """Frozen payload accepted by the live voting strategy constructor."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    name: Annotated[str, Field(min_length=1)] = "voting_strategy"
+    sub_signals: Annotated[list[dict[str, object]], Field(min_length=1)]
+    min_votes: Annotated[int, Field(strict=True, ge=1)] = 4
+    position_pct: Annotated[float, Field(strict=True, gt=0.0, le=1.0)] = 0.08
+    bear_sub_signals: list[dict[str, object]] = Field(default_factory=list)
+    bear_min_votes: Annotated[int, Field(strict=True, ge=1)] = 4
+    bear_position_pct: Annotated[float, Field(strict=True, gt=0.0, le=1.0)] = 0.06
+    cooldown_bars: Annotated[int, Field(strict=True, ge=0)] = 12
+    conviction_gap: Annotated[int, Field(strict=True, ge=0)] = 2
+    strategy_mode: Literal["bidirectional", "long_only", "regime_gated"] = "bidirectional"
+
+    @model_validator(mode="after")
+    def require_reachable_vote_thresholds(self):
+        if self.min_votes > len(self.sub_signals):
+            raise ValueError("min_votes cannot exceed sub_signals")
+        if self.bear_sub_signals and self.bear_min_votes > len(self.bear_sub_signals):
+            raise ValueError("bear_min_votes cannot exceed bear_sub_signals")
+        return self
+
+
+class DeferredExecutablePayload(BaseModel):
+    """Frozen payload for model/backtest-only strategies not run by this evaluator."""
+
+    model_config = ConfigDict(extra="allow", frozen=True, strict=True)
+
+
+ExecutablePayload = RuleExecutablePayload | VotingExecutablePayload | DeferredExecutablePayload
+
+
 class ExecutableStrategyConfig(BaseModel):
     """Immutable live execution identity plus strategy-specific payload."""
 
@@ -77,7 +129,24 @@ class ExecutableStrategyConfig(BaseModel):
     symbol: Annotated[str, Field(min_length=1)]
     market: Literal["tw_stock", "crypto_spot", "crypto_perp"]
     interval: Annotated[str, Field(min_length=1)]
-    payload: dict[str, object]
+    payload: ExecutablePayload
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_strategy_payload(cls, value):
+        if not isinstance(value, dict):
+            return value
+        payload_type = {
+            "rule": RuleExecutablePayload,
+            "voting": VotingExecutablePayload,
+            "liquidity_sweep": DeferredExecutablePayload,
+            "model": DeferredExecutablePayload,
+        }.get(value.get("strategy_type"))
+        if payload_type is None:
+            return value
+        normalized = dict(value)
+        normalized["payload"] = payload_type.model_validate(value.get("payload"))
+        return normalized
 
     @field_validator("symbol", "interval")
     @classmethod
@@ -85,6 +154,17 @@ class ExecutableStrategyConfig(BaseModel):
         if value != value.strip():
             raise ValueError("executable identity must be non-empty trimmed text")
         return value
+
+    def routing_matches(self, strategy) -> bool:
+        return self.symbol == strategy.symbol and self.market == strategy.market and self.interval == strategy.interval
+
+    def runtime_config(self) -> dict[str, object]:
+        return {
+            **self.payload.model_dump(mode="json"),
+            "symbol": self.symbol,
+            "market": self.market,
+            "interval": self.interval,
+        }
 
 
 @dataclass(frozen=True)
@@ -189,6 +269,13 @@ class ReleaseService:
             market=executable.market,
             interval=executable.interval,
         )
+        if not executable.routing_matches(strategy):
+            return _predicate(
+                "candidate_identity",
+                "blocked",
+                "candidate executable routing identity does not match strategy",
+                **evidence,
+            )
         return _predicate(
             "candidate_identity",
             "passed",
@@ -217,6 +304,19 @@ class ReleaseService:
         if strategy is None:
             return _predicate(
                 "policy_identity", "unavailable", "owning strategy market is unavailable", **evidence
+            ), policy
+        try:
+            executable = ExecutableStrategyConfig.model_validate(candidate.config_json)
+        except (PydanticValidationError, TypeError, ValueError):
+            return _predicate(
+                "policy_identity", "unavailable", "candidate executable config is invalid", **evidence
+            ), policy
+        if executable.market != policy.market:
+            return _predicate(
+                "policy_identity",
+                "blocked",
+                "executable market does not match frozen policy market",
+                **evidence,
             ), policy
         if policy.market != strategy.market:
             return _predicate(
@@ -272,6 +372,23 @@ class ReleaseService:
             incumbent.verify_content()
         except (TypeError, ValueError):
             return _predicate("campaign_identity", "blocked", "campaign incumbent content changed", **evidence)
+        try:
+            executable = ExecutableStrategyConfig.model_validate(candidate.config_json)
+        except (PydanticValidationError, TypeError, ValueError):
+            return _predicate("campaign_identity", "unavailable", "candidate executable config is invalid", **evidence)
+        universe = campaign.contract_json.get("universe")
+        if not isinstance(universe, list) or not any(
+            isinstance(member, dict)
+            and member.get("symbol") == executable.symbol
+            and member.get("market") == executable.market
+            for member in universe
+        ):
+            return _predicate(
+                "campaign_identity",
+                "blocked",
+                "candidate executable routing identity is outside campaign universe",
+                **evidence,
+            )
         return _predicate("campaign_identity", "passed", "campaign and version identities match", **evidence)
 
     @staticmethod
@@ -1050,16 +1167,27 @@ class ReleaseService:
             "content_sha256": target.content_sha256,
             "source_release_event_id": None if source is None else str(source.id),
         }
+        executable = None
         try:
             target.verify_content()
-            ExecutableStrategyConfig.model_validate(target.config_json)
-            valid_target = target.strategy_id == strategy.id and source is not None
+            executable = ExecutableStrategyConfig.model_validate(target.config_json)
+            valid_target = (
+                target.strategy_id == strategy.id and source is not None and executable.routing_matches(strategy)
+            )
         except (PydanticValidationError, TypeError, ValueError):
             valid_target = False
+        if executable is None:
+            target_reason = "rollback target executable config is invalid"
+        elif not executable.routing_matches(strategy):
+            target_reason = "rollback target executable routing identity does not match strategy"
+        elif source is None or target.strategy_id != strategy.id:
+            target_reason = "rollback target lacks prior valid release"
+        else:
+            target_reason = "prior released immutable target matches"
         target_predicate = _predicate(
             "rollback_target",
             "passed" if valid_target else "blocked",
-            "prior released immutable target matches" if valid_target else "rollback target lacks prior valid release",
+            target_reason,
             **target_evidence,
         )
 
@@ -1073,7 +1201,10 @@ class ReleaseService:
             )
         else:
             valid_policy = (
-                policy.mode == "human"
+                policy_predicate.state == "passed"
+                and executable is not None
+                and executable.market == policy.market
+                and policy.mode == "human"
                 and policy.release_gate.requires_human_release is True
                 and policy.protective_exit.allowed_without_approval is True
                 and policy.market == strategy.market

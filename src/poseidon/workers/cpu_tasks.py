@@ -2130,15 +2130,9 @@ def evaluate_active_strategies(
             try:
                 executable = ExecutableStrategyConfig.model_validate(version.config_json)
                 if executable.strategy_type == "rule":
-                    strategy = RuleStrategy(config=executable.payload, strategy_id=record.id)
+                    strategy = RuleStrategy(config=executable.runtime_config(), strategy_id=record.id)
                 elif executable.strategy_type == "voting":
-                    config = {
-                        **executable.payload,
-                        "symbol": executable.symbol,
-                        "market": executable.market,
-                        "interval": executable.interval,
-                    }
-                    strategy = VotingStrategy(config=config, strategy_id=record.id)
+                    strategy = VotingStrategy(config=executable.runtime_config(), strategy_id=record.id)
                 elif executable.strategy_type == "liquidity_sweep":
                     # supports_live = False -> deferred to backtest/research path only.
                     logger.debug(
