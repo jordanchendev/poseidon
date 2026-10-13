@@ -7,15 +7,19 @@ from datetime import UTC, datetime, timedelta
 from itertools import product
 
 import pytest
-from sqlalchemy import text
+from fastapi import HTTPException
+from sqlalchemy import func, text
 
 from poseidon.api.auth import AuthPrincipal
 from poseidon.backtest.experiment_tracker import ExperimentTracker
-from poseidon.decision_loop.decisions import DecisionPolicy
+from poseidon.decision_loop.decisions import DecisionConflictError, DecisionPolicy
 from poseidon.decision_loop.manifest import content_sha256
 from poseidon.decision_loop.releases import ReleaseGateResult, ReleasePredicate, ReleaseService
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.experiment_campaign import CampaignReview, HoldoutUse
+from poseidon.models.decision_record import DecisionRecord
+from poseidon.models.order import OrderRecord
+from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
@@ -60,31 +64,51 @@ def _seed_gate_graph(
     reconciliation_status="matched",
     mature_samples=10,
     policy_changes=None,
+    strategy_id=None,
+    incumbent_id=None,
 ):
     marker = uuid.uuid4().hex
-    policy = synthetic_policy(
-        reconciliation=synthetic_reconciliation_policy(),
-        **(policy_changes or {}),
-    )
-    DecisionPolicy.model_validate(policy)
-    strategy = StrategyRecord(
-        name=f"phase100-gate-{marker}",
-        strategy_type="technical",
-        config={},
-        symbol="2330",
-        market="tw_stock",
-        interval="1d",
-        active=False,
-    )
-    session.add(strategy)
-    session.flush()
-    versions = []
-    for number, role in enumerate(("incumbent", "candidate"), start=1):
+    if (strategy_id is None) != (incumbent_id is None):
+        raise ValueError("strategy_id and incumbent_id must be provided together")
+    if strategy_id is None:
+        policy = synthetic_policy(
+            reconciliation=synthetic_reconciliation_policy(),
+            **(policy_changes or {}),
+        )
+        DecisionPolicy.model_validate(policy)
+        strategy = StrategyRecord(
+            name=f"phase100-gate-{marker}",
+            strategy_type="technical",
+            config={},
+            symbol="2330",
+            market="tw_stock",
+            interval="1d",
+            active=False,
+        )
+        session.add(strategy)
+        session.flush()
+        incumbent = None
+        next_version = 1
+    else:
+        strategy = session.get(StrategyRecord, strategy_id)
+        incumbent = session.get(StrategyVersion, incumbent_id)
+        if strategy is None or incumbent is None or incumbent.strategy_id != strategy.id:
+            raise ValueError("follow-up campaign requires its strategy-owned incumbent")
+        policy = incumbent.policy_json
+        next_version = (
+            session.query(func.max(StrategyVersion.version_no))
+            .filter(StrategyVersion.strategy_id == strategy.id)
+            .scalar()
+            + 1
+        )
+    versions = [] if incumbent is None else [incumbent]
+    roles = ("incumbent", "candidate") if incumbent is None else ("candidate",)
+    for offset, role in enumerate(roles):
         config = {"marker": marker, "role": role}
         artifact = {"uri": f"fixture://phase100/{marker}/{role}"}
         version = StrategyVersion(
             strategy_id=strategy.id,
-            version_no=number,
+            version_no=next_version + offset,
             status="draft",
             config_json=config,
             policy_json=policy,
@@ -189,6 +213,26 @@ def _seed_gate_graph(
         review.id,
         reconciliation.id,
         holdout_identity,
+    )
+
+
+def _release(service, graph, *, key="release-key", reason="release fixture", **changes):
+    values = {
+        "expected_revision": 0,
+        "expected_active_version_id": None,
+        "principal": release_manager(),
+        "idempotency_key": key,
+        "reason": reason,
+        "now": NOW,
+    }
+    values.update(changes)
+    return service.release(
+        graph.strategy_id,
+        graph.candidate_id,
+        graph.campaign_id,
+        graph.review_id,
+        graph.reconciliation_id,
+        **values,
     )
 
 
@@ -476,3 +520,163 @@ def test_gate_keeps_legacy_unbound_review_readable_but_ineligible(phase99_sessio
         assert "legacy" in _by_code(result, "review_identity").reason
         assert _by_code(result, "holdout_ownership").state == "unavailable"
         session.rollback()
+
+
+@pytest.mark.postgresql
+def test_release_replays_exact_request_and_rejects_changed_digest(phase99_session_factory):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        service = ReleaseService(session)
+
+        response = _release(service, graph)
+        replay = _release(service, graph)
+
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        events = session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).all()
+        assert replay == response
+        assert (strategy.active_version_id, strategy.release_revision) == (graph.candidate_id, 1)
+        assert len(events) == 1
+        assert events[0].response_json == response
+        with pytest.raises(DecisionConflictError, match="different request"):
+            _release(service, graph, reason="changed payload")
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_four_transitions_preserve_pointer_semantics_and_rollback_creates_no_work(
+    phase99_session_factory,
+):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        service = ReleaseService(session)
+        _release(service, graph)
+        baseline = (
+            session.query(DecisionRecord).count(),
+            session.query(OrderRecord).count(),
+            session.query(PositionLot).count(),
+        )
+
+        rejected = service.reject(
+            graph.strategy_id,
+            graph.candidate_id,
+            expected_revision=1,
+            expected_active_version_id=graph.candidate_id,
+            principal=release_manager(),
+            idempotency_key="reject-key",
+            reason="candidate terminally reviewed",
+        )
+        paused = service.pause(
+            graph.strategy_id,
+            expected_revision=2,
+            expected_active_version_id=graph.candidate_id,
+            principal=release_manager(),
+            idempotency_key="pause-key",
+            reason="operator pause",
+        )
+        rolled_back = service.rollback(
+            graph.strategy_id,
+            graph.candidate_id,
+            graph.reconciliation_id,
+            expected_revision=3,
+            expected_active_version_id=None,
+            principal=release_manager(),
+            idempotency_key="rollback-key",
+            reason="restore prior released version",
+            now=NOW,
+        )
+
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        events = (
+            session.query(StrategyReleaseEvent)
+            .filter_by(strategy_id=graph.strategy_id)
+            .order_by(StrategyReleaseEvent.resulting_revision)
+            .all()
+        )
+        assert rejected["to_version_id"] == str(graph.candidate_id)
+        assert paused["to_version_id"] is None
+        assert rolled_back["to_version_id"] == str(graph.candidate_id)
+        assert (strategy.active_version_id, strategy.release_revision) == (graph.candidate_id, 4)
+        assert [(event.event_type, event.resulting_revision) for event in events] == [
+            ("release", 1),
+            ("reject", 2),
+            ("pause", 3),
+            ("rollback", 4),
+        ]
+        assert {predicate["code"] for predicate in events[-1].gate_json["predicates"]} == {
+            "rollback_target",
+            "rollback_policy",
+            "rollback_holdings",
+            "rollback_outstanding_work",
+            "rollback_reconciliation",
+            "release_authority",
+        }
+        assert (
+            session.query(DecisionRecord).count(),
+            session.query(OrderRecord).count(),
+            session.query(PositionLot).count(),
+        ) == baseline
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_transition_rejects_stale_pointer_revision_and_unauthorized_principal(phase99_session_factory):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        service = ReleaseService(session)
+        worker = AuthPrincipal(
+            "service:phase100-worker",
+            frozenset({"decision-worker"}),
+            frozenset({"paper:pilot"}),
+        )
+
+        with pytest.raises(HTTPException) as denied:
+            _release(service, graph, principal=worker)
+        assert denied.value.status_code == 403
+        with pytest.raises(DecisionConflictError, match="revision"):
+            _release(service, graph, expected_revision=1, key="stale-revision")
+        with pytest.raises(DecisionConflictError, match="pointer"):
+            _release(
+                service,
+                graph,
+                expected_active_version_id=uuid.uuid4(),
+                key="stale-pointer",
+            )
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).count() == 0
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_caller_rollback_removes_release_event_pointer_and_revision(phase99_session_factory):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        session.commit()
+
+        _release(ReleaseService(session), graph)
+        assert session.get(StrategyRecord, graph.strategy_id).release_revision == 1
+        session.rollback()
+
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        assert (strategy.active_version_id, strategy.release_revision) == (None, 0)
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).count() == 0
+
+
+@pytest.mark.postgresql
+def test_failure_after_event_flush_is_atomic(phase99_session_factory, monkeypatch):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        session.commit()
+        execute = session.execute
+
+        def fail_guard(statement, *args, **kwargs):
+            if "set_config('poseidon.release_event_id'" in str(statement):
+                raise RuntimeError("injected pointer guard failure")
+            return execute(statement, *args, **kwargs)
+
+        monkeypatch.setattr(session, "execute", fail_guard)
+        with pytest.raises(RuntimeError, match="injected pointer guard failure"):
+            _release(ReleaseService(session), graph)
+        session.rollback()
+
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        assert (strategy.active_version_id, strategy.release_revision) == (None, 0)
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).count() == 0
