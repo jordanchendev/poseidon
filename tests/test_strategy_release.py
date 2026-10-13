@@ -1,5 +1,6 @@
 """Fail-closed release gate contracts."""
 
+import copy
 import json
 import uuid
 from dataclasses import dataclass
@@ -16,8 +17,10 @@ from poseidon.decision_loop.decisions import DecisionConflictError, DecisionPoli
 from poseidon.decision_loop.manifest import content_sha256
 from poseidon.decision_loop.releases import ReleaseGateResult, ReleasePredicate, ReleaseService
 from poseidon.models.account_reconciliation import AccountReconciliation
+from poseidon.models.data_manifest import DataManifest
 from poseidon.models.experiment_campaign import CampaignReview, HoldoutUse
 from poseidon.models.decision_record import DecisionRecord
+from poseidon.models.evaluation_run import EvaluationRun
 from poseidon.models.order import OrderRecord
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy import StrategyRecord
@@ -170,15 +173,26 @@ def _seed_gate_graph(
         for role in ("incumbent", "candidate")
         for arm in ("fundamental_only", "technical_only", "combined")
     }
+    review_cells = {
+        cell: {"1_session": {"status": "available", "estimate": 0.1, "coverage": 1.0}}
+        for cell in coverage
+    }
     result = {
         "status": review_status,
         "reason_code": None if review_status == "passed" else f"fixture_{review_status}",
         "coverage_matrix": coverage,
         "paired_sample_digest": input_identity["paired_sample_sha256"],
-        "cross_sectional_ic": {},
-        "time_series_ic": {},
+        "cross_sectional_ic": review_cells,
+        "time_series_ic": review_cells,
+        "horizon_decay": {"1_session": {"effect": 0.01}},
+        "slices": {"time": {"all": {"effect": 0.01}}},
         "hac": {"status": "available", "sample_count": mature_samples},
+        "gross": {"incumbent_mean": 0.01, "candidate_mean": 0.02, "effect": 0.01},
+        "net": {"minimum_effect": 0.009},
+        "drawdown": {"maximum": 0.01},
+        "turnover": {"incumbent_mean": 0.1, "candidate_mean": 0.1},
         "capacity": {"status": "available", "value": "1000000"},
+        "cost_sensitivity": {"base": {"effect": 0.009}},
         "failed_gates": [],
     }
     review = CampaignReview(
@@ -470,6 +484,72 @@ def test_gate_blocks_newer_unresolved_reconciliation(phase99_session_factory):
 
 
 @pytest.mark.postgresql
+def test_gate_blocks_later_same_as_of_reconciliation(phase99_session_factory):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        current = session.get(AccountReconciliation, graph.reconciliation_id)
+        session.add(
+            AccountReconciliation(
+                account_scope=current.account_scope,
+                account_generation=current.account_generation,
+                as_of=current.as_of,
+                broker_state_watermark="broker:same-as-of-later",
+                internal_state_watermark="internal:same-as-of-later",
+                broker_snapshot_sha256="7" * 64,
+                broker_snapshot_json={},
+                internal_snapshot_json={},
+                difference_json={"unresolved": ["fixture"]},
+                policy_sha256=current.policy_sha256,
+                status="unresolved",
+                created_at=current.created_at + timedelta(microseconds=1),
+            )
+        )
+        session.flush()
+
+        result = _evaluate(session, graph, now=NOW + timedelta(seconds=1))
+
+        assert _by_code(result, "reconciliation").state == "blocked"
+        assert "newer" in _by_code(result, "reconciliation").reason
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_gate_blocks_review_result_for_a_different_paired_sample(phase99_session_factory):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        review = session.get(CampaignReview, graph.review_id)
+        review.result_json = copy.deepcopy(review.result_json)
+        review.result_json["paired_sample_digest"] = "0" * 64
+        review.result_sha256 = content_sha256(review.result_json)
+
+        with session.no_autoflush:
+            result = _evaluate(session, graph)
+
+        assert _by_code(result, "review_identity").state == "blocked"
+        session.rollback()
+
+
+@pytest.mark.postgresql
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("cross_sectional_ic", {}), ("turnover", None)),
+)
+def test_gate_blocks_incomplete_passed_review_output(phase99_session_factory, field, value):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        review = session.get(CampaignReview, graph.review_id)
+        review.result_json = copy.deepcopy(review.result_json)
+        review.result_json[field] = value
+        review.result_sha256 = content_sha256(review.result_json)
+
+        with session.no_autoflush:
+            result = _evaluate(session, graph)
+
+        assert _by_code(result, "review_identity").state == "inconclusive"
+        session.rollback()
+
+
+@pytest.mark.postgresql
 def test_gate_blocks_foreign_candidate_review_and_holdout_consumption(phase99_session_factory):
     with phase99_session_factory() as session:
         own = _seed_gate_graph(session)
@@ -539,6 +619,120 @@ def test_release_replays_exact_request_and_rejects_changed_digest(phase99_sessio
         assert events[0].response_json == response
         with pytest.raises(DecisionConflictError, match="different request"):
             _release(service, graph, reason="changed payload")
+        session.rollback()
+
+
+@pytest.mark.postgresql
+def test_release_replay_rechecks_retained_account_scope(phase99_session_factory):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        service = ReleaseService(session)
+        _release(service, graph)
+
+        with pytest.raises(HTTPException) as denied:
+            _release(service, graph, principal=release_manager("paper:revoked"))
+
+        assert denied.value.status_code == 403
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).count() == 1
+        session.rollback()
+
+
+def _seed_rollback_work(session, graph, work_kind):
+    if work_kind == "standalone_order":
+        row = OrderRecord(
+            strategy_name="phase100-legacy-order",
+            symbol="2330",
+            market="tw_stock",
+            action="buy",
+            order_type="market",
+            target_weight=0.1,
+            quantity=1.0,
+            side="long",
+            status="pending_submit",
+            broker_mode="paper",
+            order_origin="signal",
+            account_scope="paper:pilot",
+            account_generation="generation-1",
+        )
+        session.add(row)
+        session.flush()
+        return row.id
+
+    manifest = DataManifest(
+        content_sha256=content_sha256({"manifest": uuid.uuid4().hex}),
+        market="tw_stock",
+        interval="1d",
+        as_of=NOW,
+        capability_json={},
+        sources_json=[],
+        payload_json={},
+    )
+    session.add(manifest)
+    session.flush()
+    run = EvaluationRun(
+        strategy_version_id=graph.candidate_id,
+        manifest_id=manifest.id,
+        decision_as_of=NOW,
+        universe_json=[],
+        input_sha256=content_sha256({"run": uuid.uuid4().hex}),
+        status="succeeded",
+        coverage_json={},
+    )
+    session.add(run)
+    session.flush()
+    row = DecisionRecord(
+        evaluation_run_id=run.id,
+        strategy_version_id=graph.candidate_id,
+        account_scope="paper:pilot",
+        decision_as_of=NOW,
+        valid_until=NOW + timedelta(hours=1),
+        status="approved",
+        creation_sha256=content_sha256({"decision": uuid.uuid4().hex}),
+        policy_sha256=session.get(StrategyVersion, graph.candidate_id).content_sha256,
+        original_json={"order_intents": [{"symbol": "2330"}]},
+        final_json={"order_intents": [{"symbol": "2330"}]},
+        portfolio_snapshot_json={},
+        risk_snapshot_json={},
+    )
+    session.add(row)
+    session.flush()
+    return row.id
+
+
+@pytest.mark.postgresql
+@pytest.mark.parametrize("work_kind", ("approved_decision", "standalone_order"))
+def test_rollback_blocks_outstanding_ordinary_work(phase99_session_factory, work_kind):
+    with phase99_session_factory() as session:
+        graph = _seed_gate_graph(session)
+        service = ReleaseService(session)
+        _release(service, graph)
+        service.pause(
+            graph.strategy_id,
+            expected_revision=1,
+            expected_active_version_id=graph.candidate_id,
+            principal=release_manager(),
+            idempotency_key="pause-before-blocked-rollback",
+            reason="pause before rollback",
+        )
+        work_id = _seed_rollback_work(session, graph, work_kind)
+
+        with pytest.raises(DecisionConflictError, match="rollback_outstanding_work"):
+            service.rollback(
+                graph.strategy_id,
+                graph.candidate_id,
+                graph.reconciliation_id,
+                expected_revision=2,
+                expected_active_version_id=None,
+                principal=release_manager(),
+                idempotency_key=f"blocked-rollback-{work_kind}",
+                reason="must not strand ordinary work",
+                now=NOW,
+            )
+
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+        assert (strategy.active_version_id, strategy.release_revision) == (None, 2)
+        assert session.get(DecisionRecord if work_kind == "approved_decision" else OrderRecord, work_id) is not None
+        assert session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).count() == 2
         session.rollback()
 
 
