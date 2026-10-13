@@ -403,7 +403,8 @@ class Phase100DshBoundaryTests(unittest.TestCase):
                     "from poseidon.api import decisions as decision_api\n"
                     "APPROVE = decision_api.approve_decision\n"
                     "def _promote():\n    return APPROVE(None)\n"
-                    "def autoresearch_run():\n    return _promote()\n"
+                    "PROMOTE = _promote\n"
+                    "def autoresearch_run():\n    return PROMOTE()\n"
                 ),
                 "docker-compose.yml": "services:\n  dsh:\n    profiles: [dsh]\n",
                 "pyproject.toml": 'dependencies = ["deepseek_harness"]\n',
