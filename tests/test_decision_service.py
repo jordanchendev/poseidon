@@ -25,9 +25,11 @@ from poseidon.models.base import Base
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
+from poseidon.models.fill_allocation import FillAllocation
 from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
 from poseidon.models.outcome import OutcomeRecord
+from poseidon.models.position_lot import PositionLot
 from poseidon.models.signal import SignalRecord
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 from poseidon.orders.schemas import Fill, Order
@@ -1066,14 +1068,60 @@ def test_trace_execution_stage_reports_real_filled_order(db):
     )
     db.add(fill)
     db.flush()
+    lot = PositionLot(
+        id=uuid.uuid4(),
+        account_scope="paper:pilot",
+        account_generation="trace-generation",
+        market="tw_stock",
+        symbol="2330",
+        instrument="spot",
+        side="long",
+        opening_fill_id=fill.id,
+        opening_decision_id=decision.id,
+        original_quantity=1.0,
+        open_quantity=0.5,
+        reserved_close_quantity=0.0,
+        cost_basis_json={"price": 100.0},
+        opened_at=datetime(2026, 9, 26, 12, 45, tzinfo=UTC),
+        created_at=datetime(2026, 9, 26, 12, 45, tzinfo=UTC),
+        updated_at=datetime(2026, 9, 26, 12, 45, tzinfo=UTC),
+    )
+    db.add(lot)
+    db.flush()
+    allocation = FillAllocation(
+        id=uuid.uuid4(),
+        closing_fill_id=fill.id,
+        position_lot_id=lot.id,
+        closing_decision_id=decision.id,
+        quantity=0.5,
+        realized_cost_json={"cost": 50.0},
+        created_at=datetime(2026, 9, 26, 12, 46, tzinfo=UTC),
+    )
+    db.add(allocation)
+    db.flush()
 
-    execution = DecisionService(db).trace(decision.id, principal=manager())["stages"][5]
+    execution = TraceService(db).by_decision(decision.id, principal=manager()).stages[5]
 
-    assert execution["state"] == "Filled"
-    assert [row["label"] for row in execution["rows"]] == ["Order", "Fill"]
-    assert execution["rows"][1]["identities"] == {
+    assert execution.state == "Filled"
+    assert [row.label for row in execution.rows] == ["Order", "Fill", "Position lot", "Fill allocation"]
+    assert execution.rows[1].identities == {
         "fill_id": str(fill.id),
         "order_id": str(order.id),
+    }
+    assert execution.rows[2].timestamp == lot.opened_at
+    assert execution.rows[2].identities == {
+        "position_lot_id": str(lot.id),
+        "opening_fill_id": str(fill.id),
+        "opening_decision_id": str(decision.id),
+        "cost_basis_sha256": content_sha256(lot.cost_basis_json),
+    }
+    assert execution.rows[3].timestamp == allocation.created_at
+    assert execution.rows[3].identities == {
+        "fill_allocation_id": str(allocation.id),
+        "closing_fill_id": str(fill.id),
+        "position_lot_id": str(lot.id),
+        "closing_decision_id": str(decision.id),
+        "realized_cost_sha256": content_sha256(allocation.realized_cost_json),
     }
 
 
