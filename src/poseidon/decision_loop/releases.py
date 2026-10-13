@@ -616,6 +616,32 @@ class ReleaseService:
         )
 
     @staticmethod
+    def _account_identity(policy):
+        if policy.reconciliation is None:
+            return None
+        return policy.account_scope, policy.reconciliation.account_generation
+
+    def _current_or_paused_authority_version(self, strategy):
+        if strategy.active_version_id is not None:
+            return self.session.get(StrategyVersion, strategy.active_version_id)
+        event = self.session.scalar(
+            select(StrategyReleaseEvent)
+            .where(
+                StrategyReleaseEvent.strategy_id == strategy.id,
+                (
+                    StrategyReleaseEvent.from_version_id.is_not(None)
+                    | StrategyReleaseEvent.to_version_id.is_not(None)
+                ),
+            )
+            .order_by(StrategyReleaseEvent.resulting_revision.desc())
+            .limit(1)
+        )
+        if event is None:
+            return None
+        version_id = event.to_version_id if event.to_version_id is not None else event.from_version_id
+        return self.session.get(StrategyVersion, version_id)
+
+    @staticmethod
     def _compare_expected(strategy, expected_revision, expected_pointer):
         if strategy.release_revision != expected_revision:
             raise DecisionConflictError("strategy release revision changed")
@@ -924,7 +950,7 @@ class ReleaseService:
             reason=reason,
         )
 
-    def _rollback_gate(self, strategy, target, reconciliation, principal, now):
+    def _rollback_gate(self, strategy, target, reconciliation, source_policy, principal, now):
         source = self.session.scalar(
             select(StrategyReleaseEvent)
             .where(
@@ -966,16 +992,23 @@ class ReleaseService:
                 and policy.release_gate.requires_human_release is True
                 and policy.protective_exit.allowed_without_approval is True
                 and policy.market == strategy.market
+                and self._account_identity(policy) == self._account_identity(source_policy)
             )
             rollback_policy = _predicate(
                 "rollback_policy",
                 "passed" if valid_policy else "blocked",
-                "frozen account and protective-exit policy match"
+                "source and target account identity plus protective-exit policy match"
                 if valid_policy
-                else "frozen rollback account or protective-exit policy is unsafe",
+                else "source and target account identity or protective-exit policy is unsafe",
                 strategy_version_id=str(target.id),
                 account_scope=policy.account_scope,
                 account_generation=policy.reconciliation.account_generation,
+                source_account_scope=source_policy.account_scope,
+                source_account_generation=(
+                    None
+                    if source_policy.reconciliation is None
+                    else source_policy.reconciliation.account_generation
+                ),
                 market=policy.market,
                 protective_exit=policy.protective_exit.allowed_without_approval,
                 policy_state=policy_predicate.state,
@@ -1112,9 +1145,19 @@ class ReleaseService:
         if target is None:
             raise DecisionConflictError("rollback target does not exist")
         target_policy = self._policy_for_version(target, strategy, principal)
-        self._lock_reconciliation_authority(target_policy)
+        source_version = self._current_or_paused_authority_version(strategy)
+        source_policy = self._policy_for_version(source_version, strategy, principal)
+        if self._account_identity(target_policy) == self._account_identity(source_policy):
+            self._lock_reconciliation_authority(target_policy)
         reconciliation = self.session.get(AccountReconciliation, reconciliation_id)
-        gate, source, policy = self._rollback_gate(strategy, target, reconciliation, principal, now)
+        gate, source, policy = self._rollback_gate(
+            strategy,
+            target,
+            reconciliation,
+            source_policy,
+            principal,
+            now,
+        )
         self._require_allowed(gate, "rollback")
         principal.require_account_scope(policy.account_scope)
         return self._append_transition(
