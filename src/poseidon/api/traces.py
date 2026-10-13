@@ -228,8 +228,12 @@ class TraceService:
             for key in ("events", "orders", "fills", "lots", "allocations", "reconciliations"):
                 unique = {row["id"]: row for trace in traces for row in trace[key]}
                 raw[key] = [unique[key] for key in sorted(unique)]
-            signals = {row["identities"]["signal_id"]: row for trace in traces for row in trace["signals"]}
-            raw["signals"] = [signals[key] for key in sorted(signals)]
+            raw["signals"] = load_trace_signals(
+                self.session,
+                account_scope=policy.account_scope,
+                version=version,
+                snapshots=[snapshot],
+            )
             raw.update(
                 _evidence(
                     self.session,

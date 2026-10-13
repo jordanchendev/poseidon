@@ -56,6 +56,12 @@ from poseidon.signals.schemas import SignalTraceMetadata
 ACTION_VALUES = frozenset({"watch", "hold", "enter", "add", "reduce", "exit", "reject"})
 EXECUTABLE_ACTIONS = frozenset({"enter", "add", "reduce", "exit"})
 LIVE_STATUSES = frozenset({"pending_approval", "approved"})
+BLOCKED_DECISION_STATUSES = frozenset({"risk_blocked", "rejected", "expired", "superseded"})
+PROVISIONAL_DECISION_STATUSES = frozenset({"pending_approval", "execution_claimed"})
+BLOCKED_ORDER_STATUSES = frozenset({"rejected", "cancelled"})
+PROVISIONAL_ORDER_STATUSES = frozenset(
+    {"pending", "pending_submit", "submitted", "partially_filled", "reconciliation_required"}
+)
 SYSTEM_ACTOR = "system:decision-service"
 CLAIM_SCAN_LIMIT = 100
 PositiveStrictInt = Annotated[int, Field(strict=True, gt=0)]
@@ -83,6 +89,16 @@ def _trace_row(label, state, *, timestamp_value=None, identities=None, values=No
         "identities": identities or {},
         "values": values or {},
     }
+
+
+def _order_trace_state(status):
+    if status == "filled":
+        return "Filled"
+    if status in BLOCKED_ORDER_STATUSES:
+        return "Blocked"
+    if status in PROVISIONAL_ORDER_STATUSES:
+        return "Provisional"
+    return "Unavailable"
 
 
 def project_trace_signal(signal, metadata=None):
@@ -414,10 +430,10 @@ def build_trace_stages(trace):
     relevant_evaluations = [row for row in evaluations if not relevant_ids or row["id"] in relevant_ids]
     no_trade_evaluations = [row for row in relevant_evaluations if row["status"] == "no_trade"]
     no_trade = bool(no_trade_evaluations)
-    if signals:
-        signal_state, signal_reason = "Available", "Stored signal carries exact trace identity"
-    elif no_trade:
+    if no_trade:
         signal_state, signal_reason = "No trade", "Evaluation completed without an executable trade"
+    elif signals:
+        signal_state, signal_reason = "Available", "Stored signal carries exact trace identity"
     elif not decisions and relevant_evaluations:
         signal_state, signal_reason = "Unavailable", "No stored signal is linked to the evaluated evidence"
     else:
@@ -445,12 +461,12 @@ def build_trace_stages(trace):
             if no_trade
             else "No decision is linked to the evaluated evidence"
         )
-    elif any(row["status"] == "pending_approval" for row in decisions):
-        decision_state = "Provisional"
-        decision_reason = "Decision approval is pending"
-    elif all(row["status"] in {"rejected", "expired", "superseded"} for row in decisions):
+    elif any(row["status"] in BLOCKED_DECISION_STATUSES for row in decisions):
         decision_state = "Blocked"
         decision_reason = "Decision terminal state prevents execution"
+    elif any(row["status"] in PROVISIONAL_DECISION_STATUSES for row in decisions):
+        decision_state = "Provisional"
+        decision_reason = "Decision execution is not yet materialized"
     else:
         decision_state = "Available"
         decision_reason = "Decisions and ordered events are available"
@@ -458,8 +474,19 @@ def build_trace_stages(trace):
         row for row in decisions if row.get("final_json", {}).get("final_action") in EXECUTABLE_ACTIONS
     ]
     if trace["orders"]:
-        execution_state = "Filled" if trace["fills"] else "Available"
-        execution_reason = "Orders, fills, and reconciliation remain separate"
+        order_states = [_order_trace_state(row["status"]) for row in trace["orders"]]
+        if "Blocked" in order_states:
+            execution_state = "Blocked"
+            execution_reason = "At least one stored order is rejected or cancelled"
+        elif order_states and all(state == "Filled" for state in order_states):
+            execution_state = "Filled"
+            execution_reason = "All stored orders are terminal-filled"
+        elif "Provisional" in order_states:
+            execution_state = "Provisional"
+            execution_reason = "Stored order execution or reconciliation is incomplete"
+        else:
+            execution_state = "Unavailable"
+            execution_reason = "Stored order status is not recognized"
     elif not decisions:
         execution_state = "Not required" if no_trade else "Unavailable"
         execution_reason = (
@@ -468,12 +495,12 @@ def build_trace_stages(trace):
     elif not executable_decisions:
         execution_state = "Not required"
         execution_reason = "The final decision action is not executable"
-    elif any(row["status"] == "pending_approval" for row in executable_decisions):
-        execution_state = "Provisional"
-        execution_reason = "Executable decision is awaiting approval"
-    elif any(row["status"] in {"rejected", "expired", "superseded"} for row in executable_decisions):
+    elif any(row["status"] in BLOCKED_DECISION_STATUSES for row in executable_decisions):
         execution_state = "Blocked"
         execution_reason = "Executable decision cannot proceed"
+    elif any(row["status"] in PROVISIONAL_DECISION_STATUSES for row in executable_decisions):
+        execution_state = "Provisional"
+        execution_reason = "Executable decision is awaiting approval or materialization"
     else:
         execution_state = "Unavailable"
         execution_reason = "Approved executable decision has no stored order"
@@ -549,7 +576,7 @@ def build_trace_stages(trace):
             "identities": (
                 {} if len(no_trade_evaluations) != 1 else {"evaluation_snapshot_id": no_trade_evaluations[0]["id"]}
             ),
-            "rows": signals if signals else no_trade_rows,
+            "rows": [*signals, *no_trade_rows],
             "raw_payload": None,
         },
         {
@@ -634,7 +661,7 @@ def build_trace_stages(trace):
                 *[
                     _trace_row(
                         "Order",
-                        "Filled" if row["status"] == "filled" else "Available",
+                        _order_trace_state(row["status"]),
                         identities={"order_id": row["id"]},
                         values={key: value for key, value in row.items() if key != "id"},
                     )
