@@ -6,6 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from poseidon.api.auth import AuthPrincipal, verify_api_key
 from poseidon.api.capabilities import router as capabilities_router
 from poseidon.capabilities.registry import ComponentCapability
 
@@ -81,6 +82,16 @@ def mock_capabilities():
         yield
 
 
+@pytest.fixture(autouse=True)
+def authenticated_legacy_key():
+    """The endpoint requires the legacy API key; authenticate this standalone app."""
+    _test_app.dependency_overrides[verify_api_key] = lambda: AuthPrincipal("legacy-api-key", frozenset(), frozenset())
+    try:
+        yield
+    finally:
+        _test_app.dependency_overrides.pop(verify_api_key, None)
+
+
 # --------------- Tests ---------------
 
 
@@ -146,3 +157,9 @@ class TestCapabilitiesEndpoint:
         hmm = next(c for c in data["components"] if c["name"] == "hmm_regime")
         assert hmm["bias_risk"] == ["lookahead_normalization"]
         assert hmm["stateful"] is True
+
+
+def test_capabilities_requires_api_key():
+    _test_app.dependency_overrides.pop(verify_api_key, None)
+    resp = client.get("/api/v1/capabilities")
+    assert resp.status_code == 401
