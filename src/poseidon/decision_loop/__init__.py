@@ -2,12 +2,15 @@
 
 from poseidon.decision_loop.execution import DecisionExecutionService, ExecutionConflictError
 from poseidon.decision_loop.outcomes import OutcomeService, label_mature_outcomes
+from poseidon.decision_loop.producer import ProducerService, build_run_inputs
 from poseidon.decision_loop.transactions import materialize_order_intents
 
 __all__ = [
     "DecisionExecutionService",
     "ExecutionConflictError",
     "OutcomeService",
+    "ProducerService",
+    "build_run_inputs",
     "label_mature_outcomes",
     "materialize_order_intents",
 ]

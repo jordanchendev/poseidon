@@ -313,6 +313,7 @@ def cutover_account(tmp_path, monkeypatch):
         _env_file=None,
         decision_loop_execution_mode="decision",
         decision_loop_execution_enabled=True,
+        decision_loop_worker_principal_id="service:decision-worker",
         decision_loop_approved_account_scope="paper:pilot",
         decision_loop_approved_market="tw_stock",
         decision_loop_approved_account_generation="generation-1",

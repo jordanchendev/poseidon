@@ -740,6 +740,190 @@ def recover_decision_execution() -> dict:
     return {"enqueued": len(dispatches)}
 
 
+# ---------------------------------------------------------------------------
+# Decision-loop producers: every task is a no-op unless the configured
+# execution mode is shadow or decision. The legacy signal path is untouched.
+# ---------------------------------------------------------------------------
+
+LOOP_PRODUCING_MODES = frozenset({"shadow", "decision"})
+LOOP_OHLCV_LOOKBACK_BARS = 400
+LOOP_BAR_FIELDS = ("open", "high", "low", "close", "volume")
+
+
+def _loop_mode_skip() -> dict | None:
+    mode = settings.decision_loop_execution_mode
+    return None if mode in LOOP_PRODUCING_MODES else {"skipped": mode}
+
+
+def _loop_market_skip(market: str) -> dict | None:
+    if not settings.decision_loop_approved_account_scope or settings.decision_loop_approved_market != market:
+        return {"skipped": "market_not_approved"}
+    return None
+
+
+def _loop_as_of(value: str | None) -> str:
+    from poseidon.decision_loop.manifest import iso_time
+
+    if value is None:
+        value = datetime.now(UTC).replace(second=0, microsecond=0)
+    return iso_time(value, "as_of")
+
+
+def _decision_worker_principal():
+    """Resolve the loop actor only from configured principals; never from task payloads."""
+    from poseidon.api.auth import _configured_principals
+    from poseidon.decision_loop.producer import resolve_worker_principal
+
+    principal = resolve_worker_principal(settings.decision_loop_worker_principal_id, _configured_principals().values())
+    principal.require_account_scope(settings.decision_loop_approved_account_scope)
+    return principal
+
+
+def _frozen_ohlcv_evidence(market: str, interval: str, symbol: str, as_of: str) -> dict | None:
+    from urllib.parse import urlencode
+
+    from poseidon.data.remote_repository import RemoteDataRepository
+    from poseidon.decision_loop.manifest import content_sha256, iso_time, timestamp
+    from poseidon.decision_loop.producer import interval_delta
+
+    cutoff = timestamp(as_of, "as_of")
+    start = cutoff - interval_delta(interval) * LOOP_OHLCV_LOOKBACK_BARS
+    params = {
+        "symbol": symbol,
+        "market": market,
+        "interval": interval,
+        "start": start.isoformat(),
+        "end": cutoff.isoformat(),
+    }
+    frame = RemoteDataRepository.from_settings().read_ohlcv(symbol, market, interval, start, cutoff)
+    bars = []
+    for index, row in frame.iterrows():
+        values = [row.get(field) for field in LOOP_BAR_FIELDS]
+        if any(value is None or not math.isfinite(float(value)) for value in values):
+            continue
+        bar_time = pd.Timestamp(index)
+        bar_time = bar_time.tz_localize("UTC") if bar_time.tzinfo is None else bar_time.tz_convert("UTC")
+        if bar_time.to_pydatetime() > cutoff:
+            continue
+        bars.append(
+            {
+                "time": iso_time(bar_time.to_pydatetime(), "bar.time"),
+                **{field: float(value) for field, value in zip(LOOP_BAR_FIELDS, values, strict=True)},
+            }
+        )
+    if not bars:
+        return None
+    payload = {"symbol": symbol, "market": market, "interval": interval, "bars": bars}
+    return {
+        "id": f"ohlcv:{symbol}",
+        "kind": "ohlcv",
+        "source_uri": f"{settings.thalassa_base_url.rstrip('/')}/api/v1/ohlcv?{urlencode(params)}",
+        "event_time": bars[-1]["time"],
+        "available_at": bars[-1]["time"],
+        "recorded_at": as_of,
+        "payload": payload,
+        "content_sha256": content_sha256(payload),
+    }
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.freeze_market_manifest", max_retries=0)
+def freeze_market_manifest(market: str, interval: str, as_of: str | None = None) -> dict:
+    """Freeze one OHLCV manifest for the approved universe of active decision-loop strategies."""
+    skipped = _loop_mode_skip() or _loop_market_skip(market)
+    if skipped:
+        return skipped
+    from pydantic import ValidationError as PydanticValidationError
+
+    from poseidon.decision_loop.decisions import DecisionPolicy
+    from poseidon.decision_loop.manifest import ManifestService, canonical_json
+    from poseidon.decision_loop.producer import ProducerService, executable_config
+
+    as_of = _loop_as_of(as_of)
+    scope = settings.decision_loop_approved_account_scope
+    with SessionLocal() as session:
+        versions = ProducerService(session).active_versions(market, interval, scope)
+        try:
+            policies = [DecisionPolicy.model_validate(version.policy_json) for version in versions]
+        except PydanticValidationError as error:
+            raise ValueError("active decision-loop strategy has an invalid decision policy") from error
+        symbols = sorted({executable_config(version).symbol for version in versions})
+    if not versions:
+        return {"skipped": "no_active_strategies"}
+    required = {kind: rule.model_dump() for kind, rule in policies[0].required_data.items()}
+    if any(
+        (policy.universe_id, canonical_json({kind: rule.model_dump() for kind, rule in policy.required_data.items()}))
+        != (policies[0].universe_id, canonical_json(required))
+        for policy in policies
+    ):
+        raise ValueError("active decision policies disagree on universe_id or required_data")
+    unsupported = sorted(set(required) - {"ohlcv"})
+    if unsupported:
+        raise ValueError(f"manifest freeze supplies only ohlcv evidence; policy requires {unsupported}")
+    evidence = [
+        item for symbol in symbols if (item := _frozen_ohlcv_evidence(market, interval, symbol, as_of)) is not None
+    ]
+    request = {
+        "market": market,
+        "interval": interval,
+        "as_of": as_of,
+        "account_scope": scope,
+        "universe_id": policies[0].universe_id,
+        "capability_json": {"ohlcv": True},
+        "required_data": required,
+        "sources_json": [{"source": "thalassa", "base_url": settings.thalassa_base_url}],
+        "evidence": evidence,
+    }
+    with SessionLocal() as session, session.begin():
+        manifest = ManifestService(session).freeze(request)
+        return {"manifest_id": str(manifest.id), "content_sha256": manifest.content_sha256, "as_of": as_of}
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.produce_decision_run", max_retries=0)
+def produce_decision_run(strategy_version_id: str, manifest_id: str, decision_as_of: str | None = None) -> dict:
+    """Turn one frozen manifest plus one strategy version into one immutable run (and decision)."""
+    skipped = _loop_mode_skip()
+    if skipped:
+        return skipped
+    version_id = uuid.UUID(strategy_version_id)
+    persisted_manifest_id = uuid.UUID(manifest_id)
+    from poseidon.decision_loop.producer import ProducerService
+
+    principal = _decision_worker_principal()
+    with SessionLocal() as session, session.begin():
+        return ProducerService(session).produce(
+            version_id,
+            persisted_manifest_id,
+            decision_as_of=decision_as_of,
+            principal=principal,
+            mode=settings.decision_loop_execution_mode,
+        )
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.produce_decision_runs_for_market", max_retries=0)
+def produce_decision_runs_for_market(market: str, interval: str, as_of: str | None = None) -> dict:
+    """Beat entry: freeze once, then enqueue one UUID-only producer task per active version."""
+    skipped = _loop_mode_skip() or _loop_market_skip(market)
+    if skipped:
+        return skipped
+    from poseidon.decision_loop.producer import ProducerService
+
+    _decision_worker_principal()
+    as_of = _loop_as_of(as_of)
+    frozen = freeze_market_manifest.run(market, interval, as_of)
+    if "manifest_id" not in frozen:
+        return frozen
+    with SessionLocal() as session:
+        version_ids = [
+            str(version.id)
+            for version in ProducerService(session).active_versions(
+                market, interval, settings.decision_loop_approved_account_scope
+            )
+        ]
+    for version_id in version_ids:
+        produce_decision_run.delay(version_id, frozen["manifest_id"], as_of)
+    return {"manifest_id": frozen["manifest_id"], "as_of": as_of, "enqueued": len(version_ids)}
+
+
 def _build_portfolio_strategy(record, repo):
     """Build a PortfolioStrategy instance from StrategyRecord config."""
     from poseidon.strategies.portfolio.crypto_trend import CryptoTrendConfig

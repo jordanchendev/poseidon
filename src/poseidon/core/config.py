@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     decision_loop_approved_market: Literal["", "tw_stock", "crypto_perp"] = ""
     decision_loop_approved_account_generation: str = ""
     decision_loop_legacy_protective_scopes: tuple[str, ...] = ()
+    # actor_id of the configured api_principals_json entry the loop producers act as.
+    decision_loop_worker_principal_id: str = ""
 
     @model_validator(mode="after")
     def validate_execution_gate(self):
@@ -58,6 +60,11 @@ class Settings(BaseSettings):
             raise ValueError("decision mode requires the execution gate")
         if self.decision_loop_execution_enabled and not all(identity):
             raise ValueError("enabled execution requires approved identity")
+        worker = self.decision_loop_worker_principal_id
+        if worker and (worker != worker.strip() or "*" in worker):
+            raise ValueError("decision worker principal must be exact trimmed text")
+        if self.decision_loop_execution_mode in {"shadow", "decision"} and not worker:
+            raise ValueError("shadow/decision modes require decision_loop_worker_principal_id")
         return self
 
     # Cache settings
