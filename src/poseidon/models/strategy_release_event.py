@@ -25,12 +25,8 @@ class StrategyReleaseEvent(Base):
     __tablename__ = "strategy_release_events"
     __table_args__ = (
         UniqueConstraint("strategy_id", "id", name="uq_strategy_release_events_strategy_id_id"),
-        UniqueConstraint(
-            "strategy_id", "idempotency_key", name="uq_strategy_release_events_idempotency"
-        ),
-        UniqueConstraint(
-            "strategy_id", "resulting_revision", name="uq_strategy_release_events_revision"
-        ),
+        UniqueConstraint("strategy_id", "idempotency_key", name="uq_strategy_release_events_idempotency"),
+        UniqueConstraint("strategy_id", "resulting_revision", name="uq_strategy_release_events_revision"),
         ForeignKeyConstraint(
             ["strategy_id", "candidate_version_id"],
             ["strategy_versions.strategy_id", "strategy_versions.id"],
@@ -72,12 +68,12 @@ class StrategyReleaseEvent(Base):
         CheckConstraint(
             "char_length(request_sha256) = 64",
             name="ck_strategy_release_events_request_sha256",
-        ),
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint(
             "btrim(actor_id) <> '' AND btrim(account_scope) <> '' "
             "AND btrim(idempotency_key) <> '' AND btrim(reason) <> ''",
             name="ck_strategy_release_events_nonempty_text",
-        ),
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint(
             "(event_type = 'release' AND candidate_version_id IS NOT NULL "
             "AND to_version_id = candidate_version_id AND source_release_event_id IS NULL "
@@ -98,9 +94,7 @@ class StrategyReleaseEvent(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=func.gen_random_uuid()
     )
-    strategy_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("strategies.id"), nullable=False
-    )
+    strategy_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("strategies.id"), nullable=False)
     event_type: Mapped[str] = mapped_column(String(16), nullable=False)
     candidate_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     from_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
