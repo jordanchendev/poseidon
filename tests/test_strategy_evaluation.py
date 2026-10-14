@@ -1,7 +1,7 @@
 """Tests for evaluate_active_strategies CPU task."""
 
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pandas as pd
 import pytest
@@ -444,10 +444,6 @@ def test_released_executable_envelope_drives_scheduled_evaluation(phase99_sessio
         strategy = session.get(StrategyRecord, graph.strategy_id)
         version = session.get(StrategyVersion, graph.candidate_id)
         assert strategy.active_version_id == version.id
-        session.query(StrategyRecord).filter(StrategyRecord.id != strategy.id).update(
-            {StrategyRecord.active_version_id: None}, synchronize_session=False
-        )
-        session.flush()
 
         context = MagicMock()
         context.__enter__.return_value = session
@@ -463,14 +459,22 @@ def test_released_executable_envelope_drives_scheduled_evaluation(phase99_sessio
         ):
             result = evaluate_active_strategies(market="tw_stock", interval="1d")
 
-        assert result["strategies_evaluated"] == 1
-        assert result["errors"] == []
-        assert len(emitted) == 1
-        engine.compute.assert_called_once_with(
-            "2330",
-            "tw_stock",
-            "1d",
-            feature_specs=[("rsi", {"period": 8}), ("returns", {})],
+        # Other released strategies in the shared database may also be evaluated;
+        # only this test's released strategy is asserted (no direct pointer writes).
+        own_emitted = [signal for signal in emitted if signal.strategy_id == strategy.id]
+        assert result["strategies_evaluated"] >= 1
+        assert strategy.name not in result["errors"]
+        assert len(own_emitted) == 1
+        assert (
+            engine.compute.call_args_list.count(
+                call(
+                    "2330",
+                    "tw_stock",
+                    "1d",
+                    feature_specs=[("rsi", {"period": 8}), ("returns", {})],
+                )
+            )
+            == 1
         )
         session.rollback()
 
@@ -529,10 +533,6 @@ def test_released_perp_envelope_emits_owner_frozen_instrument(phase99_session_fa
         )
         _release(ReleaseService(session), graph, key="release-perp-executable")
         strategy = session.get(StrategyRecord, graph.strategy_id)
-        session.query(StrategyRecord).filter(StrategyRecord.id != strategy.id).update(
-            {StrategyRecord.active_version_id: None}, synchronize_session=False
-        )
-        session.flush()
 
         context = MagicMock()
         context.__enter__.return_value = session
@@ -548,10 +548,12 @@ def test_released_perp_envelope_emits_owner_frozen_instrument(phase99_session_fa
         ):
             result = evaluate_active_strategies(market="crypto_perp", interval="4h")
 
-        assert result["errors"] == []
-        assert len(emitted) == 1
-        assert emitted[0].symbol == symbol
-        assert emitted[0].market == "crypto_perp"
-        assert emitted[0].instrument is InstrumentType.PERPETUAL
-        engine.compute.assert_called_once_with(symbol, "crypto_perp", "4h", feature_specs=[])
+        # Scope to this test's released strategy; other released strategies are irrelevant.
+        own_emitted = [signal for signal in emitted if signal.strategy_id == strategy.id]
+        assert strategy.name not in result["errors"]
+        assert len(own_emitted) == 1
+        assert own_emitted[0].symbol == symbol
+        assert own_emitted[0].market == "crypto_perp"
+        assert own_emitted[0].instrument is InstrumentType.PERPETUAL
+        engine.compute.assert_any_call(symbol, "crypto_perp", "4h", feature_specs=[])
         session.rollback()
