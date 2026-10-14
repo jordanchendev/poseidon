@@ -3,7 +3,6 @@
 import ast
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 PHASE99_TARGETS = (
     ROOT / "src/poseidon/models/outcome.py",
@@ -39,9 +38,7 @@ def test_phase99_models_and_schema_do_not_own_transaction_commits():
         commits = [
             node
             for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "commit"
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "commit"
         ]
         assert commits == [], f"{path.relative_to(ROOT)} must leave commit ownership to a transaction runner"
 
@@ -76,6 +73,7 @@ def test_phase99_migration_declares_exactly_ten_authoritative_tables():
 def test_phase99_migration_is_the_sole_alembic_head():
     revisions = set()
     down_revisions = set()
+    parents = {}
     for path in (ROOT / "alembic/versions").glob("*.py"):
         module = ast.parse(path.read_text(), filename=str(path))
         values = {
@@ -88,6 +86,16 @@ def test_phase99_migration_is_the_sole_alembic_head():
         }
         if "revision" in values:
             revisions.add(values["revision"])
+            parents[values["revision"]] = values.get("down_revision")
         if values.get("down_revision"):
             down_revisions.add(values["down_revision"])
-    assert revisions - down_revisions == {"043"}
+    # Phase 99 owns revision 043; later phases may add descendants. Require one linear
+    # head whose ancestry contains 043 (whose parent is 042) instead of hard-coding head.
+    heads = revisions - down_revisions
+    assert len(heads) == 1
+    assert parents["043"] == "042"
+    ancestry, current = [], next(iter(heads))
+    while current is not None:
+        ancestry.append(current)
+        current = parents.get(current)
+    assert "043" in ancestry

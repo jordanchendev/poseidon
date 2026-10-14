@@ -6,11 +6,11 @@ import uuid
 from pathlib import Path
 
 import pytest
-from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
+from alembic import command
 
 pytestmark = pytest.mark.postgresql
 ROOT = Path(__file__).resolve().parents[1]
@@ -76,7 +76,8 @@ def _seed_legacy_042(engine):
 
 def test_empty_database_upgrades_to_the_single_043_head(phase99_migration_database):
     config, engine = phase99_migration_database
-    command.upgrade(config, "head")
+    # Validate the Phase 99 revision itself; later phases may add descendant heads.
+    command.upgrade(config, "043")
     with engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "043"
     assert set(inspect(engine).get_table_names()) >= {
@@ -170,17 +171,20 @@ def test_populated_043_refuses_downgrade_before_any_schema_mutation(phase99_migr
         "campaign_reviews",
     }
     assert expected_tables <= set(inspector.get_table_names())
-    assert set(name for name in (
-        "campaign_id",
-        "original_trial_id",
-        "trial_role",
-        "strategy_version_id",
-        "ablation_arm",
-        "paired_sample_key_sha256",
-        "input_sha256",
-        "result_sha256",
-        "started_at",
-        "completed_at",
-        "terminal_state",
-        "terminal_reason_json",
-    )) <= {column["name"] for column in inspector.get_columns("experiments")}
+    assert set(
+        name
+        for name in (
+            "campaign_id",
+            "original_trial_id",
+            "trial_role",
+            "strategy_version_id",
+            "ablation_arm",
+            "paired_sample_key_sha256",
+            "input_sha256",
+            "result_sha256",
+            "started_at",
+            "completed_at",
+            "terminal_state",
+            "terminal_reason_json",
+        )
+    ) <= {column["name"] for column in inspector.get_columns("experiments")}
