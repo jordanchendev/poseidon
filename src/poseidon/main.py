@@ -19,6 +19,7 @@ from poseidon.api import (
     rdagent,
     releases,
     research_api,
+    research_loop,
     risk,
     risk_metrics,
     rl_execution,
@@ -60,6 +61,7 @@ app.include_router(decisions.router, prefix="/api/v1/decisions", tags=["decision
 app.include_router(releases.router, prefix="/api/v1/strategies", tags=["releases"])
 app.include_router(capabilities.router, prefix="/api/v1", tags=["capabilities"])
 app.include_router(traces.router, prefix="/api/v1/traces", tags=["traces"])
+app.include_router(research_loop.router, prefix="/api/v1/research", tags=["research-loop"])
 
 # --- Secured endpoints: require valid X-API-Key header ---
 secured = [Depends(verify_api_key)]
