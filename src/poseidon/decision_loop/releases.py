@@ -476,6 +476,41 @@ def _predicate(code: str, state: PredicateState, reason: str, **evidence) -> Rel
     return ReleasePredicate(code, state, reason, json.loads(canonical_json(evidence)))
 
 
+HoldoutResolutionKind = Literal[
+    "foreign_owner",
+    "binding_missing",
+    "ownership_mismatch",
+    "reuse_denied",
+    "consume_event_missing",
+    "own_campaign",
+]
+_HOLDOUT_OUTCOMES: dict[str, tuple[PredicateState, str]] = {
+    "foreign_owner": ("blocked", "holdout is owned by another campaign"),
+    "binding_missing": ("unavailable", "review holdout binding is missing"),
+    "ownership_mismatch": ("blocked", "committed holdout ownership does not match"),
+    "reuse_denied": ("blocked", "holdout reuse was denied"),
+    "consume_event_missing": ("unavailable", "committed holdout consume event is missing"),
+    "own_campaign": ("passed", "same-campaign committed holdout use matches"),
+}
+
+_HOLDOUT_STATE_LABELS: dict[str, str] = {
+    "foreign_owner": "consumed_by_another_campaign",
+    "binding_missing": "unavailable",
+    "ownership_mismatch": "ownership_mismatch",
+    "reuse_denied": "reuse_denied",
+    "consume_event_missing": "unavailable",
+    "own_campaign": "consumed_by_this_campaign",
+}
+
+
+@dataclass(frozen=True)
+class HoldoutResolution:
+    kind: HoldoutResolutionKind
+    holdout_use_id: uuid.UUID | None
+    holdout_identity_sha256: str | None
+    owner_campaign_id: uuid.UUID | None
+
+
 def require_active_pointer(session, decision, *, lock: bool, error_type):
     """Require a decision's immutable version to remain the active authority."""
     version = session.get(StrategyVersion, decision.strategy_version_id)
@@ -850,26 +885,29 @@ class ReleaseService:
             )
         return _predicate("review_identity", "passed", "passed review identity and evidence match", **evidence)
 
-    def _holdout_predicate(self, campaign, review):
+    def _holdout_resolution(self, campaign, review) -> HoldoutResolution:
+        """Resolve stored holdout ownership facts shared by the gate and state reader."""
+
         identity = (
             review.input_identity_json.get("holdout_identity_sha256")
             if review is not None and isinstance(review.input_identity_json, dict)
             else None
         )
-        evidence = {
-            "holdout_use_id": None if review is None or review.holdout_use_id is None else str(review.holdout_use_id),
-            "holdout_identity_sha256": identity,
-        }
+        holdout_use_id = None if review is None else review.holdout_use_id
         owner = (
             None
             if identity is None
             else self.session.scalar(select(HoldoutUse).where(HoldoutUse.holdout_identity_sha256 == identity))
         )
+        owner_campaign_id = None if owner is None else owner.campaign_id
+
+        def resolved(kind):
+            return HoldoutResolution(kind, holdout_use_id, identity, owner_campaign_id)
+
         if owner is not None and campaign is not None and owner.campaign_id != campaign.id:
-            evidence["owner_campaign_id"] = str(owner.campaign_id)
-            return _predicate("holdout_ownership", "blocked", "holdout is owned by another campaign", **evidence)
+            return resolved("foreign_owner")
         if campaign is None or review is None or review.holdout_use_id is None or identity is None:
-            return _predicate("holdout_ownership", "unavailable", "review holdout binding is missing", **evidence)
+            return resolved("binding_missing")
         use = self.session.get(HoldoutUse, review.holdout_use_id)
         if (
             use is None
@@ -877,7 +915,7 @@ class ReleaseService:
             or use.campaign_contract_sha256 != campaign.contract_sha256
             or use.holdout_identity_sha256 != identity
         ):
-            return _predicate("holdout_ownership", "blocked", "committed holdout ownership does not match", **evidence)
+            return resolved("ownership_mismatch")
         events = self.session.scalars(
             select(CampaignEvent).where(
                 CampaignEvent.event_type.in_(
@@ -901,12 +939,38 @@ class ReleaseService:
             for event in events
         )
         if denied:
-            return _predicate("holdout_ownership", "blocked", "holdout reuse was denied", **evidence)
+            return resolved("reuse_denied")
         if not own_use:
-            return _predicate(
-                "holdout_ownership", "unavailable", "committed holdout consume event is missing", **evidence
+            return resolved("consume_event_missing")
+        return resolved("own_campaign")
+
+    def _holdout_predicate(self, campaign, review):
+        resolution = self._holdout_resolution(campaign, review)
+        evidence = {
+            "holdout_use_id": None if resolution.holdout_use_id is None else str(resolution.holdout_use_id),
+            "holdout_identity_sha256": resolution.holdout_identity_sha256,
+        }
+        if resolution.kind == "foreign_owner":
+            evidence["owner_campaign_id"] = str(resolution.owner_campaign_id)
+        state, reason = _HOLDOUT_OUTCOMES[resolution.kind]
+        return _predicate("holdout_ownership", state, reason, **evidence)
+
+    def _latest_reconciliation(self, account_scope, account_generation):
+        """Return the reconciliation the gate treats as current for one account identity."""
+
+        return self.session.scalar(
+            select(AccountReconciliation)
+            .where(
+                AccountReconciliation.account_scope == account_scope,
+                AccountReconciliation.account_generation == account_generation,
             )
-        return _predicate("holdout_ownership", "passed", "same-campaign committed holdout use matches", **evidence)
+            .order_by(
+                AccountReconciliation.as_of.desc(),
+                AccountReconciliation.created_at.desc(),
+                AccountReconciliation.id.desc(),
+            )
+            .limit(1)
+        )
 
     def _reconciliation_predicate(self, reconciliation, policy, policy_sha256, now):
         evidence = {"reconciliation_id": None if reconciliation is None else str(reconciliation.id)}
@@ -934,19 +998,7 @@ class ReleaseService:
             return _predicate("reconciliation", "blocked", "reconciliation is stale", **evidence)
         if not reconciliation.broker_state_watermark or not reconciliation.internal_state_watermark:
             return _predicate("reconciliation", "unavailable", "reconciliation watermarks are missing", **evidence)
-        latest = self.session.scalar(
-            select(AccountReconciliation)
-            .where(
-                AccountReconciliation.account_scope == reconciliation.account_scope,
-                AccountReconciliation.account_generation == reconciliation.account_generation,
-            )
-            .order_by(
-                AccountReconciliation.as_of.desc(),
-                AccountReconciliation.created_at.desc(),
-                AccountReconciliation.id.desc(),
-            )
-            .limit(1)
-        )
+        latest = self._latest_reconciliation(reconciliation.account_scope, reconciliation.account_generation)
         if latest is not None and latest.id != reconciliation.id:
             evidence["newer_reconciliation_ids"] = [str(latest.id)]
             return _predicate("reconciliation", "blocked", "a newer reconciliation state exists", **evidence)
@@ -1674,3 +1726,175 @@ class ReleaseService:
             reason=reason,
             gate_json=gate.as_json(),
         )
+
+    @staticmethod
+    def _version_identity(version):
+        if version is None:
+            return None
+        return {
+            "strategy_version_id": version.id,
+            "version_no": version.version_no,
+            "status": version.status,
+            "content_sha256": version.content_sha256,
+            "policy_sha256": content_sha256(version.policy_json),
+            "account_scope": (
+                version.policy_json.get("account_scope") if isinstance(version.policy_json, dict) else None
+            ),
+            "created_at": version.created_at,
+        }
+
+    def _stored_reconciliation(self, version):
+        """Resolve the latest stored reconciliation for a version's frozen account identity."""
+
+        if version is None:
+            return None, None
+        try:
+            policy = DecisionPolicy.model_validate(version.policy_json)
+        except (PydanticValidationError, TypeError, ValueError):
+            return None, None
+        identity = self._account_identity(policy)
+        if identity is None:
+            return None, None
+        latest = self._latest_reconciliation(*identity)
+        if latest is None:
+            return identity, None
+        return identity, {
+            "reconciliation_id": latest.id,
+            "account_scope": latest.account_scope,
+            "account_generation": latest.account_generation,
+            "status": latest.status,
+            "as_of": latest.as_of,
+            "policy_sha256": latest.policy_sha256,
+        }
+
+    def read_release_state(self, strategy) -> dict:
+        """Project stored release identities for one strategy; never evaluate, lock, or write.
+
+        Eligibility stays with ``evaluate_gate`` and ``_rollback_gate``. This reader only
+        hands callers the exact stored identities those gates and mutations consume.
+        """
+
+        active = (
+            None
+            if strategy.active_version_id is None
+            else self.session.get(StrategyVersion, strategy.active_version_id)
+        )
+        authority = self._current_or_paused_authority_version(strategy)
+        latest_event = self.session.scalar(
+            select(StrategyReleaseEvent)
+            .where(StrategyReleaseEvent.strategy_id == strategy.id)
+            .order_by(StrategyReleaseEvent.resulting_revision.desc())
+            .limit(1)
+        )
+        _authority_account, authority_reconciliation = self._stored_reconciliation(authority)
+        if strategy.active_version_id is not None:
+            pointer_state = "active"
+        elif authority is not None:
+            pointer_state = "paused"
+        else:
+            pointer_state = "unreleased"
+
+        strategy_versions = select(StrategyVersion.id).where(StrategyVersion.strategy_id == strategy.id)
+        campaigns = self.session.scalars(
+            select(ExperimentCampaign)
+            .where(ExperimentCampaign.candidate_strategy_version_id.in_(strategy_versions))
+            .order_by(ExperimentCampaign.created_at.desc(), ExperimentCampaign.id.desc())
+        ).all()
+        candidates = []
+        for campaign in campaigns:
+            candidate = self.session.get(StrategyVersion, campaign.candidate_strategy_version_id)
+            trials = self.session.scalars(
+                select(ExperimentRecord)
+                .where(ExperimentRecord.campaign_id == campaign.id)
+                .order_by(ExperimentRecord.id)
+            ).all()
+            reviews = self.session.scalars(
+                select(CampaignReview)
+                .where(CampaignReview.campaign_id == campaign.id)
+                .order_by(CampaignReview.created_at.desc(), CampaignReview.id.desc())
+            ).all()
+            denials = self.session.scalars(
+                select(CampaignEvent)
+                .where(
+                    CampaignEvent.campaign_id == campaign.id,
+                    CampaignEvent.event_type == "holdout_reuse_denied",
+                )
+                .order_by(CampaignEvent.created_at, CampaignEvent.id)
+            ).all()
+            account, reconciliation = self._stored_reconciliation(candidate)
+            declared = (
+                campaign.contract_json.get("declared_trials") if isinstance(campaign.contract_json, dict) else None
+            )
+            version_roles = {
+                campaign.incumbent_strategy_version_id: "incumbent",
+                campaign.candidate_strategy_version_id: "candidate",
+            }
+            review_rows = []
+            for review in reviews:
+                resolution = self._holdout_resolution(campaign, review)
+                review_rows.append(
+                    {
+                        "review_id": review.id,
+                        "status": review.status,
+                        "input_sha256": review.input_sha256,
+                        "result_sha256": review.result_sha256,
+                        "created_at": review.created_at,
+                        "holdout": {
+                            "state": _HOLDOUT_STATE_LABELS[resolution.kind],
+                            "holdout_use_id": resolution.holdout_use_id,
+                            "holdout_identity_sha256": resolution.holdout_identity_sha256,
+                            "owner_campaign_id": resolution.owner_campaign_id,
+                        },
+                    }
+                )
+            candidates.append(
+                {
+                    "candidate": self._version_identity(candidate),
+                    "campaign_id": campaign.id,
+                    "hypothesis": campaign.hypothesis,
+                    "contract_sha256": campaign.contract_sha256,
+                    "campaign_created_at": campaign.created_at,
+                    "incumbent_version_id": campaign.incumbent_strategy_version_id,
+                    "incumbent_content_sha256": campaign.incumbent_content_sha256,
+                    "declared_trial_count": len(declared) if isinstance(declared, list) else None,
+                    "terminal_trial_count": sum(1 for trial in trials if trial.terminal_state is not None),
+                    "trials": [
+                        {
+                            "experiment_id": trial.id,
+                            "original_trial_id": trial.original_trial_id,
+                            "trial_role": trial.trial_role,
+                            "strategy_version_id": trial.strategy_version_id,
+                            "version_role": version_roles.get(trial.strategy_version_id),
+                            "ablation_arm": trial.ablation_arm,
+                            "terminal_state": trial.terminal_state,
+                            "result_sha256": trial.result_sha256,
+                        }
+                        for trial in trials
+                    ],
+                    "reviews": review_rows,
+                    "holdout_reuse_denials": [
+                        {
+                            "campaign_event_id": event.id,
+                            "holdout_identity_sha256": event.payload_json.get("holdout_identity_sha256"),
+                            "owner_campaign_id": event.payload_json.get("owner_campaign_id"),
+                            "created_at": event.created_at,
+                        }
+                        for event in denials
+                    ],
+                    "account_scope": None if account is None else account[0],
+                    "account_generation": None if account is None else account[1],
+                    "reconciliation": reconciliation,
+                }
+            )
+        return {
+            "strategy_id": strategy.id,
+            "release_revision": strategy.release_revision,
+            "active_version_id": strategy.active_version_id,
+            "pointer_state": pointer_state,
+            "active_version": self._version_identity(active),
+            "authority_version": self._version_identity(authority),
+            "latest_event_id": None if latest_event is None else latest_event.id,
+            "latest_event_type": None if latest_event is None else latest_event.event_type,
+            "authority_reconciliation": authority_reconciliation,
+            "candidates": candidates,
+        }

@@ -183,6 +183,31 @@ class StubReleaseService:
         source = next(event for event in self.strategy_session.events if event.to_version_id == target.id)
         return SimpleNamespace(allowed=eligible, predicates=(predicate,)), source, _policy
 
+    def read_release_state(self, strategy):
+        self.calls.append(("state", strategy.id))
+        version = self.strategy_session.versions[strategy.active_version_id]
+        identity = {
+            "strategy_version_id": version.id,
+            "version_no": version.version_no,
+            "status": "draft",
+            "content_sha256": version.content_sha256,
+            "policy_sha256": "c" * 64,
+            "account_scope": ACCOUNT,
+            "created_at": datetime(2026, 10, 13, tzinfo=UTC),
+        }
+        return {
+            "strategy_id": strategy.id,
+            "release_revision": strategy.release_revision,
+            "active_version_id": strategy.active_version_id,
+            "pointer_state": "active",
+            "active_version": identity,
+            "authority_version": identity,
+            "latest_event_id": None,
+            "latest_event_type": None,
+            "authority_reconciliation": None,
+            "candidates": [],
+        }
+
     def release(self, strategy_id, candidate_version_id, *args, **kwargs):
         return self._mutate("release", strategy_id, candidate_version_id, *args, **kwargs)
 
@@ -677,3 +702,385 @@ def test_release_api_openapi_has_generated_client_models_and_errors(api):
     assert gate_json == {"$ref": "#/components/schemas/ReleaseGateResponse"}
     evidence = schemas["ReleasePredicateResponse"]["properties"]["evidence"]
     assert evidence == {"$ref": "#/components/schemas/ReleasePredicateEvidence"}
+
+
+def test_release_state_read_matches_sibling_status_semantics(api):
+    client, session, service, strategy = api
+    state = client.get(f"/api/v1/strategies/{strategy.id}/release-state", headers=_headers(VIEWER_KEY))
+
+    assert state.status_code == 200
+    body = state.json()
+    assert body["strategy_id"] == str(strategy.id)
+    assert body["release_revision"] == strategy.release_revision
+    assert body["active_version_id"] == str(strategy.active_version_id)
+    assert body["active_version"]["content_sha256"] == "a" * 64
+    assert body["latest_event_id"] is None and "authority_reconciliation" in body
+    assert body["candidates"] == []
+
+    unknown = uuid.uuid4()
+    for path in ("release-state", "release-events"):
+        missing = client.get(f"/api/v1/strategies/{unknown}/{path}", headers=_headers(VIEWER_KEY))
+        assert missing.status_code == 404
+    unauthenticated = client.get(f"/api/v1/strategies/{strategy.id}/release-state")
+    sibling_unauthenticated = client.get(f"/api/v1/strategies/{strategy.id}/release-events")
+    assert unauthenticated.status_code == sibling_unauthenticated.status_code
+    assert unauthenticated.status_code in {401, 403}
+    legacy = client.get(f"/api/v1/strategies/{strategy.id}/release-state", headers=_headers(LEGACY_KEY))
+    sibling_legacy = client.get(f"/api/v1/strategies/{strategy.id}/release-events", headers=_headers(LEGACY_KEY))
+    assert legacy.status_code == sibling_legacy.status_code == 403
+    assert session.commits == 0 and session.rollbacks == 0
+    assert [call[0] for call in service.calls] == ["state"]
+
+
+def test_release_state_openapi_is_typed_read_only_contract(api):
+    client, _session, _service, _strategy = api
+    schema = client.get("/openapi.json").json()
+    path = schema["paths"]["/api/v1/strategies/{strategy_id}/release-state"]
+    assert set(path) == {"get"}
+    operation = path["get"]
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ReleaseStateResponse"
+    }
+    assert {"403", "404"}.issubset(operation["responses"])
+    assert [parameter["name"] for parameter in operation.get("parameters", [])] == ["strategy_id"]
+    schemas = schema["components"]["schemas"]
+    for model in (
+        "ReleaseStateResponse",
+        "ReleaseStateCandidate",
+        "ReleaseStateVersionIdentity",
+        "ReleaseStateReconciliation",
+        "ReleaseStateReview",
+        "ReleaseStateHoldout",
+        "ReleaseStateHoldoutDenial",
+        "ReleaseStateTrial",
+    ):
+        assert model in schemas
+    state = schemas["ReleaseStateResponse"]
+    assert {"release_revision", "active_version_id", "candidates", "pointer_state"} <= set(state["required"])
+    assert state["properties"]["pointer_state"]["enum"] == ["unreleased", "active", "paused"]
+    assert schemas["ReleaseStateHoldout"]["properties"]["state"]["enum"] == [
+        "consumed_by_this_campaign",
+        "consumed_by_another_campaign",
+        "reuse_denied",
+        "ownership_mismatch",
+        "unavailable",
+    ]
+    candidate = schemas["ReleaseStateCandidate"]["properties"]
+    assert set(candidate).isdisjoint({"allowed", "eligible", "predicates", "sharpe"})
+
+
+def _release_api_client(session):
+    app = FastAPI()
+    app.include_router(releases_api.router, prefix="/api/v1/strategies")
+    app.dependency_overrides[get_db] = lambda: session
+    return TestClient(app)
+
+
+def _authority_counts(session, strategy_id, campaign_ids):
+    from poseidon.models.account_reconciliation import AccountReconciliation
+    from poseidon.models.experiment_campaign import CampaignEvent, CampaignReview, HoldoutUse
+    from poseidon.models.strategy import StrategyRecord
+
+    session.expire_all()
+    strategy = session.get(StrategyRecord, strategy_id)
+    return {
+        "pointer": (strategy.active_version_id, strategy.release_revision),
+        "release_events": session.query(StrategyReleaseEvent).filter_by(strategy_id=strategy_id).count(),
+        "campaign_events": session.query(CampaignEvent).filter(CampaignEvent.campaign_id.in_(campaign_ids)).count(),
+        "reviews": session.query(CampaignReview).filter(CampaignReview.campaign_id.in_(campaign_ids)).count(),
+        "holdouts": session.query(HoldoutUse).count(),
+        "reconciliations": session.query(AccountReconciliation).count(),
+        "versions": session.query(StrategyVersion).filter_by(strategy_id=strategy_id).count(),
+    }
+
+
+@pytest.mark.postgresql
+def test_real_release_state_for_unreleased_strategy_without_candidates(monkeypatch, phase99_session_factory):
+    from poseidon.models.strategy import StrategyRecord
+    from poseidon.models.strategy_version import strategy_version_digest
+    from tests.test_decision_service import synthetic_policy, synthetic_reconciliation_policy
+
+    _configure_auth(monkeypatch)
+    with phase99_session_factory() as session:
+        marker = uuid.uuid4().hex
+        strategy = StrategyRecord(
+            name=f"phase100-state-empty-{marker}",
+            strategy_type="technical",
+            config={},
+            symbol="2330",
+            market="tw_stock",
+            interval="1d",
+            active=False,
+        )
+        session.add(strategy)
+        session.flush()
+        policy = synthetic_policy(reconciliation=synthetic_reconciliation_policy(account_generation=f"gen-{marker}"))
+        config = {"marker": marker}
+        session.add(
+            StrategyVersion(
+                strategy_id=strategy.id,
+                version_no=1,
+                status="draft",
+                config_json=config,
+                policy_json=policy,
+                artifact_json={},
+                content_sha256=strategy_version_digest(config, policy, {}),
+            )
+        )
+        session.commit()
+        before = _authority_counts(session, strategy.id, [])
+
+        response = _release_api_client(session).get(
+            f"/api/v1/strategies/{strategy.id}/release-state",
+            headers=_headers(VIEWER_KEY),
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "strategy_id": str(strategy.id),
+            "release_revision": 0,
+            "active_version_id": None,
+            "pointer_state": "unreleased",
+            "active_version": None,
+            "authority_version": None,
+            "latest_event_id": None,
+            "latest_event_type": None,
+            "authority_reconciliation": None,
+            "candidates": [],
+        }
+        assert _authority_counts(session, strategy.id, []) == before
+
+
+def _fresh_reconciliation(session, graph):
+    from poseidon.models.account_reconciliation import AccountReconciliation
+
+    seeded = session.get(AccountReconciliation, graph.reconciliation_id)
+    fresh = AccountReconciliation(
+        account_scope=seeded.account_scope,
+        account_generation=seeded.account_generation,
+        as_of=datetime.now(UTC),
+        broker_state_watermark=f"{seeded.broker_state_watermark}:fresh",
+        internal_state_watermark=f"{seeded.internal_state_watermark}:fresh",
+        broker_snapshot_sha256=seeded.broker_snapshot_sha256,
+        broker_snapshot_json={},
+        internal_snapshot_json={},
+        difference_json={},
+        policy_sha256=seeded.policy_sha256,
+        status="matched",
+    )
+    session.add(fresh)
+    session.flush()
+    return fresh
+
+
+@pytest.mark.postgresql
+def test_real_release_state_identities_feed_gate_release_and_pause(monkeypatch, phase99_session_factory):
+    from poseidon.models.experiment_campaign import CampaignReview, ExperimentCampaign
+    from tests.test_decision_service import synthetic_reconciliation_policy
+    from tests.test_strategy_release import _seed_gate_graph
+
+    _configure_auth(monkeypatch)
+    with phase99_session_factory() as session:
+        generation = f"gen-{uuid.uuid4().hex}"
+        graph = _seed_gate_graph(
+            session,
+            policy_changes={"reconciliation": synthetic_reconciliation_policy(account_generation=generation)},
+        )
+        fresh = _fresh_reconciliation(session, graph)
+        session.commit()
+        campaign = session.get(ExperimentCampaign, graph.campaign_id)
+        review = session.get(CampaignReview, graph.review_id)
+        candidate_version = session.get(StrategyVersion, graph.candidate_id)
+        client = _release_api_client(session)
+        before = _authority_counts(session, graph.strategy_id, [graph.campaign_id])
+
+        state = client.get(f"/api/v1/strategies/{graph.strategy_id}/release-state", headers=_headers(VIEWER_KEY))
+
+        assert state.status_code == 200
+        body = state.json()
+        assert _authority_counts(session, graph.strategy_id, [graph.campaign_id]) == before
+        assert body["release_revision"] == 0
+        assert body["active_version_id"] is None
+        assert body["pointer_state"] == "unreleased"
+        assert body["authority_reconciliation"] is None
+        assert len(body["candidates"]) == 1
+        candidate = body["candidates"][0]
+        assert candidate["candidate"]["strategy_version_id"] == str(graph.candidate_id)
+        assert candidate["candidate"]["content_sha256"] == candidate_version.content_sha256
+        assert candidate["candidate"]["account_scope"] == ACCOUNT
+        assert candidate["campaign_id"] == str(graph.campaign_id)
+        assert candidate["hypothesis"] == campaign.hypothesis
+        assert candidate["contract_sha256"] == campaign.contract_sha256
+        assert candidate["incumbent_version_id"] == str(campaign.incumbent_strategy_version_id)
+        assert candidate["incumbent_content_sha256"] == campaign.incumbent_content_sha256
+        assert candidate["declared_trial_count"] == 6
+        assert candidate["terminal_trial_count"] == 6
+        assert {(trial["version_role"], trial["ablation_arm"]) for trial in candidate["trials"]} == {
+            (role, arm)
+            for role in ("incumbent", "candidate")
+            for arm in ("fundamental_only", "technical_only", "combined")
+        }
+        assert candidate["holdout_reuse_denials"] == []
+        assert [row["review_id"] for row in candidate["reviews"]] == [str(graph.review_id)]
+        assert candidate["reviews"][0]["status"] == "passed"
+        assert candidate["reviews"][0]["input_sha256"] == review.input_sha256
+        assert candidate["reviews"][0]["result_sha256"] == review.result_sha256
+        assert candidate["reviews"][0]["holdout"] == {
+            "state": "consumed_by_this_campaign",
+            "holdout_use_id": str(review.holdout_use_id),
+            "holdout_identity_sha256": graph.holdout_identity,
+            "owner_campaign_id": str(graph.campaign_id),
+        }
+        assert candidate["account_scope"] == ACCOUNT
+        assert candidate["account_generation"] == generation
+        assert candidate["reconciliation"]["reconciliation_id"] == str(fresh.id)
+        assert candidate["reconciliation"]["status"] == "matched"
+
+        gate_query = {
+            "candidate_version_id": candidate["candidate"]["strategy_version_id"],
+            "campaign_id": candidate["campaign_id"],
+            "review_id": candidate["reviews"][0]["review_id"],
+            "reconciliation_id": candidate["reconciliation"]["reconciliation_id"],
+        }
+        gate = client.get(
+            f"/api/v1/strategies/{graph.strategy_id}/release-gate",
+            params=gate_query,
+            headers=_headers(MANAGER_KEY),
+        )
+        assert gate.status_code == 200
+        assert gate.json()["allowed"] is True, gate.json()
+
+        released = client.post(
+            f"/api/v1/strategies/{graph.strategy_id}/release",
+            json={
+                "expected_revision": body["release_revision"],
+                "expected_active_version_id": body["active_version_id"],
+                "reason": "release from read-only state identities",
+                **gate_query,
+            },
+            headers=_headers(MANAGER_KEY, f"state-release-{generation}"),
+        )
+        assert released.status_code == 200, released.json()
+
+        after_release = client.get(
+            f"/api/v1/strategies/{graph.strategy_id}/release-state",
+            headers=_headers(VIEWER_KEY),
+        ).json()
+        assert after_release["release_revision"] == released.json()["release_revision"] == 1
+        assert after_release["active_version_id"] == str(graph.candidate_id)
+        assert after_release["pointer_state"] == "active"
+        assert after_release["active_version"]["content_sha256"] == candidate_version.content_sha256
+        assert after_release["latest_event_id"] == released.json()["event_id"]
+        assert after_release["latest_event_type"] == "release"
+        assert after_release["authority_reconciliation"]["reconciliation_id"] == str(fresh.id)
+
+        paused = client.post(
+            f"/api/v1/strategies/{graph.strategy_id}/pause",
+            json={
+                "expected_revision": after_release["release_revision"],
+                "expected_active_version_id": after_release["active_version_id"],
+                "reason": "pause from read-only state identities",
+            },
+            headers=_headers(MANAGER_KEY, f"state-pause-{generation}"),
+        )
+        assert paused.status_code == 200, paused.json()
+        after_pause = client.get(
+            f"/api/v1/strategies/{graph.strategy_id}/release-state",
+            headers=_headers(VIEWER_KEY),
+        ).json()
+        assert after_pause["pointer_state"] == "paused"
+        assert after_pause["active_version_id"] is None
+        assert after_pause["active_version"] is None
+        assert after_pause["authority_version"]["strategy_version_id"] == str(graph.candidate_id)
+        assert after_pause["release_revision"] == 2
+        assert after_pause["latest_event_type"] == "pause"
+
+
+@pytest.mark.postgresql
+def test_real_release_state_labels_foreign_and_denied_holdouts_like_gate(monkeypatch, phase99_session_factory):
+    from poseidon.decision_loop.manifest import content_sha256
+    from poseidon.models.experiment import ExperimentRecord
+    from poseidon.models.experiment_campaign import CampaignReview, ExperimentCampaign
+    from poseidon.research.campaign import CampaignService, build_review_input_identity
+    from tests.test_strategy_release import _seed_gate_graph
+
+    _configure_auth(monkeypatch)
+    with phase99_session_factory() as session:
+        owner = _seed_gate_graph(session)
+        foreign = _seed_gate_graph(session)
+        denied = _seed_gate_graph(session)
+        foreign_campaign = session.get(ExperimentCampaign, foreign.campaign_id)
+        foreign_review = session.get(CampaignReview, foreign.review_id)
+        trials = session.query(ExperimentRecord).filter_by(campaign_id=foreign.campaign_id).all()
+        borrowed_identity = build_review_input_identity(
+            foreign_campaign,
+            trials,
+            holdout_identity_sha256=owner.holdout_identity,
+            panel_sha256="f" * 64,
+        )
+        borrowed = CampaignReview(
+            campaign_id=foreign.campaign_id,
+            input_sha256=content_sha256(borrowed_identity),
+            result_sha256=foreign_review.result_sha256,
+            status="passed",
+            result_json=foreign_review.result_json,
+            holdout_use_id=foreign_review.holdout_use_id,
+            input_identity_json=borrowed_identity,
+        )
+        session.add(borrowed)
+        CampaignService(session).append_event(
+            denied.campaign_id,
+            event_type="holdout_reuse_denied",
+            payload_json={
+                "holdout_identity_sha256": denied.holdout_identity,
+                "owner_campaign_id": str(owner.campaign_id),
+                "owner_campaign_contract_sha256": "0" * 64,
+            },
+        )
+        session.commit()
+        client = _release_api_client(session)
+
+        def holdout_rows(graph):
+            response = client.get(f"/api/v1/strategies/{graph.strategy_id}/release-state", headers=_headers(VIEWER_KEY))
+            assert response.status_code == 200
+            (candidate,) = response.json()["candidates"]
+            return candidate, {row["review_id"]: row["holdout"] for row in candidate["reviews"]}
+
+        def gate_holdout(graph, review_id):
+            response = client.get(
+                f"/api/v1/strategies/{graph.strategy_id}/release-gate",
+                params={
+                    "candidate_version_id": str(graph.candidate_id),
+                    "campaign_id": str(graph.campaign_id),
+                    "review_id": str(review_id),
+                    "reconciliation_id": str(graph.reconciliation_id),
+                },
+                headers=_headers(MANAGER_KEY),
+            )
+            assert response.status_code == 200
+            return next(item for item in response.json()["predicates"] if item["code"] == "holdout_ownership")
+
+        before = _authority_counts(session, foreign.strategy_id, [foreign.campaign_id, denied.campaign_id])
+        _candidate, foreign_rows = holdout_rows(foreign)
+        assert foreign_rows[str(foreign.review_id)]["state"] == "consumed_by_this_campaign"
+        assert foreign_rows[str(borrowed.id)] == {
+            "state": "consumed_by_another_campaign",
+            "holdout_use_id": str(foreign_review.holdout_use_id),
+            "holdout_identity_sha256": owner.holdout_identity,
+            "owner_campaign_id": str(owner.campaign_id),
+        }
+        assert gate_holdout(foreign, foreign.review_id)["state"] == "passed"
+        foreign_gate = gate_holdout(foreign, borrowed.id)
+        assert foreign_gate["state"] == "blocked"
+        assert foreign_gate["evidence"]["owner_campaign_id"] == str(owner.campaign_id)
+
+        denied_candidate, denied_rows = holdout_rows(denied)
+        assert denied_rows[str(denied.review_id)]["state"] == "reuse_denied"
+        assert [row["holdout_identity_sha256"] for row in denied_candidate["holdout_reuse_denials"]] == [
+            denied.holdout_identity
+        ]
+        assert denied_candidate["holdout_reuse_denials"][0]["owner_campaign_id"] == str(owner.campaign_id)
+        denied_gate = gate_holdout(denied, denied.review_id)
+        assert denied_gate["state"] == "blocked"
+        assert "denied" in denied_gate["reason"]
+        assert _authority_counts(session, foreign.strategy_id, [foreign.campaign_id, denied.campaign_id]) == before

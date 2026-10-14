@@ -183,6 +183,102 @@ class RollbackTargetResponse(BaseModel):
     predicates: list[ReleasePredicateResponse]
 
 
+class ReleaseStateVersionIdentity(BaseModel):
+    """Stored immutable identity of one strategy version."""
+
+    strategy_version_id: uuid.UUID
+    version_no: int
+    status: str
+    content_sha256: str
+    policy_sha256: str
+    account_scope: str | None
+    created_at: datetime
+
+
+class ReleaseStateReconciliation(BaseModel):
+    """Latest stored reconciliation for an account identity, as the gate resolves it."""
+
+    reconciliation_id: uuid.UUID
+    account_scope: str
+    account_generation: str
+    status: str
+    as_of: datetime
+    policy_sha256: str
+
+
+class ReleaseStateTrial(BaseModel):
+    experiment_id: uuid.UUID
+    original_trial_id: str | None
+    trial_role: str | None
+    strategy_version_id: uuid.UUID | None
+    version_role: Literal["incumbent", "candidate"] | None
+    ablation_arm: str | None
+    terminal_state: str | None
+    result_sha256: str | None
+
+
+class ReleaseStateHoldout(BaseModel):
+    state: Literal[
+        "consumed_by_this_campaign",
+        "consumed_by_another_campaign",
+        "reuse_denied",
+        "ownership_mismatch",
+        "unavailable",
+    ]
+    holdout_use_id: uuid.UUID | None
+    holdout_identity_sha256: str | None
+    owner_campaign_id: uuid.UUID | None
+
+
+class ReleaseStateReview(BaseModel):
+    review_id: uuid.UUID
+    status: Literal["passed", "failed", "inconclusive", "unavailable"]
+    input_sha256: str
+    result_sha256: str
+    created_at: datetime
+    holdout: ReleaseStateHoldout
+
+
+class ReleaseStateHoldoutDenial(BaseModel):
+    campaign_event_id: uuid.UUID
+    holdout_identity_sha256: str | None
+    owner_campaign_id: str | None
+    created_at: datetime
+
+
+class ReleaseStateCandidate(BaseModel):
+    candidate: ReleaseStateVersionIdentity
+    campaign_id: uuid.UUID
+    hypothesis: str
+    contract_sha256: str
+    campaign_created_at: datetime
+    incumbent_version_id: uuid.UUID
+    incumbent_content_sha256: str
+    declared_trial_count: int | None
+    terminal_trial_count: int
+    trials: list[ReleaseStateTrial]
+    reviews: list[ReleaseStateReview]
+    holdout_reuse_denials: list[ReleaseStateHoldoutDenial]
+    account_scope: str | None
+    account_generation: str | None
+    reconciliation: ReleaseStateReconciliation | None
+
+
+class ReleaseStateResponse(BaseModel):
+    """Read-only stored release identities; eligibility remains the release gate's decision."""
+
+    strategy_id: uuid.UUID
+    release_revision: int
+    active_version_id: uuid.UUID | None
+    pointer_state: Literal["unreleased", "active", "paused"]
+    active_version: ReleaseStateVersionIdentity | None
+    authority_version: ReleaseStateVersionIdentity | None
+    latest_event_id: uuid.UUID | None
+    latest_event_type: Literal["release", "pause", "rollback", "reject"] | None
+    authority_reconciliation: ReleaseStateReconciliation | None
+    candidates: list[ReleaseStateCandidate]
+
+
 class TransitionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -320,6 +416,32 @@ def get_release_gate(
         principal=principal,
     )
     return ReleaseGateResponse.model_validate(result.as_json())
+
+
+@router.get(
+    "/{strategy_id}/release-state",
+    response_model=ReleaseStateResponse,
+    responses=ERROR_RESPONSES,
+)
+def get_release_state(
+    strategy_id: uuid.UUID,
+    principal: AuthPrincipal = Depends(get_auth_principal),
+    db: Session = Depends(get_db),
+) -> ReleaseStateResponse:
+    strategy = _strategy(db, strategy_id)
+    events = db.scalars(
+        select(StrategyReleaseEvent)
+        .where(StrategyReleaseEvent.strategy_id == strategy_id)
+        .order_by(StrategyReleaseEvent.resulting_revision, StrategyReleaseEvent.id)
+    ).all()
+    _authorize_strategy_read(db, strategy, principal, events)
+    state = ReleaseService(db).read_release_state(strategy)
+    for version_id in {
+        strategy.active_version_id,
+        *(candidate["candidate"]["strategy_version_id"] for candidate in state["candidates"]),
+    } - {None}:
+        _version_scope(db, strategy, version_id, principal)
+    return ReleaseStateResponse.model_validate(state)
 
 
 @router.get(

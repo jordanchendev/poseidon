@@ -1507,3 +1507,33 @@ def test_failure_after_event_flush_is_atomic(phase99_session_factory, monkeypatc
         strategy = session.get(StrategyRecord, graph.strategy_id)
         assert (strategy.active_version_id, strategy.release_revision) == (None, 0)
         assert session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).count() == 0
+
+
+@pytest.mark.postgresql
+def test_release_state_reader_shares_gate_holdout_and_reconciliation_resolution(phase99_session_factory):
+    with phase99_session_factory() as session:
+        generation = f"gen-{uuid.uuid4().hex}"
+        graph = _seed_gate_graph(
+            session,
+            policy_changes={"reconciliation": synthetic_reconciliation_policy(account_generation=generation)},
+        )
+        service = ReleaseService(session)
+        strategy = session.get(StrategyRecord, graph.strategy_id)
+
+        state = service.read_release_state(strategy)
+        gate = _evaluate(session, graph)
+
+        assert not session.new and not session.dirty and not session.deleted
+        assert state["release_revision"] == 0 and state["active_version_id"] is None
+        assert state["pointer_state"] == "unreleased"
+        (candidate,) = state["candidates"]
+        assert candidate["candidate"]["strategy_version_id"] == graph.candidate_id
+        assert candidate["account_generation"] == generation
+        assert candidate["reconciliation"]["reconciliation_id"] == graph.reconciliation_id
+        assert _by_code(gate, "reconciliation").state == "passed"
+        (review,) = candidate["reviews"]
+        assert review["review_id"] == graph.review_id
+        assert review["holdout"]["state"] == "consumed_by_this_campaign"
+        assert _by_code(gate, "holdout_ownership").state == "passed"
+        assert gate.allowed
+        session.rollback()
