@@ -46,6 +46,11 @@ def test_poseidon_beat_has_trading_tasks():
         "perp-rebalance-4h",
         "perp-funding-settlement",
         "perp-nav-snapshot",
+        "decision-loop-recover-execution",
+        "decision-loop-reconcile-paper-account",
+        "decision-loop-expire-decisions",
+        "decision-loop-produce-tw-daily",
+        "decision-loop-label-outcomes",
     ]
     for name in expected:
         assert name in schedule, f"Trading task '{name}' missing from Poseidon schedule"
@@ -55,7 +60,7 @@ def test_poseidon_beat_entry_count():
     from poseidon.workers.celery_app import celery_app
 
     schedule = celery_app.conf.beat_schedule
-    assert len(schedule) == 17, f"Expected 17 entries, got {len(schedule)}: {list(schedule.keys())}"
+    assert len(schedule) == 22, f"Expected 22 entries, got {len(schedule)}: {list(schedule.keys())}"
 
 
 def test_cutover_preserves_redbeat_names_and_recovery_protective_symbols():

@@ -924,6 +924,298 @@ def produce_decision_runs_for_market(market: str, interval: str, as_of: str | No
     return {"manifest_id": frozen["manifest_id"], "as_of": as_of, "enqueued": len(version_ids)}
 
 
+# ---------------------------------------------------------------------------
+# Decision-loop housekeeping: expiry, outcome labeling, paired review, and the
+# scheduled entry points for the existing recovery/reconciliation tasks.
+# Every task returns {"skipped": mode} outside shadow/decision.
+# ---------------------------------------------------------------------------
+
+LOOP_LABEL_BATCH = 50
+LOOP_OUTCOME_LOOKBACK_DAYS = 7
+OUTCOME_CAPABILITIES = ("price", "benchmark", "fx", "calendar", "research")
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.expire_due_decisions", max_retries=0)
+def expire_due_decisions(as_of: str | None = None) -> dict:
+    skipped = _loop_mode_skip()
+    if skipped:
+        return skipped
+    from poseidon.decision_loop.decisions import DecisionService
+
+    as_of = _loop_as_of(as_of)
+    with SessionLocal() as session, session.begin():
+        expired = DecisionService(session).expire_due(as_of)
+        return {"as_of": as_of, "expired": [str(decision.id) for decision in expired]}
+
+
+def _is_outcome_manifest(manifest) -> bool:
+    capabilities = manifest.capability_json if isinstance(manifest.capability_json, dict) else {}
+    return all(capabilities.get(kind) is True for kind in OUTCOME_CAPABILITIES)
+
+
+def _latest_outcome_as_of(session, now) -> str | None:
+    from sqlalchemy import select
+
+    from poseidon.decision_loop.manifest import iso_time
+    from poseidon.models.data_manifest import DataManifest
+
+    manifests = session.scalars(
+        select(DataManifest)
+        .where(DataManifest.as_of <= now, DataManifest.as_of >= now - timedelta(days=LOOP_OUTCOME_LOOKBACK_DAYS))
+        .order_by(DataManifest.as_of.desc(), DataManifest.id)
+    ).all()
+    latest = next((manifest for manifest in manifests if _is_outcome_manifest(manifest)), None)
+    return None if latest is None else iso_time(latest.as_of, "as_of")
+
+
+def _mature_outcome_batches(session, as_of: str, label_definition_version: str):
+    """Group unlabeled snapshots with a mature horizon by their frozen outcome manifest."""
+    from sqlalchemy import select
+
+    from poseidon.decision_loop.manifest import ValidationError, timestamp
+    from poseidon.decision_loop.outcomes import _horizon_time, _manifest_facts, validate_outcome_label_contract
+    from poseidon.models.data_manifest import DataManifest
+    from poseidon.models.decision_record import DecisionRecord
+    from poseidon.models.evaluation_run import EvaluationRun
+    from poseidon.models.evaluation_snapshot import EvaluationSnapshot
+    from poseidon.models.outcome import OutcomeLabelContract, OutcomeRecord
+
+    contracts = session.scalars(
+        select(OutcomeLabelContract).where(OutcomeLabelContract.version == label_definition_version)
+    ).all()
+    if len(contracts) != 1:
+        raise ValueError(f"label contract {label_definition_version!r} must resolve exactly once")
+    contract_row = contracts[0]
+    contract = validate_outcome_label_contract(contract_row)
+    cutoff = timestamp(as_of, "as_of")
+    by_identity = {}
+    for manifest in session.scalars(
+        select(DataManifest).where(DataManifest.as_of == cutoff).order_by(DataManifest.id)
+    ).all():
+        if not _is_outcome_manifest(manifest):
+            continue
+        try:
+            _payload, by_id, sessions, _counterfactuals = _manifest_facts(manifest, contract, cutoff)
+        except ValidationError:
+            continue
+        prices = [item for item in by_id.values() if item.get("kind") == "price"]
+        if len(prices) != 1 or not isinstance(prices[0].get("payload"), dict):
+            continue
+        identity = (manifest.market, prices[0]["payload"].get("symbol"))
+        by_identity.setdefault(identity, []).append((manifest, sessions))
+
+    batches, unlabeled = {}, {}
+    for (market, symbol), candidates in sorted(by_identity.items(), key=str):
+        if len(candidates) != 1:
+            unlabeled[f"{market}:{symbol}"] = "outcome_manifest_ambiguous"
+            continue
+        manifest, sessions = candidates[0]
+        rows = session.execute(
+            select(EvaluationSnapshot, EvaluationRun)
+            .join(EvaluationRun, EvaluationRun.id == EvaluationSnapshot.evaluation_run_id)
+            .where(
+                EvaluationSnapshot.market == market,
+                EvaluationSnapshot.symbol == symbol,
+                EvaluationRun.status == "complete",
+                EvaluationRun.decision_as_of < cutoff,
+            )
+            .order_by(EvaluationRun.decision_as_of, EvaluationSnapshot.id)
+        ).all()
+        for snapshot, run in rows:
+            anchor = timestamp(
+                run.decision_as_of.replace(tzinfo=UTC) if run.decision_as_of.tzinfo is None else run.decision_as_of,
+                "decision_as_of",
+            )
+            labeled = {
+                (kind, horizon_key)
+                for kind, horizon_key in session.execute(
+                    select(OutcomeRecord.kind, OutcomeRecord.horizon_key).where(
+                        OutcomeRecord.evaluation_snapshot_id == snapshot.id,
+                        OutcomeRecord.label_contract_id == contract_row.id,
+                    )
+                ).all()
+            }
+            traded = (
+                session.scalar(select(DecisionRecord.id).where(DecisionRecord.evaluation_run_id == run.id).limit(1))
+                is not None
+            )
+            try:
+                # The service resolves every horizon, so an unresolvable calendar would fail the whole batch.
+                maturities = {
+                    (kind, horizon["key"]): _horizon_time(anchor, horizon, sessions)
+                    for kind in ("signal", "trade", "research")
+                    for horizon in contract["horizons"][kind]
+                }
+            except ValidationError:
+                unlabeled[str(snapshot.id)] = "calendar_unresolved"
+                continue
+            due = [
+                key
+                for key, maturity in maturities.items()
+                if maturity <= cutoff and (key[0] != "trade" or traded) and key not in labeled
+            ]
+            if due:
+                batches.setdefault(manifest.id, []).append(snapshot.id)
+    return batches, unlabeled
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.label_decision_outcomes", max_retries=0)
+def label_decision_outcomes(as_of: str | None = None) -> dict:
+    """Label only mature, not-yet-labeled snapshots against one frozen outcome manifest per symbol."""
+    skipped = _loop_mode_skip()
+    if skipped:
+        return skipped
+    version = settings.decision_loop_label_definition_version
+    if not version:
+        return {"skipped": "label_definition_version_unset"}
+    from poseidon.decision_loop.outcomes import label_mature_outcomes
+
+    with SessionLocal() as session:
+        if as_of is None:
+            as_of = _latest_outcome_as_of(session, datetime.now(UTC))
+            if as_of is None:
+                return {"skipped": "outcome_manifest_missing"}
+        as_of = _loop_as_of(as_of)
+        batches, unlabeled = _mature_outcome_batches(session, as_of, version)
+    outcomes = 0
+    for manifest_id, snapshot_ids in sorted(batches.items(), key=lambda item: str(item[0])):
+        for start in range(0, len(snapshot_ids), LOOP_LABEL_BATCH):
+            outcomes += len(
+                label_mature_outcomes(
+                    SessionLocal,
+                    evaluation_snapshot_ids=snapshot_ids[start : start + LOOP_LABEL_BATCH],
+                    as_of=as_of,
+                    label_definition_version=version,
+                    outcome_manifest_id=manifest_id,
+                )
+            )
+    return {
+        "as_of": as_of,
+        "label_definition_version": version,
+        "snapshots": sum(len(snapshot_ids) for snapshot_ids in batches.values()),
+        "outcomes": outcomes,
+        "unlabeled": unlabeled,
+    }
+
+
+def _holdout_manifest_ids(session, campaign, holdout_identity: dict) -> list:
+    """Metadata-only preflight; holdout payloads are read only after consumption commits."""
+    from poseidon.decision_loop.manifest import canonical_json
+    from poseidon.models.data_manifest import DataManifest
+
+    contract = campaign.contract_json if isinstance(campaign.contract_json, dict) else {}
+    frozen_refs = {canonical_json(item) for item in contract.get("manifest_set") or []}
+    references = holdout_identity.get("manifest_set")
+    if not isinstance(references, list) or not references:
+        raise ValueError("holdout identity requires a non-empty manifest_set")
+    manifest_ids = []
+    for reference in references:
+        if canonical_json(reference) not in frozen_refs:
+            raise ValueError("holdout manifest is not part of the frozen campaign contract")
+        raw_id = reference.get("manifest_id") if isinstance(reference, dict) else reference
+        expected = reference.get("content_sha256") if isinstance(reference, dict) else None
+        try:
+            manifest_id = uuid.UUID(str(raw_id))
+        except ValueError as error:
+            raise ValueError("holdout manifest reference must be a frozen manifest UUID") from error
+        manifest = session.get(DataManifest, manifest_id)
+        if manifest is None or (expected is not None and manifest.content_sha256 != expected):
+            raise ValueError("holdout manifest reference does not match frozen truth")
+        if (manifest.capability_json or {}).get("review_panel") is not True:
+            raise ValueError("holdout manifest does not declare review_panel evidence")
+        manifest_ids.append(manifest_id)
+    return manifest_ids
+
+
+def _holdout_panel(manifest_ids: list, holdout_identity: dict) -> pd.DataFrame:
+    from poseidon.decision_loop.manifest import verify_manifest
+    from poseidon.models.data_manifest import DataManifest
+
+    window = holdout_identity.get("window") if isinstance(holdout_identity.get("window"), dict) else {}
+    start, end = str(window.get("start", ""))[:10], str(window.get("end", ""))[:10]
+    universe = {
+        item if isinstance(item, str) else item.get("symbol")
+        for item in holdout_identity.get("universe") or []
+        if isinstance(item, (str, dict))
+    }
+    rows = []
+    with SessionLocal() as session:
+        for manifest_id in manifest_ids:
+            payload = verify_manifest(session.get(DataManifest, manifest_id))
+            for item in payload["evidence"]:
+                if item.get("kind") != "review_panel" or not isinstance(item.get("payload"), dict):
+                    continue
+                for row in item["payload"].get("rows") or []:
+                    date = str(row.get("date", ""))[:10] if isinstance(row, dict) else ""
+                    if start <= date <= end and (not universe or row.get("symbol") in universe):
+                        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.run_review_campaign", max_retries=0)
+def run_review_campaign(campaign_id: str, holdout_identity: dict) -> dict:
+    """Consume the global holdout, then run one paired review; reuse fails the task without retry."""
+    skipped = _loop_mode_skip()
+    if skipped:
+        return skipped
+    persisted_id = uuid.UUID(campaign_id)
+    from poseidon.models.experiment_campaign import ExperimentCampaign
+    from poseidon.research.campaign import build_holdout_identity, run_paired_review_in_transactions
+
+    digest = build_holdout_identity(holdout_identity)
+    with SessionLocal() as session:
+        campaign = session.get(ExperimentCampaign, persisted_id)
+        if campaign is None:
+            raise ValueError("campaign does not exist")
+        manifest_ids = _holdout_manifest_ids(session, campaign, holdout_identity)
+
+    def loader(*, permit):
+        return _holdout_panel(manifest_ids, holdout_identity)
+
+    review = run_paired_review_in_transactions(SessionLocal, persisted_id, digest, loader)
+    return {
+        "campaign_id": str(persisted_id),
+        "review_id": str(review.id),
+        "status": review.status,
+        "holdout_identity_sha256": digest,
+    }
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.scheduled_recover_decision_execution", max_retries=0)
+def scheduled_recover_decision_execution() -> dict:
+    """Beat entry for the existing recovery selector; a no-op outside shadow/decision."""
+    skipped = _loop_mode_skip()
+    if skipped:
+        return skipped
+    return recover_decision_execution.run()
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.scheduled_reconcile_paper_account", max_retries=0)
+def scheduled_reconcile_paper_account() -> dict:
+    """Beat entry reconciling only the approved paper account; a no-op outside shadow/decision."""
+    skipped = _loop_mode_skip()
+    if skipped:
+        return skipped
+    from sqlalchemy import select
+
+    from poseidon.models.paper_broker_account import PaperBrokerAccount
+
+    scope = settings.decision_loop_approved_account_scope
+    generation = settings.decision_loop_approved_account_generation
+    if not scope or not generation:
+        return {"skipped": "account_not_approved"}
+    with SessionLocal() as session:
+        account_id = session.scalar(
+            select(PaperBrokerAccount.id).where(
+                PaperBrokerAccount.account_scope == scope,
+                PaperBrokerAccount.account_generation == generation,
+            )
+        )
+    if account_id is None:
+        return {"skipped": "paper_account_missing"}
+    return reconcile_paper_account.run(str(account_id))
+
+
 def _build_portfolio_strategy(record, repo):
     """Build a PortfolioStrategy instance from StrategyRecord config."""
     from poseidon.strategies.portfolio.crypto_trend import CryptoTrendConfig

@@ -127,6 +127,32 @@ celery_app.conf.update(
             "task": "poseidon.workers.cpu_tasks.perp_nav_snapshot",
             "schedule": crontab(hour="0,4,8,12,16,20", minute=15),
         },
+        # --- Decision loop (Phase 100-07) ---
+        # Every task gates itself on decision_loop_execution_mode and returns
+        # {"skipped": mode} in legacy/halted, so the legacy path is unchanged.
+        "decision-loop-recover-execution": {
+            "task": "poseidon.workers.cpu_tasks.scheduled_recover_decision_execution",
+            "schedule": crontab(minute="*/15"),
+        },
+        # Approved paper account reconciliation: daily after the TW close and NAV snapshot.
+        "decision-loop-reconcile-paper-account": {
+            "task": "poseidon.workers.cpu_tasks.scheduled_reconcile_paper_account",
+            "schedule": crontab(hour=6, minute=20),
+        },
+        "decision-loop-expire-decisions": {
+            "task": "poseidon.workers.cpu_tasks.expire_due_decisions",
+            "schedule": crontab(minute=5),
+        },
+        # Frozen evaluation runs: 30 minutes after evaluate-strategies-tw-daily (06:10).
+        "decision-loop-produce-tw-daily": {
+            "task": "poseidon.workers.cpu_tasks.produce_decision_runs_for_market",
+            "schedule": crontab(hour=6, minute=40),
+            "kwargs": {"market": "tw_stock", "interval": "1d"},
+        },
+        "decision-loop-label-outcomes": {
+            "task": "poseidon.workers.cpu_tasks.label_decision_outcomes",
+            "schedule": crontab(hour=7, minute=30),
+        },
     },
     # Auto-discover task modules.
     # NB: poseidon.workers.qlib_tasks + poseidon.workers.qlib_rl_tasks must

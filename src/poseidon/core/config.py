@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     decision_loop_legacy_protective_scopes: tuple[str, ...] = ()
     # actor_id of the configured api_principals_json entry the loop producers act as.
     decision_loop_worker_principal_id: str = ""
+    # OutcomeLabelContract.version used by the scheduled outcome labeler; empty disables it.
+    decision_loop_label_definition_version: str = ""
 
     @model_validator(mode="after")
     def validate_execution_gate(self):

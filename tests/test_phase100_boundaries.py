@@ -189,16 +189,25 @@ def _authority_issues(
 
 
 def _autoresearch_worker_source(root: Path) -> str:
+    return _worker_closure_source(root, "autoresearch_run")
+
+
+def _worker_closure_source(root: Path, entry: str, *, leaves: frozenset[str] = frozenset()) -> str:
+    """Fixed-point source closure of one cpu_tasks entry; ``leaves`` are referenced but not expanded."""
     path = root / "src/poseidon/workers/cpu_tasks.py"
     if not path.is_file():
         return ""
     text = path.read_text(encoding="utf-8")
     tree = ast.parse(text, filename=str(path))
-    functions = {node.name: node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    if "autoresearch_run" not in functions:
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name not in leaves
+    }
+    if entry not in functions:
         return ""
     assignments = [node for node in tree.body if isinstance(node, (ast.Assign, ast.AnnAssign))]
-    used_names = {"autoresearch_run"}
+    used_names = {entry}
     included_functions: set[str] = set()
     included_assignments: set[int] = set()
     nodes: list[ast.AST] = []
@@ -316,6 +325,129 @@ def scan_boundary(root: Path) -> list[str]:
     return sorted(set(issues))
 
 
+LOOP_PRODUCER_MODULES = (
+    "src/poseidon/api/research_loop.py",
+    "src/poseidon/api/campaigns.py",
+    "src/poseidon/decision_loop/producer.py",
+    "src/poseidon/decision_loop/strategy_signals.py",
+)
+LOOP_PRODUCER_TASKS = (
+    "freeze_market_manifest",
+    "produce_decision_run",
+    "produce_decision_runs_for_market",
+    "expire_due_decisions",
+    "label_decision_outcomes",
+    "run_review_campaign",
+)
+# Scheduled entry points that only gate and delegate to pre-existing, already
+# authorization-gated recovery/reconciliation tasks (leaves are not expanded).
+LOOP_SCHEDULED_DELEGATES = {
+    "scheduled_recover_decision_execution": "recover_decision_execution",
+    "scheduled_reconcile_paper_account": "reconcile_paper_account",
+}
+LOOP_WRITER_MODULES = (
+    "poseidon.api.decisions",
+    "poseidon.api.releases",
+    "poseidon.api.risk",
+    "poseidon.api.strategy_releases",
+    "poseidon.decision_loop.execution",
+    "poseidon.decision_loop.releases",
+    "poseidon.decision_loop.transactions",
+    "poseidon.decision_loop.reconciliation",
+    "poseidon.orders",
+    "poseidon.broker",
+    "poseidon.positions",
+    "poseidon.models.order",
+    "poseidon.models.order_fill",
+    "poseidon.models.paper_broker_order",
+    "poseidon.models.paper_broker_fill",
+    "poseidon.models.strategy_release",
+    "poseidon.models.strategy_release_event",
+)
+# Read-only configuration parsing shared with evaluate_active_strategies.
+LOOP_ALLOWED_IMPORTS = frozenset({"poseidon.decision_loop.releases.ExecutableStrategyConfig"})
+LOOP_WRITER_NAMES = (
+    "ReleaseService",
+    "StrategyReleaseEvent",
+    "release_revision",
+    "approve",
+    "approve_decision",
+    "ApprovalBody",
+    "reject",
+    "RejectionBody",
+    "claim_execution",
+    "claim_next_approved",
+    "DecisionExecutionService",
+    "ProtectiveExecutionService",
+    "materialize_order_intents",
+    "materialize_execution_claim",
+    "_record_risk_block",
+    "submit_decision_order",
+    "submit_or_reconcile_order",
+    "apply_fill_projection",
+    "OrderManager",
+    "execute_rebalance",
+    "_persist_order",
+    "OrderRecord",
+    "OrderFillRecord",
+    "PaperBrokerOrder",
+    "PaperBrokerFill",
+)
+
+
+def _loop_writer_issues(label: str, text: str) -> list[str]:
+    """Release/pointer/approval/order/fill writers reachable from a loop producer source."""
+    try:
+        tree = ast.parse(text, filename=label)
+    except SyntaxError:
+        return [f"unparseable loop producer source: {label}"]
+    referenced = {
+        value
+        for node in ast.walk(tree)
+        for value in (
+            node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None,
+        )
+        if value is not None
+    }
+    issues = [f"loop writer name {name}: {label}" for name in LOOP_WRITER_NAMES if name in referenced]
+    for imported in _imports(text, label) - LOOP_ALLOWED_IMPORTS:
+        if any(imported == module or imported.startswith(f"{module}.") for module in LOOP_WRITER_MODULES):
+            issues.append(f"loop writer import {imported}: {label}")
+    for node in ast.walk(tree):
+        if (
+            (isinstance(node, ast.Attribute) and node.attr == "active_version_id" and isinstance(node.ctx, ast.Store))
+            or (isinstance(node, ast.keyword) and node.arg == "active_version_id")
+            or (isinstance(node, ast.Constant) and node.value == "active_version_id")
+        ):
+            issues.append(f"loop pointer write active_version_id: {label}")
+    return issues
+
+
+def scan_loop_producers(root: Path) -> list[str]:
+    issues: list[str] = []
+    for relative in LOOP_PRODUCER_MODULES:
+        path = root / relative
+        if not path.is_file():
+            issues.append(f"missing loop producer module: {relative}")
+            continue
+        issues.extend(_loop_writer_issues(relative, path.read_text(encoding="utf-8")))
+    for task in LOOP_PRODUCER_TASKS:
+        source = _worker_closure_source(root, task)
+        if not source:
+            issues.append(f"missing loop producer task: {task}")
+            continue
+        issues.extend(_loop_writer_issues(f"src/poseidon/workers/cpu_tasks.py:{task}", source))
+    for task, delegate in LOOP_SCHEDULED_DELEGATES.items():
+        source = _worker_closure_source(root, task, leaves=frozenset({delegate}))
+        if not source:
+            issues.append(f"missing loop scheduled task: {task}")
+            continue
+        if delegate not in source:
+            issues.append(f"loop scheduled task {task} does not delegate to {delegate}")
+        issues.extend(_loop_writer_issues(f"src/poseidon/workers/cpu_tasks.py:{task}", source))
+    return sorted(set(issues))
+
+
 def bundle() -> dict:
     def snapshot(identity: str, as_of: str, prefix: str, revenue: int, close: int) -> dict:
         return {
@@ -430,6 +562,48 @@ class Phase100DshBoundaryTests(unittest.TestCase):
 
     def test_committed_tree_has_only_allowlisted_poc_and_no_authority_path(self) -> None:
         self.assertEqual(scan_boundary(POSEIDON_ROOT), [])
+
+    def test_loop_producers_reach_no_release_pointer_approval_order_or_fill_writer(self) -> None:
+        self.assertEqual(scan_loop_producers(POSEIDON_ROOT), [])
+
+    def test_loop_producer_detector_flags_writers_and_missing_surfaces(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixtures = {
+                "src/poseidon/api/research_loop.py": "from poseidon.api.releases import router\n",
+                "src/poseidon/api/campaigns.py": "def promote(strategy, version):\n    strategy.active_version_id = version\n",
+                "src/poseidon/decision_loop/producer.py": (
+                    "from poseidon.decision_loop.releases import ExecutableStrategyConfig\n"
+                    "from poseidon.decision_loop.releases import ReleaseService\n"
+                    "def read(strategy):\n    return strategy.active_version_id\n"
+                ),
+                "src/poseidon/workers/cpu_tasks.py": (
+                    "from poseidon.decision_loop.decisions import DecisionService\n"
+                    "def _approve(session, decision):\n"
+                    "    return DecisionService(session).approve(decision, {}, principal=None, idempotency_key='k')\n"
+                    "def expire_due_decisions():\n    return _approve(None, None)\n"
+                    "def recover_decision_execution():\n    return submit_decision_order()\n"
+                    "def scheduled_recover_decision_execution():\n    return recover_decision_execution()\n"
+                ),
+            }
+            for relative, content in fixtures.items():
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            issues = "\n".join(scan_loop_producers(root))
+        for expected in (
+            "loop writer import poseidon.api.releases.router: src/poseidon/api/research_loop.py",
+            "loop pointer write active_version_id: src/poseidon/api/campaigns.py",
+            "loop writer import poseidon.decision_loop.releases.ReleaseService: src/poseidon/decision_loop/producer.py",
+            "loop writer name approve: src/poseidon/workers/cpu_tasks.py:expire_due_decisions",
+            "missing loop producer module: src/poseidon/decision_loop/strategy_signals.py",
+            "missing loop producer task: run_review_campaign",
+            "missing loop scheduled task: scheduled_reconcile_paper_account",
+        ):
+            self.assertIn(expected, issues)
+        self.assertNotIn("ExecutableStrategyConfig", issues)
+        self.assertNotIn("loop pointer write active_version_id: src/poseidon/decision_loop/producer.py", issues)
+        self.assertNotIn("submit_decision_order: src/poseidon/workers/cpu_tasks.py:scheduled_recover", issues)
 
     def test_dsh_root_evidence_allowlist_is_exact(self) -> None:
         with TemporaryDirectory() as directory:
