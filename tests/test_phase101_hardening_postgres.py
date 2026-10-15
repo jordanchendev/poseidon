@@ -418,7 +418,7 @@ VIOLATIONS = (
     ("ck_decision_records_validity", "decision_records", "anchor_decision", {"valid_until": DECISION_AS_OF}),
     ("ck_decision_records_sha256", "decision_records", "anchor_decision", {"policy_sha256": "short"}),
     ("ck_evaluation_runs_status", "evaluation_runs", "run", {"status": "running"}),
-    ("ck_evaluation_snapshots_status", "evaluation_snapshots", "snapshot", {"status": "insufficient_data"}),
+    ("ck_evaluation_snapshots_status", "evaluation_snapshots", "snapshot", {"status": "insufficient"}),
     ("ck_strategy_versions_status", "strategy_versions", "version", {"status": "bogus"}),
     ("ck_strategy_versions_number_hash", "strategy_versions", "version", {"version_no": 0}),
     ("ck_research_revisions_status", "research_revisions", "research", {"status": "complete"}),

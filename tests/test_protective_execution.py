@@ -2058,7 +2058,7 @@ def test_projection_rejects_non_exact_durable_origin(seed, origin):
 @pytest.mark.parametrize(
     ("changes", "constraint"),
     [
-        ({"order_origin": "unknown"}, "ck_orders_order_origin_allowlist"),
+        ({"order_origin": "unknown", "decision_id": None}, "ck_orders_order_origin_allowlist"),
         ({"order_origin": "manual"}, "ck_orders_decision_id_origin"),
     ],
     ids=["unknown", "anchored-manual"],
