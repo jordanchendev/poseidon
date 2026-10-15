@@ -58,7 +58,7 @@ class StrategyReleaseEvent(Base):
             name="fk_strategy_release_events_holdout_use",
         ),
         CheckConstraint(
-            "event_type IN ('release', 'pause', 'rollback', 'reject')",
+            "event_type IN ('release', 'pause', 'rollback', 'reject', 'bootstrap')",
             name="ck_strategy_release_events_type",
         ),
         CheckConstraint(
@@ -86,7 +86,12 @@ class StrategyReleaseEvent(Base):
             "AND reconciliation_id IS NOT NULL) OR "
             "(event_type = 'reject' AND candidate_version_id IS NOT NULL "
             "AND to_version_id IS NOT DISTINCT FROM from_version_id "
-            "AND source_release_event_id IS NULL)",
+            "AND source_release_event_id IS NULL) OR "
+            "(event_type = 'bootstrap' AND candidate_version_id IS NOT NULL "
+            "AND to_version_id = candidate_version_id AND from_version_id IS NULL "
+            "AND expected_revision = 0 AND source_release_event_id IS NULL "
+            "AND campaign_id IS NULL AND review_id IS NULL "
+            "AND holdout_use_id IS NULL AND reconciliation_id IS NULL)",
             name="ck_strategy_release_events_shape",
         ),
     )

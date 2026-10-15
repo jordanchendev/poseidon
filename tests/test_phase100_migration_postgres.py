@@ -6,11 +6,11 @@ import uuid
 from pathlib import Path
 
 import pytest
-from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
+from alembic import command
 
 pytestmark = pytest.mark.postgresql
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,7 +87,7 @@ def _seed_legacy_043(engine):
 
 def test_empty_database_upgrades_to_the_single_044_head(phase100_migration_database):
     config, engine = phase100_migration_database
-    command.upgrade(config, "head")
+    command.upgrade(config, "044")
     with engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "044"
     inspector = inspect(engine)
