@@ -79,6 +79,14 @@ class ReleasePredicateEvidence(BaseModel):
     position_lot_ids: list[uuid.UUID] | None = None
     claimed_decision_ids: list[uuid.UUID] | None = None
     active_order_ids: list[uuid.UUID] | None = None
+    release_revision: int | None = None
+    prior_release_events: int | None = None
+    stop_loss_pct: float | None = None
+    paper_accounts: int | None = None
+    paper_broker_orders: int | None = None
+    paper_broker_fills: int | None = None
+    open_position_lots: int | None = None
+    decision_records: int | None = None
 
 
 ReleasePredicateCode = Literal[
@@ -96,6 +104,9 @@ ReleasePredicateCode = Literal[
     "rollback_holdings",
     "rollback_outstanding_work",
     "rollback_reconciliation",
+    "bootstrap_eligibility",
+    "protective_exit",
+    "account_fresh",
 ]
 
 
@@ -109,6 +120,7 @@ class ReleasePredicateResponse(BaseModel):
 class ReleaseGateResponse(BaseModel):
     allowed: bool
     predicates: list[ReleasePredicateResponse]
+    bootstrap: Literal[True] | None = None
 
 
 class ReleaseGateFailureDetail(BaseModel):
@@ -155,7 +167,7 @@ class ReleaseEventResponse(BaseModel):
 
     id: uuid.UUID
     strategy_id: uuid.UUID
-    event_type: Literal["release", "pause", "rollback", "reject"]
+    event_type: Literal["release", "pause", "rollback", "reject", "bootstrap"]
     candidate_version_id: uuid.UUID | None
     from_version_id: uuid.UUID | None
     to_version_id: uuid.UUID | None
@@ -274,7 +286,7 @@ class ReleaseStateResponse(BaseModel):
     active_version: ReleaseStateVersionIdentity | None
     authority_version: ReleaseStateVersionIdentity | None
     latest_event_id: uuid.UUID | None
-    latest_event_type: Literal["release", "pause", "rollback", "reject"] | None
+    latest_event_type: Literal["release", "pause", "rollback", "reject", "bootstrap"] | None
     authority_reconciliation: ReleaseStateReconciliation | None
     candidates: list[ReleaseStateCandidate]
 
@@ -307,9 +319,13 @@ class RejectRequest(TransitionRequest):
     candidate_version_id: uuid.UUID
 
 
+class BootstrapRequest(TransitionRequest):
+    candidate_version_id: uuid.UUID
+
+
 class ReleaseMutationResponse(BaseModel):
     event_id: uuid.UUID
-    event_type: Literal["release", "pause", "rollback", "reject"]
+    event_type: Literal["release", "pause", "rollback", "reject", "bootstrap"]
     strategy_id: uuid.UUID
     from_version_id: uuid.UUID | None
     to_version_id: uuid.UUID | None
@@ -623,6 +639,37 @@ def reject_strategy(
         strategy = _strategy(db, strategy_id)
         _version_scope(db, strategy, body.candidate_version_id, principal)
         return service.reject(
+            strategy_id,
+            body.candidate_version_id,
+            expected_revision=body.expected_revision,
+            expected_active_version_id=body.expected_active_version_id,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            reason=body.reason,
+        )
+
+    return _mutate(db, operation)
+
+
+@router.post(
+    "/{strategy_id}/bootstrap",
+    response_model=ReleaseMutationResponse,
+    responses=ERROR_RESPONSES,
+)
+def bootstrap_strategy(
+    strategy_id: uuid.UUID,
+    body: BootstrapRequest,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
+    principal: AuthPrincipal = Depends(get_auth_principal),
+    db: Session = Depends(get_db),
+) -> ReleaseMutationResponse:
+    """Documented first activation without campaign evidence (Phase 101 D-23.1)."""
+
+    def operation(service):
+        principal.require_role("release_manager")
+        strategy = _strategy(db, strategy_id)
+        _version_scope(db, strategy, body.candidate_version_id, principal)
+        return service.bootstrap(
             strategy_id,
             body.candidate_version_id,
             expected_revision=body.expected_revision,

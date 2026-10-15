@@ -11,7 +11,7 @@ from typing import Annotated, Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from poseidon.api.auth import AuthPrincipal
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionPolicy
@@ -32,6 +32,9 @@ from poseidon.models.experiment_campaign import (
     HoldoutUse,
 )
 from poseidon.models.order import OrderRecord
+from poseidon.models.paper_broker_account import PaperBrokerAccount
+from poseidon.models.paper_broker_fill import PaperBrokerFill
+from poseidon.models.paper_broker_order import PaperBrokerOrder
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
@@ -344,6 +347,18 @@ class DeferredExecutablePayload(BaseModel):
 ExecutablePayload = RuleExecutablePayload | VotingExecutablePayload | DeferredExecutablePayload
 
 
+class ProtectiveExitConfig(BaseModel):
+    """Durable stop-loss for loop-opened tw_stock lots (Phase 101 D-23.12).
+
+    Read verbatim by ``workers.cpu_tasks._durable_protective_triggers`` from the
+    top level of ``StrategyVersion.config_json``.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    stop_loss_pct: Annotated[float, Field(strict=True, gt=0.0, lt=1.0, allow_inf_nan=False)]
+
+
 class ExecutableStrategyConfig(BaseModel):
     """Immutable live execution identity plus strategy-specific payload."""
 
@@ -355,6 +370,7 @@ class ExecutableStrategyConfig(BaseModel):
     instrument: Literal["spot", "perpetual"]
     interval: Annotated[str, Field(min_length=1)]
     payload: ExecutablePayload
+    protective_exit: ProtectiveExitConfig | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -384,6 +400,12 @@ class ExecutableStrategyConfig(BaseModel):
         expected = "perpetual" if self.market == "crypto_perp" else "spot"
         if self.instrument != expected:
             raise ValueError("executable instrument does not match market")
+        return self
+
+    @model_validator(mode="after")
+    def require_tw_stock_protective_exit(self):
+        if self.protective_exit is not None and self.market != "tw_stock":
+            raise ValueError("protective_exit is defined only for tw_stock")
         return self
 
     def routing_matches(self, strategy) -> bool:
@@ -1475,6 +1497,173 @@ class ReleaseService:
             principal=principal,
             idempotency_key=idempotency_key,
             reason=reason,
+        )
+
+    def _bootstrap_eligibility_predicate(self, strategy):
+        prior_events = self.session.scalar(
+            select(func.count())
+            .select_from(StrategyReleaseEvent)
+            .where(StrategyReleaseEvent.strategy_id == strategy.id)
+        )
+        evidence = {
+            "strategy_id": str(strategy.id),
+            "active_version_id": None if strategy.active_version_id is None else str(strategy.active_version_id),
+            "release_revision": strategy.release_revision,
+            "prior_release_events": prior_events,
+        }
+        if strategy.active_version_id is not None or strategy.release_revision != 0 or prior_events != 0:
+            return _predicate(
+                "bootstrap_eligibility",
+                "blocked",
+                "bootstrap is only for a strategy with no release history",
+                **evidence,
+            )
+        return _predicate("bootstrap_eligibility", "passed", "strategy has no release history", **evidence)
+
+    @staticmethod
+    def _protective_exit_predicate(candidate):
+        evidence = {"candidate_version_id": None if candidate is None else str(candidate.id)}
+        if candidate is None:
+            return _predicate("protective_exit", "unavailable", "candidate version is unavailable", **evidence)
+        try:
+            executable = ExecutableStrategyConfig.model_validate(candidate.config_json)
+        except (PydanticValidationError, TypeError, ValueError):
+            return _predicate("protective_exit", "blocked", "candidate executable config is invalid", **evidence)
+        evidence["market"] = executable.market
+        if executable.market != "tw_stock":
+            return _predicate(
+                "protective_exit", "passed", "typed protective exit is defined only for tw_stock", **evidence
+            )
+        if executable.protective_exit is None:
+            return _predicate(
+                "protective_exit", "blocked", "tw_stock bootstrap requires a typed protective_exit", **evidence
+            )
+        evidence["stop_loss_pct"] = executable.protective_exit.stop_loss_pct
+        return _predicate("protective_exit", "passed", "tw_stock stop-loss is resolvable", **evidence)
+
+    def _account_fresh_predicate(self, policy):
+        evidence = {"account_scope": None if policy is None else policy.account_scope}
+        if policy is None or policy.reconciliation is None:
+            return _predicate("account_fresh", "blocked", "frozen reconciliation policy is missing", **evidence)
+        scope = policy.account_scope
+        generation = policy.reconciliation.account_generation
+        evidence["account_generation"] = generation
+        accounts = self.session.scalars(
+            select(PaperBrokerAccount).where(
+                PaperBrokerAccount.account_scope == scope,
+                PaperBrokerAccount.account_generation == generation,
+            )
+        ).all()
+        evidence["paper_accounts"] = len(accounts)
+        if len(accounts) != 1:
+            return _predicate(
+                "account_fresh", "blocked", "exactly one paper account must match the frozen identity", **evidence
+            )
+        account = accounts[0]
+        if account.opening_cash != policy.reconciliation.opening_cash or (
+            account.currency != policy.reconciliation.currency
+        ):
+            return _predicate(
+                "account_fresh",
+                "blocked",
+                "paper account opening cash or currency does not match the frozen policy",
+                **evidence,
+            )
+        evidence.update(
+            paper_broker_orders=self.session.scalar(
+                select(func.count())
+                .select_from(PaperBrokerOrder)
+                .where(PaperBrokerOrder.account_scope == scope, PaperBrokerOrder.account_generation == generation)
+            ),
+            paper_broker_fills=self.session.scalar(
+                select(func.count())
+                .select_from(PaperBrokerFill)
+                .where(PaperBrokerFill.account_scope == scope, PaperBrokerFill.account_generation == generation)
+            ),
+            open_position_lots=self.session.scalar(
+                select(func.count())
+                .select_from(PositionLot)
+                .where(
+                    PositionLot.account_scope == scope,
+                    PositionLot.account_generation == generation,
+                    PositionLot.open_quantity > 0,
+                )
+            ),
+            decision_records=self.session.scalar(
+                select(func.count()).select_from(DecisionRecord).where(DecisionRecord.account_scope == scope)
+            ),
+        )
+        if any(
+            evidence[key]
+            for key in ("paper_broker_orders", "paper_broker_fills", "open_position_lots", "decision_records")
+        ):
+            return _predicate("account_fresh", "blocked", "paper account already has trading history", **evidence)
+        return _predicate("account_fresh", "passed", "paper account is fresh for the frozen identity", **evidence)
+
+    def bootstrap(
+        self,
+        strategy_id,
+        candidate_version_id,
+        *,
+        expected_revision,
+        expected_active_version_id,
+        reason,
+        principal,
+        idempotency_key,
+    ):
+        """Activate the first StrategyVersion without campaign evidence (Phase 101 D-23.1).
+
+        Bootstrap is a documented, one-time event: it records no campaign, review,
+        holdout, or reconciliation ids, and the pointer still moves only through
+        ``_append_transition`` under the 044 authority trigger.
+        """
+        reason = required_text(reason, "reason")
+        body = {"candidate_version_id": str(candidate_version_id), "reason": reason}
+        if isinstance(expected_revision, bool) or expected_revision != 0 or expected_active_version_id is not None:
+            raise DecisionConflictError("bootstrap requires expected_revision 0 and no active version")
+        strategy, digest, _pointer, _body, replay = self._begin_transition(
+            operation="bootstrap",
+            strategy_id=strategy_id,
+            expected_revision=0,
+            expected_active_version_id=None,
+            principal=principal,
+            idempotency_key=idempotency_key,
+            body=body,
+        )
+        if replay is not None:
+            return replay
+        candidate = self.session.get(StrategyVersion, candidate_version_id)
+        policy = self._policy_for_version(candidate, strategy, principal)
+        self._lock_reconciliation_authority(policy)
+        gate = ReleaseGateResult(
+            (
+                self._candidate_predicate(strategy, candidate, candidate_version_id),
+                self._policy_predicate(strategy, candidate)[0],
+                self._bootstrap_eligibility_predicate(strategy),
+                self._protective_exit_predicate(candidate),
+                self._account_fresh_predicate(policy),
+                self._authority_predicate(principal, policy),
+            )
+        )
+        self._require_allowed(gate, "bootstrap")
+        gate_json = {**gate.as_json(), "bootstrap": True}
+        return self._append_transition(
+            operation="bootstrap",
+            strategy=strategy,
+            candidate_version_id=candidate.id,
+            to_version_id=candidate.id,
+            source_release_event_id=None,
+            campaign_id=None,
+            review_id=None,
+            holdout_use_id=None,
+            reconciliation_id=None,
+            principal=principal,
+            account_scope=policy.account_scope,
+            expected_revision=0,
+            idempotency_key=idempotency_key,
+            request_sha256=digest,
+            reason=reason,
+            gate_json=gate_json,
         )
 
     def _rollback_gate(self, strategy, target, reconciliation, source_policy, principal, now):
