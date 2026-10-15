@@ -45,7 +45,7 @@ PRODUCING_MODES = frozenset({"shadow", "decision"})
 LIVE_STRATEGY_TYPES = frozenset({"rule", "voting"})
 ENTRY_ACTIONS = frozenset({"long", "short"})
 SHADOW_PARITY_ACTOR = "system:shadow-parity"
-DECISION_ALLOWED_ACTIONS = ("enter", "hold", "watch")
+DECISION_ALLOWED_ACTIONS = ("enter", "exit", "hold", "watch")
 _INTERVAL = re.compile(r"^(\d+)([mhdw])$")
 _INTERVAL_UNITS = {"m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
 
@@ -155,7 +155,17 @@ def _signal_facts(signals) -> list[dict]:
 
 
 def _member_snapshot(
-    member, executable, evidence, policy, cutoff, valid_until, research_lookup, signal_evaluator, *, research_required
+    member,
+    executable,
+    evidence,
+    policy,
+    cutoff,
+    valid_until,
+    research_lookup,
+    signal_evaluator,
+    *,
+    research_required,
+    open_positions=frozenset(),
 ):
     def terminal(status, reasons, **fields):
         return _terminal(member, status, reasons, valid_until=valid_until, **fields)
@@ -198,9 +208,40 @@ def _member_snapshot(
         return terminal("failed", ["signal_evaluation_failed"], technical=technical)
     technical["signals"] = facts
     entries = [fact for fact in facts if fact["action"] in ENTRY_ACTIONS]
+    closes = [fact for fact in facts if fact["action"] == "close"]
+    if closes and entries:
+        return terminal(
+            "no_trade", ["conflicting_close_and_entry_signals"], technical=technical, research_ids=research_ids
+        )
+    if closes:
+        # A rule close exits only a position the account already holds (D-23.11); never opens or flips.
+        identity = (member["market"], member["symbol"], member["instrument"])
+        held = sorted(
+            side for (market, symbol, instrument, side) in open_positions if (market, symbol, instrument) == identity
+        )
+        if not held:
+            return terminal("no_trade", ["signal_close"], technical=technical, research_ids=research_ids)
+        if len(held) != 1:
+            return terminal("no_trade", ["ambiguous_open_position"], technical=technical, research_ids=research_ids)
+        close = max(closes, key=lambda fact: (fact["confidence"], canonical_json(fact)))
+        intent = {
+            "symbol": member["symbol"],
+            "market": member["market"],
+            "instrument": member["instrument"],
+            "action": "exit",
+            "side": held[0],
+            "target_weight": 0.0,
+            "order_type": "market",
+        }
+        return terminal(
+            CANDIDATE_STATUS,
+            [],
+            technical=technical,
+            research_ids=research_ids,
+            recommendation={"side": held[0], "confidence": close["confidence"], "intent": intent},
+        )
     if not entries:
-        reason = "signal_close" if any(fact["action"] == "close" for fact in facts) else "no_entry_signal"
-        return terminal("no_trade", [reason], technical=technical, research_ids=research_ids)
+        return terminal("no_trade", ["no_entry_signal"], technical=technical, research_ids=research_ids)
     if len({fact["action"] for fact in entries}) != 1:
         return terminal("no_trade", ["conflicting_entry_signals"], technical=technical, research_ids=research_ids)
     entry = max(entries, key=lambda fact: (fact["confidence"], canonical_json(fact)))
@@ -233,8 +274,13 @@ def build_run_inputs(
     *,
     research_lookup,
     signal_evaluator,
+    open_positions=frozenset(),
 ) -> tuple[list, list]:
-    """Pure manifest -> (universe, terminal snapshots); no database, network, Redis, or clock."""
+    """Pure manifest -> (universe, terminal snapshots); no database, network, Redis, or clock.
+
+    Open positions are an input: a frozenset of ``(market, symbol, instrument, side)`` the caller
+    read before calling. A rule ``close`` becomes an ``exit`` candidate only for a held identity.
+    """
     executable = executable_config(strategy_version)
     if executable.market != manifest_payload.get("market") or executable.interval != manifest_payload.get("interval"):
         raise ValidationError("strategy version does not match the manifest market and interval")
@@ -255,6 +301,7 @@ def build_run_inputs(
             research_lookup,
             signal_evaluator,
             research_required=research_required,
+            open_positions=open_positions,
         )
         for member in universe
     ]
@@ -350,8 +397,12 @@ class ProducerService:
 
     def _shadow_parity(self, version, manifest, rows) -> dict:
         """Compare frozen candidates with legacy signals on the same bar; read-only."""
+        candidates = [row for row in rows if row.status == CANDIDATE_STATUS]
         frozen = sorted(
-            [row.symbol, row.recommendation_json.get("side")] for row in rows if row.status == CANDIDATE_STATUS
+            [row.symbol, row.recommendation_json.get("side")] for row in candidates if _intent_action(row) == "enter"
+        )
+        frozen_exits = sorted(
+            [row.symbol, row.recommendation_json.get("side")] for row in candidates if _intent_action(row) == "exit"
         )
         bar_times = sorted(
             {row.technical_json.get("last_bar_time") for row in rows if row.technical_json.get("last_bar_time")}
@@ -376,6 +427,7 @@ class ProducerService:
             "bar_times": bar_times,
             "legacy_targets": legacy,
             "frozen_targets": frozen,
+            "frozen_exits": frozen_exits,
             "matched": legacy == frozen,
         }
         payload["parity_sha256"] = content_sha256(payload)
@@ -397,12 +449,16 @@ class ProducerService:
         principal.require_account_scope(policy.account_scope)
         payload = verify_manifest(manifest)
         cutoff = timestamp(decision_as_of if decision_as_of is not None else payload["as_of"], "decision_as_of")
+        portfolio = self._portfolio_snapshot(policy)
         universe, snapshots = build_run_inputs(
             payload,
             version,
             policy,
             research_lookup=self._research_lookup(payload, cutoff),
             signal_evaluator=self.signal_evaluator,
+            open_positions=frozenset(
+                (item["market"], item["symbol"], item["instrument"], item["side"]) for item in portfolio["positions"]
+            ),
         )
         run = EvaluationService(self.session).evaluate_run(version.id, manifest.id, universe, snapshots, cutoff)
         rows = self.session.scalars(
@@ -415,18 +471,27 @@ class ProducerService:
             result["shadow_parity"] = self._shadow_parity(version, manifest, rows)
             return result
 
-        portfolio = self._portfolio_snapshot(policy)
         held = {(item["market"], item["symbol"], item["instrument"], item["side"]) for item in portfolio["positions"]}
         candidates = [
             row
             for row in rows
             if row.status == CANDIDATE_STATUS
-            and (row.market, row.symbol, row.instrument, row.recommendation_json.get("side")) not in held
+            and (
+                _intent_action(row) == "exit"
+                or (row.market, row.symbol, row.instrument, row.recommendation_json.get("side")) not in held
+            )
         ]
         if not candidates:
             result["decision_id"] = None
             result["decision_skipped"] = "no_candidates"
             return result
+        actions = {_intent_action(row) for row in candidates}
+        if len(actions) > 1:
+            # One decision carries one final_action; fail closed rather than split or guess.
+            result["decision_id"] = None
+            result["decision_skipped"] = "mixed_actions"
+            return result
+        final_action = actions.pop()
         intents = [{"evaluation_snapshot_id": str(row.id), **row.recommendation_json["intent"]} for row in candidates]
         decision = DecisionService(self.session).create_decision(
             run.id,
@@ -436,7 +501,7 @@ class ProducerService:
                 "policy_id": policy.policy_id,
                 "policy_sha256": content_sha256(version.policy_json),
                 "selected_evaluation_ids": [str(row.id) for row in candidates],
-                "final_action": "enter",
+                "final_action": final_action,
                 "order_intents": intents,
             },
             portfolio_snapshot_json=portfolio,
@@ -445,6 +510,11 @@ class ProducerService:
         result["decision_id"] = str(decision.id)
         result["decision_status"] = decision.status
         return result
+
+
+def _intent_action(row):
+    intent = row.recommendation_json.get("intent") if isinstance(row.recommendation_json, dict) else None
+    return intent.get("action") if isinstance(intent, dict) else None
 
 
 def _uuid(value, field):

@@ -30,10 +30,11 @@ from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_run import EvaluationRun
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
+from poseidon.models.position_lot import PositionLot
 from poseidon.models.signal import SignalRecord
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
-from tests.test_decision_service import synthetic_policy
+from tests.test_decision_service import synthetic_policy, synthetic_reconciliation_policy
 
 POSEIDON_ROOT = Path(__file__).resolve().parents[1]
 ACCOUNT = "paper:pilot"
@@ -185,13 +186,15 @@ def broken_signal(_executable, _bars):
     raise RuntimeError("synthetic strategy failure")
 
 
-def _build(request, version, *, evaluator=long_signal, lookup=lambda _scope: None):
+def _build(request, version, *, evaluator=long_signal, lookup=lambda _scope: None, open_positions=None):
+    kwargs = {} if open_positions is None else {"open_positions": open_positions}
     return build_run_inputs(
         validate_manifest(request),
         version,
         DecisionPolicy.model_validate(version.policy_json),
         research_lookup=lookup,
         signal_evaluator=evaluator,
+        **kwargs,
     )
 
 
@@ -349,6 +352,7 @@ def test_shadow_mode_writes_the_run_and_parity_but_no_decision(db):
     assert parity["actor_id"] == "system:shadow-parity"
     assert parity["frozen_targets"] == [["2330", "long"]]
     assert parity["legacy_targets"] == [["2330", "long"]]
+    assert parity["frozen_exits"] == []
     assert parity["matched"] is True
 
 
@@ -368,7 +372,7 @@ def test_decision_mode_creates_one_pending_decision_and_replays(db):
     assert decision.original_json["final_action"] == "enter"
     assert [intent["evaluation_snapshot_id"] for intent in decision.original_json["order_intents"]] == candidate_ids
     assert decision.risk_snapshot_json["hard_failures"] == []
-    assert decision.risk_snapshot_json["allowed_actions"] == ["enter", "hold", "watch"]
+    assert decision.risk_snapshot_json["allowed_actions"] == ["enter", "exit", "hold", "watch"]
     assert decision.portfolio_snapshot_json == {"account_scope": ACCOUNT, "account_generation": None, "positions": []}
     created = db.query(DecisionEvent).filter_by(decision_id=decision.id).one()
     assert created.actor_id == "decision-worker:producer"
@@ -587,3 +591,231 @@ def test_produce_task_resolves_worker_from_configured_principals(monkeypatch, db
     )
     with pytest.raises(ValueError, match="exactly one configured principal"):
         cpu_tasks.produce_decision_run.run(str(version.id), str(manifest.id), AS_OF)
+
+
+# --- Phase 101-02: ordinary exit path for rule close signals (D-23.11) ---
+
+HELD_LONG = frozenset({("tw_stock", "2330", "spot", "long")})
+GENERATION = "synthetic-generation-1"
+
+
+def close_and_long_signal(_executable, _bars):
+    return [
+        {"action": "close", "confidence": 1.0, "quantity_pct": None},
+        {"action": "long", "confidence": 0.9, "quantity_pct": 0.1},
+    ]
+
+
+def weaker_and_stronger_close(_executable, _bars):
+    return [
+        {"action": "close", "confidence": 0.4, "quantity_pct": None},
+        {"action": "close", "confidence": 0.7, "quantity_pct": 1.0},
+    ]
+
+
+def reconciled_version(db, **kwargs):
+    return make_version(db, policy=synthetic_policy(reconciliation=synthetic_reconciliation_policy()), **kwargs)
+
+
+def seed_open_lot(db, *, side="long", quantity=1000.0, symbol="2330"):
+    lot = PositionLot(
+        account_scope=ACCOUNT,
+        account_generation=GENERATION,
+        market="tw_stock",
+        symbol=symbol,
+        instrument="spot",
+        side=side,
+        opening_fill_id=uuid.uuid4(),
+        opening_decision_id=uuid.uuid4(),
+        original_quantity=quantity,
+        open_quantity=quantity,
+        reserved_close_quantity=0.0,
+        cost_basis_json={"price": 100.0},
+        opened_at=LAST_BAR - timedelta(days=3),
+    )
+    db.add(lot)
+    db.flush()
+    return lot
+
+
+def test_close_signal_on_held_position_emits_exit_intent(db):
+    version = make_version(db)
+    _universe, [snapshot] = _build(
+        manifest_request(), version, evaluator=weaker_and_stronger_close, open_positions=HELD_LONG
+    )
+    assert snapshot["status"] == CANDIDATE_STATUS
+    assert snapshot["reason_codes"] == []
+    assert snapshot["recommendation_json"]["side"] == "long"
+    assert snapshot["recommendation_json"]["confidence"] == 0.7
+    assert snapshot["recommendation_json"]["intent"] == {
+        "symbol": "2330",
+        "market": "tw_stock",
+        "instrument": "spot",
+        "action": "exit",
+        "side": "long",
+        "target_weight": 0.0,
+        "order_type": "market",
+    }
+
+
+def test_close_signal_exits_the_held_side_including_short(db):
+    version = make_version(db)
+    _universe, [snapshot] = _build(
+        manifest_request(),
+        version,
+        evaluator=close_signal,
+        open_positions=frozenset({("tw_stock", "2330", "spot", "short")}),
+    )
+    assert snapshot["recommendation_json"]["intent"]["action"] == "exit"
+    assert snapshot["recommendation_json"]["intent"]["side"] == "short"
+
+
+@pytest.mark.parametrize(
+    "open_positions",
+    [
+        None,
+        frozenset(),
+        frozenset({("tw_stock", "2317", "spot", "long")}),
+        frozenset({("crypto_perp", "2330", "spot", "long")}),
+    ],
+)
+def test_close_signal_without_held_identity_stays_no_trade(db, open_positions):
+    version = make_version(db)
+    _universe, [snapshot] = _build(manifest_request(), version, evaluator=close_signal, open_positions=open_positions)
+    assert snapshot["status"] == "no_trade"
+    assert snapshot["reason_codes"] == ["signal_close"]
+    assert "intent" not in snapshot["recommendation_json"]
+
+
+def test_close_and_entry_on_the_same_bar_is_a_deterministic_no_trade(db):
+    version = make_version(db)
+    for open_positions in (frozenset(), HELD_LONG):
+        _universe, [snapshot] = _build(
+            manifest_request(), version, evaluator=close_and_long_signal, open_positions=open_positions
+        )
+        assert snapshot["status"] == "no_trade"
+        assert snapshot["reason_codes"] == ["conflicting_close_and_entry_signals"]
+
+
+def test_close_with_two_open_sides_is_ambiguous(db):
+    version = make_version(db)
+    both = HELD_LONG | {("tw_stock", "2330", "spot", "short")}
+    _universe, [snapshot] = _build(manifest_request(), version, evaluator=close_signal, open_positions=both)
+    assert snapshot["status"] == "no_trade"
+    assert snapshot["reason_codes"] == ["ambiguous_open_position"]
+
+
+def test_exit_snapshots_are_deterministic(db):
+    version = make_version(db)
+    request = manifest_request()
+    _universe, [first] = _build(copy.deepcopy(request), version, evaluator=close_signal, open_positions=HELD_LONG)
+    _universe, [second] = _build(copy.deepcopy(request), version, evaluator=close_signal, open_positions=HELD_LONG)
+    assert content_sha256(snapshot_payload(first)) == content_sha256(snapshot_payload(second))
+
+
+def test_decision_mode_close_on_open_lot_creates_exit_decision(db):
+    version = reconciled_version(db)
+    seed_open_lot(db)
+    manifest = ManifestService(db).freeze(manifest_request())
+    result = ProducerService(db, signal_evaluator=close_signal).produce(
+        version.id, manifest.id, decision_as_of=AS_OF, principal=worker(), mode="decision"
+    )
+    decision = db.get(DecisionRecord, uuid.UUID(result["decision_id"]))
+    assert decision.status == "pending_approval"
+    assert decision.original_json["final_action"] == "exit"
+    [intent] = decision.original_json["order_intents"]
+    assert intent["action"] == "exit"
+    assert intent["side"] == "long"
+    assert intent["target_weight"] == 0.0
+    assert decision.risk_snapshot_json["allowed_actions"] == ["enter", "exit", "hold", "watch"]
+    assert decision.risk_snapshot_json["hard_failures"] == []
+    assert decision.portfolio_snapshot_json["positions"] == [
+        {"market": "tw_stock", "symbol": "2330", "instrument": "spot", "side": "long", "open_quantity": 1000.0}
+    ]
+
+
+def test_decision_mode_entry_on_already_held_side_creates_no_decision(db):
+    version = reconciled_version(db)
+    seed_open_lot(db)
+    manifest = ManifestService(db).freeze(manifest_request())
+    result = ProducerService(db, signal_evaluator=long_signal).produce(
+        version.id, manifest.id, decision_as_of=AS_OF, principal=worker(), mode="decision"
+    )
+    assert result["decision_id"] is None
+    assert result["decision_skipped"] == "no_candidates"
+    assert db.query(DecisionRecord).count() == 0
+
+
+def test_decision_mode_close_without_open_lot_creates_no_decision(db):
+    version = reconciled_version(db)
+    manifest = ManifestService(db).freeze(manifest_request())
+    result = ProducerService(db, signal_evaluator=close_signal).produce(
+        version.id, manifest.id, decision_as_of=AS_OF, principal=worker(), mode="decision"
+    )
+    assert result["decision_skipped"] == "no_candidates"
+    snapshot = db.query(EvaluationSnapshot).one()
+    assert (snapshot.status, snapshot.reason_codes) == ("no_trade", ["signal_close"])
+
+
+def test_decision_mode_fails_closed_on_mixed_actions(db, monkeypatch):
+    from poseidon.decision_loop import producer
+
+    real_build = producer.build_run_inputs
+
+    def two_member_build(*args, **kwargs):
+        universe, [exit_snapshot] = real_build(*args, **kwargs)
+        assert exit_snapshot["recommendation_json"]["intent"]["action"] == "exit"
+        entry_member = {"symbol": "2317", "market": "tw_stock", "instrument": "spot"}
+        entry_snapshot = copy.deepcopy(exit_snapshot) | entry_member
+        entry_snapshot["recommendation_json"]["intent"] = {
+            **entry_member,
+            "action": "enter",
+            "side": "long",
+            "target_weight": 0.1,
+            "order_type": "market",
+        }
+        return [*universe, entry_member], [exit_snapshot, entry_snapshot]
+
+    monkeypatch.setattr(producer, "build_run_inputs", two_member_build)
+    version = reconciled_version(db)
+    seed_open_lot(db)
+    manifest = ManifestService(db).freeze(manifest_request())
+    result = ProducerService(db, signal_evaluator=close_signal).produce(
+        version.id, manifest.id, decision_as_of=AS_OF, principal=worker(), mode="decision"
+    )
+    assert result["decision_id"] is None
+    assert result["decision_skipped"] == "mixed_actions"
+    assert db.query(DecisionRecord).count() == 0
+
+
+def test_shadow_parity_reports_exits_separately_from_entry_targets(db):
+    strategy_id = uuid.uuid4()
+    version = reconciled_version(db, strategy_id=strategy_id)
+    seed_open_lot(db)
+    manifest = ManifestService(db).freeze(manifest_request())
+    db.add(
+        SignalRecord(
+            id=uuid.uuid4(),
+            strategy_id=strategy_id,
+            symbol="2330",
+            market="tw_stock",
+            instrument="spot",
+            action="close",
+            confidence=1.0,
+            signal_time=LAST_BAR,
+            interval="1d",
+            params={},
+            status="passed",
+            metadata_={},
+        )
+    )
+    db.flush()
+    result = ProducerService(db, signal_evaluator=close_signal).produce(
+        version.id, manifest.id, decision_as_of=AS_OF, principal=worker(), mode="shadow"
+    )
+    parity = result["shadow_parity"]
+    assert parity["frozen_targets"] == []
+    assert parity["frozen_exits"] == [["2330", "long"]]
+    assert parity["legacy_targets"] == []
+    assert parity["matched"] is True
+    assert db.query(DecisionRecord).count() == 0
