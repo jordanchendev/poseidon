@@ -6,6 +6,8 @@ Run inside the Poseidon image (``python -m poseidon.decision_loop.admin``):
   Phase 100 wrap (read-only transaction).
 * ``create-version`` inserts one immutable draft ``StrategyVersion`` for one
   named strategy after the release-gate validations.
+* ``seed-paper-account`` / ``seed-label-contract`` create exactly one row each
+  from operator-supplied JSON.
 
 No command writes the strategy release pointer, its revision, the legacy
 ``active`` flag, or release events. Release stays with the human ``bootstrap``
@@ -25,10 +27,11 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import func, select, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from poseidon.decision_loop.decisions import DecisionPolicy
 from poseidon.decision_loop.manifest import ValidationError, canonical_json, content_sha256
+from poseidon.decision_loop.outcomes import validate_outcome_label_contract
 from poseidon.decision_loop.releases import (
     ExecutableStrategyConfig,
     LiveFeaturePlanError,
@@ -36,6 +39,8 @@ from poseidon.decision_loop.releases import (
     RuleExecutablePayload,
     VotingExecutablePayload,
 )
+from poseidon.models.outcome import OutcomeLabelContract, outcome_label_contract_sha256
+from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 
@@ -403,6 +408,155 @@ def cmd_create_version(session_factory, *, strategy_id: str, request: dict) -> d
         session.close()
 
 
+def _account_output(account, *, operator: str, replay: bool) -> dict:
+    return {
+        "account_id": str(account.id),
+        "account_scope": account.account_scope,
+        "account_generation": account.account_generation,
+        "opening_cash": account.opening_cash,
+        "currency": account.currency,
+        "operator": operator,
+        "replay": replay,
+    }
+
+
+def _matching_account(session, scope: str, generation: str, reconciliation, operator: str):
+    account = session.scalar(
+        select(PaperBrokerAccount).where(
+            PaperBrokerAccount.account_scope == scope,
+            PaperBrokerAccount.account_generation == generation,
+        )
+    )
+    if account is None:
+        return None
+    if account.opening_cash != reconciliation.opening_cash or account.currency != reconciliation.currency:
+        raise AdminRefusal(
+            "account_identity_conflict",
+            "an account with this scope/generation exists with a different opening_cash or currency",
+        )
+    return _account_output(account, operator=operator, replay=True)
+
+
+def cmd_seed_paper_account(session_factory, *, request: dict) -> dict:
+    _require_keys(request, ("policy", "operator"))
+    operator = _operator(request["operator"])
+    policy = _policy(request["policy"])
+    if policy.reconciliation is None:
+        raise AdminRefusal("policy_reconciliation_missing", "policy.reconciliation is required")
+    _check_settings_identity(policy)
+    reconciliation = policy.reconciliation
+    scope = policy.account_scope
+    generation = reconciliation.account_generation
+
+    session = session_factory()
+    try:
+        replay = _matching_account(session, scope, generation, reconciliation, operator)
+        if replay is not None:
+            session.rollback()
+            return replay
+        account = PaperBrokerAccount(
+            account_scope=scope,
+            account_generation=generation,
+            opening_cash=reconciliation.opening_cash,
+            currency=reconciliation.currency,
+            state_version=0,
+        )
+        session.add(account)
+        try:
+            session.flush()
+        except IntegrityError:
+            # A concurrent seed won the unique (scope, generation) race: re-read it.
+            session.rollback()
+            replay = _matching_account(session, scope, generation, reconciliation, operator)
+            if replay is None:
+                raise
+            session.rollback()
+            return replay
+        output = _account_output(account, operator=operator, replay=False)
+        session.commit()
+        return output
+    except BaseException:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def _contract_output(row, *, operator: str, replay: bool) -> dict:
+    return {
+        "label_contract_id": str(row.id),
+        "version": row.version,
+        "contract_sha256": row.contract_sha256,
+        "operator": operator,
+        "replay": replay,
+    }
+
+
+def _matching_contract(session, version: str, digest: str, operator: str):
+    rows = session.scalars(
+        select(OutcomeLabelContract).where(
+            (OutcomeLabelContract.version == version) | (OutcomeLabelContract.contract_sha256 == digest)
+        )
+    ).all()
+    if not rows:
+        return None
+    if any(row.version == version and row.contract_sha256 != digest for row in rows):
+        raise AdminRefusal(
+            "label_contract_version_conflict",
+            "a label contract with this version exists with different content",
+        )
+    if any(row.contract_sha256 == digest and row.version != version for row in rows):
+        raise AdminRefusal(
+            "label_contract_content_conflict",
+            "identical label contract content is already stored under another version",
+        )
+    return _contract_output(rows[0], operator=operator, replay=True)
+
+
+def cmd_seed_label_contract(session_factory, *, request: dict) -> dict:
+    _require_keys(request, ("version", "contract", "operator"))
+    operator = _operator(request["operator"])
+    version = request["version"]
+    if not isinstance(version, str) or not version.strip() or version != version.strip():
+        raise AdminRefusal("input_invalid", "version must be non-empty trimmed text")
+    try:
+        contract = validate_outcome_label_contract(request["contract"])
+    except ValidationError as error:
+        raise AdminRefusal("label_contract_invalid", str(error)) from error
+    digest = outcome_label_contract_sha256(contract)
+
+    session = session_factory()
+    try:
+        replay = _matching_contract(session, version, digest, operator)
+        if replay is not None:
+            session.rollback()
+            return replay
+        row = OutcomeLabelContract(version=version, contract_json=contract, contract_sha256=digest)
+        try:
+            row.verify_contract()
+        except ValueError as error:
+            raise AdminRefusal("label_contract_invalid", str(error)) from error
+        session.add(row)
+        try:
+            session.flush()
+        except IntegrityError:
+            # A concurrent seed stored the same content first: re-read it.
+            session.rollback()
+            replay = _matching_contract(session, version, digest, operator)
+            if replay is None:
+                raise
+            session.rollback()
+            return replay
+        output = _contract_output(row, operator=operator, replay=False)
+        session.commit()
+        return output
+    except BaseException:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 # --------------------------------------------------------------------------- entry point
 
 
@@ -418,6 +572,11 @@ def _parser() -> argparse.ArgumentParser:
     create.add_argument("--strategy-id", required=True)
     create.add_argument("--input", required=True, choices=["-"], help="read the request JSON from stdin")
 
+    account = commands.add_parser("seed-paper-account", help="create the one paper account for a policy")
+    account.add_argument("--input", required=True, choices=["-"], help="read the request JSON from stdin")
+
+    contract = commands.add_parser("seed-label-contract", help="create one outcome label contract")
+    contract.add_argument("--input", required=True, choices=["-"], help="read the request JSON from stdin")
     return parser
 
 
@@ -435,8 +594,12 @@ def main(argv=None, *, session_factory=None, stdin=None, stdout=None, stderr=Non
         factory = _session_factory(session_factory)
         if args.command == "wrap-legacy":
             result = cmd_wrap_legacy(factory, market=args.market, strategy_type=args.strategy_type)
-        else:
+        elif args.command == "create-version":
             result = cmd_create_version(factory, strategy_id=args.strategy_id, request=_read_input(stdin))
+        elif args.command == "seed-paper-account":
+            result = cmd_seed_paper_account(factory, request=_read_input(stdin))
+        else:
+            result = cmd_seed_label_contract(factory, request=_read_input(stdin))
     except AdminRefusal as refusal:
         _emit(stderr, {"error": refusal.code, "detail": refusal.detail, **refusal.extra})
         return 2
