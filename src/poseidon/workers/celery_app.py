@@ -150,6 +150,12 @@ celery_app.conf.update(
             "schedule": crontab(hour=6, minute=40),
             "kwargs": {"market": "tw_stock", "interval": "1d"},
         },
+        # Phase 101 D-23.4: freeze one outcome manifest per active pilot symbol
+        # before the 07:30 labeler (stale on non-trading days, so nothing is frozen).
+        "decision-loop-freeze-outcome-manifests": {
+            "task": "poseidon.workers.cpu_tasks.freeze_outcome_manifests",
+            "schedule": crontab(hour=7, minute=20),
+        },
         "decision-loop-label-outcomes": {
             "task": "poseidon.workers.cpu_tasks.label_decision_outcomes",
             "schedule": crontab(hour=7, minute=30),

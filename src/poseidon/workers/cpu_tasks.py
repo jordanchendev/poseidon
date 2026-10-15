@@ -1105,6 +1105,143 @@ def label_decision_outcomes(as_of: str | None = None) -> dict:
     }
 
 
+# Phase 101 D-23.4: daily outcome manifests for the labeler above.
+OUTCOME_PRICE_LOOKBACK_DAYS = 120
+OUTCOME_MARKET = "tw_stock"
+OUTCOME_INTERVAL = "1d"
+OUTCOME_CALENDAR_PATH = "config/calendars/xtai_1d_sessions.json"
+
+
+def _outcome_bars(symbol: str, as_of: str) -> list[dict]:
+    """Finite tw_stock 1d closes at or before as_of, fetched like `_frozen_ohlcv_evidence`."""
+    from poseidon.data.remote_repository import RemoteDataRepository
+    from poseidon.decision_loop.manifest import iso_time, timestamp
+
+    cutoff = timestamp(as_of, "as_of")
+    start = cutoff - timedelta(days=OUTCOME_PRICE_LOOKBACK_DAYS)
+    frame = RemoteDataRepository.from_settings().read_ohlcv(symbol, OUTCOME_MARKET, OUTCOME_INTERVAL, start, cutoff)
+    bars = []
+    for index, row in frame.iterrows():
+        values = [row.get(field) for field in LOOP_BAR_FIELDS]
+        if any(value is None or not math.isfinite(float(value)) for value in values):
+            continue
+        bar_time = pd.Timestamp(index)
+        bar_time = bar_time.tz_localize("UTC") if bar_time.tzinfo is None else bar_time.tz_convert("UTC")
+        if bar_time.to_pydatetime() > cutoff:
+            continue
+        bars.append({"time": iso_time(bar_time.to_pydatetime(), "bar.time"), "close": float(row.get("close"))})
+    return bars
+
+
+def _outcome_targets(session, scope: str, cutoff: datetime) -> dict:
+    """Per active pilot symbol: the policy's account scope and universe plus recent decision anchors."""
+    from pydantic import ValidationError as PydanticValidationError
+    from sqlalchemy import select
+
+    from poseidon.decision_loop.decisions import DecisionPolicy
+    from poseidon.decision_loop.manifest import timestamp
+    from poseidon.decision_loop.producer import ProducerService, executable_config
+    from poseidon.models.evaluation_run import EvaluationRun
+
+    earliest = cutoff - timedelta(days=OUTCOME_PRICE_LOOKBACK_DAYS)
+    targets = {}
+    for version in ProducerService(session).active_versions(OUTCOME_MARKET, OUTCOME_INTERVAL, scope):
+        try:
+            policy = DecisionPolicy.model_validate(version.policy_json)
+        except PydanticValidationError as error:
+            raise ValueError("active decision-loop strategy has an invalid decision policy") from error
+        symbol = executable_config(version).symbol
+        identity = (policy.account_scope, policy.universe_id)
+        target = targets.setdefault(symbol, {"identity": identity, "anchors": set()})
+        if target["identity"] != identity:
+            raise ValueError(f"active decision policies for {symbol} disagree on account_scope or universe_id")
+        for run in session.scalars(
+            select(EvaluationRun).where(
+                EvaluationRun.strategy_version_id == version.id,
+                EvaluationRun.status == "complete",
+            )
+        ).all():
+            decision_as_of = run.decision_as_of
+            if decision_as_of.tzinfo is None:
+                decision_as_of = decision_as_of.replace(tzinfo=UTC)
+            anchor = timestamp(decision_as_of, "decision_as_of")
+            if earliest <= anchor <= cutoff:
+                target["anchors"].add(anchor)
+    return targets
+
+
+@celery_app.task(name="poseidon.workers.cpu_tasks.freeze_outcome_manifests", max_retries=0)
+def freeze_outcome_manifests(as_of: str | None = None) -> dict:
+    """Freeze one outcome manifest per active tw_stock pilot symbol for `label_decision_outcomes`.
+
+    Benchmark, reporting currency, fx model, and calendar identity come only from the
+    `OutcomeLabelContract` row of the configured label version; nothing is defaulted.
+    """
+    skipped = _loop_mode_skip() or _loop_market_skip(settings.decision_loop_approved_market)
+    if skipped:
+        return skipped
+    if settings.decision_loop_approved_market != OUTCOME_MARKET:
+        return {"skipped": "market_not_supported"}
+    version = settings.decision_loop_label_definition_version
+    if not version:
+        return {"skipped": "label_definition_version_unset"}
+    from sqlalchemy import select
+
+    from poseidon.decision_loop.manifest import ManifestService, ValidationError, timestamp, validate_manifest
+    from poseidon.decision_loop.outcome_manifest import build_outcome_manifest_request, load_session_calendar
+    from poseidon.decision_loop.outcomes import validate_outcome_label_contract
+    from poseidon.models.outcome import OutcomeLabelContract
+
+    as_of = _loop_as_of(as_of)
+    cutoff = timestamp(as_of, "as_of")
+    scope = settings.decision_loop_approved_account_scope
+    calendar = load_session_calendar(OUTCOME_CALENDAR_PATH)
+    with SessionLocal() as session:
+        contracts = session.scalars(select(OutcomeLabelContract).where(OutcomeLabelContract.version == version)).all()
+        if len(contracts) != 1:
+            raise ValueError(f"label contract {version!r} must resolve exactly once")
+        contract = validate_outcome_label_contract(contracts[0])
+        targets = _outcome_targets(session, scope, cutoff)
+    if not targets:
+        return {"skipped": "no_active_strategies"}
+
+    manifests, skipped_symbols = {}, {}
+    benchmark_bars = _outcome_bars(contract["benchmark"]["symbol"], as_of)
+    for symbol, target in sorted(targets.items()):
+        if not benchmark_bars:
+            skipped_symbols[symbol] = "benchmark_missing"
+            continue
+        bars = _outcome_bars(symbol, as_of)
+        if not bars:
+            skipped_symbols[symbol] = "price_missing"
+            continue
+        account_scope, universe_id = target["identity"]
+        request = build_outcome_manifest_request(
+            market=OUTCOME_MARKET,
+            interval=OUTCOME_INTERVAL,
+            as_of=as_of,
+            account_scope=account_scope,
+            universe_id=universe_id,
+            symbol=symbol,
+            contract=contract,
+            calendar=calendar,
+            bars=bars,
+            benchmark_bars=benchmark_bars,
+            anchors=sorted(target["anchors"]),
+            source_base_url=settings.thalassa_base_url,
+        )
+        try:
+            validate_manifest(request)
+        except ValidationError as error:
+            if str(error) != "required evidence is stale: price":
+                raise
+            skipped_symbols[symbol] = "price_stale"
+            continue
+        with SessionLocal() as session, session.begin():
+            manifests[symbol] = str(ManifestService(session).freeze(request).id)
+    return {"as_of": as_of, "manifests": manifests, "skipped_symbols": skipped_symbols}
+
+
 def _holdout_manifest_ids(session, campaign, holdout_identity: dict) -> list:
     """Metadata-only preflight; holdout payloads are read only after consumption commits."""
     from poseidon.decision_loop.manifest import canonical_json
