@@ -746,7 +746,8 @@ def _seed_rollback_work(session, graph, work_kind):
             side="long",
             status="pending" if work_kind == "pending_order" else "pending_submit",
             broker_mode="paper",
-            order_origin="signal",
+            # 047 forbids scoped signal-origin orders; manual is ordinary non-protective work.
+            order_origin="manual",
             account_scope="paper:pilot",
             account_generation=candidate.policy_json["reconciliation"]["account_generation"],
         )
@@ -771,7 +772,7 @@ def _seed_rollback_work(session, graph, work_kind):
         decision_as_of=NOW,
         universe_json=[],
         input_sha256=content_sha256({"run": uuid.uuid4().hex}),
-        status="succeeded",
+        status="complete",
         coverage_json={},
     )
     session.add(run)
@@ -891,7 +892,8 @@ def test_rollback_rejects_active_version_with_different_account_identity(
             side="long",
             status="pending",
             broker_mode="paper",
-            order_origin="signal",
+            # 047 forbids scoped signal-origin orders; manual is ordinary non-protective work.
+            order_origin="manual",
             account_scope=active_version.policy_json["account_scope"],
             account_generation=active_version.policy_json["reconciliation"]["account_generation"],
         )

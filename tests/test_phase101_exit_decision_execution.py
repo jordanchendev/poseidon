@@ -161,6 +161,8 @@ def _seed_open_lot(session, seed_values, entry_decision_id):
             account_scope=account,
             account_generation=generation,
             client_order_ref=f"DL-source-{order_id.hex}",
+            execution_key=uuid.uuid4(),
+            intent_sha256=content_sha256({"seeded_order": f"DL-source-{order_id.hex}"}),
             instrument="spot",
             created_at=opened,
             updated_at=opened,
