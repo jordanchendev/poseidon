@@ -79,3 +79,16 @@ def test_cutover_preserves_redbeat_names_and_recovery_protective_symbols():
     assert callable(cpu_tasks.reconcile_execution_claim.run)
     assert callable(cpu_tasks.reconcile_paper_account.run)
     assert callable(cpu_tasks.recover_decision_execution.run)
+
+
+def test_portfolio_rebalance_weekday_claim_slot():
+    """Phase 101 D-11: the ordinary claimer fires Mon-Fri 01:30 UTC under its original RedBeat name."""
+    from poseidon.workers.celery_app import celery_app
+
+    entry = celery_app.conf.beat_schedule["portfolio-monthly-rebalance"]
+    schedule = entry["schedule"]
+    assert entry["task"] == "poseidon.workers.cpu_tasks.portfolio_monthly_rebalance"
+    assert schedule.hour == {1}
+    assert schedule.minute == {30}
+    assert schedule.day_of_week == {1, 2, 3, 4, 5}
+    assert schedule.day_of_month == set(range(1, 32))

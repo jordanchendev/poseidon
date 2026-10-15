@@ -91,10 +91,11 @@ celery_app.conf.update(
             "task": "poseidon.workers.cpu_tasks.trigger_risk_update",
             "schedule": crontab(minute=20),
         },
-        # Portfolio monthly rebalance: 15th of month at 01:30 UTC (09:30 UTC+8, after TW market open)
+        # Phase 101 D-11: decision-mode ordinary claimer, weekdays 01:30 UTC (09:30 Taipei); pairs with policy decision_ttl_seconds=68700.
+        # RedBeat entry name and task are kept unchanged (legacy/shadow/halted modes skip inside the task).
         "portfolio-monthly-rebalance": {
             "task": "poseidon.workers.cpu_tasks.portfolio_monthly_rebalance",
-            "schedule": crontab(day_of_month=15, hour=1, minute=30),
+            "schedule": crontab(day_of_week="mon-fri", hour=1, minute=30),
         },
         # Portfolio stop-loss monitor: every 5 min (task self-gates to TW trading hours 01:00-05:30 UTC)
         "portfolio-stop-loss-monitor": {
