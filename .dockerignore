@@ -2,12 +2,13 @@
 local_dev/
 .planning/
 
-# Repo dirs not COPY'd by any Dockerfile in this repo
+# Repo dirs not COPY'd by any Dockerfile (scripts/ except the entrypoint)
 tests/
 docs/
 notebooks/
 qrun_configs/
-scripts/
+scripts/*
+!scripts/entrypoint.sh
 
 # Git
 .git/

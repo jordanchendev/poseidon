@@ -22,7 +22,7 @@ COPY config/ config/
 COPY alembic/ alembic/
 COPY alembic.ini .
 
-COPY scripts/ scripts/
+COPY scripts/entrypoint.sh scripts/entrypoint.sh
 RUN chmod +x scripts/entrypoint.sh
 
 ENV PATH="/app/.venv/bin:$PATH"
