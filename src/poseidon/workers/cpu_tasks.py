@@ -746,6 +746,8 @@ def recover_decision_execution() -> dict:
 # ---------------------------------------------------------------------------
 
 LOOP_PRODUCING_MODES = frozenset({"shadow", "decision"})
+# Phase 101 D-21b/D-23.5: reconciliation and recovery keep running when new writers are halted.
+LOOP_RECONCILE_MODES = frozenset({"shadow", "decision", "halted"})
 LOOP_OHLCV_LOOKBACK_BARS = 400
 LOOP_BAR_FIELDS = ("open", "high", "low", "close", "volume")
 
@@ -753,6 +755,11 @@ LOOP_BAR_FIELDS = ("open", "high", "low", "close", "volume")
 def _loop_mode_skip() -> dict | None:
     mode = settings.decision_loop_execution_mode
     return None if mode in LOOP_PRODUCING_MODES else {"skipped": mode}
+
+
+def _loop_reconcile_skip() -> dict | None:
+    mode = settings.decision_loop_execution_mode
+    return None if mode in LOOP_RECONCILE_MODES else {"skipped": mode}
 
 
 def _loop_market_skip(market: str) -> dict | None:
@@ -1183,8 +1190,8 @@ def run_review_campaign(campaign_id: str, holdout_identity: dict) -> dict:
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.scheduled_recover_decision_execution", max_retries=0)
 def scheduled_recover_decision_execution() -> dict:
-    """Beat entry for the existing recovery selector; a no-op outside shadow/decision."""
-    skipped = _loop_mode_skip()
+    """Beat entry for the existing recovery selector; a no-op outside shadow/decision/halted."""
+    skipped = _loop_reconcile_skip()
     if skipped:
         return skipped
     return recover_decision_execution.run()
@@ -1192,8 +1199,8 @@ def scheduled_recover_decision_execution() -> dict:
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.scheduled_reconcile_paper_account", max_retries=0)
 def scheduled_reconcile_paper_account() -> dict:
-    """Beat entry reconciling only the approved paper account; a no-op outside shadow/decision."""
-    skipped = _loop_mode_skip()
+    """Beat entry reconciling only the approved paper account; a no-op outside shadow/decision/halted."""
+    skipped = _loop_reconcile_skip()
     if skipped:
         return skipped
     from sqlalchemy import select

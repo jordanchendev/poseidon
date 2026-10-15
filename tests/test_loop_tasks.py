@@ -49,8 +49,18 @@ def _settings(mode, **changes):
     return SimpleNamespace(**values)
 
 
-@pytest.mark.parametrize("mode", ["legacy", "halted"])
-@pytest.mark.parametrize("task_name", sorted(LOOP_TASKS))
+# Phase 101 D-23.5: scheduled reconcile/recover keep running in halted mode
+# (covered in tests/test_phase101_halted_reconcile.py).
+HALTED_RUNNING_TASKS = {"scheduled_recover_decision_execution", "scheduled_reconcile_paper_account"}
+NO_OP_CASES = [
+    (mode, task_name)
+    for mode in ("legacy", "halted")
+    for task_name in sorted(LOOP_TASKS)
+    if not (mode == "halted" and task_name in HALTED_RUNNING_TASKS)
+]
+
+
+@pytest.mark.parametrize(("mode", "task_name"), NO_OP_CASES)
 def test_every_loop_task_is_a_write_free_no_op_outside_shadow_and_decision(monkeypatch, mode, task_name):
     monkeypatch.setattr(cpu_tasks, "settings", _settings(mode))
     monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: pytest.fail(f"{task_name} opened a session in {mode}"))
