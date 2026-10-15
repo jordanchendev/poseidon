@@ -344,6 +344,18 @@ class DeferredExecutablePayload(BaseModel):
 ExecutablePayload = RuleExecutablePayload | VotingExecutablePayload | DeferredExecutablePayload
 
 
+class ProtectiveExitConfig(BaseModel):
+    """Durable stop-loss for loop-opened tw_stock lots (Phase 101 D-23.12).
+
+    Read verbatim by ``workers.cpu_tasks._durable_protective_triggers`` from the
+    top level of ``StrategyVersion.config_json``.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    stop_loss_pct: Annotated[float, Field(strict=True, gt=0.0, lt=1.0, allow_inf_nan=False)]
+
+
 class ExecutableStrategyConfig(BaseModel):
     """Immutable live execution identity plus strategy-specific payload."""
 
@@ -355,6 +367,7 @@ class ExecutableStrategyConfig(BaseModel):
     instrument: Literal["spot", "perpetual"]
     interval: Annotated[str, Field(min_length=1)]
     payload: ExecutablePayload
+    protective_exit: ProtectiveExitConfig | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -384,6 +397,12 @@ class ExecutableStrategyConfig(BaseModel):
         expected = "perpetual" if self.market == "crypto_perp" else "spot"
         if self.instrument != expected:
             raise ValueError("executable instrument does not match market")
+        return self
+
+    @model_validator(mode="after")
+    def require_tw_stock_protective_exit(self):
+        if self.protective_exit is not None and self.market != "tw_stock":
+            raise ValueError("protective_exit is defined only for tw_stock")
         return self
 
     def routing_matches(self, strategy) -> bool:
