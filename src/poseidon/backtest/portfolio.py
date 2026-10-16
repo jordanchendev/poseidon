@@ -24,6 +24,7 @@ class SizingMode(StrEnum):
     FIXED_NOTIONAL = "fixed_notional"
     VOL_TARGET = "vol_target"
     FIXED_RISK = "fixed_risk"
+    FIXED_CONTRACTS = "fixed_contracts"
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,8 @@ class SizingConfig:
         max_position_pct: Hard cap on position size as fraction of capital (vol_target mode).
         risk_pct: Fraction of equity risked per trade (fixed_risk mode).
         max_notional_pct: Hard cap on position notional as fraction of equity (fixed_risk mode).
+        contracts: Fixed number of contracts per entry (fixed_contracts mode;
+            futures research where notional-based sizing would drift with price).
     """
 
     mode: SizingMode = SizingMode.FIXED_NOTIONAL
@@ -49,6 +52,7 @@ class SizingConfig:
     max_position_pct: float = 0.3
     risk_pct: float = 0.01  # 1% of equity risked per trade (FIXED_RISK only)
     max_notional_pct: float = 0.3  # Hard cap as fraction of equity (FIXED_RISK only)
+    contracts: int = 1  # FIXED_CONTRACTS only
 
 
 @dataclass
@@ -158,12 +162,18 @@ class BacktestPortfolio:
         """Check if signal is for a crypto market (fractional quantities allowed)."""
         return signal.market in ("crypto_spot", "crypto_perp")
 
+    def _resolve_quantity(self, signal: Signal, fill_price: float) -> float:
+        """Quantity for an entry: fixed contracts, or notional-derived (int for non-crypto)."""
+        if self.sizing_config.mode == SizingMode.FIXED_CONTRACTS:
+            return float(self.sizing_config.contracts)
+        quantity_pct = signal.quantity_pct or 0.1
+        raw_quantity = self._sizing_base() * quantity_pct / fill_price
+        return raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
+
     def _execute_long(self, signal: Signal, price: float, key: str) -> TradeRecord | None:
         """Open a long position."""
         fill_price = self._apply_slippage(price, is_buy=True)
-        quantity_pct = signal.quantity_pct or 0.1
-        raw_quantity = self._sizing_base() * quantity_pct / fill_price
-        quantity = raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
+        quantity = self._resolve_quantity(signal, fill_price)
         if quantity <= 0:
             return None
 
@@ -199,9 +209,7 @@ class BacktestPortfolio:
     def _execute_short(self, signal: Signal, price: float, key: str) -> TradeRecord | None:
         """Open a short position."""
         fill_price = self._apply_slippage(price, is_buy=False)
-        quantity_pct = signal.quantity_pct or 0.1
-        raw_quantity = self._sizing_base() * quantity_pct / fill_price
-        quantity = raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
+        quantity = self._resolve_quantity(signal, fill_price)
         if quantity <= 0:
             return None
 
@@ -358,9 +366,7 @@ class BacktestPortfolio:
         fee_rate = self.cost_model.buy_commission_rate  # Maker rate
 
         if signal.action == SignalAction.LONG:
-            quantity_pct = signal.quantity_pct or 0.1
-            raw_quantity = self._sizing_base() * quantity_pct / fill_price
-            quantity = raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
+            quantity = self._resolve_quantity(signal, fill_price)
             if quantity <= 0:
                 return None
 
@@ -394,9 +400,7 @@ class BacktestPortfolio:
             return trade
 
         elif signal.action == SignalAction.SHORT:
-            quantity_pct = signal.quantity_pct or 0.1
-            raw_quantity = self._sizing_base() * quantity_pct / fill_price
-            quantity = raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
+            quantity = self._resolve_quantity(signal, fill_price)
             if quantity <= 0:
                 return None
 

@@ -22,6 +22,7 @@ from poseidon.data.features import (
     open_interest,  # noqa: F401
     price_momentum,  # noqa: F401
     quality_factor,  # noqa: F401
+    range_reversion,  # noqa: F401
     regime,  # noqa: F401
     returns,  # noqa: F401
     swing,  # noqa: F401

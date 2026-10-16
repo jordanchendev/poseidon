@@ -21,15 +21,14 @@ from poseidon.models.strategy import StrategyRecord
 
 router = APIRouter()
 
-_LEGACY_RELEASE_CONFLICT = (
-    "Legacy strategy activation is disabled; use /api/v1/strategies/{strategy_id}/release"
-)
+_LEGACY_RELEASE_CONFLICT = "Legacy strategy activation is disabled; use /api/v1/strategies/{strategy_id}/release"
 
 _VALID_STRATEGY_TYPES = {
     "model",
     "rule",
     "voting",
     "portfolio_strategy",
+    "range_reversion",
 }
 
 

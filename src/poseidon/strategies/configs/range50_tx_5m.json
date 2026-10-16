@@ -1,0 +1,41 @@
+{
+  "name": "range_50_reversion",
+  "symbol": "TX",
+  "market": "tw_futures",
+  "interval": "5m",
+  "direction_mode": "bidirectional",
+  "session": {
+    "tz": "Asia/Taipei",
+    "day_rollover": "14:30",
+    "entry_start": "09:00",
+    "entry_end": "11:15",
+    "flat_at": "13:40"
+  },
+  "range": { "lookback_days": 20, "bias_mode": "range" },
+  "sweep": {
+    "require_h1": true,
+    "require_h4": true,
+    "require_d1": false,
+    "min_sweeps": 2,
+    "sweep_valid_bars": 12
+  },
+  "confirm": {
+    "smt_mode": "off",
+    "companion_symbol": "TE",
+    "companion_market": "tw_futures",
+    "entry_trigger": "fvg_or_level",
+    "fvg_max_age_bars": 24
+  },
+  "risk": {
+    "stop_buffer_points": 5.0,
+    "leg_lookback_bars": 48,
+    "min_rr": 1.5,
+    "max_stop_points": 150.0
+  },
+  "manage": {
+    "breakeven_on_h1_flip": true,
+    "breakeven_offset_points": 2.0,
+    "max_trades_per_day": 2,
+    "stop_after_win": true
+  }
+}

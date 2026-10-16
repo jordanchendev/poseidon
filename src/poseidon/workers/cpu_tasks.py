@@ -16,6 +16,7 @@ from poseidon.backtest.cost_model import COST_MODELS
 from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
 from poseidon.backtest.optimizer import BayesianOptimizer, GridSearchOptimizer
 from poseidon.backtest.portfolio import SizingConfig, SizingMode
+from poseidon.backtest.range_reversion_factory import RangeReversionStrategyFactory
 from poseidon.backtest.repository import BacktestRepository
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.backtest.schemas import BacktestConfig
@@ -1531,6 +1532,8 @@ def run_backtest_task(
             # Reconstruct strategy object
             if record.strategy_type == "liquidity_sweep":
                 strategy = LiquiditySweepStrategyFactory.from_config(record.config, strategy_id=record.id)
+            elif record.strategy_type == "range_reversion":
+                strategy = RangeReversionStrategyFactory.from_config(record.config, strategy_id=record.id)
             elif record.strategy_type == "rule":
                 strategy = RuleStrategy(config=record.config, strategy_id=record.id)
             elif record.strategy_type == "voting":
