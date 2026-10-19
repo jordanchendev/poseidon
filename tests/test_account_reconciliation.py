@@ -21,6 +21,7 @@ from poseidon.decision_loop.execution import (
     ProtectiveExecutionService,
     internal_state_watermark,
 )
+from poseidon.decision_loop.manifest import content_sha256
 from poseidon.decision_loop.reconciliation import ReconciliationService, submit_or_reconcile_order
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_record import DecisionRecord
@@ -33,7 +34,8 @@ from poseidon.models.paper_broker_order import PaperBrokerOrder
 from poseidon.models.paper_cash_movement import PaperCashMovement
 from poseidon.models.portfolio_holding import PortfolioHoldingRecord
 from poseidon.models.position_lot import PositionLot
-from poseidon.models.strategy_version import StrategyVersion
+from poseidon.models.strategy import StrategyRecord
+from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 from tests import test_position_lot_allocation as lot_tests
 
 NOW = lot_tests.NOW + timedelta(days=2)
@@ -985,3 +987,109 @@ def test_traded_missing_broker_positions_are_durable_unresolved(account):
     result = reconcile(account)
     assert result["status"] == "unresolved"
     assert stored(account, result).difference_json["unresolved"]
+
+
+def _detach_decisions(account):
+    """Shadow soak shape: the account exists and a version is released, but no decision names it yet."""
+    with account.sessions() as session, session.begin():
+        session.execute(
+            update(DecisionRecord)
+            .where(DecisionRecord.account_scope == account.scope)
+            .values(account_scope=f"{account.scope}:detached")
+        )
+
+
+def _owner_version(account):
+    with account.sessions() as session:
+        decision = session.get(DecisionRecord, account.decision_id)
+        version = session.get(StrategyVersion, decision.strategy_version_id)
+        return version.id, version.strategy_id, copy.deepcopy(version.policy_json)
+
+
+def _release(session, strategy_id, version_id):
+    session.execute(text("ALTER TABLE strategies DISABLE TRIGGER trg_strategies_release_authority"))
+    try:
+        session.execute(
+            update(StrategyRecord).where(StrategyRecord.id == strategy_id).values(active_version_id=version_id)
+        )
+    finally:
+        session.execute(text("ALTER TABLE strategies ENABLE TRIGGER trg_strategies_release_authority"))
+
+
+def test_shadow_without_decisions_resolves_owner_policy_from_active_version(account):
+    _detach_decisions(account)
+    _version_id, _strategy_id, policy_json = _owner_version(account)
+    result = reconcile(account)
+    assert result["status"] == "matched"
+    row = stored(account, result)
+    assert row.policy_sha256 == content_sha256(policy_json)
+    assert row.difference_json["owner_policy"] == policy_json["reconciliation"]
+    assert row.difference_json["unresolved"] == []
+    assert row.internal_snapshot_json["cash"] == row.broker_snapshot_json["cash"]
+
+
+def test_shadow_without_decisions_or_active_version_stays_unresolved(account):
+    _detach_decisions(account)
+    _version_id, strategy_id, _policy_json = _owner_version(account)
+    with account.sessions() as session, session.begin():
+        _release(session, strategy_id, None)
+    result = reconcile(account)
+    assert result["status"] == "unresolved"
+    row = stored(account, result)
+    assert row.policy_sha256 == "0" * 64
+    assert "owner policy is missing for account generation" in row.difference_json["unresolved"]
+
+
+def test_shadow_conflicting_active_owner_policies_are_ambiguous_not_guessed(account):
+    _detach_decisions(account)
+    _version_id, _strategy_id, policy_json = _owner_version(account)
+    other_policy = copy.deepcopy(policy_json)
+    other_policy["reconciliation"]["opening_cash"] = policy_json["reconciliation"]["opening_cash"] + 1
+    with account.sessions() as session, session.begin():
+        strategy = StrategyRecord(
+            name=f"shadow-owner-conflict-{uuid.uuid4().hex}",
+            strategy_type="technical",
+            symbol="2330",
+            market="tw_stock",
+            interval="1d",
+        )
+        session.add(strategy)
+        session.flush()
+        config = {"fixture": strategy.name}
+        version = StrategyVersion(
+            strategy_id=strategy.id,
+            version_no=1,
+            config_json=config,
+            policy_json=other_policy,
+            artifact_json={},
+            content_sha256=strategy_version_digest(config, other_policy, {}),
+        )
+        session.add(version)
+        session.flush()
+        _release(session, strategy.id, version.id)
+        conflict_ids = (strategy.id, version.id)
+    try:
+        result = reconcile(account)
+        assert result["status"] == "unresolved"
+        row = stored(account, result)
+        assert row.policy_sha256 == "0" * 64
+        assert "owner policy is ambiguous across active strategy versions" in row.difference_json["unresolved"]
+    finally:
+        with account.sessions() as session, session.begin():
+            _release(session, conflict_ids[0], None)
+            session.execute(delete(StrategyVersion).where(StrategyVersion.id == conflict_ids[1]))
+            session.execute(delete(StrategyRecord).where(StrategyRecord.id == conflict_ids[0]))
+
+
+def test_shadow_owner_policy_from_active_version_is_scoped_to_the_account_generation(account):
+    _detach_decisions(account)
+    version_id, _strategy_id, policy_json = _owner_version(account)
+    other_generation = copy.deepcopy(policy_json)
+    other_generation["reconciliation"]["account_generation"] = "generation-2"
+    with account.sessions() as session, session.begin():
+        session.execute(
+            update(StrategyVersion).where(StrategyVersion.id == version_id).values(policy_json=other_generation)
+        )
+    result = reconcile(account)
+    assert result["status"] == "unresolved"
+    assert "owner policy is missing for account generation" in stored(account, result).difference_json["unresolved"]

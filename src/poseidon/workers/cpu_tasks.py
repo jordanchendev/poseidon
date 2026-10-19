@@ -833,6 +833,33 @@ def _frozen_ohlcv_evidence(market: str, interval: str, symbol: str, as_of: str) 
     }
 
 
+def _stale_required_evidence(required: dict, evidence: list[dict], as_of: str) -> dict:
+    """Return the required kinds whose newest evidence is older than the policy ``max_age_seconds``.
+
+    Phase 101 D-04: on non-trading days the newest TW 1d bar is a day or more old, so the
+    manifest must not be frozen; the beat task reports a skip instead of raising, because a
+    raised loop task marks the soak day red. Missing evidence is not stale and still fails
+    closed inside ``ManifestService.freeze``.
+    """
+    from poseidon.decision_loop.manifest import timestamp
+
+    cutoff = timestamp(as_of, "as_of")
+    newest: dict[str, object] = {}
+    for item in evidence:
+        event_time = timestamp(item["event_time"], "event_time")
+        if item["kind"] not in newest or event_time > newest[item["kind"]]:
+            newest[item["kind"]] = event_time
+    stale = {}
+    for kind, rule in required.items():
+        latest = newest.get(kind)
+        max_age = rule.get("max_age_seconds") if isinstance(rule, dict) else None
+        if latest is None or not isinstance(max_age, (int, float)) or isinstance(max_age, bool):
+            continue
+        if (cutoff - latest).total_seconds() > max_age:
+            stale[kind] = latest.isoformat().replace("+00:00", "Z")
+    return stale
+
+
 @celery_app.task(name="poseidon.workers.cpu_tasks.freeze_market_manifest", max_retries=0)
 def freeze_market_manifest(market: str, interval: str, as_of: str | None = None) -> dict:
     """Freeze one OHLCV manifest for the approved universe of active decision-loop strategies."""
@@ -869,6 +896,9 @@ def freeze_market_manifest(market: str, interval: str, as_of: str | None = None)
     evidence = [
         item for symbol in symbols if (item := _frozen_ohlcv_evidence(market, interval, symbol, as_of)) is not None
     ]
+    stale = _stale_required_evidence(required, evidence, as_of)
+    if stale:
+        return {"skipped": "evidence_stale", "stale": stale, "as_of": as_of}
     request = {
         "market": market,
         "interval": interval,
