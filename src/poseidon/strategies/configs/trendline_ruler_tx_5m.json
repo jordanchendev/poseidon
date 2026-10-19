@@ -1,0 +1,28 @@
+{
+  "name": "trendline_ruler",
+  "symbol": "TX",
+  "market": "tw_futures",
+  "interval": "5m",
+  "direction_mode": "bidirectional",
+  "session": {
+    "tz": "Asia/Taipei",
+    "day_rollover": "14:30",
+    "allowed_windows": [["09:15", "13:15"]],
+    "flat_at": ["13:40"]
+  },
+  "htf": { "mode": "sma_slope", "sma_period": 20, "slope_lookback": 5 },
+  "bands": { "bb_period": 20, "bb_std": 2.0, "atr_period": 14 },
+  "pattern": {
+    "pivot_left": 3,
+    "pivot_right": 3,
+    "max_line_age_bars": 60,
+    "max_pattern_index": 2,
+    "leg_reset": "bb_upper",
+    "setup_zone": "mid_or_beyond",
+    "max_entries_per_line": 1,
+    "skip_conflicting": true
+  },
+  "entry": { "touch_atr_frac": 0.25, "require_mid_close": true, "no_chase": true },
+  "risk": { "stop_buffer_points": 5.0, "min_rr": 1.0, "max_stop_points": 150.0 },
+  "manage": { "max_trades_per_day": 3 }
+}

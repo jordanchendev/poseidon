@@ -14,6 +14,7 @@ from poseidon.strategies.range_reversion import RangeReversionStrategy
 from poseidon.strategies.regime_router import RegimeRouter
 from poseidon.strategies.rule_strategy import RuleStrategy
 from poseidon.strategies.structural_reversal import StructuralReversalStrategy
+from poseidon.strategies.trendline_ruler import TrendlineRulerStrategy
 from poseidon.strategies.tw_futures.mean_reversion import MeanReversionStrategy
 from poseidon.strategies.tw_futures.trend_following import TrendFollowingStrategy
 from poseidon.strategies.tw_futures.volatility_breakout import VolatilityBreakoutStrategy
@@ -30,6 +31,7 @@ __all__ = [
     "StrategyType",
     "StructuralReversalStrategy",
     "TrendFollowingStrategy",
+    "TrendlineRulerStrategy",
     "VolatilityBreakoutStrategy",
     "VotingStrategy",
 ]
