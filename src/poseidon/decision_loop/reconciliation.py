@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
 
 from poseidon.broker.base import (
@@ -17,6 +18,7 @@ from poseidon.broker.base import (
     BrokerFillSnapshot,
     BrokerOrderSnapshot,
 )
+from poseidon.decision_loop.decisions import DecisionPolicy
 from poseidon.decision_loop.execution import (
     PROTECTIVE_ORIGINS,
     DecisionExecutionService,
@@ -36,6 +38,7 @@ from poseidon.models.paper_broker_order import PaperBrokerOrder
 from poseidon.models.paper_cash_movement import PaperCashMovement
 from poseidon.models.portfolio_holding import PortfolioHoldingRecord
 from poseidon.models.position_lot import PositionLot
+from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_version import StrategyVersion
 from poseidon.orders.schemas import Order
 from poseidon.orders.state_machine import OrderStatus, transition_order
@@ -579,6 +582,48 @@ class ReconciliationService:
             "fill_ids": sorted(seen),
         }
 
+    def _active_version_owner_policy(self, scope, generation, reasons):
+        """Owner policy before the first decision exists (Phase 101 shadow soak).
+
+        Shadow mode produces evaluation runs only, so no ``DecisionRecord`` can name the owner.
+        The owner is then the frozen policy of the released ``StrategyVersion`` that authorizes
+        this exact account scope and generation. Several active versions must agree on one
+        policy digest; anything else stays unresolved, never guessed.
+        """
+        rows = self.session.execute(
+            select(StrategyVersion)
+            .join(StrategyRecord, StrategyRecord.active_version_id == StrategyVersion.id)
+            .order_by(StrategyVersion.id)
+        ).all()
+        candidates = {}
+        for (version,) in rows:
+            policy_json = version.policy_json if isinstance(version.policy_json, dict) else {}
+            frozen = policy_json.get("reconciliation")
+            if (
+                policy_json.get("account_scope") != scope
+                or not isinstance(frozen, dict)
+                or frozen.get("account_generation") != generation
+            ):
+                continue
+            candidates.setdefault(content_sha256(policy_json), version)
+        if not candidates:
+            reasons.append("owner policy is missing for account generation")
+            return None
+        if len(candidates) > 1:
+            reasons.append("owner policy is ambiguous across active strategy versions")
+            return None
+        policy_sha, version = next(iter(candidates.items()))
+        try:
+            version.verify_content()
+            full_policy = DecisionPolicy.model_validate(version.policy_json)
+        except (TypeError, ValueError, PydanticValidationError) as error:
+            reasons.append(f"owner policy unresolved: {error}")
+            return None
+        if full_policy.reconciliation is None:
+            reasons.append("owner policy unresolved: missing owner reconciliation policy")
+            return None
+        return version.policy_json["reconciliation"], full_policy.reconciliation, policy_sha
+
     def reconcile_account(self, account_id, snapshot, *, now=None, prices=None):
         """Compare independent ledgers and flush one immutable account result."""
         probe = self.session.get(PaperBrokerAccount, account_id)
@@ -623,9 +668,11 @@ class ReconciliationService:
                 except (ExecutionConflictError, ValueError) as error:
                     reasons.append(f"owner policy unresolved: {error}")
                 break
-        if owner is None:
-            reasons.append("owner policy is missing for account generation")
         policy_sha = owner.policy_sha256 if owner is not None else "0" * 64
+        if owner is None:
+            resolved = self._active_version_owner_policy(scope, generation, reasons)
+            if resolved is not None:
+                frozen, policy, policy_sha = resolved
         broker_orders = self.session.scalars(
             select(PaperBrokerOrder)
             .where(PaperBrokerOrder.account_scope == scope, PaperBrokerOrder.account_generation == generation)

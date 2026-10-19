@@ -819,3 +819,95 @@ def test_shadow_parity_reports_exits_separately_from_entry_targets(db):
     assert parity["legacy_targets"] == []
     assert parity["matched"] is True
     assert db.query(DecisionRecord).count() == 0
+
+
+def _shadow_market_settings():
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        decision_loop_execution_mode="shadow",
+        decision_loop_approved_market="tw_stock",
+        decision_loop_approved_account_scope=ACCOUNT,
+        thalassa_base_url="http://thalassa.test",
+    )
+
+
+def _activate(db, version, name="producer-active"):
+    strategy = StrategyRecord(
+        id=version.strategy_id,
+        name=name,
+        strategy_type="rule",
+        symbol="2330",
+        market="tw_stock",
+        interval="1d",
+        active_version_id=version.id,
+    )
+    db.add(strategy)
+    db.commit()
+    return strategy
+
+
+def test_freeze_task_skips_stale_required_evidence_instead_of_raising(monkeypatch, db):
+    """Phase 101 D-04: a non-trading day leaves the newest bar past max_age; the beat task skips."""
+    from poseidon.models.data_manifest import DataManifest
+    from poseidon.workers import cpu_tasks
+
+    _activate(db, make_version(db))
+    monkeypatch.setattr(cpu_tasks, "settings", _shadow_market_settings())
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: Session(db.get_bind()))
+    monkeypatch.setattr(cpu_tasks, "_decision_worker_principal", lambda: worker())
+    stale_bar = LAST_BAR - timedelta(days=2)
+    monkeypatch.setattr(
+        cpu_tasks,
+        "_frozen_ohlcv_evidence",
+        lambda market, interval, symbol, as_of: ohlcv_evidence(symbol, last_bar=stale_bar),
+    )
+    monkeypatch.setattr(
+        cpu_tasks.produce_decision_run, "delay", lambda *args, **kwargs: pytest.fail("producer queued on stale data")
+    )
+    expected = {"skipped": "evidence_stale", "stale": {"ohlcv": "2026-09-24T00:00:00Z"}, "as_of": AS_OF}
+    assert cpu_tasks.freeze_market_manifest.run("tw_stock", "1d", AS_OF) == expected
+    assert cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", AS_OF) == expected
+    assert db.query(DataManifest).count() == 0
+
+
+def test_freeze_task_freezes_fresh_required_evidence(monkeypatch, db):
+    from poseidon.models.data_manifest import DataManifest
+    from poseidon.workers import cpu_tasks
+
+    _activate(db, make_version(db))
+    monkeypatch.setattr(cpu_tasks, "settings", _shadow_market_settings())
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: Session(db.get_bind()))
+    monkeypatch.setattr(
+        cpu_tasks, "_frozen_ohlcv_evidence", lambda market, interval, symbol, as_of: ohlcv_evidence(symbol)
+    )
+    result = cpu_tasks.freeze_market_manifest.run("tw_stock", "1d", AS_OF)
+    assert set(result) == {"manifest_id", "content_sha256", "as_of"}
+    assert db.query(DataManifest).count() == 1
+
+
+def test_freeze_task_still_fails_closed_without_any_evidence(monkeypatch, db):
+    from poseidon.decision_loop.manifest import ValidationError
+    from poseidon.workers import cpu_tasks
+
+    _activate(db, make_version(db))
+    monkeypatch.setattr(cpu_tasks, "settings", _shadow_market_settings())
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: Session(db.get_bind()))
+    monkeypatch.setattr(cpu_tasks, "_frozen_ohlcv_evidence", lambda market, interval, symbol, as_of: None)
+    with pytest.raises(ValidationError, match="required evidence capability missing: ohlcv"):
+        cpu_tasks.freeze_market_manifest.run("tw_stock", "1d", AS_OF)
+
+
+def test_stale_required_evidence_reports_only_kinds_past_max_age():
+    from poseidon.workers.cpu_tasks import _stale_required_evidence
+
+    fresh = ohlcv_evidence("2330")
+    stale = ohlcv_evidence("0050", last_bar=LAST_BAR - timedelta(days=3))
+    stale["kind"] = "benchmark"
+    required = {
+        "ohlcv": {"max_age_seconds": 86400},
+        "benchmark": {"max_age_seconds": 86400},
+        "news": {"max_age_seconds": 1},
+    }
+    assert _stale_required_evidence(required, [fresh, stale], AS_OF) == {"benchmark": "2026-09-23T00:00:00Z"}
+    assert _stale_required_evidence({"ohlcv": {"max_age_seconds": 0}}, [], AS_OF) == {}
