@@ -29,6 +29,7 @@ from poseidon.data.features import (
     technical,  # noqa: F401
     trade_structure,  # noqa: F401
     trend,  # noqa: F401
+    trendline_ruler,  # noqa: F401
     valuation,  # noqa: F401
     volatility,  # noqa: F401
     volume,  # noqa: F401
