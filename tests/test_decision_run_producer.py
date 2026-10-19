@@ -894,7 +894,8 @@ def test_freeze_task_still_fails_closed_without_any_evidence(monkeypatch, db):
     monkeypatch.setattr(cpu_tasks, "settings", _shadow_market_settings())
     monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: Session(db.get_bind()))
     monkeypatch.setattr(cpu_tasks, "_frozen_ohlcv_evidence", lambda market, interval, symbol, as_of: None)
-    with pytest.raises(ValidationError, match="required evidence capability missing: ohlcv"):
+    # No bars at all is not "stale": the manifest service still refuses an empty evidence list.
+    with pytest.raises(ValidationError, match="manifest evidence must be a non-empty list"):
         cpu_tasks.freeze_market_manifest.run("tw_stock", "1d", AS_OF)
 
 
