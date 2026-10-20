@@ -524,7 +524,7 @@ def test_beat_runs_the_freeze_between_producer_and_labeler():
     }
     assert schedule["decision-loop-produce-tw-daily"]["schedule"] == crontab(hour=6, minute=40)
     assert schedule["decision-loop-label-outcomes"]["schedule"] == crontab(hour=7, minute=30)
-    assert len(schedule) == 23
+    assert len(schedule) == 26  # 101-17.2: three producer retry slots
 
 
 @pytest.mark.postgresql

@@ -936,9 +936,43 @@ def produce_decision_run(strategy_version_id: str, manifest_id: str, decision_as
         )
 
 
+def _complete_runs_on_day(session, version_ids: list, as_of: str) -> list[str]:
+    """Complete evaluation runs for ``version_ids`` whose ``decision_as_of`` falls on the UTC day of ``as_of``.
+
+    Phase 101-17.2: the beat retry slots call the producer several times per session; the
+    first successful freeze settles the day, later slots must not freeze a second manifest.
+    """
+    from sqlalchemy import select
+
+    from poseidon.decision_loop.manifest import timestamp
+    from poseidon.models.evaluation_run import EvaluationRun
+
+    if not version_ids:
+        return []
+    day = timestamp(as_of, "as_of").date()
+    runs = session.scalars(
+        select(EvaluationRun)
+        .where(EvaluationRun.strategy_version_id.in_(version_ids), EvaluationRun.status == "complete")
+        .order_by(EvaluationRun.decision_as_of.desc(), EvaluationRun.id)
+        .limit(200)
+    ).all()
+    matched = []
+    for run in runs:
+        stored = run.decision_as_of
+        if stored.tzinfo is None:
+            stored = stored.replace(tzinfo=UTC)
+        if stored.astimezone(UTC).date() == day:
+            matched.append(str(run.id))
+    return sorted(matched)
+
+
 @celery_app.task(name="poseidon.workers.cpu_tasks.produce_decision_runs_for_market", max_retries=0)
 def produce_decision_runs_for_market(market: str, interval: str, as_of: str | None = None) -> dict:
-    """Beat entry: freeze once, then enqueue one UUID-only producer task per active version."""
+    """Beat entry: freeze once, then enqueue one UUID-only producer task per active version.
+
+    Scheduled at 06:40Z and at three retry slots (06:55Z, 07:10Z, 07:25Z) inside the ohlcv
+    freshness window; a slot that finds the day already produced skips without freezing.
+    """
     skipped = _loop_mode_skip() or _loop_market_skip(market)
     if skipped:
         return skipped
@@ -946,16 +980,17 @@ def produce_decision_runs_for_market(market: str, interval: str, as_of: str | No
 
     _decision_worker_principal()
     as_of = _loop_as_of(as_of)
+    with SessionLocal() as session:
+        versions = ProducerService(session).active_versions(
+            market, interval, settings.decision_loop_approved_account_scope
+        )
+        produced = _complete_runs_on_day(session, [version.id for version in versions], as_of)
+        version_ids = [str(version.id) for version in versions]
+    if produced:
+        return {"skipped": "already_produced", "as_of": as_of, "runs": produced}
     frozen = freeze_market_manifest.run(market, interval, as_of)
     if "manifest_id" not in frozen:
         return frozen
-    with SessionLocal() as session:
-        version_ids = [
-            str(version.id)
-            for version in ProducerService(session).active_versions(
-                market, interval, settings.decision_loop_approved_account_scope
-            )
-        ]
     for version_id in version_ids:
         produce_decision_run.delay(version_id, frozen["manifest_id"], as_of)
     return {"manifest_id": frozen["manifest_id"], "as_of": as_of, "enqueued": len(version_ids)}
