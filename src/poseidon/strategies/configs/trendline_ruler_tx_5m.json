@@ -23,6 +23,12 @@
     "skip_conflicting": true
   },
   "entry": { "touch_atr_frac": 0.25, "require_mid_close": true, "no_chase": true },
-  "risk": { "stop_buffer_points": 5.0, "min_rr": 1.0, "max_stop_points": 150.0 },
-  "manage": { "max_trades_per_day": 3 }
+  "risk": {
+    "stop_mode": "touch_bar_high",
+    "stop_buffer_points": 5.0,
+    "min_stop_atr": 0.0,
+    "min_rr": 1.0,
+    "max_stop_points": 150.0
+  },
+  "manage": { "max_trades_per_day": 3, "exit_mode": "target_and_break" }
 }

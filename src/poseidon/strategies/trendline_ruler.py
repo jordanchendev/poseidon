@@ -3,8 +3,9 @@
 Port of a discretionary NQ 5m intraday method to Taiwan index futures (TX 5m).
 Short side described; the long side is the exact mirror (one sign variable).
 
-  1. Daily direction filter (``htf_bias``): only short when the completed
-     daily trend is down (``htf.mode="off"`` disables it).
+  1. Daily direction filter (``htf_bias``): ``htf.mode="sma_slope"`` only
+     shorts when the completed daily trend is down; ``"block_counter"`` also
+     allows a neutral bias (0) and only blocks an up bias; ``"off"`` disables it.
   2. Bollinger Bands 20/2 on the 5m close. The pattern must appear at or above
      the middle band (``tls_zone_ok``), the entry bar must close below the
      middle band and still inside the lower band (no chasing). Only the first
@@ -16,10 +17,20 @@ Short side described; the long side is the exact mirror (one sign variable).
      ATR) but closes below it -> market SHORT at the close. A close through
      the line breaks the pattern and exits any open position. Simultaneous
      valid long and short patterns cancel each other.
-  5. Stop: touch-bar high + ``stop_buffer_points``; reward/risk >= ``min_rr``
-     and stop distance <= ``max_stop_points``.
-  6. Exit: all-out at the target (no scaling) via the runner's SL/TP, on a line
-     break, at the next ``flat_at`` clock time, or if the trading day rolls.
+  5. Stop (``risk.stop_mode``): ``"touch_bar_high"`` = touch-bar high +
+     ``stop_buffer_points``; ``"line"`` = the line's value at the entry bar +
+     buffer; ``"p2"`` = the line's second pivot high + buffer. If
+     ``min_stop_atr`` > 0 and the stop is closer than ``min_stop_atr`` x ATR,
+     it is widened to exactly that distance. Then reward/risk >= ``min_rr`` and
+     stop distance <= ``max_stop_points`` (both on the final stop).
+  6. Exit (``manage.exit_mode``): ``"target_and_break"`` = all-out at the
+     target (no scaling) via the runner's SL/TP or on a close through the
+     line; ``"line_trail"`` additionally emits a HOLD each bar in position with
+     ``updated_stop_loss`` = this bar's projected line + buffer, so the
+     runner's intra-bar stop follows the line (tighten-only, never loosens);
+     ``"line_trail_no_tp"`` is the same without a take-profit. In every mode
+     the position is also closed at the next ``flat_at`` clock time or if the
+     trading day rolls.
 
 Session times are Asia/Taipei. ``allowed_windows`` are [start, end] local
 clock ranges (a range with start > end wraps past midnight for the night
@@ -121,9 +132,12 @@ class TrendlineRulerStrategy(BaseStrategy):
         self._stop_buffer_points: float = float(risk.get("stop_buffer_points", 5.0))
         self._min_rr: float = float(risk.get("min_rr", 1.0))
         self._max_stop_points: float = float(risk.get("max_stop_points", 150.0))
+        self._stop_mode: str = risk.get("stop_mode", "touch_bar_high")
+        self._min_stop_atr: float = float(risk.get("min_stop_atr", 0.0))
 
         manage = config.get("manage", {})
         self._max_trades_per_day: int = int(manage.get("max_trades_per_day", 3))
+        self._exit_mode: str = manage.get("exit_mode", "target_and_break")
 
         self.reset()
 
@@ -136,6 +150,8 @@ class TrendlineRulerStrategy(BaseStrategy):
         self.reject_counts: Counter[str] = Counter()
         self.exit_counts: Counter[str] = Counter()
         self.entry_rr: list[float] = []  # planned reward/risk of each entry (driver reporting)
+        self.entry_stop_points: list[float] = []  # planned stop distance of each entry
+        self.entry_target_points: list[float] = []  # planned target distance of each entry
         # open position mirror
         self._side: str | None = None
         self._entry_price: float | None = None
@@ -157,7 +173,8 @@ class TrendlineRulerStrategy(BaseStrategy):
                 {
                     "htf_sma_period": self._htf_sma_period,
                     "htf_slope_lookback": self._htf_slope_lookback,
-                    "htf_mode": self._htf_mode,
+                    # block_counter reads the same sma_slope bias, it only filters differently
+                    "htf_mode": "off" if self._htf_mode == "off" else "sma_slope",
                     "tz": self._tz,
                     "day_rollover_minute": self._day_rollover_minute,
                 },
@@ -181,8 +198,14 @@ class TrendlineRulerStrategy(BaseStrategy):
             raise ValueError("symbol and market must be non-empty")
         if self._direction_mode not in ("long_only", "short_only", "bidirectional"):
             raise ValueError(f"direction_mode invalid: {self._direction_mode!r}")
-        if self._htf_mode not in ("sma_slope", "off"):
+        if self._htf_mode not in ("sma_slope", "block_counter", "off"):
             raise ValueError(f"htf.mode invalid: {self._htf_mode!r}")
+        if self._stop_mode not in ("touch_bar_high", "line", "p2"):
+            raise ValueError(f"risk.stop_mode invalid: {self._stop_mode!r}")
+        if self._min_stop_atr < 0:
+            raise ValueError("risk.min_stop_atr must be >= 0")
+        if self._exit_mode not in ("target_and_break", "line_trail", "line_trail_no_tp"):
+            raise ValueError(f"manage.exit_mode invalid: {self._exit_mode!r}")
         if self._leg_reset not in ("bb_upper", "off"):
             raise ValueError(f"pattern.leg_reset invalid: {self._leg_reset!r}")
         if self._setup_zone not in ("mid_or_beyond", "off"):
@@ -270,7 +293,10 @@ class TrendlineRulerStrategy(BaseStrategy):
             return "max_trades_per_day"
         if self._direction_mode == ("long_only" if side == "short" else "short_only"):
             return "direction_mode"
-        if self._htf_mode != "off" and _f(row, "htf_bias", 0.0) != -sign:
+        bias = _f(row, "htf_bias", 0.0)
+        if self._htf_mode == "sma_slope" and bias != -sign:
+            return "htf_bias"
+        if self._htf_mode == "block_counter" and bias == sign:
             return "htf_bias"
         if _f(row, f"{prefix}_pattern_index", 0.0) > self._max_pattern_index:
             return "pattern_index"
@@ -291,14 +317,28 @@ class TrendlineRulerStrategy(BaseStrategy):
             return "conflicting_setup"
         return None
 
+    def _stop_anchor(self, row: pd.Series, side: str) -> float:
+        """Price the stop is placed beyond (before the buffer), per ``stop_mode``."""
+        prefix = _SIDES[side][0]
+        if self._stop_mode == "line":
+            return _f(row, f"{prefix}_line")
+        if self._stop_mode == "p2":
+            return _f(row, f"{prefix}_p2")
+        return _f(row, "high") if side == "short" else _f(row, "low")
+
     def _plan(self, row: pd.Series, side: str) -> tuple[float, float, float] | str:
         """(stop, target, rr) or the rejection reason."""
         prefix, _, sign = _SIDES[side]
         close = _f(row, "close")
-        extreme = _f(row, "high") if side == "short" else _f(row, "low")
-        stop = extreme + sign * self._stop_buffer_points
+        stop = self._stop_anchor(row, side) + sign * self._stop_buffer_points
         target = _f(row, f"{prefix}_target")
         risk = sign * (stop - close)
+        if risk <= 0:
+            return "stop_inside"
+        min_risk = self._min_stop_atr * _f(row, f"atr_{self._atr_period}", 0.0)
+        if risk < min_risk:
+            risk = min_risk
+            stop = close + sign * risk
         reward = sign * (close - target)
         if _f(row, f"{prefix}_ruler", 0.0) <= 0 or reward <= 0:
             return "no_reward"
@@ -349,13 +389,14 @@ class TrendlineRulerStrategy(BaseStrategy):
                 continue
             stop, target, rr = plan
             close = _f(row, "close")
+            take_profit = None if self._exit_mode == "line_trail_no_tp" else target
             line_id = _f(row, f"{prefix}_id")
             prev_id, entries = self._entries_per_line.get(side, (-1.0, 0))
             self._entries_per_line[side] = (line_id, entries + 1 if prev_id == line_id else 1)
             self._side = side
             self._entry_price = close
             self._sl = stop
-            self._tp = target
+            self._tp = take_profit
             self._line_id = line_id
             self._line_at_entry = line
             self._line_slope = _f(row, f"{prefix}_slope", 0.0)
@@ -364,6 +405,8 @@ class TrendlineRulerStrategy(BaseStrategy):
             self._trades_today += 1
             self.reject_counts["entered"] += 1
             self.entry_rr.append(rr)
+            self.entry_stop_points.append(sign * (stop - close))
+            self.entry_target_points.append(sign * (close - target))
             logger.debug("trendline %s @%.1f sl=%.1f tp=%.1f rr=%.2f", side, close, stop, target, rr)
             signals.append(
                 self._signal(
@@ -372,12 +415,14 @@ class TrendlineRulerStrategy(BaseStrategy):
                     confidence=min(1.0, rr / 3.0),
                     order_type=OrderType.MARKET,
                     stop_loss_price=stop,
-                    take_profit_price=target,
+                    take_profit_price=take_profit,
                     metadata={
                         "line_id": int(line_id),
                         "pattern_index": int(_f(row, f"{prefix}_pattern_index", 0.0)),
                         "ruler": _f(row, f"{prefix}_ruler"),
                         "rr": rr,
+                        "stop_points": sign * (stop - close),
+                        "target_points": sign * (close - target),
                         "touch_tol": touch_tol,
                     },
                 )
@@ -395,4 +440,10 @@ class TrendlineRulerStrategy(BaseStrategy):
             return self._close(signal_time, "line_break")
         if self._flat_deadline is not None and self._local_time(signal_time) >= self._flat_deadline:
             return self._close(signal_time, "flat")
-        return []
+        if self._exit_mode == "target_and_break":
+            return []
+        # Trail: the runner applies this stop from the next bar on; tighten only.
+        trail = line_now + sign * self._stop_buffer_points
+        if self._sl is None or sign * (trail - self._sl) < 0:
+            self._sl = trail
+        return [self._signal(SignalAction.HOLD, signal_time, confidence=1.0, metadata={"updated_stop_loss": self._sl})]
