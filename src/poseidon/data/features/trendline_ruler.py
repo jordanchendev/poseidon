@@ -13,7 +13,8 @@ Mechanical port of a discretionary NQ 5m method:
     consecutive known pivot highs (P1 higher than P2) and measures the "ruler":
     the distance from the pattern's lowest low (P1 .. current bar, wicks
     included) up to the line directly above that low. Target = lowest low -
-    ruler. The long side (``tll_*``) is the exact mirror (rising pivot lows,
+    ruler. ``tls_p2`` is the second pivot's high (``tll_p2``: its low), used
+    by the strategy's ``stop_mode="p2"``. The long side (``tll_*``) is the exact mirror (rising pivot lows,
     highest high, target = highest high + ruler); it is computed by running the
     same machine on sign-flipped prices.
 
@@ -124,6 +125,7 @@ def _line_machine(
         "slope": np.zeros(n),
         "ext": np.zeros(n),
         "ext_idx": np.full(n, -1.0),
+        "p2": np.zeros(n),
         "ruler": np.zeros(n),
         "target": np.zeros(n),
         "broken": np.zeros(n),
@@ -196,6 +198,7 @@ def _line_machine(
             out["slope"][t] = slope
             out["ext"][t] = ext
             out["ext_idx"][t] = float(ext_idx)
+            out["p2"][t] = high[p2]
             out["ruler"][t] = ruler
             out["target"][t] = target
             out["pattern_index"][t] = float(pattern_index)
@@ -241,7 +244,7 @@ def compute_trendline_ruler(
     # NaN bands (warmup) compare False: no leg reset, zone not ok.
     short = _line_machine(high, low, close, upper, middle, **kw)
     long_ = _line_machine(-low, -high, -close, -lower, -middle, **kw)
-    for key in ("line", "slope", "ext", "target"):
+    for key in ("line", "slope", "ext", "target", "p2"):
         long_[key] = -long_[key]
 
     cols: dict[str, np.ndarray] = {}
