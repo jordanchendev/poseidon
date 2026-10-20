@@ -1,0 +1,182 @@
+[
+ {
+  "label": "htf-off_stop-touch_bar_high_piv3_age60",
+  "set": {
+   "htf.mode": "off",
+   "risk.stop_mode": "touch_bar_high",
+   "pattern.pivot_left": 3,
+   "pattern.pivot_right": 3,
+   "pattern.max_line_age_bars": 60
+  }
+ },
+ {
+  "label": "htf-off_stop-touch_bar_high_piv5_age100",
+  "set": {
+   "htf.mode": "off",
+   "risk.stop_mode": "touch_bar_high",
+   "pattern.pivot_left": 5,
+   "pattern.pivot_right": 5,
+   "pattern.max_line_age_bars": 100
+  }
+ },
+ {
+  "label": "htf-off_stop-touch_bar_high_piv8_age160",
+  "set": {
+   "htf.mode": "off",
+   "risk.stop_mode": "touch_bar_high",
+   "pattern.pivot_left": 8,
+   "pattern.pivot_right": 8,
+   "pattern.max_line_age_bars": 160
+  }
+ },
+ {
+  "label": "htf-off_stop-line_piv3_age60",
+  "set": {
+   "htf.mode": "off",
+   "risk.stop_mode": "line",
+   "pattern.pivot_left": 3,
+   "pattern.pivot_right": 3,
+   "pattern.max_line_age_bars": 60
+  }
+ },
+ {
+  "label": "htf-off_stop-line_piv5_age100",
+  "set": {
+   "htf.mode": "off",
+   "risk.stop_mode": "line",
+   "pattern.pivot_left": 5,
+   "pattern.pivot_right": 5,
+   "pattern.max_line_age_bars": 100
+  }
+ },
+ {
+  "label": "htf-off_stop-line_piv8_age160",
+  "set": {
+   "htf.mode": "off",
+   "risk.stop_mode": "line",
+   "pattern.pivot_left": 8,
+   "pattern.pivot_right": 8,
+   "pattern.max_line_age_bars": 160
+  }
+ },
+ {
+  "label": "htf-off_stop-p2_piv3_age60",
+  "set": {
+   "htf.mode": "off",
+   "risk.stop_mode": "p2",
+   "pattern.pivot_left": 3,
+   "pattern.pivot_right": 3,
+   "pattern.max_line_age_bars": 60
+  }
+ },
+ {
+  "label": "htf-off_stop-p2_piv5_age100",
+  "set": {
+   "htf.mode": "off",
+   "risk.stop_mode": "p2",
+   "pattern.pivot_left": 5,
+   "pattern.pivot_right": 5,
+   "pattern.max_line_age_bars": 100
+  }
+ },
+ {
+  "label": "htf-off_stop-p2_piv8_age160",
+  "set": {
+   "htf.mode": "off",
+   "risk.stop_mode": "p2",
+   "pattern.pivot_left": 8,
+   "pattern.pivot_right": 8,
+   "pattern.max_line_age_bars": 160
+  }
+ },
+ {
+  "label": "htf-sma_slope_stop-touch_bar_high_piv3_age60",
+  "set": {
+   "htf.mode": "sma_slope",
+   "risk.stop_mode": "touch_bar_high",
+   "pattern.pivot_left": 3,
+   "pattern.pivot_right": 3,
+   "pattern.max_line_age_bars": 60
+  }
+ },
+ {
+  "label": "htf-sma_slope_stop-touch_bar_high_piv5_age100",
+  "set": {
+   "htf.mode": "sma_slope",
+   "risk.stop_mode": "touch_bar_high",
+   "pattern.pivot_left": 5,
+   "pattern.pivot_right": 5,
+   "pattern.max_line_age_bars": 100
+  }
+ },
+ {
+  "label": "htf-sma_slope_stop-touch_bar_high_piv8_age160",
+  "set": {
+   "htf.mode": "sma_slope",
+   "risk.stop_mode": "touch_bar_high",
+   "pattern.pivot_left": 8,
+   "pattern.pivot_right": 8,
+   "pattern.max_line_age_bars": 160
+  }
+ },
+ {
+  "label": "htf-sma_slope_stop-line_piv3_age60",
+  "set": {
+   "htf.mode": "sma_slope",
+   "risk.stop_mode": "line",
+   "pattern.pivot_left": 3,
+   "pattern.pivot_right": 3,
+   "pattern.max_line_age_bars": 60
+  }
+ },
+ {
+  "label": "htf-sma_slope_stop-line_piv5_age100",
+  "set": {
+   "htf.mode": "sma_slope",
+   "risk.stop_mode": "line",
+   "pattern.pivot_left": 5,
+   "pattern.pivot_right": 5,
+   "pattern.max_line_age_bars": 100
+  }
+ },
+ {
+  "label": "htf-sma_slope_stop-line_piv8_age160",
+  "set": {
+   "htf.mode": "sma_slope",
+   "risk.stop_mode": "line",
+   "pattern.pivot_left": 8,
+   "pattern.pivot_right": 8,
+   "pattern.max_line_age_bars": 160
+  }
+ },
+ {
+  "label": "htf-sma_slope_stop-p2_piv3_age60",
+  "set": {
+   "htf.mode": "sma_slope",
+   "risk.stop_mode": "p2",
+   "pattern.pivot_left": 3,
+   "pattern.pivot_right": 3,
+   "pattern.max_line_age_bars": 60
+  }
+ },
+ {
+  "label": "htf-sma_slope_stop-p2_piv5_age100",
+  "set": {
+   "htf.mode": "sma_slope",
+   "risk.stop_mode": "p2",
+   "pattern.pivot_left": 5,
+   "pattern.pivot_right": 5,
+   "pattern.max_line_age_bars": 100
+  }
+ },
+ {
+  "label": "htf-sma_slope_stop-p2_piv8_age160",
+  "set": {
+   "htf.mode": "sma_slope",
+   "risk.stop_mode": "p2",
+   "pattern.pivot_left": 8,
+   "pattern.pivot_right": 8,
+   "pattern.max_line_age_bars": 160
+  }
+ }
+]
