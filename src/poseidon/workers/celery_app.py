@@ -150,6 +150,24 @@ celery_app.conf.update(
             "schedule": crontab(hour=6, minute=40),
             "kwargs": {"market": "tw_stock", "interval": "1d"},
         },
+        # Phase 101-17.2: retry slots inside the ohlcv freshness window (the 05:30Z TW bar
+        # plus max_age_seconds 14400 -> 09:30Z). Same task; once the day has a complete
+        # evaluation run it returns {"skipped": "already_produced"} without freezing.
+        "decision-loop-produce-tw-daily-retry-1": {
+            "task": "poseidon.workers.cpu_tasks.produce_decision_runs_for_market",
+            "schedule": crontab(hour=6, minute=55),
+            "kwargs": {"market": "tw_stock", "interval": "1d"},
+        },
+        "decision-loop-produce-tw-daily-retry-2": {
+            "task": "poseidon.workers.cpu_tasks.produce_decision_runs_for_market",
+            "schedule": crontab(hour=7, minute=10),
+            "kwargs": {"market": "tw_stock", "interval": "1d"},
+        },
+        "decision-loop-produce-tw-daily-retry-3": {
+            "task": "poseidon.workers.cpu_tasks.produce_decision_runs_for_market",
+            "schedule": crontab(hour=7, minute=25),
+            "kwargs": {"market": "tw_stock", "interval": "1d"},
+        },
         # Phase 101 D-23.4: freeze one outcome manifest per active pilot symbol
         # before the 07:30 labeler (stale on non-trading days, so nothing is frozen).
         "decision-loop-freeze-outcome-manifests": {

@@ -912,3 +912,103 @@ def test_stale_required_evidence_reports_only_kinds_past_max_age():
     }
     assert _stale_required_evidence(required, [fresh, stale], AS_OF) == {"benchmark": "2026-09-23T00:00:00Z"}
     assert _stale_required_evidence({"ohlcv": {"max_age_seconds": 0}}, [], AS_OF) == {}
+
+
+def _producer_task_env(monkeypatch, db, evidence):
+    from poseidon.workers import cpu_tasks
+
+    monkeypatch.setattr(cpu_tasks, "settings", _shadow_market_settings())
+    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: Session(db.get_bind()))
+    monkeypatch.setattr(cpu_tasks, "_decision_worker_principal", lambda: worker())
+    monkeypatch.setattr(cpu_tasks, "_frozen_ohlcv_evidence", evidence)
+    enqueued = []
+    monkeypatch.setattr(
+        cpu_tasks.produce_decision_run, "delay", lambda *args, **kwargs: enqueued.append((args, kwargs))
+    )
+    return cpu_tasks, enqueued
+
+
+def test_produce_task_skips_when_the_day_already_has_a_complete_run(monkeypatch, db):
+    """Phase 101-17.2: a retry slot after a successful freeze must not freeze a second manifest."""
+    from poseidon.models.data_manifest import DataManifest
+
+    version = make_version(db)
+    _activate(db, version)
+    manifest = ManifestService(db).freeze(manifest_request())
+    result = ProducerService(db).produce(
+        version.id, manifest.id, decision_as_of=AS_OF, principal=worker(), mode="shadow"
+    )
+    db.commit()
+    run_id = result["evaluation_run_id"]
+
+    def evidence(market, interval, symbol, as_of):
+        pytest.fail("retry slot froze evidence although the day was already produced")
+
+    cpu_tasks, enqueued = _producer_task_env(monkeypatch, db, evidence)
+    retry_as_of = "2026-09-26T12:15:00Z"
+    assert cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of) == {
+        "skipped": "already_produced",
+        "as_of": retry_as_of,
+        "runs": [run_id],
+    }
+    assert enqueued == []
+    assert db.query(DataManifest).count() == 1
+
+
+def test_produce_task_retry_slot_freezes_once_evidence_turns_fresh(monkeypatch, db):
+    """Phase 101-17.2: 06:40Z stale -> skip; the 06:55Z slot finds the new bar and produces."""
+    from poseidon.models.data_manifest import DataManifest
+
+    version = make_version(db)
+    _activate(db, version)
+    bars = {"last_bar": LAST_BAR - timedelta(days=3)}
+    cpu_tasks, enqueued = _producer_task_env(
+        monkeypatch, db, lambda market, interval, symbol, as_of: ohlcv_evidence(symbol, last_bar=bars["last_bar"])
+    )
+    first = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", AS_OF)
+    assert first["skipped"] == "evidence_stale"
+    assert enqueued == [] and db.query(DataManifest).count() == 0
+
+    bars["last_bar"] = LAST_BAR
+    retry_as_of = "2026-09-26T12:15:00Z"
+    second = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of)
+    assert second["as_of"] == retry_as_of and second["enqueued"] == 1
+    assert db.query(DataManifest).count() == 1
+    assert enqueued == [((str(version.id), second["manifest_id"], retry_as_of), {})]
+
+
+def test_produce_task_guard_ignores_runs_from_other_days(monkeypatch, db):
+    from poseidon.models.data_manifest import DataManifest
+
+    version = make_version(db)
+    _activate(db, version)
+    manifest = ManifestService(db).freeze(manifest_request())
+    ProducerService(db).produce(version.id, manifest.id, decision_as_of=AS_OF, principal=worker(), mode="shadow")
+    db.commit()
+    next_day_bar = LAST_BAR + timedelta(days=1)
+    cpu_tasks, enqueued = _producer_task_env(
+        monkeypatch, db, lambda market, interval, symbol, as_of: ohlcv_evidence(symbol, last_bar=next_day_bar)
+    )
+    next_as_of = "2026-09-27T01:00:00Z"  # 3600 s after the 09-27 bar: fresh, unlike the 09-26 run
+    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", next_as_of)
+    assert result["enqueued"] == 1 and result["as_of"] == next_as_of
+    assert len(enqueued) == 1
+    assert db.query(DataManifest).count() == 2
+
+
+def test_complete_runs_on_day_matches_only_complete_runs_of_the_versions(db):
+    from poseidon.workers.cpu_tasks import _complete_runs_on_day
+
+    version = make_version(db)
+    manifest = ManifestService(db).freeze(manifest_request())
+    run_id = ProducerService(db).produce(
+        version.id, manifest.id, decision_as_of=AS_OF, principal=worker(), mode="shadow"
+    )["evaluation_run_id"]
+    db.flush()
+    assert _complete_runs_on_day(db, [version.id], AS_OF) == [run_id]
+    assert _complete_runs_on_day(db, [version.id], "2026-09-27T00:00:00Z") == []
+    assert _complete_runs_on_day(db, [uuid.uuid4()], AS_OF) == []
+    assert _complete_runs_on_day(db, [], AS_OF) == []
+    db.query(EvaluationRun).filter(EvaluationRun.id == uuid.UUID(run_id)).update({"status": "failed"})
+    db.flush()
+    assert _complete_runs_on_day(db, [version.id], AS_OF) == []
