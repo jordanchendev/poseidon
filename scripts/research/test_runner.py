@@ -283,7 +283,7 @@ def test_happy_path_completes_and_reports_done(env):
         "draft_returned": [RETURNED_MODEL],
         "jev": runner.JEV_MODEL,
     }
-    assert run["costs"]["draft_usd"] == 0.0021 and run["costs"]["jev_usd"] == pytest.approx(0.0003)
+    assert run["costs"]["draft_usd"] == 0.0021 and run["costs"]["jev_usd"] == pytest.approx(0.0002)
     assert run["draft_calls"][0]["prompt_sha256"] == draft.sha256_json(
         [{k: m[k] for k in ("role", "content")} for m in t.chat_calls[0]["messages"]]
     )
@@ -291,7 +291,8 @@ def test_happy_path_completes_and_reports_done(env):
     # revision: same shape as the UMC reference (identity / research / manifest_payload / jev_results)
     assert set(rev) == {"identity", "research", "manifest_payload", "jev_results"}
     assert rev["identity"]["status"] == "completed" and rev["identity"]["replay_same_revision"] is True
-    assert rev["jev_results"]["supports"] == rev["jev_results"]["n"] == 3
+    assert rev["jev_results"]["supports"] == rev["jev_results"]["n"] == 2  # the inference claim is not sent to JEV
+    assert all(p["kind"] == "fact" for p in rev["jev_results"]["per_claim"])
     assert rev["research"]["claims"][0]["quote"] == "Revenue was NT$68.73 billion for the quarter"
     ev = {e["id"]: e["kind"] for e in rev["manifest_payload"]["evidence"]}
     assert ev[DOC_ID] == "fundamental" and ev["kpi_series:2303"] == "kpi_series" and "ohlcv:0050" in ev
@@ -359,15 +360,24 @@ def test_non_atomic_and_bad_quote_are_refused(env):
 
 
 def test_jev_non_supports_needs_review(env):
-    t = FakeOpenRouter([good_narrative()], jev_label=lambda c: "says_nothing" if "價格事實" in c else "supports")
+    t = FakeOpenRouter([good_narrative()], jev_label=lambda c: "says_nothing" if "毛利率" in c else "supports")
     assert env["run"](t) == 0
     run = json.loads((env["run_dir"] / "run.json").read_text())
     rev = json.loads((env["run_dir"] / "revision.json").read_text())
     assert run["status"] == "needs_review" and run["failed_stage"] == "jev"
     assert rev["jev_results"]["says_nothing"] == 1 and rev["identity"]["status"] == "prepared"
-    assert len(t.jev_calls) == 3
+    assert len(t.jev_calls) == 2  # fact claims only
     assert ledger_row(env)[1][0]["status"] == "prepared"
-    assert "JEV did not support 1/3" in bridge_calls(env, "needs-review")[0]["stdin"]
+    assert "JEV did not support 1/2" in bridge_calls(env, "needs-review")[0]["stdin"]
+
+
+def test_inference_claim_is_not_sent_to_jev(env):
+    # JEV would answer says_nothing for the inference claim; it must not block completion (fact-only JEV scope).
+    t = FakeOpenRouter([good_narrative()], jev_label=lambda c: "says_nothing" if "價格事實" in c else "supports")
+    assert env["run"](t) == 0
+    run = json.loads((env["run_dir"] / "run.json").read_text())
+    assert run["status"] == "completed"
+    assert all("價格事實" not in j["state"]["claim"] for j in t.jev_calls)
 
 
 @pytest.mark.parametrize(
@@ -421,7 +431,7 @@ def test_idempotent_rerun_reports_again_without_new_work(env):
     rev_id = ledger_row(env)[0]["revision_id"]
     # bridge still lists the row as accepted (e.g. the earlier done did not land): report done again, no new run
     assert env["run"](t) == 0
-    assert len(t.chat_calls) == 1 and len(t.jev_calls) == 3
+    assert len(t.chat_calls) == 1 and len(t.jev_calls) == 2
     done = bridge_calls(env, "done")
     assert len(done) == 2 and done[1]["args"][1:] == [AGENDA_ID, rev_id]
     # bridge no longer lists it: nothing to do, no bridge write

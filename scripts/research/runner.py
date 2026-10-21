@@ -7,7 +7,9 @@ Pipeline for the chosen row (design: aquarium local_dev/design/2026-10-21-resear
   -> draft (draft.py: OpenRouter, RESEARCH_DRAFT_OPENROUTER_KEY)
   -> gates (schema incl. Poseidon validate_research, narrative extras, quote-in-cited-evidence, claim_precheck strict
      numbers, lint_atomic, GAAP basis); refused -> ONE repair round with the refusal reasons -> gates again
-  -> JEV jev-1.13 on every claim (JEV_RESEARCH_OPENROUTER_KEY); every label must be `supports`
+  -> JEV jev-1.13 on every FACT claim (JEV_RESEARCH_OPENROUTER_KEY); every label must be `supports`.
+     Inference claims are not sent to JEV (UMC 3de55971 precedent: a source never states an inference, so JEV would
+     answer says_nothing); they stay gated by claim_precheck (scale/sign) and the verbatim-quote check.
   -> complete (research_theme.py --narrative: re-runs its own prechecks, completes, replay + immutability check)
   -> bridge `done <agenda_id> <revision_id>` with the tl_dr on stdin.
 Any failure -> the revision stays prepared, bridge `needs-review <agenda_id>` with a short reason on stdin.
@@ -302,12 +304,14 @@ def jev_source_text(claim, cited):
 
 
 def jev_check(narrative, payload, cfg, key, *, model=JEV_MODEL, transport=None):
-    """Judge every claim with JEV; returns jev_results (UMC revision shape). Raises StageError on a call failure."""
+    """Judge every fact claim with JEV; returns jev_results (UMC revision shape). Raises StageError on a call failure."""
     from jev_eval_control_set import build_request
 
     by_id = {e["id"]: e for e in payload["evidence"]}
     path, per, usage_total = JEV_PRIMARY, [], {}
     for n, c in enumerate(narrative["claims"]):
+        if c.get("kind") != "fact":
+            continue
         cited = [by_id[i] for i in c["evidence_ids"] if i in by_id]
         case = {
             "symbol": cfg.get("symbol") or ",".join(cfg["symbols"]),
@@ -352,7 +356,7 @@ def jev_check(narrative, payload, cfg, key, *, model=JEV_MODEL, transport=None):
         "contradicts": labels.count("contradicts"),
         "says_nothing": labels.count("says_nothing"),
         "run_at": now_iso(),
-        "scope": "every claim (fact and inference); source = claim quote + cited evidence texts",
+        "scope": "fact claims only (inference claims gated by precheck + quote check); source = claim quote + cited evidence texts",
         "usage_total": usage_total,
         "per_claim": per,
     }
