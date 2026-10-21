@@ -3,7 +3,7 @@
 > Moved 2026-10-21 from aquarium `local_dev/scripts/research/` into Poseidon `scripts/research/` (versioned). Paths below
 > that start with `local_dev/scripts/research/` now mean `scripts/research/` in this repo; tests run from the repo root:
 > `PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/`. The server-side runner (`runner.py`) is
-> described in RUNNER.md.
+> described in "Runner on stormtrooper" at the end of this file.
 
 SEED-002 phase 2 is not implemented in Poseidon yet. These scripts close the loop end to end without
 touching Poseidon production, so the loop can run daily while v21 is planned.
@@ -182,3 +182,94 @@ All optional; a run without them freezes to the same manifest hash as before.
 - Acceptance lives in `agenda.jsonl` on macminim4, not in a Poseidon agenda table.
 - Taiwan consensus has no free primary source; Yahoo coverage is via ADRs only (UMC/TSM), EPS per ADR, and Yahoo does not
   say which basis or which brokers. No median, no estimate history (a single snapshot per run).
+
+## Runner on stormtrooper (2026-10-21)
+
+Design: aquarium `local_dev/design/2026-10-21-research-runner-stormtrooper.md`. One accepted agenda topic per invocation,
+no human in the loop; nothing is written to Poseidon production (isolated SQLite ledger until the 101-23 soak gate).
+
+```
+pending row ─ assemble.py ─ research_theme.py (freeze + prepare) ─ draft.py (OpenRouter) ─ gates ─┬─ JEV ─ complete ─ done
+                                                                                                 └─ refused: ONE repair round, then needs-review
+```
+
+- **assemble.py** (no LLM): fetches `primary_source_url` (falls back to `mirror_url` on a fetch error or when no excerpt
+  matched) with `fetch_source.build_document`; template from `event_type` (earnings / investor_conference -> earnings,
+  press_release -> press_release, else generic); keeps every verified proposal in document order up to 40. Daily bars for
+  the Taiwan symbols + `0050` from Thalassa (Poseidon `RemoteDataRepository`, env `POSEIDON_THALASSA_BASE_URL` /
+  `POSEIDON_THALASSA_API_KEY`), `kpi_series:<symbol>` from TWSE t187ap05_L (a TWSE failure only drops kpi_series).
+  Event/document time = `event_date`T00:00Z, clamped to as_of when the event is in the future. Freshness rules:
+  fundamental 90 days, ohlcv 5 days (so Monday-morning runs see Friday's bar). Non-numeric symbols get no OHLCV.
+  One TW symbol -> scope `tw_stock:spot:<sym>`; several -> `tw_stock:basket:<a>-<b>`.
+- **draft.py**: OpenRouter chat completions, model from config (default `deepseek/deepseek-v4.1-flash-1017`),
+  `response_format: json_object`, `reasoning.enabled` (default on; `--no-reasoning`), `max_tokens` 16000.
+  `content=None` or `finish_reason=length` is a draft failure. Records configured model, returned model, prompt sha256,
+  finish_reason, usage and `usage.cost`. Narrative schema = the research_theme schema (`tl_dr`, `thesis`, `stance`
+  watch|neutral|hold|long|short, `change_summary`, `next_review_at`, optional `catalysts`, `risks`,
+  `invalidation_conditions`, `unknowns`, `claims[]`) where each claim is `{kind fact|inference, text, evidence_ids[],
+  quote}` and `quote` must be copied verbatim from one cited evidence text (document excerpt, or a line of the rendered
+  kpi / price_facts / ohlcv block shown in the prompt). `quote` is stored in research_json (Poseidon keeps extra claim keys).
+- **Gates** (runner.py `run_gates`): schema (incl. Poseidon `validate_research`: >= 3 claims, required fundamental + ohlcv
+  cited), `validate_narrative_extras` / `validate_variant_perception`, quote-in-cited-evidence, `precheck_claims` with
+  `allow_non_atomic=False` (fact: any numeric mismatch refuses; inference: scale/sign), lint_atomic, GAAP basis. Refusal ->
+  one repair round (the model gets its previous JSON and the refusal list) -> gates again. JEV `typesafe/jev-1.13`
+  (`/v1/systemone`, falls back to `/alpha/decisions` on 404) judges **every** claim, fact and inference, against the claim
+  quote + the cited evidence texts (capped at 12k chars); every label must be `supports`. Completion runs
+  research_theme.py with `--narrative`, which re-runs its own prechecks, completes, and checks replay + immutability.
+- **Outcome**: completed -> bridge `done <agenda_id> <revision_id>` with the tl_dr on stdin. Anything else (assemble,
+  freeze, draft, gates after repair, JEV, completion, internal error) -> revision stays `prepared`, bridge
+  `needs-review <agenda_id>` with `<stage>: <reasons>` (<= 580 chars) on stdin. No escalation to another model.
+- **Idempotency**: `runner_runs` in the ledger. A row already completed / needs_review that the bridge still lists as
+  accepted is reported again (no new run, no model call). A row left `running` by a crash is rerun. To force a rerun,
+  delete its `runner_runs` row.
+
+### Invocation
+
+```bash
+python scripts/research/runner.py --state-dir ~/research-runner/state \
+  --draft-env ~/research-runner/secrets/research-draft-openrouter.env \
+  --jev-env ~/research-runner/secrets/jev-openrouter.env \
+  [--bridge "ssh research-bridge"] [--agenda-json FILE] [--outbox DIR] [--agenda-id ID] [--dry-run] \
+  [--draft-model ID] [--no-reasoning] [--max-tokens N] [--jev-model ID]
+```
+
+- Env files (600, checked; group/other-readable files are refused): `RESEARCH_DRAFT_OPENROUTER_KEY=...` and
+  `JEV_RESEARCH_OPENROUTER_KEY=...` (`export` and quotes allowed). Keys are read only from these files, never from the
+  process environment; a missing/empty key exits 3 with a message naming the variable, before the bridge is touched.
+- Thalassa: `POSEIDON_THALASSA_BASE_URL` / `POSEIDON_THALASSA_API_KEY` from the process env (`docker --env-file`).
+- `--dry-run`: assemble + freeze/prepare + prompt only, under `<state>/dry-run/` (own ledger), no keys, no model / JEV /
+  bridge writes; writes `prompt.json`.
+- Exit codes: 0 handled / nothing to do / lock busy, 3 key file, 4 a bridge report failed (retried next run),
+  5 bridge `pending` failed.
+
+Outputs under `--state-dir`: `ledger.sqlite` (research_theme tables + `runner_runs`), `runner.log`, `runner.lock`,
+`runs/<agenda_id>/` with `config.json`, `bars.csv`, `sources/` (raw + text + `twse-t187ap05_L.json`), `narrative.json`
+(+ `narrative.draft1.json` after a repair), `revision.json` (`identity`, `research`, `manifest_payload`, `jev_results`; on
+needs_review `research` is null, `identity.status` is `prepared` and `needs_review` lists the reasons) and `run.json`
+(status, failed_stage, reasons, timings, models configured/returned, draft calls with prompt sha256 / usage / cost, JEV
+usage, costs, gate reports).
+
+### docker run (sketch, not run here)
+
+The `poseidon-cpu-worker` image (python:3.13-slim) has everything the runner imports (pandas, sqlalchemy, httpx,
+tenacity, poseidon) but, most likely, no `ssh` client and no `pdftotext`:
+
+- no ssh -> the host does the bridge I/O: pull `pending` into a file, run the container with `--agenda-json` and
+  `--outbox`, then deliver the queued reports with `deliver_outbox.py` (stdlib, Python 3.8+) on the host.
+- no pdftotext -> a PDF source fails assemble with "needs pdftotext (poppler-utils)" -> needs-review. HTML sources work.
+
+```bash
+set -e; cd ~/Projects/poseidon-research; S=~/research-runner
+ssh research-bridge pending > $S/state/pending.json.tmp && mv $S/state/pending.json.tmp $S/state/pending.json
+docker run --rm --user "$(id -u):$(id -g)" --env-file $S/secrets/thalassa.env \
+  -v $PWD/src/poseidon:/app/.venv/lib/python3.13/site-packages/poseidon:ro -v $PWD/scripts:/app/scripts:ro \
+  -v $S/state:/state -v $S/secrets:/secrets:ro -w /app poseidon-cpu-worker \
+  python scripts/research/runner.py --state-dir /state --draft-env /secrets/research-draft-openrouter.env \
+    --jev-env /secrets/jev-openrouter.env --agenda-json /state/pending.json --outbox /state/outbox
+python3 scripts/research/deliver_outbox.py --outbox $S/state/outbox --bridge "ssh research-bridge"
+```
+
+`thalassa.env` holds only the two `POSEIDON_THALASSA_*` values (not the compose `.env`: Settings() cannot parse its JSON
+values). Mount `scripts/` read-only: the runner writes only under `--state-dir`.
+Tests: `PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/test_runner.py` (offline; the bridge,
+OpenRouter, JEV, Thalassa and TWSE are faked; the source is served from a file:// URL through fetch_source).
