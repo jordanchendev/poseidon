@@ -142,6 +142,50 @@ def paragraphs(text_path):
     return paras
 
 
+def build_document(url, *, doc_id, title, publisher, event_time, out_dir, template="earnings", keep=None, min_chars=80):
+    """Fetch `url` into out_dir, convert to text and build a research_theme.py `documents[]` entry.
+
+    keep: None (no excerpts), "all" (every verified proposal) or a list of 1-based proposal indexes.
+    Returns (document, proposals, content_type). Raises SystemExit on a Cloudflare challenge page and lets
+    urllib / subprocess errors propagate (callers that must not die catch them).
+    """
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", url.rsplit("/", 1)[-1] or "document")[:80] or "document"
+    raw = out / name
+    ctype = fetch(url, raw)
+    txt = to_text(raw, ctype)
+    canon_all = canonical(txt.read_text(encoding="utf-8", errors="replace"))
+    anchors = [re.compile(p, re.I) for p in TEMPLATES[template]]
+    proposals = []
+    for s, e, text in paragraphs(txt):
+        if len(text) < min_chars:
+            continue
+        hits = [p.pattern for p in anchors if p.search(text)]
+        if not hits:
+            continue
+        ok = canonical(text) in canon_all
+        proposals.append({"locator": "lines %d-%d" % (s, e), "text": text, "anchors": hits, "verified": ok})
+    kept = []
+    if keep == "all":
+        kept = [p for p in proposals if p["verified"]]
+    elif keep:
+        kept = [proposals[int(i) - 1] for i in keep if proposals[int(i) - 1]["verified"]]
+    doc = {
+        "id": doc_id,
+        "kind": "fundamental",
+        "title": title,
+        "publisher": publisher,
+        "source_uri": url,
+        "event_time": event_time,
+        "available_at": event_time,
+        "raw_text_path": str(txt),
+        "raw_files": {raw.name: sha(raw), txt.name + " (converted)": sha(txt)},
+        "excerpts": [{"locator": p["locator"], "text": p["text"]} for p in kept],
+    }
+    return doc, proposals, ctype
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("url")
@@ -154,40 +198,17 @@ def main():
     ap.add_argument("--keep", default=None, help="'all' or comma-separated proposal indexes to keep as excerpts")
     ap.add_argument("--min-chars", type=int, default=80)
     a = ap.parse_args()
-    out = Path(a.out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    name = re.sub(r"[^A-Za-z0-9._-]+", "_", a.url.rsplit("/", 1)[-1] or "document")[:80] or "document"
-    raw = out / name
-    ctype = fetch(a.url, raw)
-    txt = to_text(raw, ctype)
-    canon_all = canonical(txt.read_text(encoding="utf-8", errors="replace"))
-    anchors = [re.compile(p, re.I) for p in TEMPLATES[a.template]]
-    proposals = []
-    for s, e, text in paragraphs(txt):
-        if len(text) < a.min_chars:
-            continue
-        hits = [p.pattern for p in anchors if p.search(text)]
-        if not hits:
-            continue
-        ok = canonical(text) in canon_all
-        proposals.append({"locator": "lines %d-%d" % (s, e), "text": text, "anchors": hits, "verified": ok})
-    keep = []
-    if a.keep == "all":
-        keep = [p for p in proposals if p["verified"]]
-    elif a.keep:
-        keep = [proposals[int(i) - 1] for i in a.keep.split(",") if proposals[int(i) - 1]["verified"]]
-    doc = {
-        "id": a.id,
-        "kind": "fundamental",
-        "title": a.title,
-        "publisher": a.publisher,
-        "source_uri": a.url,
-        "event_time": a.event_time,
-        "available_at": a.event_time,
-        "raw_text_path": str(txt),
-        "raw_files": {raw.name: sha(raw), txt.name + " (converted)": sha(txt)},
-        "excerpts": [{"locator": p["locator"], "text": p["text"]} for p in keep],
-    }
+    doc, proposals, ctype = build_document(
+        a.url,
+        doc_id=a.id,
+        title=a.title,
+        publisher=a.publisher,
+        event_time=a.event_time,
+        out_dir=a.out_dir,
+        template=a.template,
+        keep="all" if a.keep == "all" else (a.keep.split(",") if a.keep else None),
+        min_chars=a.min_chars,
+    )
     print(
         json.dumps(
             {
