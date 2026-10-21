@@ -105,6 +105,28 @@ class Bridge:
         self._run(["needs-review", agenda_id], cap(reason, REASON_CAP) + "\n")
 
 
+class OutboxBridge(Bridge):
+    """For containers without an ssh client: done / needs-review are queued as <outbox>/<agenda_id>.json
+    ({verb, args, stdin}) and delivered by deliver_outbox.py on the host. `pending` still runs the bridge command
+    (or the runner reads --agenda-json). One file per agenda id, so a re-report replaces the queued one."""
+
+    def __init__(self, cmd, outbox):
+        super().__init__(cmd)
+        self.outbox = Path(outbox)
+
+    def _run(self, args, stdin=""):
+        if args[0] == "pending":
+            return super()._run(args, stdin)
+        try:
+            self.outbox.mkdir(parents=True, exist_ok=True)
+            tmp = self.outbox / f".{args[1]}.json.tmp"
+            tmp.write_text(json.dumps({"verb": args[0], "args": args[1:], "stdin": stdin}, ensure_ascii=False))
+            tmp.replace(self.outbox / f"{args[1]}.json")
+        except OSError as e:
+            raise BridgeError(f"outbox write failed: {e}") from None
+        return ""
+
+
 def one_line(text, n):
     return cap(" ".join(str(text or "").split()), n)
 
@@ -534,7 +556,7 @@ def run_once(args, keys, *, transport=None, assemble_kw=None, as_of=None):
     state = Path(args.state_dir).expanduser()
     base = state / "dry-run" if args.dry_run else state
     base.mkdir(parents=True, exist_ok=True)
-    bridge = Bridge(args.bridge)
+    bridge = OutboxBridge(args.bridge, args.outbox) if args.outbox else Bridge(args.bridge)
     if args.agenda_json:
         rows = json.loads(Path(args.agenda_json).read_text(encoding="utf-8"))
     else:
@@ -611,6 +633,9 @@ def parse_args(argv=None):
     ap.add_argument("--jev-env", help=f"600 env file with {JEV_KEY_VAR}")
     ap.add_argument("--bridge", default=DEFAULT_BRIDGE, help="agenda bridge command (default: %(default)s)")
     ap.add_argument("--agenda-json", help="read pending rows from this file instead of `<bridge> pending`")
+    ap.add_argument(
+        "--outbox", help="queue done / needs-review here for deliver_outbox.py instead of calling the bridge"
+    )
     ap.add_argument("--agenda-id", help="only consider this agenda id")
     ap.add_argument(
         "--dry-run",

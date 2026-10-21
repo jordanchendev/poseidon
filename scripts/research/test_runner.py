@@ -235,6 +235,7 @@ def env(tmp_path, monkeypatch):
         bridge_state.write_text(json.dumps(st))
 
     return dict(
+        bridge_cmd=f"{sys.executable} {bridge_py} {bridge_state}",
         tmp=tmp_path,
         state=state,
         run=run,
@@ -582,3 +583,27 @@ def test_draft_schema_is_the_narrative_schema_plus_quote():
         "claims",
     }
     assert set(draft.NARRATIVE_SCHEMA["claims"][0]) == {"kind", "text", "evidence_ids", "quote"}
+
+
+def test_outbox_mode_queues_reports_and_host_delivery(env):
+    import deliver_outbox
+
+    outbox = env["tmp"] / "outbox"
+    t = FakeOpenRouter([good_narrative()])
+    assert env["run"](t, "--outbox", str(outbox)) == 0
+    assert bridge_calls(env, "done") == [] and len(bridge_calls(env, "pending")) == 1
+    entry = json.loads((outbox / f"{AGENDA_ID}.json").read_text())
+    rev_id = ledger_row(env)[0]["revision_id"]
+    assert entry == {"verb": "done", "args": [AGENDA_ID, rev_id], "stdin": good_narrative()["tl_dr"] + "\n"}
+    bridge_cmd = env["bridge_cmd"]
+    env["set_bridge"](refuse={"done": "already done"})
+    assert deliver_outbox.main(["--outbox", str(outbox), "--bridge", bridge_cmd]) == 4
+    assert (outbox / "refused" / f"{AGENDA_ID}.json").is_file()
+    (outbox / "refused" / f"{AGENDA_ID}.json").replace(outbox / f"{AGENDA_ID}.json")
+    env["set_bridge"](refuse={})
+    assert deliver_outbox.main(["--outbox", str(outbox), "--bridge", bridge_cmd]) == 0
+    assert not (outbox / f"{AGENDA_ID}.json").exists()
+    assert bridge_calls(env, "done")[-1]["args"][1:] == [AGENDA_ID, rev_id]
+    (outbox / "20261021-9.json").write_text(json.dumps({"verb": "done", "args": ["20261021-9", "x; rm"], "stdin": ""}))
+    assert deliver_outbox.main(["--outbox", str(outbox), "--bridge", bridge_cmd]) == 4
+    assert len(bridge_calls(env, "done")) == 2  # malformed entry never reaches the bridge
