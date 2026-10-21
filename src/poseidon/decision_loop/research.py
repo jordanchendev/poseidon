@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from poseidon.api.auth import AuthPrincipal
+from poseidon.decision_loop.claim_lint import check_numbers, lint_atomic
 from poseidon.decision_loop.manifest import (
     NON_FACT_TIERS,
     ValidationError,
@@ -81,6 +82,72 @@ def validate_claim_tier(claim, evidence):
             "fact claims require official or derived evidence; "
             f"cited tiers {sorted(tier for tier in tiers if tier)} include a non-fact tier"
         )
+
+
+# SEED-002 C2: claims citing price-derived evidence carry computed numbers, not quoted ones.
+NUMERIC_PRECHECK_SKIP_KINDS = frozenset({"price_facts", "ohlcv"})
+# Numeric mismatch kinds that refuse completion; "value" and "absent" are recorded only.
+REFUSED_NUMERIC_MISMATCHES = frozenset({"scale", "sign"})
+
+
+def _claim_excerpt_texts(claim, evidence):
+    """Excerpt texts a claim cites: its citation locators when present, else every excerpt of its evidence."""
+    texts = []
+    pairs = {(item["evidence_id"], item["excerpt_locator"]) for item in claim.get("citations", [])}
+    for evidence_id in claim["evidence_ids"]:
+        payload = evidence[evidence_id].get("payload")
+        excerpts = payload.get("excerpts") if isinstance(payload, dict) else None
+        for excerpt in excerpts if isinstance(excerpts, list) else []:
+            if not isinstance(excerpt, dict) or not isinstance(excerpt.get("text"), str):
+                continue
+            if pairs and (evidence_id, excerpt.get("locator")) not in pairs:
+                continue
+            texts.append(excerpt["text"])
+    return texts
+
+
+def precheck_claims(claims, evidence):
+    """SEED-002 C2: atomic lint and numeric precheck for every claim of a new completion.
+
+    Refuses non-atomic claims and numeric scale/sign mismatches against the cited excerpts; returns the
+    per-claim results, in which value/absent mismatches and period mismatches are recorded, not refused.
+    Runs only on new completions (not inside validate_research), so revisions completed before this
+    check keep re-verifying in evaluation and outcome accounting.
+    """
+    problems = []
+    results = []
+    for index, claim in enumerate(claims):
+        atomic = lint_atomic(claim["text"])
+        if not atomic["ok"]:
+            problems.append(f"claims[{index}] is non-atomic ({atomic['reason']}); clauses: {atomic['clauses']}")
+        kinds = {evidence[item]["kind"] for item in claim["evidence_ids"]}
+        excerpts = _claim_excerpt_texts(claim, evidence)
+        if kinds & NUMERIC_PRECHECK_SKIP_KINDS:
+            numbers = {"status": "skipped", "reason": "cites price_facts/ohlcv"}
+        elif not excerpts:
+            numbers = {"status": "skipped", "reason": "no cited excerpts"}
+        else:
+            numbers = check_numbers(claim["text"], "\n".join(excerpts))
+        refused = [item for item in numbers.get("unmatched", []) if item["kind"] in REFUSED_NUMERIC_MISMATCHES]
+        if refused:
+            detail = "; ".join(f"{item['claim']} ({item['kind']})" for item in refused)
+            problems.append(f"claims[{index}] numeric mismatch vs cited excerpts {claim['evidence_ids']}: {detail}")
+        results.append(
+            {
+                "claim": index,
+                "atomic": atomic["ok"],
+                "numbers": numbers["status"],
+                **({"reason": numbers["reason"]} if "reason" in numbers else {}),
+                "unmatched": [{"claim": item["claim"], "kind": item["kind"]} for item in numbers.get("unmatched", [])],
+                "period_mismatch": [
+                    {key: item[key] for key in ("claim", "claim_period", "excerpt_periods")}
+                    for item in numbers.get("period_mismatch", [])
+                ],
+            }
+        )
+    if problems:
+        raise ValidationError("claim precheck refused completion: " + " | ".join(problems))
+    return results
 
 
 def validate_research(research, revision, payload):
@@ -270,9 +337,17 @@ class ResearchService:
             if revision.status != "completed" or revision.content_sha256 != digest or revision.research_json != body:
                 raise ValidationError("completed research is immutable")
             return revision
+        evidence = {item["id"]: item for item in payload["evidence"]}
+        claim_precheck = precheck_claims(body["claims"], evidence)
         actual = self._predecessor(revision.scope_key, manifest)
         if (actual.id if actual else None) != revision.previous_revision_id:
             raise ValidationError("actual predecessor changed; rerun prepare")
+        # TODO(SEED-002 C2): persist claim_precheck. research_json is the only JSON column and does not fit:
+        # content_sha256 hashes it and evaluation.py / outcomes.py re-verify that hash, the idempotent replay
+        # above compares it to the submitted body, and the API serves it as the human narrative. Persisting
+        # needs a host-owned column (e.g. research_revisions.precheck_json) in a future migration; until then
+        # the results are exposed only on the returned instance as a non-persisted attribute.
+        revision.claim_precheck = claim_precheck
         revision.research_json = body
         revision.content_sha256 = digest
         revision.status = "completed"

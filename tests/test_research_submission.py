@@ -279,3 +279,123 @@ def test_inference_on_secondary_evidence_is_allowed(db):
     body["claims"][0] = claim
     # The untouched fact claim on "ohlcv" has no tier and keeps pre-v21 behaviour.
     assert complete(service, revision, body).status == "completed"
+
+
+# SEED-002 C2: atomic lint and numeric precheck on new completions.
+PRECHECK_EXCERPTS = [
+    {"locator": "p1:l1", "text": "Revenue of $133.19 billion versus $37.38 billion for the prior year"},
+    {"locator": "p1:l2", "text": "third quarter results represented a 17.6% increase in revenue"},
+    {"locator": "p1:l3", "text": "Gross margin for the quarter was 66.4%, operating margin was 58.7%"},
+]
+
+
+def precheck_manifest(db, index=0):
+    request = with_excerpts(
+        manifest_request(),
+        index=index,
+        excerpts=PRECHECK_EXCERPTS,
+        raw_text="\n".join(item["text"] for item in PRECHECK_EXCERPTS),
+    )
+    return ManifestService(db).freeze(request)
+
+
+def cited_claim(text, locator, evidence_id="fundamental", kind="fact"):
+    return {
+        "kind": kind,
+        "text": text,
+        "evidence_ids": [evidence_id],
+        "citations": [{"evidence_id": evidence_id, "excerpt_locator": locator}],
+    }
+
+
+def refused(db, manifest, claim, index=0):
+    service = ResearchService(db)
+    revision = prepare(service, manifest)
+    body = narrative(manifest)
+    body["claims"][index] = claim
+    with pytest.raises(ValidationError) as error:
+        complete(service, revision, body)
+    assert revision.content_sha256 is None
+    assert revision.status == "prepared"
+    return str(error.value)
+
+
+def test_non_atomic_claim_is_refused_with_index_and_clauses(db):
+    manifest = precheck_manifest(db)
+    claim = {"kind": "inference", "text": "第三季毛利率 66.4%、營業利益率 58.7%。", "evidence_ids": ["fundamental"]}
+    message = refused(db, manifest, claim, index=2)
+    assert "claims[2] is non-atomic" in message
+    assert "'第三季毛利率 66.4%'" in message and "'營業利益率 58.7%'" in message
+
+
+def test_causal_compound_claim_is_refused(db):
+    manifest = ManifestService(db).freeze(manifest_request())
+    claim = {
+        "kind": "inference",
+        "text": "第四季毛利率指引低於第三季是因為 2 奈米爬坡的稀釋效應。",
+        "evidence_ids": ["fundamental"],
+    }
+    assert "causal/driver clause attached" in refused(db, manifest, claim)
+
+
+@pytest.mark.parametrize(
+    "text,locator,kind",
+    [
+        ("美光 2026 會計年度營收為 133.19 億美元。", "p1:l1", "scale"),
+        ("Third-quarter revenue decreased 17.6% from the second quarter.", "p1:l2", "sign"),
+    ],
+)
+def test_numeric_scale_or_sign_mismatch_is_refused(db, text, locator, kind):
+    message = refused(db, precheck_manifest(db), cited_claim(text, locator))
+    assert "claims[0] numeric mismatch vs cited excerpts ['fundamental']" in message
+    assert f"({kind})" in message
+
+
+def test_numeric_check_uses_only_the_cited_locator(db):
+    # 66.4% is in p1:l3; citing p1:l1 alone makes the percentage absent, which is recorded, not refused.
+    manifest = precheck_manifest(db)
+    completed, _ = complete_with_claim(db, manifest, cited_claim("第三季毛利率為 66.4%。", "p1:l1"))
+    assert completed.claim_precheck[0]["unmatched"] == [{"claim": "66.4%", "kind": "absent"}]
+
+
+def test_value_mismatch_is_recorded_not_refused(db):
+    manifest = precheck_manifest(db)
+    completed, _ = complete_with_claim(db, manifest, cited_claim("第三季毛利率為 56.4%。", "p1:l3"))
+    assert completed.status == "completed"
+    assert completed.claim_precheck[0] == {
+        "claim": 0,
+        "atomic": True,
+        "numbers": "mismatch",
+        "unmatched": [{"claim": "56.4%", "kind": "value"}],
+        "period_mismatch": [],
+    }
+    assert "claim_precheck" not in completed.research_json
+
+
+def test_claim_without_citations_checks_every_excerpt_of_its_evidence(db):
+    manifest = precheck_manifest(db)
+    claim = {"kind": "fact", "text": "美光 2026 會計年度營收為 133.19 億美元。", "evidence_ids": ["fundamental"]}
+    assert "(scale)" in refused(db, manifest, claim)
+
+
+def test_price_evidence_skips_numeric_check(db):
+    manifest = precheck_manifest(db, index=1)  # the excerpts sit on the ohlcv evidence
+    claim = cited_claim("美光 2026 會計年度營收為 133.19 億美元。", "p1:l1", evidence_id="ohlcv")
+    completed, _ = complete_with_claim(db, manifest, claim)
+    assert completed.claim_precheck[0]["numbers"] == "skipped"
+    assert completed.claim_precheck[0]["reason"] == "cites price_facts/ohlcv"
+
+
+def test_legacy_evidence_without_excerpts_skips_numeric_check(db):
+    manifest = ManifestService(db).freeze(manifest_request())
+    completed, _ = complete_with_claim(
+        db, manifest, {"kind": "fact", "text": "營收為 133.19 億美元。", "evidence_ids": ["fundamental"]}
+    )
+    assert completed.claim_precheck[0] == {
+        "claim": 0,
+        "atomic": True,
+        "numbers": "skipped",
+        "reason": "no cited excerpts",
+        "unmatched": [],
+        "period_mismatch": [],
+    }
