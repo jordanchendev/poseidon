@@ -1,9 +1,11 @@
 """Host-validated, scoped research identity and human narrative completion."""
 
 import json
+import uuid
 
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import select, text
+from sqlalchemy.orm import aliased
 
 from poseidon.api.auth import AuthPrincipal
 from poseidon.decision_loop.claim_lint import check_numbers, lint_atomic
@@ -19,14 +21,21 @@ from poseidon.decision_loop.manifest import (
     verify_manifest,
 )
 from poseidon.models.data_manifest import DataManifest
-from poseidon.models.research_revision import ResearchRevision
+from poseidon.models.research_revision import CORRECTION_REASONS, ResearchRevision
 
 _UNSET = object()
 FAILURE_CODES = frozenset({"provider_error", "provider_timeout", "provider_invalid_response", "provider_unavailable"})
 
 
-def request_identity(scope_key, manifest, predecessor, policy_version, provider, model, runtime_digest):
-    return {
+CORRECTION_PREFIX = "CORRECTION:"
+# SEED-002 C3: reasons that fix how the evidence was written down may not change what it implies.
+STANCE_CHANGE_REASONS = frozenset({"source_error", "stale_evidence"})
+
+
+def request_identity(
+    scope_key, manifest, predecessor, policy_version, provider, model, runtime_digest, supersedes_revision_id=None
+):
+    identity = {
         "scope_key": scope_key,
         "manifest_sha256": manifest.content_sha256,
         "previous_revision_id": str(predecessor.id) if predecessor else None,
@@ -36,6 +45,68 @@ def request_identity(scope_key, manifest, predecessor, policy_version, provider,
         "model": model,
         "runtime_digest": runtime_digest,
     }
+    # Added only for a correction, so every pre-C3 request_sha256 stays byte-identical.
+    if supersedes_revision_id is not None:
+        identity["supersedes_revision_id"] = str(supersedes_revision_id)
+    return identity
+
+
+def superseded_revision_ids():
+    """Subquery of revision ids superseded by a completed correction (SEED-002 C3).
+
+    A superseded revision keeps status ``completed`` and its content hash, so evaluation chains that
+    cite it still re-verify; supersession is derived from the correction row, never stored on the old one.
+    """
+    correction = aliased(ResearchRevision)
+    return select(correction.supersedes_revision_id).where(
+        correction.supersedes_revision_id.is_not(None), correction.status == "completed"
+    )
+
+
+def superseded_by(session, revision_id):
+    """The completed correction that supersedes ``revision_id``, or None (at most one, by 048's unique index)."""
+    return (
+        session.query(ResearchRevision)
+        .filter(ResearchRevision.supersedes_revision_id == revision_id, ResearchRevision.status == "completed")
+        .one_or_none()
+    )
+
+
+def is_superseded(session, revision_id):
+    return superseded_by(session, revision_id) is not None
+
+
+def validate_correction(body, revision, superseded):
+    """SEED-002 C3 body rules for a new completion; ``superseded`` is None for an ordinary revision.
+
+    Runs only on new completions (not inside validate_research), so stored bodies keep re-verifying unchanged.
+    """
+    summary = body["change_summary"]
+    if superseded is None:
+        if summary.startswith(CORRECTION_PREFIX):
+            raise ValidationError(
+                f"change_summary starting with {CORRECTION_PREFIX!r} requires a correction prepared with "
+                "supersedes_revision_id"
+            )
+        if "supersedes" in body or "correction_reason" in body:
+            raise ValidationError("research.supersedes/correction_reason are only allowed on a correction")
+        return None
+    if body.get("supersedes") != str(revision.supersedes_revision_id):
+        raise ValidationError("correction research.supersedes must equal the prepared supersedes_revision_id")
+    if not summary.startswith(CORRECTION_PREFIX):
+        raise ValidationError(f"correction requires change_summary to start with {CORRECTION_PREFIX!r}")
+    reason = body.get("correction_reason")
+    if reason not in CORRECTION_REASONS:
+        raise ValidationError(f"correction requires research.correction_reason in {list(CORRECTION_REASONS)}")
+    if reason not in STANCE_CHANGE_REASONS:
+        previous = superseded.research_json
+        for field in ("stance", "next_review_at"):
+            if body.get(field) != previous.get(field):
+                raise ValidationError(
+                    f"correction_reason {reason!r} may not change research.{field}; "
+                    f"only {sorted(STANCE_CHANGE_REASONS)} may"
+                )
+    return reason
 
 
 def _excerpt_locators(item):
@@ -218,35 +289,58 @@ class ResearchService:
         verify_manifest(manifest)
         return manifest
 
+    @staticmethod
+    def _scope(payload):
+        return (payload.get("account_scope"), payload["market"], payload["interval"], payload.get("symbol"))
+
     def _predecessor(self, scope_key, manifest):
-        scope = (
-            manifest.payload_json.get("account_scope"),
-            manifest.market,
-            manifest.interval,
-            manifest.payload_json.get("symbol"),
-        )
+        """Latest completed, not superseded revision of the scope strictly before the manifest's as_of.
+
+        Ties on as_of are broken by created_at, then str(id). Revisions superseded by a completed
+        correction are skipped (SEED-002 C3), so the correction takes the superseded revision's place.
+        """
+        scope = self._scope(manifest.payload_json)
         candidates = (
             self.session.query(ResearchRevision, DataManifest)
             .join(DataManifest, ResearchRevision.manifest_id == DataManifest.id)
             .filter(
                 ResearchRevision.scope_key == scope_key,
                 ResearchRevision.status == "completed",
+                ResearchRevision.id.not_in(superseded_revision_ids()),
             )
             .all()
         )
         eligible = []
         for revision, candidate_manifest in candidates:
             payload = verify_manifest(candidate_manifest)
-            candidate_scope = (
-                payload.get("account_scope"),
-                payload["market"],
-                payload["interval"],
-                payload.get("symbol"),
-            )
             cutoff = timestamp(payload["as_of"], "manifest.as_of")
-            if candidate_scope == scope and cutoff < timestamp(manifest.payload_json["as_of"], "manifest.as_of"):
+            if self._scope(payload) == scope and cutoff < timestamp(manifest.payload_json["as_of"], "manifest.as_of"):
                 eligible.append((cutoff, revision.created_at, str(revision.id), revision))
         return max(eligible, default=(None, None, "", None))[-1]
+
+    def _correction_target(self, scope_key, manifest, supersedes_revision_id):
+        """The completed, not yet superseded revision a correction replaces, checked against its scope."""
+        try:
+            target_id = uuid.UUID(str(supersedes_revision_id))
+        except ValueError as error:
+            raise ValidationError("supersedes_revision_id must be a UUID") from error
+        target = self.session.get(ResearchRevision, target_id)
+        if target is None:
+            raise ValidationError("superseded research revision does not exist")
+        if target.status != "completed":
+            raise ValidationError("only a completed research revision can be superseded")
+        target_payload = verify_manifest(self._manifest(target.manifest_id))
+        if target.scope_key != scope_key or self._scope(target_payload) != self._scope(manifest.payload_json):
+            raise ValidationError(
+                "correction must share scope_key, account_scope, market, interval and symbol with the superseded revision"
+            )
+        if timestamp(target_payload["as_of"], "manifest.as_of") != timestamp(
+            manifest.payload_json["as_of"], "manifest.as_of"
+        ):
+            raise ValidationError("correction manifest as_of must equal the superseded revision's as_of")
+        if is_superseded(self.session, target.id):
+            raise ValidationError("research revision is already superseded; correct the latest correction instead")
+        return target
 
     def prepare(
         self,
@@ -258,6 +352,7 @@ class ResearchService:
         model,
         runtime_digest,
         expected_previous_revision_id=_UNSET,
+        supersedes_revision_id=None,
     ):
         for field, value in (
             ("scope_key", scope_key),
@@ -270,12 +365,22 @@ class ResearchService:
         manifest = self._manifest(manifest_id)
         account_scope = required_text(manifest.payload_json.get("account_scope"), "manifest.account_scope")
         self._lock_scope(scope_key, account_scope)
-        previous = self._predecessor(scope_key, manifest)
+        target = None
+        if supersedes_revision_id is not None:
+            # A correction replaces the superseded revision in the chain: it inherits that revision's
+            # predecessor instead of becoming its successor (SEED-002 C3).
+            target = self._correction_target(scope_key, manifest, supersedes_revision_id)
+            previous = (
+                self.session.get(ResearchRevision, target.previous_revision_id) if target.previous_revision_id else None
+            )
+        else:
+            previous = self._predecessor(scope_key, manifest)
         previous_id = previous.id if previous else None
         if expected_previous_revision_id is not _UNSET and expected_previous_revision_id != previous_id:
             raise ValidationError("actual predecessor changed; rerun prepare")
+        target_id = target.id if target else None
         digest = content_sha256(
-            request_identity(scope_key, manifest, previous, policy_version, provider, model, runtime_digest)
+            request_identity(scope_key, manifest, previous, policy_version, provider, model, runtime_digest, target_id)
         )
         return insert_once(
             self.session,
@@ -289,6 +394,7 @@ class ResearchService:
             provider=provider,
             model=model,
             runtime_digest=runtime_digest,
+            supersedes_revision_id=target_id,
             status="prepared",
             research_json={},
         )
@@ -334,6 +440,7 @@ class ResearchService:
             revision.provider,
             revision.model,
             revision.runtime_digest,
+            revision.supersedes_revision_id,
         )
         if content_sha256(identity) != revision.request_sha256:
             raise ValidationError("frozen research request identity mismatch")
@@ -343,17 +450,24 @@ class ResearchService:
             if revision.status != "completed" or revision.content_sha256 != digest or revision.research_json != body:
                 raise ValidationError("completed research is immutable")
             return revision
+        target = None
+        if revision.supersedes_revision_id is not None:
+            # Re-checked under the scope lock: the target may have been corrected since prepare.
+            target = self._correction_target(revision.scope_key, manifest, revision.supersedes_revision_id)
+        correction_reason = validate_correction(body, revision, target)
         evidence = {item["id"]: item for item in payload["evidence"]}
         claim_precheck = precheck_claims(body["claims"], evidence)
-        actual = self._predecessor(revision.scope_key, manifest)
-        if (actual.id if actual else None) != revision.previous_revision_id:
+        if target is not None:
+            expected_previous = target.previous_revision_id
+        else:
+            actual = self._predecessor(revision.scope_key, manifest)
+            expected_previous = actual.id if actual else None
+        if expected_previous != revision.previous_revision_id:
             raise ValidationError("actual predecessor changed; rerun prepare")
-        # TODO(SEED-002 C2): persist claim_precheck. research_json is the only JSON column and does not fit:
-        # content_sha256 hashes it and evaluation.py / outcomes.py re-verify that hash, the idempotent replay
-        # above compares it to the submitted body, and the API serves it as the human narrative. Persisting
-        # needs a host-owned column (e.g. research_revisions.precheck_json) in a future migration; until then
-        # the results are exposed only on the returned instance as a non-persisted attribute.
-        revision.claim_precheck = claim_precheck
+        # Host-owned results live in precheck_json (048), never in research_json: content_sha256 hashes
+        # research_json, evaluation/outcomes re-verify that hash, and the API serves it as the narrative.
+        revision.precheck_json = claim_precheck
+        revision.correction_reason = correction_reason
         revision.research_json = body
         revision.content_sha256 = digest
         revision.status = "completed"

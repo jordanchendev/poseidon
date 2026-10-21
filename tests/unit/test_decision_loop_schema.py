@@ -158,9 +158,7 @@ class MigrationOperations:
 
     def create_foreign_key(self, name, source, referent, local_columns, remote_columns):
         self.mutation_calls.append(("create_foreign_key", name))
-        self.created_foreign_keys.append(
-            (name, source, referent, tuple(local_columns), tuple(remote_columns))
-        )
+        self.created_foreign_keys.append((name, source, referent, tuple(local_columns), tuple(remote_columns)))
         self.metadata.tables[source].append_constraint(
             sa.ForeignKeyConstraint(
                 local_columns,
@@ -199,7 +197,9 @@ def _assert_migration_matches_models(
     later_columns=None,
     later_constraints=None,
     later_foreign_keys=None,
+    later_indexes=None,
 ):
+    later_indexes = later_indexes or set()
     later_columns = later_columns or {}
     later_constraints = later_constraints or set()
     later_foreign_keys = later_foreign_keys or {}
@@ -207,9 +207,7 @@ def _assert_migration_matches_models(
     for model in models:
         table = model.__table__
         migrated = operations.metadata.tables[table.name]
-        model_columns = [
-            column for column in table.c if column.name not in later_columns.get(table.name, set())
-        ]
+        model_columns = [column for column in table.c if column.name not in later_columns.get(table.name, set())]
         assert [column.name for column in model_columns] == list(migrated.c.keys())
         for column in model_columns:
             other = migrated.c[column.name]
@@ -218,9 +216,7 @@ def _assert_migration_matches_models(
             model_foreign_keys = {fk.target_fullname for fk in column.foreign_keys} - later_foreign_keys.get(
                 (table.name, column.name), set()
             )
-            assert model_foreign_keys == {
-                fk.target_fullname for fk in other.foreign_keys
-            }
+            assert model_foreign_keys == {fk.target_fullname for fk in other.foreign_keys}
             assert (str(column.server_default.arg) if column.server_default else None) == (
                 str(other.server_default.arg) if other.server_default else None
             )
@@ -232,6 +228,7 @@ def _assert_migration_matches_models(
                 str(index.dialect_options["postgresql"].get("where")),
             )
             for index in table.indexes
+            if (table.name, index.name) not in later_indexes
         } == {
             (
                 index.name,
@@ -244,8 +241,7 @@ def _assert_migration_matches_models(
         assert {
             (constraint.name, tuple(constraint.columns.keys()))
             for constraint in table.constraints
-            if isinstance(constraint, sa.UniqueConstraint)
-            and (table.name, constraint.name) not in later_constraints
+            if isinstance(constraint, sa.UniqueConstraint) and (table.name, constraint.name) not in later_constraints
         } == {
             (constraint.name, tuple(constraint.columns.keys()))
             for constraint in migrated.constraints
@@ -254,8 +250,7 @@ def _assert_migration_matches_models(
         assert {
             (constraint.name, str(constraint.sqltext))
             for constraint in table.constraints
-            if isinstance(constraint, sa.CheckConstraint)
-            and (table.name, constraint.name) not in later_constraints
+            if isinstance(constraint, sa.CheckConstraint) and (table.name, constraint.name) not in later_constraints
         } == {
             (constraint.name, str(constraint.sqltext))
             for constraint in migrated.constraints
@@ -279,7 +274,14 @@ def test_foundation_migration_matches_orm_and_reverses_dependency_order(monkeypa
     _assert_migration_matches_models(
         operations,
         models,
-        later_constraints={("strategy_versions", "uq_strategy_versions_strategy_id_id")},
+        later_constraints={
+            ("strategy_versions", "uq_strategy_versions_strategy_id_id"),
+            # 048 (SEED-002 C3)
+            ("research_revisions", "ck_research_revisions_correction_reason"),
+            ("research_revisions", "ck_research_revisions_correction_link"),
+        },
+        later_columns={"research_revisions": {"supersedes_revision_id", "correction_reason", "precheck_json"}},
+        later_indexes={("research_revisions", "uq_research_revisions_supersedes_completed")},
     )
 
     migration.downgrade()
@@ -752,16 +754,17 @@ def test_phase99_outcome_model_exports_and_revision_contracts():
         ),
     ) in _foreign_key_constraints(outcome)
     assert "revision_no = 1" in _check_sql(outcome, "ck_outcome_records_revision_chain")
-    assert "previous_revision_no = revision_no - 1" in _check_sql(
-        outcome, "ck_outcome_records_revision_chain"
-    )
+    assert "previous_revision_no = revision_no - 1" in _check_sql(outcome, "ck_outcome_records_revision_chain")
     identity_check = _check_sql(outcome, "ck_outcome_records_kind_decision")
     assert all(token in identity_check for token in ("signal", "trade", "research", "decision_id"))
-    assert all(token in _check_sql(outcome, "ck_outcome_records_status") for token in (
-        "available",
-        "provisional",
-        "unavailable",
-    ))
+    assert all(
+        token in _check_sql(outcome, "ck_outcome_records_status")
+        for token in (
+            "available",
+            "provisional",
+            "unavailable",
+        )
+    )
 
 
 def test_phase99_outcome_label_contract_requires_complete_explicit_json():
@@ -850,24 +853,35 @@ def test_phase99_fill_cost_metadata_preserves_decimal_fx_and_unbranched_revision
     for field in ("native_amount", "reporting_amount", "fx_rate"):
         assert isinstance(component.c[field].type, sa.Numeric)
         assert (component.c[field].type.precision, component.c[field].type.scale) == (38, 18)
-    assert all(token in _check_sql(component, "ck_fill_cost_components_type") for token in (
-        "commission",
-        "tax",
-        "funding",
-        "borrow",
-        "fx",
-        "other",
-    ))
-    assert all(token in _check_sql(component, "ck_fill_cost_components_classification") for token in (
-        "actual",
-        "estimated",
-        "not_applicable",
-        "unavailable",
-    ))
+    assert all(
+        token in _check_sql(component, "ck_fill_cost_components_type")
+        for token in (
+            "commission",
+            "tax",
+            "funding",
+            "borrow",
+            "fx",
+            "other",
+        )
+    )
+    assert all(
+        token in _check_sql(component, "ck_fill_cost_components_classification")
+        for token in (
+            "actual",
+            "estimated",
+            "not_applicable",
+            "unavailable",
+        )
+    )
     assert "fx_source IS NOT NULL" in _check_sql(component, "ck_fill_cost_components_cross_currency_fx")
 
     forbidden = ("amount", "cost", "fx_rate", "gross", "net")
-    for model in (models.FillCostRevision, models.FillCostComponent, models.EconomicReconciliation, models.OutcomeRecord):
+    for model in (
+        models.FillCostRevision,
+        models.FillCostComponent,
+        models.EconomicReconciliation,
+        models.OutcomeRecord,
+    ):
         for column in model.__table__.c:
             if any(token in column.name for token in forbidden):
                 assert not isinstance(column.type, sa.Float)
@@ -882,15 +896,21 @@ def test_phase99_research_assessment_and_economic_reconciliation_are_bounded_fac
     assert _unique_constraints(assessment) == {
         ("uq_research_assessments_replay", ("evaluation_snapshot_id", "input_sha256"))
     }
-    assert all(token in _check_sql(assessment, "ck_research_assessments_type") for token in (
-        "expiry",
-        "invalidation",
-    ))
-    assert all(token in _check_sql(assessment, "ck_research_assessments_status") for token in (
-        "confirmed",
-        "not_confirmed",
-        "unavailable",
-    ))
+    assert all(
+        token in _check_sql(assessment, "ck_research_assessments_type")
+        for token in (
+            "expiry",
+            "invalidation",
+        )
+    )
+    assert all(
+        token in _check_sql(assessment, "ck_research_assessments_status")
+        for token in (
+            "confirmed",
+            "not_confirmed",
+            "unavailable",
+        )
+    )
     assert "jsonb_array_length" in _check_sql(assessment, "ck_research_assessments_citations")
 
     reconciliation = models.EconomicReconciliation.__table__
@@ -903,11 +923,14 @@ def test_phase99_research_assessment_and_economic_reconciliation_are_bounded_fac
             ("account_reconciliation_id", "input_sha256"),
         )
     }
-    assert all(token in _check_sql(reconciliation, "ck_economic_reconciliations_status") for token in (
-        "matched",
-        "provisional",
-        "unavailable",
-    ))
+    assert all(
+        token in _check_sql(reconciliation, "ck_economic_reconciliations_status")
+        for token in (
+            "matched",
+            "provisional",
+            "unavailable",
+        )
+    )
 
 
 def test_phase99_campaign_models_keep_identity_frozen_and_state_append_only():
@@ -918,30 +941,25 @@ def test_phase99_campaign_models_keep_identity_frozen_and_state_append_only():
 
     campaign = models.ExperimentCampaign.__table__
     assert not {"status", "trial_count", "release", "active_version_id"} & set(campaign.c.keys())
-    assert _unique_constraints(campaign) == {
-        ("uq_experiment_campaigns_contract_sha256", ("contract_sha256",))
-    }
-    assert {
-        fk.target_fullname
-        for column in campaign.c
-        for fk in column.foreign_keys
-    } == {"strategy_versions.id"}
+    assert _unique_constraints(campaign) == {("uq_experiment_campaigns_contract_sha256", ("contract_sha256",))}
+    assert {fk.target_fullname for column in campaign.c for fk in column.foreign_keys} == {"strategy_versions.id"}
 
     event = models.CampaignEvent.__table__
-    assert _unique_constraints(event) == {
-        ("uq_campaign_events_idempotency", ("campaign_id", "idempotency_sha256"))
-    }
+    assert _unique_constraints(event) == {("uq_campaign_events_idempotency", ("campaign_id", "idempotency_sha256"))}
     review = models.CampaignReview.__table__
     assert _unique_constraints(review) == {
         ("uq_campaign_reviews_replay", ("campaign_id", "input_sha256")),
         ("uq_campaign_reviews_campaign_id_id", ("campaign_id", "id")),
     }
-    assert all(token in _check_sql(review, "ck_campaign_reviews_status") for token in (
-        "passed",
-        "failed",
-        "inconclusive",
-        "unavailable",
-    ))
+    assert all(
+        token in _check_sql(review, "ck_campaign_reviews_status")
+        for token in (
+            "passed",
+            "failed",
+            "inconclusive",
+            "unavailable",
+        )
+    )
 
 
 def test_phase99_campaign_digest_covers_every_frozen_identity_field():

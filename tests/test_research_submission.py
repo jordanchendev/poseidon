@@ -1,13 +1,20 @@
 """Research request identity and immutable human-completion contracts."""
 
+import uuid
+from datetime import timedelta
+
 import pytest
 from fastapi import HTTPException
 
 from poseidon.api.auth import AuthPrincipal
-from poseidon.decision_loop.manifest import ManifestService, ValidationError
-from poseidon.decision_loop.research import ResearchService
+from poseidon.decision_loop import evaluation
+from poseidon.decision_loop.evaluation import EvaluationService
+from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256, timestamp
+from poseidon.decision_loop.producer import ProducerService
+from poseidon.decision_loop.research import ResearchService, is_superseded, superseded_by
+from poseidon.models.research_revision import ResearchRevision
 from tests.test_decision_loop_foundation import db as foundation_db
-from tests.test_decision_loop_foundation import manifest_request, with_excerpts
+from tests.test_decision_loop_foundation import evaluation_inputs, manifest_request, with_excerpts
 
 db = foundation_db
 RESEARCHER = AuthPrincipal("human", frozenset({"researcher"}), frozenset({"paper:pilot"}))
@@ -414,3 +421,182 @@ def test_legacy_evidence_without_excerpts_skips_numeric_check(db):
         "unmatched": [],
         "period_mismatch": [],
     }
+
+
+# SEED-002 C3: corrections are new revisions that supersede a completed one; the old row never changes.
+LATER = "2026-09-26T13:00:00Z"
+
+
+def correction_body(manifest, superseded, reason="numeric_error", summary="CORRECTION: claims[0] restated"):
+    return dict(narrative(manifest), supersedes=str(superseded.id), correction_reason=reason, change_summary=summary)
+
+
+def corrected_chain(db):
+    """first (12:00) <- second (13:00), both completed; returns the later manifest too."""
+    manifests = ManifestService(db)
+    earlier, later = manifests.freeze(manifest_request()), manifests.freeze(manifest_request(LATER))
+    service = ResearchService(db)
+    first = complete(service, prepare(service, earlier), narrative(earlier))
+    second = complete(service, prepare(service, later), narrative(later))
+    assert second.previous_revision_id == first.id
+    return service, later, first, second
+
+
+def test_correction_gets_its_own_identity_inherits_the_chain_and_persists_precheck(db):
+    service, later, first, second = corrected_chain(db)
+    fix = prepare(service, later, supersedes_revision_id=second.id)
+    assert fix.id != second.id
+    assert fix.request_sha256 != second.request_sha256
+    assert fix.supersedes_revision_id == second.id
+    assert fix.previous_revision_id == first.id  # replaces second in the chain, not its successor
+    assert prepare(service, later, supersedes_revision_id=second.id).id == fix.id  # insert_once replay
+    assert prepare(service, later).id == second.id  # identity without supersedes is byte-identical
+
+    body = correction_body(later, second)
+    completed = complete(service, fix, body)
+    assert complete(service, fix, body).id == completed.id  # idempotent replay
+    db.expire_all()
+    stored = db.get(ResearchRevision, fix.id)
+    assert (stored.status, stored.correction_reason) == ("completed", "numeric_error")
+    assert stored.content_sha256 == content_sha256(stored.research_json)
+    assert "claim_precheck" not in stored.research_json and "precheck_json" not in stored.research_json
+    assert [item["claim"] for item in stored.precheck_json] == [0, 1, 2]
+    assert stored.claim_precheck == stored.precheck_json
+
+    original = db.get(ResearchRevision, second.id)
+    assert original.status == "completed"
+    assert original.content_sha256 == content_sha256(original.research_json)
+    assert is_superseded(db, second.id) and superseded_by(db, second.id).id == fix.id
+    assert not is_superseded(db, fix.id) and not is_superseded(db, first.id)
+
+    # The next ordinary revision builds on the correction, not on the superseded revision.
+    following = prepare(service, ManifestService(db).freeze(manifest_request("2026-09-26T14:00:00Z")))
+    assert following.previous_revision_id == fix.id
+    # Correcting the correction keeps the same inherited predecessor.
+    assert prepare(service, later, supersedes_revision_id=fix.id).previous_revision_id == first.id
+
+
+def test_ordinary_completion_persists_precheck_without_correction_fields(db):
+    manifest = ManifestService(db).freeze(manifest_request())
+    service = ResearchService(db)
+    revision = complete(service, prepare(service, manifest), narrative(manifest))
+    db.expire_all()
+    stored = db.get(ResearchRevision, revision.id)
+    assert len(stored.precheck_json) == 3
+    assert (stored.supersedes_revision_id, stored.correction_reason) == (None, None)
+
+
+@pytest.mark.parametrize(
+    "change,match",
+    [
+        (lambda body: body.update(change_summary="claims[0] restated"), "start with 'CORRECTION:'"),
+        (lambda body: body.pop("correction_reason"), "correction_reason in"),
+        (lambda body: body.update(correction_reason="typo"), "correction_reason in"),
+        (lambda body: body.pop("supersedes"), "supersedes must equal"),
+        (lambda body: body.update(stance="buy"), "'numeric_error' may not change research.stance"),
+        (lambda body: body.update(next_review_at="later"), "may not change research.next_review_at"),
+    ],
+)
+def test_correction_completion_refuses_missing_rule_fields(db, change, match):
+    service, later, _, second = corrected_chain(db)
+    fix = prepare(service, later, supersedes_revision_id=second.id)
+    body = correction_body(later, second)
+    change(body)
+    with pytest.raises(ValidationError, match=match):
+        complete(service, fix, body)
+    assert (fix.status, fix.content_sha256, fix.precheck_json, fix.correction_reason) == ("prepared", None, None, None)
+    assert not is_superseded(db, second.id)
+
+
+def test_source_error_correction_may_change_stance(db):
+    service, later, _, second = corrected_chain(db)
+    fix = prepare(service, later, supersedes_revision_id=second.id)
+    body = dict(correction_body(later, second, reason="source_error"), stance="avoid")
+    assert complete(service, fix, body).correction_reason == "source_error"
+
+
+@pytest.mark.parametrize(
+    "extra,match",
+    [
+        ({"change_summary": "CORRECTION: not linked"}, "requires a correction prepared with supersedes_revision_id"),
+        ({"correction_reason": "other"}, "only allowed on a correction"),
+    ],
+)
+def test_ordinary_revision_cannot_be_filed_as_a_correction(db, extra, match):
+    manifest = ManifestService(db).freeze(manifest_request())
+    service = ResearchService(db)
+    revision = prepare(service, manifest)
+    with pytest.raises(ValidationError, match=match):
+        complete(service, revision, dict(narrative(manifest), **extra))
+
+
+def test_already_superseded_revision_cannot_be_superseded_again(db):
+    service, later, _, second = corrected_chain(db)
+    racing = prepare(service, later, supersedes_revision_id=second.id, provider="other")
+    fix = prepare(service, later, supersedes_revision_id=second.id)
+    complete(service, fix, correction_body(later, second))
+    with pytest.raises(ValidationError, match="already superseded"):
+        prepare(service, later, supersedes_revision_id=second.id, model="again")
+    # A correction prepared before the first one completed is refused at completion (one chain, no forks).
+    with pytest.raises(ValidationError, match="already superseded"):
+        complete(service, racing, correction_body(later, second))
+    assert racing.status == "prepared"
+
+
+def test_correction_target_must_share_scope_cutoff_and_be_completed(db):
+    service, later, first, second = corrected_chain(db)
+    with pytest.raises(ValidationError, match="must share scope_key"):
+        prepare(service, later, scope="tw_stock:sector:semiconductor", supersedes_revision_id=second.id)
+    other_request = manifest_request(LATER)
+    other_request["account_scope"] = "paper:other"
+    other = ManifestService(db).freeze(other_request)
+    with pytest.raises(ValidationError, match="must share scope_key"):
+        prepare(service, other, supersedes_revision_id=second.id)
+    with pytest.raises(ValidationError, match="as_of must equal"):
+        prepare(service, later, supersedes_revision_id=first.id)
+    pending = prepare(service, ManifestService(db).freeze(manifest_request("2026-09-26T14:00:00Z")))
+    with pytest.raises(ValidationError, match="only a completed"):
+        prepare(service, later, supersedes_revision_id=pending.id)
+    with pytest.raises(ValidationError, match="does not exist"):
+        prepare(service, later, supersedes_revision_id=uuid.uuid4())
+
+
+def test_pending_revision_built_on_a_superseded_predecessor_must_reprepare(db):
+    service, later, _, second = corrected_chain(db)
+    pending_manifest = ManifestService(db).freeze(manifest_request("2026-09-26T14:00:00Z"))
+    pending = prepare(service, pending_manifest)
+    assert pending.previous_revision_id == second.id
+    fix = complete(service, prepare(service, later, supersedes_revision_id=second.id), correction_body(later, second))
+    with pytest.raises(ValidationError, match="predecessor"):
+        complete(service, pending, narrative(pending_manifest))
+    assert prepare(service, pending_manifest).previous_revision_id == fix.id
+
+
+def test_producer_lookup_skips_the_superseded_revision(db):
+    service, later, _, second = corrected_chain(db)
+    lookup = ProducerService(db, signal_evaluator=lambda *args: None)._research_lookup(
+        later.payload_json, timestamp(LATER, "cutoff")
+    )
+    assert lookup("tw_stock:spot:2330") == second.id
+    fix = complete(service, prepare(service, later, supersedes_revision_id=second.id), correction_body(later, second))
+    # Make the original win every tie-break (created_at, then id) so only the exclusion can pick the correction.
+    fix.created_at = second.created_at - timedelta(days=1)
+    db.flush()
+    assert lookup("tw_stock:spot:2330") == fix.id
+
+
+def test_evaluation_citing_the_superseded_revision_still_reverifies(db):
+    manifest, version, universe, snapshots = evaluation_inputs(db)
+    service = ResearchService(db)
+    original = complete(service, prepare(service, manifest), narrative(manifest))
+    snapshots[0]["recommendation_json"] = {"research_status": "completed"}
+    snapshots[0]["research_revision_ids"] = [str(original.id)]
+    run = EvaluationService(db).evaluate_run(version.id, manifest.id, universe, snapshots)
+
+    fix = prepare(service, manifest, supersedes_revision_id=original.id)
+    complete(service, fix, correction_body(manifest, original))
+    db.expire_all()
+
+    evaluation.verify_complete_run(db, run.id)
+    stored = db.get(ResearchRevision, original.id)
+    assert stored.status == "completed" and is_superseded(db, original.id)
