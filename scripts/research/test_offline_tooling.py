@@ -1510,7 +1510,7 @@ def test_projection_edges_links_section_and_stubs(kvault):
         "[[concepts/revenue-test]]",
         "[[concepts/benchmark-concept]]",
     ]  # taxonomy ids only, in taxonomy order
-    assert fm["peers"] == ["[[companies/ccc-gamma]]"] and fm["timeline"] == "[[timelines/2026-aaa]]"
+    assert fm["peers"] == ["[[companies/ccc-gamma]]"] and "timeline" not in fm  # timelines retired 2026-10-21
     assert fm["summary"] == "AAA beat and outperformed the benchmark." and str(fm["next_review_at"]).startswith(
         "2026-10-05"
     )
@@ -1521,11 +1521,10 @@ def test_projection_edges_links_section_and_stubs(kvault):
         "sectors/testsector",
         "concepts/revenue-test",
         "companies/ccc-gamma",
-        "timelines/2026-aaa",
     ):
         assert "[[%s]]" % t in sec
     wiki = k["v"] / "_kb" / "wiki"
-    for t in ("sectors/testsector", "concepts/revenue-test", "companies/ccc-gamma", "timelines/2026-aaa"):
+    for t in ("sectors/testsector", "concepts/revenue-test", "companies/ccc-gamma"):
         sfm, _ = split_note((wiki / (t + ".md")).read_text())
         assert sfm["status"] == "stub" and sfm["origin"] == "agent", t
     assert not (wiki / "concepts" / "never-matched.md").exists()
@@ -1534,11 +1533,11 @@ def test_projection_edges_links_section_and_stubs(kvault):
     assert company.split("<!-- research-timeline:start")[0] == COMPANY_HUMAN.split("<!-- research-timeline:start")[0]
     assert company.endswith("<!-- research-timeline:end -->\n\nHuman footer.\n")
     assert "\\|%s]] | watch | AAA beat and outperformed the benchmark. | 2026-10-05 |" % k["rid"][:8] in company
-    tl = (wiki / "timelines" / "2026-aaa.md").read_text()
-    assert (
+    assert not (wiki / "timelines").exists()
+    assert "\n### 催化劑\n" in company and (
         "| 2026-10-05 | monthly_revenue | revenue stays above 100 | [[Research/tw_stock-spot-AAA/%s\\|%s]] |"
         % (k["rid"], k["rid"][:8])
-        in tl
+        in company
     )
     log = (wiki / "log.md").read_text()
     assert (
@@ -1592,6 +1591,6 @@ def test_research_links_block_regeneration_idempotent(kvault):
     assert first.returncode == 0 and "applied: 1 company block(s)" in first.stdout, first.stderr
     snap = {p: p.read_bytes() for p in (k["v"] / "_kb" / "wiki").rglob("*.md")}
     second = subprocess.run([PY, *rl, "--apply"], env=envv, capture_output=True, text=True)
-    assert second.returncode == 0 and "applied: 0 company block(s), 0 timeline block(s)" in second.stdout
+    assert second.returncode == 0 and "applied: 0 company block(s) changed" in second.stdout
     assert {p: p.read_bytes() for p in (k["v"] / "_kb" / "wiki").rglob("*.md")} == snap  # no change, no extra log line
     assert company.read_text() == text

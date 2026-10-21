@@ -118,7 +118,6 @@ def vault(tmp_path):
         "_kb/wiki/companies/9999-bad.md",
         note(base("company", "Bad", extra='symbol: "9999"\nsector: "[[sectors/bogus]]"\n')),
     )
-    write(v, "_kb/wiki/timelines/2026-2303.md", note(base("timeline", "2026 2303")))
     # 2303 chain: aaa (old, superseded by bbb) -> bbb (latest, review passed, bullish)
     write(
         v,
@@ -135,7 +134,7 @@ def vault(tmp_path):
             "bullish",
             'next_review_at: "%sT00:00:00+08:00"\nprevious_revision_id: "aaa"\ncompany: "[[companies/2303-umc]]"\n'
             'sector: "[[sectors/foundry]]"\nconcepts: ["[[concepts/capacity-utilization]]"]\n'
-            'peers: ["[[companies/2330-tsmc]]"]\ntimeline: "[[timelines/2026-2303]]"\n'
+            'peers: ["[[companies/2330-tsmc]]"]\n'
             'related: ["[[aaa]]", "[[Research/tw_stock-spot-2303/aaa]]"]\n' % PAST,
         )
         + "Body [[companies/2303-umc|UMC]] [[nowhere-page]] `[[in-code]]` [[2303-umc\\|UMC]]\n",
@@ -274,7 +273,6 @@ def test_graph_export(vault):
         (b, "_kb/wiki/companies/2330-tsmc", "read_across"),
         (b, "_kb/wiki/concepts/capacity-utilization", "uses_concept"),
         (b, "Research/tw_stock-spot-2303/aaa", "predecessor"),
-        (b, "_kb/wiki/timelines/2026-2303", "catalyst"),
         ("_kb/wiki/companies/2303-umc", "_kb/wiki/sectors/foundry", "in_sector"),
         ("Research/tw_stock-spot-2330/ddd", "_kb/wiki/companies/2330-tsmc", "about"),
     ]:
