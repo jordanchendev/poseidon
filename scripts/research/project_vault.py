@@ -15,7 +15,8 @@ repeated as bullets in a trailing `## 知識連結` section:
   peers     list; read_across symbols from the revision identity and from --config.
   timeline  "[[timelines/<yyyy of as_of>-<symbol>]]" per company.
 plus the machine fields research_links.py reads: next_review_at (leading ISO timestamp of the narrative's
-next_review_at), summary (tl_dr, else first sentence of the thesis), catalysts (list).
+next_review_at), summary (tl_dr, else first sentence of the thesis), catalysts (list), event_status
+(pre_event|post_event, only when the revision's narrative has it; set by the research runner).
 Missing link targets get a stub page (status: stub, origin: agent); existing pages are never overwritten.
 
 --replace: allowed only when the existing note has the same revision_id, the same content_sha256 and origin: agent.
@@ -41,7 +42,17 @@ import yaml
 VAULT = os.environ.get("NEXUS_VAULT") or os.path.expanduser(
     "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Nexus"
 )
-EDGE_KEYS = ("company", "sector", "concepts", "peers", "timeline", "next_review_at", "summary", "catalysts")
+EDGE_KEYS = (
+    "company",
+    "sector",
+    "concepts",
+    "peers",
+    "timeline",
+    "next_review_at",
+    "summary",
+    "catalysts",
+    "event_status",
+)
 LINKS_HEAD = "## 知識連結"
 LINK = re.compile(r"\[\[([^\]|#]+)")
 LOG_HEADER = """---
@@ -203,6 +214,7 @@ def compute_edges(vault, i, r, scope_key, a):
         next_review_at=nr.group(0) if nr else None,
         summary=r.get("tl_dr") or first_sentence(r.get("thesis")),
         catalysts=[{k: c.get(k) for k in ("date", "type", "expected_signal")} for c in r.get("catalysts") or []],
+        event_status=r.get("event_status") if r.get("event_status") in ("pre_event", "post_event") else None,
         sectors_tax=sectors_tax,
         concepts_tax=concepts_tax,
     )
@@ -224,6 +236,8 @@ def edge_lines(e):
         out.append("summary: " + json.dumps(e["summary"], ensure_ascii=False))
     if e["catalysts"]:
         out.append("catalysts: [%s]" % ", ".join(json.dumps(c, ensure_ascii=False) for c in e["catalysts"]))
+    if e["event_status"]:
+        out.append("event_status: %s" % e["event_status"])
     return out
 
 

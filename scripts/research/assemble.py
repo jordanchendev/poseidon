@@ -5,14 +5,20 @@ Steps (all inputs are recorded under <run_dir>, nothing is chosen by a model):
   1. Fetch the row's primary_source_url (fall back to mirror_url on a fetch error or when no excerpt matched) with
      fetch_source.build_document into <run_dir>/sources; the template follows event_type
      (earnings / investor_conference -> earnings, press_release -> press_release, anything else -> generic) and every
-     pre-verified excerpt proposal is kept, in document order, up to MAX_EXCERPTS.
+     pre-verified excerpt proposal is kept, in document order, up to MAX_EXCERPTS. When no candidate matches the
+     template (e.g. a MOPS notice of a future 法說會 fetched for an earnings topic), the first fetched document falls
+     back to the generic template (paragraphs >= FALLBACK_MIN_CHARS, the longest MAX_EXCERPTS kept in document order,
+     still pre-verified verbatim) instead of failing; only an unfetchable source fails.
+  1b. event_status (owner decision 2026-10-21), decided here and never by the model: "pre_event" when event_date is
+     after as_of, or the document dates the event (事實發生日 / 召開…日期 / 舉行…日期 …) after as_of, or no template
+     excerpt matched (the outcome is not in the evidence); otherwise "post_event". Stored as cfg["event"].
   2. Daily OHLCV for the Taiwan-listed symbols plus the benchmark (0050) from Thalassa, using Poseidon's
      RemoteDataRepository with POSEIDON_THALASSA_BASE_URL / POSEIDON_THALASSA_API_KEY from the process environment;
      written to <run_dir>/bars.csv in research_theme.py's CSV format.
   3. TWSE t187ap05_L monthly revenue for the numeric non-benchmark symbols, saved as <run_dir>/sources/twse-t187ap05_L.json
      ({rows, source_uri, fetched_at}) and passed to research_theme.py as --kpi-json. A TWSE failure only drops
      kpi_series (recorded in notes); it never fails the run.
-  4. Config of the shape research_theme.py reads, plus runner-only keys (runner_inputs, agenda, draft, assemble_notes)
+  4. Config of the shape research_theme.py reads, plus runner-only keys (runner_inputs, agenda, draft, event, assemble_notes)
      that research_theme.py ignores.
 
 Any failure that leaves no usable evidence raises AssembleError(reason); the runner turns it into needs_review.
@@ -36,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fetch_source
 
 MAX_EXCERPTS = 40
+FALLBACK_MIN_CHARS = 20  # notices are short; generic fallback keeps shorter paragraphs than the template default (80)
 BENCHMARK = "0050"
 LOOKBACK_DAYS = 600  # research_theme keeps the last 400 bars; 600 calendar days covers that
 ACCOUNT_SCOPE = "paper:tw-stock-pilot"
@@ -102,10 +109,23 @@ def fetch_document(url, *, doc_id, title, publisher, event_time, out_dir, templa
     return doc, stats
 
 
+def generic_fallback(doc):
+    """Re-propose excerpts of an already fetched document with the generic template (no refetch). The longest
+    MAX_EXCERPTS verified paragraphs are kept, in document order. Returns the number of verified proposals."""
+    verified = [
+        p for p in fetch_source.propose(doc["raw_text_path"], "generic", min_chars=FALLBACK_MIN_CHARS) if p["verified"]
+    ]
+    longest = sorted(range(len(verified)), key=lambda n: -len(verified[n]["text"]))[:MAX_EXCERPTS]
+    doc["excerpts"] = [{"locator": verified[n]["locator"], "text": verified[n]["text"]} for n in sorted(longest)]
+    return len(verified)
+
+
 def source_document(row, run_dir, event_time, fetch=fetch_document):
-    """Primary URL first; mirror on a fetch error or when the primary yields no excerpt. Returns (doc, notes)."""
+    """Primary URL first; mirror on a fetch error or when the primary yields no template excerpt; if no fetched
+    candidate matches the template, the first fetched one falls back to the generic template.
+    Returns (doc, notes, template_matched)."""
     template = template_for(row.get("event_type"))
-    notes, errors = [], []
+    notes, errors, fetched = [], [], []
     candidates = [("primary", row.get("primary_source_url"))]
     if row.get("mirror_url"):
         candidates.append(("mirror", row["mirror_url"]))
@@ -128,10 +148,60 @@ def source_document(row, run_dir, event_time, fetch=fetch_document):
             continue
         if not doc["excerpts"]:
             errors.append(f"{label} source {url}: no verified excerpt matched the {template} template")
+            fetched.append((label, url, doc))
             continue
         notes.append(f"document from {label} url ({url}); excerpts {stats}")
-        return doc, notes
+        return doc, notes, True
+    for label, url, doc in fetched:
+        if template != "generic" and doc.get("raw_text_path") and generic_fallback(doc):
+            notes += errors
+            notes.append(
+                f"document from {label} url ({url}); no {template} excerpt matched, generic fallback kept "
+                f"{len(doc['excerpts'])} verified paragraphs"
+            )
+            return doc, notes, False
+        errors.append(f"{label} source {url}: no usable paragraph (generic fallback empty)")
     raise AssembleError("; ".join(errors) or "agenda row has no source url")
+
+
+# ------------------------------------------------------------------------------------------------ event status
+_DATE = r"(\d{2,4})\s*(?:[/.-]|年)\s*(\d{1,2})\s*(?:[/.-]|月)\s*(\d{1,2})\s*日?"
+_EVENT_DATE_RE = re.compile(
+    r"(事實發生日|(?:召開|舉行|開會|會議|說明會|法說會)[^\n:：|]{0,12}?(?:日期|時間))\s*[:：|]?\s*" + _DATE
+)
+
+
+def notice_event_dates(text):
+    """Dates the document gives for the event: values after 事實發生日 / 召開…日期 / 舉行…時間 ... (ROC years +1911)."""
+    out = []
+    for m in _EVENT_DATE_RE.finditer(text or ""):
+        y, mo, d = (int(g) for g in m.group(2, 3, 4))
+        y = y + 1911 if y < 1000 else y
+        try:
+            out.append((m.group(1), datetime.date(y, mo, d)))
+        except ValueError:
+            continue
+    return out
+
+
+def event_status(row, as_of_dt, doc, template_matched):
+    """Deterministic pre_event / post_event decision; returns {status, event_date, why[]}."""
+    as_of_day = as_of_dt.astimezone(datetime.UTC).date()
+    row_day = datetime.date.fromisoformat(str(row["event_date"])[:10])
+    why, event_day = [], row_day
+    if datetime.datetime.combine(row_day, datetime.time(), datetime.UTC) > as_of_dt:
+        why.append(f"event_date {row_day} is after as_of")
+    try:
+        text = Path(doc["raw_text_path"]).read_text(encoding="utf-8", errors="replace")
+    except (KeyError, OSError):
+        text = "\n".join(ex["text"] for ex in doc.get("excerpts", []))
+    future = [(label, d) for label, d in notice_event_dates(text) if d > as_of_day]
+    if future:
+        label, event_day = max(future, key=lambda x: x[1])
+        why.append(f"document dates the event after as_of ({label} {event_day})")
+    if not template_matched:
+        why.append("no template excerpt matched (the event outcome is not in the evidence)")
+    return {"status": "pre_event" if why else "post_event", "event_date": event_day.isoformat(), "why": why}
 
 
 # ------------------------------------------------------------------------------------------------ OHLCV (Thalassa)
@@ -244,8 +314,10 @@ def assemble(
         notes.append("event_date {} is after as_of; document/event time clamped to as_of".format(row["event_date"]))
         event_dt = as_of_dt
     event_time = iso_z(event_dt)
-    doc, doc_notes = source_document(row, run_dir, event_time, fetch=fetch)
+    doc, doc_notes, template_matched = source_document(row, run_dir, event_time, fetch=fetch)
     notes += doc_notes
+    event = event_status(row, as_of_dt, doc, template_matched)
+    notes.append("event_status {} ({})".format(event["status"], "; ".join(event["why"]) or "event on/before as_of"))
     symbols = tw + ([BENCHMARK] if BENCHMARK not in tw else [])
     write_bars(symbols, as_of_dt, run_dir / "bars.csv", fetch_bars=fetch_bars)
     kpi_path = run_dir / "sources" / TWSE_KPI_FILE
@@ -283,6 +355,7 @@ def assemble(
         },
         "agenda": {k: row.get(k) for k in ("id", "topic", "symbols", "event_date", "event_type", "why_now", "source")},
         "draft": draft,
+        "event": event,
         "assemble_notes": notes,
     }
     (run_dir / "config.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")

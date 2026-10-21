@@ -201,6 +201,19 @@ pending row ─ assemble.py ─ research_theme.py (freeze + prepare) ─ draft.p
   Event/document time = `event_date`T00:00Z, clamped to as_of when the event is in the future. Freshness rules:
   fundamental 90 days, ohlcv 5 days (so Monday-morning runs see Friday's bar). Non-numeric symbols get no OHLCV.
   One TW symbol -> scope `tw_stock:spot:<sym>`; several -> `tw_stock:basket:<a>-<b>`.
+  When no fetched candidate matches the template (e.g. a MOPS notice of a future 法說會 for an earnings topic), the
+  first fetched document falls back to the generic template (paragraphs >= 20 chars, the longest 40 kept in document
+  order, pre-verified verbatim) instead of failing; an unfetchable source (primary and mirror) still fails.
+- **event_status** (owner decision 2026-10-21; assemble.py `event_status`, never the model): `pre_event` when
+  `event_date` is after as_of, OR the document dates the event after as_of (value after 事實發生日 / 召開…日期 /
+  舉行…時間 / 會議…日期, ROC years +1911; the latest such date becomes `event_date`), OR no template excerpt matched
+  (the outcome is not in the evidence); else `post_event`. Stored as config `event` {status, event_date, why[]}, shown
+  to the model in the research context, and written into the narrative (`event_status`, `event_date`) after every
+  draft, so it lands in research_json. pre_event: the prompt says the note is a pre-event expectation and every
+  outcome claim is an inference with its basis; gates refuse an empty/missing `catalysts` and (when event_date is on or
+  after as_of) a catalyst list without the event date. render_theme.py opens a pre_event revision with
+  `> [!warning] 事前推論：事件（<date>）尚未發生…` (event date before as_of: `證據中沒有事件（<date>）的結果…`);
+  project_vault.py writes `event_status` to the frontmatter (machine field, like next_review_at).
 - **draft.py**: OpenRouter chat completions, model from config (default `deepseek/deepseek-v4.1-flash-1017`),
   `response_format: json_object`, `reasoning.enabled` (default on; `--no-reasoning`), `max_tokens` 16000.
   `content=None` or `finish_reason=length` is a draft failure. Records configured model, returned model, prompt sha256,
@@ -211,7 +224,13 @@ pending row ─ assemble.py ─ research_theme.py (freeze + prepare) ─ draft.p
   kpi / price_facts / ohlcv block shown in the prompt). `quote` is stored in research_json (Poseidon keeps extra claim keys).
 - **Gates** (runner.py `run_gates`): schema (incl. Poseidon `validate_research`: >= 3 claims, required fundamental + ohlcv
   cited), `validate_narrative_extras` / `validate_variant_perception`, quote-in-cited-evidence, `precheck_claims` with
-  `allow_non_atomic=False` (fact: any numeric mismatch refuses; inference: scale/sign), lint_atomic, GAAP basis. Refusal ->
+  `allow_non_atomic=False` (fact: any numeric mismatch refuses; inference: scale/sign, also against an A-B/A+B
+  derivation; a recomputed derivation is recorded as `derived` [{claim, how, from, value}]), lint_atomic (inference
+  claims: the multi-quantity rule does not refuse, causal clauses still do), GAAP basis, inference basis marker
+  (`claim_precheck.has_inference_basis`: 推算 估算 推估 推論 估計 判斷 研判 預期 預估 可能 若 如果 假設 換算 計算 相減
+  相加 合計 依(not 依然/依舊) 根據 基於 意味 暗示 隱含 有望 或將 恐將 / based on, implies, suggests, likely, probably,
+  may, might, could, expect, estimate, if, assuming, derived, computed, calculated), pre_event catalysts. Inference
+  claims render with a `【推論】` prefix (facts unprefixed) in render_theme.py. Refusal ->
   one repair round (the model gets its previous JSON and the refusal list) -> gates again. JEV `typesafe/jev-1.13`
   (`/v1/systemone`, falls back to `/alpha/decisions` on 404) judges **every** claim, fact and inference, against the claim
   quote + the cited evidence texts (capped at 12k chars); every label must be `supports`. Completion runs

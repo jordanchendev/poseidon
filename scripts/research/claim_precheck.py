@@ -45,7 +45,8 @@ Three pieces:
    claims, A/B and 1+p/100 for multiple claims. Ranges in the claim need both ends matched.
    A direct counterpart whose sign is the opposite one does not count. Unmatched quantities carry a ``kind``:
      * ``sign``  -- the same magnitude exists but with the opposite direction (17.6 % decrease vs increase);
-     * ``scale`` -- the same digits exist at another power of ten (133.19 億 vs 1,331.9 億; 210 pp vs 210 bp);
+     * ``scale`` -- the same digits exist at another power of ten (133.19 億 vs 1,331.9 億; 210 pp vs 210 bp),
+                    also against an A-B (A+B with allow_sum) derivation of two excerpt quantities (12.9 vs 4.68-3.39);
      * ``value`` -- the excerpt has quantities of the same class, none equal;
      * ``absent``-- the excerpt has no quantity of that class at all.
    ``status`` is ``mismatch`` when anything is unmatched, ``ok`` when all matched, ``no_numbers`` when the claim
@@ -65,6 +66,9 @@ Three pieces:
    ("66.4%, the highest in history" without a verb after the comma) can pass; "X compared with Y" is flagged
    because both sides carry a quantity, even when the comparison is the single fact. "compared with/to" is not a
    predicate, so a leading "Compared with the second quarter, X rose 17.6%" stays one clause.
+   ``lint_atomic(claim, kind="inference")``: the multi-quantity rule does not refuse (a derivation names its inputs);
+   causal clauses still refuse, and so do >= 2 predicate clauses once derivation-basis clauses (推算/依…/根據…) are set
+   aside. ``has_inference_basis(text)`` is the runner's basis-marker gate for inference claims.
 """
 
 from __future__ import annotations
@@ -706,8 +710,8 @@ def _bound_ok(qual, v, x):
     return _close(v, x)
 
 
-def _match_value(v, cq, pts):
-    """Returns (direct_matches, derived_match_or_None)."""
+def _match_value(v, cq, pts, allow_sum=False):
+    """Returns (direct_matches, derived_match_or_None). allow_sum adds A+B over same-class pairs (inference claims)."""
     direct = [
         p
         for p in pts
@@ -756,6 +760,8 @@ def _match_value(v, cq, pts):
             and _compatible(cq.unit_class, cq.currency, a[1], a[2])
         ):
             cands.append((a[0] - b[0], "A-B"))
+            if allow_sum:
+                cands.append((a[0] + b[0], "A+B"))
         for x, how in cands:
             if x > 0 and (_close(v, x) or (cq.qualifier and _bound_ok(cq.qualifier, v, x))):
                 return [], {"how": how, "from": [a[4].raw, b[4].raw], "value": round(x, 6)}
@@ -768,13 +774,27 @@ def _match_value(v, cq, pts):
     return [], None
 
 
-def _miss_kind(v, cq, pts):
+def _scale_off(v, x):
+    if not (v and x):
+        return None
+    r = math.log10(abs(v / x))
+    return round(r) if abs(r - round(r)) < 0.002 and round(r) != 0 else None
+
+
+def _miss_kind(v, cq, pts, allow_sum=False):
     same = [p for p in pts if p[1] != "*" and _compatible(cq.unit_class, cq.currency, p[1], p[2])]
     for p in same:
-        if p[0] and v:
-            r = math.log10(abs(v / p[0]))
-            if abs(r - round(r)) < 0.002 and round(r) != 0:
-                return "scale", {"excerpt": p[4].raw, "factor": f"1e{round(r)}"}
+        k = _scale_off(v, p[0])
+        if k is not None:
+            return "scale", {"excerpt": p[4].raw, "factor": f"1e{k}"}
+    # a derivation (A-B, and A+B when allowed) off by a power of ten is a scale slip too
+    if cq.unit_class in ("money", "count", "days"):
+        plain = [p for p in same if p[3] == "direct" and p[1] == cq.unit_class and p[0] != 0]
+        for a, b in permutations(plain, 2):
+            for x, how in ((a[0] - b[0], "A-B"), *(((a[0] + b[0], "A+B"),) if allow_sum else ())):
+                k = _scale_off(v, x) if x > 0 else None
+                if k is not None:
+                    return "scale", {"excerpt": [a[4].raw, b[4].raw], "derived": how, "factor": f"1e{k}"}
     return ("value", None) if same else ("absent", None)
 
 
@@ -782,8 +802,9 @@ def _growth_like(q):
     return q.unit_class in ("percent", "pp", "multiple") or q.sign != 0
 
 
-def check_numbers(claim: str, excerpt: str) -> dict:
-    """Claim-vs-excerpt numeric check (see module docstring)."""
+def check_numbers(claim: str, excerpt: str, allow_sum: bool = False) -> dict:
+    """Claim-vs-excerpt numeric check (see module docstring). allow_sum=True also accepts A+B of two excerpt
+    quantities of the claim's class (used for inference claims only, so a fact claim never matches a sum)."""
     cqs, eqs = extract_quantities(claim), extract_quantities(excerpt)
     if not cqs:
         return {"status": "no_numbers", "unmatched": [], "matched": [], "period_mismatch": []}
@@ -793,7 +814,7 @@ def check_numbers(claim: str, excerpt: str) -> dict:
         values = list(cq.range) if cq.range else [cq.value]
         res, ok = [], True
         for v in values:
-            direct, derived = _match_value(v, cq, pts)
+            direct, derived = _match_value(v, cq, pts, allow_sum)
             if direct:
                 good = [p for p in direct if not (cq.sign and p[4].sign and cq.sign != p[4].sign)]
                 if good:
@@ -812,7 +833,7 @@ def check_numbers(claim: str, excerpt: str) -> dict:
                 res.append({"value": v, "match": "derived", **derived})
                 continue
             ok = False
-            kind, det = _miss_kind(v, cq, pts)
+            kind, det = _miss_kind(v, cq, pts, allow_sum)
             res.append({"value": v, "kind": kind, **({"detail": det} if det else {})})
         entry = {
             "claim": cq.raw,
@@ -876,8 +897,34 @@ _SPLIT_RE = re.compile(
 )
 
 
-def lint_atomic(claim: str) -> dict:
-    """Heuristic atomicity lint (see module docstring for the rules and their blind spots)."""
+# Inference basis markers (owner decision 2026-10-21): an inference claim must say what it rests on or that it is
+# an expectation, so a reader never takes it for an observed fact. Used by the runner gate (has_inference_basis);
+# lint_atomic sets derivation-basis clauses ("由 A 與 B 推算", "依 X 判斷") aside for inference claims.
+_BASIS_RE = re.compile(
+    r"推算|估算|推估|推論|估計|判斷|研判|預期|預估|可能|若|如果|假設|換算|計算|相減|相加|合計|依(?![然舊])|根據|基於|"
+    r"意味|暗示|隱含|有望|或將|恐將|\bbased\s+on\b|\bimpl(?:y|ies|ied)\b|\bsuggests?\b|\blikely\b|\bprobabl[ey]\b|"
+    r"\bmay\b|\bmight\b|\bcould\b|\bexpect(?:s|ed)?\b|\bestimat\w*|\bif\b|\bassum\w*|\bderived\b|\bcomputed\b|"
+    r"\bcalculated\b",
+    re.I,
+)
+# narrower: a clause that names the inputs of a derivation ("由上半年 4.68 元與第二季 3.39 元推算", "依 X 判斷")
+_DERIVATION_BASIS_RE = re.compile(
+    r"推算|估算|推估|換算|計算|相減|相加|依(?![然舊])|根據|基於|\bbased\s+on\b|\bderived\s+from\b|\bcomputed\s+from\b",
+    re.I,
+)
+
+
+def has_inference_basis(text: str) -> bool:
+    """True when an inference claim's text carries a basis / expectation marker (_BASIS_RE)."""
+    return bool(_BASIS_RE.search(text or ""))
+
+
+def lint_atomic(claim: str, kind: str | None = None) -> dict:
+    """Heuristic atomicity lint (see module docstring for the rules and their blind spots).
+
+    kind="inference" (owner decision 2026-10-21): the multi-quantity rule does not refuse, because a derived inference
+    names its inputs ("由上半年累計 4.68 元與第二季 3.39 元推算，第一季每股盈餘約為 1.29 元"). A causal/driver clause still
+    refuses, and so do >= 2 clauses with their own predicate once derivation-basis clauses are set aside."""
     qspans = [q.span for q in extract_quantities(claim)]
     start = 0
     pieces = []
@@ -899,6 +946,19 @@ def lint_atomic(claim: str) -> dict:
         content = len(re.findall(r"[A-Za-z]{2,}", frag)) >= 2 or len(re.findall(r"[一-鿿]", frag)) >= 2
         if has_q or has_pred or (causal and content):
             clauses.append({"text": frag, "quantity": has_q, "predicate": has_pred, "causal": causal})
+    if kind == "inference" and len(clauses) >= 2 and not any(c["causal"] for c in clauses):
+        asserted = [c for c in clauses if c["predicate"] and not _DERIVATION_BASIS_RE.search(c["text"])]
+        if len(asserted) >= 2:
+            return {
+                "ok": False,
+                "clauses": [c["text"] for c in clauses],
+                "reason": "non-atomic: %d clauses with separate predicates" % len(asserted),
+            }
+        return {
+            "ok": True,
+            "clauses": [c["text"] for c in clauses],
+            "reason": "inference: multi-quantity derivation allowed",
+        }
     if len(clauses) >= 2:
         why = []
         if sum(c["quantity"] for c in clauses) >= 2:

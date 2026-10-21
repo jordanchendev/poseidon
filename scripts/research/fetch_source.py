@@ -142,6 +142,22 @@ def paragraphs(text_path):
     return paras
 
 
+def propose(text_path, template, min_chars=80):
+    """Paragraphs of the converted text matching the template anchors, each pre-verified as a verbatim substring."""
+    canon_all = canonical(Path(text_path).read_text(encoding="utf-8", errors="replace"))
+    anchors = [re.compile(p, re.I) for p in TEMPLATES[template]]
+    proposals = []
+    for s, e, text in paragraphs(text_path):
+        if len(text) < min_chars:
+            continue
+        hits = [p.pattern for p in anchors if p.search(text)]
+        if not hits:
+            continue
+        ok = canonical(text) in canon_all
+        proposals.append({"locator": "lines %d-%d" % (s, e), "text": text, "anchors": hits, "verified": ok})
+    return proposals
+
+
 def build_document(url, *, doc_id, title, publisher, event_time, out_dir, template="earnings", keep=None, min_chars=80):
     """Fetch `url` into out_dir, convert to text and build a research_theme.py `documents[]` entry.
 
@@ -155,17 +171,7 @@ def build_document(url, *, doc_id, title, publisher, event_time, out_dir, templa
     raw = out / name
     ctype = fetch(url, raw)
     txt = to_text(raw, ctype)
-    canon_all = canonical(txt.read_text(encoding="utf-8", errors="replace"))
-    anchors = [re.compile(p, re.I) for p in TEMPLATES[template]]
-    proposals = []
-    for s, e, text in paragraphs(txt):
-        if len(text) < min_chars:
-            continue
-        hits = [p.pattern for p in anchors if p.search(text)]
-        if not hits:
-            continue
-        ok = canonical(text) in canon_all
-        proposals.append({"locator": "lines %d-%d" % (s, e), "text": text, "anchors": hits, "verified": ok})
+    proposals = propose(txt, template, min_chars)
     kept = []
     if keep == "all":
         kept = [p for p in proposals if p["verified"]]

@@ -5,8 +5,11 @@ Pipeline for the chosen row (design: aquarium local_dev/design/2026-10-21-resear
   assemble (assemble.py: source fetch, Thalassa OHLCV, TWSE kpi_series -> config.json)
   -> freeze/prepare (research_theme.py without --narrative: manifest frozen, revision prepared in the ledger)
   -> draft (draft.py: OpenRouter, RESEARCH_DRAFT_OPENROUTER_KEY)
+  -> event_status (pre_event | post_event, decided by assemble from dates, never by the model) is written into the
+     narrative with event_date
   -> gates (schema incl. Poseidon validate_research, narrative extras, quote-in-cited-evidence, claim_precheck strict
-     numbers, lint_atomic, GAAP basis); refused -> ONE repair round with the refusal reasons -> gates again
+     numbers, lint_atomic (inference: multi-quantity allowed), GAAP basis, inference basis marker, pre_event catalysts);
+     refused -> ONE repair round with the refusal reasons -> gates again
   -> JEV jev-1.13 on every FACT claim (JEV_RESEARCH_OPENROUTER_KEY); every label must be `supports`.
      Inference claims are not sent to JEV (UMC 3de55971 precedent: a source never states an inference, so JEV would
      answer says_nothing); they stay gated by claim_precheck (scale/sign) and the verbatim-quote check.
@@ -44,6 +47,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import assemble as assemble_mod  # noqa: E402
 import draft as draft_mod  # noqa: E402
+from claim_precheck import has_inference_basis  # noqa: E402
 
 JEV_KEY_VAR = "JEV_RESEARCH_OPENROUTER_KEY"
 JEV_MODEL = "typesafe/jev-1.13"
@@ -225,6 +229,16 @@ NARRATIVE_LISTS = ("risks", "invalidation_conditions", "unknowns")
 NARRATIVE_TEXTS = ("tl_dr", "thesis", "stance", "change_summary", "next_review_at")
 
 
+def apply_event(narrative, cfg):
+    """Write the runner's event_status / event_date into the drafted narrative (the model never decides them)."""
+    event = cfg.get("event")
+    if event and isinstance(narrative, dict):
+        narrative["event_status"] = event["status"]
+        if event.get("event_date"):
+            narrative["event_date"] = event["event_date"]
+    return narrative
+
+
 def run_gates(narrative, payload, cfg):
     """All local checks; returns (reasons, report). An empty reasons list means the narrative may be completed."""
     import research_theme as rt
@@ -280,6 +294,21 @@ def run_gates(narrative, payload, cfg):
                 f"[quote] claims[{n}] quote is missing or not a verbatim substring of the cited evidence {ids}"
             )
     report["quote_ok"] = sum(quotes)
+    # inference claims must state their basis (owner decision 2026-10-21)
+    for n, c in enumerate(claims):
+        if c.get("kind") == "inference" and not has_inference_basis(c.get("text", "")):
+            reasons.append(
+                f"[basis] claims[{n}] is an inference but its text states no basis: say which numbers/evidence it "
+                "rests on (依…推算 / 依…判斷 / 由 A 與 B 推算) or that it is an expectation (預期 / 可能), or make it a fact"
+            )
+    # pre_event: the event date (when known and not past) must be on the catalyst calendar
+    event = cfg.get("event") or {}
+    if narrative.get("event_status") == "pre_event" and (event.get("event_date") or "") >= payload["as_of"][:10]:
+        dates = [c.get("date") for c in narrative.get("catalysts") or [] if isinstance(c, dict)]
+        if event["event_date"] not in dates:
+            reasons.append(
+                "[event] pre_event research: catalysts must include the event date {}".format(event["event_date"])
+            )
     # claim_precheck strict (numbers: fact any mismatch, inference scale/sign), lint_atomic, GAAP basis
     try:
         report["claim_precheck"] = rt.precheck_claims(narrative, payload["evidence"], allow_non_atomic=False)
@@ -431,6 +460,7 @@ def process_row(row, *, state_dir, ledger, keys, opts):
             except assemble_mod.AssembleError as e:
                 raise StageError("assemble", str(e)) from None
         run.data["assemble_notes"] = cfg["assemble_notes"]
+        run.data["event"] = cfg.get("event")
         run.data["models"]["draft_configured"] = cfg["draft"]["model"]
         config_path = run_dir / "config.json"
         # freeze + prepare
@@ -469,6 +499,7 @@ def process_row(row, *, state_dir, ledger, keys, opts):
                     run.data["draft_calls"].append({"round": round_no, **e.record, "error": str(e)})
                     raise StageError("draft", str(e)) from None
             run.data["draft_calls"].append({"round": round_no, **attempt.record})
+            apply_event(attempt.narrative, cfg)
             if round_no == 2:
                 (run_dir / "narrative.json").replace(run_dir / "narrative.draft1.json")
             write_json(run_dir / "narrative.json", attempt.narrative)

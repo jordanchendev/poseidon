@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Render a research revision JSON (from research_theme.py) as Markdown. Sections that need fields a revision lacks are
-omitted, so older revisions still render."""
+omitted, so older revisions still render. Inference claims are prefixed 【推論】 (facts are not); a revision with
+event_status pre_event opens with a warning banner (事前推論)."""
 
 import json
 import sys
@@ -25,7 +26,18 @@ bench = next(
     ),
     None,
 )
+banner = []
+if r.get("event_status") == "pre_event":
+    ed = r.get("event_date") or next(
+        (c["date"] for c in sorted(r.get("catalysts") or [], key=lambda c: c["date"]) if c["date"] >= r["as_of"][:10]),
+        None,
+    )
+    if ed and ed < r["as_of"][:10]:
+        banner = [f"> [!warning] 事前推論：證據中沒有事件（{ed}）的結果，以下關於結果的內容皆為推論。\n"]
+    else:
+        banner = [f"> [!warning] 事前推論：事件（{ed or '日期未知'}）尚未發生，以下關於結果的內容皆為推論。\n"]
 L = [
+    *banner,
     f"**立場：{r['stance']}**　|　scope `{r['scope_key']}`　|　as_of `{r['as_of']}`　|　revision `{i['revision_id'][:8]}`　|　status `{i['status']}`\n",
     *(["> **推論｜一句話結論：** " + " ".join(r["tl_dr"].split()) + "\n"] if r.get("tl_dr") else []),
     "## 論點\n\n" + r["thesis"] + "\n",
@@ -216,9 +228,10 @@ if r.get("catalysts"):
         f"| {c['date']} | {c['type']} | {c['expected_signal']} | {c['source']} |"
         for c in sorted(r["catalysts"], key=lambda c: c["date"])
     ]
-for title, kind in (("事實（引用凍結證據）", "fact"), ("推論", "inference")):
+# inference claims carry a visible 【推論】 prefix wherever a human reads them (owner decision 2026-10-21); facts do not
+for title, kind, mark in (("事實（引用凍結證據）", "fact", ""), ("推論", "inference", "【推論】")):
     L.append(f"\n## {title}\n")
-    L += [f"- {c['text']}　_引用：{', '.join(c['evidence_ids'])}_" for c in r["claims"] if c["kind"] == kind] or [
+    L += [f"- {mark}{c['text']}　_引用：{', '.join(c['evidence_ids'])}_" for c in r["claims"] if c["kind"] == kind] or [
         "- （無）"
     ]
 for title, key in (("風險", "risks"), ("失效條件", "invalidation_conditions"), ("未知", "unknowns")):

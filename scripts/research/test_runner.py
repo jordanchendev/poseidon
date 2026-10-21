@@ -79,7 +79,7 @@ def good_narrative():
             },
             {
                 "kind": "inference",
-                "text": "2303 的價格事實已凍結供事件後追蹤。",
+                "text": "依 2303 的價格事實判斷，股價反應仍待事件後追蹤。",
                 "evidence_ids": ["ohlcv:2303", "price_facts:2303"],
                 "quote": "2303 price facts (algorithm price-facts-v2",
             },
@@ -617,3 +617,231 @@ def test_outbox_mode_queues_reports_and_host_delivery(env):
     (outbox / "20261021-9.json").write_text(json.dumps({"verb": "done", "args": ["20261021-9", "x; rm"], "stdin": ""}))
     assert deliver_outbox.main(["--outbox", str(outbox), "--bridge", bridge_cmd]) == 4
     assert len(bridge_calls(env, "done")) == 2  # malformed entry never reaches the bridge
+
+
+# ------------------------------------------------------------------------------------------------ owner decisions 2026-10-21
+# 1: derived inferences pass lint and are marked 【推論】; 2: future events are researched as pre_event inference.
+UMC_DERIVED = "由上半年累計 4.68 元與第二季 3.39 元推算，第一季每股盈餘約為 1.29 元。"
+NOTICE_ID = "20261021-7"
+NOTICE_DOC = f"fundamental:agenda-{NOTICE_ID}"
+# A MOPS-style notice of a future investor conference: no earnings-template anchor, event dated after as_of.
+NOTICE_HTML = """<html><body>
+<p>本公司召開2026年第三季法人說明會</p>
+
+<p>1.事實發生日:115/10/21 2.召開法人說明會之日期:115/10/28 3.召開法人說明會之時間:14 時 00 分</p>
+
+<p>4.召開法人說明會之地點:台北君悅酒店，本公司將於會中說明營運概況並回答法人提問。</p>
+</body></html>
+"""
+NOTICE_ROW = dict(
+    ROW,
+    id=NOTICE_ID,
+    topic="本公司召開2026年第三季法人說明會",
+    event_date="2026-10-21",
+    event_type="investor_conference",
+    primary_source_url="https://mops.example.test/notice-2303.htm",
+)
+
+
+def pre_event_narrative(catalysts=True):
+    n = {
+        "tl_dr": "事前推論：聯電 10/28 法說會尚未舉行，第四季展望待會後確認。",
+        "thesis": "聯電已公告第三季法說會日期，結果尚未公布，本筆記為事前推論。",
+        "stance": "watch",
+        "change_summary": "首版（事前）。",
+        "next_review_at": "2026-10-28T09:00:00Z 法說會後補版",
+        "risks": ["法說會內容不如預期。"],
+        "invalidation_conditions": ["法說會延期。"],
+        "unknowns": ["第四季指引。"],
+        "claims": [
+            {
+                "kind": "fact",
+                "text": "聯電已公告將召開第三季法人說明會。",
+                "evidence_ids": [NOTICE_DOC],
+                "quote": "2.召開法人說明會之日期:115/10/28",
+            },
+            {
+                "kind": "fact",
+                "text": "2303 的日線價格已凍結於 manifest。",
+                "evidence_ids": ["ohlcv:2303"],
+                "quote": "2303 daily bars (last",
+            },
+            {
+                "kind": "inference",
+                "text": "依法說會公告判斷，第四季展望要待法說會後才能確認。",
+                "evidence_ids": [NOTICE_DOC],
+                "quote": "召開法人說明會之日期:115/10/28",
+            },
+        ],
+    }
+    if catalysts:
+        n["catalysts"] = [
+            {"date": "2026-10-28", "type": "earnings_call", "expected_signal": "第四季展望", "source": NOTICE_DOC}
+        ]
+    return n
+
+
+@pytest.fixture()
+def notice_env(env, tmp_path):
+    (tmp_path / "web" / "notice-2303.htm").write_text(NOTICE_HTML, encoding="utf-8")
+    env["set_bridge"](rows=[NOTICE_ROW])
+    env["run_dir"] = env["state"] / "runs" / NOTICE_ID
+    return env
+
+
+def render_md(path):
+    import subprocess
+
+    p = subprocess.run([sys.executable, str(HERE / "render_theme.py"), str(path)], capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    return p.stdout
+
+
+def test_umc_derived_inference_passes_lint_as_inference_only():
+    from claim_precheck import has_inference_basis, lint_atomic
+
+    assert lint_atomic(UMC_DERIVED, "inference")["ok"] is True
+    fact = lint_atomic(UMC_DERIVED, "fact")
+    assert fact["ok"] is False and "2 clauses carry their own quantity" in fact["reason"]
+    assert lint_atomic(UMC_DERIVED)["ok"] is False  # no kind = fact behaviour
+    assert has_inference_basis(UMC_DERIVED)
+    # inference still refuses a causal clause and two separately asserted metrics
+    assert lint_atomic("受惠於 AI 需求，營收可能成長 20%。", "inference")["ok"] is False
+    assert lint_atomic("營收預期成長 20%，毛利率可能下滑 2 個百分點。", "inference")["ok"] is False
+
+
+def test_umc_derivation_recorded_and_scale_still_refused():
+    import research_theme
+
+    ev = [
+        {
+            "id": "fundamental:umc",
+            "kind": "fundamental",
+            "payload": {"excerpts": [{"text": "第二季每股盈餘為新台幣 3.39 元，上半年累計每股盈餘 4.68 元。"}]},
+        }
+    ]
+    claim = {"kind": "inference", "text": UMC_DERIVED, "evidence_ids": ["fundamental:umc"]}
+    res = research_theme.precheck_claims({"claims": [claim]}, ev)[0]
+    assert res["numbers"] == "ok" and res["atomic"] is True
+    assert res["derived"] == [{"claim": "1.29 元", "how": "A-B", "from": ["4.68 元", "新台幣 3.39 元"], "value": 1.29}]
+    # A+B is accepted for inference claims only
+    s = dict(claim, text="由第一季 1.29 元與第二季 3.39 元推算，上半年每股盈餘約為 4.68 元。")
+    ev_q = [dict(ev[0], payload={"excerpts": [{"text": "第一季每股盈餘 1.29 元，第二季每股盈餘 3.39 元。"}]})]
+    assert research_theme.precheck_claims({"claims": [s]}, ev_q)[0]["derived"][0]["how"] == "A+B"
+    with pytest.raises(SystemExit, match="numeric mismatch"):
+        research_theme.precheck_claims({"claims": [dict(s, kind="fact")]}, ev_q)
+    with pytest.raises(SystemExit, match="non-atomic"):
+        research_theme.precheck_claims({"claims": [dict(claim, kind="fact")]}, ev)
+    # a scale slip in a derivation still refuses
+    bad = dict(claim, text="由上半年累計 4.68 元與第二季 3.39 元推算，第一季每股盈餘約為 12.9 元。")
+    with pytest.raises(SystemExit, match="scale"):
+        research_theme.precheck_claims({"claims": [bad]}, ev)
+
+
+def test_inference_without_basis_refused_then_repaired(env):
+    n = good_narrative()
+    n["claims"][2]["text"] = "2303 的價格事實已凍結供事件後追蹤。"  # phrased as an observation, no basis
+    t = FakeOpenRouter([n, good_narrative()])
+    assert env["run"](t) == 0
+    run = json.loads((env["run_dir"] / "run.json").read_text())
+    assert run["status"] == "completed" and len(t.chat_calls) == 2
+    assert [r for r in run["gates"][0]["reasons"] if r.startswith("[basis] claims[2]")]
+    assert run["gates"][1]["reasons"] == []
+    assert "[basis] claims[2]" in t.chat_calls[1]["messages"][-1]["content"]
+    # the system prompt tells the model to state the basis
+    assert "依…推算" in t.chat_calls[0]["messages"][0]["content"]
+
+
+def test_rendered_markdown_marks_inference_only(env):
+    t = FakeOpenRouter([good_narrative()])
+    assert env["run"](t) == 0
+    rev = json.loads((env["run_dir"] / "revision.json").read_text())
+    assert rev["research"]["event_status"] == "post_event" and rev["research"]["event_date"] == "2026-10-06"
+    md = render_md(env["run_dir"] / "revision.json")
+    lines = md.splitlines()
+    for c in rev["research"]["claims"]:
+        line = next(ln for ln in lines if c["text"] in ln)
+        assert line.startswith("- 【推論】") == (c["kind"] == "inference"), line
+    assert "事前推論" not in md
+
+
+def test_pre_event_detected_from_notice_and_assemble_falls_back(notice_env, tmp_path):
+    env = notice_env
+    cfg = assemble.assemble(NOTICE_ROW, tmp_path / "asm", as_of_dt=AS_OF, **env["assemble_kw"])
+    assert cfg["event"]["status"] == "pre_event" and cfg["event"]["event_date"] == "2026-10-28"
+    assert any("召開法人說明會之日期 2026-10-28" in w for w in cfg["event"]["why"])
+    assert any("no template excerpt matched" in w for w in cfg["event"]["why"])
+    doc = cfg["documents"][0]
+    assert doc["excerpts"] and any("115/10/28" in ex["text"] for ex in doc["excerpts"])
+    assert any("generic fallback" in n for n in cfg["assemble_notes"])
+    assert cfg["kpi_symbols"] == ["2303"] and (tmp_path / "asm" / "bars.csv").stat().st_size > 0
+    assert assemble.notice_event_dates("事實發生日：115年10月28日")[0][1] == datetime.date(2026, 10, 28)
+    # a past event whose document matched the template is post_event
+    past = assemble.event_status(ROW, AS_OF, {"excerpts": [{"text": "x"}]}, True)
+    assert past["status"] == "post_event" and past["why"] == []
+    future = assemble.event_status(dict(ROW, event_date="2026-10-28"), AS_OF, {"excerpts": []}, True)
+    assert future["status"] == "pre_event" and future["event_date"] == "2026-10-28"
+
+
+def test_pre_event_without_catalysts_refused(notice_env):
+    env = notice_env
+    t = FakeOpenRouter([pre_event_narrative(catalysts=False), pre_event_narrative(catalysts=False)])
+    assert env["run"](t) == 0
+    run = json.loads((env["run_dir"] / "run.json").read_text())
+    assert run["status"] == "needs_review" and run["failed_stage"] == "gates"
+    assert any("pre_event requires a non-empty catalysts list" in r for r in run["gates"][0]["reasons"])
+    # the prompt carried the runner's decision
+    assert '"event_status": "pre_event"' in t.chat_calls[0]["messages"][1]["content"]
+    # a catalyst list without the event date is refused too
+    n = pre_event_narrative()
+    n["catalysts"][0]["date"] = "2026-11-10"
+    n["next_review_at"] = "2026-11-10T09:00:00Z 月營收"
+    reasons, _ = runner.run_gates(
+        runner.apply_event(n, {"event": run["event"]}),
+        json.loads((env["run_dir"] / "revision.json").read_text())["manifest_payload"],
+        json.loads((env["run_dir"] / "config.json").read_text()),
+    )
+    assert reasons == ["[event] pre_event research: catalysts must include the event date 2026-10-28"]
+
+
+def test_pre_event_completes_with_banner_and_frontmatter(notice_env, tmp_path):
+    import subprocess
+
+    env = notice_env
+    drafted = pre_event_narrative()
+    drafted["event_status"] = "post_event"  # the model never decides it; the runner overwrites
+    t = FakeOpenRouter([drafted])
+    assert env["run"](t) == 0
+    run = json.loads((env["run_dir"] / "run.json").read_text())
+    assert run["status"] == "completed", run["reasons"]
+    rev_path = env["run_dir"] / "revision.json"
+    research = json.loads(rev_path.read_text())["research"]
+    assert research["event_status"] == "pre_event" and research["event_date"] == "2026-10-28"
+    md = render_md(rev_path)
+    assert md.startswith("> [!warning] 事前推論：事件（2026-10-28）尚未發生，以下關於結果的內容皆為推論。")
+    assert "- 【推論】依法說會公告判斷" in md
+    past = json.loads(rev_path.read_text())
+    past["research"]["event_date"] = "2026-10-01"  # outcome missing from the evidence, event already past
+    (tmp_path / "past.json").write_text(json.dumps(past, ensure_ascii=False))
+    assert render_md(tmp_path / "past.json").startswith("> [!warning] 事前推論：證據中沒有事件（2026-10-01）的結果")
+    vault = tmp_path / "vault"
+    p = subprocess.run(
+        [
+            sys.executable,
+            str(HERE / "project_vault.py"),
+            str(rev_path),
+            "--title",
+            "聯電法說會（事前）",
+            "--evidence-dir",
+            "ev",
+            "--out-dir",
+            str(vault),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    note = next((vault / "Research" / "tw_stock-spot-2303").glob("*.md")).read_text()
+    fm = note.split("\n---\n", 1)[0]
+    assert "\nevent_status: pre_event" in fm and "\nnext_review_at: 2026-10-28T09:00:00Z" in fm
+    assert "> [!warning] 事前推論" in note

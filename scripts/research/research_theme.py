@@ -21,6 +21,8 @@ Narrative extras (not part of Poseidon's contract; validated here before complet
   - catalysts: [{date YYYY-MM-DD, type in CATALYST_TYPES, expected_signal, source}]; next_review_at must then start with
     the earliest catalyst date >= the as_of date.
   - tl_dr: one sentence, treated as inference.
+  - event_status: pre_event|post_event (+ optional event_date YYYY-MM-DD), decided by the research runner, never the
+    model; pre_event requires a non-empty catalysts list. Kept in research_json (Poseidon keeps extra narrative keys).
 Guidance (gap B2): documents[].guidance[] {metric, period, low+high|value, unit, basis GAAP|non-GAAP|IFRS|n/a, fx_assumption?,
   excerpt_locator} is checked number-by-number against the referenced excerpt with check_numbers (scale/sign mismatch
   refuses the freeze, value/absent warns) and stored in the document payload (hashed). Config actuals[] {metric, period,
@@ -44,10 +46,12 @@ Supersede: narrative supersedes_revision_id (or supersedes) must be a completed 
 Claim precheck (claim_precheck.py, run before complete_human_research on every narrative claim):
   - numeric: claim quantities must match the cited evidence's excerpt texts (document kinds with payload.excerpts, and
     kpi_series points rendered as text). Fact claims: any mismatch refuses. Inference claims: only scale/sign mismatches
-    refuse; other mismatches are recorded as numbers="mismatch-recorded" with the unmatched items.
+    refuse; other mismatches are recorded as numbers="mismatch-recorded" with the unmatched items. Inference claims may
+    also match A+B of two cited quantities; a derivation precheck recomputed is recorded as `derived` [{claim, how, from}].
     Claims citing price_facts/ohlcv are not numerically checked (their numbers come from derived facts, not excerpts);
     claims citing no excerpt-bearing evidence are not numerically checked either. See the fact/inference split above.
-  - atomic: a non-atomic claim refuses completion unless cfg["allow_non_atomic"] is true.
+  - atomic: a non-atomic claim refuses completion unless cfg["allow_non_atomic"] is true. For inference claims the
+    multi-quantity rule does not refuse (a derivation names its inputs); causal clauses still do (lint_atomic kind).
 """
 
 import argparse
@@ -181,6 +185,7 @@ def document_evidence(item, as_of):
 
 PRICE_FACTS_ALGO = "price-facts-v2"  # v1 fields + T+1/T+5 and benchmark-relative event returns (see module docstring)
 CATALYST_TYPES = ("monthly_revenue", "earnings_call", "agm", "investor_day", "product_event", "regulatory", "other")
+EVENT_STATUSES = ("pre_event", "post_event")  # narrative.event_status, set by the runner (never by the model)
 
 
 def _frame(ohlcv_item):
@@ -270,7 +275,17 @@ def validate_narrative_extras(narrative, as_of):
     """Offline shape checks for optional narrative fields; raises SystemExit with a clear message."""
     if "tl_dr" in narrative and not (isinstance(narrative["tl_dr"], str) and narrative["tl_dr"].strip()):
         raise SystemExit("tl_dr must be a non-empty string")
+    status = narrative.get("event_status")
+    if status is not None and status not in EVENT_STATUSES:
+        raise SystemExit("event_status must be one of %s, got %r" % ("|".join(EVENT_STATUSES), status))
+    if narrative.get("event_date") is not None:
+        try:
+            datetime.date.fromisoformat(str(narrative["event_date"]))
+        except ValueError:
+            raise SystemExit("event_date must be an ISO date YYYY-MM-DD, got %r" % narrative["event_date"])
     cats = narrative.get("catalysts")
+    if status == "pre_event" and not (isinstance(cats, list) and cats):
+        raise SystemExit("event_status pre_event requires a non-empty catalysts list (include the event date)")
     if cats is None:
         return
     if not isinstance(cats, list) or not cats:
@@ -1295,13 +1310,21 @@ def precheck_claims(narrative, evidence, allow_non_atomic=False):
             excerpts += [consensus_text(e["payload"]) for e in cited if e["kind"] == "consensus"]
             excerpts += [surprise_text(e["payload"]) for e in cited if e["kind"] == "surprise"]
             num = (
-                check_numbers(text, "\n".join(excerpts))
+                check_numbers(text, "\n".join(excerpts), allow_sum=claim.get("kind") == "inference")
                 if excerpts
                 else {"status": "skipped", "reason": "no cited excerpts"}
             )
-        atom = lint_atomic(text)
+        atom = lint_atomic(text, claim.get("kind"))
         basis = check_basis(text, [ex["text"] for e in cited for ex in e["payload"].get("excerpts", [])])
         numbers = num["status"]
+        # a stated derivation (A-B, A+B, A/B, ...) that precheck recomputed from the cited numbers is recorded
+        derived = [
+            {"claim": m["claim"], **{k: v for k, v in via.items() if k in ("how", "from", "value")}}
+            for m in num.get("matched", [])
+            if m.get("match") == "derived"
+            for via in m["via"]
+            if via.get("match") == "derived"
+        ]
         if (
             numbers == "mismatch"
             and claim.get("kind") == "inference"
@@ -1319,6 +1342,7 @@ def precheck_claims(narrative, evidence, allow_non_atomic=False):
                     if numbers == "mismatch-recorded"
                     else {}
                 ),
+                **({"derived": derived} if derived else {}),
             }
         )
         if basis == "missing":
