@@ -152,7 +152,8 @@ celery_app.conf.update(
         },
         # Phase 101-17.2: retry slots inside the ohlcv freshness window (the 05:30Z TW bar
         # plus max_age_seconds 14400 -> 09:30Z). Same task; once the day has a complete
-        # evaluation run it returns {"skipped": "already_produced"} without freezing.
+        # evaluation run it returns {"skipped": "already_produced"}, and while a same-day run
+        # is non-terminal it returns {"skipped": "in_progress"}, both without freezing.
         "decision-loop-produce-tw-daily-retry-1": {
             "task": "poseidon.workers.cpu_tasks.produce_decision_runs_for_market",
             "schedule": crontab(hour=6, minute=55),

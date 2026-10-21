@@ -1012,3 +1012,130 @@ def test_complete_runs_on_day_matches_only_complete_runs_of_the_versions(db):
     db.query(EvaluationRun).filter(EvaluationRun.id == uuid.UUID(run_id)).update({"status": "failed"})
     db.flush()
     assert _complete_runs_on_day(db, [version.id], AS_OF) == []
+
+
+def _produced_run_with_status(db, status):
+    version = make_version(db)
+    _activate(db, version)
+    manifest = ManifestService(db).freeze(manifest_request())
+    run_id = ProducerService(db).produce(
+        version.id, manifest.id, decision_as_of=AS_OF, principal=worker(), mode="shadow"
+    )["evaluation_run_id"]
+    db.query(EvaluationRun).filter(EvaluationRun.id == uuid.UUID(run_id)).update({"status": status})
+    db.commit()
+    return version, run_id
+
+
+def test_produce_task_skips_while_the_day_has_a_pending_run(monkeypatch, db):
+    """A retry slot must not freeze a second manifest while the earlier slot's run is unsettled."""
+    from poseidon.models.data_manifest import DataManifest
+
+    _, run_id = _produced_run_with_status(db, "pending")
+
+    def evidence(market, interval, symbol, as_of):
+        pytest.fail("retry slot froze evidence although a same-day run is still pending")
+
+    cpu_tasks, enqueued = _producer_task_env(monkeypatch, db, evidence)
+    retry_as_of = "2026-09-26T12:15:00Z"
+    assert cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of) == {
+        "skipped": "in_progress",
+        "as_of": retry_as_of,
+        "runs": [run_id],
+    }
+    assert enqueued == []
+    assert db.query(DataManifest).count() == 1
+
+
+@pytest.mark.parametrize("status", ["running", "queued"])
+def test_produce_task_treats_unknown_statuses_as_in_progress(monkeypatch, db, status):
+    _, run_id = _produced_run_with_status(db, status)
+    cpu_tasks, enqueued = _producer_task_env(
+        monkeypatch, db, lambda market, interval, symbol, as_of: pytest.fail("froze on a non-terminal day")
+    )
+    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", "2026-09-26T12:15:00Z")
+    assert result["skipped"] == "in_progress" and result["runs"] == [run_id]
+    assert enqueued == []
+
+
+def test_produce_task_reproduces_a_day_whose_runs_all_failed(monkeypatch, db):
+    from poseidon.models.data_manifest import DataManifest
+
+    version, _ = _produced_run_with_status(db, "failed")
+    cpu_tasks, enqueued = _producer_task_env(
+        monkeypatch, db, lambda market, interval, symbol, as_of: ohlcv_evidence(symbol)
+    )
+    retry_as_of = "2026-09-26T12:15:00Z"
+    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of)
+    assert result["as_of"] == retry_as_of and result["enqueued"] == 1
+    assert db.query(DataManifest).count() == 2
+    assert enqueued == [((str(version.id), result["manifest_id"], retry_as_of), {})]
+
+
+def test_produce_task_prefers_already_produced_over_in_progress(monkeypatch, db):
+    """One complete run settles the day even if another same-day run is still pending."""
+    version, complete_id = _produced_run_with_status(db, "complete")
+    complete = db.get(EvaluationRun, uuid.UUID(complete_id))
+    db.add(
+        EvaluationRun(
+            strategy_version_id=version.id,
+            manifest_id=complete.manifest_id,
+            decision_as_of=complete.decision_as_of,
+            universe_json=complete.universe_json,
+            input_sha256="0" * 64,
+            status="pending",
+            coverage_json={},
+        )
+    )
+    db.commit()
+    cpu_tasks, enqueued = _producer_task_env(
+        monkeypatch, db, lambda market, interval, symbol, as_of: pytest.fail("froze on a produced day")
+    )
+    retry_as_of = "2026-09-26T12:15:00Z"
+    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of)
+    assert result == {"skipped": "already_produced", "as_of": retry_as_of, "runs": [complete_id]}
+    assert enqueued == []
+
+
+def test_in_progress_runs_on_day_matches_only_non_terminal_runs_of_the_versions(db):
+    from poseidon.workers.cpu_tasks import _complete_runs_on_day, _in_progress_runs_on_day
+
+    version = make_version(db)
+    manifest = ManifestService(db).freeze(manifest_request())
+    run_id = ProducerService(db).produce(
+        version.id, manifest.id, decision_as_of=AS_OF, principal=worker(), mode="shadow"
+    )["evaluation_run_id"]
+    db.flush()
+    assert _in_progress_runs_on_day(db, [version.id], AS_OF) == []
+    for status, expected in (("pending", [run_id]), ("failed", []), ("complete", [])):
+        db.query(EvaluationRun).filter(EvaluationRun.id == uuid.UUID(run_id)).update({"status": status})
+        db.flush()
+        assert _in_progress_runs_on_day(db, [version.id], AS_OF) == expected
+    db.query(EvaluationRun).filter(EvaluationRun.id == uuid.UUID(run_id)).update({"status": "pending"})
+    db.flush()
+    assert _complete_runs_on_day(db, [version.id], AS_OF) == []
+    assert _in_progress_runs_on_day(db, [version.id], "2026-09-27T00:00:00Z") == []
+    assert _in_progress_runs_on_day(db, [uuid.uuid4()], AS_OF) == []
+    assert _in_progress_runs_on_day(db, [], AS_OF) == []
+
+
+def test_produce_task_stuck_pending_run_skips_every_retry_slot(monkeypatch, db):
+    """THREAT (accepted, mitigation deferred to 101-19): a run stuck in ``pending`` blocks the day.
+
+    The retry slots are 15 minutes apart, so a pending run that never settles makes every slot up
+    to the 09:30Z freshness edge return ``in_progress`` and the session produces nothing. 101-19 is
+    to treat a run pending longer than N minutes as stale; no TTL is implemented here on purpose.
+    """
+    from poseidon.models.data_manifest import DataManifest
+
+    _, run_id = _produced_run_with_status(db, "pending")
+    cpu_tasks, enqueued = _producer_task_env(
+        monkeypatch, db, lambda market, interval, symbol, as_of: pytest.fail("froze while a run is pending")
+    )
+    for slot in ("2026-09-26T06:55:00Z", "2026-09-26T07:10:00Z", "2026-09-26T07:25:00Z"):
+        assert cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", slot) == {
+            "skipped": "in_progress",
+            "as_of": slot,
+            "runs": [run_id],
+        }
+    assert enqueued == []
+    assert db.query(DataManifest).count() == 1

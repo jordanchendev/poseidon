@@ -936,12 +936,14 @@ def produce_decision_run(strategy_version_id: str, manifest_id: str, decision_as
         )
 
 
-def _complete_runs_on_day(session, version_ids: list, as_of: str) -> list[str]:
-    """Complete evaluation runs for ``version_ids`` whose ``decision_as_of`` falls on the UTC day of ``as_of``.
+# EvaluationRun statuses that settle a run. The model writes "pending" then "complete"; "failed"
+# is the terminal-failure spelling. Any other (or future) status counts as still in progress, so an
+# unknown status fails closed (skip) instead of letting a retry slot freeze a second manifest.
+_RUN_TERMINAL_STATUSES = frozenset({"complete", "failed"})
 
-    Phase 101-17.2: the beat retry slots call the producer several times per session; the
-    first successful freeze settles the day, later slots must not freeze a second manifest.
-    """
+
+def _runs_on_day(session, version_ids: list, as_of: str) -> list:
+    """Evaluation runs (any status) for ``version_ids`` whose ``decision_as_of`` is on the UTC day of ``as_of``."""
     from sqlalchemy import select
 
     from poseidon.decision_loop.manifest import timestamp
@@ -952,7 +954,7 @@ def _complete_runs_on_day(session, version_ids: list, as_of: str) -> list[str]:
     day = timestamp(as_of, "as_of").date()
     runs = session.scalars(
         select(EvaluationRun)
-        .where(EvaluationRun.strategy_version_id.in_(version_ids), EvaluationRun.status == "complete")
+        .where(EvaluationRun.strategy_version_id.in_(version_ids))
         .order_by(EvaluationRun.decision_as_of.desc(), EvaluationRun.id)
         .limit(200)
     ).all()
@@ -962,8 +964,24 @@ def _complete_runs_on_day(session, version_ids: list, as_of: str) -> list[str]:
         if stored.tzinfo is None:
             stored = stored.replace(tzinfo=UTC)
         if stored.astimezone(UTC).date() == day:
-            matched.append(str(run.id))
-    return sorted(matched)
+            matched.append(run)
+    return matched
+
+
+def _complete_runs_on_day(session, version_ids: list, as_of: str) -> list[str]:
+    """Complete evaluation runs for ``version_ids`` whose ``decision_as_of`` falls on the UTC day of ``as_of``.
+
+    Phase 101-17.2: the beat retry slots call the producer several times per session; the
+    first successful freeze settles the day, later slots must not freeze a second manifest.
+    """
+    return sorted(str(run.id) for run in _runs_on_day(session, version_ids, as_of) if run.status == "complete")
+
+
+def _in_progress_runs_on_day(session, version_ids: list, as_of: str) -> list[str]:
+    """Same-day runs for ``version_ids`` that are not yet terminal (not complete and not failed)."""
+    return sorted(
+        str(run.id) for run in _runs_on_day(session, version_ids, as_of) if run.status not in _RUN_TERMINAL_STATUSES
+    )
 
 
 @celery_app.task(name="poseidon.workers.cpu_tasks.produce_decision_runs_for_market", max_retries=0)
@@ -971,7 +989,8 @@ def produce_decision_runs_for_market(market: str, interval: str, as_of: str | No
     """Beat entry: freeze once, then enqueue one UUID-only producer task per active version.
 
     Scheduled at 06:40Z and at three retry slots (06:55Z, 07:10Z, 07:25Z) inside the ohlcv
-    freshness window; a slot that finds the day already produced skips without freezing.
+    freshness window; a slot that finds the day already produced (a complete run) or still in
+    progress (a non-terminal run) skips without freezing. A day whose runs all failed is re-produced.
     """
     skipped = _loop_mode_skip() or _loop_market_skip(market)
     if skipped:
@@ -985,9 +1004,14 @@ def produce_decision_runs_for_market(market: str, interval: str, as_of: str | No
             market, interval, settings.decision_loop_approved_account_scope
         )
         produced = _complete_runs_on_day(session, [version.id for version in versions], as_of)
+        in_progress = [] if produced else _in_progress_runs_on_day(session, [version.id for version in versions], as_of)
         version_ids = [str(version.id) for version in versions]
     if produced:
         return {"skipped": "already_produced", "as_of": as_of, "runs": produced}
+    if in_progress:
+        # An earlier slot's run has not settled yet; a second freeze would mean two runs (and, in
+        # decision mode, two decisions) for one session. Only all-failed days are re-produced.
+        return {"skipped": "in_progress", "as_of": as_of, "runs": in_progress}
     frozen = freeze_market_manifest.run(market, interval, as_of)
     if "manifest_id" not in frozen:
         return frozen
