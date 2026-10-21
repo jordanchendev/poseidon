@@ -7,11 +7,13 @@ from sqlalchemy import text
 
 from poseidon.api.auth import AuthPrincipal
 from poseidon.decision_loop.manifest import (
+    NON_FACT_TIERS,
     ValidationError,
     canonical_json,
     content_sha256,
     insert_once,
     required_text,
+    source_tier,
     timestamp,
     verify_manifest,
 )
@@ -33,6 +35,52 @@ def request_identity(scope_key, manifest, predecessor, policy_version, provider,
         "model": model,
         "runtime_digest": runtime_digest,
     }
+
+
+def _excerpt_locators(item):
+    excerpts = item.get("payload", {}).get("excerpts") if isinstance(item.get("payload"), dict) else None
+    if not isinstance(excerpts, list):
+        return set()
+    return {excerpt.get("locator") for excerpt in excerpts if isinstance(excerpt, dict)}
+
+
+def validate_claim_citations(claim, evidence):
+    """SEED-002 B2: optional excerpt-level citations; evidence_ids must equal the cited set."""
+    if "citations" not in claim:
+        return
+    citations = claim["citations"]
+    if not isinstance(citations, list) or not citations:
+        raise ValidationError("claim.citations must be a non-empty list when present")
+    cited_ids = set()
+    pairs = set()
+    for citation in citations:
+        if not isinstance(citation, dict):
+            raise ValidationError("claim.citations entries must be objects")
+        evidence_id = citation.get("evidence_id")
+        if not isinstance(evidence_id, str) or evidence_id not in evidence:
+            raise ValidationError(f"claim citation evidence_id {evidence_id!r} does not belong to frozen evidence")
+        locator = required_text(citation.get("excerpt_locator"), "claim citation excerpt_locator")
+        if locator not in _excerpt_locators(evidence[evidence_id]):
+            raise ValidationError(f"claim citation excerpt_locator {locator!r} not found in evidence {evidence_id}")
+        if (evidence_id, locator) in pairs:
+            raise ValidationError(f"claim citation {evidence_id}#{locator} is duplicated")
+        pairs.add((evidence_id, locator))
+        cited_ids.add(evidence_id)
+    if set(claim["evidence_ids"]) != cited_ids:
+        raise ValidationError("claim.evidence_ids must equal the evidence cited in claim.citations")
+
+
+def validate_claim_tier(claim, evidence):
+    """SEED-002 B3: fact claims may not rest on third-party or secondary attribution."""
+    claim_tier = source_tier(claim.get("source_tier"), "claim.source_tier")
+    if claim["kind"] != "fact":
+        return
+    tiers = {claim_tier} | {evidence[item].get("source_tier") for item in claim["evidence_ids"]}
+    if tiers & NON_FACT_TIERS:
+        raise ValidationError(
+            "fact claims require official or derived evidence; "
+            f"cited tiers {sorted(tier for tier in tiers if tier)} include a non-fact tier"
+        )
 
 
 def validate_research(research, revision, payload):
@@ -69,6 +117,8 @@ def validate_research(research, revision, payload):
             or any(not isinstance(item, str) or item not in evidence for item in citations)
         ):
             raise ValidationError("claim citations must belong to frozen evidence")
+        validate_claim_citations(claim, evidence)
+        validate_claim_tier(claim, evidence)
         cited.update(citations)
     for kind in payload["required_data"]:
         if not any(evidence[item]["kind"] == kind for item in cited):

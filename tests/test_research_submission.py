@@ -7,7 +7,7 @@ from poseidon.api.auth import AuthPrincipal
 from poseidon.decision_loop.manifest import ManifestService, ValidationError
 from poseidon.decision_loop.research import ResearchService
 from tests.test_decision_loop_foundation import db as foundation_db
-from tests.test_decision_loop_foundation import manifest_request
+from tests.test_decision_loop_foundation import manifest_request, with_excerpts
 
 db = foundation_db
 RESEARCHER = AuthPrincipal("human", frozenset({"researcher"}), frozenset({"paper:pilot"}))
@@ -172,3 +172,110 @@ def test_completion_rejects_missing_role_worker_and_cross_account(db, principal,
             request_sha256=revision.request_sha256,
         )
     assert error.value.status_code == 403
+
+
+def excerpt_manifest(db, fundamental_tier=None, ohlcv_tier=None):
+    request = with_excerpts(manifest_request(), index=0, tier=fundamental_tier)
+    if ohlcv_tier is not None:
+        request["evidence"][1]["source_tier"] = ohlcv_tier
+    return ManifestService(db).freeze(request)
+
+
+def complete_with_claim(db, manifest, claim):
+    service = ResearchService(db)
+    revision = prepare(service, manifest)
+    body = narrative(manifest)
+    body["claims"][0] = claim
+    return complete(service, revision, body), revision
+
+
+def test_excerpt_citations_happy_path(db):
+    manifest = excerpt_manifest(db, fundamental_tier="official-prepared", ohlcv_tier="derived")
+    claim = {
+        "kind": "fact",
+        "text": "revenue grew",
+        "source_tier": "official-prepared",
+        "evidence_ids": ["fundamental"],
+        "citations": [
+            {"evidence_id": "fundamental", "excerpt_locator": "p1:l1"},
+            {"evidence_id": "fundamental", "excerpt_locator": "p1:l2"},
+        ],
+    }
+    completed, _ = complete_with_claim(db, manifest, claim)
+    assert completed.status == "completed"
+    assert completed.research_json["claims"][0]["citations"][1]["excerpt_locator"] == "p1:l2"
+
+
+@pytest.mark.parametrize(
+    "evidence_ids,citations,match",
+    [
+        (["fundamental"], [{"evidence_id": "fundamental", "excerpt_locator": "p9:l9"}], "'p9:l9' not found"),
+        (["ohlcv"], [{"evidence_id": "ohlcv", "excerpt_locator": "p1:l1"}], "not found in evidence ohlcv"),
+        (["fundamental"], [{"evidence_id": "invented", "excerpt_locator": "p1:l1"}], "'invented' does not belong"),
+        (
+            ["fundamental", "ohlcv"],
+            [{"evidence_id": "fundamental", "excerpt_locator": "p1:l1"}],
+            "must equal the evidence cited",
+        ),
+        (
+            ["fundamental"],
+            [{"evidence_id": "fundamental", "excerpt_locator": "p1:l1"}] * 2,
+            "duplicated",
+        ),
+        (["fundamental"], [], "non-empty list when present"),
+    ],
+)
+def test_excerpt_citations_reject_bad_locator_or_mismatch(db, evidence_ids, citations, match):
+    manifest = excerpt_manifest(db)
+    claim = {"kind": "inference", "text": "x", "evidence_ids": evidence_ids, "citations": citations}
+    service = ResearchService(db)
+    revision = prepare(service, manifest)
+    body = narrative(manifest)
+    body["claims"][0] = claim
+    with pytest.raises(ValidationError, match=match):
+        complete(service, revision, body)
+    assert revision.content_sha256 is None
+
+
+def test_claim_source_tier_unknown_value_is_rejected(db):
+    manifest = excerpt_manifest(db)
+    claim = {"kind": "inference", "text": "x", "source_tier": "blog", "evidence_ids": ["fundamental"]}
+    with pytest.raises(ValidationError, match=r"claim\.source_tier must be one of"):
+        complete_with_claim(db, manifest, claim)
+
+
+@pytest.mark.parametrize("tier", ["secondary", "third-party-transcript"])
+def test_fact_on_non_official_evidence_is_rejected(db, tier):
+    manifest = excerpt_manifest(db, fundamental_tier=tier)
+    claim = {
+        "kind": "fact",
+        "text": "x",
+        "evidence_ids": ["fundamental"],
+        "citations": [{"evidence_id": "fundamental", "excerpt_locator": "p1:l1"}],
+    }
+    with pytest.raises(ValidationError, match="fact claims require official or derived evidence"):
+        complete_with_claim(db, manifest, claim)
+
+
+def test_fact_with_self_declared_secondary_tier_is_rejected(db):
+    manifest = excerpt_manifest(db)
+    claim = {"kind": "fact", "text": "x", "source_tier": "secondary", "evidence_ids": ["fundamental"]}
+    with pytest.raises(ValidationError, match="fact claims require official or derived evidence"):
+        complete_with_claim(db, manifest, claim)
+
+
+def test_inference_on_secondary_evidence_is_allowed(db):
+    manifest = excerpt_manifest(db, fundamental_tier="secondary")
+    claim = {
+        "kind": "inference",
+        "text": "x",
+        "source_tier": "secondary",
+        "evidence_ids": ["fundamental"],
+        "citations": [{"evidence_id": "fundamental", "excerpt_locator": "p1:l2"}],
+    }
+    service = ResearchService(db)
+    revision = prepare(service, manifest)
+    body = narrative(manifest)
+    body["claims"][0] = claim
+    # The untouched fact claim on "ohlcv" has no tier and keeps pre-v21 behaviour.
+    assert complete(service, revision, body).status == "completed"

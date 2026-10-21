@@ -303,3 +303,62 @@ def test_evaluation_rechecks_freshness_at_decision_time(db):
         EvaluationService(db).evaluate_run(
             version.id, manifest.id, universe, snapshots, decision_as_of="2026-09-28T00:00:00Z"
         )
+
+
+RAW_TEXT = "Revenue grew\f12% year over year.\n| HBM | demand  remained   strong |\n"
+EXCERPTS = [
+    {"locator": "p1:l1", "text": "Revenue grew 12% year over year."},
+    {"locator": "p1:l2", "text": "HBM | demand remained strong"},
+]
+
+
+def with_excerpts(request, index=0, excerpts=None, raw_text=RAW_TEXT, tier=None):
+    """Attach the offline-tooling payload shape (SEED-002 B1-B3) and re-hash the evidence item."""
+    item = request["evidence"][index]
+    payload = dict(item["payload"], excerpts=copy.deepcopy(EXCERPTS if excerpts is None else excerpts))
+    if raw_text is not None:
+        payload["raw_text"] = raw_text
+    item["payload"] = payload
+    item["content_sha256"] = content_sha256(payload)
+    if tier is not None:
+        item["source_tier"] = tier
+    return request
+
+
+@pytest.mark.parametrize("tier", ["official-prepared", "official-qa", "third-party-transcript", "secondary", "derived"])
+def test_manifest_accepts_known_source_tiers(db, tier):
+    manifest = ManifestService(db).freeze(with_excerpts(manifest_request(), tier=tier))
+    assert manifest.payload_json["evidence"][0]["source_tier"] == tier
+
+
+@pytest.mark.parametrize("tier", ["official", "", 1])
+def test_manifest_rejects_unknown_source_tier(db, tier):
+    request = manifest_request()
+    request["evidence"][0]["source_tier"] = tier
+    with pytest.raises(ValidationError, match="source_tier must be one of"):
+        ManifestService(db).freeze(request)
+
+
+def test_manifest_raw_text_excerpts_match_after_canonicalisation(db):
+    manifest = ManifestService(db).freeze(with_excerpts(manifest_request()))
+    assert manifest.payload_json["evidence"][0]["payload"]["excerpts"][1]["locator"] == "p1:l2"
+
+
+@pytest.mark.parametrize(
+    "excerpt,match",
+    [
+        ({"locator": "p1:l9", "text": "Revenue grew 21% year over year."}, "p1:l9 is not found in payload.raw_text"),
+        ({"locator": "p1:l9", "text": " \f | "}, "p1:l9 text must be non-empty"),
+        ({"locator": "", "text": "Revenue grew"}, "excerpt.locator must be non-empty"),
+    ],
+)
+def test_manifest_rejects_excerpt_not_in_raw_text(db, excerpt, match):
+    request = with_excerpts(manifest_request(), excerpts=[*EXCERPTS, excerpt])
+    with pytest.raises(ValidationError, match=match):
+        ManifestService(db).freeze(request)
+
+
+def test_manifest_skips_excerpt_check_without_raw_text(db):
+    excerpts = [{"locator": "p1:l1", "text": "not in any frozen original"}]
+    manifest = ManifestService(db).freeze(with_excerpts(manifest_request(), excerpts=excerpts, raw_text=None))
+    assert "raw_text" not in manifest.payload_json["evidence"][0]["payload"]
