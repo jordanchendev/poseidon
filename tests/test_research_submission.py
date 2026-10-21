@@ -351,25 +351,40 @@ def test_numeric_scale_or_sign_mismatch_is_refused(db, text, locator, kind):
     assert f"({kind})" in message
 
 
-def test_numeric_check_uses_only_the_cited_locator(db):
-    # 66.4% is in p1:l3; citing p1:l1 alone makes the percentage absent, which is recorded, not refused.
-    manifest = precheck_manifest(db)
-    completed, _ = complete_with_claim(db, manifest, cited_claim("第三季毛利率為 66.4%。", "p1:l1"))
-    assert completed.claim_precheck[0]["unmatched"] == [{"claim": "66.4%", "kind": "absent"}]
+@pytest.mark.parametrize(
+    "text,locator,kind",
+    [
+        ("第三季毛利率為 56.4%。", "p1:l3", "value"),
+        # 66.4% is in p1:l3; citing p1:l1 alone makes the percentage absent.
+        ("第三季毛利率為 66.4%。", "p1:l1", "absent"),
+    ],
+)
+def test_fact_claim_value_or_absent_mismatch_is_refused(db, text, locator, kind):
+    message = refused(db, precheck_manifest(db), cited_claim(text, locator))
+    assert f"({kind})" in message
 
 
-def test_value_mismatch_is_recorded_not_refused(db):
+@pytest.mark.parametrize(
+    "text,locator,raw,kind",
+    [("第三季毛利率為 56.4%。", "p1:l3", "56.4%", "value"), ("第三季毛利率為 66.4%。", "p1:l1", "66.4%", "absent")],
+)
+def test_inference_claim_value_or_absent_mismatch_is_recorded_not_refused(db, text, locator, raw, kind):
     manifest = precheck_manifest(db)
-    completed, _ = complete_with_claim(db, manifest, cited_claim("第三季毛利率為 56.4%。", "p1:l3"))
+    completed, _ = complete_with_claim(db, manifest, cited_claim(text, locator, kind="inference"))
     assert completed.status == "completed"
     assert completed.claim_precheck[0] == {
         "claim": 0,
         "atomic": True,
         "numbers": "mismatch",
-        "unmatched": [{"claim": "56.4%", "kind": "value"}],
+        "unmatched": [{"claim": raw, "kind": kind}],
         "period_mismatch": [],
     }
     assert "claim_precheck" not in completed.research_json
+
+
+def test_inference_claim_scale_mismatch_is_refused(db):
+    claim = cited_claim("美光 2026 會計年度營收為 133.19 億美元。", "p1:l1", kind="inference")
+    assert "(scale)" in refused(db, precheck_manifest(db), claim)
 
 
 def test_claim_without_citations_checks_every_excerpt_of_its_evidence(db):

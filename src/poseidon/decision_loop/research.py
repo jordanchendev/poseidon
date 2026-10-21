@@ -86,8 +86,12 @@ def validate_claim_tier(claim, evidence):
 
 # SEED-002 C2: claims citing price-derived evidence carry computed numbers, not quoted ones.
 NUMERIC_PRECHECK_SKIP_KINDS = frozenset({"price_facts", "ohlcv"})
-# Numeric mismatch kinds that refuse completion; "value" and "absent" are recorded only.
-REFUSED_NUMERIC_MISMATCHES = frozenset({"scale", "sign"})
+# Numeric mismatch kinds that refuse completion, by claim kind: every mismatch refuses a fact claim; an
+# inference claim is refused only on scale/sign, and its value/absent mismatches are recorded.
+REFUSED_NUMERIC_MISMATCHES = {
+    "fact": frozenset({"scale", "sign", "value", "absent"}),
+    "inference": frozenset({"scale", "sign"}),
+}
 
 
 def _claim_excerpt_texts(claim, evidence):
@@ -109,8 +113,9 @@ def _claim_excerpt_texts(claim, evidence):
 def precheck_claims(claims, evidence):
     """SEED-002 C2: atomic lint and numeric precheck for every claim of a new completion.
 
-    Refuses non-atomic claims and numeric scale/sign mismatches against the cited excerpts; returns the
-    per-claim results, in which value/absent mismatches and period mismatches are recorded, not refused.
+    Refuses non-atomic claims and numeric mismatches against the cited excerpts (any mismatch for a fact
+    claim, scale/sign for an inference claim); returns the per-claim results, in which inference value/absent
+    mismatches and all period mismatches are recorded, not refused.
     Runs only on new completions (not inside validate_research), so revisions completed before this
     check keep re-verifying in evaluation and outcome accounting.
     """
@@ -128,7 +133,8 @@ def precheck_claims(claims, evidence):
             numbers = {"status": "skipped", "reason": "no cited excerpts"}
         else:
             numbers = check_numbers(claim["text"], "\n".join(excerpts))
-        refused = [item for item in numbers.get("unmatched", []) if item["kind"] in REFUSED_NUMERIC_MISMATCHES]
+        refusing = REFUSED_NUMERIC_MISMATCHES[claim["kind"]]
+        refused = [item for item in numbers.get("unmatched", []) if item["kind"] in refusing]
         if refused:
             detail = "; ".join(f"{item['claim']} ({item['kind']})" for item in refused)
             problems.append(f"claims[{index}] numeric mismatch vs cited excerpts {claim['evidence_ids']}: {detail}")

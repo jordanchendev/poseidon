@@ -182,3 +182,16 @@ def test_check_numbers_derived_flag_and_period_mismatch():
 )
 def test_lint_atomic(claim, ok):
     assert lint_atomic(claim)["ok"] is ok
+
+
+@pytest.mark.parametrize("text", ["8 吋產能利用率", "12-inch wafer shipments", "28nm 製程", "0.18 微米製程"])
+def test_dimension_descriptors_are_not_quantities(text):
+    assert extract_quantities(text) == []
+
+
+def test_unit_bearing_claim_matches_bare_table_digits():
+    excerpt = "(thousand NTD): 204,009,681 129,770,564"
+    assert check_numbers("營業成本 129,770,564 千元。", excerpt)["status"] == "ok"
+    result = check_numbers("毛利 74,239,117 千元。", excerpt)
+    assert result["status"] == "ok"
+    assert result["matched"][0]["via"][0]["how"] == "A-B (bare digits)"

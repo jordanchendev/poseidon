@@ -337,6 +337,9 @@ def _skip_spans(text):
     return spans
 
 
+SIZE_RE = re.compile(r"\s*(?:-\s*)?(?:吋|英吋|inch(?:es)?\b|nm\b|奈米|mm\b|毫米|微米|μm\b|um\b)")
+
+
 def _raw_tokens(text):
     toks = []
     skip = _skip_spans(text)
@@ -361,6 +364,8 @@ def _raw_tokens(text):
             continue
         value = float(num.replace(",", ""))
         pos = e
+        if SIZE_RE.match(text[e : e + 12]):
+            continue  # wafer size / process node / dimension descriptor: 8 吋, 12-inch, 28nm, 0.18 微米
         # scale
         item, pos2 = _take(text, pos, SCALES)
         scale, scale_tok = 1.0, None
@@ -674,6 +679,22 @@ def _match_value(v, cq, pts):
         for p in pts:
             if _compatible(cq.unit_class, cq.currency, p[1], p[2]) and p[1] != "*" and _bound_ok(cq.qualifier, v, p[0]):
                 return [], {"how": f"bound{cq.qualifier}", "from": [p[4].raw]}
+    # unit-bearing claim vs bare excerpt digits: tables carry the unit in the header ("(thousand NTD): 129,770,564"),
+    # so compare the claim's unscaled digits with bare excerpt numbers, directly and as A-B over bare pairs.
+    if cq.has_unit or cq.scale != 1:
+        vr = v / cq.scale
+        bare = [
+            p
+            for p in pts
+            if p[3] == "direct" and p[1] == "count" and not p[4].has_unit and p[4].scale == 1 and p[0] != 0
+        ]
+        hit = [p for p in bare if _close(vr, p[0])]
+        if hit:
+            return hit, None
+        for a, b in permutations(bare, 2):
+            x = a[0] - b[0]
+            if x > 0 and _close(vr, x):
+                return [], {"how": "A-B (bare digits)", "from": [a[4].raw, b[4].raw], "value": round(x, 6)}
     # arithmetic over pairs of plain excerpt points
     plain = [p for p in pts if p[3] == "direct" and p[0] != 0]
     for a, b in permutations(plain, 2):
