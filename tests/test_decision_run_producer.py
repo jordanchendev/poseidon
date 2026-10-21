@@ -1139,3 +1139,147 @@ def test_produce_task_stuck_pending_run_skips_every_retry_slot(monkeypatch, db):
         }
     assert enqueued == []
     assert db.query(DataManifest).count() == 1
+
+
+RETRY_AS_OF = "2026-09-26T12:15:00Z"
+
+
+def _runless_manifest(db, *, created_at, request=None):
+    """A frozen manifest whose producer tasks have not landed a run (backlog or failed produce)."""
+    from poseidon.models.data_manifest import DataManifest
+
+    manifest = ManifestService(db).freeze(request or manifest_request())
+    db.query(DataManifest).filter(DataManifest.id == manifest.id).update({"created_at": created_at})
+    db.commit()
+    return str(manifest.id)
+
+
+def test_produce_task_skips_while_a_young_same_day_manifest_has_no_run(monkeypatch, db):
+    """In-flight guard: the 06:40Z manifest is frozen but its producer task is still queued."""
+    from poseidon.models.data_manifest import DataManifest
+
+    _activate(db, make_version(db))
+    manifest_id = _runless_manifest(db, created_at=datetime(2026, 9, 26, 12, 10, tzinfo=UTC))
+    cpu_tasks, enqueued = _producer_task_env(
+        monkeypatch, db, lambda market, interval, symbol, as_of: pytest.fail("froze while a manifest is in flight")
+    )
+    assert cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", RETRY_AS_OF) == {
+        "skipped": "in_progress",
+        "as_of": RETRY_AS_OF,
+        "manifest_id": manifest_id,
+        "runs": [],
+    }
+    assert enqueued == []
+    assert db.query(DataManifest).count() == 1
+
+
+def test_produce_task_reproduces_once_a_runless_manifest_leaves_the_in_flight_window(monkeypatch, db):
+    from poseidon.models.data_manifest import DataManifest
+
+    version = make_version(db)
+    _activate(db, version)
+    stale_id = _runless_manifest(db, created_at=datetime(2026, 9, 26, 11, 45, tzinfo=UTC))
+    cpu_tasks, enqueued = _producer_task_env(
+        monkeypatch, db, lambda market, interval, symbol, as_of: ohlcv_evidence(symbol)
+    )
+    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", RETRY_AS_OF)
+    assert result["enqueued"] == 1 and result["manifest_id"] != stale_id
+    assert db.query(DataManifest).count() == 2
+    assert enqueued == [((str(version.id), result["manifest_id"], RETRY_AS_OF), {})]
+
+
+def test_produce_task_in_flight_guard_ignores_previous_day_manifests(monkeypatch, db):
+    from poseidon.models.data_manifest import DataManifest
+
+    _activate(db, make_version(db))
+    next_as_of = "2026-09-27T01:00:00Z"
+    _runless_manifest(db, created_at=datetime(2026, 9, 27, 0, 55, tzinfo=UTC))  # young, but as_of is 09-26
+    next_day_bar = LAST_BAR + timedelta(days=1)
+    cpu_tasks, enqueued = _producer_task_env(
+        monkeypatch, db, lambda market, interval, symbol, as_of: ohlcv_evidence(symbol, last_bar=next_day_bar)
+    )
+    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", next_as_of)
+    assert result["enqueued"] == 1 and result["as_of"] == next_as_of
+    assert len(enqueued) == 1
+    assert db.query(DataManifest).count() == 2
+
+
+def test_produce_task_in_flight_guard_ignores_other_account_scopes(monkeypatch, db):
+    from poseidon.models.data_manifest import DataManifest
+
+    _activate(db, make_version(db))
+    other_scope = dict(manifest_request(), account_scope="paper:other")
+    _runless_manifest(db, created_at=datetime(2026, 9, 26, 12, 10, tzinfo=UTC), request=other_scope)
+    cpu_tasks, enqueued = _producer_task_env(
+        monkeypatch, db, lambda market, interval, symbol, as_of: ohlcv_evidence(symbol)
+    )
+    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", RETRY_AS_OF)
+    assert result["enqueued"] == 1
+    assert len(enqueued) == 1
+    assert db.query(DataManifest).count() == 2
+
+
+def test_in_flight_guard_does_not_hide_a_manifest_that_already_has_a_run(monkeypatch, db):
+    """A manifest with a complete run is settled by already_produced first; the order is unchanged."""
+    from poseidon.models.data_manifest import DataManifest
+    from poseidon.workers.cpu_tasks import _in_flight_manifest_on_day
+
+    version, run_id = _produced_run_with_status(db, "complete")
+    run = db.get(EvaluationRun, uuid.UUID(run_id))
+    db.query(DataManifest).filter(DataManifest.id == run.manifest_id).update(
+        {"created_at": datetime(2026, 9, 26, 12, 10, tzinfo=UTC)}
+    )
+    db.commit()
+    assert _in_flight_manifest_on_day(db, "tw_stock", "1d", ACCOUNT, [version.id], RETRY_AS_OF) is None
+    cpu_tasks, enqueued = _producer_task_env(
+        monkeypatch, db, lambda market, interval, symbol, as_of: pytest.fail("froze on a produced day")
+    )
+    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", RETRY_AS_OF)
+    assert result == {"skipped": "already_produced", "as_of": RETRY_AS_OF, "runs": [run_id]}
+    assert enqueued == []
+
+
+def test_produce_task_body_skips_a_version_whose_day_already_has_a_complete_run(monkeypatch, db):
+    """A late task from a manifest the in-flight guard gave up on must not add a second run.
+
+    THREAT (accepted): the guard is check-then-insert. Two tasks running at the same moment on
+    different cpu-worker forks can both find no complete run and both produce; in shadow mode that
+    is one extra run and no order. Mitigation after 101-19: a partial unique index on
+    evaluation_runs (strategy_version_id, decision_as_of::date). Phase 101 adds no migration.
+    """
+    version = make_version(db)
+    _activate(db, version)
+    first = ManifestService(db).freeze(manifest_request())
+    run_id = ProducerService(db).produce(version.id, first.id, decision_as_of=AS_OF, principal=worker(), mode="shadow")[
+        "evaluation_run_id"
+    ]
+    db.commit()
+    late = ManifestService(db).freeze(dict(manifest_request(), as_of=RETRY_AS_OF))
+    db.commit()
+    cpu_tasks, _ = _producer_task_env(monkeypatch, db, lambda *args: pytest.fail("no freeze expected"))
+    monkeypatch.setattr(
+        ProducerService,
+        "produce",
+        lambda *args, **kwargs: pytest.fail("produce called although the day already has a complete run"),
+    )
+    for manifest_id, as_of in ((str(late.id), RETRY_AS_OF), (str(late.id), None)):
+        assert cpu_tasks.produce_decision_run.run(str(version.id), manifest_id, as_of) == {
+            "skipped": "already_produced",
+            "run_id": run_id,
+            "manifest_id": manifest_id,
+        }
+    assert db.query(EvaluationRun).count() == 1
+
+
+def test_produce_task_body_produces_when_the_version_has_no_run_that_day(monkeypatch, db):
+    version = make_version(db)
+    _activate(db, version)
+    other = make_version(db)
+    manifest = ManifestService(db).freeze(manifest_request())
+    ProducerService(db).produce(other.id, manifest.id, decision_as_of=AS_OF, principal=worker(), mode="shadow")
+    db.commit()
+    cpu_tasks, _ = _producer_task_env(monkeypatch, db, lambda *args: pytest.fail("no freeze expected"))
+    result = cpu_tasks.produce_decision_run.run(str(version.id), str(manifest.id), AS_OF)
+    assert result["mode"] == "shadow" and "evaluation_run_id" in result
+    assert db.query(EvaluationRun).filter(EvaluationRun.strategy_version_id == version.id).count() == 1
+    assert db.query(EvaluationRun).count() == 2

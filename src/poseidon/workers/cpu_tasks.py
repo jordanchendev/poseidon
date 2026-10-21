@@ -927,6 +927,24 @@ def produce_decision_run(strategy_version_id: str, manifest_id: str, decision_as
 
     principal = _decision_worker_principal()
     with SessionLocal() as session, session.begin():
+        # A task from a manifest the in-flight guard already gave up on may still run late on a
+        # backlogged worker; whichever task lands first settles the day for this version.
+        # Accepted threat: check-then-insert, so two tasks running concurrently on different
+        # cpu-worker forks can both see no run and both produce. Fix after 101-19: a partial unique
+        # index on evaluation_runs (strategy_version_id, decision_as_of::date); Phase 101 opens no
+        # migration.
+        day_as_of = decision_as_of
+        if day_as_of is None:
+            from poseidon.models.data_manifest import DataManifest
+
+            manifest = session.get(DataManifest, persisted_manifest_id)
+            stored = manifest.as_of if manifest is not None else None
+            if stored is not None and stored.tzinfo is None:
+                stored = stored.replace(tzinfo=UTC)
+            day_as_of = stored.isoformat() if stored is not None else None
+        produced = _complete_runs_on_day(session, [version_id], day_as_of) if day_as_of else []
+        if produced:
+            return {"skipped": "already_produced", "run_id": produced[0], "manifest_id": manifest_id}
         return ProducerService(session).produce(
             version_id,
             persisted_manifest_id,
@@ -984,6 +1002,58 @@ def _in_progress_runs_on_day(session, version_ids: list, as_of: str) -> list[str
     )
 
 
+# Phase 101 in-flight guard (proposal, pending 101-19 / owner approval). EvaluationRun rows only
+# land as "complete" (produce_decision_run commits inside one transaction), so a backlogged
+# producer leaves a same-day manifest with no run at all. A manifest that young is treated as in
+# flight; an older one without runs is treated as a failed produce and the day is re-produced.
+# 1200 s = one full 900 s retry-slot gap + 300 s margin: after a 06:40Z freeze the 06:55Z slot
+# always skips (the common worker-backlog length) and only 07:10Z onwards treats it as dead. A
+# produce itself takes seconds, so no run after a whole slot gap is not a backlog any more.
+PRODUCER_IN_FLIGHT_SECONDS = 1200
+
+
+def _in_flight_manifest_on_day(session, market: str, interval: str, account_scope: str, version_ids: list, as_of: str):
+    """Latest same-day manifest for this market/interval/scope with no run of ``version_ids``, if still in flight."""
+    from sqlalchemy import select
+
+    from poseidon.decision_loop.manifest import timestamp
+    from poseidon.models.data_manifest import DataManifest
+    from poseidon.models.evaluation_run import EvaluationRun
+
+    if not version_ids:
+        return None
+    cutoff = timestamp(as_of, "as_of")
+
+    def utc(value):
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+    manifests = session.scalars(
+        select(DataManifest)
+        .where(DataManifest.market == market, DataManifest.interval == interval)
+        .order_by(DataManifest.as_of.desc(), DataManifest.created_at.desc(), DataManifest.id)
+        .limit(50)
+    ).all()
+    latest = None
+    for manifest in manifests:
+        payload = manifest.payload_json if isinstance(manifest.payload_json, dict) else {}
+        if utc(manifest.as_of).date() != cutoff.date() or payload.get("account_scope") != account_scope:
+            continue
+        if latest is None or utc(manifest.created_at) > utc(latest.created_at):
+            latest = manifest
+    if latest is None:
+        return None
+    has_run = session.scalars(
+        select(EvaluationRun.id)
+        .where(EvaluationRun.manifest_id == latest.id, EvaluationRun.strategy_version_id.in_(version_ids))
+        .limit(1)
+    ).first()
+    if has_run is not None:
+        return None
+    if (cutoff - utc(latest.created_at)).total_seconds() > PRODUCER_IN_FLIGHT_SECONDS:
+        return None
+    return str(latest.id)
+
+
 @celery_app.task(name="poseidon.workers.cpu_tasks.produce_decision_runs_for_market", max_retries=0)
 def produce_decision_runs_for_market(market: str, interval: str, as_of: str | None = None) -> dict:
     """Beat entry: freeze once, then enqueue one UUID-only producer task per active version.
@@ -1005,6 +1075,18 @@ def produce_decision_runs_for_market(market: str, interval: str, as_of: str | No
         )
         produced = _complete_runs_on_day(session, [version.id for version in versions], as_of)
         in_progress = [] if produced else _in_progress_runs_on_day(session, [version.id for version in versions], as_of)
+        in_flight = (
+            None
+            if produced or in_progress
+            else _in_flight_manifest_on_day(
+                session,
+                market,
+                interval,
+                settings.decision_loop_approved_account_scope,
+                [version.id for version in versions],
+                as_of,
+            )
+        )
         version_ids = [str(version.id) for version in versions]
     if produced:
         return {"skipped": "already_produced", "as_of": as_of, "runs": produced}
@@ -1012,6 +1094,9 @@ def produce_decision_runs_for_market(market: str, interval: str, as_of: str | No
         # An earlier slot's run has not settled yet; a second freeze would mean two runs (and, in
         # decision mode, two decisions) for one session. Only all-failed days are re-produced.
         return {"skipped": "in_progress", "as_of": as_of, "runs": in_progress}
+    if in_flight:
+        # An earlier slot froze a manifest whose producer tasks have not landed a run yet.
+        return {"skipped": "in_progress", "as_of": as_of, "manifest_id": in_flight, "runs": []}
     frozen = freeze_market_manifest.run(market, interval, as_of)
     if "manifest_id" not in frozen:
         return frozen
