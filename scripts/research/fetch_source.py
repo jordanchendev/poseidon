@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""Fetch a primary-source document into an isolated directory and emit a `documents[]` block for research_theme.py.
+
+- Downloads the URL (SEC EDGAR gets the required identifying User-Agent; others a browser UA), refuses Cloudflare
+  challenge pages, records sha256 of the raw file and of the text conversion (HTML -> text via stdlib parser,
+  PDF -> text via `pdftotext -layout`).
+- Proposes excerpts: paragraphs (blank-line separated, page footers removed as whole lines) that match
+  template anchors for the document type; each proposal is verified to be a verbatim substring of the text
+  file under the same canonicalisation research_theme.py uses, so what you keep will freeze.
+- Prints JSON: {"document": {...}, "proposed_excerpts": [...]}; copy `document` into the config and prune the
+  excerpt list by hand (or pass --keep all).
+
+Usage: fetch_source.py URL --id fundamental:tsmc-3q26-6k --title "..." --publisher "..." --event-time 2026-10-15T10:40:56Z
+       --out-dir sources/ [--template earnings|press_release|generic] [--keep all|N,N,N]
+Run with python3 -I from outside the download directory (untrusted data).
+"""
+
+import argparse
+import datetime
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from html.parser import HTMLParser
+from pathlib import Path
+
+UA_SEC = os.environ.get("SEC_USER_AGENT", "jordan.chen.dev@gmail.com research-tool")
+UA_BROWSER = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36"
+)
+TEMPLATES = {
+    "earnings": [
+        r"revenue|net sales|營收",
+        r"gross (profit )?margin|毛利",
+        r"EPS|earnings per share|每股",
+        r"guidance|outlook|expect|預期|展望|指引",
+        r"capital expenditure|capex|資本支出",
+        r"demand|需求",
+    ],
+    "press_release": [
+        r"announce|宣布|signed|簽訂|agreement|合作|聯盟|投資",
+        r"revenue|營收|million|億",
+        r"expect|預計|預期|將",
+    ],
+    "generic": [r"."],
+}
+FOOTER = re.compile(r"^\s*(©|\(c\)|Page \d+|\d+\s*/\s*\d+\s*$)", re.I)
+
+
+class _Text(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.out = []
+        self.skip = False
+
+    def handle_starttag(self, t, a):
+        if t in ("script", "style"):
+            self.skip = True
+        if t in ("p", "div", "tr", "br", "li", "table", "h1", "h2", "h3", "h4"):
+            self.out.append("\n")
+        if t in ("td", "th"):
+            self.out.append(" | ")
+
+    def handle_endtag(self, t):
+        if t in ("script", "style"):
+            self.skip = False
+
+    def handle_data(self, d):
+        if not self.skip:
+            self.out.append(d)
+
+
+def canonical(text):
+    return " ".join(tok for tok in text.replace("\f", " ").split() if tok != "|")
+
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def fetch(url, dest):
+    ua = UA_SEC if "sec.gov" in url else UA_BROWSER
+    req = urllib.request.Request(url, headers={"User-Agent": ua, "Accept": "*/*"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        body = r.read()
+        ctype = r.headers.get("Content-Type", "")
+    head = body[:4096].decode("utf-8", "replace").lower()
+    if "just a moment" in head or "cf-chl" in head or "attention required" in head:
+        sys.exit("blocked by a Cloudflare challenge page: %s" % url)
+    Path(dest).write_bytes(body)
+    return ctype
+
+
+def to_text(raw_path, ctype):
+    raw = Path(raw_path)
+    is_pdf = raw.read_bytes()[:5] == b"%PDF-" or "pdf" in ctype
+    txt = raw.with_suffix(raw.suffix + ".txt")
+    if is_pdf:
+        subprocess.run(["pdftotext", "-layout", str(raw), str(txt)], check=True)
+    else:
+        p = _Text()
+        p.feed(raw.read_text(encoding="utf-8", errors="replace"))
+        t = re.sub(r"[ \t\xa0]+", " ", "".join(p.out))
+        t = re.sub(r"\n\s*\n+", "\n\n", t)
+        txt.write_text(t, encoding="utf-8")
+    return txt
+
+
+def paragraphs(text_path):
+    lines = Path(text_path).read_text(encoding="utf-8", errors="replace").split("\n")
+    paras, cur, start = [], [], None
+    bullet = re.compile(r"^\s*([•\-\*▪·]|\(?\d{1,2}[.)])\s*\S")
+    for n, line in enumerate(lines, 1):
+        if "\f" in line:
+            line = line.replace("\f", "")
+        if FOOTER.match(line) or not line.strip() or re.fullmatch(r"[ |]+", line):
+            # a blank line does not end a paragraph whose last line ends with ':' (lead-in before bullets) or is a bullet
+            if cur and (cur[-1].rstrip().endswith((":", "：", ",", "，", ";", "；")) or bullet.match(cur[-1])):
+                continue
+            if cur:
+                paras.append((start, n - 1, " ".join(x.strip() for x in cur)))
+                cur, start = [], None
+            continue
+        if (
+            cur
+            and not bullet.match(line)
+            and bullet.match(cur[-1])
+            and not cur[-1].rstrip().endswith((":", "：", ";", "；", ",", "，"))
+        ):
+            # bullets group ended by a non-bullet line: close the group first
+            paras.append((start, n - 1, " ".join(x.strip() for x in cur)))
+            cur, start = [], None
+        if start is None:
+            start = n
+        cur.append(line)
+    if cur:
+        paras.append((start, len(lines), " ".join(x.strip() for x in cur)))
+    return paras
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("url")
+    ap.add_argument("--id", required=True)
+    ap.add_argument("--title", required=True)
+    ap.add_argument("--publisher", required=True)
+    ap.add_argument("--event-time", required=True)
+    ap.add_argument("--out-dir", required=True)
+    ap.add_argument("--template", default="earnings", choices=sorted(TEMPLATES))
+    ap.add_argument("--keep", default=None, help="'all' or comma-separated proposal indexes to keep as excerpts")
+    ap.add_argument("--min-chars", type=int, default=80)
+    a = ap.parse_args()
+    out = Path(a.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", a.url.rsplit("/", 1)[-1] or "document")[:80] or "document"
+    raw = out / name
+    ctype = fetch(a.url, raw)
+    txt = to_text(raw, ctype)
+    canon_all = canonical(txt.read_text(encoding="utf-8", errors="replace"))
+    anchors = [re.compile(p, re.I) for p in TEMPLATES[a.template]]
+    proposals = []
+    for s, e, text in paragraphs(txt):
+        if len(text) < a.min_chars:
+            continue
+        hits = [p.pattern for p in anchors if p.search(text)]
+        if not hits:
+            continue
+        ok = canonical(text) in canon_all
+        proposals.append({"locator": "lines %d-%d" % (s, e), "text": text, "anchors": hits, "verified": ok})
+    keep = []
+    if a.keep == "all":
+        keep = [p for p in proposals if p["verified"]]
+    elif a.keep:
+        keep = [proposals[int(i) - 1] for i in a.keep.split(",") if proposals[int(i) - 1]["verified"]]
+    doc = {
+        "id": a.id,
+        "kind": "fundamental",
+        "title": a.title,
+        "publisher": a.publisher,
+        "source_uri": a.url,
+        "event_time": a.event_time,
+        "available_at": a.event_time,
+        "raw_text_path": str(txt),
+        "raw_files": {raw.name: sha(raw), txt.name + " (converted)": sha(txt)},
+        "excerpts": [{"locator": p["locator"], "text": p["text"]} for p in keep],
+    }
+    print(
+        json.dumps(
+            {
+                "document": doc,
+                "fetched_at": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "content_type": ctype,
+                "proposed_excerpts": [
+                    {
+                        "n": n,
+                        "locator": p["locator"],
+                        "verified": p["verified"],
+                        "anchors": p["anchors"],
+                        "preview": p["text"][:160],
+                    }
+                    for n, p in enumerate(proposals, 1)
+                ],
+            },
+            ensure_ascii=False,
+            indent=1,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()
