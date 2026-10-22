@@ -549,6 +549,9 @@ class TestCollectRender(unittest.TestCase):
             {"returned_model": "m"},
             cfg(),
         )
+        sources_section = md.split("## 資料來源", 1)[1].split("\n\n_", 1)[0]
+        self.assertNotIn("：http", sources_section)  # sources are link labels, the URL is not shown
+        self.assertRegex(sources_section, r"\n- \[[^\]]+\]\(https?://[^)]+\)")
         tg = render.telegram_text(md)
         self.assertFalse(tg.startswith("---"))
         self.assertNotIn("promote: nexus", tg)

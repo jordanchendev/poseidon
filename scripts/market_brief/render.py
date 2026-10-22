@@ -502,7 +502,9 @@ def render(facts, section=None, llm_meta=None, cfg=None):
         parts += [
             f"{h['n']}. [{h['title']}]({h['link']}) — {h['source']}，{h['published']}" for h in facts["headlines"]
         ]
-    parts += ["", "## 資料來源"] + [f"- {s['name']}：{s['url']}" for s in facts["sources"]]
+    parts += ["", "## 資料來源"] + [
+        f"- [{s['name'].replace('[', '［').replace(']', '］')}]({s['url']})" for s in facts["sources"]
+    ]
     parts += ["", DISCLAIMER, ""]
     md = "\n".join(parts)
     summary_lines = [facts["title"], det_one]
