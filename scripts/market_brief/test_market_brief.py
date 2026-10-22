@@ -48,6 +48,14 @@ def cfg():
     return json.loads((HERE / "config.json").read_text(encoding="utf-8"))
 
 
+def U(x):
+    return f'<span style="color:#d6453d">▲{x}</span>'
+
+
+def D(x):
+    return f'<span style="color:#2e9e6a">▼{x}</span>'
+
+
 WATCH = json.loads((HERE / "watchlist.json").read_text(encoding="utf-8"))
 
 
@@ -508,13 +516,14 @@ class TestCollectRender(unittest.TestCase):
             "## 成交金額前 20 大",
             "## Watchlist",
             "## 解讀",
-            "| 加權指數 | 46,887.77 | ▲+594.84 | ▲+1.28% |",
-            "| 外資及陸資（不含外資自營商） | 3,470.69 | 3,448.30 | ▲+22.39 |",
-            "| 合計 | 4,180.86 | 4,166.21 | ▲+14.66 |",
-            "| 2330 | 台積電 | 2,420 | ▲+15 | ▲+0.62% | 655.16 | Phase 101 pilot |",
+            f"| 加權指數 | 46,887.77 | {U('+594.84')} | {U('+1.28%')} |",
+            f"| 外資及陸資（不含外資自營商） | 3,470.69 | 3,448.30 | {U('+22.39')} |",
+            f"| 自營商（避險） | 317.91 | 391.75 | {D('-73.84')} |",
+            f"| 合計 | 4,180.86 | 4,166.21 | {U('+14.66')} |",
+            f"| 2330 | 台積電 | 2,420 | {U('+15')} | {U('+0.62%')} | 655.16 | Phase 101 pilot |",
             "| 上市股票 | 600 | 380 | 101 | 24 | 1 |",
             "|---|---:|---:|---:|",
-            "<!-- tg: 收盤=Close; 漲跌=Chg; 漲跌%=Chg%; 指數 -->",
+            "<!-- tg: 收盤=Close; 漲跌=Chg; 漲跌%=Chg%!; 指數 -->",
             "### 上櫃跌幅（成交 ≥ 5 億）",
         ):
             self.assertIn(needle, md)
@@ -554,18 +563,20 @@ class TestCollectRender(unittest.TestCase):
             "一句",
             "第一段。\n\n第二段 [1]。",
             "觀察重點：\n- 甲\n- 乙",
-            "```\n    Close      Chg    Chg% 指數\n46,887.77  +594.84  +1.28% 加權指數\n",
-            "2330   2,420  +0.62% 台積電",
-            " #  Code     Amt    Chg% 名稱\n 1  2330  655.16  +0.62% 台積電",
-            "   Up  Down  Flat  LimUp  LimDn 市場\n  600   380   101     24      1 上市股票",
-            "    Net       Buy      Sell 法人\n +22.39  3,470.69  3,448.30 外資及陸資（不含外資自營商）",
+            "```\n    Close      Chg    Chg% 指數\n46,887.77  +594.84  +1.28% 加權指數 🔴\n",
+            "2330   2,420  +0.62% 台積電 🔴\n",
+            " #  Code     Amt    Chg% 名稱\n 1  2330  655.16  +0.62% 台積電 🔴\n",
+            "   Up  Down  Flat  LimUp  LimDn 市場\n  600   380   101     24      1 上市股票\n",  # no change column
+            "    Net       Buy      Sell 法人\n +22.39  3,470.69  3,448.30 外資及陸資（不含外資自營商） 🔴\n",
+            " -73.84    317.91    391.75 自營商（避險） 🟢\n",
+            "-2.15% 通信網路 🟢\n",
             "1. [台股［盤後］收漲](https://news.cnyes.com/news/id/1) — 鉅亨網\n",
             "_本報告由程式彙整",
         ):
             self.assertIn(needle, tg)
         self.assertNotIn("2026-10-21T06:31Z", tg)
         self.assertNotIn("<!--", tg)
-        self.assertIn(" 國巨*\n", tg)  # inside a code block: no markdown escaping
+        self.assertIn(" 國巨* 🔴\n", tg)  # inside a code block: no markdown escaping
         self.assertNotIn("▲", tg.split("**解讀")[0].split("**大盤**")[1].split("```")[1])  # ASCII inside code blocks
         for block in tg.split("```")[1::2]:
             for ln in block.strip("\n").split("\n"):
@@ -580,7 +591,7 @@ class TestCollectRender(unittest.TestCase):
         facts = collect.collect("us-postmarket", D21, collector(TW_ROUTES_21))
         tg = render.telegram_text(render.render(facts, None, None, cfg())[0])
         tsm = next(ln for ln in tg.split("\n") if ln.startswith("TSM "))
-        self.assertEqual(tsm.split(), ["TSM", "431.89", "+1.60%", "-1.25%"])
+        self.assertEqual(tsm.split(), ["TSM", "431.89", "+1.60%", "-1.25%", "🔴"])
         self.assertEqual(next(ln for ln in tg.split("\n") if ln.startswith("NVDA")).split(), ["NVDA", "-", "-", "-"])
         self.assertIn("Sym", tg)
         self.assertIn("\n**資料未齊**：", tg)
@@ -654,7 +665,8 @@ class TestCollectRender(unittest.TestCase):
         self.assertIn("## 類股 ETF", md)
         self.assertIn("| VIX | 16.68 | — | — |", md)
         self.assertNotIn("0.00%", md.split("## 指數")[1].split("## 利率")[0])
-        self.assertIn("| SMH | 半導體 | 556.70 | ▲+10.34 | ▲+1.89% |", md)
+        self.assertIn(f"| SMH | 半導體 | 556.70 | {U('+10.34')} | {U('+1.89%')} |", md)
+        self.assertIn(f"| TSM | 431.89 | {U('+6.81')} | {U('+1.60%')} | 426.50 | {D('-1.25%')} |", md)  # 盤後% too
         self.assertNotIn("breadth", md.lower().split("---", 2)[2])
         # tw-premarket for 10-22 (previous TW session 10-21); MIS day fixture has CDate 20261022
         facts = collect.collect("tw-premarket", D22, collector(TW_ROUTES_21))
@@ -1406,6 +1418,70 @@ class TestMirror(unittest.TestCase):
         self.assertFalse(run.deliver.mirror_sync("ssh research-bridge", log=logs.append, runner=runner))
         self.assertEqual(runner_calls[0], ["ssh", "research-bridge", "brief-mirror-sync"])
         self.assertIn("exit 255", logs[0])
+
+
+class TestColours(unittest.TestCase):
+    def _contrast(self, a, b):
+        def lum(h):
+            c = [int(h[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+            c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+            return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+        la, lb = lum(a), lum(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+    def test_contrast_on_obsidian_backgrounds(self):
+        for fg in (render.UP_COLOR, render.DOWN_COLOR):
+            for bg in ("#ffffff", "#1e1e1e"):
+                self.assertGreaterEqual(self._contrast(fg, bg), 3.0, (fg, bg))
+        self.assertAlmostEqual(self._contrast("#d6453d", "#1e1e1e"), 3.79, places=2)
+        self.assertAlmostEqual(self._contrast("#2e9e6a", "#ffffff"), 3.38, places=2)
+
+    def _all_md(self):
+        out = []
+        for kind, d in (("tw-postmarket", D21), ("us-postmarket", D21), ("tw-premarket", D22)):
+            facts = collect.collect(kind, d, collector(TW_ROUTES_21))
+            out.append(render.render(facts, None, None, cfg())[0])
+        return out
+
+    def test_spans_wrap_every_arrow_and_tables_stay_valid(self):
+        for md in self._all_md():
+            body = md.split("\n---\n", 1)[1]
+            plain = re.sub(
+                r'<span style="color:#d6453d">▲[^<|]*</span>|<span style="color:#2e9e6a">▼[^<|]*</span>', "", body
+            )
+            self.assertNotIn("▲", plain)  # every arrow is inside its colour span
+            self.assertNotIn("▼", plain)
+            self.assertNotIn("<span", plain)
+            self.assertNotIn('#d6453d">▼', body)
+            self.assertNotIn('#2e9e6a">▲', body)
+            block = []
+            for line in [*body.splitlines(), ""]:
+                if line.startswith("|"):
+                    block.append(line)
+                    continue
+                if block:  # GFM: header, separator and every row have the same column count
+                    counts = {len(b.strip().strip("|").split("|")) for b in block}
+                    self.assertEqual(len(counts), 1, block[:3])
+                    block = []
+            for pat in NEXUS_SENSITIVE_CI:
+                self.assertIsNone(re.search(pat, md, re.I | re.M), pat)
+
+    def test_telegram_has_no_spans_and_marks_only_at_line_end(self):
+        for md in self._all_md():
+            tg = render.telegram_text(md)
+            self.assertNotIn("<span", tg)
+            self.assertNotIn("</span>", tg)
+            for i, block in enumerate(tg.split("```")):
+                for ln in block.split("\n"):
+                    for mark in ("🔴", "🟢"):
+                        if mark in ln:
+                            self.assertEqual(i % 2, 1, ln)  # only inside code blocks
+                            self.assertTrue(ln.endswith(" " + mark), ln)
+                            self.assertEqual(ln.count(mark), 1, ln)
+            for block in tg.split("```")[1::2]:
+                rows = [r for r in block.strip("\n").split("\n")]
+                self.assertFalse(rows[0].endswith(("🔴", "🟢")), rows[0])  # header row
 
 
 if __name__ == "__main__":

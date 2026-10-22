@@ -58,13 +58,20 @@ def frontmatter(facts, model_id):
 
 
 # ------------------------------------------------------------------------------------------------ table helpers
+UP_COLOR = "#d6453d"  # TW convention in both markets: up = red, down = green
+DOWN_COLOR = "#2e9e6a"  # contrast >= 3:1 on Obsidian light (#ffffff) and dark (#1e1e1e) backgrounds
+_SPAN = re.compile(r"<span[^>]*>(.*?)</span>")
+
+
 def _arw(x, text):
-    """▲/▼ prefix on a change cell (the md has no colours); "—" when missing."""
+    """Change cell: ▲/▼ prefix inside a coloured span (Obsidian shows the colour; Kairos drops tags and colours by
+    the ▲/▼ itself); flat and "—" stay plain."""
     if x is None or text == "—":
         return "—"
     if round(x, 4) == 0:
         return text
-    return ("▲" if x > 0 else "▼") + text
+    color, arrow = (UP_COLOR, "▲") if x > 0 else (DOWN_COLOR, "▼")
+    return f'<span style="color:{color}">{arrow}{text}</span>'
 
 
 def chg_cell(x, nd=2):
@@ -105,11 +112,11 @@ def _quote_rows(rows, label_note=True):
     return out
 
 
-QUOTE_TG = "最新=Last; 漲跌=Chg; 漲跌%=Chg%; 項目"
+QUOTE_TG = "最新=Last; 漲跌=Chg!; 漲跌%=Chg%; 項目"
 
 
 def _quote_table(rows, first="項目", last_header="最新"):
-    tg = f"{last_header}=Last; 漲跌=Chg; 漲跌%=Chg%; {first}"
+    tg = f"{last_header}=Last; 漲跌=Chg!; 漲跌%=Chg%; {first}"
     return _table([first, last_header, "漲跌", "漲跌%"], ["l", "r", "r", "r"], _quote_rows(rows), tg=tg)
 
 
@@ -134,7 +141,7 @@ def _tw_watch_table(rows):
         ["代號", "名稱", "收盤", "漲跌", "漲跌%", "成交值(億)", "備註"],
         ["l", "l", "r", "r", "r", "r", "l"],
         body,
-        tg="代號=Code; 收盤=Close; 漲跌%=Chg%; 名稱",
+        tg="代號=Code; 收盤=Close; 漲跌%=Chg%!; 名稱",
     )
 
 
@@ -161,7 +168,7 @@ def _us_watch_table(rows, ext_label):
         ["代號", "收盤", "漲跌", "漲跌%", ext_label, f"{ext_label}%"],
         ["l", "r", "r", "r", "r", "r"],
         body,
-        tg=f"代號=Sym; 收盤=Close; 漲跌%=Chg%; {ext_label}%={tag}",
+        tg=f"代號=Sym; 收盤=Close; 漲跌%=Chg%!; {ext_label}%={tag}",
     )
 
 
@@ -187,7 +194,7 @@ def _inst_table(detail, nets):
             continue
         body.append([label, fmt(dv.get("buy")) if dv else "—", fmt(dv.get("sell")) if dv else "—", chg_cell(net)])
     return _table(
-        ["法人", "買進", "賣出", "買賣超"], ["l", "r", "r", "r"], body, tg="買賣超=Net; 買進=Buy; 賣出=Sell; 法人"
+        ["法人", "買進", "賣出", "買賣超"], ["l", "r", "r", "r"], body, tg="買賣超=Net!; 買進=Buy; 賣出=Sell; 法人"
     )
 
 
@@ -199,7 +206,7 @@ def _movers_table(items):
         ["代號", "名稱", "漲跌%", "成交值(億)"],
         ["l", "l", "r", "r"],
         body,
-        tg="代號=Code; 漲跌%=Chg%; 成交值(億)=Amt; 名稱",
+        tg="代號=Code; 漲跌%=Chg%!; 成交值(億)=Amt; 名稱",
     )
 
 
@@ -272,7 +279,7 @@ def _body_tw_post(d, cfg_tw):
     out = ["## 大盤", ""]
     rows = [[i["name"], fmt(i["close"]), chg_cell(i["chg"]), pct_cell(i["pct"])] for i in d["indices"]]
     out += _table(
-        ["指數", "收盤", "漲跌", "漲跌%"], ["l", "r", "r", "r"], rows, tg="收盤=Close; 漲跌=Chg; 漲跌%=Chg%; 指數"
+        ["指數", "收盤", "漲跌", "漲跌%"], ["l", "r", "r", "r"], rows, tg="收盤=Close; 漲跌=Chg; 漲跌%=Chg%!; 指數"
     )
     t = d["turnover"]
     rows = [["一般股票", fmt(t["stocks_yi"])], ["集中市場總計", fmt(t["total_yi"])]]
@@ -320,7 +327,7 @@ def _body_tw_post(d, cfg_tw):
         ["類股", "收盤", "漲跌%"],
         ["l", "r", "r"],
         [[x["name"], fmt(x["close"]), pct_cell(x["pct"])] for x in secs],
-        tg="漲跌%=Chg%; 類股",
+        tg="漲跌%=Chg%!; 類股",
     )
     out += [
         "",
@@ -337,7 +344,7 @@ def _body_tw_post(d, cfg_tw):
         ["#", "代號", "名稱", "成交值(億)", "收盤", "漲跌", "漲跌%"],
         ["r", "l", "l", "r", "r", "r", "r"],
         rows,
-        tg="#=#; 代號=Code; 成交值(億)=Amt; 漲跌%=Chg%; 名稱",
+        tg="#=#; 代號=Code; 成交值(億)=Amt; 漲跌%=Chg%!; 名稱",
     )
     m = d["movers"]
     out += ["", "## 焦點個股", ""]
@@ -386,7 +393,7 @@ def _body_tw_pre(d):
                     fmt(n["volume"], 0),
                 ]
             ],
-            tg="最後=Last; 漲跌=Chg; 漲跌%=Chg%; 成交量=Vol; 合約",
+            tg="最後=Last; 漲跌=Chg!; 漲跌%=Chg%; 成交量=Vol; 合約",
         )
         extra = f"參考價 {fmt(n['ref'], 0)}（{n.get('source', 'TAIFEX')}）"
         if n.get("basis_vs_taiex") is not None:
@@ -441,7 +448,7 @@ def _body_us_post(d):
         ["ETF", "類股", "收盤", "漲跌", "漲跌%"],
         ["l", "l", "r", "r", "r"],
         rows,
-        tg="ETF=ETF; 漲跌%=Chg%; 收盤=Close; 類股",
+        tg="ETF=ETF; 漲跌%=Chg%!; 收盤=Close; 類股",
     )
     out += ["", "## Watchlist（收盤與盤後）", "", *_us_watch_table(d["watchlist"], "盤後")]
     a = d.get("adr")
@@ -536,13 +543,16 @@ def _table_row_line(header, cells):
 
 
 def _tg_spec(text):
-    """'收盤=Close; 漲跌%=Chg%; 指數' -> [(md header, label)]; the last item is the unpadded (CJK) column."""
+    """'收盤=Close; 漲跌%=Chg%!; 指數' -> [(md header, label, primary)]; the last item is the unpadded (CJK) column;
+    a trailing '!' marks the column whose ▲/▼ picks the row's 🔴/🟢 marker."""
     out = []
     for item in text.split(";"):
         item = item.strip()
         if item:
             h, _, label = item.partition("=")
-            out.append((h.strip(), (label or h).strip()))
+            label = (label or h).strip()
+            primary = label.endswith("!")
+            out.append((h.strip(), label.rstrip("!"), primary))
     return out
 
 
@@ -558,7 +568,9 @@ def _ascii_cell(c):
 def code_table(header, rows, spec, max_width=34):
     """A GFM table as a fenced code block for Telegram (OpenClaw renders tables as <pre> anyway, where CJK breaks
     alignment): only the spec's columns, ASCII cells padded (numbers right-aligned), the CJK column last and unpadded."""
-    cols = [(header.index(h), label) for h, label in spec if h in header]
+    spec = [x if len(x) == 3 else (x[0], x[1], False) for x in spec]
+    cols = [(header.index(h), label) for h, label, _p in spec if h in header]
+    prim = next((header.index(h) for h, _l, p in spec if p and h in header), None)
     if len(cols) < 2:
         return None
     body = [[r[i] if i < len(r) else "" for i, _ in cols] for r in rows]
@@ -570,11 +582,17 @@ def code_table(header, rows, spec, max_width=34):
     widths = [max(len(r[j]) for r in fixed) for j in range(n)]
     right = [sum(1 for r in fixed[1:] if _NUMERIC_CELL.match(r[j])) * 2 >= len(fixed) - 1 for j in range(n)]
     sep = "  " if sum(widths) + 2 * n <= max_width else " "
+    marks = [""] + [_row_mark(r[prim] if prim is not None and prim < len(r) else "") for r in rows]
     lines = []
-    for r, tail in zip(fixed, last, strict=True):
+    for r, tail, mark in zip(fixed, last, marks, strict=True):
         cells = [r[j].rjust(widths[j]) if right[j] else r[j].ljust(widths[j]) for j in range(n)]
-        lines.append((sep.join(cells) + " " + tail).rstrip())
+        lines.append((sep.join(cells) + " " + tail).rstrip() + mark)
     return ["```", *lines, "```"]
+
+
+def _row_mark(cell):
+    """' 🔴' for ▲ (up), ' 🟢' for ▼ (down), '' otherwise; appended at the very end so alignment is unchanged."""
+    return " 🔴" if "▲" in cell else " 🟢" if "▼" in cell else ""
 
 
 def telegram_text(md):
@@ -583,7 +601,7 @@ def telegram_text(md):
     columns, CJK label last). Tables without a spec (reports rendered before specs existed) become one line per row.
     Everything else (banner, 一句話, 解讀, 觀察重點) is kept verbatim."""
     m = re.match(r"---\n.*?\n---\n?", md, re.S)
-    lines = (md[m.end() :] if m else md).splitlines()
+    lines = _SPAN.sub(r"\1", md[m.end() :] if m else md).splitlines()
     out, skipping, spec, i = [], False, None, 0
     while i < len(lines):
         line = lines[i].rstrip()
