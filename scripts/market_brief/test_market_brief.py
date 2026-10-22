@@ -766,6 +766,7 @@ class TestBridgePatch(unittest.TestCase):
         loader.exec_module(mod)
         mod.BRIEFS = str(Path(tmp) / "media" / "market-briefs")
         mod.NEXUS = str(Path(tmp) / "Nexus")
+        mod.MIRROR = str(Path(tmp) / "mirror")
         mod.LOG = str(Path(tmp) / "bridge.log")
         os.makedirs(mod.NEXUS)
         (Path(mod.NEXUS) / "AGENTS.md").write_text("# Nexus\n")
@@ -934,6 +935,7 @@ class TestDueRunner(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             c = cfg()
             c["state_dir"], c["outbox_dir"], c["watchlist_file"] = f"{tmp}/state", f"{tmp}/outbox", f"{tmp}/none.json"
+            c["bridge"] = "/bin/false"  # never reach the real bridge from tests
             cpath = Path(tmp) / "config.json"
             cpath.write_text(json.dumps(c, ensure_ascii=False))
             routes = [r for r in TW_ROUTES_21 if not r[0].startswith("BFI82U?type=day&dayDate=20261021")]
@@ -965,6 +967,7 @@ class TestDueRunner(unittest.TestCase):
     def _cfg(self, tmp):
         c = cfg()
         c["state_dir"], c["outbox_dir"], c["watchlist_file"] = f"{tmp}/state", f"{tmp}/outbox", f"{tmp}/none.json"
+        c["bridge"] = "/bin/false"  # never reach the real bridge from tests
         cpath = Path(tmp) / "config.json"
         cpath.write_text(json.dumps(c, ensure_ascii=False))
         return cpath
@@ -1064,6 +1067,7 @@ class TestDueRunner(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             c = cfg()
             c["state_dir"], c["outbox_dir"] = f"{tmp}/state", f"{tmp}/outbox"
+            c["bridge"] = "/bin/false"
             c["llm"]["key_file"] = f"{tmp}/absent.env"
             cpath = Path(tmp) / "config.json"
             cpath.write_text(json.dumps(c, ensure_ascii=False))
@@ -1327,6 +1331,81 @@ class TestBriefServer(unittest.TestCase):
         self.assertEqual(fm, {"a": "x: y", "b": "it's", "c": ["p", "q"], "d": ["1", "two"], "e": [], "f": False})
         self.assertEqual(body, "body")
         self.assertEqual(self.bs.parse_frontmatter("no frontmatter"), ({}, "no frontmatter"))
+
+
+class TestMirror(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.b = TestBridgePatch()
+        self.mod = self.b.load(self.tmp.name)
+        facts = collect.collect("tw-postmarket", D21, collector(TW_ROUTES_21))
+        self.md = render.render(facts, None, None, cfg())[0]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_archive_mirrors_exact_bytes(self):
+        mod, name = self.mod, "2026-10-21-tw-postmarket.md"
+        self.assertEqual(mod.nexus_archive(name, self.md), "written")
+        src = Path(mod.NEXUS) / "_kb/raw/market-daily" / name
+        dst = Path(mod.MIRROR) / name
+        self.assertEqual(dst.read_bytes(), src.read_bytes())
+        self.assertEqual(oct(Path(mod.MIRROR).stat().st_mode & 0o777), "0o700")
+        self.assertEqual(oct(dst.stat().st_mode & 0o777), "0o600")
+        dst.unlink()
+        self.assertEqual(mod.nexus_archive(name, self.md), "duplicate")  # identical note -> mirrored again
+        self.assertTrue(dst.is_file())
+        self.assertEqual(
+            mod.nexus_archive("2026-10-22-tw-postmarket.md", self.md + "\ntoken=abcdefghij\n"), "sensitive"
+        )
+        self.assertFalse((Path(mod.MIRROR) / "2026-10-22-tw-postmarket.md").exists())
+
+    def test_mirror_sync(self):
+        mod = self.mod
+        src_dir = Path(mod.NEXUS) / "_kb/raw/market-daily"
+        src_dir.mkdir(parents=True)
+        (src_dir / "2026-10-21-tw-market.md").write_text("legacy", encoding="utf-8")  # put there by nexus_pull
+        (src_dir / "2026-10-22-tw-postmarket.md").write_text("v1", encoding="utf-8")
+        (src_dir / "notes.txt").write_text("x")
+        out = json.loads(self.b.call(mod, "brief-mirror-sync", "")[1])
+        self.assertEqual(out, {"copied": 2, "deleted": 0, "unchanged": 0})
+        self.assertEqual(sorted(os.listdir(mod.MIRROR)), ["2026-10-21-tw-market.md", "2026-10-22-tw-postmarket.md"])
+        self.assertEqual(
+            json.loads(self.b.call(mod, "brief-mirror-sync", "")[1]), {"copied": 0, "deleted": 0, "unchanged": 2}
+        )
+        (src_dir / "2026-10-22-tw-postmarket.md").write_text("v2-longer", encoding="utf-8")
+        (src_dir / "2026-10-21-tw-market.md").unlink()
+        out = json.loads(self.b.call(mod, "brief-mirror-sync", "")[1])
+        self.assertEqual(out, {"copied": 1, "deleted": 1, "unchanged": 0})
+        self.assertEqual((Path(mod.MIRROR) / "2026-10-22-tw-postmarket.md").read_text(), "v2-longer")
+        self.assertEqual(self.b.call(mod, "brief-mirror-sync extra", "")[0], 2)
+        self.assertIn("brief-mirror-sync copied=1 deleted=1", Path(mod.LOG).read_text())
+
+    def test_client_mirror_sync_schedule(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir, outbox = Path(tmp) / "state", Path(tmp) / "outbox"
+            state_dir.mkdir()
+            calls = []
+            t0 = dt.datetime(2026, 10, 22, 10, 0, tzinfo=dt.UTC)
+            with mock.patch.object(run.deliver, "mirror_sync", lambda bridge, log=None: calls.append(bridge) or True):
+                run.maybe_mirror_sync(cfg(), state_dir, outbox, 0, t0, print)  # never synced -> sync
+                run.maybe_mirror_sync(cfg(), state_dir, outbox, 0, t0 + dt.timedelta(minutes=30), print)  # < 1 h
+                (outbox / "sent").mkdir(parents=True)
+                (outbox / "sent" / "x.json").write_text("{}")
+                run.maybe_mirror_sync(cfg(), state_dir, outbox, 0, t0 + dt.timedelta(minutes=35), print)  # delivered
+                run.maybe_mirror_sync(cfg(), state_dir, outbox, 1, t0 + dt.timedelta(minutes=95), print)  # 1 h since
+            self.assertEqual(len(calls), 3)
+            self.assertEqual(json.loads((state_dir / "state.json").read_text())["_mirror_sync"]["ok"], True)
+        runner_calls = []
+
+        def runner(cmd, **kw):
+            runner_calls.append(cmd)
+            return mock.Mock(returncode=255, stdout="", stderr="ssh: connect failed")
+
+        logs = []
+        self.assertFalse(run.deliver.mirror_sync("ssh research-bridge", log=logs.append, runner=runner))
+        self.assertEqual(runner_calls[0], ["ssh", "research-bridge", "brief-mirror-sync"])
+        self.assertIn("exit 255", logs[0])
 
 
 if __name__ == "__main__":

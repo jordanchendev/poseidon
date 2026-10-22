@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # PROPOSED REPLACEMENT for macminim4 ~/.openclaw/bin/research_bridge.py (Python 3.9), adds the `brief` verb.
-# Based on the 110-line original read 2026-10-22; the installed copy (md5 c8182517...) is the previous revision of
+# Based on the 110-line original read 2026-10-22; the installed copy (md5 051f6faa...) is the previous revision of
 # this file. Every added/changed line is marked "# [brief]".
 # Archive: each brief is written add-only into the Nexus vault _kb/raw/market-daily/<date>-<kind>.md (Nexus raw
 # schema, as nexus_pull's to_nexus_raw builds it) BEFORE any Telegram send; nexus_pull's sensitive-content patterns
 # are checked first (a hit skips the vault write, Telegram still goes out). Sisyphus/output is no longer written.
 # `brief-archive <kind> <YYYY-MM-DD>` writes an already delivered brief (from market-briefs/) into Nexus only.
+# Every Nexus write (or identical existing note) is also copied to ~/.openclaw/briefs-mirror (outside iCloud: TCC
+# blocks the launchd brief server from iCloud Drive); `brief-mirror-sync` re-syncs the whole folder one-way.
 # Apply: diff this file against the live one, copy it over, keep mode/owner as they are. Nothing else changes:
 # pending / done / needs-review behave exactly as before. The authorized_keys forced-command entry is unchanged.
 # Delivery client: scripts/market_brief/deliver.py runs `ssh research-bridge brief <kind> <YYYY-MM-DD>` with JSON
@@ -28,6 +30,7 @@ SSH_ORIGINAL_COMMAND; free text (summary / reason) is read from stdin, never fro
                                    ~/.openclaw/media/market-briefs/, written into Nexus _kb/raw/market-daily/ and
                                    sent to Telegram                                                       # [brief]
   brief-archive <kind> <date>   -> write a delivered brief into Nexus only (no Telegram)                 # [brief]
+  brief-mirror-sync             -> one-way sync Nexus market-daily -> ~/.openclaw/briefs-mirror          # [brief]
   brief-failed <kind> <date>    -> one Telegram notice that the brief was not produced; stdin = reason   # [brief]
   brief-resend <kind> <date>    -> resend the full text of a delivered brief; stdin = JSON {telegram_md} # [brief]
 """
@@ -44,6 +47,9 @@ UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 BRIEFS = os.path.expanduser("~/.openclaw/media/market-briefs")  # under an OpenClaw media root            # [brief]
 NEXUS = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Nexus")  # live-synced vault  # [brief]
 NEXUS_MARKET = "_kb/raw/market-daily"                                                                    # [brief]
+# Mirror outside iCloud for the launchd brief server (TCC blocks launchd python from iCloud Drive).        # [brief]
+MIRROR = os.path.expanduser("~/.openclaw/briefs-mirror")                                                  # [brief]
+MIRROR_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z-]+\.md$")  # same as brief_server.NAME_RE         # [brief]
 # Same patterns as nexus_pull.py / phase101-vault-pull.sh (CI = case-insensitive, CS = case-sensitive).   # [brief]
 SENSITIVE_CI = [                                                                                         # [brief]
     r"(^|[\s,{])([a-z0-9]+[_-])*(password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|cookie|dsn|database[_-]?url|redis[_-]?url)\s*[=:]\s*[^\]\s,}]+",
@@ -175,6 +181,55 @@ def to_nexus_raw(name, md, today=None):                                         
     return "\n".join(lines) + "\n" + body                                                                # [brief]
 
 
+def _mirror_copy(src, name):                                                                             # [brief]
+    """Copy the exact bytes (and mtime) of src to MIRROR/name atomically; mirror dir 700, file 600."""     # [brief]
+    os.makedirs(MIRROR, mode=0o700, exist_ok=True)                                                       # [brief]
+    os.chmod(MIRROR, 0o700)                                                                              # [brief]
+    with open(src, "rb") as fh: data = fh.read()                                                         # [brief]
+    dst = os.path.join(MIRROR, name)                                                                     # [brief]
+    tmp = os.path.join(MIRROR, "." + name + ".tmp")                                                      # [brief]
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)                                       # [brief]
+    with os.fdopen(fd, "wb") as fh: fh.write(data)                                                       # [brief]
+    st = os.stat(src)                                                                                    # [brief]
+    os.utime(tmp, (st.st_atime, st.st_mtime))                                                            # [brief]
+    os.replace(tmp, dst)                                                                                 # [brief]
+
+
+def _mirror(name):                                                                                       # [brief]
+    try:                                                                                                 # [brief]
+        _mirror_copy(os.path.join(NEXUS, NEXUS_MARKET, name), name)                                      # [brief]
+    except OSError as e:                                                                                 # [brief]
+        log("brief %s: mirror copy failed: %s" % (name, type(e).__name__))                               # [brief]
+
+
+def brief_mirror_sync(argv):                                                                             # [brief]
+    """brief-mirror-sync: one-way Nexus market-daily -> MIRROR (new/changed copied, vanished deleted)."""  # [brief]
+    if len(argv) != 1: fail("bad arguments")                                                             # [brief]
+    src_dir = os.path.join(NEXUS, NEXUS_MARKET)                                                          # [brief]
+    try:                                                                                                 # [brief]
+        names = [n for n in os.listdir(src_dir) if MIRROR_NAME_RE.match(n)                               # [brief]
+                 and os.path.isfile(os.path.join(src_dir, n)) and not os.path.islink(os.path.join(src_dir, n))]
+    except OSError as e:                                                                                 # [brief]
+        fail("cannot list Nexus %s: %s" % (NEXUS_MARKET, type(e).__name__))                              # [brief]
+    os.makedirs(MIRROR, mode=0o700, exist_ok=True)                                                       # [brief]
+    copied = unchanged = deleted = 0                                                                     # [brief]
+    for n in names:                                                                                      # [brief]
+        src, dst = os.path.join(src_dir, n), os.path.join(MIRROR, n)                                     # [brief]
+        if os.path.isfile(dst):                                                                          # [brief]
+            s1, s2 = os.stat(src), os.stat(dst)                                                          # [brief]
+            same = s1.st_size == s2.st_size and int(s1.st_mtime) == int(s2.st_mtime)                     # [brief]
+            if not same:                                                                                 # [brief]
+                with open(src, "rb") as a, open(dst, "rb") as b: same = a.read() == b.read()            # [brief]
+            if same: unchanged += 1; continue                                                            # [brief]
+        _mirror_copy(src, n); copied += 1                                                                # [brief]
+    keep = set(names)                                                                                    # [brief]
+    for n in os.listdir(MIRROR):                                                                         # [brief]
+        if MIRROR_NAME_RE.match(n) and n not in keep:                                                    # [brief]
+            os.remove(os.path.join(MIRROR, n)); deleted += 1                                             # [brief]
+    if copied or deleted: log("brief-mirror-sync copied=%d deleted=%d unchanged=%d" % (copied, deleted, unchanged))
+    print(json.dumps({"copied": copied, "deleted": deleted, "unchanged": unchanged}))                     # [brief]
+
+
 def nexus_archive(name, md):                                                                             # [brief]
     """Add-only write into Nexus. -> 'written' | 'duplicate' | 'sensitive' | 'no-vault'; refuses (exit 2) when a
     note with the same name but a different body exists (frontmatter may differ: compile flips `compiled`)."""
@@ -191,9 +246,11 @@ def nexus_archive(name, md):                                                    
         with open(dest, "x", encoding="utf-8") as fh: fh.write(raw)                                      # [brief]
     except FileExistsError:                                                                              # [brief]
         if _split_fm(_read(dest))[1] == _split_fm(raw)[1]:                                               # [brief]
+            _mirror(name)                                                                                # [brief]
             return "duplicate"                                                                           # [brief]
         fail("Nexus %s/%s exists with a different body; left as is" % (NEXUS_MARKET, name))             # [brief]
     log("brief %s: written to Nexus %s" % (name, NEXUS_MARKET))                                          # [brief]
+    _mirror(name)                                                                                        # [brief]
     return "written"                                                                                     # [brief]
 
 
@@ -328,6 +385,8 @@ def main():
         brief(argv); return                                                                              # [brief]
     if cmd == "brief-failed":                                                                            # [brief]
         brief_failed(argv); return                                                                       # [brief]
+    if cmd == "brief-mirror-sync":                                                                       # [brief]
+        brief_mirror_sync(argv); return                                                                  # [brief]
     if cmd == "brief-archive":                                                                           # [brief]
         brief_archive(argv); return                                                                      # [brief]
     if cmd == "brief-resend":                                                                            # [brief]

@@ -182,6 +182,30 @@ def sweep_expired(state, outbox, slots, window_minutes, now, log):
             )
 
 
+MIRROR_SYNC_EVERY_S = 3600
+
+
+def _sent_count(outbox):
+    try:
+        return sum(1 for _ in (outbox / "sent").glob("*.json"))
+    except OSError:
+        return 0
+
+
+def maybe_mirror_sync(cfg, state_dir, outbox, sent_before, now, log):
+    """`ssh research-bridge brief-mirror-sync` after a delivery in this run, else at most once per hour.
+    Failures are logged only: they never notify and never change the exit code."""
+    state = load_state(state_dir)
+    last = (state.get("_mirror_sync") or {}).get("at")
+    delivered = _sent_count(outbox) > sent_before
+    stale = not last or (now - dt.datetime.fromisoformat(last)).total_seconds() >= MIRROR_SYNC_EVERY_S
+    if not (delivered or stale):
+        return
+    ok = deliver.mirror_sync(cfg["bridge"], log=log)
+    state["_mirror_sync"] = {"at": now.isoformat(timespec="seconds"), "ok": ok}
+    save_json(state_dir / "state.json", state)
+
+
 class Lock:
     def __init__(self, path):
         self.path = path
@@ -224,6 +248,7 @@ def cmd_due(a, cfg, state_dir, outbox, log):
         if not lock.acquired:
             return 0
         rc = 0
+        sent_before = _sent_count(outbox)
         if not a.no_deliver and not a.dry_run and deliver.deliver_outbox(outbox, cfg["bridge"], log=log):
             rc = 4
         state = load_state(state_dir)
@@ -308,6 +333,8 @@ def cmd_due(a, cfg, state_dir, outbox, log):
         save_json(state_dir / "state.json", state)
         if not a.no_deliver and deliver.deliver_outbox(outbox, cfg["bridge"], log=log):
             rc = 4
+        if not a.no_deliver:
+            maybe_mirror_sync(cfg, state_dir, outbox, sent_before, now, log)
         return rc
 
 

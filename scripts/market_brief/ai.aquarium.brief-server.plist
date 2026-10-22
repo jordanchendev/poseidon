@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- macminim4 user LaunchAgent for scripts/market_brief/brief_server.py (installed as ~/.openclaw/bin/brief_server.py).
+<!-- Root is the mirror outside iCloud (~/.openclaw/briefs-mirror, kept in sync by the bridge): TCC blocks launchd's
+     python from iCloud Drive.
+     macminim4 user LaunchAgent for scripts/market_brief/brief_server.py (installed as ~/.openclaw/bin/brief_server.py).
      Install: cp to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.aquarium.brief-server.plist` -->
 <plist version="1.0">
 <dict>
@@ -12,6 +14,8 @@
     <string>/Users/macminim4/.openclaw/bin/brief_server.py</string>
     <string>--port</string>
     <string>8790</string>
+    <string>--root</string>
+    <string>/Users/macminim4/.openclaw/briefs-mirror</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

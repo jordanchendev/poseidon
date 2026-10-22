@@ -105,6 +105,19 @@ def resend(kind, date, telegram_md, bridge, log=print, runner=subprocess.run):
     return True
 
 
+def mirror_sync(bridge, log=print, runner=subprocess.run):
+    """`brief-mirror-sync` on the bridge (Nexus market-daily -> mirror for the brief server). Never raises."""
+    try:
+        p = runner([*shlex.split(bridge), "brief-mirror-sync"], input="", capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log(f"bridge brief-mirror-sync failed to run: {type(e).__name__}")
+        return False
+    if p.returncode != 0:
+        log(f"bridge brief-mirror-sync exit {p.returncode}: {p.stderr.strip()[:300]}")
+        return False
+    return True
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--outbox", required=True)
