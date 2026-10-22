@@ -27,6 +27,7 @@ from poseidon.models.backtest import BacktestRecord
 from poseidon.models.strategy import StrategyRecord
 from poseidon.risk.engine import RiskEngine
 from poseidon.strategies.rule_strategy import RuleStrategy
+from poseidon.strategies.rule_strategy_v2 import build_rule_strategy
 from poseidon.strategies.voting_strategy import VotingStrategy
 from poseidon.workers.celery_app import celery_app
 
@@ -1597,7 +1598,7 @@ def run_backtest_task(
             if record.strategy_type == "liquidity_sweep":
                 strategy = LiquiditySweepStrategyFactory.from_config(record.config, strategy_id=record.id)
             elif record.strategy_type == "rule":
-                strategy = RuleStrategy(config=record.config, strategy_id=record.id)
+                strategy = build_rule_strategy(record.config, strategy_id=record.id)
             elif record.strategy_type == "voting":
                 strategy = VotingStrategy(config=record.config, strategy_id=record.id)
             elif record.strategy_type == "model":
@@ -1873,7 +1874,7 @@ def run_dual_mode_task(
                     record.config, strategy_id=record.id
                 )
             elif record.strategy_type == "rule":
-                strategy_factory = lambda: RuleStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
+                strategy_factory = lambda: build_rule_strategy(record.config, strategy_id=record.id)  # noqa: E731
             elif record.strategy_type == "model":
                 raise ValueError("Dual-mode comparison not supported for model strategies")
             else:

@@ -420,3 +420,13 @@ class RuleStrategyV2(BaseStrategy):
             if current is None or candidate < current:
                 return candidate
         return None
+
+
+def build_rule_strategy(config: dict, *, strategy_id: UUID | None = None) -> BaseStrategy:
+    """Strategy for a stored ``rule`` config: v1 ``RuleStrategy`` or, for ``dsl_version: 2``, ``RuleStrategyV2``."""
+    from poseidon.strategies.dsl.versions import dsl_version_of
+    from poseidon.strategies.rule_strategy import RuleStrategy
+
+    if isinstance(config, dict) and dsl_version_of(config) == 2:
+        return RuleStrategyV2(config=config, strategy_id=strategy_id)
+    return RuleStrategy(config=config, strategy_id=strategy_id)
