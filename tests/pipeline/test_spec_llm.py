@@ -316,6 +316,39 @@ def test_pipeline_policy_rejects_mtx():
     assert "TX on tw_futures only" in outcome.report["rounds"][0]["errors"][0]["msg"]
 
 
+def test_pipeline_policy_rejects_comparisons_across_scales():
+    spec = valid_spec()
+    spec["rules"][0]["condition"]["all"].append(
+        {"type": "compare", "a": {"ind": "atr", "period": 14}, "op": "<", "b": {"ind": "sma", "period": 50}}
+    )
+    client = FakeClient([reply(ok(spec)), reply(ok())])
+    outcome, _ = run(client)
+    first = outcome.report["rounds"][0]
+    assert first["outcome"] == "invalid"
+    assert first["errors"] == [
+        {
+            "path": "rules.0.condition.all.2",
+            "msg": "a is on the points scale but b is on the price scale; compare like with like",
+        }
+    ]
+    assert outcome.verdict == Verdict.PASS  # repaired in round 1
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ({"ind": "atr", "period": 14}, {"const": 40}),
+        ({"ind": "rsi", "period": 14}, {"const": 30}),
+        ({"session": "or_range", "minutes": 30}, {"ind": "atr", "period": 14}),
+        ({"price": "close"}, {"session": "prev_day_high"}),
+    ],
+)
+def test_like_scale_comparisons_are_allowed(a, b):
+    spec = valid_spec()
+    spec["rules"][0]["condition"]["all"].append({"type": "compare", "a": a, "op": "<", "b": b})
+    assert spec_llm.pipeline_policy_errors(validate_v2(spec)) == []
+
+
 # --------------------------------------------------------------- unsupported
 
 

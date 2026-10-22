@@ -44,12 +44,19 @@ from poseidon.decision_loop.manifest import canonical_json, content_sha256
 from poseidon.pipeline.state import Verdict
 from poseidon.strategies.dsl.v2 import DslUnsupportedError, DslValidationError, dsl_v2_json_schema, validate_v2
 from poseidon.strategies.dsl.v2.examples import tx_orb30_day
-from poseidon.strategies.dsl.v2.validate import merge_risk
+from poseidon.strategies.dsl.v2.schema import (
+    CompareCondition,
+    ConstOperand,
+    CrossCondition,
+    IndicatorOperand,
+    OpeningRangeOperand,
+)
+from poseidon.strategies.dsl.v2.validate import merge_risk, walk_model
 
 KEY_ENV = "STRATEGY_PIPELINE_OPENROUTER_KEY"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 IDENTITY_CACHE_SECONDS = 600.0
-PROMPT_VERSION = 2
+PROMPT_VERSION = 3
 
 MAX_ERRORS_PER_ROUND = 20
 MAX_TEXT = 300
@@ -125,6 +132,12 @@ DSL v2 RULES
   strategy interval only, {{"session":"or_high|or_low|or_mid|or_range","minutes":N}} (opening range,
   N a multiple of the interval), {{"session":"open|high|low|vwap|prev_high|prev_low|prev_close|
   prev_day_high|prev_day_low|prev_day_close"}}, {{"const":X}}.
+- Operand scales: price levels (price, ema, sma, or_high/or_low/or_mid, every session level), points
+  (atr, or_range) and rsi (0-100). ema/sma are of the close price. cross/compare must keep a and b on the
+  same scale (a const fits any scale); an offset is added to b in points or ATR multiples.
+  There is no indicator of an indicator (e.g. SMA of ATR) and no rolling N-bar highest/lowest. If the
+  idea's core needs one, use a coherent approximation stated in "assumptions" (e.g. ATR below a points
+  threshold param for "low volatility"), or answer unsupported.
 - Conditions: cross, compare, time_window, session_elapsed, combined with all / any / none (depth <= 4,
   <= 12 leaves per rule). Rules: 1-6, at most 4 long/short entry rules, optional close rules.
 - Every long/short rule must end up with a stop_loss (in its own risk block or the strategy risk block).
@@ -146,10 +159,7 @@ DSL v2 RULES
   session, time window, exits) in "assumptions", one short sentence each.
 - name: lowercase snake_case, 3-64 characters.
 
-REFERENCE EXAMPLE (30-minute day-session opening-range breakout):
-{_compact(tx_orb30_day(), sort_keys=False)}
-
-PARAMETER EXAMPLE (same strategy with two tunable params):
+REFERENCE EXAMPLE (30-minute day-session opening-range breakout with two tunable params):
 {_compact(_param_example(), sort_keys=False)}
 
 JSON SCHEMA of the DSL v2 document (the "spec" value). Any numeric field may instead hold {{"$param":"<name>"}}:
@@ -344,8 +354,24 @@ def parse_reply(content: Any) -> tuple[str, dict]:
     return "contract_error", {"errors": [_err("status", 'status must be "ok" or "unsupported"')]}
 
 
+def operand_scale(operand: Any) -> str | None:
+    """``price`` / ``points`` / ``rsi`` scale of an operand; ``None`` for a const (fits any scale)."""
+
+    if isinstance(operand, IndicatorOperand):
+        return {"atr": "points", "rsi": "rsi"}.get(operand.ind, "price")
+    if isinstance(operand, OpeningRangeOperand):
+        return "points" if operand.session == "or_range" else "price"
+    if isinstance(operand, ConstOperand):
+        return None
+    return "price"  # PriceOperand, SessionLevelOperand
+
+
 def pipeline_policy_errors(validated) -> list[dict]:
-    """Pipeline rules on top of the DSL v2 grammar: TX only, a stop on every entry."""
+    """Pipeline rules on top of the DSL v2 grammar: TX only, a stop on every entry, like-scale comparisons.
+
+    The scale check catches specs that validate but can never mean what they say
+    (e.g. ``atr < sma``: points against a price level is always true).
+    """
 
     model = validated.model
     errors = []
@@ -354,6 +380,16 @@ def pipeline_policy_errors(validated) -> list[dict]:
     for index, rule in enumerate(model.rules):
         if rule.action in ("long", "short") and merge_risk(model.risk, rule.risk).stop_loss is None:
             errors.append(_err(f"rules.{index}.risk.stop_loss", "every long/short rule needs a stop_loss"))
+    for path, node in walk_model(model):
+        if isinstance(node, CrossCondition | CompareCondition):
+            scale_a, scale_b = operand_scale(node.a), operand_scale(node.b)
+            if scale_a and scale_b and scale_a != scale_b:
+                errors.append(
+                    _err(
+                        ".".join(str(part) for part in path),
+                        f"a is on the {scale_a} scale but b is on the {scale_b} scale; compare like with like",
+                    )
+                )
     return errors
 
 
