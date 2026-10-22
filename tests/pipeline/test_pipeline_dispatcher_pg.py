@@ -146,18 +146,20 @@ def test_invalid_spec_fails_validation_and_the_run_is_final(harness):
         _rerun(harness, run_id)
 
 
-def test_unsupported_stops_the_run_and_rerun_is_allowed(harness):
+def test_unsupported_stops_the_run_and_rerun_is_allowed(harness, monkeypatch):
+    # Without the LLM key the generation attempt is an error (no LLM call), which is rerunnable.
+    monkeypatch.delenv("STRATEGY_PIPELINE_OPENROUTER_KEY", raising=False)
     run_id = harness.create(spec=None)
     harness.drain()
     run = harness.run(run_id)
-    assert (run.status, run.reason) == ("unsupported", "spec_generate: llm generation not implemented")
+    assert run.status == "error" and "STRATEGY_PIPELINE_OPENROUTER_KEY is not set" in run.reason
 
     response = _rerun(harness, run_id)
     assert response["status"] == "queued" and response["current_stage"] == "spec_generate"
     harness.drain()
     assert _summary(harness, run_id) == [
-        ("spec_generate", 1, "advance", "completed", "unsupported"),
-        ("spec_generate", 2, "rerun", "completed", "unsupported"),
+        ("spec_generate", 1, "advance", "completed", "error"),
+        ("spec_generate", 2, "rerun", "completed", "error"),
     ]
 
     gap = harness.create(spec=tx_spec(rules=[{"condition": {"type": "opening_range_breakout"}, "action": "long"}]))

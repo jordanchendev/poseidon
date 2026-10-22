@@ -59,6 +59,7 @@ def default_config(*, stage_plan: list[str] | None, as_of: date) -> dict:
 
     return {
         "version": CONFIG_VERSION,
+        "spec_generate": copy.deepcopy(DEFAULT_SPEC_GENERATE),
         "stage_plan": list(stage_plan) if stage_plan is not None else list(V1_STAGE_PLAN),
         "thresholds": copy.deepcopy(DEFAULT_THRESHOLDS),
         "data": {"interval": "5m", "start": "2020-03-02", "end": as_of.isoformat()},
@@ -89,3 +90,20 @@ def validate_stage_plan(stage_plan: list[str], registry) -> list[str]:
             raise StagePlanError(f"stage {name} requires {', '.join(missing)} earlier in the plan")
         seen.add(name)
     return list(stage_plan)
+
+
+# --- Step 4: LLM spec generation (frozen per run) ---
+# Key: STRATEGY_PIPELINE_OPENROUTER_KEY only (see poseidon.pipeline.spec_llm).
+DEFAULT_SPEC_GENERATE: dict = {
+    "provider": "openrouter",
+    "model": "deepseek/deepseek-v4.1-flash-1017",
+    "max_repair_rounds": 2,
+    "max_tokens": 6000,
+    "temperature": 0.0,
+    "reasoning_enabled": False,
+    "max_cost_usd_per_attempt": 0.05,
+    # Only used when OpenRouter returns no cost: conservative (2x the 1017 list price).
+    "estimate_usd_per_mtok": {"prompt": 0.30, "completion": 1.20},
+    "request_timeout_seconds": 120,
+    "max_idea_chars": 4000,
+}

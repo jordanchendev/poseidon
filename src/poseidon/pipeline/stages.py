@@ -104,25 +104,42 @@ class BaseStage:
 
 
 class SpecGenerateStage(BaseStage):
-    """Step 1: pass a hand-written spec through. LLM generation lands in Step 4."""
+    """Pass a hand-written spec through, or generate one from the idea with the LLM (Step 4)."""
 
     name = "spec_generate"
 
+    def __init__(self, *, client_factory=None, pin_provider=None):
+        self._client_factory = client_factory
+        self._pin_provider = pin_provider
+
     def input_payload(self, ctx):
-        return {
+        payload = {
             "stage": self.name,
             "config_sha256": ctx.config_sha256,
             "idea_text": ctx.idea_text,
             "input_spec_json": ctx.input_spec_json,
         }
+        if ctx.input_spec_json is None:
+            from poseidon.pipeline.spec_llm import PROMPT_SHA256
+
+            payload["prompt_sha256"] = PROMPT_SHA256
+        return payload
 
     def run(self, ctx):
-        if ctx.input_spec_json is None:
-            return StageResult.unsupported("llm generation not implemented")
-        spec = ctx.input_spec_json
-        return StageResult.passed(
-            {"origin": "input_spec_json", "spec": spec, "spec_sha256": content_sha256(spec)},
+        if ctx.input_spec_json is not None:
+            spec = ctx.input_spec_json
+            return StageResult.passed(
+                {"origin": "input_spec_json", "spec": spec, "spec_sha256": content_sha256(spec)},
+            )
+        from poseidon.core.config import settings
+        from poseidon.pipeline.spec_llm import generate_spec
+
+        ctx.check_stop()
+        pin = self._pin_provider() if self._pin_provider else settings.pipeline_openrouter_key_label
+        outcome = generate_spec(
+            ctx.idea_text, ctx.config.get("spec_generate"), pin=pin, client_factory=self._client_factory
         )
+        return StageResult(outcome.verdict, outcome.reason, outcome.report, outcome.files)
 
 
 class SpecValidateStage(BaseStage):

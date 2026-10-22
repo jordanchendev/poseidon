@@ -6,6 +6,10 @@
 #          POSEIDON_DATABASE_URL=postgresql://poseidon:<password>@host.docker.internal:5433/poseidon_pipeline
 #          POSEIDON_API_PRINCIPALS_JSON={"<sha256 of key>": {"actor_id": "strategy-bridge", "roles": ["researcher"], "account_scopes": []}, ...}
 #     3. mkdir -p ~/strategy-pipeline/artifacts
+#     4. ~/strategy-pipeline/secrets/strategy-pipeline-openrouter.env (chmod 600), one line
+#          STRATEGY_PIPELINE_OPENROUTER_KEY=<key>      (worker only)
+#        and in pipeline.env the non-secret pin of that key's masked OpenRouter label
+#          POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL=<data.label of GET https://openrouter.ai/api/v1/key>
 #   Start (from the repo root):
 #     PIPELINE_GIT_SHA=$(git rev-parse --short HEAD) docker compose -f deploy/pipeline/docker-compose.yml up -d --build
 #
@@ -54,6 +58,10 @@ services:
 
   worker:
     <<: *pipeline-service
+    # Only the worker gets the LLM key (spec_generate runs here); api and beat never see it.
+    env_file:
+      - ${PIPELINE_ENV_FILE:-${HOME}/strategy-pipeline/pipeline.env}
+      - ${PIPELINE_LLM_ENV_FILE:-${HOME}/strategy-pipeline/secrets/strategy-pipeline-openrouter.env}
     command: celery -A poseidon.pipeline.celery_app worker -Q poseidon_pipeline -c 2 --loglevel=info
     depends_on:
       api:
