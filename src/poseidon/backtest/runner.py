@@ -137,6 +137,7 @@ class BacktestRunner:
         max_pending_bars: int = 24,
         include_funding: bool = False,
         funding_rates: pd.DataFrame | None = None,
+        gap_aware_stops: bool = False,
     ) -> None:
         self.strategy = strategy
         self.feature_engine = feature_engine
@@ -148,6 +149,10 @@ class BacktestRunner:
         self._max_pending_bars = max_pending_bars
         self._include_funding = include_funding
         self._funding_rates = funding_rates
+        # Off by default so historical results are unchanged. When on, a stop
+        # that the bar gaps through fills at the worse open (long: min(open, SL),
+        # short: max(open, SL)); take-profit stays at its limit price.
+        self._gap_aware_stops = gap_aware_stops
         self._funding_costs_total = 0.0
         self._funding_costs_by_trade: list[float] = []
         self._last_funding_settlement: pd.Timestamp | None = None
@@ -382,6 +387,8 @@ class BacktestRunner:
         - TP triggers if bar_low <= take_profit_price
 
         When both SL and TP trigger in the same bar, SL takes priority.
+        With ``gap_aware_stops`` a stop gapped through at the open fills at the
+        open instead of the stop price; TP always fills at its price.
 
         Args:
             portfolio: The BacktestPortfolio to evaluate.
@@ -417,7 +424,11 @@ class BacktestRunner:
 
             # SL takes priority when both trigger in same bar
             if sl_triggered:
-                exits.append((key, sl_price, "sl"))
+                fill = sl_price
+                if self._gap_aware_stops:
+                    bar_open = float(bar["open"])
+                    fill = min(bar_open, sl_price) if pos["side"] == "long" else max(bar_open, sl_price)
+                exits.append((key, fill, "sl"))
             elif tp_triggered:
                 exits.append((key, tp_price, "tp"))
 

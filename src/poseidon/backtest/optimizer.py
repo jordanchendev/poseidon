@@ -62,12 +62,14 @@ class GridSearchOptimizer:
         cost_model: CostModel,
         initial_capital: float = 1_000_000.0,
         sizing_config: SizingConfig | None = None,
+        gap_aware_stops: bool = False,
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
         self.cost_model = cost_model
         self.initial_capital = initial_capital
         self.sizing_config = sizing_config or SizingConfig()
+        self._runner_extra = {"gap_aware_stops": True} if gap_aware_stops else {}
 
     def optimize(
         self,
@@ -110,6 +112,7 @@ class GridSearchOptimizer:
                 cost_model=self.cost_model,
                 initial_capital=self.initial_capital,
                 sizing_config=self.sizing_config,
+                **self._runner_extra,
             )
             result = runner.run(ohlcv)
 
@@ -143,6 +146,7 @@ class BayesianOptimizer:
         sizing_config: SizingConfig | None = None,
         db_session: Any | None = None,
         fill_model: FillModel | None = None,
+        gap_aware_stops: bool = False,
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
@@ -151,6 +155,7 @@ class BayesianOptimizer:
         self.sizing_config = sizing_config or SizingConfig()
         self.db_session = db_session
         self.fill_model = fill_model
+        self._runner_extra = {"gap_aware_stops": True} if gap_aware_stops else {}
 
     def optimize(
         self,
@@ -221,6 +226,7 @@ class BayesianOptimizer:
                 initial_capital=self.initial_capital,
                 sizing_config=self.sizing_config,
                 fill_model=self.fill_model,
+                **self._runner_extra,
             )
             result = runner.run(ohlcv, db_session=self.db_session)
 
