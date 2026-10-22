@@ -11,6 +11,7 @@ The only backtest-specific logic is:
 
 from __future__ import annotations
 
+import copy
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -79,6 +80,14 @@ class _PortfolioAdapter:
             quantity_pct=pos["quantity"] * pos["entry_price"] / self._portfolio.initial_capital,
             entry_time=pos["entry_time"],
         )
+
+
+def _last_closed_trade(portfolio: BacktestPortfolio):
+    """Copy of the most recent TradeRecord that closed a position, or None."""
+    for trade in reversed(portfolio.trades):
+        if trade.exit_time is not None:
+            return copy.copy(trade)
+    return None
 
 
 class _FakePositionEntry:
@@ -621,6 +630,11 @@ class BacktestRunner:
         # Create PendingOrderBook for this run
         pending_book = PendingOrderBook(fill_model=self._fill_model)
 
+        position_aware = bool(getattr(self.strategy, "position_aware", False))
+        position_key = f"{self.strategy.market}:{self.strategy.symbol}"
+        if position_aware:
+            self.strategy.reset()
+
         for i in range(n_bars):
             bar = features.iloc[i]
 
@@ -639,6 +653,15 @@ class BacktestRunner:
 
             # Phase C: Strategy evaluate + signal routing
             features_slice = features.iloc[: i + 1]
+            if position_aware:
+                # Position-aware strategies (DSL v2) get the runner's view of the
+                # position after Phase A/B, never their own emitted signals.
+                pos = portfolio.positions.get(position_key)
+                self.strategy.on_bar_context(
+                    position=copy.copy(pos) if pos is not None else None,
+                    last_closed_trade=_last_closed_trade(portfolio),
+                    bar_index=i,
+                )
             signals = self.strategy.evaluate(features_slice)
 
             for signal in signals:
