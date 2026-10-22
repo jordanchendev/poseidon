@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+# PROPOSED REPLACEMENT for macminim4 ~/.openclaw/bin/research_bridge.py (Python 3.9), adds the `brief` verb.
+# Based on the version read 2026-10-22 (110 lines). Every added/changed line is marked "# [brief]".
+# Apply: diff this file against the live one, copy it over, keep mode/owner as they are. Nothing else changes:
+# pending / done / needs-review behave exactly as before. The authorized_keys forced-command entry is unchanged.
+# Delivery client: scripts/market_brief/deliver.py runs `ssh research-bridge brief <kind> <YYYY-MM-DD>` with JSON
+# {filename, summary, report_md} on stdin. Exit 0 delivered (or duplicate already sent), 2 refused, 1 retryable
+# (Telegram send failed: the report is saved, the client keeps its outbox entry, the retry resends).
+# `brief-failed <kind> <YYYY-MM-DD>` (stdin = one-line reason) sends "市場報告未產出 <kind> <date>：<reason>" once per
+# kind+date (marker file next to the reports); a repeat is logged and exits 0 without sending.
+"""research-bridge: forced-command endpoint for the stormtrooper research runner (Python 3.9).
+
+Only reachable through one authorized_keys entry (command=..., from=stormtrooper LAN). Commands come from
+SSH_ORIGINAL_COMMAND; free text (summary / reason) is read from stdin, never from the command line.
+  pending                       -> JSON list of agenda rows with status accepted
+  done <agenda_id> <rev_uuid>   -> status done + revision_id; stdin = one-line summary, or JSON {summary, report_md}:
+                                   the report is saved under ~/.openclaw/media/research-reports/ and attached to the notice
+  needs-review <agenda_id>      -> status needs_review; stdin = reason; Telegram notice
+  brief <kind> <YYYY-MM-DD>     -> market brief; stdin = JSON {filename, summary, report_md}; the report is saved under
+                                   ~/.openclaw/media/market-briefs/, copied to Sisyphus/output/ (nexus_pull picks it
+                                   up) and attached to a Telegram notice                                  # [brief]
+  brief-failed <kind> <date>    -> one Telegram notice that the brief was not produced; stdin = reason   # [brief]
+"""
+import datetime, json, os, re, subprocess, sys
+
+AGENDA = os.path.expanduser("~/.openclaw/research/agenda.jsonl")
+LOG = os.path.expanduser("~/.openclaw/research/bridge.log")
+REPORTS = os.path.expanduser("~/.openclaw/media/research-reports")  # under an OpenClaw media root, so --media may read it
+STDIN_CAP = 450000
+OPENCLAW = "/opt/homebrew/bin/openclaw"
+ACCOUNT, CHAT = "main_bot", "6051426738"
+ID_RE = re.compile(r"^\d{8}-m?\d{1,3}$")
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+BRIEFS = os.path.expanduser("~/.openclaw/media/market-briefs")  # under an OpenClaw media root            # [brief]
+SISYPHUS_OUT = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Sisyphus/output")      # [brief]
+BRIEF_KINDS = ("tw-premarket", "tw-postmarket", "us-premarket", "us-postmarket")                       # [brief]
+BRIEF_DATE_RE = re.compile(r"^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")                       # [brief]
+
+
+def now():
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def log(msg):
+    with open(LOG, "a") as fh: fh.write("%s %s\n" % (now(), msg))
+
+
+def load():
+    with open(AGENDA) as fh: return [json.loads(l) for l in fh if l.strip()]
+
+
+def save(rows):
+    tmp = AGENDA + ".bridge.tmp"
+    with open(tmp, "w") as fh:
+        for r in rows: fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    os.replace(tmp, AGENDA)
+
+
+def clean(text, limit):
+    text = "".join(ch for ch in text if ch.isprintable() or ch == "\n").strip()
+    return text[:limit]
+
+
+def telegram(text, media=None):
+    env = dict(os.environ, PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+    cmd = [OPENCLAW, "message", "send", "--channel", "telegram", "--account", ACCOUNT, "--target", CHAT,
+           "--json", "--message", text]
+    if media: cmd += ["--media", media, "--force-document"]
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
+    return out.returncode == 0
+
+
+def save_report(row, rev, md):
+    md = "".join(ch for ch in md if ch.isprintable() or ch in "\n\t")
+    os.makedirs(REPORTS, mode=0o700, exist_ok=True)
+    name = "%s-%s-%s.md" % ("-".join(row["symbols"]), row["id"], rev[:8])
+    path = os.path.join(REPORTS, name)
+    fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh: fh.write(md)
+    os.replace(path + ".tmp", path)
+    return path
+
+
+def fail(msg):
+    log("refused: " + msg); print(msg, file=sys.stderr); sys.exit(2)
+
+
+def _write_atomic(path, text, mode):                                                                    # [brief]
+    tmp = os.path.join(os.path.dirname(path), "." + os.path.basename(path) + ".tmp")                    # [brief]
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)                                       # [brief]
+    with os.fdopen(fd, "w", encoding="utf-8") as fh: fh.write(text)                                      # [brief]
+    os.replace(tmp, path)                                                                                # [brief]
+
+
+def _read(path):                                                                                         # [brief]
+    with open(path, encoding="utf-8") as fh: return fh.read()                                            # [brief]
+
+
+def brief(argv):                                                                                         # [brief]
+    """brief <kind> <YYYY-MM-DD>; stdin JSON {filename, summary, report_md}."""                          # [brief]
+    if len(argv) != 3 or argv[1] not in BRIEF_KINDS or not BRIEF_DATE_RE.match(argv[2]): fail("bad arguments")
+    kind, date = argv[1], argv[2]                                                                        # [brief]
+    raw = sys.stdin.read(STDIN_CAP + 1)                                                                  # [brief]
+    if len(raw) > STDIN_CAP: fail("stdin too large")                                                     # [brief]
+    try:                                                                                                 # [brief]
+        payload = json.loads(raw)                                                                        # [brief]
+    except ValueError:                                                                                   # [brief]
+        fail("stdin is not valid JSON")                                                                  # [brief]
+    if not isinstance(payload, dict): fail("stdin must be a JSON object")                                # [brief]
+    name = "%s-%s.md" % (date, kind)  # derived here; the client value must match, never trusted as a path
+    if payload.get("filename") not in (None, name): fail("filename mismatch")                           # [brief]
+    md, summary = payload.get("report_md"), payload.get("summary")                                       # [brief]
+    if not isinstance(md, str) or not md.startswith("---\n") or "\npromote: nexus\n" not in md:          # [brief]
+        fail("report_md must be markdown with frontmatter (promote: nexus)")                            # [brief]
+    if not isinstance(summary, str): fail("summary must be a string")                                    # [brief]
+    md = "".join(ch for ch in md if ch.isprintable() or ch in "\n\t")                                    # [brief]
+    text = clean(summary, 600)                                                                           # [brief]
+    os.makedirs(BRIEFS, mode=0o700, exist_ok=True)                                                       # [brief]
+    path = os.path.join(BRIEFS, name)                                                                    # [brief]
+    marker = path + ".sent"                                                                              # [brief]
+    if os.path.exists(path):                                                                             # [brief]
+        if _read(path) != md: fail("brief %s already delivered with different content" % name)          # [brief]
+        if os.path.exists(marker):                                                                       # [brief]
+            log("brief %s duplicate, already sent" % name)                                               # [brief]
+            print(json.dumps({"file": name, "telegram_sent": True, "duplicate": True})); return         # [brief]
+    else:                                                                                                # [brief]
+        _write_atomic(path, md, 0o600)                                                                   # [brief]
+    copied = False                                                                                       # [brief]
+    try:                                                                                                 # [brief]
+        dest = os.path.join(SISYPHUS_OUT, name)                                                          # [brief]
+        if not os.path.isdir(SISYPHUS_OUT):                                                              # [brief]
+            log("brief %s: Sisyphus output dir missing, not copied" % name)                              # [brief]
+        elif os.path.exists(dest) and _read(dest) != md:                                                 # [brief]
+            log("brief %s: Sisyphus copy differs, left as is" % name)                                    # [brief]
+        else:                                                                                            # [brief]
+            if not os.path.exists(dest): _write_atomic(dest, md, 0o644)                                  # [brief]
+            copied = True                                                                                # [brief]
+    except OSError as e:                                                                                 # [brief]
+        log("brief %s: Sisyphus copy failed: %s" % (name, type(e).__name__))                             # [brief]
+    try:                                                                                                 # [brief]
+        sent = telegram(text + "\n完整報告見附件。", path)                                                  # [brief]
+    except (OSError, subprocess.TimeoutExpired) as e:                                                    # [brief]
+        log("brief %s: telegram failed: %s" % (name, type(e).__name__)); sent = False                    # [brief]
+    if sent: open(marker, "w").close()                                                                   # [brief]
+    log("brief %s telegram_sent=%s copied=%s" % (name, sent, copied))                                    # [brief]
+    print(json.dumps({"file": name, "telegram_sent": sent, "copied": copied}))                           # [brief]
+    if not sent: sys.exit(1)  # retryable: the client keeps the outbox entry and the retry resends       # [brief]
+
+
+def brief_failed(argv):                                                                                  # [brief]
+    """brief-failed <kind> <YYYY-MM-DD>; stdin = one-line reason. One notice per kind+date."""            # [brief]
+    if len(argv) != 3 or argv[1] not in BRIEF_KINDS or not BRIEF_DATE_RE.match(argv[2]): fail("bad arguments")
+    kind, date = argv[1], argv[2]                                                                        # [brief]
+    raw = sys.stdin.read(4097)                                                                           # [brief]
+    if len(raw) > 4096: fail("stdin too large")                                                          # [brief]
+    reason = " ".join(clean(raw, 2000).split())[:500] or "（未提供）"                                     # [brief]
+    os.makedirs(BRIEFS, mode=0o700, exist_ok=True)                                                       # [brief]
+    marker = os.path.join(BRIEFS, "%s-%s.failed-sent" % (date, kind))                                    # [brief]
+    if os.path.exists(marker):                                                                           # [brief]
+        log("brief-failed %s %s duplicate, already sent" % (kind, date))                                 # [brief]
+        print(json.dumps({"kind": kind, "date": date, "telegram_sent": True, "duplicate": True})); return
+    try:                                                                                                 # [brief]
+        sent = telegram("市場報告未產出 %s %s：%s" % (kind, date, reason))                                    # [brief]
+    except (OSError, subprocess.TimeoutExpired) as e:                                                    # [brief]
+        log("brief-failed %s %s: telegram failed: %s" % (kind, date, type(e).__name__)); sent = False    # [brief]
+    if sent:                                                                                             # [brief]
+        with open(marker, "w") as fh: fh.write(reason + "\n")                                            # [brief]
+    log("brief-failed %s %s telegram_sent=%s reason=%s" % (kind, date, sent, reason[:200]))             # [brief]
+    print(json.dumps({"kind": kind, "date": date, "telegram_sent": sent}, ensure_ascii=False))           # [brief]
+    if not sent: sys.exit(1)  # retryable                                                                # [brief]
+
+
+def main():
+    argv = os.environ.get("SSH_ORIGINAL_COMMAND", "").split()
+    if not argv: fail("no command")
+    cmd = argv[0]
+    if cmd == "pending" and len(argv) == 1:
+        print(json.dumps([r for r in load() if r.get("status") == "accepted"], ensure_ascii=False)); return
+    if cmd == "brief":                                                                                   # [brief]
+        brief(argv); return                                                                              # [brief]
+    if cmd == "brief-failed":                                                                            # [brief]
+        brief_failed(argv); return                                                                       # [brief]
+    if cmd not in ("done", "needs-review"): fail("unknown command %r" % cmd[:20])
+    if len(argv) != (3 if cmd == "done" else 2) or not ID_RE.match(argv[1]): fail("bad arguments")
+    if cmd == "done" and not UUID_RE.match(argv[2]): fail("bad revision id")
+    raw = sys.stdin.read(STDIN_CAP + 1)
+    if len(raw) > STDIN_CAP: fail("stdin too large")
+    report_md = None
+    if cmd == "done" and raw.lstrip().startswith("{"):
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            fail("stdin is not valid JSON")
+        raw, report_md = str(payload.get("summary") or ""), payload.get("report_md")
+        if report_md is not None and not isinstance(report_md, str): fail("report_md must be a string")
+    text = clean(raw, 600)
+    rows = load(); hits = [r for r in rows if r["id"] == argv[1]]
+    if len(hits) != 1: fail("agenda id not found: %s" % argv[1])
+    r = hits[0]
+    if r.get("status") != "accepted": fail("agenda %s is %s, not accepted" % (r["id"], r.get("status")))
+    if cmd == "done":
+        r.update(status="done", done_at=now(), revision_id=argv[2], runner="stormtrooper")
+        msg = "研究完成 %s [%s]\nrevision %s\n%s" % (r["id"], ",".join(r["symbols"]), argv[2][:8], text or r["topic"])
+    else:
+        r.update(status="needs_review", needs_review_at=now(), needs_review_reason=text, runner="stormtrooper")
+        msg = "研究需要人工檢查 %s [%s]\n%s\n原因：%s" % (r["id"], ",".join(r["symbols"]), r["topic"][:80], text or "（未提供）")
+    media = save_report(r, argv[2], report_md) if (cmd == "done" and report_md) else None
+    if media: r["report_path"] = media
+    save(rows)
+    sent = telegram(msg + ("\n完整報告見附件。" if media else ""), media)
+    log("%s %s telegram_sent=%s attachment=%s" % (cmd, r["id"], sent, bool(media)))
+    print(json.dumps({"id": r["id"], "status": r["status"], "telegram_sent": sent}, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
