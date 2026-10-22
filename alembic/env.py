@@ -18,11 +18,20 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+# A non-default ini section (``alembic -n pipeline``) may name its own metadata
+# and version table; the main [alembic] section sets neither and is unchanged.
+_metadata_ref = config.get_main_option("target_metadata")
+if _metadata_ref:
+    import importlib
+
+    _module_name, _attribute = _metadata_ref.split(":")
+    target_metadata = getattr(importlib.import_module(_module_name), _attribute).metadata
+version_table = config.get_main_option("version_table") or "alembic_version"
 
 
 def run_migrations_offline():
     url = config.get_main_option("sqlalchemy.url")
-    context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
+    context.configure(url=url, target_metadata=target_metadata, literal_binds=True, version_table=version_table)
     with context.begin_transaction():
         context.run_migrations()
 
@@ -34,7 +43,7 @@ def run_migrations_online():
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(connection=connection, target_metadata=target_metadata, version_table=version_table)
         with context.begin_transaction():
             context.run_migrations()
 
