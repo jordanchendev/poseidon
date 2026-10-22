@@ -36,6 +36,7 @@ from poseidon.api.errors import (
     http_exception_handler,
     validation_exception_handler,
 )
+from poseidon.core.config import settings
 
 app = FastAPI(title="Poseidon", description="Trading signal platform for OpenClaw")
 
@@ -64,6 +65,10 @@ app.include_router(capabilities.router, prefix="/api/v1", tags=["capabilities"])
 app.include_router(traces.router, prefix="/api/v1/traces", tags=["traces"])
 app.include_router(research_loop.router, prefix="/api/v1/research", tags=["research-loop"])
 app.include_router(campaigns.router, prefix="/api/v1/campaigns", tags=["campaigns"])
+if settings.pipeline_api_enabled:  # off in production; the isolated runner serves poseidon.pipeline.app
+    from poseidon.api import pipelines
+
+    app.include_router(pipelines.router, prefix="/api/v1/pipelines", tags=["pipelines"])
 
 # --- Secured endpoints: require valid X-API-Key header ---
 secured = [Depends(verify_api_key)]

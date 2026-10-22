@@ -97,6 +97,14 @@ class Settings(BaseSettings):
     quality_weight_anomaly_free: float = 0.25
     quality_weight_timeliness: float = 0.20
 
+    # Strategy pipeline (isolated runner during the Phase 101 soak).
+    # The production API never mounts /api/v1/pipelines unless this is enabled.
+    pipeline_api_enabled: bool = False
+    pipeline_artifacts_root: str = "~/strategy-pipeline/artifacts"
+    pipeline_code_version: str = ""  # image git sha recorded on every stage attempt
+    # When set, runner processes refuse to start unless database_url names this database.
+    pipeline_expected_database: str = ""
+
     # Thalassa connectivity (always remote, no feature flag)
     thalassa_base_url: str = ""
     thalassa_api_key: str = ""
