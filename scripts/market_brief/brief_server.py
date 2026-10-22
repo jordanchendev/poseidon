@@ -80,7 +80,8 @@ def build_index(root):
     briefs = []
     try:
         names = os.listdir(root)
-    except OSError:
+    except OSError as e:  # e.g. TCC denying launchd's python access to iCloud Drive: make it visible in the log
+        sys.stderr.write(f"cannot list {root}: {type(e).__name__}: {e}\n")
         names = []
     for name in names:
         m = NAME_RE.match(name)
