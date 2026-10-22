@@ -20,6 +20,7 @@ from sqlalchemy.orm import sessionmaker
 PIPELINE_TEST_DB_ENV = "POSEIDON_PIPELINE_TEST_DATABASE_URL"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STEP1_PLAN = ["spec_generate", "spec_validate", "backtest"]
+PIPELINE_URL = "postgresql://poseidon:x@127.0.0.1:1/poseidon_pipeline"  # never connected to
 
 TX_SPEC = {
     "name": "tx-rsi-reversion",
@@ -76,6 +77,32 @@ def pipeline_alembic_config(url: str):
     config.set_main_option("target_metadata", "poseidon.pipeline.models:PipelineBase")
     config.set_main_option("sqlalchemy.url", url)
     return config
+
+
+@pytest.fixture(autouse=True)
+def runner_expects_configured_database(monkeypatch):
+    """Name the isolated database explicitly so runner modules import in tests.
+
+    ``poseidon.pipeline.app`` / ``celery_app`` refuse to import while
+    ``POSEIDON_PIPELINE_EXPECTED_DATABASE`` is unset (fail closed). These tests
+    exercise the runner wiring, not the isolation guard, which has its own
+    explicit-argument and subprocess tests.
+    """
+
+    from sqlalchemy.engine import make_url
+
+    from poseidon.core.config import settings
+
+    monkeypatch.setattr(settings, "pipeline_expected_database", make_url(settings.database_url).database)
+
+
+def runner_env(**overrides) -> dict:
+    """Subprocess environment for runner entry points (isolation named explicitly)."""
+
+    env = dict(os.environ)
+    env.update({"POSEIDON_DATABASE_URL": PIPELINE_URL, "POSEIDON_PIPELINE_EXPECTED_DATABASE": "poseidon_pipeline"})
+    env.update(overrides)
+    return {key: value for key, value in env.items() if value is not None}
 
 
 @pytest.fixture(scope="session")

@@ -24,7 +24,7 @@ from poseidon.pipeline.state import (
     transition_run,
     transition_stage,
 )
-from tests.pipeline.conftest import REPO_ROOT, STEP1_PLAN, tx_spec
+from tests.pipeline.conftest import REPO_ROOT, STEP1_PLAN, runner_env, tx_spec
 
 NOW = datetime(2026, 10, 22, tzinfo=UTC)
 
@@ -236,7 +236,9 @@ def test_runner_entry_points_never_import_the_production_celery_app():
         "import sys, poseidon.pipeline.tasks, poseidon.pipeline.app; "
         "print('poseidon.workers.celery_app' in sys.modules, 'poseidon.main' in sys.modules)"
     )
-    output = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
+    output = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True, env=runner_env()
+    ).stdout
     assert output.split() == ["False", "False"]
 
 
@@ -252,9 +254,52 @@ def test_guard_refuses_a_non_pipeline_database():
     from poseidon.pipeline.guard import PipelineIsolationError, assert_isolated_database
 
     assert_isolated_database("postgresql://u:p@h:5433/poseidon_pipeline", expected="poseidon_pipeline")
-    assert_isolated_database("postgresql://u:p@h:5433/poseidon", expected="")
-    with pytest.raises(PipelineIsolationError):
+    with pytest.raises(PipelineIsolationError, match="expects database 'poseidon_pipeline', configured 'poseidon'"):
         assert_isolated_database("postgresql://u:p@h:5433/poseidon", expected="poseidon_pipeline")
+
+
+@pytest.mark.parametrize("expected", ["", "   "])
+def test_guard_refuses_an_unset_or_empty_expectation(expected):
+    from poseidon.pipeline.guard import PipelineIsolationError, assert_isolated_database
+
+    with pytest.raises(PipelineIsolationError, match="POSEIDON_PIPELINE_EXPECTED_DATABASE is unset or empty"):
+        assert_isolated_database("postgresql://u:p@h:5433/poseidon_pipeline", expected=expected)
+
+
+def test_guard_reads_the_expectation_from_settings(monkeypatch):
+    from poseidon.core.config import settings
+    from poseidon.pipeline.guard import PipelineIsolationError, assert_isolated_database
+
+    monkeypatch.setattr(settings, "pipeline_expected_database", "")
+    with pytest.raises(PipelineIsolationError, match="unset or empty"):
+        assert_isolated_database("postgresql://u:p@h:5433/poseidon_pipeline")
+    monkeypatch.setattr(settings, "pipeline_expected_database", "poseidon_pipeline")
+    assert_isolated_database("postgresql://u:p@h:5433/poseidon_pipeline")
+
+
+def _run(args, **env):
+    return subprocess.run([sys.executable, *args], capture_output=True, text=True, env=runner_env(**env))
+
+
+@pytest.mark.parametrize("expected", [None, ""])  # None: variable absent from the environment
+def test_guard_cli_fails_closed_when_the_expectation_is_unset(expected):
+    result = _run(["-m", "poseidon.pipeline.guard"], POSEIDON_PIPELINE_EXPECTED_DATABASE=expected)
+    assert result.returncode == 1
+    assert "refusing to start: POSEIDON_PIPELINE_EXPECTED_DATABASE is unset or empty" in result.stderr
+
+
+def test_guard_cli_passes_only_for_the_named_database():
+    assert _run(["-m", "poseidon.pipeline.guard"]).returncode == 0
+    production = _run(["-m", "poseidon.pipeline.guard"], POSEIDON_DATABASE_URL="postgresql://u:p@h:5433/poseidon")
+    assert production.returncode == 1 and "configured 'poseidon'" in production.stderr
+
+
+@pytest.mark.parametrize("module", ["poseidon.pipeline.app", "poseidon.pipeline.celery_app", "poseidon.pipeline.tasks"])
+@pytest.mark.parametrize("expected", [None, ""])
+def test_runner_entry_points_refuse_to_import_without_an_expectation(module, expected):
+    result = _run(["-c", f"import {module}"], POSEIDON_PIPELINE_EXPECTED_DATABASE=expected)
+    assert result.returncode != 0
+    assert "PipelineIsolationError" in result.stderr and "unset or empty" in result.stderr
 
 
 def test_alembic_streams_are_separate():
