@@ -87,6 +87,12 @@ class RuleStrategy(BaseStrategy):
         )
         return signals
 
+    def reset(self) -> None:
+        """Reset per-run state. RuleStrategy v1 is stateless, so this is a no-op.
+
+        ``WalkForwardAnalyzer`` calls ``reset()`` between the IS and OOS runs.
+        """
+
     def validate_config(self) -> bool:
         if not self.config.rules:
             raise ValueError("RuleStrategy requires at least one rule")

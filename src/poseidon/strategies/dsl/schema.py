@@ -1,5 +1,7 @@
 """DSL JSON schema — Pydantic models for rule-based strategy definitions."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -13,8 +15,14 @@ class RuleEntry(BaseModel):
 
 
 class RuleConfig(BaseModel):
-    """Top-level DSL document for a rule-based strategy."""
+    """Top-level DSL document for a rule-based strategy (DSL v1).
 
+    ``dsl_version`` only accepts 1 so a v2 document can never be silently
+    parsed as v1; it is excluded from ``model_dump()`` to keep v1 dumps
+    byte-identical to what they were before versioning existed.
+    """
+
+    dsl_version: Literal[1] = Field(1, exclude=True)
     name: str
     description: str = ""
     symbol: str
