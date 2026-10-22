@@ -82,7 +82,9 @@ class BacktestPortfolio:
       settles ``price_diff * quantity * point_value`` in cash. Mark-to-market
       equity is ``cash + unrealized``, so the equity change over a round trip
       equals ``TradeRecord.pnl``. Fees and tax are charged on the full
-      notional in both models.
+      notional in both models. Tax is charged on the exit leg only unless
+      ``cost_model.tax_on_entry``; ``cost_model.commission_per_contract`` adds
+      a fixed fee per unit on every leg (both default off).
     """
 
     def __init__(
@@ -113,6 +115,13 @@ class BacktestPortfolio:
     def _notional(self, price: float, quantity: float) -> float:
         """Currency notional of ``quantity`` units at ``price`` (fee/tax base)."""
         return price * quantity * self.point_value
+
+    def _entry_fees(self, notional: float, quantity: float, rate: float) -> float:
+        """Entry-leg fees: commission rate, optional entry tax, optional per-contract fee."""
+        fees = notional * rate
+        if getattr(self.cost_model, "tax_on_entry", False):
+            fees += notional * self.cost_model.tax_rate
+        return fees + abs(quantity) * getattr(self.cost_model, "commission_per_contract", 0.0)
 
     def _position_value(self, pos: dict, price: float) -> float:
         """Value of an open position added on top of cash for equity.
@@ -210,7 +219,7 @@ class BacktestPortfolio:
             return None
 
         notional = self._notional(fill_price, quantity)
-        fees = notional * self.cost_model.buy_commission_rate
+        fees = self._entry_fees(notional, quantity, self.cost_model.buy_commission_rate)
         total_cost = fees if self.is_margined else notional + fees
 
         if total_cost > self.cash:
@@ -248,7 +257,7 @@ class BacktestPortfolio:
             return None
 
         notional = self._notional(fill_price, quantity)
-        fees = notional * self.cost_model.sell_commission_rate
+        fees = self._entry_fees(notional, quantity, self.cost_model.sell_commission_rate)
 
         # Fully funded short receives the proceeds; margined only pays fees.
         self.cash += (0.0 if self.is_margined else notional) - fees
@@ -312,7 +321,8 @@ class BacktestPortfolio:
     def _settle_close(self, pos: dict, exit_price: float) -> tuple[float, float]:
         """Move cash for closing ``pos`` at ``exit_price``.
 
-        Exit fees are (sell commission + tax) on the exit notional.
+        Exit fees are (sell commission + tax) on the exit notional plus any
+        per-contract commission.
 
         Returns:
             (total_fees, pnl) where pnl is net of entry and exit fees.
@@ -321,6 +331,7 @@ class BacktestPortfolio:
         entry_price = pos["entry_price"]
         notional = self._notional(exit_price, quantity)
         exit_fees = notional * (self.cost_model.sell_commission_rate + self.cost_model.tax_rate)
+        exit_fees += abs(quantity) * getattr(self.cost_model, "commission_per_contract", 0.0)
         total_fees = pos.get("entry_fees", 0.0) + exit_fees
 
         if pos["side"] == "long":
@@ -413,7 +424,7 @@ class BacktestPortfolio:
                 return None
 
             notional = self._notional(fill_price, quantity)
-            fees = notional * fee_rate
+            fees = self._entry_fees(notional, quantity, fee_rate)
             total_cost = fees if self.is_margined else notional + fees
 
             if total_cost > self.cash:
@@ -449,7 +460,7 @@ class BacktestPortfolio:
                 return None
 
             notional = self._notional(fill_price, quantity)
-            fees = notional * fee_rate
+            fees = self._entry_fees(notional, quantity, fee_rate)
 
             # Fully funded short receives the proceeds; margined only pays fees.
             self.cash += (0.0 if self.is_margined else notional) - fees
