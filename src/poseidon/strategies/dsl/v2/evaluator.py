@@ -99,8 +99,8 @@ class ColumnCache:
         self._len = 0
         self._first = None
         self._last = None
-        self._positions: list[int] = []
-        self.index: list = []
+        self._positions = np.array([], dtype=np.intp)
+        self.index: pd.Index = pd.Index([])
 
     def __len__(self) -> int:
         return self._len
@@ -116,31 +116,40 @@ class ColumnCache:
             arr = np.full(cap, np.nan)
             arr[:n] = frame[col].to_numpy(dtype=float, na_value=np.nan)
             self._data[col] = arr
-        self._positions = [frame.columns.get_loc(c) for c in self.columns]
-        self.index = list(frame.index)
+        self._positions = np.array([frame.columns.get_loc(c) for c in self.columns], dtype=np.intp)
         self._len = n
 
+    @staticmethod
+    def _keys(index: pd.Index):
+        """Cheap comparable view of the index (int64 nanoseconds for datetimes)."""
+        return index.asi8 if isinstance(index, pd.DatetimeIndex) else index
+
     def sync(self, frame: pd.DataFrame) -> int:
-        """Bring the cache in line with ``frame``; return the last row index."""
+        """Bring the cache in line with ``frame``; return the last row index.
+
+        ``self.index`` is the index of the frame last synced (rows beyond it
+        are never read).
+        """
         n = len(frame)
+        self.index = frame.index
         if n == 0:
             self._len = 0
-            self.index = []
             return -1
-        first, last = frame.index[0], frame.index[-1]
+        keys = self._keys(frame.index)
+        first, last = keys[0], keys[n - 1]
         if self._len and first == self._first and n == self._len and last == self._last:
             return n - 1
-        if self._len and first == self._first and n == self._len + 1 and frame.index[-2] == self._last:
+        if self._len and first == self._first and n == self._len + 1 and keys[n - 2] == self._last:
             row = n - 1
-            for col, pos in zip(self.columns, self._positions, strict=True):
+            # One row read for all cached columns (iat per column is ~10x slower).
+            values = frame.iloc[row].to_numpy()[self._positions]
+            for col, value in zip(self.columns, values, strict=True):
                 arr = self._data[col]
                 if row >= len(arr):
                     grown = np.full(len(arr) * 2, np.nan)
                     grown[: len(arr)] = arr
                     self._data[col] = arr = grown
-                value = frame.iat[row, pos]
                 arr[row] = np.nan if value is None or value is pd.NA else float(value)
-            self.index.append(last)
             self._len = n
         else:
             self._rebuild(frame)
