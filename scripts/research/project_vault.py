@@ -313,7 +313,10 @@ def create_stubs(vault, e, rev8):
 
 
 def evidence_ref(d):
-    """Evidence dir as 'aquarium/<path>' when it lives under the aquarium root, so notes never carry a home path."""
+    """Evidence dir as 'aquarium/<path>' when it lives under the aquarium root, so notes never carry a home path.
+    A remote reference `host:path` (e.g. the stormtrooper runner's run dir, from nexus_pull.py) is kept as given."""
+    if re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*:", str(d)):
+        return str(d)
     p = Path(d).expanduser().resolve()
     # aquarium root = nearest ancestor of this script holding local_dev/ (the script lives in poseidon/scripts/research)
     root = next((q for q in Path(__file__).resolve().parents if (q / "local_dev").is_dir()), None)

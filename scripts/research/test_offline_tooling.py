@@ -1594,3 +1594,14 @@ def test_research_links_block_regeneration_idempotent(kvault):
     assert second.returncode == 0 and "applied: 0 company block(s) changed" in second.stdout
     assert {p: p.read_bytes() for p in (k["v"] / "_kb" / "wiki").rglob("*.md")} == snap  # no change, no extra log line
     assert company.read_text() == text
+
+
+def test_evidence_ref_keeps_remote_host_paths():
+    sys.path.insert(0, str(HERE))
+    import project_vault
+
+    assert project_vault.evidence_ref("stormtrooper:research-runner/state/runs/20261022-1/") == (
+        "stormtrooper:research-runner/state/runs/20261022-1/"
+    )
+    local = project_vault.evidence_ref(str(HERE))
+    assert local.startswith("aquarium/") or local == str(HERE)  # aquarium-relative when under the aquarium root
