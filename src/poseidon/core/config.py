@@ -104,6 +104,9 @@ class Settings(BaseSettings):
     pipeline_code_version: str = ""  # image git sha recorded on every stage attempt
     # Runner processes refuse to start unless this is set and database_url names this database.
     pipeline_expected_database: str = ""
+    # Non-secret pin: the masked ``data.label`` OpenRouter's GET /key returns for
+    # STRATEGY_PIPELINE_OPENROUTER_KEY. spec_generate refuses to call the LLM unless they match exactly.
+    pipeline_openrouter_key_label: str = ""
 
     # Thalassa connectivity (always remote, no feature flag)
     thalassa_base_url: str = ""
