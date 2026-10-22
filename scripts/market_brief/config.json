@@ -2,6 +2,7 @@
   "_comment": "market_brief config. Paths may start with ~. Slot times are local to each slot's tz; US slots follow America/New_York (DST-aware).",
   "state_dir": "~/market-brief/state",
   "outbox_dir": "~/market-brief/outbox",
+  "archive_dir": "~/market-brief/archive",
   "watchlist_file": "~/market-brief/watchlist.json",
   "bridge": "ssh research-bridge",
   "window_minutes": 90,

@@ -61,6 +61,7 @@ class Collector:
         self.retry_gaps = []  # gaps worth waiting for (data may still be published within the window)
         self.must_missing = []
         self._mi_cache = {}
+        self.bfi_detail = {}
         self._tpex_q_cache = {}
 
     # -------------------------------------------------------------------------------------------- helpers
@@ -130,6 +131,9 @@ class Collector:
         nets = {k: yi2(v["net"]) for k, v in out.items()}
         if out.get("dealer_self") and out.get("dealer_hedge"):
             nets["dealer_total"] = yi2(out["dealer_self"]["net"] + out["dealer_hedge"]["net"])
+        self.bfi_detail[d] = {
+            k: {"buy": yi2(v["buy"]), "sell": yi2(v["sell"]), "net": yi2(v["net"])} for k, v in out.items()
+        }
         return nets
 
     def quotes(self, instruments):
@@ -346,7 +350,11 @@ class Collector:
         ]
         sectors.sort(key=lambda s: s["pct"], reverse=True)
         n = tcfg["sectors_n"]
-        sector_data = {"leaders": sectors[:n], "laggards": list(reversed(sectors[-n:])) if len(sectors) > n else []}
+        sector_data = {
+            "leaders": sectors[:n],
+            "laggards": list(reversed(sectors[-n:])) if len(sectors) > n else [],
+            "all": sectors,  # full sorted list for the sector chart
+        }
         inst = self.bfi(d)
         if inst is None:
             self.gap("三大法人買賣金額（BFI82U）尚未公布")
@@ -393,6 +401,7 @@ class Collector:
             "breadth": breadth,
             "sectors": sector_data,
             "institutions_yi": inst,
+            "institutions_detail_yi": self.bfi_detail.get(d),
             "top_turnover": top,
             "movers": movers,
             "otc_movers": otc_movers,

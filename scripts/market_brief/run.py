@@ -15,6 +15,10 @@ Commands
       --out (default <state>/dry-run) and touches neither state nor outbox; without it the brief is queued.
   run.py deliver
       Deliver queued briefs only.
+  run.py archive-backfill
+      Copy delivered briefs (outbox/sent/*.json) into the public archive (archive_dir) and its index.json.
+Archive (Kairos): every queued brief is also written to <archive_dir>/<YYYY>/<date>-<kind>.md (644, dirs 755) and
+<archive_dir>/index.json is upserted (newest first), right after the md is final, independent of Telegram.
   run.py resend KIND --date YYYY-MM-DD [--dry-run]
       Re-send the phone-format text of an already delivered brief (bridge `brief-resend`, text only). Source: the
       delivered markdown in outbox/sent/<date>-<kind>.json, else a fresh no-LLM build. --dry-run prints the text.
@@ -33,6 +37,7 @@ import datetime as dt
 import fcntl
 import json
 import os
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -178,6 +183,117 @@ def sweep_expired(state, outbox, slots, window_minutes, now, log):
             )
 
 
+# ------------------------------------------------------------------------------------------------ archive (Kairos)
+def parse_frontmatter(md):
+    """The subset render.frontmatter writes: `key: value` (JSON-quoted strings or bare) and `key:` + `  - "item"` lists."""
+    m = re.match(r"---\n(.*?)\n---", md, re.S)
+    out, key = {}, None
+    for line in (m.group(1) if m else "").splitlines():
+        if line.startswith("  - ") and key:
+            v = line[4:].strip()
+            out.setdefault(key, []).append(json.loads(v) if v.startswith('"') else v)
+            continue
+        k, sep, v = line.partition(":")
+        if not sep or line.startswith(" "):
+            continue
+        key, v = k.strip(), v.strip()
+        if v:
+            try:
+                out[key] = json.loads(v) if v.startswith('"') else v
+            except ValueError:
+                out[key] = v
+        else:
+            out[key] = []
+    return out
+
+
+def _write_public(path, data):
+    """Atomic write, mode 644 (the archive is public market data served read-only by Caddy)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for d in (path.parent, path.parent.parent):
+        if d.exists():
+            os.chmod(d, 0o755)
+    tmp = path.with_name("." + path.name + ".tmp")
+    tmp.write_bytes(data)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def archive_brief(archive_dir, kind, date, md, summary, log=None):
+    """Write <archive>/<YYYY>/<date>-<kind>.md and upsert archive/index.json (newest first). Runs as soon as the md is
+    final, independent of Telegram delivery."""
+    archive_dir = Path(archive_dir)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(archive_dir, 0o755)
+    name = render.filename(kind, date)
+    rel = f"{date[:4]}/{name}"
+    data = md.encode("utf-8")
+    _write_public(archive_dir / rel, data)
+    fm = parse_frontmatter(md)
+    item = {
+        "date": date,
+        "kind": kind,
+        "market": kind.split("-")[0],
+        "session": kind.split("-")[1],
+        "title": fm.get("title") or name,
+        "file": rel,
+        "summary": summary,
+        "bytes": len(data),
+        "session_date": str(fm.get("session_date") or date),
+        "generated_at": fm.get("generated_at"),
+        "data_gaps": fm.get("data_gaps") or [],
+    }
+    index_path = archive_dir / "index.json"
+    try:
+        briefs = json.loads(index_path.read_text(encoding="utf-8")).get("briefs", [])
+    except (OSError, ValueError):
+        briefs = []
+    briefs = [b for b in briefs if not (b.get("date") == date and b.get("kind") == kind)] + [item]
+    briefs.sort(key=lambda b: (b.get("date") or "", b.get("generated_at") or ""), reverse=True)
+    index = {"generated_at": dt.datetime.now(TPE).isoformat(timespec="seconds"), "briefs": briefs}
+    _write_public(index_path, json.dumps(index, ensure_ascii=False, indent=1).encode("utf-8"))
+    if log:
+        log(f"{kind} {date}: archived {rel}")
+    return item
+
+
+def try_archive(cfg, entry, log):
+    try:
+        archive_brief(
+            expand(cfg.get("archive_dir") or "~/market-brief/archive"),
+            entry["kind"],
+            entry["date"],
+            entry["report_md"],
+            entry["summary"],
+            log,
+        )
+    except Exception as e:  # never block delivery on the archive
+        log(f"{entry['kind']} {entry['date']}: archive failed {type(e).__name__}: {e}")
+
+
+def cmd_archive_backfill(a, cfg, state_dir, outbox, log):
+    """Import delivered briefs from outbox/sent/*.json into the archive (brief entries only)."""
+    n = 0
+    for p in sorted((outbox / "sent").glob("*.json")):
+        try:
+            e = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if e.get("verb") not in (None, "brief") or not deliver.valid(e):
+            continue
+        archive_brief(
+            expand(cfg.get("archive_dir") or "~/market-brief/archive"),
+            e["kind"],
+            e["date"],
+            e["report_md"],
+            e["summary"],
+            log,
+        )
+        n += 1
+    log(f"archive-backfill: {n} brief(s) imported")
+    return 0
+
+
 class Lock:
     def __init__(self, path):
         self.path = path
@@ -292,7 +408,9 @@ def cmd_due(a, cfg, state_dir, outbox, log):
                 log(f"{kind} {d}: data incomplete ({state[k]['reason']}); retry next tick")
                 continue
             save_json(state_dir / "runs" / f"{d}-{kind}.json", run_record(facts, meta, fetcher))
-            save_json(outbox / f"{d}-{kind}.json", outbox_entry(facts, md, summary))
+            entry = outbox_entry(facts, md, summary)
+            save_json(outbox / f"{d}-{kind}.json", entry)
+            try_archive(cfg, entry, log)
             state[k] = {
                 "status": "queued",
                 "attempts": attempts,
@@ -339,6 +457,7 @@ def cmd_run(a, cfg, state_dir, outbox, log):
         return 0
     save_json(state_dir / "runs" / f"{d}-{a.kind}.json", rec)
     save_json(outbox / f"{d}-{a.kind}.json", entry)
+    try_archive(cfg, entry, log)
     state = load_state(state_dir)
     state[f"{a.kind}:{d}"] = {
         "status": "queued",
@@ -388,6 +507,7 @@ def main(argv=None):
     p_run.add_argument("--date")
     p_run.add_argument("--out")
     sub.add_parser("deliver")
+    sub.add_parser("archive-backfill")
     p_resend = sub.add_parser("resend")
     p_resend.add_argument("kind", choices=tradingcal.KINDS)
     p_resend.add_argument("--date", required=True)
@@ -409,6 +529,8 @@ def main(argv=None):
             return cmd_due(a, cfg, state_dir, outbox, log)
         if a.cmd == "run":
             return cmd_run(a, cfg, state_dir, outbox, log)
+        if a.cmd == "archive-backfill":
+            return cmd_archive_backfill(a, cfg, state_dir, outbox, log)
         if a.cmd == "resend":
             return cmd_resend(a, cfg, state_dir, outbox, log)
         with Lock(state_dir / "run.lock") as lock:

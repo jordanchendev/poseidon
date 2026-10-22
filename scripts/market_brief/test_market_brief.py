@@ -217,11 +217,9 @@ class TestUSParsers(unittest.TestCase):
         rows = c.us_rows(insts, got, expect_date="2026-10-21", strict=True)
         self.assertEqual((rows[0]["chg"], rows[1]["chg"], rows[1]["pct"]), (44.6, None, None))
         self.assertTrue(any("日經 225 報價屬 2026-10-22" in g for g in c.gaps))
-        self.assertIn(
-            "日經 225（2026-10-22 報價）",
-            render._chg_line("日經 225", c.us_rows(insts, got, expect_date="2026-10-21")[1]),
-        )
-        self.assertEqual(render._chg_line("日經 225", rows[1]), "- 日經 225（2026-10-22 報價）：63,139.59，—（—）")
+        labelled = render._quote_rows(c.us_rows(insts, got, expect_date="2026-10-21"))
+        self.assertEqual(labelled[1][0], "日經 225（2026-10-22 報價）")
+        self.assertEqual(render._quote_rows(rows)[1], ["日經 225（2026-10-22 報價）", "63,139.59", "—", "—"])
 
     def test_yahoo(self):
         q = us.parse_yahoo_chart(fx("yahoo_gspc.json"))
@@ -510,9 +508,14 @@ class TestCollectRender(unittest.TestCase):
             "## 成交金額前 20 大",
             "## Watchlist",
             "## 解讀",
-            "- 加權指數：46,887.77，+594.84（+1.28%）",
-            "- 外資及陸資（不含外資自營商）：+22.39",
-            "| 2330 | 台積電 | 2,420 | +15 | +0.62% |",
+            "| 加權指數 | 46,887.77 | ▲+594.84 | ▲+1.28% |",
+            "| 外資及陸資（不含外資自營商） | 3,470.69 | 3,448.30 | ▲+22.39 |",
+            "| 合計 | 4,180.86 | 4,166.21 | ▲+14.66 |",
+            "| 2330 | 台積電 | 2,420 | ▲+15 | ▲+0.62% | 655.16 | Phase 101 pilot |",
+            "| 上市股票 | 600 | 380 | 101 | 24 | 1 |",
+            "|---|---:|---:|---:|",
+            "<!-- tg: 收盤=Close; 漲跌=Chg; 漲跌%=Chg%; 指數 -->",
+            "### 上櫃跌幅（成交 ≥ 5 億）",
         ):
             self.assertIn(needle, md)
         self.assertLessEqual(len(summary), 580)
@@ -551,21 +554,35 @@ class TestCollectRender(unittest.TestCase):
             "一句",
             "第一段。\n\n第二段 [1]。",
             "觀察重點：\n- 甲\n- 乙",
-            "2330 台積電 2,420 +15（+0.62%）成交 655.16 億 · Phase 101 pilot",
+            "```\n    Close      Chg    Chg% 指數\n46,887.77  +594.84  +1.28% 加權指數\n",
+            "2330   2,420  +0.62% 台積電",
+            " #  Code     Amt    Chg% 名稱\n 1  2330  655.16  +0.62% 台積電",
+            "   Up  Down  Flat  LimUp  LimDn 市場\n  600   380   101     24      1 上市股票",
+            "    Net       Buy      Sell 法人\n +22.39  3,470.69  3,448.30 外資及陸資（不含外資自營商）",
             "1. [台股［盤後］收漲](https://news.cnyes.com/news/id/1) — 鉅亨網\n",
             "_本報告由程式彙整",
         ):
             self.assertIn(needle, tg)
         self.assertNotIn("2026-10-21T06:31Z", tg)
-        if "國巨*" in md:
-            self.assertIn("國巨\\*", tg)  # lone asterisk escaped so markdown does not italicise
+        self.assertNotIn("<!--", tg)
+        self.assertIn(" 國巨*\n", tg)  # inside a code block: no markdown escaping
+        self.assertNotIn("▲", tg.split("**解讀")[0].split("**大盤**")[1].split("```")[1])  # ASCII inside code blocks
+        for block in tg.split("```")[1::2]:
+            for ln in block.strip("\n").split("\n"):
+                cut = next((k for k, ch in enumerate(ln) if ord(ch) > 127), len(ln))
+                head = ln[:cut]
+                self.assertTrue(cut == len(ln) or head.endswith(" "), ln)  # non-ASCII only in the last column
+                self.assertLessEqual(len(head), 34, ln)
         self.assertLess(len(tg), render.TELEGRAM_TEXT_CAP)
         entry = run.outbox_entry(facts, md, summary)
         self.assertEqual(entry["telegram_md"], tg)
         # US table rows and the 資料未齊 banner
         facts = collect.collect("us-postmarket", D21, collector(TW_ROUTES_21))
         tg = render.telegram_text(render.render(facts, None, None, cfg())[0])
-        self.assertIn("TSM 431.89 +6.81（+1.60%） · 盤後 426.50（-1.25%）", tg)
+        tsm = next(ln for ln in tg.split("\n") if ln.startswith("TSM "))
+        self.assertEqual(tsm.split(), ["TSM", "431.89", "+1.60%", "-1.25%"])
+        self.assertEqual(next(ln for ln in tg.split("\n") if ln.startswith("NVDA")).split(), ["NVDA", "-", "-", "-"])
+        self.assertIn("Sym", tg)
         self.assertIn("\n**資料未齊**：", tg)
         self.assertIn("**類股 ETF（依漲跌排序）**", tg)
         long_md = "---\na: b\n---\n" + "x" * 30000
@@ -635,9 +652,9 @@ class TestCollectRender(unittest.TestCase):
         self.assertIn("VIX 漲跌未取得（資料源回報不變或缺值）", facts["gaps"])
         md, _ = render.render(facts, None, None, cfg())
         self.assertIn("## 類股 ETF", md)
-        self.assertIn("- VIX：16.68，—（—）", md)
-        self.assertNotIn("，0.00（0.00%）", md)
-        self.assertIn("- 半導體（SMH）：", md)
+        self.assertIn("| VIX | 16.68 | — | — |", md)
+        self.assertNotIn("0.00%", md.split("## 指數")[1].split("## 利率")[0])
+        self.assertIn("| SMH | 半導體 | 556.70 | ▲+10.34 | ▲+1.89% |", md)
         self.assertNotIn("breadth", md.lower().split("---", 2)[2])
         # tw-premarket for 10-22 (previous TW session 10-21); MIS day fixture has CDate 20261022
         facts = collect.collect("tw-premarket", D22, collector(TW_ROUTES_21))
@@ -652,7 +669,7 @@ class TestCollectRender(unittest.TestCase):
         md, _ = render.render(facts, None, None, cfg())
         self.assertIn("## 台指期夜盤（近月）", md)
         self.assertNotIn("，0.00（0.00%）", md)
-        self.assertIn("0056 元大高股息（息）現金股利 1.72 元", md)
+        self.assertIn("| 0056 | 元大高股息 | 息 | 1.72 | — |", md)
 
 
 # ================================================================================================ delivery
@@ -914,6 +931,7 @@ class TestDueRunner(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             c = cfg()
             c["state_dir"], c["outbox_dir"], c["watchlist_file"] = f"{tmp}/state", f"{tmp}/outbox", f"{tmp}/none.json"
+            c["archive_dir"] = f"{tmp}/archive"
             cpath = Path(tmp) / "config.json"
             cpath.write_text(json.dumps(c, ensure_ascii=False))
             routes = [r for r in TW_ROUTES_21 if not r[0].startswith("BFI82U?type=day&dayDate=20261021")]
@@ -933,6 +951,12 @@ class TestDueRunner(unittest.TestCase):
                 entry = json.loads((Path(tmp) / "outbox" / "2026-10-21-tw-postmarket.json").read_text())
                 self.assertEqual(entry["filename"], "2026-10-21-tw-postmarket.md")
                 self.assertIn("資料未齊", entry["report_md"])
+                arch = Path(tmp) / "archive"
+                self.assertEqual(
+                    (arch / "2026" / "2026-10-21-tw-postmarket.md").read_text(encoding="utf-8"), entry["report_md"]
+                )
+                idx = json.loads((arch / "index.json").read_text(encoding="utf-8"))
+                self.assertEqual([b["file"] for b in idx["briefs"]], ["2026/2026-10-21-tw-postmarket.md"])
                 n = len(list((Path(tmp) / "outbox").glob("*.json")))
                 run.main(["--config", str(cpath), "due", "--now", "2026-10-21T17:40:00+08:00", "--no-llm"])
                 self.assertEqual(len(list((Path(tmp) / "outbox").glob("*.json"))), n)  # idempotent
@@ -945,6 +969,7 @@ class TestDueRunner(unittest.TestCase):
     def _cfg(self, tmp):
         c = cfg()
         c["state_dir"], c["outbox_dir"], c["watchlist_file"] = f"{tmp}/state", f"{tmp}/outbox", f"{tmp}/none.json"
+        c["archive_dir"] = f"{tmp}/archive"
         cpath = Path(tmp) / "config.json"
         cpath.write_text(json.dumps(c, ensure_ascii=False))
         return cpath
@@ -1044,6 +1069,7 @@ class TestDueRunner(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             c = cfg()
             c["state_dir"], c["outbox_dir"] = f"{tmp}/state", f"{tmp}/outbox"
+            c["archive_dir"] = f"{tmp}/archive"
             c["llm"]["key_file"] = f"{tmp}/absent.env"
             cpath = Path(tmp) / "config.json"
             cpath.write_text(json.dumps(c, ensure_ascii=False))
@@ -1059,6 +1085,129 @@ class TestDueRunner(unittest.TestCase):
                 "RESEARCH_DRAFT_OPENROUTER_KEY",
                 json.loads((ob / "2026-10-21-tw-postmarket.failed.json").read_text())["reason"],
             )
+
+
+class TestLLMContentRules(unittest.TestCase):
+    def setUp(self):
+        self.facts = collect.collect("tw-postmarket", D21, collector(TW_ROUTES_21))
+
+    def _resp(self, obj):
+        body = {
+            "model": "m",
+            "usage": {"cost": 0.0},
+            "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(obj, ensure_ascii=False)}}],
+        }
+        return 200, json.dumps(body).encode()
+
+    def test_tech_terms_and_normalize(self):
+        self.assertEqual(
+            llm.tech_terms("加權指數跌破季線，46,887.77 點附近有支撐；MA5、KD 黃金交叉"),
+            ["KD", "MA5", "季線", "支撐", "黃金交叉"],
+        )
+        self.assertEqual(llm.tech_terms("賣壓沉重、電子族群壓力大、相對有撐"), [])  # ordinary words are fine
+        self.assertEqual(
+            llm.normalize("台積電收 2,420.0 元、漲 0.6%，指數 46887.77、跌 -1.5%"),
+            "台積電收 2,420 元、漲 0.60%，指數 46,887.77、跌 -1.50%",
+        )
+        sec, reasons = llm.validate(
+            {"one_liner": "加權指數收 46,887.77。", "interpretation": "跌破季線。", "watch_points": ["x"]}, self.facts
+        )
+        self.assertIsNone(sec)
+        self.assertTrue(any("季線" in r for r in reasons))
+
+    def test_repair_then_drop(self):
+        bad = {
+            "one_liner": "加權指數收 46,887.77。",
+            "interpretation": "投信買超 127.99 億。加權指數站上月線。\n\n成交量擴大。",
+            "watch_points": ["觀察 46,887.77 點支撐", "觀察投信動向"],
+        }
+        calls = []
+
+        def t(method, url, headers, body, timeout):
+            calls.append(1)
+            return self._resp(bad)
+
+        sec, meta = llm.interpret(self.facts, "k", cfg()["llm"], transport=t)
+        self.assertEqual(len(calls), 2)  # one repair round
+        self.assertEqual(meta["status"], "ok_terms_dropped")
+        self.assertEqual(sec["interpretation"], "投信買超 127.99 億。\n\n成交量擴大。")
+        self.assertEqual(sec["watch_points"], ["觀察投信動向"])
+        self.assertEqual(len(meta["dropped"]), 2)
+        md, _ = render.render(self.facts, sec, meta, cfg())
+        self.assertIn("_（已移除 2 句資料中沒有依據的技術面描述）_", md)
+        self.assertNotIn("月線", md)
+        good = dict(bad, interpretation="投信買超 127.99 億。", watch_points=["觀察投信動向"])
+        sec, meta = llm.interpret(self.facts, "k", cfg()["llm"], transport=lambda *a: self._resp(good))
+        self.assertEqual(meta["status"], "ok")
+
+    def test_code_table(self):
+        lines = render.code_table(
+            ["代號", "名稱", "收盤", "漲跌%"],
+            [["2330", "台積電", "2,420", "▲+0.62%"], ["0050", "元大台灣50", "資料未取得", "—"]],
+            render._tg_spec("代號=Code; 收盤=Close; 漲跌%=Chg%; 名稱"),
+        )
+        self.assertEqual(
+            lines,
+            ["```", "Code  Close    Chg% 名稱", "2330  2,420  +0.62% 台積電", "0050      -       - 元大台灣50", "```"],
+        )
+
+
+class TestArchive(unittest.TestCase):
+    def test_archive_and_backfill(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            arch = Path(tmp) / "archive"
+            facts = collect.collect("tw-postmarket", D21, collector(TW_ROUTES_21))
+            md, summary = render.render(facts, None, None, cfg())
+            item = run.archive_brief(arch, "tw-postmarket", "2026-10-21", md, summary)
+            f = arch / "2026" / "2026-10-21-tw-postmarket.md"
+            self.assertEqual(oct(f.stat().st_mode & 0o777), "0o644")
+            self.assertEqual(oct((arch / "2026").stat().st_mode & 0o777), "0o755")
+            self.assertEqual(oct((arch / "index.json").stat().st_mode & 0o777), "0o644")
+            self.assertEqual(item["title"], "台股盤後日報 2026-10-21（三）")
+            self.assertEqual(item["bytes"], len(md.encode()))
+            self.assertEqual(item["session_date"], "2026-10-21")
+            self.assertEqual(
+                set(item),
+                {
+                    "date",
+                    "kind",
+                    "market",
+                    "session",
+                    "title",
+                    "file",
+                    "summary",
+                    "bytes",
+                    "session_date",
+                    "generated_at",
+                    "data_gaps",
+                },
+            )
+            md2 = md.replace("promote: nexus", 'data_gaps:\n  - "三大法人未取得"\npromote: nexus')
+            run.archive_brief(arch, "us-premarket", "2026-10-22", md2, "s2")
+            run.archive_brief(arch, "tw-postmarket", "2026-10-21", md, "again")  # upsert, no duplicate
+            idx = json.loads((arch / "index.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [(b["date"], b["kind"]) for b in idx["briefs"]],
+                [("2026-10-22", "us-premarket"), ("2026-10-21", "tw-postmarket")],
+            )
+            self.assertEqual(idx["briefs"][0]["data_gaps"], ["三大法人未取得"])
+            self.assertEqual(idx["briefs"][1]["summary"], "again")
+            self.assertFalse(list(arch.rglob(".*.tmp")))
+            # backfill from outbox/sent
+            c = cfg()
+            c["state_dir"], c["outbox_dir"], c["archive_dir"] = f"{tmp}/state", f"{tmp}/outbox", f"{tmp}/arch2"
+            cpath = Path(tmp) / "c.json"
+            cpath.write_text(json.dumps(c, ensure_ascii=False))
+            sent = Path(tmp) / "outbox" / "sent"
+            sent.mkdir(parents=True)
+            entry = run.outbox_entry(facts, md, summary)
+            (sent / "2026-10-21-tw-postmarket.json").write_text(json.dumps(entry, ensure_ascii=False))
+            (sent / "2026-10-20-tw-postmarket.failed.json").write_text(
+                json.dumps({"verb": "brief-failed", "kind": "tw-postmarket", "date": "2026-10-20", "reason": "x"})
+            )
+            self.assertEqual(run.main(["--config", str(cpath), "archive-backfill"]), 0)
+            idx = json.loads((Path(tmp) / "arch2" / "index.json").read_text(encoding="utf-8"))
+            self.assertEqual([b["file"] for b in idx["briefs"]], ["2026/2026-10-21-tw-postmarket.md"])
 
 
 if __name__ == "__main__":
