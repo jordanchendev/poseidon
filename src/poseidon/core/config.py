@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     pipeline_api_enabled: bool = False
     pipeline_artifacts_root: str = "~/strategy-pipeline/artifacts"
     pipeline_code_version: str = ""  # image git sha recorded on every stage attempt
-    # When set, runner processes refuse to start unless database_url names this database.
+    # Runner processes refuse to start unless this is set and database_url names this database.
     pipeline_expected_database: str = ""
 
     # Thalassa connectivity (always remote, no feature flag)
