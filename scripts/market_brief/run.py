@@ -15,6 +15,9 @@ Commands
       --out (default <state>/dry-run) and touches neither state nor outbox; without it the brief is queued.
   run.py deliver
       Deliver queued briefs only.
+  run.py resend KIND --date YYYY-MM-DD [--dry-run]
+      Re-send the phone-format text of an already delivered brief (bridge `brief-resend`, text only). Source: the
+      delivered markdown in outbox/sent/<date>-<kind>.json, else a fresh no-LLM build. --dry-run prints the text.
 
 Files (config.json; paths may use ~): state_dir/state.json, state_dir/market-brief.log, state_dir/runs/<date>-<kind>.json,
 state_dir/cache/tw-holidays-<year>.json, outbox_dir/<date>-<kind>.json (+ sent/, refused/).
@@ -140,6 +143,7 @@ def outbox_entry(facts, md, summary):
         "filename": render.filename(facts["kind"], facts["date"]),
         "summary": summary,
         "report_md": md,
+        "telegram_md": render.telegram_text(md),
     }
 
 
@@ -347,6 +351,33 @@ def cmd_run(a, cfg, state_dir, outbox, log):
     return 0
 
 
+def cmd_resend(a, cfg, state_dir, outbox, log):
+    d = dt.date.fromisoformat(a.date)
+    sent = outbox / "sent" / f"{d}-{a.kind}.json"
+    md = None
+    try:
+        md = json.loads(sent.read_text(encoding="utf-8"))["report_md"]
+        log(f"resend {a.kind} {d}: using delivered markdown {sent}")
+    except (OSError, ValueError, KeyError):
+        now = parse_now(a.now)
+        fetcher = Fetcher()
+        cal = build_calendar(fetcher, cfg, state_dir, {d.year}, log)
+        watchlist, _ = load_watchlist(cfg)
+        facts, md, _summary, _meta = build(
+            a.kind, d, cfg=cfg, fetcher=fetcher, calendar=cal, watchlist=watchlist, now_utc=now, key=None, log=log
+        )
+        if facts["status"] != "ok":
+            log(f"resend {a.kind} {d}: no delivered markdown and rebuild failed ({facts['status']})")
+            return 1
+        log(f"resend {a.kind} {d}: no delivered markdown; rebuilt without LLM")
+    text = render.telegram_text(md)
+    if a.dry_run:
+        print(text)
+        return 0
+    ok = deliver.resend(a.kind, str(d), text, cfg["bridge"], log=log)
+    return 0 if ok else 4
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Daily market briefs (TW + US).")
     ap.add_argument("--config", default=str(HERE / "config.json"))
@@ -357,6 +388,11 @@ def main(argv=None):
     p_run.add_argument("--date")
     p_run.add_argument("--out")
     sub.add_parser("deliver")
+    p_resend = sub.add_parser("resend")
+    p_resend.add_argument("kind", choices=tradingcal.KINDS)
+    p_resend.add_argument("--date", required=True)
+    p_resend.add_argument("--dry-run", action="store_true")
+    p_resend.add_argument("--now", help=argparse.SUPPRESS)
     for p in (p_due, p_run):
         p.add_argument("--now", help="ISO time (tests/backfill); naive = Asia/Taipei")
         p.add_argument("--no-llm", action="store_true")
@@ -373,6 +409,8 @@ def main(argv=None):
             return cmd_due(a, cfg, state_dir, outbox, log)
         if a.cmd == "run":
             return cmd_run(a, cfg, state_dir, outbox, log)
+        if a.cmd == "resend":
+            return cmd_resend(a, cfg, state_dir, outbox, log)
         with Lock(state_dir / "run.lock") as lock:
             if not lock.acquired:
                 return 0

@@ -520,6 +520,57 @@ class TestCollectRender(unittest.TestCase):
         for pat in NEXUS_SENSITIVE_CI:
             self.assertIsNone(re.search(pat, md, re.I | re.M), pat)
 
+    def test_telegram_text(self):
+        facts = collect.collect("tw-postmarket", D21, collector(TW_ROUTES_21))
+        facts["headlines"] = [
+            {
+                "n": 1,
+                "title": "台股[盤後]收漲",
+                "link": "https://news.cnyes.com/news/id/1",
+                "source": "鉅亨網",
+                "published": "2026-10-21T06:31Z",
+            }
+        ]
+        md, summary = render.render(
+            facts,
+            {"one_liner": "一句", "interpretation": "第一段。\n\n第二段 [1]。", "watch_points": ["甲", "乙"]},
+            {"returned_model": "m"},
+            cfg(),
+        )
+        tg = render.telegram_text(md)
+        self.assertFalse(tg.startswith("---"))
+        self.assertNotIn("promote: nexus", tg)
+        self.assertNotIn("資料來源", tg)
+        self.assertNotIn("api.cnyes.com", tg)  # source URLs only lived in 資料來源
+        self.assertNotIn("\n#", "\n" + tg)
+        self.assertNotIn("|", tg)
+        self.assertTrue(tg.startswith("**台股盤後日報 2026-10-21（三）**"))
+        for needle in (
+            "**大盤**",
+            "**一句話**",
+            "一句",
+            "第一段。\n\n第二段 [1]。",
+            "觀察重點：\n- 甲\n- 乙",
+            "2330 台積電 2,420 +15（+0.62%）成交 655.16 億 · Phase 101 pilot",
+            "1. [台股［盤後］收漲](https://news.cnyes.com/news/id/1) — 鉅亨網\n",
+            "_本報告由程式彙整",
+        ):
+            self.assertIn(needle, tg)
+        self.assertNotIn("2026-10-21T06:31Z", tg)
+        if "國巨*" in md:
+            self.assertIn("國巨\\*", tg)  # lone asterisk escaped so markdown does not italicise
+        self.assertLess(len(tg), render.TELEGRAM_TEXT_CAP)
+        entry = run.outbox_entry(facts, md, summary)
+        self.assertEqual(entry["telegram_md"], tg)
+        # US table rows and the 資料未齊 banner
+        facts = collect.collect("us-postmarket", D21, collector(TW_ROUTES_21))
+        tg = render.telegram_text(render.render(facts, None, None, cfg())[0])
+        self.assertIn("TSM 431.89 +6.81（+1.60%） · 盤後 426.50（-1.25%）", tg)
+        self.assertIn("\n**資料未齊**：", tg)
+        self.assertIn("**類股 ETF（依漲跌排序）**", tg)
+        long_md = "---\na: b\n---\n" + "x" * 30000
+        self.assertLessEqual(len(render.telegram_text(long_md)), render.TELEGRAM_TEXT_CAP)
+
     def test_frontmatter(self):
         facts = collect.collect("tw-postmarket", D21, collector(TW_ROUTES_21))
         md, _ = render.render(
@@ -610,6 +661,28 @@ class TestDeliver(unittest.TestCase):
         e = {"kind": kind, "date": date, "filename": f"{date}-{kind}.md", "summary": "s", "report_md": "---\nx\n---\n"}
         e.update(kw)
         return e
+
+    def test_telegram_md_and_resend(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ob = Path(tmp)
+            (ob / "a.json").write_text(json.dumps(self.entry(telegram_md="**全文**")))
+            seen = []
+
+            def runner(cmd, input, **kw):
+                seen.append((cmd, input))
+                return mock.Mock(returncode=0, stdout="{}", stderr="")
+
+            self.assertEqual(deliver.deliver_outbox(ob, "ssh research-bridge", log=lambda m: None, runner=runner), 0)
+            self.assertEqual(json.loads(seen[0][1])["telegram_md"], "**全文**")
+            self.assertTrue(
+                deliver.resend(
+                    "tw-postmarket", "2026-10-22", "全文", "ssh research-bridge", log=lambda m: None, runner=runner
+                )
+            )
+            self.assertEqual(seen[1][0], ["ssh", "research-bridge", "brief-resend", "tw-postmarket", "2026-10-22"])
+            self.assertEqual(json.loads(seen[1][1]), {"telegram_md": "全文"})
+            with self.assertRaises(ValueError):
+                deliver.resend("tw-x", "2026-10-22", "t", "ssh research-bridge", runner=runner)
 
     def test_outcomes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -737,6 +810,71 @@ class TestBridgePatch(unittest.TestCase):
             self.ok = True
             self.assertEqual(self.call(mod, "brief us-premarket 2026-10-22", p2)[0], 0)
             self.assertEqual(len(self.sent), 3)
+
+    def test_brief_with_telegram_md(self):
+        md = "---\ntype: market_daily\npromote: nexus\n---\n# 台股盤後日報\n"
+        p = {
+            "filename": "2026-10-22-tw-postmarket.md",
+            "summary": "s",
+            "report_md": md,
+            "telegram_md": "**台股盤後日報**\n\n**大盤**\n- 加權\x07",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            mod = self.load(tmp)
+            self.ok = False  # text fails, document goes out -> exit 1
+            mod.telegram = lambda text, media=None: self.sent.append((text, media)) or (media is not None)
+            self.assertEqual(self.call(mod, "brief tw-postmarket 2026-10-22", p)[0], 1)
+            self.assertEqual([m is None for _, m in self.sent], [True, False])
+            self.assertEqual(self.sent[1][0], "完整報告 md：2026-10-22-tw-postmarket.md")
+            mod.telegram = lambda text, media=None: self.sent.append((text, media)) or True
+            code, out = self.call(mod, "brief tw-postmarket 2026-10-22", p)  # retry: only the text
+            self.assertEqual(code, 0, out)
+            self.assertEqual(len(self.sent), 3)
+            self.assertEqual(self.sent[2], ("**台股盤後日報**\n\n**大盤**\n- 加權", None))  # cleaned, newlines kept
+            code, out = self.call(mod, "brief tw-postmarket 2026-10-22", p)
+            self.assertEqual((code, len(self.sent)), (0, 3))
+            self.assertIn("duplicate", out)
+            self.assertEqual(
+                self.call(
+                    mod,
+                    "brief us-premarket 2026-10-22",
+                    dict(p, filename="2026-10-22-us-premarket.md", telegram_md="x" * 20001),
+                )[0],
+                2,
+            )
+            self.assertEqual(
+                self.call(
+                    mod, "brief us-premarket 2026-10-22", dict(p, filename="2026-10-22-us-premarket.md", telegram_md=5)
+                )[0],
+                2,
+            )
+
+    def test_brief_resend_verb(self):
+        md = "---\ntype: market_daily\npromote: nexus\n---\n# x\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            mod = self.load(tmp)
+            self.assertEqual(
+                self.call(mod, "brief-resend tw-postmarket 2026-10-22", {"telegram_md": "全文"})[0], 2
+            )  # not delivered yet
+            old = {
+                "filename": "2026-10-22-tw-postmarket.md",
+                "summary": "s",
+                "report_md": md,
+            }  # delivered in the old format
+            self.assertEqual(self.call(mod, "brief tw-postmarket 2026-10-22", old)[0], 0)
+            for _ in range(2):  # no markers: the owner may resend more than once
+                self.assertEqual(
+                    self.call(mod, "brief-resend tw-postmarket 2026-10-22", {"telegram_md": "全文\n第二行"})[0], 0
+                )
+            self.assertEqual(self.sent[-1], ("全文\n第二行", None))
+            self.assertEqual(len(self.sent), 3)
+            self.assertEqual(self.call(mod, "brief-resend tw-postmarket 2026-10-22", "not json")[0], 2)
+            self.assertEqual(self.call(mod, "brief-resend tw-postmarket 2026-10-22", {"telegram_md": ""})[0], 2)
+            self.assertEqual(self.call(mod, "brief-resend tw-postmarket 2026-10-22 x", {"telegram_md": "t"})[0], 2)
+            # old-format delivery + new client payload with telegram_md -> only the text is sent
+            self.assertEqual(self.call(mod, "brief tw-postmarket 2026-10-22", dict(old, telegram_md="新格式"))[0], 0)
+            self.assertEqual(self.sent[-1], ("新格式", None))
+            self.assertEqual(len(self.sent), 4)
 
     def test_brief_failed_verb(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -879,6 +1017,28 @@ class TestDueRunner(unittest.TestCase):
             self._due(cpath, "2026-10-21T16:35:00+08:00", routes=routes)
             self.assertEqual(self._state(tmp)["tw-postmarket:2026-10-21"]["status"], "closed")
             self.assertFalse(list((Path(tmp) / "outbox").glob("*.json")))
+
+    def test_resend_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cpath = self._cfg(tmp)
+            facts = collect.collect("tw-postmarket", D21, collector(TW_ROUTES_21))
+            md, _summary = render.render(facts, None, None, cfg())
+            sent = Path(tmp) / "outbox" / "sent"
+            sent.mkdir(parents=True)
+            (sent / "2026-10-21-tw-postmarket.json").write_text(json.dumps({"report_md": md}, ensure_ascii=False))
+            out = io.StringIO()
+            with mock.patch.object(sys, "stdout", out):
+                self.assertEqual(
+                    run.main(["--config", str(cpath), "resend", "tw-postmarket", "--date", "2026-10-21", "--dry-run"]),
+                    0,
+                )
+            self.assertEqual(out.getvalue().rstrip("\n"), render.telegram_text(md).rstrip("\n"))
+            calls = []
+            with mock.patch.object(run.deliver, "resend", lambda *a, **kw: calls.append(a) or True):
+                self.assertEqual(
+                    run.main(["--config", str(cpath), "resend", "tw-postmarket", "--date", "2026-10-21"]), 0
+                )
+            self.assertEqual(calls[0][:3], ("tw-postmarket", "2026-10-21", render.telegram_text(md)))
 
     def test_missing_key_exits_3(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,8 +1,15 @@
-"""Markdown rendering (zh-TW) for the four report kinds, frontmatter, file name and Telegram summary."""
+"""Markdown rendering (zh-TW) for the four report kinds, frontmatter, file name, Telegram summary and Telegram text.
+
+Telegram text (`telegram_text`) is derived from the rendered report markdown, so a delivered report can be re-sent in
+the phone format later from its saved markdown alone. OpenClaw 2026.10.5 `message send` parses it with markdown-it
+(headingStyle "none": `#` headings lose their emphasis, so headings become **bold** lines; tables would become a <pre>
+block, so table rows become one line each) and chunks the rendered HTML at 4000 characters.
+"""
 
 from __future__ import annotations
 
 import json
+import re
 
 from numfmt import fmt, fmt_pct, fmt_price, fmt_signed, fmt_signed_price
 
@@ -347,3 +354,75 @@ def render(facts, section=None, llm_meta=None, cfg=None):
         summary_lines.append("資料未齊：" + "；".join(facts["gaps"])[:150])
     summary = "\n".join(summary_lines)[:580]
     return md, summary
+
+
+# ------------------------------------------------------------------------------------------------ Telegram text
+TELEGRAM_TEXT_CAP = 19000  # the bridge refuses > 20000
+_HEADING = re.compile(r"^#{1,6}\s+(.*)$")
+_NEWS = re.compile(r"^(\d+)\. \[(.*)\]\((\S+)\) — (.+?)(?:，\d{4}-\d{2}-\d{2}T\S+)?$")
+_LONE_STAR = re.compile(r"(?<!\*)\*(?!\*)")
+
+
+def _cells(line):
+    return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+def _table_row_line(header, cells):
+    cells = cells + [""] * (len(header) - len(cells))
+    if header[:2] == ["代號", "名稱"]:  # TW watchlist
+        code, name, close, chg, pct, turnover, note = (cells + [""] * 7)[:7]
+        if close == "資料未取得":
+            return f"{code} 資料未取得" + (f" · {note}" if note else "")
+        line = f"{code} {name} {close} {chg}（{pct}）成交 {turnover} 億"
+        return line + (f" · {note}" if note else "")
+    if header[:2] == ["代號", "收盤"]:  # US watchlist (close + pre/after-hours)
+        sym, close, chg, pct, ext = (cells + [""] * 5)[:5]
+        if close == "資料未取得":
+            return f"{sym} 資料未取得"
+        line = f"{sym} {close} {chg}（{pct}）"
+        return line + (f" · {ext}" if ext and ext != "—" else "")
+    return " · ".join(c for c in cells if c)
+
+
+def telegram_text(md):
+    """Report markdown -> phone-friendly Telegram markdown: no frontmatter, no 資料來源 section, headings as bold lines,
+    one line per table row, news as numbered links. Everything else (banner, 解讀, 觀察重點) is kept verbatim."""
+    m = re.match(r"---\n.*?\n---\n?", md, re.S)
+    body = md[m.end() :] if m else md
+    out, header, skipping = [], None, False
+    for raw in body.splitlines():
+        line = raw.rstrip()
+        h = _HEADING.match(line)
+        if h:
+            header = None
+            skipping = h.group(1).startswith("資料來源")
+            if not skipping:
+                out.append(f"**{h.group(1).strip()}**")
+            continue
+        if skipping:
+            if line.startswith("_本報告"):
+                skipping = False
+            else:
+                continue
+        if line.startswith("|"):
+            cells = _cells(line)
+            if header is None:
+                header = cells
+            elif not all(set(c) <= set("-:") for c in cells):
+                out.append(_LONE_STAR.sub(r"\\*", _table_row_line(header, cells)))
+            continue
+        header = None
+        if line.startswith("> "):
+            line = line[2:]
+        n = _NEWS.match(line)
+        if n:
+            title = n.group(2).replace("[", "［").replace("]", "］")
+            out.append(f"{n.group(1)}. [{title}]({n.group(3)}) — {n.group(4)}")
+            continue
+        if "**" not in line:
+            line = _LONE_STAR.sub(r"\\*", line)
+        out.append(line)
+    text = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip() + "\n"
+    if len(text) > TELEGRAM_TEXT_CAP:
+        text = text[: TELEGRAM_TEXT_CAP - 40].rstrip() + "\n…（內容過長已截斷，完整內容見 md 附件）\n"
+    return text

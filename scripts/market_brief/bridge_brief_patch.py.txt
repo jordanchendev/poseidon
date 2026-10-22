@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 # PROPOSED REPLACEMENT for macminim4 ~/.openclaw/bin/research_bridge.py (Python 3.9), adds the `brief` verb.
-# Based on the version read 2026-10-22 (110 lines). Every added/changed line is marked "# [brief]".
+# Based on the 110-line original read 2026-10-22; the installed copy (md5 ec8a260c...) is the previous revision of
+# this file. Every added/changed line is marked "# [brief]".
 # Apply: diff this file against the live one, copy it over, keep mode/owner as they are. Nothing else changes:
 # pending / done / needs-review behave exactly as before. The authorized_keys forced-command entry is unchanged.
 # Delivery client: scripts/market_brief/deliver.py runs `ssh research-bridge brief <kind> <YYYY-MM-DD>` with JSON
 # {filename, summary, report_md} on stdin. Exit 0 delivered (or duplicate already sent), 2 refused, 1 retryable
 # (Telegram send failed: the report is saved, the client keeps its outbox entry, the retry resends).
+# With telegram_md in the JSON, the full phone-format text is sent first (plain message, OpenClaw chunks it) and the
+# md file follows with a one-line caption; markers <file>.text-sent / <file>.sent make a retry resend only what failed.
+# `brief-resend <kind> <YYYY-MM-DD>` (stdin JSON {telegram_md}) resends the text of a delivered brief (no markers).
 # `brief-failed <kind> <YYYY-MM-DD>` (stdin = one-line reason) sends "市場報告未產出 <kind> <date>：<reason>" once per
 # kind+date (marker file next to the reports); a repeat is logged and exits 0 without sending.
 """research-bridge: forced-command endpoint for the stormtrooper research runner (Python 3.9).
@@ -20,6 +24,7 @@ SSH_ORIGINAL_COMMAND; free text (summary / reason) is read from stdin, never fro
                                    ~/.openclaw/media/market-briefs/, copied to Sisyphus/output/ (nexus_pull picks it
                                    up) and attached to a Telegram notice                                  # [brief]
   brief-failed <kind> <date>    -> one Telegram notice that the brief was not produced; stdin = reason   # [brief]
+  brief-resend <kind> <date>    -> resend the full text of a delivered brief; stdin = JSON {telegram_md} # [brief]
 """
 import datetime, json, os, re, subprocess, sys
 
@@ -34,6 +39,7 @@ UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 BRIEFS = os.path.expanduser("~/.openclaw/media/market-briefs")  # under an OpenClaw media root            # [brief]
 SISYPHUS_OUT = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Sisyphus/output")      # [brief]
 BRIEF_KINDS = ("tw-premarket", "tw-postmarket", "us-premarket", "us-postmarket")                       # [brief]
+TG_TEXT_CAP = 20000  # telegram_md cap after cleaning; OpenClaw chunks the text at 4000 rendered chars        # [brief]
 BRIEF_DATE_RE = re.compile(r"^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")                       # [brief]
 
 
@@ -96,8 +102,23 @@ def _read(path):                                                                
     with open(path, encoding="utf-8") as fh: return fh.read()                                            # [brief]
 
 
+def _clean_tg(text):                                                                                     # [brief]
+    """Telegram markdown from the client: printable chars + newlines; None when over the cap."""          # [brief]
+    text = "".join(ch for ch in text if ch.isprintable() or ch == "\n").strip()                          # [brief]
+    return text if 0 < len(text) <= TG_TEXT_CAP else None                                                # [brief]
+
+
+def _send(name, what, text, media=None):                                                                 # [brief]
+    try:                                                                                                 # [brief]
+        return telegram(text, media)                                                                     # [brief]
+    except (OSError, subprocess.TimeoutExpired) as e:                                                    # [brief]
+        log("brief %s: telegram %s failed: %s" % (name, what, type(e).__name__)); return False           # [brief]
+
+
 def brief(argv):                                                                                         # [brief]
-    """brief <kind> <YYYY-MM-DD>; stdin JSON {filename, summary, report_md}."""                          # [brief]
+    """brief <kind> <YYYY-MM-DD>; stdin JSON {filename, summary, report_md[, telegram_md]}.               # [brief]
+    With telegram_md: the full text is sent first (no media, OpenClaw chunks it), then the md file with a   # [brief]
+    one-line caption. Markers <file>.text-sent / <file>.sent let a retry resend only the part that failed."""
     if len(argv) != 3 or argv[1] not in BRIEF_KINDS or not BRIEF_DATE_RE.match(argv[2]): fail("bad arguments")
     kind, date = argv[1], argv[2]                                                                        # [brief]
     raw = sys.stdin.read(STDIN_CAP + 1)                                                                  # [brief]
@@ -113,14 +134,19 @@ def brief(argv):                                                                
     if not isinstance(md, str) or not md.startswith("---\n") or "\npromote: nexus\n" not in md:          # [brief]
         fail("report_md must be markdown with frontmatter (promote: nexus)")                            # [brief]
     if not isinstance(summary, str): fail("summary must be a string")                                    # [brief]
+    tg = payload.get("telegram_md")                                                                      # [brief]
+    if tg is not None:                                                                                   # [brief]
+        if not isinstance(tg, str): fail("telegram_md must be a string")                                 # [brief]
+        tg = _clean_tg(tg)                                                                               # [brief]
+        if tg is None: fail("telegram_md empty or longer than %d characters" % TG_TEXT_CAP)              # [brief]
     md = "".join(ch for ch in md if ch.isprintable() or ch in "\n\t")                                    # [brief]
     text = clean(summary, 600)                                                                           # [brief]
     os.makedirs(BRIEFS, mode=0o700, exist_ok=True)                                                       # [brief]
     path = os.path.join(BRIEFS, name)                                                                    # [brief]
-    marker = path + ".sent"                                                                              # [brief]
+    marker, text_marker = path + ".sent", path + ".text-sent"                                            # [brief]
     if os.path.exists(path):                                                                             # [brief]
         if _read(path) != md: fail("brief %s already delivered with different content" % name)          # [brief]
-        if os.path.exists(marker):                                                                       # [brief]
+        if os.path.exists(marker) and (tg is None or os.path.exists(text_marker)):                       # [brief]
             log("brief %s duplicate, already sent" % name)                                               # [brief]
             print(json.dumps({"file": name, "telegram_sent": True, "duplicate": True})); return         # [brief]
     else:                                                                                                # [brief]
@@ -137,15 +163,42 @@ def brief(argv):                                                                
             copied = True                                                                                # [brief]
     except OSError as e:                                                                                 # [brief]
         log("brief %s: Sisyphus copy failed: %s" % (name, type(e).__name__))                             # [brief]
-    try:                                                                                                 # [brief]
-        sent = telegram(text + "\n完整報告見附件。", path)                                                  # [brief]
-    except (OSError, subprocess.TimeoutExpired) as e:                                                    # [brief]
-        log("brief %s: telegram failed: %s" % (name, type(e).__name__)); sent = False                    # [brief]
-    if sent: open(marker, "w").close()                                                                   # [brief]
-    log("brief %s telegram_sent=%s copied=%s" % (name, sent, copied))                                    # [brief]
-    print(json.dumps({"file": name, "telegram_sent": sent, "copied": copied}))                           # [brief]
-    if not sent: sys.exit(1)  # retryable: the client keeps the outbox entry and the retry resends       # [brief]
+    text_sent = None                                                                                     # [brief]
+    if tg is not None:                                                                                   # [brief]
+        text_sent = os.path.exists(text_marker) or _send(name, "text", tg)                               # [brief]
+        if text_sent and not os.path.exists(text_marker): open(text_marker, "w").close()                 # [brief]
+        caption = "完整報告 md：%s" % name                                                                 # [brief]
+    else:                                                                                                # [brief]
+        caption = text + "\n完整報告見附件。"                                                               # [brief]
+    sent = os.path.exists(marker) or _send(name, "document", caption, path)                              # [brief]
+    if sent and not os.path.exists(marker): open(marker, "w").close()                                    # [brief]
+    ok = sent and text_sent is not False                                                                 # [brief]
+    log("brief %s telegram_sent=%s text_sent=%s copied=%s" % (name, sent, text_sent, copied))            # [brief]
+    print(json.dumps({"file": name, "telegram_sent": ok, "document_sent": sent, "text_sent": text_sent, "copied": copied}))
+    if not ok: sys.exit(1)  # retryable: the client keeps the outbox entry; markers skip what was sent   # [brief]
 
+
+def brief_resend(argv):                                                                                  # [brief]
+    """brief-resend <kind> <YYYY-MM-DD>; stdin JSON {telegram_md}. Text only, no attachment, no markers;   # [brief]
+    refused unless that brief was already delivered here."""                                             # [brief]
+    if len(argv) != 3 or argv[1] not in BRIEF_KINDS or not BRIEF_DATE_RE.match(argv[2]): fail("bad arguments")
+    kind, date = argv[1], argv[2]                                                                        # [brief]
+    name = "%s-%s.md" % (date, kind)                                                                     # [brief]
+    if not os.path.isfile(os.path.join(BRIEFS, name)): fail("brief %s was not delivered here" % name)   # [brief]
+    raw = sys.stdin.read(STDIN_CAP + 1)                                                                  # [brief]
+    if len(raw) > STDIN_CAP: fail("stdin too large")                                                     # [brief]
+    try:                                                                                                 # [brief]
+        payload = json.loads(raw)                                                                        # [brief]
+    except ValueError:                                                                                   # [brief]
+        fail("stdin is not valid JSON")                                                                  # [brief]
+    tg = payload.get("telegram_md") if isinstance(payload, dict) else None                               # [brief]
+    if not isinstance(tg, str): fail("telegram_md must be a string")                                     # [brief]
+    tg = _clean_tg(tg)                                                                                   # [brief]
+    if tg is None: fail("telegram_md empty or longer than %d characters" % TG_TEXT_CAP)                  # [brief]
+    sent = _send(name, "resend text", tg)                                                                # [brief]
+    log("brief-resend %s telegram_sent=%s chars=%d" % (name, sent, len(tg)))                             # [brief]
+    print(json.dumps({"file": name, "telegram_sent": sent}))                                             # [brief]
+    if not sent: sys.exit(1)                                                                             # [brief]
 
 def brief_failed(argv):                                                                                  # [brief]
     """brief-failed <kind> <YYYY-MM-DD>; stdin = one-line reason. One notice per kind+date."""            # [brief]
@@ -180,6 +233,8 @@ def main():
         brief(argv); return                                                                              # [brief]
     if cmd == "brief-failed":                                                                            # [brief]
         brief_failed(argv); return                                                                       # [brief]
+    if cmd == "brief-resend":                                                                            # [brief]
+        brief_resend(argv); return                                                                       # [brief]
     if cmd not in ("done", "needs-review"): fail("unknown command %r" % cmd[:20])
     if len(argv) != (3 if cmd == "done" else 2) or not ID_RE.match(argv[1]): fail("bad arguments")
     if cmd == "done" and not UUID_RE.match(argv[2]): fail("bad revision id")

@@ -36,6 +36,8 @@ def valid(entry):
         return False
     if entry.get("filename") != f"{date}-{kind}.md":
         return False
+    if entry.get("telegram_md") is not None and not isinstance(entry["telegram_md"], str):
+        return False
     return isinstance(entry.get("report_md"), str) and isinstance(entry.get("summary"), str)
 
 
@@ -55,10 +57,10 @@ def deliver_outbox(outbox, bridge, log=print, runner=subprocess.run):
         if verb == "brief-failed":
             stdin = " ".join(entry["reason"].split())[:500]
         else:
-            stdin = json.dumps(
-                {"filename": entry["filename"], "summary": entry["summary"], "report_md": entry["report_md"]},
-                ensure_ascii=False,
-            )
+            payload = {"filename": entry["filename"], "summary": entry["summary"], "report_md": entry["report_md"]}
+            if entry.get("telegram_md"):
+                payload["telegram_md"] = entry["telegram_md"]
+            stdin = json.dumps(payload, ensure_ascii=False)
         if len(stdin.encode("utf-8")) > STDIN_CAP:
             log(f"outbox entry {path.name} exceeds the bridge stdin cap; not sent")
             failed += 1
@@ -83,6 +85,24 @@ def deliver_outbox(outbox, bridge, log=print, runner=subprocess.run):
             log(f"bridge {verb} {entry['kind']} {entry['date']} exit {p.returncode}: {p.stderr.strip()[:300]}")
             failed += 1
     return failed
+
+
+def resend(kind, date, telegram_md, bridge, log=print, runner=subprocess.run):
+    """`brief-resend <kind> <date>` with {telegram_md} on stdin: text only, for a brief the bridge already holds."""
+    if kind not in KINDS or not DATE.match(date):
+        raise ValueError("bad kind/date")
+    cmd = [*shlex.split(bridge), "brief-resend", kind, date]
+    stdin = json.dumps({"telegram_md": telegram_md}, ensure_ascii=False)
+    try:
+        p = runner(cmd, input=stdin, capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log(f"bridge brief-resend {kind} {date} failed to run: {type(e).__name__}")
+        return False
+    if p.returncode != 0:
+        log(f"bridge brief-resend {kind} {date} exit {p.returncode}: {p.stderr.strip()[:300]}")
+        return False
+    log(f"resent brief text {kind} {date}: {p.stdout.strip()[:200]}")
+    return True
 
 
 def main(argv=None):
