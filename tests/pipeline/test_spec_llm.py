@@ -264,7 +264,9 @@ def test_key_limit_remaining_below_the_cap_refuses_the_call():
 
 
 def _without_stop(spec: dict) -> dict:
+    """DSL-valid (no params) but missing the stop every pipeline entry needs."""
     broken = copy.deepcopy(spec)
+    broken.pop("params", None)
     for rule in broken["rules"]:
         rule.pop("risk")
     broken["risk"]["take_profit"] = {"type": "points", "value": 80}
