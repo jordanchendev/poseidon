@@ -307,7 +307,9 @@ def test_happy_path_completes_and_reports_done(env):
     # bridge + ledger
     done = bridge_calls(env, "done")
     assert len(done) == 1 and done[0]["args"][1:] == [AGENDA_ID, rev["identity"]["revision_id"]]
-    assert done[0]["stdin"].strip() == good_narrative()["tl_dr"]
+    payload = json.loads(done[0]["stdin"])  # summary + the rendered report, attached to the Telegram notice
+    assert payload["summary"] == good_narrative()["tl_dr"]
+    assert "【推論】" in payload["report_md"] and "NT$68.73 billion" in payload["report_md"]
     rec, revs = ledger_row(env)
     assert rec["status"] == "completed" and rec["reported"] == 1
     assert [r["status"] for r in revs] == ["completed"]
@@ -604,7 +606,8 @@ def test_outbox_mode_queues_reports_and_host_delivery(env):
     assert bridge_calls(env, "done") == [] and len(bridge_calls(env, "pending")) == 1
     entry = json.loads((outbox / f"{AGENDA_ID}.json").read_text())
     rev_id = ledger_row(env)[0]["revision_id"]
-    assert entry == {"verb": "done", "args": [AGENDA_ID, rev_id], "stdin": good_narrative()["tl_dr"] + "\n"}
+    assert entry["verb"] == "done" and entry["args"] == [AGENDA_ID, rev_id]
+    assert json.loads(entry["stdin"])["summary"] == good_narrative()["tl_dr"]
     bridge_cmd = env["bridge_cmd"]
     env["set_bridge"](refuse={"done": "already done"})
     assert deliver_outbox.main(["--outbox", str(outbox), "--bridge", bridge_cmd]) == 4
@@ -845,3 +848,12 @@ def test_pre_event_completes_with_banner_and_frontmatter(notice_env, tmp_path):
     fm = note.split("\n---\n", 1)[0]
     assert "\nevent_status: pre_event" in fm and "\nnext_review_at: 2026-10-28T09:00:00Z" in fm
     assert "> [!warning] 事前推論" in note
+
+
+def test_done_without_renderable_report_falls_back_to_summary(env, monkeypatch):
+    import runner
+
+    monkeypatch.setattr(runner, "render_report", lambda run_dir: None)
+    t = FakeOpenRouter([good_narrative()])
+    assert env["run"](t) == 0
+    assert bridge_calls(env, "done")[0]["stdin"] == good_narrative()["tl_dr"] + "\n"

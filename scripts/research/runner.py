@@ -54,6 +54,7 @@ JEV_MODEL = "typesafe/jev-1.13"
 JEV_BASE = "https://openrouter.ai/api"
 JEV_PRIMARY, JEV_FALLBACK = "/v1/systemone", "/alpha/decisions"
 JEV_SOURCE_CAP = 12000
+REPORT_CAP = 400_000  # chars of rendered Markdown attached to the done report
 AGENDA_ID = re.compile(r"^\d{8}-m?\d{1,3}$")
 REVISION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 REASON_CAP = 580
@@ -100,10 +101,21 @@ class Bridge:
             raise BridgeError(f"bridge pending returned {type(rows).__name__}, not a list")
         return rows
 
-    def done(self, agenda_id, revision_id, summary):
+    def done(self, agenda_id, revision_id, summary, report_md=None):
+        """stdin is the one-line summary, or JSON {summary, report_md} when a rendered report is attached
+        (the bridge saves it and sends it to Telegram as a document)."""
         if not AGENDA_ID.match(agenda_id) or not REVISION_ID.match(revision_id):
             raise BridgeError(f"refusing to report malformed ids {agenda_id!r} / {revision_id!r}")
-        self._run(["done", agenda_id, revision_id], one_line(summary, SUMMARY_CAP) + "\n")
+        line = one_line(summary, SUMMARY_CAP)
+        if report_md and len(report_md) <= REPORT_CAP:
+            stdin = json.dumps({"summary": line, "report_md": report_md}, ensure_ascii=False)
+        else:
+            if report_md:
+                log.warning(
+                    "report for %s is %d chars (> %d); sent without attachment", agenda_id, len(report_md), REPORT_CAP
+                )
+            stdin = line + "\n"
+        self._run(["done", agenda_id, revision_id], stdin)
 
     def needs_review(self, agenda_id, reason):
         if not AGENDA_ID.match(agenda_id):
@@ -572,11 +584,33 @@ def review_reason(run):
 
 
 # ------------------------------------------------------------------------------------------------ main loop
+def render_report(run_dir):
+    """Markdown of <run_dir>/revision.json via render_theme.py (same rendering as the vault note), or None."""
+    rev = Path(run_dir or "") / "revision.json"
+    if not run_dir or not rev.is_file():
+        return None
+    try:
+        p = subprocess.run(
+            [sys.executable, str(Path(__file__).with_name("render_theme.py")), str(rev)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log.warning("render_theme failed for %s: %s", rev, type(e).__name__)
+        return None
+    if p.returncode != 0 or not p.stdout.strip():
+        log.warning("render_theme exit %s for %s: %s", p.returncode, rev, p.stderr.strip()[:200])
+        return None
+    return p.stdout
+
+
 def report(bridge, ledger, agenda_id, rec):
     """Tell the bridge the ledger outcome; records the ack. Returns False on a bridge failure."""
     try:
         if rec["status"] == "completed":
-            bridge.done(agenda_id, rec["revision_id"], rec.get("summary") or "")
+            bridge.done(agenda_id, rec["revision_id"], rec.get("summary") or "", render_report(rec.get("run_dir")))
         else:
             bridge.needs_review(agenda_id, rec.get("reason") or "needs review")
     except BridgeError as e:
