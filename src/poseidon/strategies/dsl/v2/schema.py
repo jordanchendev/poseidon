@@ -485,7 +485,10 @@ class ParamSpec(_Strict):
         return [round(v, 10) for v in values]
 
     def cast(self, value: float) -> int | float:
-        return round(value) if self.type == "int" else float(value)
+        """Snap ``value`` to the nearest grid point (removes float step noise)."""
+        k = round((float(value) - self.low) / self.step)
+        snapped = self.low + k * self.step
+        return round(snapped) if self.type == "int" else round(snapped, 10)
 
     def contains(self, value: Any) -> bool:
         if isinstance(value, bool) or not isinstance(value, int | float):

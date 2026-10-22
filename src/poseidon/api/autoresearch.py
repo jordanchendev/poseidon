@@ -12,7 +12,7 @@ from uuid import UUID
 
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from poseidon.core.schemas import MessageResponse
@@ -50,8 +50,8 @@ class AutoResearchRequest(BaseModel):
     )
     strategy_type: str = Field(
         "voting",
-        pattern="^(voting|rule|model|regime_router)$",
-        description="Strategy factory: 'voting' (default), 'rule' (RuleStrategyFactory), 'model' (ModelStrategyFactory), or 'regime_router' (RegimeSearchPipeline)",
+        pattern="^(voting|rule|rule_v2|model|regime_router)$",
+        description="Strategy factory: 'voting' (default), 'rule' (RuleStrategyFactory), 'rule_v2' (DslV2StrategyFactory over base_config_json), 'model' (ModelStrategyFactory), or 'regime_router' (RegimeSearchPipeline)",
     )
     feature_names: list[str] | None = Field(
         None,
@@ -59,8 +59,21 @@ class AutoResearchRequest(BaseModel):
     )
     base_config_json: dict | None = Field(
         None,
-        description="Base VotingStrategy config dict for RegimeRouter search (used when strategy_type='regime_router')",
+        description=(
+            "Base VotingStrategy config dict for RegimeRouter search (strategy_type='regime_router'), "
+            "or the DSL v2 spec with its params block (strategy_type='rule_v2')"
+        ),
     )
+
+    @model_validator(mode="after")
+    def _rule_v2_needs_valid_spec(self) -> AutoResearchRequest:
+        if self.strategy_type == "rule_v2":
+            if self.base_config_json is None:
+                raise ValueError("strategy_type='rule_v2' requires base_config_json (a DSL v2 spec)")
+            from poseidon.strategies.dsl.v2 import validate_v2
+
+            validate_v2(self.base_config_json)  # DslV2Error is a ValueError -> 422 with the paths
+        return self
 
 
 class TaskStatusResponse(BaseModel):

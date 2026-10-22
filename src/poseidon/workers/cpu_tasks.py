@@ -2583,6 +2583,7 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
             # model is initialised with available_models=None; AutoResearchRunner's per-market loop
             #   (runner.py:164-173) calls list_ready_models(market) and passes
             #   available_models into the pipeline, which reaches build_trial_factory() dynamically.
+            from poseidon.backtest.dsl_v2_factory import DslV2StrategyFactory
             from poseidon.backtest.model_strategy_factory import ModelStrategyFactory
             from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory
 
@@ -2592,6 +2593,8 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
                     feature_names=feature_names or [],
                     direction_mode=search_config.get("strategy_mode", "bidirectional"),
                 ),
+                # DSL v2: the search space is the spec's own $param grid.
+                "rule_v2": lambda: DslV2StrategyFactory(spec=base_config_json or {}),
                 "model": lambda: ModelStrategyFactory(available_models=None),
             }
 
