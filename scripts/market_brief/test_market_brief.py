@@ -314,9 +314,9 @@ class TestCalendarAndSlots(unittest.TestCase):
     def test_tw_slots(self):
         self.assertEqual(self.due(tpe(2026, 10, 22, 8, 15)), {("tw-premarket", "2026-10-22"): True})
         self.assertEqual(self.due(tpe(2026, 10, 22, 8, 14)), {})
-        self.assertEqual(self.due(tpe(2026, 10, 22, 17, 59)), {("tw-postmarket", "2026-10-22"): True})
-        self.assertEqual(self.due(tpe(2026, 10, 22, 18, 0)), {})  # window is [slot, slot + 90 min)
-        self.assertEqual(self.due(tpe(2026, 10, 26, 16, 35)), {("tw-postmarket", "2026-10-26"): False})  # holiday
+        self.assertEqual(self.due(tpe(2026, 10, 22, 19, 14)), {("tw-postmarket", "2026-10-22"): True})
+        self.assertEqual(self.due(tpe(2026, 10, 22, 19, 15)), {})  # window is [slot, slot + 90 min)
+        self.assertEqual(self.due(tpe(2026, 10, 26, 17, 50)), {("tw-postmarket", "2026-10-26"): False})  # holiday
 
     def test_us_slots_follow_new_york_dst(self):
         # EDT (UTC-4): pre 08:45 ET = 20:45 TPE, post 17:15 ET = 05:15 TPE next day
@@ -334,7 +334,7 @@ class TestCalendarAndSlots(unittest.TestCase):
         self.assertEqual(self.due(tpe(2026, 11, 26, 21, 50)), {("us-premarket", "2026-11-26"): False})
 
     def test_state_makes_slots_idempotent(self):
-        now = tpe(2026, 10, 22, 16, 40)
+        now = tpe(2026, 10, 22, 17, 50)
         for status in tradingcal.FINAL_STATUSES:
             self.assertEqual(self.due(now, {"tw-postmarket:2026-10-22": {"status": status}}), {})
         self.assertEqual(
@@ -765,9 +765,10 @@ class TestBridgePatch(unittest.TestCase):
         mod = importlib.util.module_from_spec(spec)
         loader.exec_module(mod)
         mod.BRIEFS = str(Path(tmp) / "media" / "market-briefs")
-        mod.SISYPHUS_OUT = str(Path(tmp) / "Sisyphus" / "output")
+        mod.NEXUS = str(Path(tmp) / "Nexus")
         mod.LOG = str(Path(tmp) / "bridge.log")
-        os.makedirs(mod.SISYPHUS_OUT)
+        os.makedirs(mod.NEXUS)
+        (Path(mod.NEXUS) / "AGENTS.md").write_text("# Nexus\n")
         self.sent = []
         mod.telegram = lambda text, media=None: self.sent.append((text, media)) or self.ok
         self.ok = True
@@ -799,7 +800,9 @@ class TestBridgePatch(unittest.TestCase):
             media = Path(mod.BRIEFS) / "2026-10-21-tw-postmarket.md"
             self.assertEqual(media.read_text(encoding="utf-8"), md)
             self.assertEqual(oct(media.stat().st_mode & 0o777), "0o600")
-            self.assertEqual((Path(mod.SISYPHUS_OUT) / "2026-10-21-tw-postmarket.md").read_text(encoding="utf-8"), md)
+            raw = (Path(mod.NEXUS) / "_kb/raw/market-daily/2026-10-21-tw-postmarket.md").read_text(encoding="utf-8")
+            self.assertTrue(raw.startswith("---\ntype: source\n"))
+            self.assertTrue(raw.endswith("# 台股盤後日報\n"))
             self.assertEqual(self.sent[-1][1], str(media))
             self.assertIn("完整報告見附件", self.sent[-1][0])
             code, out = self.call(
@@ -931,7 +934,6 @@ class TestDueRunner(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             c = cfg()
             c["state_dir"], c["outbox_dir"], c["watchlist_file"] = f"{tmp}/state", f"{tmp}/outbox", f"{tmp}/none.json"
-            c["archive_dir"] = f"{tmp}/archive"
             cpath = Path(tmp) / "config.json"
             cpath.write_text(json.dumps(c, ensure_ascii=False))
             routes = [r for r in TW_ROUTES_21 if not r[0].startswith("BFI82U?type=day&dayDate=20261021")]
@@ -940,28 +942,22 @@ class TestDueRunner(unittest.TestCase):
                 mock.patch.object(run, "Fetcher", lambda: fetcher(routes)),
                 mock.patch.object(run.deliver, "deliver_outbox", lambda ob, br, log=None: delivered.append(ob) or 0),
             ):
-                rc = run.main(["--config", str(cpath), "due", "--now", "2026-10-21T16:35:00+08:00", "--no-llm"])
+                rc = run.main(["--config", str(cpath), "due", "--now", "2026-10-21T17:50:00+08:00", "--no-llm"])
                 self.assertEqual(rc, 0)
                 st = json.loads((Path(tmp) / "state" / "state.json").read_text())
                 self.assertEqual(st["tw-postmarket:2026-10-21"]["status"], "waiting")
                 self.assertFalse(list((Path(tmp) / "outbox").glob("*.json")))
-                rc = run.main(["--config", str(cpath), "due", "--now", "2026-10-21T17:35:00+08:00", "--no-llm"])
+                rc = run.main(["--config", str(cpath), "due", "--now", "2026-10-21T18:50:00+08:00", "--no-llm"])
                 st = json.loads((Path(tmp) / "state" / "state.json").read_text())
                 self.assertEqual(st["tw-postmarket:2026-10-21"]["status"], "queued")
                 entry = json.loads((Path(tmp) / "outbox" / "2026-10-21-tw-postmarket.json").read_text())
                 self.assertEqual(entry["filename"], "2026-10-21-tw-postmarket.md")
                 self.assertIn("資料未齊", entry["report_md"])
-                arch = Path(tmp) / "archive"
-                self.assertEqual(
-                    (arch / "2026" / "2026-10-21-tw-postmarket.md").read_text(encoding="utf-8"), entry["report_md"]
-                )
-                idx = json.loads((arch / "index.json").read_text(encoding="utf-8"))
-                self.assertEqual([b["file"] for b in idx["briefs"]], ["2026/2026-10-21-tw-postmarket.md"])
                 n = len(list((Path(tmp) / "outbox").glob("*.json")))
-                run.main(["--config", str(cpath), "due", "--now", "2026-10-21T17:40:00+08:00", "--no-llm"])
+                run.main(["--config", str(cpath), "due", "--now", "2026-10-21T18:55:00+08:00", "--no-llm"])
                 self.assertEqual(len(list((Path(tmp) / "outbox").glob("*.json"))), n)  # idempotent
                 # holiday: recorded once as closed, no fetch of report data, and no failure notice
-                run.main(["--config", str(cpath), "due", "--now", "2026-10-26T16:35:00+08:00", "--no-llm"])
+                run.main(["--config", str(cpath), "due", "--now", "2026-10-26T17:50:00+08:00", "--no-llm"])
                 st = json.loads((Path(tmp) / "state" / "state.json").read_text())
                 self.assertEqual(st["tw-postmarket:2026-10-26"]["status"], "closed")
                 self.assertFalse(list((Path(tmp) / "outbox").glob("*.failed.json")))
@@ -969,7 +965,6 @@ class TestDueRunner(unittest.TestCase):
     def _cfg(self, tmp):
         c = cfg()
         c["state_dir"], c["outbox_dir"], c["watchlist_file"] = f"{tmp}/state", f"{tmp}/outbox", f"{tmp}/none.json"
-        c["archive_dir"] = f"{tmp}/archive"
         cpath = Path(tmp) / "config.json"
         cpath.write_text(json.dumps(c, ensure_ascii=False))
         return cpath
@@ -1017,7 +1012,7 @@ class TestDueRunner(unittest.TestCase):
             def boom(*a, **kw):
                 raise RuntimeError("bug")
 
-            self.assertEqual(self._due(cpath, "2026-10-21T16:35:00+08:00", build=boom), 1)
+            self.assertEqual(self._due(cpath, "2026-10-21T17:50:00+08:00", build=boom), 1)
             st = self._state(tmp)
             self.assertEqual(
                 (st["tw-postmarket:2026-10-21"]["status"], st["tw-postmarket:2026-10-21"]["notice_queued"]),
@@ -1032,14 +1027,14 @@ class TestDueRunner(unittest.TestCase):
                 "window ended", json.loads((ob / "2026-10-20-tw-postmarket.failed.json").read_text())["reason"]
             )
             n = len(list(ob.glob("*.failed.json")))
-            self._due(cpath, "2026-10-21T16:40:00+08:00", build=boom)
+            self._due(cpath, "2026-10-21T17:55:00+08:00", build=boom)
             self.assertEqual(len(list(ob.glob("*.failed.json"))), n)
 
     def test_exchange_closed_no_notice(self):  # typhoon-style closure on a calendar trading day
         with tempfile.TemporaryDirectory() as tmp:
             cpath = self._cfg(tmp)
             routes = [("MI_INDEX", "mi_index_closed_20260710.json"), *TW_ROUTES_21]
-            self._due(cpath, "2026-10-21T16:35:00+08:00", routes=routes)
+            self._due(cpath, "2026-10-21T17:50:00+08:00", routes=routes)
             self.assertEqual(self._state(tmp)["tw-postmarket:2026-10-21"]["status"], "closed")
             self.assertFalse(list((Path(tmp) / "outbox").glob("*.json")))
 
@@ -1069,7 +1064,6 @@ class TestDueRunner(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             c = cfg()
             c["state_dir"], c["outbox_dir"] = f"{tmp}/state", f"{tmp}/outbox"
-            c["archive_dir"] = f"{tmp}/archive"
             c["llm"]["key_file"] = f"{tmp}/absent.env"
             cpath = Path(tmp) / "config.json"
             cpath.write_text(json.dumps(c, ensure_ascii=False))
@@ -1077,7 +1071,7 @@ class TestDueRunner(unittest.TestCase):
                 mock.patch.object(run, "Fetcher", lambda: fetcher(TW_ROUTES_21)),
                 mock.patch.object(run.deliver, "deliver_outbox", lambda ob, br, log=None: 0),
             ):
-                rc = run.main(["--config", str(cpath), "due", "--now", "2026-10-21T16:35:00+08:00"])
+                rc = run.main(["--config", str(cpath), "due", "--now", "2026-10-21T17:50:00+08:00"])
             self.assertEqual(rc, 3)
             ob = Path(tmp) / "outbox"
             self.assertEqual([p.name for p in ob.glob("*.json")], ["2026-10-21-tw-postmarket.failed.json"])
@@ -1152,62 +1146,187 @@ class TestLLMContentRules(unittest.TestCase):
         )
 
 
-class TestArchive(unittest.TestCase):
-    def test_archive_and_backfill(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            arch = Path(tmp) / "archive"
-            facts = collect.collect("tw-postmarket", D21, collector(TW_ROUTES_21))
-            md, summary = render.render(facts, None, None, cfg())
-            item = run.archive_brief(arch, "tw-postmarket", "2026-10-21", md, summary)
-            f = arch / "2026" / "2026-10-21-tw-postmarket.md"
-            self.assertEqual(oct(f.stat().st_mode & 0o777), "0o644")
-            self.assertEqual(oct((arch / "2026").stat().st_mode & 0o777), "0o755")
-            self.assertEqual(oct((arch / "index.json").stat().st_mode & 0o777), "0o644")
-            self.assertEqual(item["title"], "台股盤後日報 2026-10-21（三）")
-            self.assertEqual(item["bytes"], len(md.encode()))
-            self.assertEqual(item["session_date"], "2026-10-21")
-            self.assertEqual(
-                set(item),
-                {
-                    "date",
-                    "kind",
-                    "market",
-                    "session",
-                    "title",
-                    "file",
-                    "summary",
-                    "bytes",
-                    "session_date",
-                    "generated_at",
-                    "data_gaps",
-                },
-            )
-            md2 = md.replace("promote: nexus", 'data_gaps:\n  - "三大法人未取得"\npromote: nexus')
-            run.archive_brief(arch, "us-premarket", "2026-10-22", md2, "s2")
-            run.archive_brief(arch, "tw-postmarket", "2026-10-21", md, "again")  # upsert, no duplicate
-            idx = json.loads((arch / "index.json").read_text(encoding="utf-8"))
-            self.assertEqual(
-                [(b["date"], b["kind"]) for b in idx["briefs"]],
-                [("2026-10-22", "us-premarket"), ("2026-10-21", "tw-postmarket")],
-            )
-            self.assertEqual(idx["briefs"][0]["data_gaps"], ["三大法人未取得"])
-            self.assertEqual(idx["briefs"][1]["summary"], "again")
-            self.assertFalse(list(arch.rglob(".*.tmp")))
-            # backfill from outbox/sent
-            c = cfg()
-            c["state_dir"], c["outbox_dir"], c["archive_dir"] = f"{tmp}/state", f"{tmp}/outbox", f"{tmp}/arch2"
-            cpath = Path(tmp) / "c.json"
-            cpath.write_text(json.dumps(c, ensure_ascii=False))
-            sent = Path(tmp) / "outbox" / "sent"
-            sent.mkdir(parents=True)
-            entry = run.outbox_entry(facts, md, summary)
-            (sent / "2026-10-21-tw-postmarket.json").write_text(json.dumps(entry, ensure_ascii=False))
-            (sent / "2026-10-20-tw-postmarket.failed.json").write_text(
-                json.dumps({"verb": "brief-failed", "kind": "tw-postmarket", "date": "2026-10-20", "reason": "x"})
-            )
-            self.assertEqual(run.main(["--config", str(cpath), "archive-backfill"]), 0)
-            idx = json.loads((Path(tmp) / "arch2" / "index.json").read_text(encoding="utf-8"))
-            self.assertEqual([b["file"] for b in idx["briefs"]], ["2026/2026-10-21-tw-postmarket.md"])
+class TestBridgeNexus(unittest.TestCase):
+    """Nexus raw archive written by the bridge `brief` / `brief-archive` verbs."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.b = TestBridgePatch()
+        self.mod = self.b.load(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def md(self):
+        facts = collect.collect("tw-postmarket", D21, collector(TW_ROUTES_21))
+        facts["gaps"] = ["三大法人未取得"]
+        return render.render(facts, None, None, cfg())[0]
+
+    def test_raw_schema_matches_lint(self):
+        raw = self.mod.to_nexus_raw("2026-10-21-tw-postmarket.md", self.md(), today="2026-10-22")
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML not installed")
+        fm = yaml.safe_load(raw.split("---\n")[1])
+        # nexus_pull to_nexus_raw() schema + lint REQUIRED / enums / dates / tags list
+        for k in ("type", "title", "status", "created", "updated", "tags", "origin"):
+            self.assertIn(k, fm)
+        self.assertEqual((fm["type"], fm["status"], fm["origin"]), ("source", "stable", "agent"))
+        self.assertEqual(fm["created"], "2026-10-22")
+        self.assertEqual(fm["updated"], "2026-10-22")
+        self.assertEqual(fm["tags"], ["market_daily", "tw_stock", "postmarket", "market-daily"])
+        self.assertEqual(fm["source_system"], "market-brief")
+        self.assertEqual(fm["source_kind"], "market_daily")
+        self.assertEqual(fm["source_path"], "stormtrooper:market-brief/2026-10-21-tw-postmarket.md")
+        self.assertIs(fm["compiled"], False)
+        self.assertEqual(fm["compiled_into"], [])
+        self.assertTrue(any("MI_INDEX" in x for x in fm["sources"]))
+        self.assertEqual((fm["market"], fm["session"], fm["session_date"]), ("tw", "postmarket", "2026-10-21"))
+        self.assertEqual(fm["data_gaps"], ["三大法人未取得"])
+        self.assertIn("as_of", fm)
+        self.assertIn("## 大盤", raw)
+
+    def test_add_only_duplicate_sensitive_and_archive_verb(self):
+        mod, name = self.mod, "2026-10-21-tw-postmarket.md"
+        md = self.md()
+        self.assertEqual(mod.nexus_archive(name, md), "written")
+        self.assertEqual(mod.nexus_archive(name, md), "duplicate")
+        dest = Path(mod.NEXUS) / "_kb/raw/market-daily" / name
+        dest.write_text(dest.read_text(encoding="utf-8").replace("compiled: false", "compiled: true"), encoding="utf-8")
+        self.assertEqual(mod.nexus_archive(name, md), "duplicate")  # compile may flip frontmatter; body unchanged
+        with self.assertRaises(SystemExit) as e:
+            mod.nexus_archive(name, md.replace("## 大盤", "## 大盤（改）"))
+        self.assertEqual(e.exception.code, 2)
+        self.assertEqual(mod.nexus_archive("2026-10-22-tw-postmarket.md", md + "\napi_key=abcdefghijk\n"), "sensitive")
+        self.assertFalse((Path(mod.NEXUS) / "_kb/raw/market-daily/2026-10-22-tw-postmarket.md").exists())
+        os.remove(Path(mod.NEXUS) / "AGENTS.md")
+        self.assertEqual(mod.nexus_archive("2026-10-23-tw-postmarket.md", md), "no-vault")
+        (Path(mod.NEXUS) / "AGENTS.md").write_text("x")
+        # brief-archive: only for a brief already delivered to market-briefs/
+        self.assertEqual(self.b.call(mod, "brief-archive tw-premarket 2026-10-22", "")[0], 2)
+        os.makedirs(mod.BRIEFS, exist_ok=True)
+        (Path(mod.BRIEFS) / "2026-10-22-tw-premarket.md").write_text(md, encoding="utf-8")
+        code, out = self.b.call(mod, "brief-archive tw-premarket 2026-10-22", "")
+        self.assertEqual((code, json.loads(out)["nexus"]), (0, "written"))
+        self.assertEqual(self.b.sent, [])  # no Telegram
+
+    def test_brief_writes_nexus_before_telegram(self):
+        mod = self.mod
+        md = '---\ntype: market_daily\ntitle: "t"\npromote: nexus\n---\n# 台股\n'
+        self.b.ok = False  # Telegram down: the archive is still written
+        p = {"filename": "2026-10-22-us-premarket.md", "summary": "s", "report_md": md}
+        self.assertEqual(self.b.call(mod, "brief us-premarket 2026-10-22", p)[0], 1)
+        self.assertTrue((Path(mod.NEXUS) / "_kb/raw/market-daily/2026-10-22-us-premarket.md").is_file())
+        self.b.ok = True
+        code, out = self.b.call(mod, "brief us-premarket 2026-10-22", p)
+        self.assertEqual((code, json.loads(out)["nexus"]), (0, "duplicate"))
+
+
+class TestBriefServer(unittest.TestCase):
+    def setUp(self):
+        import ast
+        import threading
+
+        import brief_server
+
+        ast.parse((HERE / "brief_server.py").read_text(encoding="utf-8"), feature_version=(3, 9))
+        self.bs = brief_server
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name) / "market-daily"
+        root.mkdir()
+        b = TestBridgePatch()
+        mod = b.load(self.tmp.name + "/bridge")
+        facts = collect.collect("tw-postmarket", D21, collector(TW_ROUTES_21))
+        facts["gaps"] = ["三大法人未取得"]
+        md = render.render(
+            facts,
+            {"one_liner": "加權指數收 46,887.77。", "interpretation": "x", "watch_points": ["y"]},
+            {"returned_model": "m"},
+            cfg(),
+        )[0]
+        (root / "2026-10-21-tw-postmarket.md").write_text(
+            mod.to_nexus_raw("2026-10-21-tw-postmarket.md", md, today="2026-10-22"), encoding="utf-8"
+        )
+        legacy = "---\ntype: source\ntitle: 台股盤勢日報 2026-10-21（三）\ncreated: '2026-10-21'\ntags:\n- tw_stock\ncompiled: false\n---\n\n# x\n\n## 一句話\n加權指數收 46,887.77。\n"
+        (root / "2026-10-21-tw-market.md").write_text(legacy, encoding="utf-8")
+        (root / "2026-10-22-us-premarket.md").write_text(
+            '---\ntitle: "美股盤前快報"\nsession_date: 2026-10-22\ndata_gaps: []\n---\n# y\n', encoding="utf-8"
+        )
+        (root / "notes.txt").write_text("secret")
+        (Path(self.tmp.name) / "outside.md").write_text("outside")
+        os.symlink(Path(self.tmp.name) / "outside.md", root / "2026-10-20-tw-postmarket.md")
+        self.root = root
+        self.srv = brief_server.make_server(str(root), ["127.0.0.1"], "127.0.0.1", 0)
+        self.port = self.srv.server_address[1]
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        self.tmp.cleanup()
+
+    def req(self, path, method="GET"):
+        import http.client
+
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c.request(method, path)
+        r = c.getresponse()
+        body = r.read()
+        c.close()
+        return r.status, r.getheader("Content-Type"), body
+
+    def test_index_and_files(self):
+        st, ct, body = self.req("/index.json")
+        self.assertEqual((st, ct), (200, "application/json; charset=utf-8"))
+        idx = json.loads(body)
+        self.assertEqual(set(idx), {"generated_at", "briefs"})
+        self.assertEqual(
+            [(b["date"], b["kind"]) for b in idx["briefs"]],
+            [("2026-10-22", "us-premarket"), ("2026-10-21", "tw-postmarket"), ("2026-10-21", "tw-postmarket-legacy")],
+        )
+        tw = idx["briefs"][1]
+        self.assertEqual(tw["title"], "台股盤後日報 2026-10-21（三）")
+        self.assertEqual(tw["summary"], "加權指數收 46,887.77。")
+        self.assertEqual(tw["session_date"], "2026-10-21")
+        self.assertEqual(tw["data_gaps"], ["三大法人未取得"])
+        self.assertEqual(tw["file"], "2026-10-21-tw-postmarket.md")
+        self.assertEqual(tw["bytes"], (self.root / tw["file"]).stat().st_size)
+        self.assertEqual(set(tw), {"date", "kind", "title", "file", "summary", "bytes", "session_date", "data_gaps"})
+        self.assertEqual(idx["briefs"][2]["title"], "台股盤勢日報 2026-10-21（三）")
+        st, ct, body = self.req("/2026-10-21-tw-postmarket.md")
+        self.assertEqual((st, ct), (200, "text/markdown; charset=utf-8"))
+        self.assertTrue(body.decode("utf-8").startswith("---\ntype: source"))
+        st, _, body = self.req("/2026-10-21-tw-postmarket.md", "HEAD")
+        self.assertEqual((st, body), (200, b""))
+
+    def test_rejections(self):
+        for path in (
+            "/",
+            "/notes.txt",
+            "/../outside.md",
+            "/%2e%2e/outside.md",
+            "/x/2026-10-21-tw-postmarket.md",
+            "/2026-10-20-tw-postmarket.md",
+            "/2026-10-23-tw-postmarket.md",
+            "/index.html",
+            "/2026-10-21-TW.md",
+            "/..%2Foutside.md",
+        ):
+            self.assertEqual(self.req(path)[0], 404, path)
+        self.assertEqual(self.req("/index.json", "POST")[0], 405)
+        self.assertEqual(self.req("/index.json", "DELETE")[0], 405)
+        self.srv.RequestHandlerClass.allow = frozenset({"192.168.31.181"})
+        self.assertEqual(self.req("/index.json")[0], 403)
+        self.assertEqual(self.req("/2026-10-21-tw-postmarket.md")[0], 403)
+
+    def test_frontmatter_parser(self):
+        fm, body = self.bs.parse_frontmatter(
+            "---\na: \"x: y\"\nb: 'it''s'\nc: [p, q]\nd:\n- \"1\"\n- two\ne: []\nf: false\n---\nbody"
+        )
+        self.assertEqual(fm, {"a": "x: y", "b": "it's", "c": ["p", "q"], "d": ["1", "two"], "e": [], "f": False})
+        self.assertEqual(body, "body")
+        self.assertEqual(self.bs.parse_frontmatter("no frontmatter"), ({}, "no frontmatter"))
 
 
 if __name__ == "__main__":

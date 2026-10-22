@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 # PROPOSED REPLACEMENT for macminim4 ~/.openclaw/bin/research_bridge.py (Python 3.9), adds the `brief` verb.
-# Based on the 110-line original read 2026-10-22; the installed copy (md5 ec8a260c...) is the previous revision of
+# Based on the 110-line original read 2026-10-22; the installed copy (md5 c8182517...) is the previous revision of
 # this file. Every added/changed line is marked "# [brief]".
+# Archive: each brief is written add-only into the Nexus vault _kb/raw/market-daily/<date>-<kind>.md (Nexus raw
+# schema, as nexus_pull's to_nexus_raw builds it) BEFORE any Telegram send; nexus_pull's sensitive-content patterns
+# are checked first (a hit skips the vault write, Telegram still goes out). Sisyphus/output is no longer written.
+# `brief-archive <kind> <YYYY-MM-DD>` writes an already delivered brief (from market-briefs/) into Nexus only.
 # Apply: diff this file against the live one, copy it over, keep mode/owner as they are. Nothing else changes:
 # pending / done / needs-review behave exactly as before. The authorized_keys forced-command entry is unchanged.
 # Delivery client: scripts/market_brief/deliver.py runs `ssh research-bridge brief <kind> <YYYY-MM-DD>` with JSON
@@ -21,8 +25,9 @@ SSH_ORIGINAL_COMMAND; free text (summary / reason) is read from stdin, never fro
                                    the report is saved under ~/.openclaw/media/research-reports/ and attached to the notice
   needs-review <agenda_id>      -> status needs_review; stdin = reason; Telegram notice
   brief <kind> <YYYY-MM-DD>     -> market brief; stdin = JSON {filename, summary, report_md}; the report is saved under
-                                   ~/.openclaw/media/market-briefs/, copied to Sisyphus/output/ (nexus_pull picks it
-                                   up) and attached to a Telegram notice                                  # [brief]
+                                   ~/.openclaw/media/market-briefs/, written into Nexus _kb/raw/market-daily/ and
+                                   sent to Telegram                                                       # [brief]
+  brief-archive <kind> <date>   -> write a delivered brief into Nexus only (no Telegram)                 # [brief]
   brief-failed <kind> <date>    -> one Telegram notice that the brief was not produced; stdin = reason   # [brief]
   brief-resend <kind> <date>    -> resend the full text of a delivered brief; stdin = JSON {telegram_md} # [brief]
 """
@@ -37,7 +42,18 @@ ACCOUNT, CHAT = "main_bot", "6051426738"
 ID_RE = re.compile(r"^\d{8}-m?\d{1,3}$")
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 BRIEFS = os.path.expanduser("~/.openclaw/media/market-briefs")  # under an OpenClaw media root            # [brief]
-SISYPHUS_OUT = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Sisyphus/output")      # [brief]
+NEXUS = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Nexus")  # live-synced vault  # [brief]
+NEXUS_MARKET = "_kb/raw/market-daily"                                                                    # [brief]
+# Same patterns as nexus_pull.py / phase101-vault-pull.sh (CI = case-insensitive, CS = case-sensitive).   # [brief]
+SENSITIVE_CI = [                                                                                         # [brief]
+    r"(^|[\s,{])([a-z0-9]+[_-])*(password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|cookie|dsn|database[_-]?url|redis[_-]?url)\s*[=:]\s*[^\]\s,}]+",
+    r"[a-z][a-z0-9+.-]*://[^\s/@]*(:[^\s/@]*)?@",                                                         # [brief]
+    r"(authorization|bearer)\s*[:= ]\s*[^\]\s,}]+",                                                       # [brief]
+    r"(password|passwd|secret|token|api[_-]?key|authorization)\s*[=:]\s*[^\s]{6,}",                        # [brief]
+    r"x-api-key:\s*[^\s]{16,}",                                                                           # [brief]
+    r"key[^A-Za-z0-9_]{0,3}[A-Za-z0-9_-]{43}([^A-Za-z0-9_]|$)",                                              # [brief]
+]                                                                                                        # [brief]
+SENSITIVE_CS = [r"-----BEGIN ([A-Z0-9 ]+ )?PRIVATE KEY-----", r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"]  # [brief]
 BRIEF_KINDS = ("tw-premarket", "tw-postmarket", "us-premarket", "us-postmarket")                       # [brief]
 TG_TEXT_CAP = 20000  # telegram_md cap after cleaning; OpenClaw chunks the text at 4000 rendered chars        # [brief]
 BRIEF_DATE_RE = re.compile(r"^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")                       # [brief]
@@ -102,6 +118,96 @@ def _read(path):                                                                
     with open(path, encoding="utf-8") as fh: return fh.read()                                            # [brief]
 
 
+def _sensitive(text):                                                                                   # [brief]
+    for pat in SENSITIVE_CI:                                                                             # [brief]
+        if re.search(pat, text, re.I | re.M): return pat                                                 # [brief]
+    for pat in SENSITIVE_CS:                                                                             # [brief]
+        if re.search(pat, text, re.M): return pat                                                        # [brief]
+    return None                                                                                          # [brief]
+
+
+def _split_fm(md):                                                                                       # [brief]
+    """(frontmatter dict, body) for the subset render.frontmatter writes: `k: v` (JSON-quoted or bare),
+    `k: [a, b]` and `k:` + `  - "item"` lists."""                                                          # [brief]
+    m = re.match(r"---\n(.*?)\n---\n?(.*)", md, re.S)                                                     # [brief]
+    if not m: return {}, md                                                                              # [brief]
+    fm, key = {}, None                                                                                   # [brief]
+    for line in m.group(1).splitlines():                                                                 # [brief]
+        if line.startswith("  - ") and key:                                                              # [brief]
+            v = line[4:].strip()                                                                         # [brief]
+            fm.setdefault(key, []).append(json.loads(v) if v.startswith('"') else v); continue           # [brief]
+        k, sep, v = line.partition(":")                                                                  # [brief]
+        if not sep or line.startswith(" "): continue                                                     # [brief]
+        key, v = k.strip(), v.strip()                                                                    # [brief]
+        if v.startswith("[") and v.endswith("]"):                                                        # [brief]
+            fm[key] = [x.strip().strip('"') for x in v[1:-1].split(",") if x.strip()]                     # [brief]
+        elif v.startswith('"'):                                                                          # [brief]
+            try: fm[key] = json.loads(v)                                                                 # [brief]
+            except ValueError: fm[key] = v                                                               # [brief]
+        else:                                                                                            # [brief]
+            fm[key] = v if v else []                                                                     # [brief]
+    return fm, m.group(2)                                                                                # [brief]
+
+
+def to_nexus_raw(name, md, today=None):                                                                  # [brief]
+    """Brief md -> Nexus raw note: nexus_pull to_nexus_raw() schema (type source, status stable, origin agent,
+    source_kind market_daily, compiled false, ...) with source_system market-brief, plus market/session/
+    session_date/model/data_gaps. Values are JSON-quoted, which is valid YAML."""                       # [brief]
+    fm, body = _split_fm(md)                                                                             # [brief]
+    q = lambda v: json.dumps(str(v), ensure_ascii=False)                                                 # [brief]
+    tags = [str(t) for t in (fm.get("tags") or []) if isinstance(fm.get("tags"), list)]                 # [brief]
+    if "market-daily" not in tags: tags.append("market-daily")                                           # [brief]
+    sources = fm.get("sources") if isinstance(fm.get("sources"), list) else []                           # [brief]
+    gaps = fm.get("data_gaps") if isinstance(fm.get("data_gaps"), list) else []                          # [brief]
+    lines = ["---", "type: source", "title: %s" % q(fm.get("title") or name[:-3]), "status: stable",      # [brief]
+             "created: %s" % q(fm.get("created") or name[:10]),                                          # [brief]
+             "updated: %s" % q(today or datetime.date.today().isoformat()), "tags:"]                      # [brief]
+    lines += ["- %s" % q(t) for t in tags]                                                               # [brief]
+    lines += ["origin: agent", "source_system: market-brief", "source_kind: market_daily",               # [brief]
+              "source_path: %s" % q("stormtrooper:market-brief/" + name)]                                 # [brief]
+    lines += (["sources:"] + ["- %s" % q(x) for x in sources]) if sources else ["sources: []"]          # [brief]
+    lines += ["compiled: false", "compiled_into: []"]                                                    # [brief]
+    if fm.get("as_of"): lines.append("as_of: %s" % q(fm["as_of"]))                                       # [brief]
+    for k in ("market", "session", "session_date", "model"):                                             # [brief]
+        if fm.get(k): lines.append("%s: %s" % (k, q(fm[k])))                                             # [brief]
+    lines += (["data_gaps:"] + ["- %s" % q(g) for g in gaps]) if gaps else ["data_gaps: []"]           # [brief]
+    lines.append("---")                                                                                  # [brief]
+    return "\n".join(lines) + "\n" + body                                                                # [brief]
+
+
+def nexus_archive(name, md):                                                                             # [brief]
+    """Add-only write into Nexus. -> 'written' | 'duplicate' | 'sensitive' | 'no-vault'; refuses (exit 2) when a
+    note with the same name but a different body exists (frontmatter may differ: compile flips `compiled`)."""
+    if not os.path.isfile(os.path.join(NEXUS, "AGENTS.md")):                                             # [brief]
+        log("brief %s: Nexus vault not found, not archived" % name); return "no-vault"                    # [brief]
+    hit = _sensitive(md)                                                                                 # [brief]
+    if hit:                                                                                              # [brief]
+        log("brief %s: sensitive pattern %r, not written to Nexus" % (name, hit[:40])); return "sensitive"
+    raw = to_nexus_raw(name, md)                                                                         # [brief]
+    folder = os.path.join(NEXUS, NEXUS_MARKET)                                                           # [brief]
+    os.makedirs(folder, exist_ok=True)                                                                   # [brief]
+    dest = os.path.join(folder, name)                                                                    # [brief]
+    try:                                                                                                 # [brief]
+        with open(dest, "x", encoding="utf-8") as fh: fh.write(raw)                                      # [brief]
+    except FileExistsError:                                                                              # [brief]
+        if _split_fm(_read(dest))[1] == _split_fm(raw)[1]:                                               # [brief]
+            return "duplicate"                                                                           # [brief]
+        fail("Nexus %s/%s exists with a different body; left as is" % (NEXUS_MARKET, name))             # [brief]
+    log("brief %s: written to Nexus %s" % (name, NEXUS_MARKET))                                          # [brief]
+    return "written"                                                                                     # [brief]
+
+
+def brief_archive(argv):                                                                                 # [brief]
+    """brief-archive <kind> <YYYY-MM-DD>: write the delivered market-briefs/<date>-<kind>.md into Nexus."""
+    if len(argv) != 3 or argv[1] not in BRIEF_KINDS or not BRIEF_DATE_RE.match(argv[2]): fail("bad arguments")
+    name = "%s-%s.md" % (argv[2], argv[1])                                                               # [brief]
+    path = os.path.join(BRIEFS, name)                                                                    # [brief]
+    if not os.path.isfile(path): fail("brief %s was not delivered here" % name)                          # [brief]
+    status = nexus_archive(name, _read(path))                                                            # [brief]
+    log("brief-archive %s nexus=%s" % (name, status))                                                    # [brief]
+    print(json.dumps({"file": name, "nexus": status}))                                                   # [brief]
+
+
 def _clean_tg(text):                                                                                     # [brief]
     """Telegram markdown from the client: printable chars + newlines; None when over the cap."""          # [brief]
     text = "".join(ch for ch in text if ch.isprintable() or ch == "\n").strip()                          # [brief]
@@ -146,23 +252,12 @@ def brief(argv):                                                                
     marker, text_marker = path + ".sent", path + ".text-sent"                                            # [brief]
     if os.path.exists(path):                                                                             # [brief]
         if _read(path) != md: fail("brief %s already delivered with different content" % name)          # [brief]
-        if os.path.exists(marker) and (tg is None or os.path.exists(text_marker)):                       # [brief]
-            log("brief %s duplicate, already sent" % name)                                               # [brief]
-            print(json.dumps({"file": name, "telegram_sent": True, "duplicate": True})); return         # [brief]
     else:                                                                                                # [brief]
         _write_atomic(path, md, 0o600)                                                                   # [brief]
-    copied = False                                                                                       # [brief]
-    try:                                                                                                 # [brief]
-        dest = os.path.join(SISYPHUS_OUT, name)                                                          # [brief]
-        if not os.path.isdir(SISYPHUS_OUT):                                                              # [brief]
-            log("brief %s: Sisyphus output dir missing, not copied" % name)                              # [brief]
-        elif os.path.exists(dest) and _read(dest) != md:                                                 # [brief]
-            log("brief %s: Sisyphus copy differs, left as is" % name)                                    # [brief]
-        else:                                                                                            # [brief]
-            if not os.path.exists(dest): _write_atomic(dest, md, 0o644)                                  # [brief]
-            copied = True                                                                                # [brief]
-    except OSError as e:                                                                                 # [brief]
-        log("brief %s: Sisyphus copy failed: %s" % (name, type(e).__name__))                             # [brief]
+    nexus = nexus_archive(name, md)  # before Telegram, so an outage never blocks the archive            # [brief]
+    if os.path.exists(marker) and (tg is None or os.path.exists(text_marker)):                           # [brief]
+        log("brief %s duplicate, already sent" % name)                                                   # [brief]
+        print(json.dumps({"file": name, "telegram_sent": True, "duplicate": True, "nexus": nexus})); return
     text_sent = None                                                                                     # [brief]
     if tg is not None:                                                                                   # [brief]
         text_sent = os.path.exists(text_marker) or _send(name, "text", tg)                               # [brief]
@@ -173,8 +268,8 @@ def brief(argv):                                                                
     sent = os.path.exists(marker) or _send(name, "document", caption, path)                              # [brief]
     if sent and not os.path.exists(marker): open(marker, "w").close()                                    # [brief]
     ok = sent and text_sent is not False                                                                 # [brief]
-    log("brief %s telegram_sent=%s text_sent=%s copied=%s" % (name, sent, text_sent, copied))            # [brief]
-    print(json.dumps({"file": name, "telegram_sent": ok, "document_sent": sent, "text_sent": text_sent, "copied": copied}))
+    log("brief %s telegram_sent=%s text_sent=%s nexus=%s" % (name, sent, text_sent, nexus))              # [brief]
+    print(json.dumps({"file": name, "telegram_sent": ok, "document_sent": sent, "text_sent": text_sent, "nexus": nexus}))
     if not ok: sys.exit(1)  # retryable: the client keeps the outbox entry; markers skip what was sent   # [brief]
 
 
@@ -233,6 +328,8 @@ def main():
         brief(argv); return                                                                              # [brief]
     if cmd == "brief-failed":                                                                            # [brief]
         brief_failed(argv); return                                                                       # [brief]
+    if cmd == "brief-archive":                                                                           # [brief]
+        brief_archive(argv); return                                                                      # [brief]
     if cmd == "brief-resend":                                                                            # [brief]
         brief_resend(argv); return                                                                       # [brief]
     if cmd not in ("done", "needs-review"): fail("unknown command %r" % cmd[:20])

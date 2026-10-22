@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- macminim4 user LaunchAgent for scripts/market_brief/brief_server.py (installed as ~/.openclaw/bin/brief_server.py).
+     Install: cp to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.aquarium.brief-server.plist` -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.aquarium.brief-server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/macminim4/.openclaw/bin/brief_server.py</string>
+    <string>--port</string>
+    <string>8790</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/macminim4/Library/Logs/brief-server.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/macminim4/Library/Logs/brief-server.log</string>
+</dict>
+</plist>
