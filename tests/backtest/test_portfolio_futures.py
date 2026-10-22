@@ -15,7 +15,9 @@ from uuid import uuid4
 import pandas as pd
 import pytest
 
-from poseidon.backtest.cost_model import COST_MODELS
+from poseidon.backtest.cost_model import COST_MODELS, CostModel
+from poseidon.backtest.metrics import compute_metrics
+from poseidon.backtest.pending_orders import FillEvent
 from poseidon.backtest.portfolio import BacktestPortfolio
 from poseidon.signals.schemas import InstrumentType, Signal, SignalAction
 
@@ -244,13 +246,13 @@ class TestFuturesEquity:
         unrealized_with_pv = price_diff * qty * 200.0
         unrealized_without_pv = price_diff * qty
 
-        # The equity difference should be consistent with point_value=200
-        # equity = cash + entry_price*qty + unrealized
-        expected_equity = p.cash + entry_price * qty + unrealized_with_pv
+        # Futures are margined: notional never moves through cash, so
+        # equity = cash + unrealized (cash = initial - entry fees).
+        expected_equity = p.cash + unrealized_with_pv
         assert equity_at_22100 == pytest.approx(expected_equity, rel=1e-6)
 
         # Verify it's NOT the non-point-value result
-        wrong_equity = p.cash + entry_price * qty + unrealized_without_pv
+        wrong_equity = p.cash + unrealized_without_pv
         assert equity_at_22100 != pytest.approx(wrong_equity, rel=1e-2)
 
 
@@ -412,3 +414,201 @@ class TestMTXPointValue:
         # With point_value=50 (vs TX 200), PnL should be ~1/4 of TX equivalent
         assert t_close.pnl > 4000, f"Expected MTX PnL > 4000, got {t_close.pnl}"
         assert t_close.pnl < 6000, f"Expected MTX PnL < 6000, got {t_close.pnl}"
+
+
+# ---------------------------------------------------------------------------
+# Test: futures cash/equity accounting (point_value applied to cash and fees)
+# ---------------------------------------------------------------------------
+
+# TX-like contract with non-zero commission on both legs so entry and exit
+# fees are both visible; tax applies on the exit leg (sell side) only.
+TX_WITH_FEES = CostModel(
+    market="tw_futures",
+    buy_commission_rate=0.0001,
+    sell_commission_rate=0.0001,
+    tax_rate=0.00002,
+    slippage_pct=0.0,
+    slippage_ticks=1.0,
+    point_value=200.0,
+    tick_size=1.0,
+)
+
+T0 = datetime(2024, 1, 1, tzinfo=UTC)
+T1 = datetime(2024, 1, 2, tzinfo=UTC)
+T2 = datetime(2024, 1, 3, tzinfo=UTC)
+
+
+def _round_trip(p: BacktestPortfolio, entry_action: SignalAction, entry: float, exit_: float):
+    """Record equity, open, mark, close, record equity. Returns (open_trade, close_trade)."""
+    p.record_equity_point(T0, entry)
+    t_open = p.execute_fill(make_futures_signal(entry_action, signal_time=T0), make_bar(entry, T0))
+    assert t_open is not None
+    p.record_equity_point(T1, (entry + exit_) / 2)
+    t_close = p.execute_fill(make_futures_signal(SignalAction.CLOSE, signal_time=T2), make_bar(exit_, T2))
+    assert t_close is not None
+    p.record_equity_point(T2, exit_)
+    return t_open, t_close
+
+
+class TestFuturesCashAccounting:
+    """Equity must move by exactly TradeRecord.pnl over a futures round trip."""
+
+    @pytest.mark.parametrize(
+        ("action", "entry", "exit_"),
+        [
+            (SignalAction.LONG, 22000.0, 22150.0),  # long win
+            (SignalAction.LONG, 22000.0, 21800.0),  # long loss
+            (SignalAction.SHORT, 22000.0, 21850.0),  # short win
+            (SignalAction.SHORT, 22000.0, 22200.0),  # short loss
+        ],
+    )
+    def test_round_trip_equity_delta_equals_trade_pnl(self, action, entry, exit_):
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        t_open, t_close = _round_trip(p, action, entry, exit_)
+
+        assert t_open.quantity == 1  # 1M * 0.025 / ~22000 -> 1 contract
+        assert not p.positions
+        final_equity = p.equity_curve[-1][1]
+        assert final_equity - 1_000_000 == pytest.approx(t_close.pnl, abs=1e-6)
+        assert p.cash - 1_000_000 == pytest.approx(t_close.pnl, abs=1e-6)
+
+        # Gross PnL is the slipped point move times 200 TWD/point.
+        sign = 1.0 if action == SignalAction.LONG else -1.0
+        gross = sign * (t_close.exit_price - t_close.entry_price) * 200.0
+        assert t_close.pnl == pytest.approx(gross - t_close.fees)
+
+    def test_long_fees_are_charged_on_notional(self):
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        t_open, t_close = _round_trip(p, SignalAction.LONG, 22000.0, 22100.0)
+
+        # 1 tick slippage each side: buy at 22001, sell at 22099.
+        assert t_open.entry_price == 22001.0
+        assert t_close.exit_price == 22099.0
+        entry_fee = 22001.0 * 1 * 200.0 * 0.0001  # commission on notional
+        exit_fee = 22099.0 * 1 * 200.0 * (0.0001 + 0.00002)  # commission + tax on notional
+        assert t_open.fees == pytest.approx(entry_fee)
+        assert t_close.fees == pytest.approx(entry_fee + exit_fee)
+        assert t_close.pnl == pytest.approx(98.0 * 200.0 - entry_fee - exit_fee)
+
+    def test_short_fees_are_charged_on_notional(self):
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        t_open, t_close = _round_trip(p, SignalAction.SHORT, 22000.0, 21900.0)
+
+        # Short sells at 21999, covers at 21901.
+        entry_fee = 21999.0 * 200.0 * 0.0001
+        exit_fee = 21901.0 * 200.0 * (0.0001 + 0.00002)
+        assert t_open.fees == pytest.approx(entry_fee)
+        assert t_close.fees == pytest.approx(entry_fee + exit_fee)
+        assert t_close.pnl == pytest.approx(98.0 * 200.0 - entry_fee - exit_fee)
+
+    def test_tx_registry_tax_on_notional(self, tw_futures_cost):
+        """Registry TX: 0 commission, tax 0.002% of exit notional (~88 TWD at 22000)."""
+        p = BacktestPortfolio(1_000_000, tw_futures_cost)
+        _, t_close = _round_trip(p, SignalAction.LONG, 22000.0, 22000.0)
+        assert t_close.fees == pytest.approx(21999.0 * 200.0 * 0.00002)
+        assert p.equity_curve[-1][1] - 1_000_000 == pytest.approx(t_close.pnl)
+
+    def test_no_equity_jump_at_close(self):
+        """Mark-to-market just before the close equals equity after it, minus exit fees and slippage."""
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        p.execute_fill(make_futures_signal(SignalAction.LONG, signal_time=T0), make_bar(22000.0, T0))
+        p.record_equity_point(T1, 22100.0)
+        before_close = p.equity_curve[-1][1]
+
+        t_close = p.execute_fill(make_futures_signal(SignalAction.CLOSE, signal_time=T1), make_bar(22100.0, T1))
+        p.record_equity_point(T1, 22100.0)
+        after_close = p.equity_curve[-1][1]
+
+        exit_fee = 22099.0 * 200.0 * (0.0001 + 0.00002)
+        slippage_cost = 1.0 * 200.0
+        assert before_close - after_close == pytest.approx(exit_fee + slippage_cost)
+        assert t_close.pnl is not None
+
+    def test_entry_only_costs_fees_not_notional(self):
+        """One TX contract (~4.4M TWD notional) opens on 1M capital; cash only drops by the fee."""
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        t_open = p.execute_fill(make_futures_signal(SignalAction.LONG), make_bar(22000.0))
+        assert t_open is not None
+        assert p.cash == pytest.approx(1_000_000 - t_open.fees)
+        assert p.equity == pytest.approx(1_000_000 - t_open.fees)
+
+    def test_sl_tp_exit_equity_delta_equals_trade_pnl(self):
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        p.record_equity_point(T0, 22000.0)
+        p.execute_fill(make_futures_signal(SignalAction.SHORT, signal_time=T0), make_bar(22000.0, T0))
+        t_tp = p.execute_sl_tp_exit("tw_futures:TX", 21700.0, "tp", make_bar(21700.0, T1))
+        p.record_equity_point(T1, 21700.0)
+
+        assert t_tp is not None
+        assert t_tp.pnl == pytest.approx((21999.0 - 21700.0) * 200.0 - t_tp.fees)
+        assert p.equity_curve[-1][1] - 1_000_000 == pytest.approx(t_tp.pnl)
+
+    def test_limit_fill_round_trip_equity_delta_equals_trade_pnl(self):
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        p.record_equity_point(T0, 22000.0)
+        sig = make_futures_signal(SignalAction.LONG, signal_time=T0)
+        t_open = p.execute_limit_fill(
+            FillEvent(signal=sig, fill_price=21980.0, fill_bar_index=0), make_bar(22000.0, T0)
+        )
+        assert t_open is not None
+        assert t_open.fees == pytest.approx(21980.0 * 200.0 * 0.0001)  # maker rate on notional
+        t_sl = p.execute_sl_tp_exit("tw_futures:TX", 21900.0, "sl", make_bar(21900.0, T1))
+        p.record_equity_point(T1, 21900.0)
+
+        assert t_sl.pnl == pytest.approx(-80.0 * 200.0 - t_sl.fees)
+        assert p.equity_curve[-1][1] - 1_000_000 == pytest.approx(t_sl.pnl)
+
+    def test_metrics_follow_trade_pnl(self):
+        """Losing TX trade: total_return, Sharpe and drawdown all reflect the 200x PnL."""
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        _, t_close = _round_trip(p, SignalAction.LONG, 22000.0, 21500.0)
+        equity = pd.Series([e for _, e, _ in p.equity_curve], index=[t for t, _, _ in p.equity_curve])
+        m = compute_metrics(equity, p.trades)
+
+        assert t_close.pnl < 0
+        assert m["total_return"] == pytest.approx(t_close.pnl / 1_000_000)
+        assert m["sharpe_ratio"] < 0
+        assert m["max_drawdown"] == pytest.approx(-t_close.pnl / 1_000_000, rel=1e-9)
+
+
+class TestStockAccountingUnchanged:
+    """point_value=1.0 keeps the fully funded cash model (numbers pinned from the pre-fix code)."""
+
+    def _signal(self, action: SignalAction, t: datetime) -> Signal:
+        return Signal(
+            symbol="2330",
+            market="tw_stock",
+            instrument=InstrumentType.SPOT,
+            action=action,
+            confidence=0.8,
+            quantity_pct=0.1,
+            signal_time=t,
+        )
+
+    def test_stock_long_round_trip_cash_and_equity(self, tw_stock_cost):
+        p = BacktestPortfolio(1_000_000, tw_stock_cost)
+        t_open = p.execute_fill(self._signal(SignalAction.LONG, T0), make_bar(600.0, T0))
+        # buy fill = 600 + 1 tick (600 * 0.001) = 600.6; qty = int(100000 / 600.6) = 166
+        assert t_open.entry_price == pytest.approx(600.6)
+        assert t_open.quantity == 166
+        entry_fee = 600.6 * 166 * 0.001425
+        assert p.cash == pytest.approx(1_000_000 - 600.6 * 166 - entry_fee)
+
+        p.record_equity_point(T1, 610.0)
+        # Fully funded: equity = cash + entry notional + unrealized
+        assert p.equity_curve[-1][1] == pytest.approx(1_000_000 - entry_fee + (610.0 - 600.6) * 166)
+
+        t_close = p.execute_fill(self._signal(SignalAction.CLOSE, T2), make_bar(610.0, T2))
+        exit_px = 610.0 - 0.61
+        exit_fee = exit_px * 166 * (0.001425 + 0.003)
+        assert t_close.exit_price == pytest.approx(exit_px)
+        assert t_close.pnl == pytest.approx((exit_px - 600.6) * 166 - entry_fee - exit_fee)
+        assert p.cash == pytest.approx(1_000_000 - 600.6 * 166 - entry_fee + exit_px * 166 - exit_fee)
+        assert p.cash - 1_000_000 == pytest.approx(t_close.pnl)
+
+    def test_stock_short_entry_receives_proceeds(self, tw_stock_cost):
+        p = BacktestPortfolio(1_000_000, tw_stock_cost)
+        t_open = p.execute_fill(self._signal(SignalAction.SHORT, T0), make_bar(600.0, T0))
+        # sell fill = 599.4; qty = int(100000 / 599.4) = 166
+        assert t_open.quantity == 166
+        assert p.cash == pytest.approx(1_000_000 + 599.4 * 166 * (1 - 0.001425))

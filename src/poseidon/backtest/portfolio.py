@@ -71,6 +71,18 @@ class BacktestPortfolio:
     """Virtual portfolio for backtesting with fee/slippage simulation.
 
     Tracks cash, positions, equity curve (per bar), and completed trades.
+
+    Two cash models, picked by ``cost_model.point_value``:
+
+    - ``point_value == 1.0`` (stock, ETF, crypto spot/perp): fully funded.
+      Entry moves ``price * quantity`` through cash, exit moves it back.
+    - ``point_value != 1.0`` (contract-multiplier futures such as TX=200,
+      MTX=50): margined. Notional (``price * quantity * point_value``) never
+      moves through cash; entry and exit only charge fees, and the exit
+      settles ``price_diff * quantity * point_value`` in cash. Mark-to-market
+      equity is ``cash + unrealized``, so the equity change over a round trip
+      equals ``TradeRecord.pnl``. Fees and tax are charged on the full
+      notional in both models.
     """
 
     def __init__(
@@ -89,13 +101,43 @@ class BacktestPortfolio:
         self._peak_equity: float = initial_capital
 
     @property
+    def point_value(self) -> float:
+        """Currency value of one price point per unit (1.0 for stock/crypto)."""
+        return float(getattr(self.cost_model, "point_value", 1.0))
+
+    @property
+    def is_margined(self) -> bool:
+        """True for contract-multiplier instruments whose notional is not funded in cash."""
+        return self.point_value != 1.0
+
+    def _notional(self, price: float, quantity: float) -> float:
+        """Currency notional of ``quantity`` units at ``price`` (fee/tax base)."""
+        return price * quantity * self.point_value
+
+    def _position_value(self, pos: dict, price: float) -> float:
+        """Value of an open position added on top of cash for equity.
+
+        Fully funded: entry notional (already deducted from cash) plus
+        unrealized PnL. Margined: unrealized PnL only.
+        """
+        entry = pos["entry_price"]
+        qty = pos["quantity"]
+        if pos.get("side") == "short":
+            unrealized = (entry - price) * qty * self.point_value
+        else:
+            unrealized = (price - entry) * qty * self.point_value
+        if self.is_margined:
+            return unrealized
+        return entry * qty + unrealized
+
+    @property
     def equity(self) -> float:
         """Current portfolio equity (cash + mark-to-market positions).
 
         Without a current price, returns cash + positions at entry price.
         Use record_equity_point() for mark-to-market valuation.
         """
-        position_value = sum(pos["quantity"] * pos["entry_price"] for pos in self.positions.values())
+        position_value = sum(self._position_value(pos, pos["entry_price"]) for pos in self.positions.values())
         return self.cash + position_value
 
     def execute_fill(self, signal: Signal, bar: pd.Series) -> TradeRecord | None:
@@ -167,9 +209,9 @@ class BacktestPortfolio:
         if quantity <= 0:
             return None
 
-        trade_value = fill_price * quantity
-        fees = trade_value * self.cost_model.buy_commission_rate
-        total_cost = trade_value + fees
+        notional = self._notional(fill_price, quantity)
+        fees = notional * self.cost_model.buy_commission_rate
+        total_cost = fees if self.is_margined else notional + fees
 
         if total_cost > self.cash:
             return None
@@ -205,10 +247,11 @@ class BacktestPortfolio:
         if quantity <= 0:
             return None
 
-        trade_value = fill_price * quantity
-        fees = trade_value * self.cost_model.sell_commission_rate
+        notional = self._notional(fill_price, quantity)
+        fees = notional * self.cost_model.sell_commission_rate
 
-        self.cash += trade_value - fees  # short: receive proceeds
+        # Fully funded short receives the proceeds; margined only pays fees.
+        self.cash += (0.0 if self.is_margined else notional) - fees
         self.positions[key] = {
             "side": "short",
             "quantity": quantity,
@@ -245,24 +288,12 @@ class BacktestPortfolio:
         pos = self.positions.pop(key)
         quantity = pos["quantity"]
         entry_price = pos["entry_price"]
-        entry_fees = pos.get("entry_fees", 0.0)
 
         # Slippage direction: closing long = sell, closing short = buy
         is_buy = pos["side"] == "short"
         fill_price = self._apply_slippage(price, is_buy=is_buy)
 
-        trade_value = fill_price * quantity
-        exit_fees = trade_value * (self.cost_model.sell_commission_rate + self.cost_model.tax_rate)
-        total_fees = entry_fees + exit_fees
-
-        point_value = getattr(self.cost_model, "point_value", 1.0)
-        if pos["side"] == "long":
-            pnl = (fill_price - entry_price) * quantity * point_value - total_fees
-            self.cash += trade_value - exit_fees
-        else:
-            # Short close: buy to cover
-            pnl = (entry_price - fill_price) * quantity * point_value - total_fees
-            self.cash -= trade_value + exit_fees
+        total_fees, pnl = self._settle_close(pos, fill_price)
 
         trade = TradeRecord(
             symbol=signal.symbol,
@@ -277,6 +308,35 @@ class BacktestPortfolio:
         )
         self.trades.append(trade)
         return trade
+
+    def _settle_close(self, pos: dict, exit_price: float) -> tuple[float, float]:
+        """Move cash for closing ``pos`` at ``exit_price``.
+
+        Exit fees are (sell commission + tax) on the exit notional.
+
+        Returns:
+            (total_fees, pnl) where pnl is net of entry and exit fees.
+        """
+        quantity = pos["quantity"]
+        entry_price = pos["entry_price"]
+        notional = self._notional(exit_price, quantity)
+        exit_fees = notional * (self.cost_model.sell_commission_rate + self.cost_model.tax_rate)
+        total_fees = pos.get("entry_fees", 0.0) + exit_fees
+
+        if pos["side"] == "long":
+            gross = (exit_price - entry_price) * quantity * self.point_value
+        else:
+            gross = (entry_price - exit_price) * quantity * self.point_value
+        pnl = gross - total_fees
+
+        if self.is_margined:
+            self.cash += gross - exit_fees
+        elif pos["side"] == "long":
+            self.cash += notional - exit_fees
+        else:
+            # Short close: buy to cover
+            self.cash -= notional + exit_fees
+        return total_fees, pnl
 
     def execute_sl_tp_exit(
         self,
@@ -305,20 +365,8 @@ class BacktestPortfolio:
         pos = self.positions.pop(key)
         quantity = pos["quantity"]
         entry_price = pos["entry_price"]
-        entry_fees = pos.get("entry_fees", 0.0)
 
-        trade_value = exit_price * quantity
-        exit_fees = trade_value * (self.cost_model.sell_commission_rate + self.cost_model.tax_rate)
-        total_fees = entry_fees + exit_fees
-
-        point_value = getattr(self.cost_model, "point_value", 1.0)
-        if pos["side"] == "long":
-            pnl = (exit_price - entry_price) * quantity * point_value - total_fees
-            self.cash += trade_value - exit_fees
-        else:
-            # Short close: buy to cover
-            pnl = (entry_price - exit_price) * quantity * point_value - total_fees
-            self.cash -= trade_value + exit_fees
+        total_fees, pnl = self._settle_close(pos, exit_price)
 
         trade = TradeRecord(
             symbol=key.split(":")[-1] if ":" in key else key,
@@ -364,9 +412,9 @@ class BacktestPortfolio:
             if quantity <= 0:
                 return None
 
-            trade_value = fill_price * quantity
-            fees = trade_value * fee_rate
-            total_cost = trade_value + fees
+            notional = self._notional(fill_price, quantity)
+            fees = notional * fee_rate
+            total_cost = fees if self.is_margined else notional + fees
 
             if total_cost > self.cash:
                 return None
@@ -400,10 +448,11 @@ class BacktestPortfolio:
             if quantity <= 0:
                 return None
 
-            trade_value = fill_price * quantity
-            fees = trade_value * fee_rate
+            notional = self._notional(fill_price, quantity)
+            fees = notional * fee_rate
 
-            self.cash += trade_value - fees  # short: receive proceeds
+            # Fully funded short receives the proceeds; margined only pays fees.
+            self.cash += (0.0 if self.is_margined else notional) - fees
             self.positions[key] = {
                 "side": "short",
                 "quantity": quantity,
@@ -435,20 +484,10 @@ class BacktestPortfolio:
             time: Timestamp for this equity point.
             current_price: Current market price for mark-to-market valuation.
 
-        Short positions are valued as (entry_price - current_price) * quantity,
-        reflecting profit when price drops and loss when price rises.
+        Unrealized PnL is ``price_diff * quantity * point_value`` (short:
+        entry - current). See the class docstring for the two cash models.
         """
-        point_value = getattr(self.cost_model, "point_value", 1.0)
-        position_value = 0.0
-        for pos in self.positions.values():
-            entry = pos["entry_price"]
-            qty = pos["quantity"]
-            if pos.get("side") == "short":
-                unrealized = (entry - current_price) * qty * point_value
-            else:
-                unrealized = (current_price - entry) * qty * point_value
-            # Position notional at entry (cash already deducted this amount)
-            position_value += entry * qty + unrealized
+        position_value = sum(self._position_value(pos, current_price) for pos in self.positions.values())
         current_equity = self.cash + position_value
 
         self._peak_equity = max(self._peak_equity, current_equity)
