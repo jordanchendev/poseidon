@@ -66,7 +66,7 @@ def _headers(who="researcher", key=None):
 
 
 def _create(api, key="create-1", **body):
-    payload = {"idea_text": "TX RSI reversion", "source": "telegram", "spec_json": tx_spec(), "stage_plan": STEP1_PLAN}
+    payload = {"idea_text": "TX ORB", "source": "telegram", "spec_json": tx_spec(), "stage_plan": STEP1_PLAN}
     payload.update(body)
     return api.post("/api/v1/pipelines", json=payload, headers=_headers(key=key))
 
@@ -167,7 +167,7 @@ def test_full_flow_reads_and_rerun_rules(api):
         ("backtest", "pass"),
     ]
     attempt = api.get(f"/api/v1/pipelines/{run_id}/stages/backtest/attempts/1", headers=_headers("viewer")).json()
-    assert attempt["artifact_json"]["report"]["stub"] is True and attempt["artifact_sha256"]
+    assert attempt["artifact_json"]["report"]["metrics"]["n_trades"] > 0 and attempt["artifact_sha256"]
     events = api.get(f"/api/v1/pipelines/{run_id}/events", headers=_headers("viewer")).json()["items"]
     assert events[0]["event_type"] == "run_created" and events[-1]["event_type"] == "stage_completed"
     listing = api.get("/api/v1/pipelines?status=completed", headers=_headers("viewer")).json()["items"]

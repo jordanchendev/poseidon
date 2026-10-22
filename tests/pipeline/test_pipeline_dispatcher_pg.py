@@ -22,17 +22,14 @@ from poseidon.pipeline.stages import (
     BaseStage,
     StageResult,
     TransientStageError,
-    build_default_registry,
 )
-from tests.pipeline.conftest import STEP1_PLAN, Harness, tx_spec
+from tests.pipeline.conftest import STEP1_PLAN, Harness, synthetic_registry, tx_spec, tx_v1_spec
 
 pytestmark = pytest.mark.postgresql
 
 
 def _registry(**stages):
-    registry = build_default_registry()
-    registry.update(stages)
-    return registry
+    return synthetic_registry(**stages)
 
 
 class ScriptedBacktest(BaseStage):
@@ -103,13 +100,16 @@ def test_hand_written_tx_spec_walks_the_step1_plan_to_completed(harness):
     assert all(row.code_version == "test-sha" and len(row.input_sha256) == 64 for row in attempts)
     assert all(row.artifact_sha256 == content_sha256(row.artifact_json) for row in attempts)
     backtest = attempts[-1]
-    assert backtest.artifact_json["report"]["stub"] is True
-    assert backtest.artifact_json["report"]["input_sha256"] == backtest.input_sha256
+    report = backtest.artifact_json["report"]
+    assert report["metrics"]["n_trades"] > 0 and report["data"]["part"] == "train"
+    assert report["data"]["last_bar"] < run.config_json["data"]["holdout_start"]
     files = backtest.artifact_json["files"]
+    assert [entry["name"] for entry in files] == ["daily_pnl.csv", "trades.csv"]
     directory = Path(urlparse(backtest.artifact_uri).path)
     assert directory.parts[-3:] == (str(run_id), "backtest", "1")
-    data = (directory / files[0]["name"]).read_bytes()
-    assert files[0]["sha256"] == hashlib.sha256(data).hexdigest() and files[0]["bytes"] == len(data)
+    for entry in files:
+        data = (directory / entry["name"]).read_bytes()
+        assert entry["sha256"] == hashlib.sha256(data).hexdigest() and entry["bytes"] == len(data)
     assert harness.events(run_id) == [
         "run_created",
         "stage_claimed",
@@ -160,10 +160,13 @@ def test_unsupported_stops_the_run_and_rerun_is_allowed(harness):
         ("spec_generate", 2, "rerun", "completed", "unsupported"),
     ]
 
-    gap = harness.create(spec=tx_spec(rules=[{"condition": {"type": "opening_range_breakout"}, "action": "long"}]))
+    v1 = harness.create(spec=tx_v1_spec())
     harness.drain()
-    assert harness.run(gap).status == "unsupported"
-    assert harness.attempts(gap)[1].verdict == "unsupported"
+    assert (harness.run(v1).status, harness.run(v1).reason) == (
+        "unsupported",
+        "spec_validate: pipeline requires dsl_version 2",
+    )
+    assert harness.attempts(v1)[1].verdict == "unsupported"
 
 
 def test_later_v1_stages_are_registered_but_unsupported(harness):
@@ -171,8 +174,8 @@ def test_later_v1_stages_are_registered_but_unsupported(harness):
     harness.drain()
     run = harness.run(run_id)
     assert run.config_json["stage_plan"][-1] == "awaiting_release"
-    assert (run.status, run.reason) == ("unsupported", "optimize: not implemented")
-    assert [row.verdict for row in harness.attempts(run_id)] == ["pass", "pass", "pass", "unsupported"]
+    assert (run.status, run.reason) == ("unsupported", "wfe: not implemented")
+    assert [row.verdict for row in harness.attempts(run_id)] == ["pass", "pass", "pass", "pass", "unsupported"]
 
 
 def test_rerun_reuses_upstream_passes_and_rejects_another_from_stage(pipeline_sessions, tmp_path, clock):
@@ -416,4 +419,5 @@ def test_family_trial_count_includes_trials_of_errored_attempts(pipeline_session
 
 
 def test_default_registry_is_untouched_by_tests():
-    assert STAGE_REGISTRY["backtest"].__class__.__name__ == "BacktestStubStage"
+    assert STAGE_REGISTRY["backtest"].__class__.__name__ == "BacktestStage"
+    assert STAGE_REGISTRY["backtest"].data_source is None and STAGE_REGISTRY["optimize"].data_source is None
