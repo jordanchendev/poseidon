@@ -150,17 +150,17 @@ _PARAMS_ADAPTER = TypeAdapter(
 # --------------------------------------------------------------------------- model walks
 
 
-def _walk_model(node: Any, path: tuple[Any, ...] = ()) -> Iterator[tuple[tuple[Any, ...], Any]]:
+def walk_model(node: Any, path: tuple[Any, ...] = ()) -> Iterator[tuple[tuple[Any, ...], Any]]:
     yield path, node
     if isinstance(node, BaseModel):
         for name in type(node).model_fields:
-            yield from _walk_model(getattr(node, name), (*path, name))
+            yield from walk_model(getattr(node, name), (*path, name))
     elif isinstance(node, list):
         for i, value in enumerate(node):
-            yield from _walk_model(value, (*path, i))
+            yield from walk_model(value, (*path, i))
     elif isinstance(node, dict):
         for key, value in node.items():
-            yield from _walk_model(value, (*path, key))
+            yield from walk_model(value, (*path, key))
 
 
 _COMBINATORS = {AllNode: "all", AnyNode: "any", NoneNode: "none"}
@@ -206,7 +206,7 @@ def semantic_errors(spec: StrategyV2) -> list[dict[str, str]]:
     errors: list[dict[str, str]] = []
     interval = spec.interval_minutes
 
-    for path, node in _walk_model(spec):
+    for path, node in walk_model(spec):
         if isinstance(node, OpeningRangeOperand) and node.minutes % interval != 0:
             errors.append(
                 _err(_join((*path, "minutes")), f"opening range minutes must be a multiple of the {interval}m interval")
