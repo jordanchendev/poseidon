@@ -6,8 +6,11 @@ State machine (one position at most, driven by what the runner reports):
   yields a valid stop/target emits LONG/SHORT with ``stop_loss_price`` /
   ``take_profit_price`` set. Gates: in-session bar, per-session trade cap,
   no re-entry after a stop, not inside the flat-before-session-end window.
-- in position: only ``close`` rules whose ``exit_side`` matches, plus the
-  automatic exits of the rule's merged risk block.
+- in position: automatic exits of the rule's merged risk block first
+  (session change / scheduled session end when ``close_on_session_change``
+  is on (default), ``flat_before_session_end_minutes``, ``max_hold_bars``),
+  then ``close`` rules whose ``exit_side`` matches, then a tighten-only
+  trailing stop sent as HOLD ``metadata.updated_stop_loss``.
 
 Trade counts and stop-outs come from the position/closed-trade the runner
 passes to :meth:`on_bar_context` every bar, never from emitted signals (an
@@ -44,6 +47,7 @@ from poseidon.strategies.dsl.v2.evaluator import (
 from poseidon.strategies.dsl.v2.schema import (
     AtrStop,
     AtrTarget,
+    AtrTrailing,
     EntryRule,
     LevelStop,
     LevelTarget,
@@ -78,6 +82,9 @@ class _ActiveTrade:
     entry_row: int
     risk_per_unit: float | None
     stop_loss: float | None
+    entry_price: float = math.nan
+    best_price: float = math.nan  # highest high (long) / lowest low (short) since entry
+    trailing_active: bool = False
 
 
 class RuleStrategyV2(BaseStrategy):
@@ -221,9 +228,14 @@ class RuleStrategyV2(BaseStrategy):
                 entry_row=plan.row if plan is not None else row,
                 risk_per_unit=plan.risk_per_unit if plan is not None else None,
                 stop_loss=pos.get("stop_loss_price"),
+                entry_price=float(pos["entry_price"]),
+                best_price=float(pos["entry_price"]),
             )
         else:
             self._active.stop_loss = pos.get("stop_loss_price")
+        stale = [ts for ts, plan in self._plans.items() if plan.row < row - 2]
+        for ts in stale:
+            del self._plans[ts]
 
     # ------------------------------------------------------------------ evaluation
 
@@ -256,8 +268,11 @@ class RuleStrategyV2(BaseStrategy):
             return True
         if risk.no_reentry_after_stop and session in self._stopped_sessions:
             return True
+        min_close = self._cache.get(SESSION_MIN_CLOSE, row)
+        if risk.close_on_session_change is not False and min_close <= 0:
+            return True  # the position would be closed on this very bar's session end
         flat_m = risk.flat_before_session_end_minutes
-        return flat_m is not None and self._cache.get(SESSION_MIN_CLOSE, row) <= flat_m
+        return flat_m is not None and min_close <= flat_m
 
     def _try_entries(self, row: int) -> list[Signal]:
         session = self._session_of(row)
@@ -325,8 +340,83 @@ class RuleStrategyV2(BaseStrategy):
         return stop, target, r_unit
 
     def _manage_position(self, row: int) -> list[Signal]:
+        """Automatic exits first, then close rules, then a trailing-stop update."""
         side = self._position["side"]
+        active = self._active
+        risk = self._risk_by_rule.get(active.rule_index) if active is not None else None
+        if risk is None:
+            risk = merge_risk(self.config.risk, None)
+
+        reason = self._automatic_exit(risk, active, row)
+        if reason is not None:
+            return [self._signal(SignalAction.CLOSE, row, metadata={"dsl_version": 2, "exit": reason})]
+
         for rule, cond in self._closes:
             if rule.exit_side in (side, "any") and cond.evaluate(self._cache, row):
                 return [self._signal(SignalAction.CLOSE, row, metadata={"dsl_version": 2, "rule_id": rule.id})]
+
+        if risk.trailing is not None and active is not None:
+            new_stop = self._trail(risk, active, side, row)
+            if new_stop is not None:
+                active.stop_loss = new_stop
+                return [
+                    self._signal(SignalAction.HOLD, row, metadata={"dsl_version": 2, "updated_stop_loss": new_stop})
+                ]
         return []
+
+    def _automatic_exit(self, risk: RiskBlock, active: _ActiveTrade | None, row: int) -> str | None:
+        session = self._session_of(row)
+        min_close = self._cache.get(SESSION_MIN_CLOSE, row)
+        close_on_change = risk.close_on_session_change is not False
+        if close_on_change and active is not None:
+            # Never carry a position across a session boundary: leave on the bar
+            # that closes at the scheduled end, or on the first bar that is not
+            # in the entry session (half days, missing end bars, out-of-session).
+            if math.isnan(session) or session != active.session_id:
+                return "session_change"
+            if min_close <= 0:
+                return "session_end"
+        flat_m = risk.flat_before_session_end_minutes
+        if flat_m is not None and not math.isnan(min_close) and min_close <= flat_m:
+            return "flat_before_session_end"
+        if risk.max_hold_bars is not None and active is not None and row - active.entry_row >= risk.max_hold_bars:
+            return "max_hold_bars"
+        return None
+
+    def _trail(self, risk: RiskBlock, active: _ActiveTrade, side: str, row: int) -> float | None:
+        """Tighten-only trailing stop from the best price since entry; None when unchanged."""
+        trailing = risk.trailing
+        close = self._cache.get("close", row)
+        if side == "long":
+            active.best_price = max(active.best_price, self._cache.get("high", row))
+        else:
+            active.best_price = min(active.best_price, self._cache.get("low", row))
+
+        if not active.trailing_active:
+            threshold = trailing.activate_after_r
+            if threshold is None:
+                active.trailing_active = True
+            elif active.risk_per_unit is not None:
+                excursion = (
+                    active.best_price - active.entry_price if side == "long" else active.entry_price - active.best_price
+                )
+                active.trailing_active = excursion >= threshold * active.risk_per_unit
+            if not active.trailing_active:
+                return None
+
+        if isinstance(trailing, AtrTrailing):
+            distance = trailing.value * self._cache.get(atr_column(trailing.atr_period), row)
+        else:
+            distance = float(trailing.value)
+        if math.isnan(distance) or math.isnan(close):
+            return None
+        current = active.stop_loss
+        if side == "long":
+            candidate = min(active.best_price - distance, close)
+            if current is None or candidate > current:
+                return candidate
+        else:
+            candidate = max(active.best_price + distance, close)
+            if current is None or candidate < current:
+                return candidate
+        return None

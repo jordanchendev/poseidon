@@ -127,7 +127,8 @@ def test_close_rules_respect_exit_side():
         [
             {"id": "go", "action": "long", "condition": ALWAYS},
             {"id": "x", "action": "close", "exit_side": "short", "condition": ALWAYS},
-        ]
+        ],
+        {"close_on_session_change": False},
     )
     result, _, _ = run_v2(keep, ohlcv)
     assert len(round_trips(result.trades)) == 0
