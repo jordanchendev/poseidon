@@ -24,6 +24,7 @@ from poseidon.data.features import (
     quality_factor,  # noqa: F401
     regime,  # noqa: F401
     returns,  # noqa: F401
+    session,  # noqa: F401
     swing,  # noqa: F401
     technical,  # noqa: F401
     trade_structure,  # noqa: F401

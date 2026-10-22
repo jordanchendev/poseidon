@@ -22,6 +22,9 @@ class CostModel:
     description: str = ""
     point_value: float = 1.0  # 1 index point = N currency units (default 1.0 = stock/crypto mode)
     tick_size: float = 0.0  # minimum price increment (0.0 = use price*0.001 approximation)
+    # Opt-in extras (defaults keep every pre-existing model unchanged):
+    commission_per_contract: float = 0.0  # fixed currency fee per unit/contract per side
+    tax_on_entry: bool = False  # also charge tax_rate on the entry leg (TAIFEX futures tax is both legs)
 
 
 COST_MODELS: dict[str, CostModel] = {
@@ -73,6 +76,22 @@ COST_MODELS: dict[str, CostModel] = {
         description="Mini TAIEX futures MTX: ~$15/contract round trip + 1 point slippage",
         point_value=50.0,  # MTX: 1 index point = 50 TWD
         tick_size=1.0,
+    ),
+    # Strategy pipeline TX model (owner decision 2026-10-22): futures transaction tax
+    # 0.00002 x contract value on BOTH legs, 50 TWD commission per contract per side,
+    # 1 tick slippage per side. The legacy "tw_futures" entry is intentionally untouched.
+    "tw_futures_pipeline": CostModel(
+        market="tw_futures_pipeline",
+        buy_commission_rate=0.0,
+        sell_commission_rate=0.0,
+        tax_rate=0.00002,
+        slippage_pct=0.0,
+        slippage_ticks=1.0,
+        description="TX pipeline: 0.002% tax both legs + 50 TWD/contract/side + 1 tick slippage/side",
+        point_value=200.0,
+        tick_size=1.0,
+        commission_per_contract=50.0,
+        tax_on_entry=True,
     ),
     "us_stock": CostModel(
         market="us_stock",

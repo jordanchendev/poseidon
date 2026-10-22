@@ -24,6 +24,7 @@ class SizingMode(StrEnum):
     FIXED_NOTIONAL = "fixed_notional"
     VOL_TARGET = "vol_target"
     FIXED_RISK = "fixed_risk"
+    FIXED_CONTRACTS = "fixed_contracts"
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,8 @@ class SizingConfig:
         max_position_pct: Hard cap on position size as fraction of capital (vol_target mode).
         risk_pct: Fraction of equity risked per trade (fixed_risk mode).
         max_notional_pct: Hard cap on position notional as fraction of equity (fixed_risk mode).
+        contracts: Fixed number of contracts per entry (fixed_contracts mode;
+            futures research where notional-based sizing would drift with price).
     """
 
     mode: SizingMode = SizingMode.FIXED_NOTIONAL
@@ -49,6 +52,7 @@ class SizingConfig:
     max_position_pct: float = 0.3
     risk_pct: float = 0.01  # 1% of equity risked per trade (FIXED_RISK only)
     max_notional_pct: float = 0.3  # Hard cap as fraction of equity (FIXED_RISK only)
+    contracts: int = 1  # FIXED_CONTRACTS only
 
 
 @dataclass
@@ -82,7 +86,9 @@ class BacktestPortfolio:
       settles ``price_diff * quantity * point_value`` in cash. Mark-to-market
       equity is ``cash + unrealized``, so the equity change over a round trip
       equals ``TradeRecord.pnl``. Fees and tax are charged on the full
-      notional in both models.
+      notional in both models. Tax is charged on the exit leg only unless
+      ``cost_model.tax_on_entry``; ``cost_model.commission_per_contract`` adds
+      a fixed fee per unit on every leg (both default off).
     """
 
     def __init__(
@@ -113,6 +119,13 @@ class BacktestPortfolio:
     def _notional(self, price: float, quantity: float) -> float:
         """Currency notional of ``quantity`` units at ``price`` (fee/tax base)."""
         return price * quantity * self.point_value
+
+    def _entry_fees(self, notional: float, quantity: float, rate: float) -> float:
+        """Entry-leg fees: commission rate, optional entry tax, optional per-contract fee."""
+        fees = notional * rate
+        if getattr(self.cost_model, "tax_on_entry", False):
+            fees += notional * self.cost_model.tax_rate
+        return fees + abs(quantity) * getattr(self.cost_model, "commission_per_contract", 0.0)
 
     def _position_value(self, pos: dict, price: float) -> float:
         """Value of an open position added on top of cash for equity.
@@ -200,17 +213,23 @@ class BacktestPortfolio:
         """Check if signal is for a crypto market (fractional quantities allowed)."""
         return signal.market in ("crypto_spot", "crypto_perp")
 
+    def _resolve_quantity(self, signal: Signal, fill_price: float) -> float:
+        """Quantity for an entry: fixed contracts, or notional-derived (int for non-crypto)."""
+        if self.sizing_config.mode == SizingMode.FIXED_CONTRACTS:
+            return float(self.sizing_config.contracts)
+        quantity_pct = signal.quantity_pct or 0.1
+        raw_quantity = self._sizing_base() * quantity_pct / fill_price
+        return raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
+
     def _execute_long(self, signal: Signal, price: float, key: str) -> TradeRecord | None:
         """Open a long position."""
         fill_price = self._apply_slippage(price, is_buy=True)
-        quantity_pct = signal.quantity_pct or 0.1
-        raw_quantity = self._sizing_base() * quantity_pct / fill_price
-        quantity = raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
+        quantity = self._resolve_quantity(signal, fill_price)
         if quantity <= 0:
             return None
 
         notional = self._notional(fill_price, quantity)
-        fees = notional * self.cost_model.buy_commission_rate
+        fees = self._entry_fees(notional, quantity, self.cost_model.buy_commission_rate)
         total_cost = fees if self.is_margined else notional + fees
 
         if total_cost > self.cash:
@@ -241,14 +260,12 @@ class BacktestPortfolio:
     def _execute_short(self, signal: Signal, price: float, key: str) -> TradeRecord | None:
         """Open a short position."""
         fill_price = self._apply_slippage(price, is_buy=False)
-        quantity_pct = signal.quantity_pct or 0.1
-        raw_quantity = self._sizing_base() * quantity_pct / fill_price
-        quantity = raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
+        quantity = self._resolve_quantity(signal, fill_price)
         if quantity <= 0:
             return None
 
         notional = self._notional(fill_price, quantity)
-        fees = notional * self.cost_model.sell_commission_rate
+        fees = self._entry_fees(notional, quantity, self.cost_model.sell_commission_rate)
 
         # Fully funded short receives the proceeds; margined only pays fees.
         self.cash += (0.0 if self.is_margined else notional) - fees
@@ -312,7 +329,8 @@ class BacktestPortfolio:
     def _settle_close(self, pos: dict, exit_price: float) -> tuple[float, float]:
         """Move cash for closing ``pos`` at ``exit_price``.
 
-        Exit fees are (sell commission + tax) on the exit notional.
+        Exit fees are (sell commission + tax) on the exit notional plus any
+        per-contract commission.
 
         Returns:
             (total_fees, pnl) where pnl is net of entry and exit fees.
@@ -321,6 +339,7 @@ class BacktestPortfolio:
         entry_price = pos["entry_price"]
         notional = self._notional(exit_price, quantity)
         exit_fees = notional * (self.cost_model.sell_commission_rate + self.cost_model.tax_rate)
+        exit_fees += abs(quantity) * getattr(self.cost_model, "commission_per_contract", 0.0)
         total_fees = pos.get("entry_fees", 0.0) + exit_fees
 
         if pos["side"] == "long":
@@ -406,14 +425,12 @@ class BacktestPortfolio:
         fee_rate = self.cost_model.buy_commission_rate  # Maker rate
 
         if signal.action == SignalAction.LONG:
-            quantity_pct = signal.quantity_pct or 0.1
-            raw_quantity = self._sizing_base() * quantity_pct / fill_price
-            quantity = raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
+            quantity = self._resolve_quantity(signal, fill_price)
             if quantity <= 0:
                 return None
 
             notional = self._notional(fill_price, quantity)
-            fees = notional * fee_rate
+            fees = self._entry_fees(notional, quantity, fee_rate)
             total_cost = fees if self.is_margined else notional + fees
 
             if total_cost > self.cash:
@@ -442,14 +459,12 @@ class BacktestPortfolio:
             return trade
 
         elif signal.action == SignalAction.SHORT:
-            quantity_pct = signal.quantity_pct or 0.1
-            raw_quantity = self._sizing_base() * quantity_pct / fill_price
-            quantity = raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
+            quantity = self._resolve_quantity(signal, fill_price)
             if quantity <= 0:
                 return None
 
             notional = self._notional(fill_price, quantity)
-            fees = notional * fee_rate
+            fees = self._entry_fees(notional, quantity, fee_rate)
 
             # Fully funded short receives the proceeds; margined only pays fees.
             self.cash += (0.0 if self.is_margined else notional) - fees

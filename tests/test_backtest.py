@@ -120,6 +120,7 @@ class TestCostModel:
             "tw_stock_daytrade",
             "tw_futures",
             "tw_futures_mtx",
+            "tw_futures_pipeline",
             "us_stock",
             "crypto_spot",
             "crypto_perp",

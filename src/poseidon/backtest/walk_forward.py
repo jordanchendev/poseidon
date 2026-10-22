@@ -126,6 +126,7 @@ class WalkForwardAnalyzer:
         db_session: Any | None = None,
         strategy_factory: Any | None = None,
         fill_model: Any | None = None,
+        gap_aware_stops: bool = False,
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
@@ -135,6 +136,7 @@ class WalkForwardAnalyzer:
         self.db_session = db_session
         self._strategy_factory = strategy_factory
         self._fill_model = fill_model
+        self._runner_extra = {"gap_aware_stops": True} if gap_aware_stops else {}
 
     def generate_windows(
         self,
@@ -258,6 +260,7 @@ class WalkForwardAnalyzer:
                 initial_capital=self.initial_capital,
                 sizing_config=self.sizing_config,
                 fill_model=self._fill_model,
+                **self._runner_extra,
             )
             is_result = is_runner.run(is_ohlcv, db_session=self.db_session)
 
@@ -271,6 +274,7 @@ class WalkForwardAnalyzer:
                 initial_capital=self.initial_capital,
                 sizing_config=self.sizing_config,
                 fill_model=self._fill_model,
+                **self._runner_extra,
             )
             oos_result = oos_runner.run(oos_ohlcv, db_session=self.db_session)
 

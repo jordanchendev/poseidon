@@ -21,9 +21,7 @@ from poseidon.models.strategy import StrategyRecord
 
 router = APIRouter()
 
-_LEGACY_RELEASE_CONFLICT = (
-    "Legacy strategy activation is disabled; use /api/v1/strategies/{strategy_id}/release"
-)
+_LEGACY_RELEASE_CONFLICT = "Legacy strategy activation is disabled; use /api/v1/strategies/{strategy_id}/release"
 
 _VALID_STRATEGY_TYPES = {
     "model",
@@ -40,6 +38,9 @@ def _validate_strategy_payload(strategy_type: str, config: dict | None) -> None:
             detail=f"Invalid strategy_type '{strategy_type}'. Must be one of: {sorted(_VALID_STRATEGY_TYPES)}",
         )
 
+    if strategy_type == "rule" and isinstance(config, dict) and "dsl_version" in config:
+        _validate_versioned_rule_config(config)
+
     if strategy_type == "portfolio_strategy":
         strategy_name = (config or {}).get("strategy")
         if not isinstance(strategy_name, str) or not strategy_name.strip():
@@ -47,6 +48,53 @@ def _validate_strategy_payload(strategy_type: str, config: dict | None) -> None:
                 status_code=400,
                 detail="portfolio_strategy config must include 'strategy'",
             )
+
+
+def _validate_versioned_rule_config(config: dict) -> None:
+    """Strictly validate a rule config that declares ``dsl_version`` (400 with error paths).
+
+    Rule configs without ``dsl_version`` keep the historical permissive path.
+    """
+    from pydantic import ValidationError
+
+    from poseidon.strategies.dsl import parse_rule_config
+    from poseidon.strategies.dsl.v2 import DslV2Error
+
+    try:
+        parse_rule_config(config)
+    except DslV2Error as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": f"invalid DSL v2 rule config ({exc.kind})", "kind": exc.kind, "errors": exc.errors},
+        ) from None
+    except ValidationError as exc:
+        errors = [
+            {"path": ".".join(str(p) for p in e["loc"]), "msg": e["msg"], "type": e["type"]} for e in exc.errors()
+        ]
+        raise HTTPException(
+            status_code=400, detail={"message": "invalid rule config", "kind": "invalid", "errors": errors}
+        ) from None
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc), "kind": "invalid", "errors": [{"path": "dsl_version", "msg": str(exc)}]},
+        ) from None
+
+
+def _validate_rule_identity(config: dict | None, symbol: str | None, market: str | None, interval: str | None) -> None:
+    """A DSL v2 config must agree with the record's symbol/market/interval columns."""
+    if not isinstance(config, dict) or config.get("dsl_version") != 2:
+        return
+    mismatched = [
+        {"path": field, "msg": f"config {field} {config.get(field)!r} != strategy {field} {value!r}"}
+        for field, value in (("symbol", symbol), ("market", market), ("interval", interval))
+        if value is not None and config.get(field) != value
+    ]
+    if mismatched:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "DSL v2 config does not match the strategy", "kind": "invalid", "errors": mismatched},
+        )
 
 
 # --------------- Pydantic schemas ---------------
@@ -120,6 +168,8 @@ async def create_strategy(
     and that ``name`` is unique.
     """
     _validate_strategy_payload(body.strategy_type, body.config)
+    if body.strategy_type == "rule":
+        _validate_rule_identity(body.config, body.symbol, body.market, body.interval)
 
     existing = db.query(StrategyRecord).filter(StrategyRecord.name == body.name).first()
     if existing:
@@ -182,6 +232,13 @@ async def update_strategy(
     next_config = body.config if body.config is not None else record.config
 
     _validate_strategy_payload(next_strategy_type, next_config)
+    if next_strategy_type == "rule":
+        _validate_rule_identity(
+            next_config,
+            body.symbol if body.symbol is not None else record.symbol,
+            body.market if body.market is not None else record.market,
+            body.interval if body.interval is not None else record.interval,
+        )
 
     if body.strategy_type is not None:
         record.strategy_type = body.strategy_type
