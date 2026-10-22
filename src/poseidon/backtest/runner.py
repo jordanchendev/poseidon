@@ -827,6 +827,14 @@ class BacktestRunner:
             raw_pct = cfg.target_vol / realized_vol
             return min(raw_pct, cfg.max_position_pct)
 
+        if cfg.mode == SizingMode.FIXED_CONTRACTS:
+            # Portfolio ignores quantity_pct in this mode; report the implied
+            # notional fraction so RiskEngine exposure rules see a sane number.
+            entry_price = (
+                signal.order_price if signal.order_price is not None else float(features_slice.iloc[-1]["close"])
+            )
+            return min(1.0, cfg.contracts * entry_price / self.initial_capital) if self.initial_capital > 0 else 0.0
+
         if cfg.mode == SizingMode.FIXED_RISK:
             # Entry price = order_price for limit, bar close for market
             entry_price = (
