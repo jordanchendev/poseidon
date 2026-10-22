@@ -1,9 +1,9 @@
 """Pluggable strategy-spec validators.
 
 ``spec_validate`` looks its validator up by the run's frozen
-``config_json["spec_validator"]``. Step 1 ships the current v1 ``RuleConfig`` +
-``CONDITION_REGISTRY`` validator; the DSL v2 strict parser registers itself
-under a new name later without touching the stage or the dispatcher.
+``config_json["spec_validator"]``. ``dsl_v1`` (the Step-1 ``RuleConfig`` +
+``CONDITION_REGISTRY`` check) stays registered for runs frozen before Step 2;
+new runs freeze ``dsl_v2``, the strict DSL v2 parser.
 """
 
 from __future__ import annotations
@@ -167,7 +167,64 @@ def register_spec_validator(validator: SpecValidator) -> SpecValidator:
     return validator
 
 
+class DslV2Validator:
+    """The strategy-pipeline validator: strict DSL v2 only (Step 2 onward).
+
+    ``dsl_version`` missing or 1 is ``unsupported`` (the pipeline needs v2's
+    sessions, exits and position awareness); a :class:`DslUnsupportedError`
+    (e.g. ``htf``) is ``unsupported``; every other v2 validation error is an
+    error (verdict ``fail``). :meth:`resolve` returns the concrete spec with
+    each ``$param`` at its default plus the parameter grid for ``optimize``.
+    """
+
+    name = "dsl_v2"
+
+    def __init__(self, *, market: str = "tw_futures", symbol: str = "TX"):
+        self.market = market
+        self.symbol = symbol
+
+    def validate_spec(self, spec: dict) -> SpecValidation:
+        from poseidon.strategies.dsl.v2 import DslUnsupportedError, DslValidationError, validate_v2
+
+        if not isinstance(spec, dict):
+            return SpecValidation(False, ("spec must be a JSON object",), ())
+        version = spec.get("dsl_version", 1)
+        if version == 1 and not isinstance(version, bool):
+            return SpecValidation(False, (), (V2_REQUIRED,))
+        try:
+            validated = validate_v2(spec)
+        except DslUnsupportedError as error:
+            reasons = tuple(dict.fromkeys(f"{item['path']}: {item['msg']}" for item in error.errors))
+            return SpecValidation(False, (), reasons)
+        except DslValidationError as error:
+            return SpecValidation(False, tuple(f"{item['path'] or 'spec'}: {item['msg']}" for item in error.errors), ())
+        model = validated.model
+        if model.market != self.market or model.symbol != self.symbol:
+            message = f"spec must target {self.market}/{self.symbol}, got {model.market}/{model.symbol}"
+            return SpecValidation(False, (message,), ())
+        return SpecValidation(True, (), ())
+
+    def resolve(self, spec: dict) -> dict:
+        """``{"spec", "template", "params"}`` for a spec that passed :meth:`validate_spec`."""
+
+        from poseidon.backtest.dsl_v2_factory import DslV2StrategyFactory
+
+        factory = DslV2StrategyFactory(spec=spec)
+        params = {
+            name: {"type": ptype, "low": low, "high": high, "step": step, "default": factory.defaults[name]}
+            for name, (low, high, ptype, step) in factory.param_bounds().items()
+        }
+        return {
+            "spec": DslV2StrategyFactory.to_config_dict(factory.build()),
+            "template": factory.template,
+            "params": params,
+        }
+
+
+V2_REQUIRED = "pipeline requires dsl_version 2"
+
 register_spec_validator(DslV1Validator())
+register_spec_validator(DslV2Validator())
 
 
 def get_spec_validator(name: str) -> SpecValidator:

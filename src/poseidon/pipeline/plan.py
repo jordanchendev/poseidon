@@ -38,8 +38,8 @@ DEFAULT_THRESHOLDS: dict = {
     "paper_replay_tolerance_ticks": 1,
 }
 
-CONFIG_VERSION = 1
-DEFAULT_SPEC_VALIDATOR = "dsl_v1"
+CONFIG_VERSION = 2
+DEFAULT_SPEC_VALIDATOR = "dsl_v2"
 
 
 class StagePlanError(ValueError):
@@ -53,11 +53,61 @@ def default_config(*, stage_plan: list[str] | None, as_of: date) -> dict:
         "version": CONFIG_VERSION,
         "stage_plan": list(stage_plan) if stage_plan is not None else list(V1_STAGE_PLAN),
         "thresholds": copy.deepcopy(DEFAULT_THRESHOLDS),
-        "data": {"interval": "5m", "start": "2020-03-02", "end": as_of.isoformat()},
-        "holdout": {"fraction": 0.2, "locked": True},
+        "data": data_config(as_of=as_of, holdout_fraction=HOLDOUT_FRACTION),
+        "holdout": {"fraction": HOLDOUT_FRACTION, "locked": True},
         "seed": 0,
-        "max_trials": 200,
+        "backtest": copy.deepcopy(DEFAULT_BACKTEST),
+        "optimize": copy.deepcopy(DEFAULT_OPTIMIZE),
         "spec_validator": DEFAULT_SPEC_VALIDATOR,
+    }
+
+
+# --- Step 2: data window, backtest and optimize settings (frozen per run) ---
+
+DATA_START = "2020-03-02"  # TX 5m is continuous from 2020-03 (PLAN "Given")
+HOLDOUT_FRACTION = 0.2
+
+# Owner decisions 2026-10-22: pipeline cost model, 1 contract, gap-aware stops.
+DEFAULT_BACKTEST: dict = {
+    "market": "tw_futures",
+    "symbol": "TX",
+    "cost_model": "tw_futures_pipeline",
+    "sizing": {"mode": "fixed_contracts", "contracts": 1},
+    "gap_aware_stops": True,
+    "initial_capital_twd": 1_000_000.0,
+    "bar_label": "open",
+    "sharpe": {"period": "trading_day", "annualisation_factor": 252},
+}
+
+DEFAULT_OPTIMIZE: dict = {
+    "sampler": "tpe",
+    "objective": "sharpe_daily",
+    # Measured 2026-10-23 in the runner image on stormtrooper: one backtest of
+    # the ORB example on the ~5.3-year train window (294,520 5m bars) takes
+    # 53 s alone and 55 s with both worker processes busy. 45 search trials
+    # plus one full neighbour round at the 8-parameter maximum (16 trials) is
+    # 61 x 55 s = 56 min, inside the 60-minute budget per optimize attempt.
+    "max_trials": 45,
+    "budget_seconds": 3600,  # safety stop only; see optimization.tpe_search
+    "max_consecutive_duplicates": 100,
+    "neighbour_steps": 1,
+}
+
+
+def data_config(*, as_of: date, holdout_fraction: float, start: str = DATA_START) -> dict:
+    """Frozen data window: ``[start, end)`` in Asia/Taipei, plus the locked holdout split."""
+
+    from poseidon.pipeline.window import holdout_split
+
+    end = as_of.isoformat()
+    return {
+        "source": "thalassa",
+        "interval": "5m",
+        "timezone": "Asia/Taipei",
+        "start": start,
+        "end": end,
+        "end_exclusive": True,
+        "holdout_start": holdout_split(start, end, holdout_fraction).isoformat(),
     }
 
 
