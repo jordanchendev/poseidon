@@ -57,7 +57,8 @@ from poseidon.strategies.dsl.v2.validate import merge_risk, walk_model
 KEY_ENV = "STRATEGY_PIPELINE_OPENROUTER_KEY"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 IDENTITY_CACHE_SECONDS = 600.0
-PROMPT_VERSION = 5  # 5: DSL v2.1 (smoothed indicator, rolling channel, b_mult)
+PROMPT_VERSION = 6  # 5: DSL v2.1 (smoothed indicator, rolling channel, b_mult); 6: grids bracket
+# plausible values with the default near the middle (optimize extends an edge best, 2026-10-23)
 
 MAX_ERRORS_PER_ROUND = 20
 MAX_TEXT = 300
@@ -167,6 +168,10 @@ DSL v2 RULES
   Grid rules: (high - low) is a multiple of step, default is one of low, low+step, ..., high, at most
   10 grid points; an "int" param has integer low/high/step/default. Every grid value must be valid where
   the param is used (e.g. an opening-range minutes param must stay a multiple of the interval).
+  Grid placement: choose low/high so the range brackets every plausible value on both sides, with the
+  default (your best guess) near the middle of the grid, not on low or high. Put the default on an edge only
+  where the field itself cannot go further (e.g. an offset of 0 points). A best value on a grid edge means
+  the range was too narrow: the optimizer then has to step outside it.
 - Keep the strategy minimal and faithful to the idea. Do not add filters the idea did not ask for unless a
   coherent strategy needs them. List every such addition and every default you chose (stop size, target,
   session, time window, exits) in "assumptions", one short sentence each.

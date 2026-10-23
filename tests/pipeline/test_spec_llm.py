@@ -419,8 +419,24 @@ def test_b_mult_on_a_price_level_is_limited_to_a_percent_envelope():
     assert [e["path"] for e in errors] == ["rules.0.condition.all.2.b_mult"]
 
 
+def test_prompt_v6_asks_for_grids_that_bracket_the_default():
+    assert spec_llm.PROMPT_VERSION == 6
+    assert "default (your best guess) near the middle of the grid" in SYSTEM_PROMPT
+    # The reference example follows its own advice: a default on an edge only where the field stops.
+    from poseidon.pipeline.optimization import ParamGrid, hard_bound_check
+
+    example = valid_spec()
+    grid = ParamGrid(validate_v2(example).params)
+    check = hard_bound_check(example, grid)
+    defaults = {name: spec.cast(spec.default) for name, spec in grid.specs.items()}
+    for name, spec in grid.specs.items():
+        if spec.low < spec.default < spec.high:
+            continue
+        outward = spec.default + (spec.step if spec.default >= spec.high else -spec.step)
+        assert check({**defaults, name: spec.cast(outward)}) is not None, name
+
+
 def test_prompt_v5_documents_the_v21_operands():
-    assert spec_llm.PROMPT_VERSION == 5
     for token in ('"channel":"highest|lowest"', '"smooth":{"type":"sma|ema"', '"b_mult"', "exclude_current"):
         assert token in SYSTEM_PROMPT
     assert "There is no indicator of an indicator" not in SYSTEM_PROMPT
