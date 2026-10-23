@@ -440,6 +440,8 @@ def gate_margins(reports: dict) -> dict:
                 "holdout_total_pnl_twd": g.get("holdout_total_pnl_twd"),
                 "holdout_trades": g.get("holdout_trade_count"),
                 "min_trades": g.get("min_trades"),
+                "passed_criterion": g.get("passed_criterion"),
+                "se_criterion": (g.get("criteria") or {}).get("se"),
             }
         out[name]["summary"] = report.get("summary")
     return out

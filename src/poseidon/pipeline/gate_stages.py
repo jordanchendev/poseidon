@@ -607,7 +607,9 @@ class HoldoutStage(GateStage):
         base_metrics = optimize["best"].get("metrics") or {}
         result = holdout.evaluate(
             holdout.HoldoutInputs(
-                train=summary_from_metrics(base_metrics), holdout=summary_from_metrics(outcome.metrics)
+                train=summary_from_metrics(base_metrics),
+                holdout=summary_from_metrics(outcome.metrics),
+                holdout_n_obs=outcome.metrics.get("n_obs"),
             ),
             ctx.config["thresholds"],
         )

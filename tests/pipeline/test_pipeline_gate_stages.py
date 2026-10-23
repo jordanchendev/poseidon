@@ -346,6 +346,10 @@ def test_holdout_records_the_look_and_counts_other_runs(tmp_path, chain):
     split = pd.Timestamp(probe.config["data"]["holdout_start"])
     trades = pd.read_csv(io.BytesIO(result.files["holdout_trades.csv"]))
     assert len(trades) and (pd.to_datetime(trades["entry_time"], utc=True) >= split).all()
+    # Criterion (b)'s T is the holdout backtest's trading-day count (its n_obs).
+    gate = result.report["gate_report"]
+    assert gate["holdout_n_obs"] == result.report["inputs"]["holdout_metrics"]["n_obs"] >= 2
+    assert gate["criteria"]["se"]["n_obs"] == gate["holdout_n_obs"] and gate["criteria"]["se"]["enabled"]
     again = probe.run(gate_registry(SyntheticTxSource())["holdout"])
     assert again.report["inputs"]["family_holdout_evaluations"]["this_run_previous_evaluations"] == 1
 
