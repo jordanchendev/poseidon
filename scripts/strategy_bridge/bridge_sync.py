@@ -72,6 +72,8 @@ STATUS_LINE = {
 VERDICT_MARK = {"pass": "✅", "fail": "❌", "unsupported": "⛔", "error": "⚠️"}
 MAX_ASSUMPTIONS = 5
 MESSAGE_CAP = 3800
+IDEA_SLOT = "\x00idea\x00"  # where a message template takes the full idea text
+IDEA_OVERFLOW = "…（全文見 Kairos）"
 PERMANENT_HTTP = (400, 401, 403, 404, 405, 413, 415, 422)
 
 
@@ -237,8 +239,20 @@ def _one_line(text, limit):
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _with_idea(template, run) -> str:
+    """Put the full idea text at ``IDEA_SLOT``. Only when the whole message would exceed MESSAGE_CAP is the idea
+    shortened (never the gate results or the Kairos link that follow it)."""
+
+    idea = str(run.get("idea_text") or "").strip()
+    text = template.replace(IDEA_SLOT, idea, 1)
+    if len(text) > MESSAGE_CAP:
+        room = max(0, len(idea) - (len(text) - MESSAGE_CAP) - len(IDEA_OVERFLOW))
+        text = template.replace(IDEA_SLOT, idea[:room] + IDEA_OVERFLOW, 1)
+    return text if len(text) <= MESSAGE_CAP else text[: MESSAGE_CAP - 1] + "…"
+
+
 def start_message(run) -> str:
-    return f"pipeline #{run['run_no']} 開始：{_one_line(run.get('idea_text'), 60)}"
+    return _with_idea(f"pipeline #{run['run_no']} 開始：{IDEA_SLOT}", run)
 
 
 def _num(value, fmt):
@@ -314,7 +328,7 @@ def terminal_message(run, stages, reports, kairos_base_url="") -> str:
     head = STATUS_LINE.get(status, status)
     if status == "completed" and run.get("reason") != ALL_GATES_PASSED:
         head = "✅ 完成"  # a shortened stage_plan: no validation gates ran
-    lines = [f"pipeline #{run.get('run_no')} {head}：{_one_line(run.get('idea_text'), 60)}"]
+    lines = [f"pipeline #{run.get('run_no')} {head}：{IDEA_SLOT}"]
     not_run = []
     for entry in stages:
         stage, latest = entry.get("stage"), entry.get("latest")
@@ -358,8 +372,7 @@ def terminal_message(run, stages, reports, kairos_base_url="") -> str:
         lines.append(f"耗時 {elapsed}")
     if kairos_base_url:
         lines.append(f"{kairos_base_url.rstrip('/')}/pipelines?run={run.get('id')}")
-    text = "\n".join(lines)
-    return text if len(text) <= MESSAGE_CAP else text[: MESSAGE_CAP - 1] + "…"
+    return _with_idea("\n".join(lines), run)
 
 
 def fetch_stages(api, run_id) -> list:
@@ -426,7 +439,7 @@ def milestone_message(milestone, run, stages, reports, kairos_base_url="") -> st
         days = thresholds.get("paper_min_trading_days", 20)
         lines = [
             f"{head} 通過全部驗證關卡，開始 shadow paper（至少 {days} 個交易日）",
-            _one_line(run.get("idea_text"), 60),
+            IDEA_SLOT,
         ]
         names = [entry.get("stage") for entry in stages]
         before = stages[: names.index("shadow_paper")] if "shadow_paper" in names else stages
@@ -440,7 +453,7 @@ def milestone_message(milestone, run, stages, reports, kairos_base_url="") -> st
             lines.append("參數（optimize 最佳）：" + _params_text(best["params"]))
     else:
         paper = reports.get("shadow_paper") or {}
-        lines = [f"{head} 通過 shadow paper，等待人工 release", _one_line(run.get("idea_text"), 60)]
+        lines = [f"{head} 通過 shadow paper，等待人工 release", IDEA_SLOT]
         if isinstance(paper.get("summary"), str):
             lines.append(_one_line(paper["summary"], 200))
         stats = paper.get("paper") if isinstance(paper.get("paper"), dict) else {}
@@ -451,8 +464,7 @@ def milestone_message(milestone, run, stages, reports, kairos_base_url="") -> st
             f"交易日 {_num(paper.get('trading_days'), 'd')}，交易 {_num(stats.get('n_trades'), 'd')} 筆，"
             f"paper PnL {_num(stats.get('total_pnl_twd'), '+,.0f')} TWD，replay match {_pct(ratio)}"
         )
-    text = "\n".join(lines + _link(run, kairos_base_url))
-    return text if len(text) <= MESSAGE_CAP else text[: MESSAGE_CAP - 1] + "…"
+    return _with_idea("\n".join(lines + _link(run, kairos_base_url)), run)
 
 
 # ------------------------------------------------------------------ sync

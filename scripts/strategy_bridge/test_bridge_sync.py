@@ -534,7 +534,7 @@ class FormatTests(unittest.TestCase):
         lines = text.splitlines()
         self.assertEqual(lines[0], "pipeline #10 ❌ 未通過：" + IDEA)
         self.assertEqual(
-            bs.start_message({"run_no": 1, "idea_text": "多\n" * 80}), "pipeline #1 開始：" + "多 " * 29 + "多…"
+            bs.start_message({"run_no": 1, "idea_text": "多\n" * 80}), "pipeline #1 開始：" + "多\n" * 79 + "多"
         )
         self.assertEqual(
             lines[1:5],
@@ -617,6 +617,25 @@ class FormatTests(unittest.TestCase):
         run, stages, reports = self.run_and_stages("error", results, reason="y")
         reports["spec_generate"] = {"assumptions": ["a" * 300] * 50}
         self.assertLessEqual(len(bs.terminal_message(run, stages, reports)), bs.MESSAGE_CAP)
+
+    def test_long_idea_is_shortened_before_the_link(self):
+        run, stages, reports = self.run_and_stages("completed", FULL_PASS, reason="passed all validation gates")
+        run["idea_text"] = "多" * bs.IDEA_MAX_CHARS
+        reports["spec_generate"] = {**reports["spec_generate"], "assumptions": ["a" * 160] * 5}
+        base = "https://kairos.example"
+        for text in (
+            bs.terminal_message(run, stages, reports, base),
+            bs.milestone_message("shadow_paper", run, stages, reports, base),
+        ):
+            self.assertLessEqual(len(text), bs.MESSAGE_CAP)
+            self.assertEqual(text.splitlines()[-1], f"{base}/pipelines?run={run['id']}")
+        full = bs.milestone_message("shadow_paper", run, stages, reports)
+        self.assertIn("多" * bs.IDEA_MAX_CHARS, full)  # fits: full idea, no marker
+        self.assertNotIn(bs.IDEA_OVERFLOW, full)
+        run["idea_text"] = "多" * 3790
+        shortened = bs.terminal_message(run, stages, reports, base)
+        self.assertIn(bs.IDEA_OVERFLOW, shortened)
+        self.assertEqual(len(shortened), bs.MESSAGE_CAP)
 
 
 class SafetyTests(unittest.TestCase):
