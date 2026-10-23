@@ -388,9 +388,48 @@ def test_missing_one_step_neighbours_of_the_best_are_evaluated(tmp_path):
     assert report["n_trials_by_source"]["neighbour"] == report["n_trials"] - 3
 
 
-def test_a_spec_without_params_records_the_base_backtest_as_trial_one(tmp_path):
+def test_a_hand_written_spec_without_params_fails_spec_validate():
+    result = _validated(tx_orb30_day())
+    assert result.verdict == Verdict.FAIL and result.reason == "spec invalid: 1 error(s)"
+    (error,) = result.report["errors"]
+    assert error.startswith("params: the pipeline requires 1-4 tunable $params, the spec declares 0")
+    assert "opening-range minutes" in error and "stop/target distances" in error and "thresholds" in error
+
+
+def _five_params() -> dict:
+    spec = orb_template()
+    spec["params"]["sl_buf"] = {"type": "int", "low": 0, "high": 10, "step": 5, "default": 0}
+    spec["params"]["flat_min"] = {"type": "int", "low": 5, "high": 15, "step": 5, "default": 10}
+    spec["params"]["max_n"] = {"type": "int", "low": 1, "high": 2, "step": 1, "default": 1}
+    for rule in spec["rules"]:
+        rule["risk"]["stop_loss"]["offset_points"] = {"$param": "sl_buf"}
+    spec["risk"]["flat_before_session_end_minutes"] = {"$param": "flat_min"}
+    spec["risk"]["max_trades_per_session"] = {"$param": "max_n"}
+    return spec
+
+
+def test_more_than_four_params_fail_spec_validate():
+    from poseidon.strategies.dsl.v2 import validate_v2
+
+    spec = _five_params()
+    assert len(validate_v2(spec).params) == 5  # the DSL itself allows it; the pipeline does not
+    result = _validated(spec)
+    assert result.verdict == Verdict.FAIL
+    assert result.report["errors"][0].startswith(
+        "params: the pipeline requires 1-4 tunable $params, the spec declares 5"
+    )
+
+
+def test_optimize_without_params_still_records_the_base_backtest(tmp_path):
+    """Defensive path only: spec_validate now rejects param-less specs before optimize."""
+
     spec = tx_orb30_day()
-    pipeline = _optimize(tmp_path, spec)
+    resolved = DslV2Validator().resolve(spec)
+    report = {"spec": resolved["spec"], "template": resolved["template"], "params": resolved["params"]}
+    report["spec_sha256"] = content_sha256(spec)
+    pipeline = Pipeline(tmp_path, spec)
+    pipeline.seed(report)
+    pipeline.through(BacktestStage(pipeline.source), OptimizeStage(pipeline.source))
     result = pipeline.outputs["optimize"][0]
     assert result.verdict == Verdict.PASS
     (record,) = pipeline.ledger.records
@@ -401,7 +440,7 @@ def test_a_spec_without_params_records_the_base_backtest_as_trial_one(tmp_path):
         metrics["sharpe_daily"],
         metrics["n_obs"],
     )
-    assert result.report["best_spec"] == pipeline.results["spec_validate"].report["spec"]
+    assert result.report["best_spec"] == report["spec"]
     assert result.report["neighbours"] == []
 
 
