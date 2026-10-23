@@ -5,20 +5,37 @@ from __future__ import annotations
 import copy
 from datetime import date
 
+# Step 3b gate order: cheap ledger-only gates first (param_stability, dsr), then
+# the gates that re-run the strategy on the train part (cost_stress,
+# regime_split, wfe), and the locked holdout exactly once, last, only for a
+# candidate that passed everything on train.
 V1_STAGE_PLAN: tuple[str, ...] = (
     "spec_generate",
     "spec_validate",
     "backtest",
     "optimize",
+    "param_stability",
+    "dsr",
+    "cost_stress",
+    "regime_split",
     "wfe",
     "holdout",
-    "cost_stress",
-    "dsr",
-    "param_stability",
-    "regime_split",
     "shadow_paper",
     "awaiting_release",
 )
+GATE_STAGES: tuple[str, ...] = ("param_stability", "dsr", "cost_stress", "regime_split", "wfe", "holdout")
+# shadow_paper / awaiting_release are not implemented yet (Step 7): a new run's
+# default plan ends at holdout, so a run that passes every gate completes.
+DEFAULT_STAGE_PLAN: tuple[str, ...] = V1_STAGE_PLAN[: V1_STAGE_PLAN.index("holdout") + 1]
+ALL_GATES_PASSED = "passed all validation gates"
+ALL_STAGES_PASSED = "all stages passed"
+
+
+def completion_reason(stage_plan) -> str:
+    """Reason recorded on a run whose whole plan passed."""
+
+    return ALL_GATES_PASSED if set(GATE_STAGES) <= set(stage_plan) else ALL_STAGES_PASSED
+
 
 # Initial gate thresholds (PLAN "Assumptions [minor]"). They are frozen into each
 # run's config_json; v1 never accepts client overrides -- a new threshold means
@@ -46,7 +63,8 @@ DEFAULT_THRESHOLDS: dict = {
     "paper_replay_tolerance_ticks": 1,
 }
 
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3  # 3: frozen ``gates`` settings (Step 3b); older runs -> gate stages unsupported
+GATES_CONFIG_VERSION = 3
 DEFAULT_SPEC_VALIDATOR = "dsl_v2"
 
 
@@ -60,13 +78,14 @@ def default_config(*, stage_plan: list[str] | None, as_of: date) -> dict:
     return {
         "version": CONFIG_VERSION,
         "spec_generate": copy.deepcopy(DEFAULT_SPEC_GENERATE),
-        "stage_plan": list(stage_plan) if stage_plan is not None else list(V1_STAGE_PLAN),
+        "stage_plan": list(stage_plan) if stage_plan is not None else list(DEFAULT_STAGE_PLAN),
         "thresholds": copy.deepcopy(DEFAULT_THRESHOLDS),
         "data": data_config(as_of=as_of, holdout_fraction=HOLDOUT_FRACTION),
         "holdout": {"fraction": HOLDOUT_FRACTION, "locked": True},
         "seed": 0,
         "backtest": copy.deepcopy(DEFAULT_BACKTEST),
         "optimize": copy.deepcopy(DEFAULT_OPTIMIZE),
+        "gates": copy.deepcopy(DEFAULT_GATES),
         "spec_validator": DEFAULT_SPEC_VALIDATOR,
     }
 
@@ -100,6 +119,41 @@ DEFAULT_OPTIMIZE: dict = {
     "budget_seconds": 3600,  # safety stop only; see optimization.tpe_search
     "max_consecutive_duplicates": 100,
     "neighbour_steps": 1,
+}
+
+
+# --- Step 3b: gate-stage settings (frozen per run; thresholds stay in ``thresholds``) ---
+#
+# wfe budget (<= 60 min per attempt on the worker). Measured 2026-10-23: one
+# train-window backtest of the ORB example (294,520 5m bars) takes ~55 s, i.e.
+# ~1.9e-4 s per bar, so one 730-day IS trial (~116k bars) is ~22 s and one
+# warm-up + 182-day OOS run (~32k bars) ~6 s. 4 windows x 16 IS trials =
+# 64 x 22 s + 4 x 6 s = ~24 min nominal, ~48 min when both worker processes
+# are busy and the run is 2x slower -- inside the budget with headroom for
+# larger specs. ``budget_seconds`` is the per-attempt safety stop, split evenly
+# over the windows (tpe_search stops a window early only if it would overrun).
+DEFAULT_GATES: dict = {
+    "cost_stress": {
+        # The stressed run only: stop fills get this many ticks of slippage on
+        # top of commission/tax/slippage x cost_stress_multiplier. Base stop
+        # fills have none, so this is stricter than a pure x2.
+        "stop_slippage_ticks": 1.0,
+    },
+    "regime_split": {
+        "daily_bars": "train-part 5m bars resampled per TX trading day (night session -> next day session)",
+    },
+    "wfe": {
+        "windows": 4,
+        "is_days": 730,
+        "oos_days": 182,
+        "max_trials_per_window": 16,
+        "budget_seconds": 3600,
+        "objective": "sharpe_daily",
+    },
+    # Bars before the evaluated span that warm features up; entries are refused
+    # during the warm-up, so it carries no trades and no PnL.
+    "warmup_days": 14,
+    "holdout": {"family_reuse": "report_only"},
 }
 
 

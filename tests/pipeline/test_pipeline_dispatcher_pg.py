@@ -171,13 +171,18 @@ def test_unsupported_stops_the_run_and_rerun_is_allowed(harness, monkeypatch):
     assert harness.attempts(v1)[1].verdict == "unsupported"
 
 
-def test_later_v1_stages_are_registered_but_unsupported(harness):
-    run_id = harness.create(stage_plan=None)
+def test_shadow_paper_is_registered_but_unsupported(pipeline_sessions, tmp_path, clock):
+    from poseidon.pipeline.plan import GATE_STAGES, V1_STAGE_PLAN
+    from tests.pipeline.gate_support import passing, stub_train_gates
+
+    registry = stub_train_gates(holdout=passing("holdout", ("optimize", *GATE_STAGES[:5])))
+    harness = Harness(pipeline_sessions, tmp_path, clock, registry=registry)
+    run_id = harness.create(stage_plan=list(V1_STAGE_PLAN))
     harness.drain()
     run = harness.run(run_id)
     assert run.config_json["stage_plan"][-1] == "awaiting_release"
-    assert (run.status, run.reason) == ("unsupported", "wfe: not implemented")
-    assert [row.verdict for row in harness.attempts(run_id)] == ["pass", "pass", "pass", "pass", "unsupported"]
+    assert (run.status, run.reason) == ("unsupported", "shadow_paper: not implemented")
+    assert [row.verdict for row in harness.attempts(run_id)] == ["pass"] * 10 + ["unsupported"]
 
 
 def test_rerun_reuses_upstream_passes_and_rejects_another_from_stage(pipeline_sessions, tmp_path, clock):
