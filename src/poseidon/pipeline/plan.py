@@ -7,8 +7,9 @@ from datetime import date
 
 # Step 3b gate order: cheap ledger-only gates first (param_stability, dsr), then
 # the gates that re-run the strategy on the train part (cost_stress,
-# regime_split, wfe), and the locked holdout exactly once, last, only for a
-# candidate that passed everything on train.
+# regime_split, benchmark, wfe), and the locked holdout exactly once, last, only
+# for a candidate that passed everything on train. ``benchmark`` (alpha over TX
+# buy-and-hold) exists from CONFIG_VERSION 5; see STAGE_INTRODUCED_AT.
 V1_STAGE_PLAN: tuple[str, ...] = (
     "spec_generate",
     "spec_validate",
@@ -18,15 +19,27 @@ V1_STAGE_PLAN: tuple[str, ...] = (
     "dsr",
     "cost_stress",
     "regime_split",
+    "benchmark",
     "wfe",
     "holdout",
     "shadow_paper",
     "awaiting_release",
 )
-GATE_STAGES: tuple[str, ...] = ("param_stability", "dsr", "cost_stress", "regime_split", "wfe", "holdout")
+GATE_STAGES: tuple[str, ...] = ("param_stability", "dsr", "cost_stress", "regime_split", "benchmark", "wfe", "holdout")
+# Stages added after runs were already frozen, with the CONFIG_VERSION that
+# introduced them. A run frozen earlier has no such stage in its stage_plan, so
+# for that run every stage that ``requires`` it behaves as it did at the run's
+# version: the stage is left out of its upstream map, its input hash and its
+# plan validation (``requires_for``). A live run therefore keeps its input
+# hashes across the upgrade (shadow_paper: config_sha256 + upstream shas +
+# PAPER_VERSION).
+STAGE_INTRODUCED_AT: dict[str, int] = {"benchmark": 5}
+# The gates every run with a holdout has had (completion_reason).
+CORE_GATE_STAGES: tuple[str, ...] = tuple(name for name in GATE_STAGES if name not in STAGE_INTRODUCED_AT)
 # Step 7: a run that passes the holdout continues into shadow_paper and parks in
 # awaiting_release (CONFIG_VERSION 4). Runs frozen earlier keep their own
-# stage_plan, which ends at holdout.
+# stage_plan, which ends at holdout. CONFIG_VERSION 5 adds ``benchmark``; runs
+# frozen at 4 keep their plan without it.
 DEFAULT_STAGE_PLAN: tuple[str, ...] = V1_STAGE_PLAN
 ALL_GATES_PASSED = "passed all validation gates"
 ALL_STAGES_PASSED = "all stages passed"
@@ -35,7 +48,17 @@ ALL_STAGES_PASSED = "all stages passed"
 def completion_reason(stage_plan) -> str:
     """Reason recorded on a run whose whole plan passed."""
 
-    return ALL_GATES_PASSED if set(GATE_STAGES) <= set(stage_plan) else ALL_STAGES_PASSED
+    return ALL_GATES_PASSED if set(CORE_GATE_STAGES) <= set(stage_plan) else ALL_STAGES_PASSED
+
+
+def config_version(config) -> int:
+    return int((config or {}).get("version") or 0)
+
+
+def requires_for(requires, version: int) -> tuple[str, ...]:
+    """``requires`` as it was for a run frozen at config ``version`` (see STAGE_INTRODUCED_AT)."""
+
+    return tuple(name for name in requires if STAGE_INTRODUCED_AT.get(name, 0) <= version)
 
 
 # Initial gate thresholds (PLAN "Assumptions [minor]"). They are frozen into each
@@ -50,6 +73,12 @@ DEFAULT_THRESHOLDS: dict = {
     # z standard errors of train (gates/holdout.py criterion (b)). Runs frozen
     # without this key keep decay-only judging, so no CONFIG_VERSION bump.
     "holdout_se_z": 1.96,
+    # Owner decision 2026-10-23 (pre-registered, CONFIG_VERSION 5): the benchmark
+    # gate passes iff train alpha over TX buy-and-hold > 0 and its HAC t >= this;
+    # the holdout additionally needs holdout alpha > 0. A run frozen without a key
+    # has that criterion off (gates/benchmark.py, gates/holdout.py).
+    "benchmark_alpha_t_min": 1.0,
+    "holdout_alpha_positive": True,
     "cost_stress_multiplier": 2.0,
     "cost_stress_pnl_positive": True,
     "dsr_min": 0.95,
@@ -68,8 +97,11 @@ DEFAULT_THRESHOLDS: dict = {
     "paper_replay_tolerance_ticks": 1,
 }
 
-CONFIG_VERSION = 4  # 3: frozen ``gates`` settings (Step 3b); 4: ``shadow_paper`` settings + full plan (Step 7)
+# 3: frozen ``gates`` settings (Step 3b); 4: ``shadow_paper`` settings + full plan (Step 7);
+# 5: ``benchmark`` stage + ``gates.benchmark`` + benchmark_alpha_t_min / holdout_alpha_positive
+CONFIG_VERSION = 5
 SHADOW_PAPER_CONFIG_VERSION = 4
+BENCHMARK_CONFIG_VERSION = 5
 GATES_CONFIG_VERSION = 3
 DEFAULT_SPEC_VALIDATOR = "dsl_v2"
 
@@ -160,6 +192,11 @@ DEFAULT_GATES: dict = {
     # Bars before the evaluated span that warm features up; entries are refused
     # during the warm-up, so it carries no trades and no PnL.
     "warmup_days": 14,
+    # Alpha over TX buy-and-hold (CONFIG_VERSION 5): daily strategy PnL regressed on
+    # daily buy-and-hold PnL (1 contract, point value of the cost model), alpha
+    # t-stat Newey-West HAC with this many lags; the holdout gate reports the same
+    # regression on the holdout days.
+    "benchmark": {"hac_lags": 5},
     "holdout": {"family_reuse": "report_only"},
 }
 
@@ -208,8 +245,8 @@ def data_config(*, as_of: date, holdout_fraction: float, start: str = DATA_START
     }
 
 
-def validate_stage_plan(stage_plan: list[str], registry) -> list[str]:
-    """Reject unknown, repeated, out-of-order, or dependency-starved stages."""
+def validate_stage_plan(stage_plan: list[str], registry, *, version: int = CONFIG_VERSION) -> list[str]:
+    """Reject unknown, repeated, out-of-order, or dependency-starved stages (as of config ``version``)."""
 
     if not isinstance(stage_plan, list) or not stage_plan:
         raise StagePlanError("stage_plan must be a non-empty list")
@@ -223,7 +260,9 @@ def validate_stage_plan(stage_plan: list[str], registry) -> list[str]:
         raise StagePlanError("stage_plan must follow the v1 stage order")
     seen: set[str] = set()
     for name in stage_plan:
-        missing = [required for required in registry[name].requires if required not in seen]
+        if STAGE_INTRODUCED_AT.get(name, 0) > version:
+            raise StagePlanError(f"stage {name} does not exist at config version {version}")
+        missing = [required for required in requires_for(registry[name].requires, version) if required not in seen]
         if missing:
             raise StagePlanError(f"stage {name} requires {', '.join(missing)} earlier in the plan")
         seen.add(name)

@@ -40,7 +40,7 @@ def test_the_default_plan_stops_at_the_first_failing_gate(pipeline_sessions, tmp
 
 
 def test_a_run_whose_gates_all_pass_completes_with_the_gate_reason(pipeline_sessions, tmp_path, clock):
-    registry = stub_train_gates(holdout=passing("holdout", ("optimize", *GATE_STAGES[:5])))
+    registry = stub_train_gates(holdout=passing("holdout", ("optimize", *GATE_STAGES[:-1])))
     harness = _harness(pipeline_sessions, tmp_path, clock, registry)
     run_id = harness.create(stage_plan=list(STEP2_PLAN) + list(GATE_STAGES))  # a plan that ends at holdout
     harness.drain()
@@ -99,7 +99,7 @@ def test_wfe_trials_land_in_the_ledger_under_the_wfe_attempt(pipeline_sessions, 
     registry = stub_train_gates()
     registry["wfe"] = synthetic_registry()["wfe"]
     harness = _harness(pipeline_sessions, tmp_path, clock, registry)
-    plan = [*STEP2_PLAN, *GATE_STAGES[:5]]
+    plan = [*STEP2_PLAN, *GATE_STAGES[:-1]]
     run_id = harness.create(stage_plan=plan)
     harness.drain()
     wfe = {row.stage: row for row in harness.attempts(run_id)}["wfe"]

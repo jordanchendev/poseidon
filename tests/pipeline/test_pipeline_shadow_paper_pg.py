@@ -38,7 +38,7 @@ class WideTrainSource(SyntheticTxSource):
 def _harness(pipeline_sessions, tmp_path, clock, source, *, train_scale: float = 1.0):
     """Real spec/backtest/optimize on synthetic bars, train gates + holdout stubbed to pass, real shadow_paper."""
 
-    registry = stub_train_gates(holdout=passing("holdout", ("optimize", *GATE_STAGES[:5])))
+    registry = stub_train_gates(holdout=passing("holdout", ("optimize", *GATE_STAGES[:-1])))
     if train_scale != 1.0:
         registry.update(synthetic_registry(WideTrainSource(train_scale), **{k: registry[k] for k in GATE_STAGES}))
     registry["shadow_paper"] = ShadowPaperStage(source)
@@ -92,7 +92,7 @@ def test_end_to_end_holdout_pass_shadow_paper_awaiting_release(pipeline_sessions
     run_id = harness.create(stage_plan=None)
     harness.drain()
     run = harness.run(run_id)
-    assert run.config_json["stage_plan"] == list(V1_STAGE_PLAN) and run.config_json["version"] == 4
+    assert run.config_json["stage_plan"] == list(V1_STAGE_PLAN) and run.config_json["version"] == 5
     assert _latest(harness, run_id, "holdout").verdict == "pass"
     assert (run.status, run.current_stage) == ("waiting", "shadow_paper")
 

@@ -17,7 +17,12 @@ The Sharpe criterion passes when EITHER
 
 With a small train Sharpe the decay ratio is dominated by the holdout Sharpe's
 sampling noise, which (b) accounts for. Runs frozen before ``holdout_se_z``
-existed have no such threshold: (b) is off and only (a) applies. The split
+existed have no such threshold: (b) is off and only (a) applies.
+
+Alpha over TX buy-and-hold (``benchmark.regress`` on the holdout days, passed
+in as ``benchmark``) is reported whenever the stage supplies it; with
+``holdout_alpha_positive`` the gate also requires holdout alpha > 0 (checked
+last). Runs frozen without that key have it off. The split
 itself is enforced upstream by ``backtest.holdout.HoldoutConfig``; this gate
 only judges the two results.
 """
@@ -39,6 +44,7 @@ from poseidon.pipeline.gates.base import (
     passed,
     pct,
 )
+from poseidon.pipeline.gates.benchmark import phrase as benchmark_phrase
 
 GATE = "holdout"
 SE_FORMULA = "sqrt((1 + holdout_sharpe^2 / 2) / T_holdout)  (Lo 2002, i.i.d.)"
@@ -50,6 +56,8 @@ class HoldoutInputs:
     holdout: ResultSummary
     # T: trading-day observations behind ``holdout.sharpe`` (the backtest's ``n_obs``).
     holdout_n_obs: int | None = None
+    # ``benchmark.regress`` of the holdout daily PnL on TX buy-and-hold (None: not computed).
+    benchmark: Mapping | None = None
 
 
 def sharpe_se(sharpe: float, n_obs: int) -> float:
@@ -63,6 +71,9 @@ def evaluate(inputs: HoldoutInputs, thresholds: Mapping) -> GateResult:
     min_trades = int(thresholds["holdout_min_trades"])
     require_pnl = bool(thresholds["holdout_pnl_positive"])
     z = thresholds.get("holdout_se_z")  # missing: frozen before criterion (b) existed -> off
+    require_alpha = bool(thresholds.get("holdout_alpha_positive", False))  # missing -> off
+    stats = dict(inputs.benchmark) if inputs.benchmark is not None else None
+    alpha = (stats or {}).get("alpha_twd_per_day")
     train, holdout = inputs.train, inputs.holdout
     named = [
         ("train.sharpe", train.sharpe),
@@ -72,6 +83,8 @@ def evaluate(inputs: HoldoutInputs, thresholds: Mapping) -> GateResult:
     ]
     if z is not None:
         named += [("thresholds.holdout_se_z", z), ("holdout.n_obs", inputs.holdout_n_obs)]
+    if require_alpha:
+        named += [("benchmark.alpha_twd_per_day", alpha)]
     bad = non_finite(named)
     if bad:
         return invalid(GATE, "non-finite inputs: " + ", ".join(bad))
@@ -94,6 +107,8 @@ def evaluate(inputs: HoldoutInputs, thresholds: Mapping) -> GateResult:
         "pnl_positive_required": require_pnl,
         "criteria": None,
         "passed_criterion": None,
+        "alpha_positive_required": require_alpha,
+        "benchmark": stats,
     }
     if train.sharpe <= 0:
         return failed(
@@ -157,11 +172,20 @@ def evaluate(inputs: HoldoutInputs, thresholds: Mapping) -> GateResult:
             f"holdout PnL {holdout.total_pnl_twd:,.0f}",
             report,
         )
+    alpha_phrase = f", {benchmark_phrase(stats)}" if stats is not None else ""
+    if require_alpha and not alpha > 0:
+        return failed(
+            GATE,
+            "holdout_alpha_not_positive",
+            f"holdout alpha {alpha:+,.0f} TWD/day <= 0 over TX buy-and-hold ({benchmark_phrase(stats)})",
+            f"holdout {benchmark_phrase(stats)}",
+            report,
+        )
     if decay_ok:
-        return passed(GATE, f"Sharpe decay {pct(decay)}", report)
+        return passed(GATE, f"Sharpe decay {pct(decay)}{alpha_phrase}", report)
     return passed(
         GATE,
-        f"decay {pct(decay)} but within {se_phrase}",
+        f"decay {pct(decay)} but within {se_phrase}{alpha_phrase}",
         report,
         reason=f"Sharpe decay {decay:.1%} > {decay_max:.0%}, but holdout Sharpe is within {se_phrase} of train",
     )
