@@ -7,6 +7,10 @@
   ``drift_bars`` bars (with the same noise on top).
 * :class:`RandomEntryFactory` -- a DSL v2 factory whose strategy enters at
   seeded pseudo-random bars in a random direction (the "random entry" control).
+* :class:`DriftOnlySource` + :func:`overnight_long_spec` -- the "pure beta"
+  control: no pattern at all, only an upward drift proportional to each move's
+  variance (so every holding period earns the same drift per unit of risk as
+  buy-and-hold), and a strategy that is long over every overnight gap.
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ class PlantedOrbSource:
         *,
         edge: bool = True,
         seed: int = 11,
+        drift_per_variance: float = 0.0,
         drift_points: float = 40.0,
         drift_bars: int = 12,
         or_bars: int = 6,
@@ -48,6 +53,8 @@ class PlantedOrbSource:
     ):
         self.edge = edge
         self.seed = seed
+        # expected move = drift_per_variance x its variance (points^2), gaps and bars alike
+        self.drift_per_variance = drift_per_variance
         self.drift_points = drift_points
         self.drift_bars = drift_bars
         self.or_bars = or_bars
@@ -66,7 +73,7 @@ class PlantedOrbSource:
         planted = 0
         for k, day in enumerate(days):
             vol = self.base_vol * (1.0 + 0.5 * math.sin(2.0 * math.pi * k / self.vol_cycle_days))
-            price += rng.normal(0.0, 3.0 * vol)  # overnight gap
+            price += rng.normal(self.drift_per_variance * (3.0 * vol) ** 2, 3.0 * vol)  # overnight gap
             noise = rng.normal(0.0, vol, DAY_BARS)
             o = np.empty(DAY_BARS)
             c = np.empty(DAY_BARS)
@@ -76,7 +83,7 @@ class PlantedOrbSource:
             or_high = or_low = None
             for i in range(DAY_BARS):
                 o[i] = price
-                step = noise[i]
+                step = noise[i] + self.drift_per_variance * vol**2
                 if left > 0:
                     step += direction * self.drift_points / self.drift_bars
                     left -= 1
@@ -133,6 +140,49 @@ def planted_orb_spec() -> dict:
         rule["risk"]["stop_loss"]["level"]["minutes"] = {"$param": "or_min"}
     doc["risk"]["take_profit"]["value"] = {"$param": "tp_r"}
     return doc
+
+
+class DriftOnlySource(PlantedOrbSource):
+    """No pattern, only buy-and-hold drift: ~50 points/day up (gap ~7, each 5m bar ~0.75 on average).
+
+    Drift per unit of variance is the same for every move, so any subset of
+    moves (e.g. only the overnight gaps) has zero alpha over buy-and-hold before
+    costs: beta = its share of the variance, expected PnL = beta x buy-and-hold.
+    """
+
+    def __init__(self, *, seed: int = 11, drift_per_variance: float = 0.03, **kwargs):
+        super().__init__(edge=False, seed=seed, drift_per_variance=drift_per_variance, **kwargs)
+
+
+def overnight_long_spec() -> dict:
+    """Long at the last day bar's close, out at the next day's first bar close; a wide disaster stop."""
+
+    return {
+        "dsl_version": 2,
+        "name": "overnight_long_pure_beta_control",
+        "symbol": "TX",
+        "market": "tw_futures",
+        "interval": "5m",
+        "params": {"sl_pts": {"type": "int", "low": 200, "high": 400, "step": 100, "default": 300}},
+        "risk": {
+            "stop_loss": {"type": "points", "value": {"$param": "sl_pts"}},
+            "max_trades_per_session": 1,
+            "close_on_session_change": False,
+        },
+        "rules": [
+            {
+                "id": "overnight_long",
+                "action": "long",
+                "condition": {"type": "time_window", "session": "day", "start": "13:45", "end": "13:45"},
+            },
+            {
+                "id": "morning_exit",
+                "action": "close",
+                "exit_side": "long",
+                "condition": {"type": "time_window", "session": "day", "start": "08:45", "end": "13:00"},
+            },
+        ],
+    }
 
 
 # ----------------------------------------------------------------- random entry
@@ -252,7 +302,7 @@ class StageChain:
             config_sha256=content_sha256(self.config),
             stage=stage.name,
             attempt=1,
-            upstream={name: self.results[name] for name in stage.requires},
+            upstream={name: self.results[name] for name in stage.upstream_names(self.config)},
             artifacts_root=self.root,
             trials=self.ledger,
             family=self.family,
@@ -303,11 +353,11 @@ def passing(name: str, requires: tuple[str, ...]):
 
 
 def stub_train_gates(**extra):
-    """Synthetic registry whose five train gates pass without looking (the real holdout stays)."""
+    """Synthetic registry whose train gates pass without looking (the real holdout stays)."""
 
     from poseidon.pipeline.plan import GATE_STAGES
 
-    stages = {name: passing(name, ("optimize",)) for name in GATE_STAGES[:4]}
+    stages = {name: passing(name, ("optimize",)) for name in GATE_STAGES[: GATE_STAGES.index("wfe")]}
     stages["wfe"] = passing("wfe", ("spec_validate", "optimize"))
     stages.update(extra)
     from tests.pipeline.conftest import synthetic_registry
@@ -348,7 +398,7 @@ def diagnose(sessions, run_id, stage_names, registry, *, artifacts_root=None) ->
     for name in stage_names:
         stage = registry[name]
         upstream = {}
-        for required in stage.requires:
+        for required in stage.upstream_names(run.config_json):
             row = latest[required]
             artifact = row.artifact_json or {}
             upstream[required] = UpstreamResult(
@@ -431,6 +481,18 @@ def gate_margins(reports: dict) -> dict:
                 "aggregate_oos_total_pnl_twd": g.get("aggregate_oos_total_pnl_twd"),
                 "per_window_wfe": [w.get("wfe") for w in g.get("windows") or []],
             }
+        elif name == "benchmark":
+            out[name] = {
+                "alpha_twd_per_day": g.get("alpha_twd_per_day"),
+                "alpha_t_hac": g.get("alpha_t_hac"),
+                "t_min": g.get("alpha_t_min"),
+                "beta": g.get("beta"),
+                "alpha_annualised_twd": g.get("alpha_annualised_twd"),
+                "strategy_total_pnl_twd": g.get("strategy_total_pnl_twd"),
+                "beta_scaled_benchmark_pnl_twd": g.get("beta_scaled_benchmark_pnl_twd"),
+                "time_in_market": g.get("time_in_market"),
+                "n_obs": g.get("n_obs"),
+            }
         elif name == "holdout":
             out[name] = {
                 "sharpe_decay": g.get("sharpe_decay"),
@@ -442,6 +504,11 @@ def gate_margins(reports: dict) -> dict:
                 "min_trades": g.get("min_trades"),
                 "passed_criterion": g.get("passed_criterion"),
                 "se_criterion": (g.get("criteria") or {}).get("se"),
+                "alpha": {
+                    key: (g.get("benchmark") or {}).get(key)
+                    for key in ("alpha_twd_per_day", "alpha_t_hac", "beta", "time_in_market")
+                },
+                "alpha_positive_required": g.get("alpha_positive_required"),
             }
         out[name]["summary"] = report.get("summary")
     return out

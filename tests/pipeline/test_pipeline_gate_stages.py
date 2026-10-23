@@ -96,10 +96,10 @@ def chain(tmp_path_factory):
 
 def test_default_plan_is_the_gate_order_then_shadow_paper():
     config = default_config(stage_plan=None, as_of=AS_OF)
-    assert config["version"] == CONFIG_VERSION == 4 and "gates" in config and "shadow_paper" in config
+    assert config["version"] == CONFIG_VERSION == 5 and "gates" in config and "shadow_paper" in config
     assert config["stage_plan"] == list(DEFAULT_STAGE_PLAN)
-    assert tuple(config["stage_plan"][4:10]) == GATE_STAGES
-    assert GATE_STAGES == ("param_stability", "dsr", "cost_stress", "regime_split", "wfe", "holdout")
+    assert tuple(config["stage_plan"][4:11]) == GATE_STAGES
+    assert GATE_STAGES == ("param_stability", "dsr", "cost_stress", "regime_split", "benchmark", "wfe", "holdout")
     assert V1_STAGE_PLAN[-2:] == ("shadow_paper", "awaiting_release")
     assert validate_stage_plan(list(DEFAULT_STAGE_PLAN), STAGE_REGISTRY) == list(DEFAULT_STAGE_PLAN)
 
@@ -110,6 +110,19 @@ def test_default_plan_is_the_gate_order_then_shadow_paper():
         ["spec_generate", "spec_validate", "backtest", "optimize", "holdout"],
         ["spec_generate", "spec_validate", "backtest", "optimize", "param_stability", "dsr", "cost_stress", "holdout"],
         ["spec_generate", "spec_validate", "backtest", "optimize", "wfe", "dsr"],  # out of order
+        # every train gate of a version-4 plan, but no benchmark: a new run needs it before holdout
+        [
+            "spec_generate",
+            "spec_validate",
+            "backtest",
+            "optimize",
+            "param_stability",
+            "dsr",
+            "cost_stress",
+            "regime_split",
+            "wfe",
+            "holdout",
+        ],
     ],
 )
 def test_holdout_needs_every_train_gate_first(plan):
@@ -168,7 +181,7 @@ def test_every_gate_report_carries_the_summary_line_and_the_full_gate_report(cha
 
 def test_gates_use_the_optimize_best_spec(chain):
     best_sha = chain.outputs["optimize"].report["best_spec_sha256"]
-    for name in ("param_stability", "dsr", "cost_stress", "regime_split", "holdout"):
+    for name in ("param_stability", "dsr", "cost_stress", "regime_split", "benchmark", "holdout"):
         assert chain.outputs[name].report["inputs"]["best_spec_sha256"] == best_sha
 
 

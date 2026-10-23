@@ -1,4 +1,4 @@
-"""The six validation gates (Step 3) as pure verdict functions.
+"""The validation gates (Step 3; ``benchmark`` from CONFIG_VERSION 5) as pure verdict functions.
 
 Each module exposes ``evaluate(inputs, thresholds) -> GateResult``; the stage
 wiring that runs the backtests and builds the inputs lives elsewhere.
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from poseidon.pipeline.gates import cost_stress, dsr, holdout, param_stability, regime_split, wfe
+from poseidon.pipeline.gates import benchmark, cost_stress, dsr, holdout, param_stability, regime_split, wfe
 from poseidon.pipeline.gates.base import GateResult
 
 GATES: dict[str, Callable[..., GateResult]] = {
@@ -18,6 +18,7 @@ GATES: dict[str, Callable[..., GateResult]] = {
     dsr.GATE: dsr.evaluate,
     param_stability.GATE: param_stability.evaluate,
     regime_split.GATE: regime_split.evaluate,
+    benchmark.GATE: benchmark.evaluate,
 }
 
 

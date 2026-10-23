@@ -1,11 +1,12 @@
-"""The six validation gates wired as pipeline stages (Step 3b).
+"""The validation gates wired as pipeline stages (Step 3b).
 
 Order (``plan.V1_STAGE_PLAN``): param_stability -> dsr -> cost_stress ->
-regime_split -> wfe -> holdout. Cheap ledger-only gates run first, then the
-gates that re-run the strategy on the train part, and the locked holdout is
-looked at exactly once, last, only for a candidate that passed everything on
-train (``holdout`` requires the five train gates, and a gate ``fail`` closes
-the run).
+regime_split -> benchmark -> wfe -> holdout. Cheap ledger-only gates run
+first, then the gates that re-run the strategy on the train part, and the
+locked holdout is looked at exactly once, last, only for a candidate that
+passed everything on train (``holdout`` requires every train gate, and a gate
+``fail`` closes the run). ``benchmark`` exists from CONFIG_VERSION 5; runs
+frozen at 4 keep their plan without it (``plan.STAGE_INTRODUCED_AT``).
 
 Every gate consumes the optimize artifact's concrete ``best_spec`` (and its
 best trial's metrics). Each stage report is::
@@ -33,11 +34,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
 
+import numpy as np
 import pandas as pd
 
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
 from poseidon.pipeline import gates
-from poseidon.pipeline.gates import cost_stress, dsr, holdout, param_stability, regime_split, wfe
+from poseidon.pipeline.gates import benchmark, cost_stress, dsr, holdout, param_stability, regime_split, wfe
 from poseidon.pipeline.gates.base import CostBreakdown, GateResult, ResultSummary, Trade, failed, invalid
 from poseidon.pipeline.plan import GATE_STAGES, GATES_CONFIG_VERSION
 from poseidon.pipeline.spec_validation import V2_REQUIRED
@@ -46,6 +48,7 @@ from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.window import MARKET_TZ, SPLIT_LOCAL_TIME, DataWindow
 
 GATES_CONFIG_MISSING = "run config predates Step 3 (no frozen gate settings); create a new run"
+BENCHMARK_CONFIG_MISSING = "run config predates the benchmark gate (config version < 5); create a new run"
 WIRING_VERSION = 1  # part of every gate stage's input hash
 
 
@@ -162,6 +165,128 @@ def daily_bars(frame: pd.DataFrame) -> pd.DataFrame:
     )
     daily.index = [stamp.date() for stamp in daily.index]
     return daily
+
+
+DEFAULT_HAC_LAGS = 5
+BUY_AND_HOLD = (
+    "TX buy-and-hold: contracts x point value x (day-session close - previous trading day's close) per trading "
+    "day (night session -> next day session), no costs; the first day with no earlier close uses close - open. "
+    "Thalassa TX is the Shioaji R1 near-month series, unadjusted: a contract roll is a price jump inside the "
+    "series, seen alike by the strategy (when it holds across it) and by buy-and-hold"
+)
+
+
+def buy_and_hold_daily(frame: pd.DataFrame, *, point_value: float, contracts: float) -> pd.Series:
+    """TX buy-and-hold PnL (TWD) per trading day of ``frame``, indexed by that date (see ``BUY_AND_HOLD``)."""
+
+    daily = daily_bars(frame)
+    close = daily["close"].astype(float)
+    pnl = close.diff()
+    if len(pnl):
+        pnl.iloc[0] = close.iloc[0] - float(daily["open"].iloc[0])
+    return pnl * float(point_value) * float(contracts)
+
+
+def daily_series(daily: pd.DataFrame) -> pd.Series:
+    """``pnl_twd`` of a ``daily_pnl`` frame (or its csv), indexed by trading-day date."""
+
+    series = daily["pnl_twd"].astype(float)
+    series.index = [pd.Timestamp(day).date() for day in daily.index]
+    return series
+
+
+def parse_daily(data: bytes) -> pd.DataFrame:
+    return pd.read_csv(io.BytesIO(data), index_col="trading_day")
+
+
+def align_daily(strategy: pd.Series, benchmark: pd.Series) -> tuple[pd.Series, pd.Series, dict]:
+    """Both series on their common trading days, plus what was dropped."""
+
+    common = sorted(set(strategy.index) & set(benchmark.index))
+    info = {
+        "days": len(common),
+        "first": common[0].isoformat() if common else None,
+        "last": common[-1].isoformat() if common else None,
+        "strategy_only_days": len(set(strategy.index) - set(common)),
+        "benchmark_only_days": len(set(benchmark.index) - set(common)),
+    }
+    return strategy.loc[common], benchmark.loc[common], info
+
+
+def time_in_market(trades: list[Trade], index: pd.DatetimeIndex) -> float | None:
+    """Share of the bars in ``index`` (sorted) at which a position was open (entry <= bar < exit)."""
+
+    if not len(index):
+        return None
+    stamps = index.asi8
+    held = 0
+    for trade in trades:
+        entry = pd.Timestamp(trade.entry_time)
+        exit_ = pd.Timestamp(trade.exit_time)
+        entry = entry.tz_localize("UTC") if entry.tzinfo is None else entry.tz_convert("UTC")
+        exit_ = exit_.tz_localize("UTC") if exit_.tzinfo is None else exit_.tz_convert("UTC")
+        held += int(np.searchsorted(stamps, exit_.value, "left") - np.searchsorted(stamps, entry.value, "left"))
+    return held / len(index)
+
+
+def benchmark_series(ctx, frame: pd.DataFrame, daily: pd.DataFrame, trades: list[Trade], *, from_day=None) -> dict:
+    """The strategy's daily PnL and TX buy-and-hold over ``frame``'s trading days, aligned.
+
+    ``from_day`` drops earlier (warm-up) days after the buy-and-hold diff, so the
+    first evaluated day still uses the previous close. Returns ``strategy`` and
+    ``benchmark`` (aligned Series), ``time_in_market`` and ``provenance``.
+    """
+
+    from poseidon.backtest.cost_model import get_cost_model
+
+    backtest = ctx.config["backtest"]
+    point_value = float(get_cost_model(backtest["cost_model"]).point_value)
+    contracts = float(backtest["sizing"]["contracts"])
+    lags = int(((ctx.config.get("gates") or {}).get("benchmark") or {}).get("hac_lags", DEFAULT_HAC_LAGS))
+    annualisation = float(backtest["sharpe"]["annualisation_factor"])
+    bh = buy_and_hold_daily(frame, point_value=point_value, contracts=contracts)
+    strategy = daily_series(daily)
+    evaluated = frame.index
+    if from_day is not None:
+        bh = bh[[day >= from_day for day in bh.index]]
+        strategy = strategy[[day >= from_day for day in strategy.index]]
+        evaluated = frame.index[trading_day_dates(frame.index) >= from_day]
+    y, x, alignment = align_daily(strategy, bh)
+    return {
+        "strategy": y,
+        "benchmark": x,
+        "time_in_market": time_in_market(trades, evaluated),
+        "provenance": {
+            "buy_and_hold": BUY_AND_HOLD,
+            "point_value_twd": point_value,
+            "contracts": contracts,
+            "hac_lags": lags,
+            "annualisation_factor": annualisation,
+            "alignment": alignment,
+            "time_in_market": "share of the evaluated 5m bars with a position open (entry <= bar < exit)",
+        },
+    }
+
+
+def benchmark_stats(ctx, frame, daily, trades, *, from_day=None) -> tuple[dict, dict]:
+    """``benchmark.regress`` (plus ``time_in_market``) of ``benchmark_series``; returns (stats, provenance)."""
+
+    series = benchmark_series(ctx, frame, daily, trades, from_day=from_day)
+    provenance = series["provenance"]
+    stats = benchmark.regress(
+        series["strategy"].to_numpy(),
+        series["benchmark"].to_numpy(),
+        lags=provenance["hac_lags"],
+        annualisation=provenance["annualisation_factor"],
+    )
+    stats["time_in_market"] = series["time_in_market"]
+    return stats, provenance
+
+
+def trading_day_dates(index: pd.DatetimeIndex) -> np.ndarray:
+    from poseidon.pipeline.backtesting import trading_days
+
+    return np.array([stamp.date() for stamp in trading_days(index)])
 
 
 def annualised_return(metrics: dict, capital: float) -> float | None:
@@ -415,6 +540,56 @@ class RegimeSplitStage(GateStage):
         return to_stage_result(result, inputs)
 
 
+class BenchmarkStage(GateStage):
+    """Gate 7: alpha of the best spec's train daily PnL over TX buy-and-hold (OLS, HAC t)."""
+
+    name = "benchmark"
+    lease_seconds = 600
+
+    def evaluate(self, ctx, optimize):
+        from poseidon.pipeline.backtesting import trades_csv
+        from poseidon.pipeline.plan import BENCHMARK_CONFIG_VERSION, config_version
+
+        settings = ctx.config["gates"].get("benchmark")
+        if config_version(ctx.config) < BENCHMARK_CONFIG_VERSION or not isinstance(settings, dict):
+            return StageResult.unsupported(BENCHMARK_CONFIG_MISSING)
+        bars = self.bars(ctx, "train")
+        upstream = ctx.upstream["optimize"]
+        daily_data = read_upstream_file(upstream, "best_daily_pnl.csv")
+        trades_data = read_upstream_file(upstream, "best_trades.csv")
+        source = "optimize best_daily_pnl.csv + best_trades.csv (sha256-verified)"
+        if daily_data is None or trades_data is None:
+            outcome = self.backtest_spec(ctx, optimize["best_spec"], bars.frame)
+            daily_data, trades_data = daily_csv_bytes(outcome.daily), trades_csv(outcome.trades)
+            source = "re-run of best_spec on the train part"
+        series = benchmark_series(ctx, bars.frame, parse_daily(daily_data), parse_trades(trades_data))
+        provenance = series["provenance"]
+        result = benchmark.evaluate(
+            benchmark.BenchmarkInputs(
+                strategy_daily=series["strategy"].to_numpy(),
+                benchmark_daily=series["benchmark"].to_numpy(),
+                hac_lags=provenance["hac_lags"],
+                annualisation_factor=provenance["annualisation_factor"],
+                time_in_market=series["time_in_market"],
+            ),
+            ctx.config["thresholds"],
+        )
+        inputs = {
+            **self.best_source(optimize),
+            "daily_source": source,
+            "train_metrics": headline_metrics(optimize["best"].get("metrics") or {}),
+            "data": bars.provenance(),
+            **provenance,
+        }
+        return to_stage_result(result, inputs)
+
+
+def daily_csv_bytes(daily: pd.DataFrame) -> bytes:
+    from poseidon.pipeline.backtesting import daily_csv
+
+    return daily_csv(daily)
+
+
 class WfeStage(GateStage):
     """Gate 1: rolling walk-forward with per-window re-optimisation on the train part.
 
@@ -588,7 +763,8 @@ class HoldoutStage(GateStage):
     """Gate 2: train vs locked holdout of the best spec. The only reader of holdout bars."""
 
     name = "holdout"
-    requires = ("optimize", "param_stability", "dsr", "cost_stress", "regime_split", "wfe")
+    # ``benchmark`` only for runs frozen at CONFIG_VERSION >= 5 (BaseStage.upstream_names).
+    requires = ("optimize", "param_stability", "dsr", "cost_stress", "regime_split", "benchmark", "wfe")
 
     def evaluate(self, ctx, optimize):
         from poseidon.pipeline.backtesting import daily_csv, trades_csv
@@ -614,11 +790,18 @@ class HoldoutStage(GateStage):
         frame = pd.concat([train.frame[train.frame.index >= holdout_from - warmup], held.frame])
         outcome = self.backtest_spec(ctx, optimize["best_spec"], frame, trade_from=holdout_from)
         base_metrics = optimize["best"].get("metrics") or {}
+        from poseidon.pipeline.backtesting import trading_days
+
+        first_day = trading_days(pd.DatetimeIndex([pd.Timestamp(holdout_from)]))[0].date()
+        stats, provenance = benchmark_stats(
+            ctx, frame, outcome.daily, parse_trades(trades_csv(outcome.trades)), from_day=first_day
+        )
         result = holdout.evaluate(
             holdout.HoldoutInputs(
                 train=summary_from_metrics(base_metrics),
                 holdout=summary_from_metrics(outcome.metrics),
                 holdout_n_obs=outcome.metrics.get("n_obs"),
+                benchmark=stats,
             ),
             ctx.config["thresholds"],
         )
@@ -632,6 +815,7 @@ class HoldoutStage(GateStage):
                 "days": int(ctx.config["gates"]["warmup_days"]),
                 "note": "train bars before the split warm features up; no entries before the split",
             },
+            "benchmark": {**provenance, "first_day": first_day.isoformat()},
             "family_holdout_evaluations": {
                 **prior,
                 "policy": ctx.config["gates"]["holdout"]["family_reuse"],
@@ -642,7 +826,15 @@ class HoldoutStage(GateStage):
         return to_stage_result(result, inputs, files)
 
 
-GATE_STAGE_CLASSES = (ParamStabilityStage, DsrStage, CostStressStage, RegimeSplitStage, WfeStage, HoldoutStage)
+GATE_STAGE_CLASSES = (
+    ParamStabilityStage,
+    DsrStage,
+    CostStressStage,
+    RegimeSplitStage,
+    BenchmarkStage,
+    WfeStage,
+    HoldoutStage,
+)
 
 
 def build_gate_stages(*, data_source=None, strategy_factory=None) -> dict:

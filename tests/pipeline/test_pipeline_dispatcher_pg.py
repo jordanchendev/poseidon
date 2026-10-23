@@ -175,7 +175,7 @@ def test_a_passing_holdout_continues_into_a_waiting_shadow_paper(pipeline_sessio
     from poseidon.pipeline.plan import GATE_STAGES, V1_STAGE_PLAN
     from tests.pipeline.gate_support import passing, stub_train_gates
 
-    registry = stub_train_gates(holdout=passing("holdout", ("optimize", *GATE_STAGES[:5])))
+    registry = stub_train_gates(holdout=passing("holdout", ("optimize", *GATE_STAGES[:-1])))
     harness = Harness(pipeline_sessions, tmp_path, clock, registry=registry)
     run_id = harness.create(stage_plan=list(V1_STAGE_PLAN))
     harness.drain()
@@ -183,7 +183,7 @@ def test_a_passing_holdout_continues_into_a_waiting_shadow_paper(pipeline_sessio
     assert run.config_json["stage_plan"][-1] == "awaiting_release"
     assert (run.status, run.current_stage) == ("waiting", "shadow_paper")
     attempts = harness.attempts(run_id)
-    assert [row.verdict for row in attempts] == ["pass"] * 10 + [None]
+    assert [row.verdict for row in attempts] == ["pass"] * (len(V1_STAGE_PLAN) - 2) + [None]
     paper = attempts[-1]
     assert paper.status == "waiting" and paper.wait_until > clock.now
     assert paper.artifact_json["report"]["status"] == "waiting"  # a waiting attempt carries its progress report

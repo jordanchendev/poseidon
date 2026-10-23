@@ -42,12 +42,14 @@ def with_thresholds(**overrides):
 
 
 def test_registry_and_frozen_thresholds():
-    assert list(GATES) == ["wfe", "holdout", "cost_stress", "dsr", "param_stability", "regime_split"]
+    assert list(GATES) == ["wfe", "holdout", "cost_stress", "dsr", "param_stability", "regime_split", "benchmark"]
     expected = {
         "wfe_min": 0.5,
         "holdout_sharpe_decay_max": 0.5,
         "holdout_min_trades": 20,
         "holdout_se_z": 1.96,
+        "benchmark_alpha_t_min": 1.0,
+        "holdout_alpha_positive": True,
         "cost_stress_multiplier": 2.0,
         "dsr_min": 0.95,
         "dsr_min_obs": 30,
@@ -107,12 +109,17 @@ def summary(pnl=10_000.0, sharpe=1.0, trades=40, costs=None):
 
 
 # Criterion (b): holdout_sharpe >= train_sharpe - z * sqrt((1 + holdout_sharpe^2 / 2) / T).
-# DECAY_ONLY: the thresholds of a run frozen before ``holdout_se_z`` existed.
-DECAY_ONLY = {key: value for key, value in T.items() if key != "holdout_se_z"}
+# DECAY_ONLY: the thresholds of a run frozen before ``holdout_se_z`` existed (so also before the alpha keys).
+NEWER_KEYS = ("holdout_se_z", "holdout_alpha_positive", "benchmark_alpha_t_min")
+DECAY_ONLY = {key: value for key, value in T.items() if key not in NEWER_KEYS}
 
 
-def inputs(train, held, n_obs=348):
-    return holdout.HoldoutInputs(train, held, n_obs)
+# A positive holdout alpha over buy-and-hold (new runs require one: holdout_alpha_positive).
+ALPHA_OK = {"alpha_twd_per_day": 500.0, "alpha_t_hac": 2.0, "beta": 0.3}
+
+
+def inputs(train, held, n_obs=348, benchmark=ALPHA_OK):
+    return holdout.HoldoutInputs(train, held, n_obs, benchmark)
 
 
 def test_holdout_pass_and_trade_boundary():
@@ -174,7 +181,8 @@ def test_holdout_sharpe_se_is_lo_2002():
 def test_holdout_decay_pass_reports_both_criteria():
     # Large Sharpe: decay passes while the gap is far beyond z * SE.
     result = check(held_out(2.0, 1.5), "pass", "pass")
-    assert result.report["passed_criterion"] == "decay" and summary_line(result) == "holdout ✅ Sharpe decay 25%"
+    assert result.report["passed_criterion"] == "decay"
+    assert summary_line(result) == "holdout ✅ Sharpe decay 25%, alpha +500/day (t 2.00), beta 0.30"
     se = result.report["criteria"]["se"]
     assert se["enabled"] and not se["passed"] and se["n_obs"] == 348 and se["z"] == 1.96
     # Small Sharpe: both pass; decay is reported as the deciding criterion.
@@ -190,7 +198,9 @@ def test_holdout_decay_fail_but_within_se_passes():
     assert result.report["passed_criterion"] == "se" and not result.report["criteria"]["decay"]["passed"]
     assert se["se"] == pytest.approx(0.053619, abs=1e-6) and se["delta"] == pytest.approx(0.102)
     assert se["allowed_delta"] == pytest.approx(1.96 * se["se"]) and se["margin"] == pytest.approx(0.003094, abs=1e-6)
-    assert summary_line(result) == "holdout ✅ decay 76% but within 1.96·SE (Δ 0.102 ≤ 0.105)"
+    assert summary_line(result) == (
+        "holdout ✅ decay 76% but within 1.96·SE (Δ 0.102 ≤ 0.105), alpha +500/day (t 2.00), beta 0.30"
+    )
 
 
 def test_holdout_both_criteria_fail():
@@ -231,6 +241,50 @@ def test_holdout_without_se_z_keeps_decay_only_behaviour():
     }
     # n_obs is not needed for decay-only runs (the inputs of runs frozen before the key).
     check(holdout.evaluate(holdout.HoldoutInputs(summary(sharpe=2.0), summary(sharpe=1.5)), DECAY_ONLY), "pass", "pass")
+
+
+# Runs frozen before CONFIG_VERSION 5 (e.g. run #6) have neither holdout_alpha_positive nor holdout_se_z.
+NO_ALPHA = DECAY_ONLY
+
+
+def test_holdout_requires_positive_alpha_last():
+    negative = {"alpha_twd_per_day": -1.0, "alpha_t_hac": -0.1, "beta": 0.9}
+    result = check(
+        holdout.evaluate(inputs(summary(sharpe=2.0), summary(sharpe=1.5), benchmark=negative), T),
+        "fail",
+        "holdout_alpha_not_positive",
+    )
+    assert result.report["alpha_positive_required"] and result.report["benchmark"] == negative
+    assert summary_line(result) == "holdout ❌ holdout alpha -1/day (t -0.10), beta 0.90"
+    zero = {**negative, "alpha_twd_per_day": 0.0}
+    check(
+        holdout.evaluate(inputs(summary(sharpe=2.0), summary(sharpe=1.5), benchmark=zero), T),
+        "fail",
+        "holdout_alpha_not_positive",
+    )
+    # the earlier criteria still decide first
+    check(
+        holdout.evaluate(inputs(summary(), summary(pnl=0.0), benchmark=negative), T), "fail", "holdout_not_profitable"
+    )
+    check(holdout.evaluate(inputs(summary(), summary(trades=3), benchmark=negative), T), "fail", "insufficient_trades")
+
+
+@pytest.mark.parametrize("benchmark", [None, {"alpha_twd_per_day": None, "alpha_t_hac": None, "beta": None}])
+def test_holdout_alpha_required_but_missing_fails_closed(benchmark):
+    check(holdout.evaluate(inputs(summary(), summary(), benchmark=benchmark), T), "fail", "invalid_input")
+
+
+def test_holdout_without_alpha_key_reports_alpha_but_does_not_gate():
+    negative = {"alpha_twd_per_day": -2_000.0, "alpha_t_hac": -1.5, "beta": 1.1}
+    result = check(
+        holdout.evaluate(inputs(summary(sharpe=2.0), summary(sharpe=1.5), benchmark=negative), NO_ALPHA), "pass", "pass"
+    )
+    assert result.report["alpha_positive_required"] is False and result.report["benchmark"] == negative
+    assert summary_line(result) == "holdout ✅ Sharpe decay 25%, alpha -2,000/day (t -1.50), beta 1.10"
+    legacy = check(
+        holdout.evaluate(inputs(summary(sharpe=2.0), summary(sharpe=1.5), benchmark=None), NO_ALPHA), "pass", "pass"
+    )
+    assert legacy.report["benchmark"] is None and summary_line(legacy) == "holdout ✅ Sharpe decay 25%"
 
 
 @pytest.mark.parametrize(

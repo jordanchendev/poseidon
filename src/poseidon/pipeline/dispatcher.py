@@ -32,7 +32,7 @@ from poseidon.decision_loop.manifest import content_sha256
 from poseidon.pipeline import artifacts
 from poseidon.pipeline.family import DbFamily
 from poseidon.pipeline.models import PipelineEvent, PipelineRun, StageRun
-from poseidon.pipeline.plan import completion_reason
+from poseidon.pipeline.plan import completion_reason, config_version, requires_for
 from poseidon.pipeline.stages import (
     STAGE_REGISTRY,
     StageContext,
@@ -75,6 +75,11 @@ def latest_attempts(attempts) -> dict[str, StageRun]:
         if row.stage not in latest or row.attempt > latest[row.stage].attempt:
             latest[row.stage] = row
     return latest
+
+
+def upstream_names(stage, config) -> tuple[str, ...]:
+    names = getattr(stage, "upstream_names", None)
+    return names(config) if names is not None else requires_for(stage.requires, config_version(config))
 
 
 def select_next_stage(stage_plan, attempts) -> tuple[str | None, StageRun | None]:
@@ -229,7 +234,7 @@ class PipelineDispatcher:
                     session, run, now, f"stage {stage_name} attempt {latest.attempt} ended {latest.verdict}"
                 )
 
-            upstream = self._upstream(attempts, stage)
+            upstream = self._upstream(attempts, stage, run.config_json)
             own = sorted((r for r in attempts if r.stage == stage_name), key=lambda r: r.attempt, reverse=True)
             starts = [r.started_at for r in own if r.started_at is not None]
             stored = next((r for r in own if r.artifact_json is not None), None)
@@ -289,10 +294,11 @@ class PipelineDispatcher:
                 {},
             )
 
-    def _upstream(self, attempts, stage) -> dict[str, UpstreamResult]:
+    def _upstream(self, attempts, stage, config) -> dict[str, UpstreamResult]:
         latest = latest_attempts(attempts)
-        # validate_stage_plan guarantees a passing attempt exists for each
-        return {name: self._as_upstream(latest[name]) for name in stage.requires}
+        # validate_stage_plan guarantees a passing attempt exists for each (as of the
+        # run's config version: a stage added later is not required by older runs)
+        return {name: self._as_upstream(latest[name]) for name in upstream_names(stage, config)}
 
     @staticmethod
     def _as_upstream(row: StageRun) -> UpstreamResult:

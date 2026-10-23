@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import ClassVar, Protocol
 
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
-from poseidon.pipeline.plan import V1_STAGE_PLAN
+from poseidon.pipeline.plan import V1_STAGE_PLAN, config_version, requires_for
 from poseidon.pipeline.spec_validation import V2_REQUIRED, get_spec_validator
 from poseidon.pipeline.state import Verdict
 
@@ -119,11 +119,16 @@ class BaseStage:
     lease_seconds: ClassVar[int] = 300
     max_auto_attempts: ClassVar[int] = 2
 
+    def upstream_names(self, config) -> tuple[str, ...]:
+        """``requires`` as of the run's frozen config version (stages added later are left out)."""
+
+        return requires_for(self.requires, config_version(config))
+
     def input_payload(self, ctx: StageContext) -> dict:
         return {
             "stage": self.name,
             "config_sha256": ctx.config_sha256,
-            "upstream": {name: ctx.upstream[name].artifact_sha256 for name in self.requires},
+            "upstream": {name: ctx.upstream[name].artifact_sha256 for name in self.upstream_names(ctx.config)},
         }
 
     def run(self, ctx: StageContext) -> StageResult:  # pragma: no cover - interface
