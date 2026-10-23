@@ -325,11 +325,16 @@ def test_every_trial_is_in_the_ledger_and_the_best_spec_is_concrete(tmp_path):
     assert result.verdict == Verdict.PASS, result.reason
     report = result.report
     records = pipeline.ledger.records
-    assert report["n_trials"] == len(records) == 6  # the whole 2 x 3 grid, defaults first
+    assert report["n_trials_by_source"]["search"] == 6  # the whole 2 x 3 grid, defaults first
+    assert (
+        report["n_trials"]
+        == len(records)
+        == 6 + report["edge_extension"]["n_trials"] + (report["n_trials_by_source"]["neighbour"])
+    )
     assert report["search"]["stopped_because"] in {"grid_exhausted", "grid_filled"}
     assert records[0].params == {"or_min": 30, "tp_r": 2.0}
-    assert [record.trial_no for record in records] == list(range(1, 7))
-    assert len({record.params_sha256 for record in records}) == 6
+    assert [record.trial_no for record in records] == list(range(1, len(records) + 1))
+    assert len({record.params_sha256 for record in records}) == len(records)
     window = pipeline.results["backtest"].report["data"]["window_sha256"]
     assert {record.window_sha256 for record in records} == {window}
     complete = [record for record in records if record.state == "complete"]
@@ -359,7 +364,8 @@ def test_failed_trials_are_recorded_too(tmp_path, monkeypatch):
     pipeline = _optimize(tmp_path, tx_spec())
     report = pipeline.outputs["optimize"][0].report
     states = [record.state for record in pipeline.ledger.records]
-    assert states.count("fail") == 2 and len(states) == report["n_trials"] == 6
+    assert states.count("fail") == 2 and len(states) == report["n_trials"]
+    assert report["n_trials_by_source"]["search"] == 6
     assert report["n_trials_by_state"]["fail"] == 2
     failed = [record for record in pipeline.ledger.records if record.state == "fail"]
     assert all(record.sharpe is None and record.params["tp_r"] == 1.5 for record in failed)
@@ -386,7 +392,9 @@ def test_missing_one_step_neighbours_of_the_best_are_evaluated(tmp_path):
         else:
             assert row["trial_no"] is None
     assert report["n_trials"] == len(pipeline.ledger.records) == len(evaluated)
-    assert report["n_trials_by_source"]["neighbour"] == report["n_trials"] - 3
+    assert report["n_trials_by_source"]["neighbour"] + report["n_trials_by_source"]["edge_extension"] == (
+        report["n_trials"] - 3
+    )
 
 
 def test_a_hand_written_spec_without_params_fails_spec_validate():
