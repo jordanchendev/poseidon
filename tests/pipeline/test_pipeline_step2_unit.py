@@ -26,6 +26,7 @@ from poseidon.pipeline.stages import (
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.trials import MemoryTrialLedger
 from poseidon.pipeline.window import MARKET_TZ, HoldoutLockedError, holdout_split, require_part
+from poseidon.strategies.dsl.v2 import validate_v2
 from poseidon.strategies.dsl.v2.examples import tx_orb30_day
 from tests.pipeline.conftest import STEP2_PLAN, SyntheticTxSource, orb_template, tx_spec, tx_v1_spec
 
@@ -336,7 +337,7 @@ def test_every_trial_is_in_the_ledger_and_the_best_spec_is_concrete(tmp_path):
     assert report["best"]["params"] == best.params and report["best"]["trial_no"] == best.trial_no
     best_spec = report["best_spec"]
     assert "$param" not in str(best_spec) and best_spec["risk"]["take_profit"]["value"] == best.params["tp_r"]
-    assert DslV2Validator().validate_spec(best_spec).ok
+    validate_v2(best_spec)  # concrete and DSL-valid (no $param left, so not itself a pipeline input spec)
     # Trial 1 is the defaults: identical to the backtest stage's numbers.
     assert records[0].sharpe == pipeline.results["backtest"].report["metrics"]["sharpe_daily"]
     trials = result.files["trials.json"]
@@ -409,8 +410,6 @@ def _five_params() -> dict:
 
 
 def test_more_than_four_params_fail_spec_validate():
-    from poseidon.strategies.dsl.v2 import validate_v2
-
     spec = _five_params()
     assert len(validate_v2(spec).params) == 5  # the DSL itself allows it; the pipeline does not
     result = _validated(spec)
