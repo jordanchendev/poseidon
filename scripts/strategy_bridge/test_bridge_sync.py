@@ -20,8 +20,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent / "strategy_scout"))  # repo layout
+sys.path.insert(0, str(HERE.parent / "scout-bin"))  # deployed: ~/strategy-pipeline/{bridge,scout-bin}
 
 import bridge_sync as bs  # noqa: E402
+import test_scout  # noqa: E402  (ScoutFixture: the real scout.propose with fake LLM / API)
 
 KEY = "sentinel-key-" + "x" * 30
 IDEA = "台指期夜盤前一日高低點反轉：價格突破前一日日盤高點後跌回高點下方做空，跌破低點後站回做多，停損 30 點"
@@ -58,8 +61,9 @@ class FakeApi:
         if method == "POST":
             assert path == "/api/v1/pipelines"
             self.posts += 1
-            assert set(body) == {"idea_text", "source"} and body["source"] == "telegram"
+            assert set(body) == {"idea_text", "source"} and body["source"] in ("telegram", "scout")
             key = headers["Idempotency-Key"]
+            assert body["source"] != "scout" or key.startswith("scout-proposal-"), key
             if key in self.by_key:
                 return 201, dict(self.runs[self.by_key[key]], status="queued")  # replayed create response
             run_id = str(uuid.uuid4())
@@ -67,6 +71,7 @@ class FakeApi:
                 "id": run_id,
                 "run_no": len(self.runs) + 10,
                 "idea_text": body["idea_text"],
+                "source": body["source"],
                 "status": "queued",
                 "created_at": "2026-10-23T09:00:00+00:00",
                 "finished_at": None,
@@ -132,6 +137,7 @@ class FakeBridge:
 
     def __init__(self):
         self.ideas: dict[str, dict] = {}
+        self.proposals: dict[str, dict] = {}  # batch -> {"items", "text", "sent"}
         self.sent: list[tuple[str, str, str]] = []
         self.fail = {}  # verb -> number of upcoming calls that fail with exit 1
         self.calls = []
@@ -146,6 +152,13 @@ class FakeBridge:
             "notified": {},
         }
 
+    def accept(self, batch, *numbers, text=None):
+        """What strategy_ideas.py accept does on macminim4: queue the proposal's idea_text under its id."""
+        for n in numbers:
+            item = self.proposals[batch]["items"][n - 1]
+            self.add(item["id"], text=item["idea_text"] if text is None else text)
+            self.ideas[item["id"]]["source"] = "scout"
+
     def __call__(self, cmd, input="", capture_output=True, text=True, timeout=None):
         assert cmd[:2] == ["ssh", "research-bridge"], cmd
         verb, args = cmd[2], cmd[3:]
@@ -153,6 +166,22 @@ class FakeBridge:
         if self.fail.get(verb):
             self.fail[verb] -= 1
             return types.SimpleNamespace(returncode=1, stdout="", stderr="telegram send failed")
+        if verb == "strategy-proposals":
+            batch, payload = args[0], json.loads(input)
+            assert payload["batch"] == batch and isinstance(payload["text"], str)
+            for n in range(1, len(payload["proposals"]) + 1):
+                if f"\n{n}. " not in "\n" + payload["text"]:
+                    return types.SimpleNamespace(returncode=2, stdout="", stderr=f"message does not show number {n}")
+            known = self.proposals.get(batch)
+            if known:
+                if known["items"] != payload["proposals"]:
+                    return types.SimpleNamespace(
+                        returncode=2, stdout="", stderr="batch recorded with different proposals"
+                    )
+                return types.SimpleNamespace(returncode=0, stdout=json.dumps({"duplicate": True}), stderr="")
+            self.proposals[batch] = {"items": payload["proposals"], "text": payload["text"]}
+            self.sent.append((batch, "proposals", payload["text"]))
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps({"telegram_sent": True}), stderr="")
         if verb == "strategy-pending":
             keep = ("id", "text", "source", "created_at")
             rows = [{k: r[k] for k in keep} for r in self.ideas.values() if r["status"] == "accepted"]
@@ -225,8 +254,13 @@ class Harness:
         key = root / "api.key"
         key.write_text(KEY + "\n")
         key.chmod(0o600)
+        self.scout = test_scout.ScoutFixture(root / "scout-host")
         self.cfg = dict(
-            bs.DEFAULTS, key_file=str(key), state_dir=str(root / "state"), log_file=str(root / "bridge.log")
+            bs.DEFAULTS,
+            key_file=str(key),
+            state_dir=str(root / "state"),
+            log_file=str(root / "bridge.log"),
+            scout_dir=self.scout.cfg["state_dir"],
         )
         self.api, self.bridge = FakeApi(), FakeBridge()
         self.log = bs.Logger(self.cfg["log_file"], echo=False)
@@ -667,6 +701,165 @@ class SafetyTests(unittest.TestCase):
             p.write_text(json.dumps({"kairos_base_url": "https://k"}))
             cfg = bs.load_config(str(p))
         self.assertEqual((cfg["kairos_base_url"], cfg["api_base"]), ("https://k", "http://127.0.0.1:8011"))
+
+
+SCOUT_NOW = datetime.datetime(2026, 10, 23, 7, 30, tzinfo=test_scout.scout.TZ)  # batch 20261023
+
+
+class ScoutBridgeTests(unittest.TestCase):
+    """scout.propose (real, fake LLM) -> bridge deliver -> 「接受策略 N」 on macminim4 (FakeBridge) -> runs."""
+
+    def setUp(self):
+        self.h = Harness(self)
+        self.assertEqual(self.h.scout.propose(SCOUT_NOW), 0, self.h.scout.lines)
+        self.ids = [r["id"] for r in self.h.scout.proposals()]
+
+    def deliveries(self):
+        return [b for b, e, _ in self.h.bridge.sent if e == "proposals"]
+
+    def test_batch_is_delivered_exactly_once(self):
+        h = self.h
+        for _ in range(3):
+            self.assertEqual(h.sync(), 0)
+        self.assertEqual(self.deliveries(), ["20261023"])
+        delivered = h.bridge.proposals["20261023"]
+        self.assertEqual([i["id"] for i in delivered["items"]], self.ids)
+        self.assertEqual(delivered["items"][0]["idea_text"], test_scout.IDEAS[0]["idea_text"])
+        self.assertTrue(delivered["text"].startswith("策略 scout 提案 2026-10-23（3 則）"))
+        self.assertEqual(sum(c[0] == "strategy-proposals" for c in h.bridge.calls), 1)  # local marker saves calls
+        marker = json.loads((Path(h.cfg["state_dir"]) / "delivered" / "20261023").read_text())
+        self.assertEqual(marker["ids"], self.ids)
+        # Lost local marker (crash after the send): the bridge answers duplicate and nothing is resent.
+        (Path(h.cfg["state_dir"]) / "delivered" / "20261023").unlink()
+        self.assertEqual(h.sync(), 0)
+        self.assertEqual(self.deliveries(), ["20261023"])
+        self.assertTrue(any("duplicate, not resent" in line for line in h.log.lines))
+        self.assertEqual(h.api.posts, 0)  # delivery alone never creates a run
+
+    def test_failed_send_is_retried_and_a_refusal_is_not(self):
+        h = self.h
+        h.bridge.fail["strategy-proposals"] = 1
+        self.assertEqual(h.sync(), 1)
+        self.assertEqual(h.sync(), 0)
+        self.assertEqual(self.deliveries(), ["20261023"])
+        h2 = Harness(self)
+        h2.scout.propose(SCOUT_NOW)
+        outbox = Path(h2.cfg["scout_dir"]) / "outbox" / "20261023.json"
+        batch = json.loads(outbox.read_text())
+        outbox.write_text(json.dumps(dict(batch, text="no numbers"), ensure_ascii=False))
+        self.assertEqual(h2.sync(), 1)
+        self.assertEqual(h2.sync(), 0)
+        self.assertEqual(sum(c[0] == "strategy-proposals" for c in h2.bridge.calls), 1)
+        self.assertEqual(sum("refused by the bridge" in line for line in h2.log.lines), 1)
+
+    def test_accepted_proposals_become_scout_runs_and_are_marked_in_proposals_jsonl(self):
+        h = self.h
+        h.sync()
+        h.bridge.accept("20261023", 1, 3)
+        self.assertEqual(h.sync(), 0)
+        self.assertEqual(h.api.posts, 2)
+        runs = sorted(h.api.runs.values(), key=lambda r: r["run_no"])
+        self.assertEqual([r["source"] for r in runs], ["scout", "scout"])
+        self.assertEqual(
+            [r["idea_text"] for r in runs], [test_scout.IDEAS[0]["idea_text"], test_scout.IDEAS[2]["idea_text"]]
+        )
+        self.assertEqual(
+            sorted(hd["Idempotency-Key"] for hd in h.api.seen_headers if "Idempotency-Key" in hd),
+            [f"scout-proposal-{self.ids[0]}", f"scout-proposal-{self.ids[2]}"],
+        )
+        rows = {r["id"]: r for r in h.scout.proposals()}
+        for pid in (self.ids[0], self.ids[2]):
+            self.assertEqual(rows[pid]["status"], "accepted")
+            self.assertEqual(rows[pid]["run_id"], h.run_id(pid))
+            self.assertEqual(rows[pid]["run_no"], h.bridge.ideas[pid]["run_no"])
+        self.assertEqual(rows[self.ids[1]]["status"], "proposed")
+        self.assertEqual(h.bridge.ideas[self.ids[0]]["status"], "submitted")
+        starts = [t for i, e, t in h.bridge.sent if e == "start"]
+        self.assertEqual(len(starts), 2)
+        self.assertTrue(starts[0].startswith(f"pipeline #10 開始（策略提案 {self.ids[0]}）："), starts[0])
+        for _ in range(2):
+            h.sync()
+        self.assertEqual(h.api.posts, 2)
+        self.assertEqual(sum(e == "start" for _, e, _ in h.bridge.sent), 2)
+        # proposals.jsonl is marked before the ack: a failed ack is retried without a second POST.
+        h.bridge.accept("20261023", 2)
+        h.bridge.fail["strategy-ack"] = 1
+        h.sync()
+        self.assertEqual({r["id"]: r for r in h.scout.proposals()}[self.ids[1]]["status"], "accepted")
+        h.sync()
+        self.assertEqual(h.bridge.ideas[self.ids[1]]["status"], "submitted")
+        self.assertEqual(h.api.posts, 3)
+
+    def test_proposal_runs_off_waits_and_logs_once_then_creates_when_flipped(self):
+        h = self.h
+        h.cfg["proposal_runs"] = False
+        h.sync()
+        h.bridge.accept("20261023", 2)
+        h.bridge.add("20261023-s1")  # Telegram ideas are not affected by the switch
+        for _ in range(3):
+            self.assertEqual(h.sync(), 0)
+        self.assertEqual(h.api.posts, 1)
+        self.assertEqual(h.bridge.ideas[self.ids[1]]["status"], "accepted")
+        self.assertEqual(sum("proposal_runs is false" in line for line in h.log.lines), 1)
+        self.assertEqual({r["id"]: r for r in h.scout.proposals()}[self.ids[1]]["status"], "proposed")
+        h.cfg["proposal_runs"] = True
+        self.assertEqual(h.sync(), 0)
+        self.assertEqual((h.api.posts, h.bridge.ideas[self.ids[1]]["status"]), (2, "submitted"))
+
+    def test_dry_run_reports_acceptance_without_creating_anything(self):
+        h = self.h
+        self.assertEqual(h.sync(dry_run=True), 0)
+        self.assertEqual(self.deliveries(), [])
+        self.assertTrue(any("dry-run: would deliver scout batch 20261023 (3 proposals" in line for line in h.log.lines))
+        h.sync()
+        h.bridge.accept("20261023", 1)
+        self.assertEqual(h.sync(dry_run=True), 0)
+        self.assertEqual(h.api.posts, 0)
+        self.assertTrue(any(f"dry-run: would create a run for idea {self.ids[0]}" in line for line in h.log.lines))
+        self.assertEqual({r["id"]: r for r in h.scout.proposals()}[self.ids[0]]["status"], "proposed")
+
+    def test_unknown_or_altered_proposals_are_refused(self):
+        h = self.h
+        h.sync()
+        h.bridge.add("20261023-p9")  # not a proposal of this host
+        h.bridge.accept("20261023", 1, text="完全不同的策略文字，不是 scout 寫的那一則提案")
+        self.assertEqual(h.sync(), 1)
+        self.assertEqual(h.sync(), 0)  # refused once, not retried
+        self.assertEqual(h.api.posts, 0)
+        self.assertEqual(sum("refused: not in proposals.jsonl" in line for line in h.log.lines), 1)
+        self.assertEqual(sum("refused: text differs" in line for line in h.log.lines), 1)
+
+    def test_whitespace_differences_are_not_a_text_change(self):
+        h = self.h
+        h.sync()
+        h.bridge.accept("20261023", 1, text="  " + test_scout.IDEAS[0]["idea_text"].replace("：", "： ") + "\n")
+        self.assertEqual(h.sync(), 0)
+        (run,) = h.api.runs.values()
+        self.assertEqual(run["idea_text"], test_scout.IDEAS[0]["idea_text"])  # this host's text is used
+
+    def test_hold_window_applies_to_proposals(self):
+        h = self.h
+        h.sync()
+        h.bridge.accept("20261023", 1)
+        inside = datetime.datetime(2026, 10, 24, 7, 0, tzinfo=datetime.UTC)
+        self.assertEqual(h.sync(now=inside), 0)
+        self.assertEqual(h.api.posts, 0)
+        h.sync(now=datetime.datetime(2026, 10, 24, 8, 41, tzinfo=datetime.UTC))
+        self.assertEqual(h.api.posts, 1)
+
+    def test_old_batches_are_not_delivered_and_partial_json_is_retried(self):
+        h = self.h
+        late = datetime.datetime(2026, 10, 31, 12, 0, tzinfo=datetime.UTC)  # 8 days after the batch date
+        self.assertEqual(h.sync(now=late), 0)
+        self.assertEqual(self.deliveries(), [])
+        self.assertEqual(sum("8 days old, not delivered" in line for line in h.log.lines), 1)
+        h2 = Harness(self)
+        outbox = Path(h2.cfg["scout_dir"]) / "outbox"
+        outbox.mkdir(parents=True)
+        (outbox / "20261023.json").write_text('{"date": "20261023", "ids": [')
+        self.assertEqual(h2.sync(), 1)
+        self.assertEqual(h2.bridge.calls.count(("strategy-proposals", "20261023")), 0)
+        self.assertFalse((Path(h2.cfg["state_dir"]) / "delivered" / "20261023").exists())
 
 
 if __name__ == "__main__":

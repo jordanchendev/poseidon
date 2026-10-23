@@ -4,10 +4,20 @@
 Commands
   bridge_sync.py sync [--config FILE] [--dry-run]
       Cron entry (every 2 minutes), under an exclusive lock (busy -> exit 0):
+      deliver  every strategy-scout batch (<scout_dir>/outbox/<batch>.json, written by scout.py propose) not yet
+            delivered -> `strategy-proposals <batch>` with JSON {batch, proposals: [{id, idea_text, summary}] from
+            <scout_dir>/proposals.jsonl, text}. macminim4 records the batch (the owner's 「接受策略 N」 numbers refer to
+            the latest delivered one) and sends the text once per batch; a repeat answers duplicate. Local marker
+            <state_dir>/delivered/<batch>. Batches older than proposal_max_age_days are skipped, not sent.
       pull  `ssh research-bridge strategy-pending` -> POST /api/v1/pipelines {idea_text, source: "telegram"} with
             Idempotency-Key "telegram-idea-<idea id>" (default stage_plan = full pipeline) -> `strategy-ack <id>
             <run_no> <run_id>`. A crash between POST and ack is harmless: the next tick POSTs the same key and the
             API replays the same run.
+            Accepted scout proposals arrive here too, with the proposal id (YYYYMMDD-pN) as idea id: the run is created
+            with source "scout", Idempotency-Key "scout-proposal-<id>" and the idea_text from this host's
+            proposals.jsonl (macminim4 only says which proposal; an unknown id or a different text is refused), and
+            proposals.jsonl marks the proposal accepted with run_id/run_no before the ack. proposal_runs false (config)
+            leaves accepted proposals waiting on the bridge, logged once each, with no run.
       push  for every run this bridge created: on first sight `strategy-notify <id> start` ("pipeline #N 開始：..."),
             and once the run is terminal (completed/failed/unsupported/error/aborted) one summary message
             `strategy-notify <id> <status>`. The bridge keeps a marker per idea+event and answers a repeat with
@@ -22,14 +32,17 @@ Commands
 Config (JSON, merged over DEFAULTS; default file ~/strategy-pipeline/bridge.json when present):
   api_base, key_file (researcher key, 600, never logged), bridge, state_dir, log_file, kairos_base_url (empty -> the
   Kairos link is omitted), watch_days (how long unsupported/error/aborted runs are watched for a rerun),
-  hold_windows_utc (no new runs inside these UTC windows; default 06:00-08:40 for the Phase 101 soak).
-State: <state_dir>/ideas/<idea id>.json, <state_dir>/runs/<run id>.json, <state_dir>/sync.lock.
+  hold_windows_utc (no new runs inside these UTC windows; default 06:00-08:40 for the Phase 101 soak), scout_dir,
+  proposal_runs (create runs for accepted proposals; default true), proposal_max_age_days.
+State: <state_dir>/ideas/<idea id>.json, <state_dir>/runs/<run id>.json, <state_dir>/delivered/<batch>,
+<state_dir>/sync.lock; <scout_dir>/proposals.jsonl is shared with scout.py under <scout_dir>/.proposals.lock.
 Exit codes: 0 ok / nothing to do / lock busy, 1 some step failed (retried next tick), 3 key file problem.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import fcntl
 import json
@@ -54,9 +67,16 @@ DEFAULTS = {
     # New runs are not created inside these UTC windows (Phase 101 soak: no heavy CPU 06:00-08:40Z); ideas wait
     # on the bridge and are picked up after the window. Notifications are not held. [] disables the hold.
     "hold_windows_utc": [["06:00", "08:40"]],
+    "scout_dir": "~/strategy-pipeline/scout",
+    # false: accepted scout proposals wait (no run) until it is flipped; delivery to Telegram is unaffected.
+    "proposal_runs": True,
+    "proposal_max_age_days": 7,  # same as the macminim4 accept verb
 }
 DEFAULT_CONFIG = "~/strategy-pipeline/bridge.json"
-IDEA_ID_RE = re.compile(r"^\d{8}-s\d{1,4}$")
+IDEA_ID_RE = re.compile(r"^\d{8}-[sp]\d{1,4}$")  # -sN Telegram idea, -pN accepted strategy-scout proposal
+PROPOSAL_ID_RE = re.compile(r"^\d{8}-p\d{1,4}$")
+BATCH_RE = re.compile(r"^\d{8}(-from-p\d{1,4})?$")
+TAIPEI = dt.timezone(dt.timedelta(hours=8))
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 IDEA_MAX_CHARS = 2000
 TERMINAL = ("completed", "failed", "unsupported", "error", "aborted")
@@ -165,9 +185,10 @@ class Api:
     def get(self, path):
         return self.request("GET", self.base + path, None, self._headers())
 
-    def create(self, idea_id, text):
-        headers = self._headers({"Content-Type": "application/json", "Idempotency-Key": f"telegram-idea-{idea_id}"})
-        body = {"idea_text": text, "source": "telegram"}  # no stage_plan: the server default (full pipeline)
+    def create(self, idea_id, text, source="telegram"):
+        prefix = "scout-proposal" if source == "scout" else "telegram-idea"
+        headers = self._headers({"Content-Type": "application/json", "Idempotency-Key": f"{prefix}-{idea_id}"})
+        body = {"idea_text": text, "source": source}  # no stage_plan: the server default (full pipeline)
         return self.request("POST", self.base + "/api/v1/pipelines", body, headers)
 
 
@@ -194,7 +215,7 @@ class State:
         self.runs = self.root / "runs"
 
     def ensure(self):
-        for d in (self.root, self.ideas, self.runs):
+        for d in (self.root, self.ideas, self.runs, self.root / "delivered"):
             d.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     @staticmethod
@@ -231,6 +252,77 @@ class State:
         return sorted(out, key=lambda r: r.get("run_no") or 0)
 
 
+class Scout:
+    """strategy-scout files on this host (written by scout.py propose): proposals.jsonl and outbox/<batch>.json."""
+
+    def __init__(self, root):
+        self.root = expand(root)
+        self.path = self.root / "proposals.jsonl"
+        self.outbox = self.root / "outbox"
+
+    @contextlib.contextmanager
+    def locked(self):
+        self.root.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.root / ".proposals.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    def _lines(self):
+        try:
+            return self.path.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            return []
+
+    def proposals(self) -> dict:
+        out = {}
+        for line in self._lines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict) and isinstance(row.get("id"), str):
+                out[row["id"]] = row
+        return out
+
+    def mark_accepted(self, proposal_id, run_id, run_no) -> bool:
+        """status accepted + run on the proposal row (other lines kept byte for byte). False = already so / absent."""
+
+        with self.locked():
+            lines, changed = self._lines(), False
+            for index, line in enumerate(lines):
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict) or row.get("id") != proposal_id:
+                    continue
+                if row.get("status") == "accepted" and row.get("run_id") == run_id:
+                    return False
+                row.update(status="accepted", run_id=run_id, run_no=run_no, accepted_at=utcnow().isoformat())
+                lines[index] = json.dumps(row, ensure_ascii=False, sort_keys=True)
+                changed = True
+            if changed:
+                tmp = self.path.with_name("." + self.path.name + ".tmp")
+                tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                os.replace(tmp, self.path)
+            return changed
+
+    def batches(self):
+        if not self.outbox.is_dir():
+            return []
+        return sorted((p.stem, p) for p in self.outbox.glob("*.json") if BATCH_RE.match(p.stem))
+
+
+def _squash(text) -> str:
+    """Comparable form of an idea text: printable non-space characters only (macminim4 drops the rest)."""
+
+    return "".join(ch for ch in str(text or "") if ch.isprintable() and not ch.isspace())
+
+
 # ------------------------------------------------------------------ formatting
 
 
@@ -251,8 +343,9 @@ def _with_idea(template, run) -> str:
     return text if len(text) <= MESSAGE_CAP else text[: MESSAGE_CAP - 1] + "…"
 
 
-def start_message(run) -> str:
-    return _with_idea(f"pipeline #{run['run_no']} 開始：{IDEA_SLOT}", run)
+def start_message(run, idea_id=None) -> str:
+    origin = f"（策略提案 {idea_id}）" if idea_id and PROPOSAL_ID_RE.match(idea_id) else ""
+    return _with_idea(f"pipeline #{run['run_no']} 開始{origin}：{IDEA_SLOT}", run)
 
 
 def _num(value, fmt):
@@ -487,7 +580,78 @@ def held_until(windows, now) -> str | None:
     return None
 
 
-def pull(api, bridge, state, log, dry_run=False, hold=None, now=None) -> int:
+def _write_marker(path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name("." + path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def deliver(bridge, state, scout, log, dry_run=False, now=None, max_age_days=7) -> int:
+    """Send each new scout outbox batch to macminim4 (`strategy-proposals`) once."""
+
+    failures, proposals = 0, None
+    today = (now or utcnow()).astimezone(TAIPEI).date()
+    for name, path in scout.batches():
+        marker = state.root / "delivered" / name
+        if marker.exists():
+            continue
+        try:
+            batch = json.loads(path.read_text(encoding="utf-8"))
+            ids, text = batch["ids"], batch["text"]
+            assert isinstance(ids, list) and ids and all(isinstance(i, str) for i in ids) and isinstance(text, str)
+        except (OSError, ValueError, KeyError, TypeError, AssertionError):
+            log(f"scout batch {name}: outbox json unreadable or malformed; retry next tick")
+            failures += 1
+            continue
+        age = (today - dt.datetime.strptime(name[:8], "%Y%m%d").date()).days
+        if age > max_age_days:
+            if not dry_run:
+                _write_marker(
+                    marker, {"batch": name, "skipped": f"older than {max_age_days} days", "at": utcnow().isoformat()}
+                )
+            log(f"scout batch {name}: {age} days old, not delivered (proposals expire after {max_age_days} days)")
+            continue
+        proposals = scout.proposals() if proposals is None else proposals
+        items, missing = [], []
+        for pid in ids:
+            row = proposals.get(pid)
+            if not PROPOSAL_ID_RE.match(pid) or not isinstance(row, dict) or not isinstance(row.get("idea_text"), str):
+                missing.append(pid)
+                continue
+            items.append({"id": pid, "idea_text": row["idea_text"], "summary": str(row.get("summary") or "")})
+        if missing:
+            log(
+                f"scout batch {name}: ids not in proposals.jsonl: {_one_line(', '.join(missing), 120)}; retry next tick"
+            )
+            failures += 1
+            continue
+        if dry_run:
+            log(f"dry-run: would deliver scout batch {name} ({len(items)} proposals, {len(text)} chars)")
+            continue
+        payload = json.dumps({"batch": name, "proposals": items, "text": text}, ensure_ascii=False)
+        rc, out, err = bridge.call("strategy-proposals", name, stdin=payload)
+        if rc == 2:  # refused by validation: resending the same batch cannot succeed
+            _write_marker(marker, {"batch": name, "refused": _one_line(err, 200), "at": utcnow().isoformat()})
+            log(f"scout batch {name} refused by the bridge: {_one_line(err, 200)}; not retried")
+            failures += 1
+            continue
+        if rc != 0:
+            log(f"bridge strategy-proposals {name} exit {rc}: {_one_line(err, 200)}")
+            failures += 1
+            continue
+        try:
+            duplicate = bool(json.loads(out).get("duplicate"))
+        except (ValueError, AttributeError):
+            duplicate = False
+        _write_marker(marker, {"batch": name, "ids": ids, "delivered_at": utcnow().isoformat(), "duplicate": duplicate})
+        log(
+            f"delivered scout batch {name} ({len(items)} proposals){' (bridge: duplicate, not resent)' if duplicate else ''}"
+        )
+    return failures
+
+
+def pull(api, bridge, state, log, dry_run=False, hold=None, now=None, scout=None, proposal_runs=True) -> int:
     rc, out, err = bridge.call("strategy-pending")
     if rc != 0:
         log(f"bridge strategy-pending exit {rc}: {_one_line(err, 200)}")
@@ -498,7 +662,7 @@ def pull(api, bridge, state, log, dry_run=False, hold=None, now=None) -> int:
     except (ValueError, AssertionError):
         log("bridge strategy-pending returned malformed JSON")
         return 1
-    failures = 0
+    failures, proposals = 0, None
     for idea in ideas:
         idea_id = idea.get("id") if isinstance(idea, dict) else None
         text = idea.get("text") if isinstance(idea, dict) else None
@@ -513,6 +677,20 @@ def pull(api, bridge, state, log, dry_run=False, hold=None, now=None) -> int:
         rec = state.idea(idea_id)
         if rec and rec.get("rejected"):
             continue  # logged once when it was rejected
+        is_proposal = bool(PROPOSAL_ID_RE.match(idea_id))
+        if is_proposal:
+            # macminim4 only names the proposal; the text that becomes the run is this host's own proposal text.
+            proposals = (scout.proposals() if scout else {}) if proposals is None else proposals
+            row = proposals.get(idea_id)
+            local = row.get("idea_text") if isinstance(row, dict) else None
+            if not isinstance(local, str) or _squash(local) != _squash(text):
+                why = "not in proposals.jsonl" if not isinstance(local, str) else "text differs from proposals.jsonl"
+                if rec is None and not dry_run:
+                    state.save_idea({"idea_id": idea_id, "rejected": True, "reason": why, "at": utcnow().isoformat()})
+                log(f"accepted proposal {idea_id} refused: {why}; not retried")
+                failures += 1
+                continue
+            text = local
         until = held_until(hold, now or utcnow()) if rec is None else None
         if until:
             marker = state.root / "held" / idea_id
@@ -521,12 +699,20 @@ def pull(api, bridge, state, log, dry_run=False, hold=None, now=None) -> int:
                 marker.touch()
                 log(f"idea {idea_id} held: no new runs until {until}Z (hold_windows_utc)")
             continue
+        if is_proposal and rec is None and not proposal_runs:
+            marker = state.root / "held" / f"{idea_id}.proposal-runs-off"
+            if not marker.exists():
+                if not dry_run:
+                    marker.parent.mkdir(exist_ok=True)
+                    marker.touch()
+                log(f"proposal {idea_id} accepted on Telegram; waiting, no run (proposal_runs is false)")
+            continue
         if dry_run:
             log(f"dry-run: would {'re-ack' if rec else 'create a run for'} idea {idea_id} ({len(text)} chars)")
             continue
         if rec is None:
             try:
-                status, body = api.create(idea_id, text)
+                status, body = api.create(idea_id, text, source="scout" if is_proposal else "telegram")
             except OSError as error:
                 log(f"create for idea {idea_id} failed: {type(error).__name__}")
                 failures += 1
@@ -554,6 +740,8 @@ def pull(api, bridge, state, log, dry_run=False, hold=None, now=None) -> int:
                 state.save_run({**rec, "notified": [], "closed": False})
             state.save_idea(rec)
             log(f"idea {idea_id} -> pipeline run #{run_no} {run_id}")
+        if is_proposal and scout and scout.mark_accepted(idea_id, rec["run_id"], rec["run_no"]):
+            log(f"proposals.jsonl: {idea_id} accepted as run #{rec['run_no']}")
         rc, out, err = bridge.call("strategy-ack", idea_id, str(rec["run_no"]), rec["run_id"])
         if rc == 0:
             log(f"acked idea {idea_id} as run #{rec['run_no']}")
@@ -617,7 +805,8 @@ def push(api, bridge, state, cfg, log, dry_run=False) -> int:
             failures += 1
             continue
         notified = set(rec.get("notified") or [])
-        if "start" not in notified and not _notify(bridge, rec, "start", start_message(run), state, log, dry_run):
+        start = start_message(run, rec.get("idea_id"))
+        if "start" not in notified and not _notify(bridge, rec, "start", start, state, log, dry_run):
             failures += 1
             continue  # the summary never goes out before the start message
         run_status = run.get("status")
@@ -682,7 +871,20 @@ def sync(cfg, log, dry_run=False, request=urllib_request, runner=subprocess.run,
         with Lock(state.root / "sync.lock"):
             api = Api(cfg["api_base"], key, request=request)
             bridge = Bridge(cfg["bridge"], runner=runner)
-            failures = pull(api, bridge, state, log, dry_run=dry_run, hold=cfg.get("hold_windows_utc"), now=now)
+            scout = Scout(cfg.get("scout_dir") or DEFAULTS["scout_dir"])
+            max_age = int(cfg.get("proposal_max_age_days") or DEFAULTS["proposal_max_age_days"])
+            failures = deliver(bridge, state, scout, log, dry_run=dry_run, now=now, max_age_days=max_age)
+            failures += pull(
+                api,
+                bridge,
+                state,
+                log,
+                dry_run=dry_run,
+                hold=cfg.get("hold_windows_utc"),
+                now=now,
+                scout=scout,
+                proposal_runs=cfg.get("proposal_runs", True) is not False,
+            )
             failures += push(api, bridge, state, cfg, log, dry_run=dry_run)
     except LockBusy:
         return 0
