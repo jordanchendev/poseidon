@@ -22,7 +22,11 @@ GATES: dict[str, Callable[..., GateResult]] = {
 
 
 def summary_line(result: GateResult) -> str:
-    """``"holdout ❌ Sharpe decay 62%"`` -- the per-gate Telegram one-liner."""
+    """``"holdout ❌ Sharpe decay 62%"`` -- the per-gate Telegram one-liner.
+
+    A holdout passed on its standard-error criterion reads e.g.
+    ``"holdout ✅ decay 76% but within 1.96·SE (Δ 0.102 ≤ 0.105)"``.
+    """
 
     mark = "✅" if result.passed else "❌"
     return f"{result.gate} {mark} {result.headline}".rstrip()

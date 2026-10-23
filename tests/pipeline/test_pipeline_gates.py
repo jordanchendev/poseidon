@@ -47,6 +47,7 @@ def test_registry_and_frozen_thresholds():
         "wfe_min": 0.5,
         "holdout_sharpe_decay_max": 0.5,
         "holdout_min_trades": 20,
+        "holdout_se_z": 1.96,
         "cost_stress_multiplier": 2.0,
         "dsr_min": 0.95,
         "dsr_min_obs": 30,
@@ -105,39 +106,46 @@ def summary(pnl=10_000.0, sharpe=1.0, trades=40, costs=None):
     return ResultSummary(pnl, sharpe, trades, costs or CostBreakdown())
 
 
+# Criterion (b): holdout_sharpe >= train_sharpe - z * sqrt((1 + holdout_sharpe^2 / 2) / T).
+# DECAY_ONLY: the thresholds of a run frozen before ``holdout_se_z`` existed.
+DECAY_ONLY = {key: value for key, value in T.items() if key != "holdout_se_z"}
+
+
+def inputs(train, held, n_obs=348):
+    return holdout.HoldoutInputs(train, held, n_obs)
+
+
 def test_holdout_pass_and_trade_boundary():
-    result = check(
-        holdout.evaluate(holdout.HoldoutInputs(summary(sharpe=2.0), summary(sharpe=1.5, trades=20)), T), "pass", "pass"
-    )
+    result = check(holdout.evaluate(inputs(summary(sharpe=2.0), summary(sharpe=1.5, trades=20)), T), "pass", "pass")
     assert result.report["sharpe_decay"] == pytest.approx(0.25)
 
 
 def test_holdout_decay_boundary_exactly_at_max_passes():
-    check(holdout.evaluate(holdout.HoldoutInputs(summary(sharpe=2.0), summary(sharpe=1.0)), T), "pass", "pass")
-    check(holdout.evaluate(holdout.HoldoutInputs(summary(sharpe=2.0), summary(sharpe=0.98)), T), "fail", "sharpe_decay")
+    check(holdout.evaluate(inputs(summary(sharpe=2.0), summary(sharpe=1.0)), T), "pass", "pass")
+    check(holdout.evaluate(inputs(summary(sharpe=2.0), summary(sharpe=0.98)), T), "fail", "sharpe_decay")
 
 
 def test_holdout_decay_headline_matches_telegram_format():
     result = check(
-        holdout.evaluate(holdout.HoldoutInputs(summary(sharpe=1.0), summary(sharpe=0.38)), T), "fail", "sharpe_decay"
+        holdout.evaluate(inputs(summary(sharpe=1.0), summary(sharpe=0.38)), DECAY_ONLY), "fail", "sharpe_decay"
     )
     assert summary_line(result) == "holdout ❌ Sharpe decay 62%"
 
 
 @pytest.mark.parametrize("train_sharpe", [0.0, -0.4])
 def test_holdout_non_positive_train_sharpe_fails(train_sharpe):
-    result = holdout.evaluate(holdout.HoldoutInputs(summary(sharpe=train_sharpe), summary(sharpe=0.5)), T)
+    result = holdout.evaluate(inputs(summary(sharpe=train_sharpe), summary(sharpe=0.5)), T)
     assert check(result, "fail", "train_not_positive").report["sharpe_decay"] is None
 
 
 def test_holdout_insufficient_trades():
-    check(holdout.evaluate(holdout.HoldoutInputs(summary(), summary(trades=19)), T), "fail", "insufficient_trades")
+    check(holdout.evaluate(inputs(summary(), summary(trades=19)), T), "fail", "insufficient_trades")
 
 
 def test_holdout_requires_positive_pnl():
-    check(holdout.evaluate(holdout.HoldoutInputs(summary(), summary(pnl=0.0)), T), "fail", "holdout_not_profitable")
+    check(holdout.evaluate(inputs(summary(), summary(pnl=0.0)), T), "fail", "holdout_not_profitable")
     relaxed = with_thresholds(holdout_pnl_positive=False)
-    check(holdout.evaluate(holdout.HoldoutInputs(summary(), summary(pnl=-1.0)), relaxed), "pass", "pass")
+    check(holdout.evaluate(inputs(summary(), summary(pnl=-1.0)), relaxed), "pass", "pass")
 
 
 @pytest.mark.parametrize(
@@ -150,7 +158,93 @@ def test_holdout_requires_positive_pnl():
     ],
 )
 def test_holdout_nan_inputs_fail_closed(train, held):
-    check(holdout.evaluate(holdout.HoldoutInputs(train, held), T), "fail", "invalid_input")
+    check(holdout.evaluate(inputs(train, held), T), "fail", "invalid_input")
+
+
+def held_out(train_sharpe, holdout_sharpe, n_obs=348, thresholds=None, **held):
+    pair = inputs(summary(sharpe=train_sharpe), summary(sharpe=holdout_sharpe, **held), n_obs)
+    return holdout.evaluate(pair, T if thresholds is None else thresholds)
+
+
+def test_holdout_sharpe_se_is_lo_2002():
+    assert holdout.sharpe_se(0.0, 100) == pytest.approx(0.1)
+    assert holdout.sharpe_se(0.032, 348) == pytest.approx(math.sqrt((1 + 0.032**2 / 2) / 348))
+
+
+def test_holdout_decay_pass_reports_both_criteria():
+    # Large Sharpe: decay passes while the gap is far beyond z * SE.
+    result = check(held_out(2.0, 1.5), "pass", "pass")
+    assert result.report["passed_criterion"] == "decay" and summary_line(result) == "holdout ✅ Sharpe decay 25%"
+    se = result.report["criteria"]["se"]
+    assert se["enabled"] and not se["passed"] and se["n_obs"] == 348 and se["z"] == 1.96
+    # Small Sharpe: both pass; decay is reported as the deciding criterion.
+    both = check(held_out(0.2, 0.15), "pass", "pass")
+    assert both.report["passed_criterion"] == "decay" and both.report["criteria"]["se"]["passed"]
+    assert result.report["criteria"]["decay"] == {"value": pytest.approx(0.25), "max": 0.5, "passed": True}
+
+
+def test_holdout_decay_fail_but_within_se_passes():
+    # Weak-edge sweep drift 6 seed 11: train 0.134, holdout 0.032 over 348 trading days.
+    result = check(held_out(0.134, 0.032), "pass", "pass")
+    se = result.report["criteria"]["se"]
+    assert result.report["passed_criterion"] == "se" and not result.report["criteria"]["decay"]["passed"]
+    assert se["se"] == pytest.approx(0.053619, abs=1e-6) and se["delta"] == pytest.approx(0.102)
+    assert se["allowed_delta"] == pytest.approx(1.96 * se["se"]) and se["margin"] == pytest.approx(0.003094, abs=1e-6)
+    assert summary_line(result) == "holdout ✅ decay 76% but within 1.96·SE (Δ 0.102 ≤ 0.105)"
+
+
+def test_holdout_both_criteria_fail():
+    result = check(held_out(1.0, 0.38), "fail", "sharpe_decay")
+    assert result.report["passed_criterion"] is None and result.report["criteria"]["se"]["passed"] is False
+    assert summary_line(result) == "holdout ❌ Sharpe decay 62%, beyond 1.96·SE (Δ 0.620 > 0.109)"
+
+
+@pytest.mark.parametrize(("train_sharpe", "holdout_sharpe"), [(2.0, 1.5), (0.134, 0.032)])
+def test_holdout_non_positive_pnl_fails_whichever_criterion_passes(train_sharpe, holdout_sharpe):
+    check(held_out(train_sharpe, holdout_sharpe, pnl=0.0), "fail", "holdout_not_profitable")
+    check(held_out(train_sharpe, holdout_sharpe, pnl=-5.0), "fail", "holdout_not_profitable")
+
+
+def test_holdout_se_boundary_exactly_at_z_se_passes():
+    # holdout Sharpe 0 over T=100 -> SE = 0.1; z = 2 -> allowed delta 0.2 exactly.
+    z2 = with_thresholds(holdout_se_z=2.0)
+    result = check(held_out(0.2, 0.0, n_obs=100, thresholds=z2), "pass", "pass")
+    assert result.report["criteria"]["se"]["margin"] == 0.0 and result.report["passed_criterion"] == "se"
+    check(held_out(0.2 + 1e-9, 0.0, n_obs=100, thresholds=z2), "fail", "sharpe_decay")
+
+
+def test_holdout_small_t_widens_se():
+    wide = check(held_out(1.0, 0.2, n_obs=4), "pass", "pass").report["criteria"]["se"]
+    assert wide["se"] == pytest.approx(math.sqrt(1.02 / 4)) and wide["allowed_delta"] > 0.8
+    check(held_out(1.0, 0.2, n_obs=348), "fail", "sharpe_decay")
+    # Fewer than 2 observations has no Sharpe; criterion (b) fails closed.
+    check(held_out(1.0, 0.2, n_obs=1), "fail", "invalid_input")
+
+
+def test_holdout_without_se_z_keeps_decay_only_behaviour():
+    result = check(held_out(0.134, 0.032, thresholds=DECAY_ONLY), "fail", "sharpe_decay")
+    assert summary_line(result) == "holdout ❌ Sharpe decay 76%"
+    assert result.report["criteria"]["se"] == {
+        "enabled": False,
+        "passed": None,
+        "note": "holdout_se_z not frozen in this run",
+    }
+    # n_obs is not needed for decay-only runs (the inputs of runs frozen before the key).
+    check(holdout.evaluate(holdout.HoldoutInputs(summary(sharpe=2.0), summary(sharpe=1.5)), DECAY_ONLY), "pass", "pass")
+
+
+@pytest.mark.parametrize(
+    ("n_obs", "thresholds"),
+    [
+        (None, T),
+        (NAN, T),
+        (math.inf, T),
+        (348, with_thresholds(holdout_se_z=NAN)),
+        (348, with_thresholds(holdout_se_z=-1.0)),
+    ],
+)
+def test_holdout_se_criterion_nan_inputs_fail_closed(n_obs, thresholds):
+    check(held_out(0.134, 0.032, n_obs=n_obs, thresholds=thresholds), "fail", "invalid_input")
 
 
 # ---------------------------------------------------------------- cost_stress
@@ -499,7 +593,11 @@ def test_regime_threshold_windows_come_from_the_run_config():
 def test_summarize_one_line_per_gate():
     results = [
         wfe.evaluate(wfe.WfeInputs([window(0, 0.2, 0.15)]), T),
-        holdout.evaluate(holdout.HoldoutInputs(summary(sharpe=1.0), summary(sharpe=0.38)), T),
+        holdout.evaluate(inputs(summary(sharpe=1.0), summary(sharpe=0.38)), T),
         dsr.evaluate(dsr.DsrInputs(NAN, 1, 0.0, 3.0, []), T),
     ]
-    assert summarize(results) == ["wfe ✅ WFE 0.75", "holdout ❌ Sharpe decay 62%", "dsr ❌ invalid input"]
+    assert summarize(results) == [
+        "wfe ✅ WFE 0.75",
+        "holdout ❌ Sharpe decay 62%, beyond 1.96·SE (Δ 0.620 > 0.109)",
+        "dsr ❌ invalid input",
+    ]

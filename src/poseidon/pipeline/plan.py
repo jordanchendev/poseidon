@@ -46,6 +46,10 @@ DEFAULT_THRESHOLDS: dict = {
     "holdout_sharpe_decay_max": 0.5,
     "holdout_pnl_positive": True,
     "holdout_min_trades": 20,
+    # Owner decision 2026-10-23: the holdout also passes when its Sharpe is within
+    # z standard errors of train (gates/holdout.py criterion (b)). Runs frozen
+    # without this key keep decay-only judging, so no CONFIG_VERSION bump.
+    "holdout_se_z": 1.96,
     "cost_stress_multiplier": 2.0,
     "cost_stress_pnl_positive": True,
     "dsr_min": 0.95,
