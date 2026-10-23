@@ -139,26 +139,67 @@ def test_best_on_the_upper_edge_is_extended_and_every_extension_is_a_trial(tmp_p
     assert rows[-1]["params"] == {"stop_pts": 70} and rows[1]["params"] == {"stop_pts": 90}
     assert all(row["in_grid"] and not row["on_declared_grid"] for row in rows.values())
     assert report["neighbourhood_settled"]
+    assert report["edge_extension"]["better_beyond_cap"] is False
+    assert report["edge_extension"]["better_beyond_cap_points"] == []
     stability = gate(chain, "param_stability")
     assert stability.verdict == Verdict.PASS
     assert stability.report["gate_report"]["evaluated"] == 2
     assert stability.report["inputs"]["effective_range"]["stop_pts"]["high"] == 90
 
 
-def test_extension_is_capped_at_three_steps_then_the_neighbour_round_runs(tmp_path, objective):
-    objective.set(peak(100, width=200))
+def test_the_cap_is_absolute_a_better_point_beyond_it_is_only_a_neighbour(tmp_path, objective):
+    objective.set(peak(100, width=200))  # keeps improving up to 100, one step beyond the cap
     chain = run_optimize(tmp_path, stop_template(int_param(20, 60, 10, 40)))
     report = chain.outputs["optimize"].report
-    steps = report["edge_extension"]["steps"]
-    assert [s["value"] for s in steps] == [70, 80, 90] and all(s["became_best"] for s in steps)
-    assert {"stopped_because": "max_steps", "value": 100}.items() <= report["edge_extension"]["stops"][0].items()
-    # The neighbour round still completes the neighbourhood of 90 (100 is in the hard bounds) and
-    # moves the best to 100 like any better neighbour; 110 is then evaluated and is worse.
-    assert report["best"]["params"] == {"stop_pts": 100}
-    assert report["n_trials_by_source"]["edge_extension"] == 3
-    assert report["n_trials_by_source"]["neighbour"] == 2  # 100, then 110
-    assert {row["params"]["stop_pts"] for row in report["neighbours"]} == {90, 110}
+    extension = report["edge_extension"]
+    assert [s["value"] for s in extension["steps"]] == [70, 80, 90] and all(
+        s["became_best"] for s in extension["steps"]
+    )
+    assert [s["step"] for s in extension["steps"]] == [1, 2, 3]
+    assert {"stopped_because": "max_steps", "value": 100}.items() <= extension["stops"][0].items()
+    # 100 is evaluated for the neighbourhood (a trial) but never becomes the best.
+    assert report["best"]["params"] == {"stop_pts": 90}
+    assert report["best_spec"]["rules"][0]["risk"]["stop_loss"]["value"] == 90
+    assert report["n_trials_by_source"] == {"base": 0, "search": 5, "edge_extension": 3, "neighbour": 1}
+    rows = {row["direction"]: row for row in report["neighbours"]}
+    assert rows[1]["params"] == {"stop_pts": 100} and rows[1]["in_grid"] and rows[1]["beyond_cap"]
+    assert rows[-1]["params"] == {"stop_pts": 80} and not rows[-1]["beyond_cap"]
     assert report["neighbourhood_settled"]
+    # The owner sees that the grid was too narrow.
+    assert extension["better_beyond_cap"] is True
+    (point,) = extension["better_beyond_cap_points"]
+    assert point["params"] == {"stop_pts": 100} and point["source"] == "neighbour"
+    assert point["sharpe_daily"] > report["best"]["metrics"]["sharpe_daily"] == point["best_sharpe_daily_then"]
+    effective = report["effective_range"]["stop_pts"]
+    assert (effective["high"], effective["best_cap_low"], effective["best_cap_high"]) == (100, -10, 90)
+    stability = gate(chain, "param_stability")
+    assert stability.verdict == Verdict.PASS and stability.report["gate_report"]["evaluated"] == 2
+    assert stability.report["inputs"]["better_beyond_cap"] is True
+    # DSR N counts the beyond-cap neighbour like every other trial.
+    assert gate(chain, "dsr").report["gate_report"]["n_trials"] == len(chain.ledger.records) == 9
+
+
+def test_inside_the_cap_the_neighbour_round_still_moves_the_best():
+    spec = stop_template(int_param(20, 60, 10, 40))
+    grid = opt.ParamGrid(validate_v2(spec).params)
+    # Search saw 20..50 only (60 never evaluated); the best 50 moves to 60, then extends to 90.
+    runner = _StubRunner(lambda v: v["stop_pts"] / 100)
+    for value in (20, 30, 40, 50):
+        runner.evaluate({"stop_pts": value}, "search")
+    extension = opt.EdgeExtension(admissible=opt.hard_bound_check(spec, grid))
+    rows, settled = opt.complete_neighbourhood(runner, grid, 1, extension)
+    assert runner.best.params == {"stop_pts": 90} and settled
+    assert [r.source for r in runner.results[4:]] == [
+        "neighbour",
+        "edge_extension",
+        "edge_extension",
+        "edge_extension",
+        "neighbour",
+    ]
+    assert [r.params["stop_pts"] for r in runner.results[4:]] == [60, 70, 80, 90, 100]
+    assert extension.report()["better_beyond_cap"] and extension.better_beyond_cap[0]["params"] == {"stop_pts": 100}
+    assert {row["params"]["stop_pts"]: row["beyond_cap"] for row in rows} == {80: False, 100: True}
+    assert len(runner.ledger.records) == 9
 
 
 def test_a_hard_bound_stops_the_extension_and_the_gate_rule_applies(tmp_path, objective):

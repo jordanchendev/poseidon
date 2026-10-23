@@ -17,7 +17,11 @@
   so it counts toward DSR's N), provided the resolved spec still passes the
   DSL v2/v2.1 validator (every field the param feeds stays in its hard
   bounds). A better outward point becomes the best and the check repeats, at
-  most ``MAX_EDGE_EXTENSION_STEPS`` per param per side; extensions count
+  most ``MAX_EDGE_EXTENSION_STEPS`` per param per side. That cap is absolute
+  (owner decision): the best never moves beyond declared edge +/- 3 steps,
+  not even through the neighbour round; a point beyond it is backtested only
+  as a neighbour (a trial, counted in N) and, if it is better, reported as
+  ``better_beyond_cap`` (the declared grid was too narrow). Extensions count
   against ``budget_seconds`` and stop (with the reason recorded) once the
   next one plus the neighbour round would overrun it. The declared grid is
   never changed: off-grid values are built from a template whose ``params``
@@ -165,7 +169,17 @@ class ParamGrid:
                 )
         return out
 
-    def effective_range(self, results: list[TrialResult]) -> dict:
+    def within_cap(self, values: dict, max_steps: int) -> bool:
+        """Whether every value lies within its declared grid widened by ``max_steps`` steps per side."""
+
+        for name in self.names:
+            spec = self.specs[name]
+            reach = max_steps * spec.step
+            if not spec.low - reach - 1e-9 <= values[name] <= spec.high + reach + 1e-9:
+                return False
+        return True
+
+    def effective_range(self, results: list[TrialResult], max_steps: int | None = None) -> dict:
         """Declared grid vs the range actually evaluated (edge extensions widen it)."""
 
         out = {}
@@ -182,6 +196,10 @@ class ParamGrid:
                 "extended_below": low < spec.low - 1e-9,
                 "extended_above": high > spec.high + 1e-9,
             }
+            if max_steps is not None:
+                # The range the best may move in (declared edge +/- max_steps steps).
+                out[name]["best_cap_low"] = spec.cast(spec.low - max_steps * spec.step)
+                out[name]["best_cap_high"] = spec.cast(spec.high + max_steps * spec.step)
         return out
 
 
@@ -273,6 +291,10 @@ class TrialRunner:
         self.check_stop = check_stop
         self.results: list[TrialResult] = []
         self.best: TrialResult | None = None
+        # Which points may become the best (the optimize stage caps grid-edge extensions);
+        # a better point that may not is kept in ``better_ineligible`` instead.
+        self.eligible: Callable[[dict], bool] = lambda _params: True
+        self.better_ineligible: list[TrialResult] = []
 
     def record(
         self, params: dict, source: str, state: str, metrics: dict | None, error: str | None = None, outcome=None
@@ -280,7 +302,11 @@ class TrialRunner:
         result = TrialResult(self.first_trial_no + len(self.results), params, source, state, metrics, error, outcome)
         self.ledger.append(make_record(result.trial_no, params, state, metrics, self.window_sha256))
         self.results.append(result)
-        if result.state == TRIAL_COMPLETE and (self.best is None or result.sharpe > self.best.sharpe):
+        better = result.state == TRIAL_COMPLETE and (self.best is None or result.sharpe > self.best.sharpe)
+        if better and not self.eligible(params):
+            self.better_ineligible.append(result)
+            better = False
+        if better:
             if self.best is not None:
                 self.best.outcome = None  # keep only the current best's trades in memory
             self.best = result
@@ -399,9 +425,9 @@ class EdgeExtension:
     reserve_trials: int = 0  # the neighbour round still to come
     clock: Callable[[], float] = time.monotonic
     max_steps: int = MAX_EDGE_EXTENSION_STEPS
-    used: dict = field(default_factory=dict)
     steps: list = field(default_factory=list)
     stops: list = field(default_factory=list)
+    better_beyond_cap: list = field(default_factory=list)
 
     def over_budget(self, n_done: int) -> str | None:
         if self.budget_seconds is None or n_done == 0:
@@ -422,7 +448,28 @@ class EdgeExtension:
             "n_trials": len(self.steps),
             "steps": self.steps,
             "stops": self.stops,
+            # Points beyond the cap that beat the best at the time (never made the best):
+            # the declared grid was too narrow for this spec.
+            "better_beyond_cap": bool(self.better_beyond_cap),
+            "better_beyond_cap_points": self.better_beyond_cap,
         }
+
+    def note_beyond_cap(self, runner: TrialRunner) -> None:
+        """Move the runner's better-but-ineligible trials into the report."""
+
+        for result in runner.better_ineligible:
+            self.better_beyond_cap.append(
+                {
+                    "trial_no": result.trial_no,
+                    "params": result.params,
+                    "source": result.source,
+                    "sharpe_daily": result.sharpe,
+                    "total_pnl_twd": (result.metrics or {}).get("total_pnl_twd"),
+                    "best_trial_no_then": runner.best.trial_no if runner.best is not None else None,
+                    "best_sharpe_daily_then": runner.best.sharpe if runner.best is not None else None,
+                }
+            )
+        runner.better_ineligible.clear()
 
 
 def extend_edges(runner: TrialRunner, grid: ParamGrid, extension: EdgeExtension, round_no: int = 1) -> None:
@@ -440,6 +487,9 @@ def extend_edges(runner: TrialRunner, grid: ParamGrid, extension: EdgeExtension,
                 target = spec.cast(value + direction * spec.step)
                 params = {**best.params, name: target}
                 stop = {"round": round_no, "param": name, "direction": direction, "best_value": value, "value": target}
+                if not grid.within_cap(params, extension.max_steps):
+                    extension.stops.append({**stop, "stopped_because": "max_steps"})
+                    break
                 existing = next((r for r in runner.results if grid.key(r.params) == grid.key(params)), None)
                 if existing is not None:
                     extension.stops.append({**stop, "stopped_because": "not_better", "trial_no": existing.trial_no})
@@ -448,20 +498,16 @@ def extend_edges(runner: TrialRunner, grid: ParamGrid, extension: EdgeExtension,
                 if reason is not None:
                     extension.stops.append({**stop, "stopped_because": "hard_bound", "detail": reason})
                     break
-                if extension.used.get((name, direction), 0) >= extension.max_steps:
-                    extension.stops.append({**stop, "stopped_because": "max_steps"})
-                    break
                 budget = extension.over_budget(len(runner.results))
                 if budget is not None:
                     extension.stops.append({**stop, "stopped_because": "budget", "detail": budget})
                     break
-                extension.used[(name, direction)] = extension.used.get((name, direction), 0) + 1
                 result = runner.evaluate(params, "edge_extension")
                 better = runner.best is result
                 extension.steps.append(
                     {
                         **stop,
-                        "step": extension.used[(name, direction)],
+                        "step": round(abs(target - edge) / spec.step),
                         "trial_no": result.trial_no,
                         "state": result.state,
                         "sharpe_daily": result.sharpe,
@@ -486,11 +532,17 @@ def complete_neighbourhood(
 
     rows: list[dict] = []
     admissible = extension.admissible if extension is not None else None
+    if extension is not None:
+        runner.eligible = lambda params: grid.within_cap(params, extension.max_steps)
     for round_no in range(1, MAX_NEIGHBOUR_ROUNDS + 1):
         if extension is not None:
             extend_edges(runner, grid, extension, round_no)
         before = runner.best.trial_no if runner.best is not None else None
         rows = evaluate_neighbours(runner, grid, steps, admissible)
+        if extension is not None:
+            extension.note_beyond_cap(runner)
+            for row in rows:
+                row["beyond_cap"] = row["in_grid"] and not grid.within_cap(row["params"], extension.max_steps)
         after = runner.best.trial_no if runner.best is not None else None
         if after == before:
             return rows, True

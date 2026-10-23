@@ -287,6 +287,7 @@ class ParamStabilityStage(GateStage):
             # Declared grid vs evaluated range (grid-edge extension); a neighbour is excluded only
             # when it violates a DSL validator hard bound (see the neighbour rows' excluded_because).
             "effective_range": optimize.get("effective_range"),
+            "better_beyond_cap": (optimize.get("edge_extension") or {}).get("better_beyond_cap"),
             "excluded_neighbours": [
                 {"param": row["param"], "direction": row["direction"], "because": row.get("excluded_because")}
                 for row in optimize.get("neighbours") or []

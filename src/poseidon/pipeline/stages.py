@@ -429,7 +429,7 @@ class OptimizeStage(_DataStage):
         if grid.names:
             # The spec's declared grid stays as declared (``param_grid``); this is what was evaluated.
             report["edge_extension"] = extension.report()
-            report["effective_range"] = grid.effective_range(results)
+            report["effective_range"] = grid.effective_range(results, extension.max_steps)
         files["trials.json"] = canonical_json([result.row() for result in results]).encode("utf-8")
         best = runner.best
         elapsed = time.monotonic() - started
