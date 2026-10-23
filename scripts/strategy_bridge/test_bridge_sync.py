@@ -49,6 +49,7 @@ class FakeApi:
         self.posts = 0
         self.seen_headers = []
         self.fail_next_get = False
+        self.plan = PLAN  # PAPER_PLAN for runs created after the shadow-paper branch merged
 
     def request(self, method, url, body, headers):
         self.seen_headers.append(dict(headers))
@@ -70,10 +71,14 @@ class FakeApi:
                 "created_at": "2026-10-23T09:00:00+00:00",
                 "finished_at": None,
                 "reason": None,
+                "current_stage": self.plan[0],
+                "config_json": {"stage_plan": list(self.plan), "thresholds": {"paper_min_trading_days": 20}},
             }
             self.runs[run_id] = run
             self.by_key[key] = run_id
-            self.stages[run_id] = [{"stage": s, "seq": i, "latest": None, "attempts": []} for i, s in enumerate(PLAN)]
+            self.stages[run_id] = [
+                {"stage": s, "seq": i, "latest": None, "attempts": []} for i, s in enumerate(self.plan)
+            ]
             return 201, dict(run)
         if self.fail_next_get:
             self.fail_next_get = False
@@ -87,6 +92,22 @@ class FakeApi:
         if parts[4] == "stages" and len(parts) == 5:
             return 200, {"run_id": run_id, "stages": self.stages[run_id]}
         return 200, self.attempts[(run_id, parts[5], int(parts[7]))]
+
+    def advance(self, run_id, status, current_stage, results, reason=None):
+        """A non-terminal state: results as in finish(); verdict None + status "waiting" = a held/waiting attempt."""
+        self.runs[run_id].update(status=status, current_stage=current_stage, reason=reason)
+        for entry in self.stages[run_id]:
+            if entry["stage"] in results:
+                stage_status, verdict, report, why = results[entry["stage"]]
+                latest = {
+                    "stage": entry["stage"],
+                    "attempt": 1,
+                    "status": stage_status,
+                    "verdict": verdict,
+                    "reason": why,
+                }
+                entry["latest"] = latest
+                self.attempts[(run_id, entry["stage"], 1)] = dict(latest, artifact_json={"report": report, "files": []})
 
     def finish(self, run_id, status, results, reason=None):
         """results: {stage: (verdict|None for aborted, report, reason)}"""
@@ -163,6 +184,20 @@ def gate(name, ok, headline):
     return {"summary": f"{name} {'✅' if ok else '❌'} {headline}", "gate": name}
 
 
+PAPER_PLAN = [*PLAN, "shadow_paper", "awaiting_release"]
+PAPER_WAITING = {
+    "summary": "shadow_paper ⏳ day 3/20 · 1/10 trades · replay match 100% · paper PnL +1,200 TWD",
+    "trading_days": 3,
+    "paper": {"n_trades": 1, "total_pnl_twd": 1200.0},
+}
+PAPER_PASSED = {
+    "summary": "shadow_paper ✅ 23 trading days · 14 trades · replay match 93% · paper PnL +12,300 TWD",
+    "trading_days": 23,
+    "paper": {"n_trades": 14, "total_pnl_twd": 12300.0, "wins": 9},
+    "consistency": {"matched": 13, "ratio": 0.9286},
+    "snapshot": {"replay_match_ratio": 0.9286},
+}
+HELD = {"summary": "awaiting_release ⏸ passed shadow paper; awaiting human release (Step 9, after the soak gate)"}
 FULL_PASS = {
     "spec_generate": (
         "pass",
@@ -300,6 +335,114 @@ class HoldTests(unittest.TestCase):
         self.assertIsNone(bs.held_until([["06:00", "08:40"]], at(5, 59)))
         self.assertIsNone(bs.held_until([], at(7, 0)))
         self.assertEqual(bs.held_until([["23:00", "01:00"]], at(0, 30)), "01:00")
+
+
+def completed(results):
+    return {stage: ("completed", verdict, report, why) for stage, (verdict, report, why) in results.items()}
+
+
+class MilestoneTests(unittest.TestCase):
+    def setUp(self):
+        self.h = Harness(self)
+        self.h.api.plan = PAPER_PLAN
+        self.h.bridge.add("20261023-s1")
+        self.h.sync()
+        self.run_id = self.h.run_id("20261023-s1")
+
+    def enter_paper(self):
+        self.h.api.advance(
+            self.run_id,
+            "waiting",
+            "shadow_paper",
+            {**completed(FULL_PASS), "shadow_paper": ("waiting", None, PAPER_WAITING, PAPER_WAITING["summary"])},
+        )
+
+    def test_gates_passed_starts_shadow_paper_once_with_gate_lines(self):
+        h = self.h
+        h.api.advance(self.run_id, "running", "wfe", completed({k: FULL_PASS[k] for k in PLAN[:8]}))
+        h.sync()
+        self.assertEqual([e for _, e in h.events()], ["start"])  # holdout not yet passed
+        self.enter_paper()
+        for _ in range(3):
+            self.assertEqual(h.sync(), 0)
+        self.assertEqual([e for _, e in h.events()], ["start", "shadow_paper"])
+        lines = h.bridge.sent[1][2].splitlines()
+        self.assertEqual(lines[0], "pipeline #10 通過全部驗證關卡，開始 shadow paper（至少 20 個交易日）")
+        self.assertEqual(lines[2:8], [f"{g} ✅ ok" for g in PLAN[4:]])
+        self.assertEqual(lines[8], "參數（optimize 最佳）：`sl_buf=5`, `tp_r=2.5`")
+        self.assertNotIn("shadow_paper ⏳", h.bridge.sent[1][2])
+
+    def test_awaiting_release_once_with_paper_summary(self):
+        h = self.h
+        self.enter_paper()
+        h.sync()
+        held = {**completed(FULL_PASS), "shadow_paper": ("completed", "pass", PAPER_PASSED, PAPER_PASSED["summary"])}
+        held["awaiting_release"] = ("waiting", None, HELD, "passed shadow paper; awaiting human release")
+        h.api.advance(self.run_id, "waiting", "awaiting_release", held, reason="passed shadow paper; awaiting ...")
+        for _ in range(3):
+            self.assertEqual(h.sync(), 0)
+        self.assertEqual([e for _, e in h.events()], ["start", "shadow_paper", "awaiting_release"])
+        lines = h.bridge.sent[2][2].splitlines()
+        self.assertEqual(lines[0], "pipeline #10 通過 shadow paper，等待人工 release")
+        self.assertEqual(lines[2], PAPER_PASSED["summary"])
+        self.assertEqual(lines[3], "交易日 23，交易 14 筆，paper PnL +12,300 TWD，replay match 93%")
+        rec = json.loads((Path(h.cfg["state_dir"]) / "runs" / f"{self.run_id}.json").read_text())
+        self.assertFalse(rec["closed"])  # still watched: a human abort or Step 9 release ends it later
+
+    def test_milestone_dedupe_survives_lost_local_state(self):
+        h = self.h
+        self.enter_paper()
+        h.sync()
+        path = Path(h.cfg["state_dir"]) / "runs" / f"{self.run_id}.json"
+        rec = json.loads(path.read_text())
+        rec["notified"] = ["start"]
+        path.write_text(json.dumps(rec))
+        h.sync()
+        self.assertEqual([e for _, e in h.events()], ["start", "shadow_paper"])
+        self.assertTrue(any("shadow_paper (bridge: duplicate" in line for line in h.log.lines))
+
+    def test_both_milestones_reached_between_ticks_go_out_in_order(self):
+        h = self.h
+        held = {**completed(FULL_PASS), "shadow_paper": ("completed", "pass", PAPER_PASSED, None)}
+        held["awaiting_release"] = ("waiting", None, HELD, None)
+        h.api.advance(self.run_id, "waiting", "awaiting_release", held)
+        h.sync()
+        self.assertEqual([e for _, e in h.events()], ["start", "shadow_paper", "awaiting_release"])
+
+    def test_shadow_paper_failure_is_in_the_terminal_summary(self):
+        h = self.h
+        self.enter_paper()
+        h.sync()
+        fail = dict(PAPER_PASSED, summary="shadow_paper ❌ replay match 71% < 90% after 22 trading days")
+        h.api.finish(self.run_id, "failed", {**FULL_PASS, "shadow_paper": ("fail", fail, "replay match 71% < 90%")})
+        h.sync()
+        self.assertEqual([e for _, e in h.events()], ["start", "shadow_paper", "failed"])
+        text = h.bridge.sent[2][2]
+        self.assertIn("shadow_paper ❌ replay match 71% < 90% after 22 trading days", text)
+        self.assertIn("未執行：awaiting_release", text)
+
+    def test_plan_without_paper_stages_never_reads_stages_before_terminal(self):
+        h = Harness(self)  # integration before the shadow branch: plan ends at holdout
+        h.bridge.add("20261023-s1")
+        h.sync()
+        run_id = h.run_id("20261023-s1")
+        h.api.advance(run_id, "running", "holdout", completed({k: FULL_PASS[k] for k in PLAN[:9]}))
+        before = len(h.api.seen_headers)
+        h.sync()
+        self.assertEqual(len(h.api.seen_headers) - before, 1)  # only the run status read
+        self.assertEqual([e for _, e in h.events()], ["start"])
+
+    def test_milestone_reached_is_generic(self):
+        stages = [
+            {"stage": "a", "latest": {"status": "completed", "verdict": "pass"}},
+            {"stage": "shadow_paper", "latest": {"status": "running", "verdict": None}},
+            {"stage": "awaiting_release", "latest": None},
+        ]
+        self.assertTrue(bs.milestone_reached("shadow_paper", stages))
+        self.assertFalse(bs.milestone_reached("awaiting_release", stages))
+        self.assertFalse(bs.milestone_reached("missing", stages))
+        stages[0]["latest"]["verdict"] = "fail"
+        self.assertFalse(bs.milestone_reached("shadow_paper", stages))
 
 
 class PushTests(unittest.TestCase):

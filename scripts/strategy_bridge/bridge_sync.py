@@ -12,7 +12,9 @@ Commands
             and once the run is terminal (completed/failed/unsupported/error/aborted) one summary message
             `strategy-notify <id> <status>`. The bridge keeps a marker per idea+event and answers a repeat with
             "duplicate" without sending, so a crash after a send (or a re-run of the ssh command) never notifies twice.
-            Local state only saves calls; the bridge marker is the authority.
+            Local state only saves calls; the bridge marker is the authority. Non-terminal milestones, once each
+            per run: `shadow_paper` (all gates passed, shadow paper started) and `awaiting_release` (shadow paper
+            passed, held for a human release); only for runs whose stage_plan contains those stages.
       --dry-run reads pending ideas and run status, logs what it would do, writes nothing and sends nothing.
   bridge_sync.py preview RUN_ID [--config FILE]
       Print the terminal summary message for any run (nothing is sent).
@@ -360,17 +362,22 @@ def terminal_message(run, stages, reports, kairos_base_url="") -> str:
     return text if len(text) <= MESSAGE_CAP else text[: MESSAGE_CAP - 1] + "…"
 
 
-def fetch_terminal_detail(api, run_id):
-    """-> (stages list, {stage: report}) or raises RuntimeError."""
-
+def fetch_stages(api, run_id) -> list:
     status, body = api.get(f"/api/v1/pipelines/{run_id}/stages")
     if status != 200 or not isinstance(body, dict):
         raise RuntimeError(f"stages http {status}")
-    stages = body.get("stages") or []
+    return body.get("stages") or []
+
+
+def fetch_terminal_detail(api, run_id, stages=None):
+    """-> (stages list, {stage: report}) or raises RuntimeError. Reports come from every stage's latest attempt
+    that stored one (completed, or a long-lived waiting/aborted stage such as shadow_paper)."""
+
+    stages = fetch_stages(api, run_id) if stages is None else stages
     reports = {}
     for entry in stages:
         latest = entry.get("latest")
-        if not latest or latest.get("status") != "completed":
+        if not latest or latest.get("status") not in ("completed", "waiting", "aborted"):
             continue
         status, attempt = api.get(
             f"/api/v1/pipelines/{run_id}/stages/{entry['stage']}/attempts/{int(latest['attempt'])}"
@@ -379,6 +386,73 @@ def fetch_terminal_detail(api, run_id):
             raise RuntimeError(f"attempt {entry['stage']}#{latest['attempt']} http {status}")
         reports[entry["stage"]] = _report(attempt)
     return stages, reports
+
+
+# ------------------------------------------------------------------ milestones
+# Non-terminal milestones, notified once each (bridge marker per idea+event = per run+milestone). Generic over the
+# stage list: a milestone stage is reached once every stage before it passed and it has an attempt of its own.
+MILESTONES = ("shadow_paper", "awaiting_release")
+
+
+def milestone_reached(stage, stages) -> bool:
+    names = [entry.get("stage") for entry in stages]
+    if stage not in names:
+        return False
+    index = names.index(stage)
+    for entry in stages[:index]:
+        latest = entry.get("latest") or {}
+        if latest.get("status") != "completed" or latest.get("verdict") != "pass":
+            return False
+    return stages[index].get("latest") is not None
+
+
+def _plan(run) -> list:
+    plan = (run.get("config_json") or {}).get("stage_plan")
+    return list(plan) if isinstance(plan, list) else []
+
+
+def _link(run, kairos_base_url):
+    return [f"{kairos_base_url.rstrip('/')}/pipelines?run={run.get('id')}"] if kairos_base_url else []
+
+
+def _pct(value):
+    return f"{value * 100:.0f}%" if isinstance(value, (int, float)) and not isinstance(value, bool) else "?"
+
+
+def milestone_message(milestone, run, stages, reports, kairos_base_url="") -> str:
+    head = f"pipeline #{run.get('run_no')}"
+    if milestone == "shadow_paper":
+        thresholds = (run.get("config_json") or {}).get("thresholds") or {}
+        days = thresholds.get("paper_min_trading_days", 20)
+        lines = [
+            f"{head} 通過全部驗證關卡，開始 shadow paper（至少 {days} 個交易日）",
+            _one_line(run.get("idea_text"), 60),
+        ]
+        names = [entry.get("stage") for entry in stages]
+        before = stages[: names.index("shadow_paper")] if "shadow_paper" in names else stages
+        lines += [
+            stage_line(entry["stage"], entry["latest"], reports.get(entry["stage"]) or {})
+            for entry in before
+            if isinstance((reports.get(entry["stage"]) or {}).get("summary"), str)
+        ]
+        best = (reports.get("optimize") or {}).get("best")
+        if isinstance(best, dict) and isinstance(best.get("params"), dict) and best["params"]:
+            lines.append("參數（optimize 最佳）：" + _params_text(best["params"]))
+    else:
+        paper = reports.get("shadow_paper") or {}
+        lines = [f"{head} 通過 shadow paper，等待人工 release", _one_line(run.get("idea_text"), 60)]
+        if isinstance(paper.get("summary"), str):
+            lines.append(_one_line(paper["summary"], 200))
+        stats = paper.get("paper") if isinstance(paper.get("paper"), dict) else {}
+        ratio = (paper.get("consistency") or {}).get("ratio")
+        if ratio is None:
+            ratio = (paper.get("snapshot") or {}).get("replay_match_ratio")
+        lines.append(
+            f"交易日 {_num(paper.get('trading_days'), 'd')}，交易 {_num(stats.get('n_trades'), 'd')} 筆，"
+            f"paper PnL {_num(stats.get('total_pnl_twd'), '+,.0f')} TWD，replay match {_pct(ratio)}"
+        )
+    text = "\n".join(lines + _link(run, kairos_base_url))
+    return text if len(text) <= MESSAGE_CAP else text[: MESSAGE_CAP - 1] + "…"
 
 
 # ------------------------------------------------------------------ sync
@@ -495,6 +569,27 @@ def _notify(bridge, rec, event, text, state, log, dry_run) -> bool:
     return True
 
 
+def _milestones(api, bridge, rec, run, pending, state, cfg, log, dry_run) -> bool:
+    """Notify each reached milestone in plan order (one stages read per tick). False = a read or send failed."""
+
+    try:
+        stages = fetch_stages(api, rec["run_id"])
+        reached = [m for m in pending if milestone_reached(m, stages)]
+        if not reached:
+            return True
+        stages, reports = fetch_terminal_detail(api, rec["run_id"], stages)
+    except (OSError, RuntimeError) as error:
+        log(
+            f"run #{rec['run_no']} milestone read failed: {error if isinstance(error, RuntimeError) else type(error).__name__}"
+        )
+        return False
+    for milestone in reached:
+        text = milestone_message(milestone, run, stages, reports, cfg.get("kairos_base_url") or "")
+        if not _notify(bridge, rec, milestone, text, state, log, dry_run):
+            return False
+    return True
+
+
 def push(api, bridge, state, cfg, log, dry_run=False) -> int:
     failures = 0
     watch = dt.timedelta(days=float(cfg.get("watch_days") or 14))
@@ -514,7 +609,12 @@ def push(api, bridge, state, cfg, log, dry_run=False) -> int:
             failures += 1
             continue  # the summary never goes out before the start message
         run_status = run.get("status")
-        if run_status in TERMINAL and run_status not in notified:
+        if run_status not in TERMINAL:
+            pending = [m for m in MILESTONES if m in _plan(run) and m not in notified]
+            if pending and not _milestones(api, bridge, rec, run, pending, state, cfg, log, dry_run):
+                failures += 1
+            continue
+        if run_status not in notified:
             try:
                 stages, reports = fetch_terminal_detail(api, rec["run_id"])
             except (OSError, RuntimeError) as error:
@@ -527,7 +627,7 @@ def push(api, bridge, state, cfg, log, dry_run=False) -> int:
             if not _notify(bridge, rec, run_status, text, state, log, dry_run):
                 failures += 1
                 continue
-        if dry_run or run_status not in TERMINAL or run_status not in set(rec.get("notified") or []):
+        if dry_run or run_status not in set(rec.get("notified") or []):
             continue
         finished = _parse_iso(run.get("finished_at"))
         if run_status in FINAL or (finished and utcnow() - finished > watch):
