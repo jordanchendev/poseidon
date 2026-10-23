@@ -285,6 +285,21 @@ def test_repair_round_fixes_an_invalid_spec():
     assert outcome.report["total_cost_usd"] == 0.002
 
 
+def test_a_spec_without_params_is_repaired_to_declare_them():
+    bare = tx_orb30_day()  # DSL-valid, has stops, declares no $param
+    client = FakeClient([reply(ok(bare)), reply(ok())])
+    outcome, _ = run(client)
+    assert outcome.verdict == Verdict.PASS and outcome.report["repair_rounds"] == 1
+    first = outcome.report["rounds"][0]
+    assert first["outcome"] == "invalid" and first["errors"][0]["path"] == "params"
+    assert "1-4 tunable $params" in client.chat_payloads[1]["messages"][-1]["content"]
+
+
+def test_prompt_requires_one_to_four_params():
+    assert "Tunable parameters (REQUIRED): declare 1-4" in SYSTEM_PROMPT
+    assert "omit params" not in SYSTEM_PROMPT
+
+
 def test_contract_error_then_valid():
     client = FakeClient([reply("this is not json"), reply(ok())])
     outcome, _ = run(client)

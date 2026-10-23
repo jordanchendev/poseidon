@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import ClassVar, Protocol
 
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
-from poseidon.pipeline.plan import V1_STAGE_PLAN
+from poseidon.pipeline.plan import GATE_STAGES, V1_STAGE_PLAN
 from poseidon.pipeline.spec_validation import V2_REQUIRED, get_spec_validator
 from poseidon.pipeline.state import Verdict
 
@@ -31,6 +31,8 @@ class UpstreamResult:
     input_sha256: str
     artifact_sha256: str | None
     report: dict | None
+    artifact_uri: str | None = None  # file:// directory holding the attempt's files
+    files: tuple = ()  # the attempt's file manifest: ({"name", "sha256", "bytes"}, ...)
 
 
 @dataclass
@@ -49,6 +51,7 @@ class StageContext:
     stage_run_id: uuid.UUID | None = None
     artifacts_root: Path | None = None
     trials: object | None = None  # a trial ledger (``poseidon.pipeline.trials``); None = in memory
+    family: object | None = None  # a family view (``poseidon.pipeline.family``); None = this ledger only
 
     def check_stop(self) -> None:
         if self.should_stop():
@@ -209,8 +212,11 @@ def _step2_config_missing(ctx) -> StageResult | None:
 class _DataStage(BaseStage):
     """A stage that reads the run's frozen window through the holdout guard."""
 
-    def __init__(self, data_source=None):
+    def __init__(self, data_source=None, strategy_factory=None):
         self.data_source = data_source
+        # ``(spec=..., bar_label=...) -> DslV2StrategyFactory``-like; tests inject
+        # a test-only strategy (the random-entry control) through it.
+        self.strategy_factory = strategy_factory
 
     def bars(self, ctx, part: str = "train"):
         from poseidon.pipeline import artifacts
@@ -222,11 +228,11 @@ class _DataStage(BaseStage):
         except DataSourceError as error:
             raise TransientStageError(str(error)) from error
 
-    @staticmethod
-    def strategy_builder(ctx, template: dict):
+    def strategy_builder(self, ctx, template: dict):
         from poseidon.backtest.dsl_v2_factory import DslV2StrategyFactory
 
-        return DslV2StrategyFactory(spec=template, bar_label=ctx.config["backtest"]["bar_label"])
+        factory = self.strategy_factory or DslV2StrategyFactory
+        return factory(spec=template, bar_label=ctx.config["backtest"]["bar_label"])
 
 
 class BacktestStage(_DataStage):
@@ -433,21 +439,20 @@ def _not_implemented(stage_name: str, required: tuple[str, ...]) -> NotImplement
     return stage_class()
 
 
-_GATES = ("wfe", "holdout", "cost_stress", "dsr", "param_stability", "regime_split")
+def build_default_registry(*, data_source=None, strategy_factory=None) -> dict[str, Stage]:
+    """``data_source`` overrides the Thalassa reader and ``strategy_factory`` the DSL v2
+    strategy factory (tests pass synthetic bars / a test-only strategy)."""
 
-
-def build_default_registry(*, data_source=None) -> dict[str, Stage]:
-    """``data_source`` overrides the Thalassa reader (tests pass synthetic bars)."""
+    from poseidon.pipeline import gate_stages
 
     registry: dict[str, Stage] = {
         "spec_generate": SpecGenerateStage(),
         "spec_validate": SpecValidateStage(),
-        "backtest": BacktestStage(data_source),
-        "optimize": OptimizeStage(data_source),
+        "backtest": BacktestStage(data_source, strategy_factory),
+        "optimize": OptimizeStage(data_source, strategy_factory),
     }
-    for gate in _GATES:
-        registry[gate] = _not_implemented(gate, ("optimize",))
-    registry["shadow_paper"] = _not_implemented("shadow_paper", _GATES)
+    registry.update(gate_stages.build_gate_stages(data_source=data_source, strategy_factory=strategy_factory))
+    registry["shadow_paper"] = _not_implemented("shadow_paper", GATE_STAGES)
     registry["awaiting_release"] = _not_implemented("awaiting_release", ("shadow_paper",))
     if tuple(registry) != V1_STAGE_PLAN:
         raise RuntimeError("stage registry drifted from the v1 stage plan")

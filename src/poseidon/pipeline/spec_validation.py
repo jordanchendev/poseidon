@@ -202,6 +202,9 @@ class DslV2Validator:
         if model.market != self.market or model.symbol != self.symbol:
             message = f"spec must target {self.market}/{self.symbol}, got {model.market}/{model.symbol}"
             return SpecValidation(False, (message,), ())
+        policy = param_count_errors(validated)
+        if policy:
+            return SpecValidation(False, tuple(f"{item['path']}: {item['msg']}" for item in policy), ())
         return SpecValidation(True, (), ())
 
     def resolve(self, spec: dict) -> dict:
@@ -222,6 +225,31 @@ class DslV2Validator:
 
 
 V2_REQUIRED = "pipeline requires dsl_version 2"
+
+# Owner decision (Step 3b): every pipeline spec -- LLM output or hand-written --
+# declares 1-4 ``$param``s, so optimize always searches and param_stability
+# always has a neighbourhood. The DSL itself allows more (``MAX_PARAMS``).
+PIPELINE_MIN_PARAMS = 1
+PIPELINE_MAX_PARAMS = 4
+PARAM_GUIDANCE = (
+    "parameterise the values worth tuning, e.g. window minutes (opening-range minutes, session_elapsed "
+    "bounds, max_hold_bars), stop/target distances (stop points or ATR multiple, target points or R multiple, "
+    "stop offset) or thresholds (const levels, indicator periods, cross/compare offsets)"
+)
+
+
+def param_count_errors(validated) -> list[dict]:
+    """Pipeline policy: ``PIPELINE_MIN_PARAMS``..``PIPELINE_MAX_PARAMS`` declared ``$param``s."""
+
+    count = len(validated.params)
+    if PIPELINE_MIN_PARAMS <= count <= PIPELINE_MAX_PARAMS:
+        return []
+    message = (
+        f"the pipeline requires {PIPELINE_MIN_PARAMS}-{PIPELINE_MAX_PARAMS} tunable $params, "
+        f"the spec declares {count}; {PARAM_GUIDANCE}"
+    )
+    return [{"path": "params", "msg": message, "type": "value_error"}]
+
 
 register_spec_validator(DslV1Validator())
 register_spec_validator(DslV2Validator())

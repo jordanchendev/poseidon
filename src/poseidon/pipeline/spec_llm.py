@@ -41,6 +41,7 @@ from typing import Any
 import httpx
 
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
+from poseidon.pipeline.spec_validation import param_count_errors
 from poseidon.pipeline.state import Verdict
 from poseidon.strategies.dsl.v2 import DslUnsupportedError, DslValidationError, dsl_v2_json_schema, validate_v2
 from poseidon.strategies.dsl.v2.examples import tx_orb30_day
@@ -56,7 +57,7 @@ from poseidon.strategies.dsl.v2.validate import merge_risk, walk_model
 KEY_ENV = "STRATEGY_PIPELINE_OPENROUTER_KEY"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 IDENTITY_CACHE_SECONDS = 600.0
-PROMPT_VERSION = 3
+PROMPT_VERSION = 4
 
 MAX_ERRORS_PER_ROUND = 20
 MAX_TEXT = 300
@@ -148,9 +149,12 @@ DSL v2 RULES
   news, fundamentals, machine-learning models, position sizing, etc.
 - missing: short snake_case capability tokens (e.g. "htf", "options_implied_volatility", "order_book"),
   so they can be aggregated across ideas.
-- Tunable parameters: declare 1-4 entries in "params" for the values most worth searching (lookbacks, stop
-  and target sizes, thresholds); omit params only if nothing in the idea is tunable. Reference each one as
-  {{"$param":"<name>"}} in place of a numeric value; every declared param must be referenced at least once.
+- Tunable parameters (REQUIRED): declare 1-4 entries in "params"; a spec without params is rejected.
+  Parameterise the values most worth searching: window minutes (opening-range minutes, session_elapsed
+  bounds, max_hold_bars, flat_before_session_end_minutes), stop/target distances (stop points or ATR multiple,
+  stop offset_points, target points or R multiple) and thresholds (const levels, indicator periods,
+  cross/compare offsets). Reference each one as {{"$param":"<name>"}} in place of a numeric value; every
+  declared param must be referenced at least once.
   Grid rules: (high - low) is a multiple of step, default is one of low, low+step, ..., high, at most
   10 grid points; an "int" param has integer low/high/step/default. Every grid value must be valid where
   the param is used (e.g. an opening-range minutes param must stay a multiple of the interval).
@@ -367,7 +371,8 @@ def operand_scale(operand: Any) -> str | None:
 
 
 def pipeline_policy_errors(validated) -> list[dict]:
-    """Pipeline rules on top of the DSL v2 grammar: TX only, a stop on every entry, like-scale comparisons.
+    """Pipeline rules on top of the DSL v2 grammar: TX only, a stop on every entry, like-scale comparisons,
+    1-4 ``$param``s (the same param policy ``spec_validate`` enforces).
 
     The scale check catches specs that validate but can never mean what they say
     (e.g. ``atr < sma``: points against a price level is always true).
@@ -390,6 +395,7 @@ def pipeline_policy_errors(validated) -> list[dict]:
                         f"a is on the {scale_a} scale but b is on the {scale_b} scale; compare like with like",
                     )
                 )
+    errors.extend(param_count_errors(validated))
     return errors
 
 

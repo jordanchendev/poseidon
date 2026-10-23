@@ -30,7 +30,9 @@ from sqlalchemy.orm import Session
 from poseidon.core.config import settings
 from poseidon.decision_loop.manifest import content_sha256
 from poseidon.pipeline import artifacts
+from poseidon.pipeline.family import DbFamily
 from poseidon.pipeline.models import PipelineEvent, PipelineRun, StageRun
+from poseidon.pipeline.plan import completion_reason
 from poseidon.pipeline.stages import (
     STAGE_REGISTRY,
     StageContext,
@@ -190,7 +192,7 @@ class PipelineDispatcher:
             plan = run.config_json["stage_plan"]
             stage_name, latest = select_next_stage(plan, attempts)
             if stage_name is None:
-                transition_run(run, RunStatus.COMPLETED, now=now, reason="all stages passed")
+                transition_run(run, RunStatus.COMPLETED, now=now, reason=completion_reason(plan))
                 run.current_stage = None
                 add_event(session, run, "run_completed", DISPATCHER_ACTOR, {"stage_plan": plan})
                 session.commit()
@@ -239,6 +241,7 @@ class PipelineDispatcher:
                 stage_run_id=row.id,
                 artifacts_root=self.artifacts_root,
                 trials=DbTrialLedger(self.session_factory, run_id=run.id, family_id=run.family_id, stage_run_id=row.id),
+                family=DbFamily(self.session_factory, run_id=run.id, family_id=run.family_id, stage_run_id=row.id),
             )
             input_sha256 = content_sha256(stage.input_payload(context))
             if row.input_sha256 is not None and row.input_sha256 != input_sha256:
@@ -283,8 +286,16 @@ class PipelineDispatcher:
         upstream = {}
         for name in stage.requires:
             row = latest[name]  # validate_stage_plan guarantees a passing attempt exists
-            report = (row.artifact_json or {}).get("report")
-            upstream[name] = UpstreamResult(name, row.attempt, row.input_sha256, row.artifact_sha256, report)
+            artifact = row.artifact_json or {}
+            upstream[name] = UpstreamResult(
+                name,
+                row.attempt,
+                row.input_sha256,
+                row.artifact_sha256,
+                artifact.get("report"),
+                artifact_uri=row.artifact_uri,
+                files=tuple(artifact.get("files") or ()),
+            )
         return upstream
 
     def _fail_run_locked(self, session, run, now, reason) -> dict:
@@ -444,7 +455,9 @@ class PipelineDispatcher:
                     session.flush()
                     next_stage, _ = select_next_stage(run.config_json["stage_plan"], attempts)
                     if next_stage is None:
-                        transition_run(run, RunStatus.COMPLETED, now=now, reason="all stages passed")
+                        transition_run(
+                            run, RunStatus.COMPLETED, now=now, reason=completion_reason(run.config_json["stage_plan"])
+                        )
                         run.current_stage = None
                     else:
                         transition_run(run, RunStatus.QUEUED, now=now)

@@ -23,6 +23,7 @@ historically wrong for futures, see Step 0):
 from __future__ import annotations
 
 import csv
+import dataclasses
 import io
 import math
 from collections import Counter
@@ -32,7 +33,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from poseidon.backtest.cost_model import get_cost_model
+from poseidon.backtest.cost_model import CostModel, get_cost_model
 from poseidon.backtest.portfolio import SizingConfig, SizingMode
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.data.feature_engine import FeatureEngine
@@ -65,7 +66,26 @@ def finite(value) -> float | None:
     return value if math.isfinite(value) else None
 
 
-def build_runner(strategy, backtest_config: dict) -> BacktestRunner:
+def stressed_cost_model(name: str, multiplier: float) -> CostModel:
+    """``name``'s cost model with commission, tax and slippage all multiplied by ``multiplier``."""
+
+    base = get_cost_model(name)
+    return dataclasses.replace(
+        base,
+        market=f"{base.market}_x{multiplier:g}",
+        buy_commission_rate=base.buy_commission_rate * multiplier,
+        sell_commission_rate=base.sell_commission_rate * multiplier,
+        commission_per_contract=base.commission_per_contract * multiplier,
+        tax_rate=base.tax_rate * multiplier,
+        slippage_pct=base.slippage_pct * multiplier,
+        slippage_ticks=base.slippage_ticks * multiplier,
+        description=f"{base.description} -- commission, tax and slippage x{multiplier:g}",
+    )
+
+
+def build_runner(
+    strategy, backtest_config: dict, *, cost_model: CostModel | None = None, stop_slippage_ticks: float = 0.0
+) -> BacktestRunner:
     sizing = backtest_config["sizing"]
     if sizing["mode"] != SizingMode.FIXED_CONTRACTS.value:
         raise ValueError(f"pipeline backtests size by fixed_contracts, not {sizing['mode']!r}")
@@ -73,10 +93,11 @@ def build_runner(strategy, backtest_config: dict) -> BacktestRunner:
         strategy=strategy,
         feature_engine=FeatureEngine(),
         risk_engine=RiskEngine(),
-        cost_model=get_cost_model(backtest_config["cost_model"]),
+        cost_model=cost_model if cost_model is not None else get_cost_model(backtest_config["cost_model"]),
         initial_capital=float(backtest_config["initial_capital_twd"]),
         sizing_config=SizingConfig(mode=SizingMode.FIXED_CONTRACTS, contracts=int(sizing["contracts"])),
         gap_aware_stops=bool(backtest_config["gap_aware_stops"]),
+        stop_slippage_ticks=float(stop_slippage_ticks),
     )
 
 
@@ -194,17 +215,25 @@ def _iso(value) -> str | None:
     return pd.Timestamp(value).isoformat() if value is not None else None
 
 
-def _instrument(strategy, should_stop: Callable[[], bool]) -> tuple[dict, dict]:
-    """Record exit reasons / entry rule ids from emitted signals; stop on request."""
+def _instrument(strategy, should_stop: Callable[[], bool], trade_from=None) -> tuple[dict, dict]:
+    """Record exit reasons / entry rule ids from emitted signals; stop on request.
+
+    With ``trade_from`` every entry signal stamped before it is dropped, so the
+    bars before it only warm features up (no position, no PnL there).
+    """
 
     exits: dict[pd.Timestamp, str] = {}
     entries: dict[pd.Timestamp, str] = {}
     evaluate = strategy.evaluate
+    cutoff = pd.Timestamp(trade_from) if trade_from is not None else None
+    entry_actions = (SignalAction.LONG, SignalAction.SHORT)
 
     def instrumented(features):
         if should_stop():
             raise _Interrupted("stage stop requested")
         signals = evaluate(features)
+        if cutoff is not None:
+            signals = [s for s in signals if s.action not in entry_actions or pd.Timestamp(s.signal_time) >= cutoff]
         for signal in signals:
             metadata = signal.metadata or {}
             stamp = pd.Timestamp(signal.signal_time)
@@ -224,11 +253,20 @@ def run_backtest(
     backtest_config: dict,
     *,
     should_stop: Callable[[], bool] = lambda: False,
+    cost_model: CostModel | None = None,
+    stop_slippage_ticks: float = 0.0,
+    trade_from=None,
 ) -> BacktestOutcome:
-    """Run ``strategy`` on ``bars``; raises ``StageStopped`` when asked to stop mid-run."""
+    """Run ``strategy`` on ``bars``; raises ``StageStopped`` when asked to stop mid-run.
 
-    exits, entries = _instrument(strategy, should_stop)
-    runner = build_runner(strategy, backtest_config)
+    ``cost_model`` / ``stop_slippage_ticks`` override the frozen costs (the
+    cost_stress gate only). ``trade_from``: bars before it are feature warm-up
+    only -- entries are refused there and the daily series starts at its
+    trading day.
+    """
+
+    exits, entries = _instrument(strategy, should_stop, trade_from)
+    runner = build_runner(strategy, backtest_config, cost_model=cost_model, stop_slippage_ticks=stop_slippage_ticks)
     result = runner.run(bars)
     if should_stop():
         from poseidon.pipeline.stages import StageStopped
@@ -246,10 +284,23 @@ def run_backtest(
         exits=exits,
         entries=entries,
         bars=len(bars),
+        stop_slippage_ticks=stop_slippage_ticks,
+        trade_from=trade_from,
     )
 
 
-def summarise(trade_records, equity_curve, backtest_config, *, cost_model, exits, entries, bars) -> BacktestOutcome:
+def summarise(
+    trade_records,
+    equity_curve,
+    backtest_config,
+    *,
+    cost_model,
+    exits,
+    entries,
+    bars,
+    stop_slippage_ticks: float = 0.0,
+    trade_from=None,
+) -> BacktestOutcome:
     capital = float(backtest_config["initial_capital_twd"])
     annualisation = float(backtest_config["sharpe"]["annualisation_factor"])
     sides: dict = {}
@@ -276,7 +327,10 @@ def summarise(trade_records, equity_curve, backtest_config, *, cost_model, exits
                 "fees_twd": fees,
                 "pnl_twd": pnl,
                 "exit_reason": reason,
-                "_slipped_legs": 1 + (record.action == "close"),
+                # Ticks of slippage inside the fills: every market-order leg,
+                # plus the stop leg when a stressed run slips stops too.
+                "_slipped_ticks": float(cost_model.slippage_ticks) * (1 + (record.action == "close"))
+                + float(stop_slippage_ticks) * (record.action == "close_sl"),
             }
         )
     open_at_end = len(sides) - len({pd.Timestamp(t["entry_time"]) for t in trips})
@@ -285,10 +339,10 @@ def summarise(trade_records, equity_curve, backtest_config, *, cost_model, exits
     fees_total = float(sum(t["fees_twd"] for t in trips))
     quantity_legs = float(sum(2 * t["quantity"] for t in trips))
     commission = quantity_legs * float(getattr(cost_model, "commission_per_contract", 0.0))
-    tick = float(cost_model.tick_size or 0.0) * float(cost_model.slippage_ticks) * float(cost_model.point_value)
-    slippage = float(sum(t["_slipped_legs"] * t["quantity"] for t in trips)) * tick
+    tick = float(cost_model.tick_size or 0.0) * float(cost_model.point_value)
+    slippage = float(sum(t["_slipped_ticks"] * t["quantity"] for t in trips)) * tick
     for trip in trips:
-        trip.pop("_slipped_legs")
+        trip.pop("_slipped_ticks")
 
     if len(pnls):
         cumulative = np.cumsum(pnls)
@@ -299,6 +353,10 @@ def summarise(trade_records, equity_curve, backtest_config, *, cost_model, exits
         max_dd = 0.0
 
     daily = daily_pnl(equity_curve, capital)
+    if trade_from is not None and len(daily):
+        stamp = pd.Timestamp(trade_from)
+        stamp = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
+        daily = daily[daily.index >= trading_days(pd.DatetimeIndex([stamp]))[0]]
     stats = daily_stats(daily["pnl_twd"], annualisation) if len(daily) else daily_stats(pd.Series(dtype=float), 1)
     n_trades = len(trips)
     wins = int((pnls > 0).sum()) if n_trades else 0
@@ -310,8 +368,13 @@ def summarise(trade_records, equity_curve, backtest_config, *, cost_model, exits
             "commission_twd": finite(commission),
             "tax_twd": finite(fees_total - commission),
             "slippage_twd_estimate": finite(slippage),
-            "note": "fees_twd = commission + tax; slippage is inside fill prices (1 tick per market-order leg, "
-            "none on stop/target fills)",
+            "note": "fees_twd = commission + tax; slippage is inside fill prices "
+            f"({float(cost_model.slippage_ticks):g} tick(s) per market-order leg, "
+            + (
+                f"{float(stop_slippage_ticks):g} on stop fills, none on target fills)"
+                if stop_slippage_ticks
+                else "none on stop/target fills)"
+            ),
         },
         "n_trades": n_trades,
         "n_long": sum(1 for t in trips if t["side"] == "long"),
