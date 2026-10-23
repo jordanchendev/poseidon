@@ -1,0 +1,165 @@
+{
+ "dsl_version": 2,
+ "name": "tx_atr_contraction_breakout_trail",
+ "symbol": "TX",
+ "market": "tw_futures",
+ "interval": "5m",
+ "description": "When ATR(14) is below a fraction of its 50-bar SMA (volatility contraction), trade a breakout of the recent N-bar Donchian range and trail the stop by ATR.",
+ "risk": {
+  "trailing": {
+   "type": "atr_mult",
+   "value": {
+    "$param": "trail_atr"
+   },
+   "atr_period": 14,
+   "activate_after_r": 1.0
+  },
+  "flat_before_session_end_minutes": 10,
+  "max_trades_per_session": 2,
+  "no_reentry_after_stop": true
+ },
+ "rules": [
+  {
+   "id": "vc_break_long",
+   "action": "long",
+   "condition": {
+    "all": [
+     {
+      "type": "time_window",
+      "session": "day",
+      "start": "08:50",
+      "end": "13:35"
+     },
+     {
+      "type": "compare",
+      "a": {
+       "ind": "atr",
+       "period": 14
+      },
+      "op": "<",
+      "b": {
+       "ind": "atr",
+       "period": 14,
+       "smooth": {
+        "type": "sma",
+        "period": 50
+       }
+      },
+      "b_mult": {
+       "$param": "atr_ratio"
+      }
+     },
+     {
+      "type": "cross",
+      "a": {
+       "price": "close"
+      },
+      "direction": "above",
+      "b": {
+       "channel": "highest",
+       "source": "high",
+       "bars": {
+        "$param": "range_bars"
+       }
+      }
+     }
+    ]
+   },
+   "risk": {
+    "stop_loss": {
+     "type": "atr_mult",
+     "value": {
+      "$param": "stop_atr"
+     },
+     "atr_period": 14
+    }
+   }
+  },
+  {
+   "id": "vc_break_short",
+   "action": "short",
+   "condition": {
+    "all": [
+     {
+      "type": "time_window",
+      "session": "day",
+      "start": "08:50",
+      "end": "13:35"
+     },
+     {
+      "type": "compare",
+      "a": {
+       "ind": "atr",
+       "period": 14
+      },
+      "op": "<",
+      "b": {
+       "ind": "atr",
+       "period": 14,
+       "smooth": {
+        "type": "sma",
+        "period": 50
+       }
+      },
+      "b_mult": {
+       "$param": "atr_ratio"
+      }
+     },
+     {
+      "type": "cross",
+      "a": {
+       "price": "close"
+      },
+      "direction": "below",
+      "b": {
+       "channel": "lowest",
+       "source": "low",
+       "bars": {
+        "$param": "range_bars"
+       }
+      }
+     }
+    ]
+   },
+   "risk": {
+    "stop_loss": {
+     "type": "atr_mult",
+     "value": {
+      "$param": "stop_atr"
+     },
+     "atr_period": 14
+    }
+   }
+  }
+ ],
+ "params": {
+  "atr_ratio": {
+   "type": "float",
+   "low": 0.5,
+   "high": 0.9,
+   "step": 0.1,
+   "default": 0.7
+  },
+  "range_bars": {
+   "type": "int",
+   "low": 10,
+   "high": 40,
+   "step": 10,
+   "default": 20
+  },
+  "stop_atr": {
+   "type": "float",
+   "low": 1.0,
+   "high": 3.0,
+   "step": 0.5,
+   "default": 1.5
+  },
+  "trail_atr": {
+   "type": "float",
+   "low": 1.0,
+   "high": 3.0,
+   "step": 0.5,
+   "default": 2.0
+  }
+ }
+}

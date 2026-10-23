@@ -57,7 +57,7 @@ from poseidon.strategies.dsl.v2.validate import merge_risk, walk_model
 KEY_ENV = "STRATEGY_PIPELINE_OPENROUTER_KEY"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 IDENTITY_CACHE_SECONDS = 600.0
-PROMPT_VERSION = 4
+PROMPT_VERSION = 5  # 5: DSL v2.1 (smoothed indicator, rolling channel, b_mult)
 
 MAX_ERRORS_PER_ROUND = 20
 MAX_TEXT = 300
@@ -132,13 +132,22 @@ DSL v2 RULES
 - Operands: {{"price":"open|high|low|close"}}, {{"ind":"ema|sma|atr|rsi","period":N}} computed on the
   strategy interval only, {{"session":"or_high|or_low|or_mid|or_range","minutes":N}} (opening range,
   N a multiple of the interval), {{"session":"open|high|low|vwap|prev_high|prev_low|prev_close|
-  prev_day_high|prev_day_low|prev_day_close"}}, {{"const":X}}.
-- Operand scales: price levels (price, ema, sma, or_high/or_low/or_mid, every session level), points
+  prev_day_high|prev_day_low|prev_day_close"}}, {{"const":X}}, and (v2.1):
+  * smoothed indicator: add "smooth":{{"type":"sma|ema","period":M}} to an ind operand for the M-bar moving
+    average of that indicator series (e.g. SMA(50) of ATR(14)); it keeps the indicator's scale.
+  * rolling channel: {{"channel":"highest|lowest","source":"high|low|close","bars":N}} = highest/lowest of
+    source over the N bars BEFORE the current bar (Donchian; "exclude_current" defaults to true and must stay
+    true inside a cross). Use it for "breakout of the recent N-bar range" and for N-bar swing stops.
+- Operand scales: price levels (price, ema, sma, channel, or_high/or_low/or_mid, every session level), points
   (atr, or_range) and rsi (0-100). ema/sma are of the close price. cross/compare must keep a and b on the
   same scale (a const fits any scale); an offset is added to b in points or ATR multiples.
-  There is no indicator of an indicator (e.g. SMA of ATR) and no rolling N-bar highest/lowest. If the
-  idea's core needs one, use a coherent approximation stated in "assumptions" (e.g. ATR below a points
-  threshold param for "low volatility"), or answer unsupported.
+- "b_mult" (optional, 0.1-10) on cross/compare multiplies b before the offset: a op b_mult*b +/- offset. Use it
+  for ratio thresholds, e.g. ATR contraction {{"type":"compare","a":{{"ind":"atr","period":14}},"op":"<",
+  "b":{{"ind":"atr","period":14,"smooth":{{"type":"sma","period":50}}}},"b_mult":0.7}}. On a price-level b
+  keep b_mult within 0.9-1.1 (a percent envelope); never put it on a const b.
+  Nothing else is derived: no smoothing of a smoothed series, no stddev / z-score / percentile rank of a
+  series. If the idea's core needs one, use a coherent approximation stated in "assumptions", or answer
+  unsupported.
 - Conditions: cross, compare, time_window, session_elapsed, combined with all / any / none (depth <= 4,
   <= 12 leaves per rule). Rules: 1-6, at most 4 long/short entry rules, optional close rules.
 - Every long/short rule must end up with a stop_loss (in its own risk block or the strategy risk block).
@@ -367,7 +376,10 @@ def operand_scale(operand: Any) -> str | None:
         return "points" if operand.session == "or_range" else "price"
     if isinstance(operand, ConstOperand):
         return None
-    return "price"  # PriceOperand, SessionLevelOperand
+    return "price"  # PriceOperand, SessionLevelOperand, ChannelOperand (highest/lowest of a price)
+
+
+PRICE_B_MULT_BOUNDS = (0.9, 1.1)
 
 
 def pipeline_policy_errors(validated) -> list[dict]:
@@ -375,7 +387,10 @@ def pipeline_policy_errors(validated) -> list[dict]:
     1-4 ``$param``s (the same param policy ``spec_validate`` enforces).
 
     The scale check catches specs that validate but can never mean what they say
-    (e.g. ``atr < sma``: points against a price level is always true).
+    (e.g. ``atr < sma``: points against a price level is always true). Likewise a
+    ``b_mult`` far from 1 on a price level (``close > 0.7 * ema``) is always true,
+    so on the price scale it is limited to :data:`PRICE_B_MULT_BOUNDS`.
+    The smoothed indicator keeps its base scale (``atr`` smoothed is points).
     """
 
     model = validated.model
@@ -393,6 +408,15 @@ def pipeline_policy_errors(validated) -> list[dict]:
                     _err(
                         ".".join(str(part) for part in path),
                         f"a is on the {scale_a} scale but b is on the {scale_b} scale; compare like with like",
+                    )
+                )
+            low, high = PRICE_B_MULT_BOUNDS
+            if node.b_mult is not None and scale_b == "price" and not low <= node.b_mult <= high:
+                errors.append(
+                    _err(
+                        ".".join(str(part) for part in (*path, "b_mult")),
+                        f"b_mult on a price level must be within [{low}, {high}] (a percent envelope); "
+                        "a larger ratio moves the level away from every price",
                     )
                 )
     errors.extend(param_count_errors(validated))
