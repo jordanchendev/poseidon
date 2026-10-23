@@ -7,6 +7,7 @@ import json
 import re
 import uuid
 from datetime import date
+from pathlib import Path
 
 import httpx
 import pytest
@@ -362,6 +363,80 @@ def test_like_scale_comparisons_are_allowed(a, b):
     spec = valid_spec()
     spec["rules"][0]["condition"]["all"].append({"type": "compare", "a": a, "op": "<", "b": b})
     assert spec_llm.pipeline_policy_errors(validate_v2(spec)) == []
+
+
+ATR14 = {"ind": "atr", "period": 14}
+ATR14_SMA50 = {"ind": "atr", "period": 14, "smooth": {"type": "sma", "period": 50}}
+HH20 = {"channel": "highest", "source": "high", "bars": 20}
+
+
+@pytest.mark.parametrize(
+    "leaf",
+    [
+        {"type": "compare", "a": ATR14, "op": "<", "b": ATR14_SMA50, "b_mult": 0.7},  # points vs points
+        {"type": "cross", "a": {"price": "close"}, "direction": "above", "b": HH20},  # price vs price
+        {"type": "compare", "a": {"ind": "ema", "period": 20}, "op": ">", "b": HH20, "b_mult": 1.01},
+        {
+            "type": "compare",
+            "a": {"ind": "rsi", "period": 14, "smooth": {"type": "ema", "period": 5}},
+            "op": ">",
+            "b": {"const": 50},
+        },
+        {"type": "compare", "a": {"session": "or_range", "minutes": 30}, "op": "<", "b": ATR14_SMA50, "b_mult": 2},
+    ],
+)
+def test_v21_like_scale_comparisons_are_allowed(leaf):
+    spec = valid_spec()
+    spec["rules"][0]["condition"]["all"].append(leaf)
+    assert spec_llm.pipeline_policy_errors(validate_v2(spec)) == []
+
+
+@pytest.mark.parametrize(
+    ("leaf", "msg"),
+    [
+        (
+            {"type": "compare", "a": ATR14, "op": "<", "b": HH20},
+            "a is on the points scale but b is on the price scale; compare like with like",
+        ),
+        (
+            {"type": "compare", "a": ATR14_SMA50, "op": ">", "b": {"ind": "rsi", "period": 14}},
+            "a is on the points scale but b is on the rsi scale; compare like with like",
+        ),
+    ],
+)
+def test_v21_cross_scale_comparisons_are_rejected(leaf, msg):
+    spec = valid_spec()
+    spec["rules"][0]["condition"]["all"].append(leaf)
+    assert spec_llm.pipeline_policy_errors(validate_v2(spec)) == [{"path": "rules.0.condition.all.2", "msg": msg}]
+
+
+def test_b_mult_on_a_price_level_is_limited_to_a_percent_envelope():
+    spec = valid_spec()
+    spec["rules"][0]["condition"]["all"].append(
+        {"type": "compare", "a": {"price": "close"}, "op": ">", "b": {"ind": "ema", "period": 20}, "b_mult": 0.7}
+    )
+    errors = spec_llm.pipeline_policy_errors(validate_v2(spec))
+    assert [e["path"] for e in errors] == ["rules.0.condition.all.2.b_mult"]
+
+
+def test_prompt_v5_documents_the_v21_operands():
+    assert spec_llm.PROMPT_VERSION == 5
+    for token in ('"channel":"highest|lowest"', '"smooth":{"type":"sma|ema"', '"b_mult"', "exclude_current"):
+        assert token in SYSTEM_PROMPT
+    assert "There is no indicator of an indicator" not in SYSTEM_PROMPT
+    schema = json.loads(SYSTEM_PROMPT.split("JSON SCHEMA of the DSL v2 document")[1].split(":\n", 1)[1])
+    assert {"ChannelOperand", "SmoothSpec"} <= set(schema["$defs"])
+
+
+def test_live_v21_atr_contraction_spec_is_valid_and_backtests():
+    """The spec the live model returned for the ATR-contraction idea under prompt v5 (was unsupported in v4)."""
+    from tests.dsl_v2_support import real_tx_fixture, round_trips, run_v2
+
+    spec = json.loads((Path(__file__).parent.parent / "fixtures" / "llm_v21_atr_contraction_spec.json").read_text())
+    kind, detail = spec_llm.check_spec(spec)
+    assert kind == "valid", detail
+    result, _, _ = run_v2(spec, real_tx_fixture())
+    assert len(round_trips(result.trades)) >= 1
 
 
 # --------------------------------------------------------------- unsupported

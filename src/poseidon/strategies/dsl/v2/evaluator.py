@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from poseidon.data.features.derived import channel_column, smoothed_column
 from poseidon.strategies.dsl.v2.schema import (
     AllNode,
     AnyNode,
@@ -20,6 +21,7 @@ from poseidon.strategies.dsl.v2.schema import (
     AtrStop,
     AtrTarget,
     AtrTrailing,
+    ChannelOperand,
     CompareCondition,
     ConstOperand,
     CrossCondition,
@@ -49,7 +51,11 @@ def operand_column(op) -> str | None:
     if isinstance(op, PriceOperand):
         return op.price
     if isinstance(op, IndicatorOperand):
+        if op.smooth is not None:
+            return smoothed_column(op.ind, op.period, op.smooth.type, op.smooth.period)
         return f"{op.ind}_{op.period}"
+    if isinstance(op, ChannelOperand):
+        return channel_column(op.channel, op.source, op.bars, op.exclude_current)
     if isinstance(op, OpeningRangeOperand):
         return f"s_or_{op.session[3:]}_{op.minutes}"
     if isinstance(op, SessionLevelOperand):
@@ -74,7 +80,28 @@ def derive_feature_specs(spec: StrategyV2, bar_label: str = DEFAULT_BAR_LABEL) -
 
     for _path, node in walk_model(spec):
         if isinstance(node, IndicatorOperand):
-            add(node.ind, {"period": node.period})
+            if node.smooth is None:
+                add(node.ind, {"period": node.period})
+            else:
+                add(
+                    "ind_smooth",
+                    {
+                        "ind": node.ind,
+                        "period": node.period,
+                        "smooth": node.smooth.type,
+                        "smooth_period": node.smooth.period,
+                    },
+                )
+        elif isinstance(node, ChannelOperand):
+            add(
+                "rolling_channel",
+                {
+                    "channel": node.channel,
+                    "source": node.source,
+                    "bars": node.bars,
+                    "exclude_current": node.exclude_current,
+                },
+            )
         elif isinstance(node, OpeningRangeOperand):
             add("opening_range", {"minutes": node.minutes, **session_params})
         elif isinstance(node, SessionLevelOperand):
@@ -225,6 +252,14 @@ def operand_value(op, cache: ColumnCache, row: int) -> float:
     return cache.get(operand_column(op), row)
 
 
+def b_value(node, cache: ColumnCache, row: int, sign: float) -> float:
+    """``b_mult * b + sign * offset`` of a cross/compare at ``row`` (b_mult defaults to 1)."""
+    b = operand_value(node.b, cache, row)
+    if node.b_mult is not None:
+        b *= float(node.b_mult)
+    return b + sign * offset_value(node.offset, cache, row)
+
+
 def offset_value(offset, cache: ColumnCache, row: int) -> float:
     if offset is None:
         return 0.0
@@ -248,15 +283,14 @@ def _eval(node, cache: ColumnCache, row: int) -> bool:
     if isinstance(node, CrossCondition):
         sign = 1.0 if node.direction == "above" else -1.0
         a0, a1 = operand_value(node.a, cache, row - 1), operand_value(node.a, cache, row)
-        b0 = operand_value(node.b, cache, row - 1) + sign * offset_value(node.offset, cache, row - 1)
-        b1 = operand_value(node.b, cache, row) + sign * offset_value(node.offset, cache, row)
+        b0, b1 = b_value(node, cache, row - 1, sign), b_value(node, cache, row, sign)
         if node.direction == "above":
             return a0 <= b0 and a1 > b1
         return a0 >= b0 and a1 < b1
     if isinstance(node, CompareCondition):
         a = operand_value(node.a, cache, row)
         sign = 1.0 if node.op in (">", ">=") else -1.0
-        b = operand_value(node.b, cache, row) + sign * offset_value(node.offset, cache, row)
+        b = b_value(node, cache, row, sign)
         if node.op == ">":
             return a > b
         if node.op == ">=":

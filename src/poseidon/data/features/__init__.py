@@ -9,6 +9,7 @@ from poseidon.data.features import (
     cascade,  # noqa: F401
     cross_asset,  # noqa: F401
     cvd,  # noqa: F401
+    derived,  # noqa: F401
     fundamentals,  # noqa: F401
     funding_rate,  # noqa: F401
     hmm_regime,  # noqa: F401
