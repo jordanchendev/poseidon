@@ -163,10 +163,11 @@ DEFAULT_GATES: dict = {
 # --- Step 7: shadow paper settings (frozen per run; min days / trades / replay match stay in ``thresholds``) ---
 #
 # One evaluation per day at 09:30 Asia/Taipei. Thalassa's TX 5m beat runs only
-# 09:00-13:55 Asia/Taipei and (observed 2026-10-23 14:30) still had nothing
-# after 05:00 that day: a day session lands with the next morning's 09:00
-# fetch, together with the night session that followed it. A wake-up after
-# 13:45 or 05:00 would see no new bars; 09:30 sees every completed trading day.
+# 09:00-13:55 Asia/Taipei, and on 2026-10-23 at 14:30 it held nothing after
+# that morning's 05:00 although every fetch of the day had run: a day session
+# arrives, at the earliest, with the next morning's fetches (together with the
+# night session after it). A wake-up 15 min after 13:45 or 05:00 would see no
+# new bars; 09:30 (after the 09:00 fetch) sees every completed trading day.
 # What is evaluated is decided by the bars themselves (only trading days whose
 # closing bar has arrived), so the wake time only sets latency. Weekend wake-ups
 # are cheap no-ops that catch up a failed Saturday fetch.

@@ -463,4 +463,19 @@ def build_default_registry(*, data_source=None, strategy_factory=None) -> dict[s
     return registry
 
 
-STAGE_REGISTRY: dict[str, Stage] = build_default_registry()
+_DEFAULT_REGISTRY: dict[str, Stage] | None = None
+
+
+def __getattr__(name: str):
+    """``STAGE_REGISTRY`` is built on first use (PEP 562), not at import time.
+
+    The registry imports the stage modules (gate_stages, shadow_paper), which
+    import this module; building it lazily lets any of them be imported first.
+    """
+
+    global _DEFAULT_REGISTRY
+    if name == "STAGE_REGISTRY":
+        if _DEFAULT_REGISTRY is None:
+            _DEFAULT_REGISTRY = build_default_registry()
+        return _DEFAULT_REGISTRY
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
