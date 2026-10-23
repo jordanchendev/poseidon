@@ -30,18 +30,23 @@ from poseidon.strategies.dsl.v2.schema import (
     AllNode,
     AnyNode,
     AtrTrailing,
+    ChannelOperand,
     CloseRule,
+    CompareCondition,
+    ConstOperand,
+    CrossCondition,
     EntryRule,
     NoneNode,
     OpeningRangeOperand,
     ParamSpec,
     PointsTrailing,
+    PriceOperand,
     RiskBlock,
     RMultipleTarget,
     StrategyV2,
 )
 
-UNSUPPORTED_KEYS = {"htf": "higher-timeframe conditions (htf) are deferred to DSL v2.1"}
+UNSUPPORTED_KEYS = {"htf": "higher-timeframe conditions (htf) are not supported yet (deferred past DSL v2.1)"}
 PARAM_REF_KEY = "$param"
 
 
@@ -201,16 +206,78 @@ def _risk_source(spec: StrategyV2, rule_index: int, field_name: str) -> str:
     return f"risk.{field_name}"
 
 
-def semantic_errors(spec: StrategyV2) -> list[dict[str, str]]:
-    """Checks that need the whole document."""
+# Prices that an include-current channel bounds by construction: highest(high) >= every price of
+# the bar, highest(close) >= close, ... (lowest mirrors it).
+_CHANNEL_BOUNDS = {
+    "high": {"highest": {"open", "high", "low", "close"}, "lowest": {"high"}},
+    "low": {"highest": {"low"}, "lowest": {"open", "high", "low", "close"}},
+    "close": {"highest": {"close"}, "lowest": {"close"}},
+}
+_FLIP = {">": "<", ">=": "<=", "<": ">", "<=": ">="}
+
+
+def _degenerate_channel_compare(node: CompareCondition) -> str | None:
+    """Why ``price op channel`` (include-current, no b_mult/offset) is constant, or None."""
+    if node.b_mult is not None or node.offset is not None:
+        return None
+    a, b, op = node.a, node.b, node.op
+    if isinstance(a, ChannelOperand) and isinstance(b, PriceOperand):
+        a, b, op = b, a, _FLIP[op]
+    if not (isinstance(a, PriceOperand) and isinstance(b, ChannelOperand)) or b.exclude_current:
+        return None
+    if a.price not in _CHANNEL_BOUNDS[b.source][b.channel]:
+        return None
+    # highest: price <= channel always; lowest: price >= channel always.
+    never, always = (">", "<=") if b.channel == "highest" else ("<", ">=")
+    if op == never:
+        return "is never true"
+    if op == always:
+        return "is always true"
+    return None
+
+
+def operand_errors(spec: StrategyV2) -> list[dict[str, str]]:
+    """Per-operand / per-comparison checks (opening-range multiples, v2.1 channel and b_mult rules)."""
     errors: list[dict[str, str]] = []
     interval = spec.interval_minutes
-
     for path, node in walk_model(spec):
         if isinstance(node, OpeningRangeOperand) and node.minutes % interval != 0:
             errors.append(
                 _err(_join((*path, "minutes")), f"opening range minutes must be a multiple of the {interval}m interval")
             )
+        if isinstance(node, CrossCondition):
+            for side in ("a", "b"):
+                operand = getattr(node, side)
+                if isinstance(operand, ChannelOperand) and not operand.exclude_current:
+                    errors.append(
+                        _err(
+                            _join((*path, side, "exclude_current")),
+                            "a channel in a cross must have exclude_current true: a channel that includes the "
+                            "current bar moves with that bar, so the bar's own price can never break it",
+                        )
+                    )
+        if (
+            isinstance(node, CrossCondition | CompareCondition)
+            and node.b_mult is not None
+            and isinstance(node.b, ConstOperand)
+        ):
+            errors.append(_err(_join((*path, "b_mult")), "b_mult on a const b is redundant; scale the const"))
+        if isinstance(node, CompareCondition):
+            why = _degenerate_channel_compare(node)
+            if why is not None:
+                errors.append(
+                    _err(
+                        _join(path),
+                        f"this compare {why}: a channel with exclude_current false contains the bar's own price; "
+                        "use exclude_current true or a different op",
+                    )
+                )
+    return errors
+
+
+def semantic_errors(spec: StrategyV2) -> list[dict[str, str]]:
+    """Checks that need the whole document."""
+    errors: list[dict[str, str]] = operand_errors(spec)
 
     entries = [i for i, r in enumerate(spec.rules) if isinstance(r, EntryRule)]
     if not entries:

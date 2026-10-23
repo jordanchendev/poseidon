@@ -27,6 +27,10 @@ MAX_LEAVES_PER_RULE = 12
 MAX_PARAMS = 8
 
 IND_PERIOD_BOUNDS = {"ema": (2, 400), "sma": (2, 400), "rsi": (2, 100), "atr": (2, 100)}
+# DSL v2.1 bounds
+SMOOTH_PERIOD_BOUNDS = (2, 400)
+CHANNEL_BARS_BOUNDS = (2, 400)
+B_MULT_BOUNDS = (0.1, 10.0)
 OPENING_RANGE_FIELDS = ("or_high", "or_low", "or_mid", "or_range")
 SESSION_LEVEL_FIELDS = (
     "open",
@@ -53,9 +57,19 @@ class PriceOperand(_Strict):
     price: Literal["open", "high", "low", "close"]
 
 
+class SmoothSpec(_Strict):
+    """v2.1: moving average (sma, or ema with span) of the indicator series over ``period`` bars."""
+
+    type: Literal["sma", "ema"]
+    period: Annotated[int, Field(ge=SMOOTH_PERIOD_BOUNDS[0], le=SMOOTH_PERIOD_BOUNDS[1])]
+
+
 class IndicatorOperand(_Strict):
+    """ema/sma of the close, atr, rsi; ``smooth`` (v2.1) makes it a moving average of that indicator."""
+
     ind: Literal["ema", "sma", "atr", "rsi"]
     period: int
+    smooth: SmoothSpec | None = None
 
     @model_validator(mode="after")
     def _period_bounds(self) -> IndicatorOperand:
@@ -85,6 +99,19 @@ class SessionLevelOperand(_Strict):
     ]
 
 
+class ChannelOperand(_Strict):
+    """v2.1 Donchian channel: highest/lowest ``source`` over ``bars`` bars.
+
+    ``exclude_current`` (default true) uses the ``bars`` bars *before* the
+    current one, so the level is fixed before the bar trades; required in cross.
+    """
+
+    channel: Literal["highest", "lowest"]
+    source: Literal["high", "low", "close"]
+    bars: Annotated[int, Field(ge=CHANNEL_BARS_BOUNDS[0], le=CHANNEL_BARS_BOUNDS[1])]
+    exclude_current: bool = True
+
+
 class ConstOperand(_Strict):
     const: Annotated[float, Field(ge=-1e6, le=1e6)]
 
@@ -96,6 +123,7 @@ def _operand_tag(value: Any) -> str | None:
             IndicatorOperand: "~ind",
             OpeningRangeOperand: "~or",
             SessionLevelOperand: "~level",
+            ChannelOperand: "~channel",
             ConstOperand: "~const",
         }.get(type(value))
     if not isinstance(value, dict):
@@ -106,6 +134,8 @@ def _operand_tag(value: Any) -> str | None:
         return "~ind"
     if "session" in value:
         return "~or" if value.get("session") in OPENING_RANGE_FIELDS or "minutes" in value else "~level"
+    if "channel" in value:
+        return "~channel"
     if "const" in value:
         return "~const"
     return None
@@ -116,11 +146,15 @@ Operand = Annotated[
     | Annotated[IndicatorOperand, Tag("~ind")]
     | Annotated[OpeningRangeOperand, Tag("~or")]
     | Annotated[SessionLevelOperand, Tag("~level")]
+    | Annotated[ChannelOperand, Tag("~channel")]
     | Annotated[ConstOperand, Tag("~const")],
     Discriminator(
         _operand_tag,
         custom_error_type="invalid_operand",
-        custom_error_message="operand must be one of {price}, {ind, period}, {session[, minutes]}, {const}",
+        custom_error_message=(
+            "operand must be one of {price}, {ind, period[, smooth]}, {session[, minutes]}, "
+            "{channel, source, bars[, exclude_current]}, {const}"
+        ),
     ),
 ]
 
@@ -184,19 +218,28 @@ def _night_order(m: int) -> int:
     return m - NIGHT_EVENING_MINUTES[0] if m >= NIGHT_EVENING_MINUTES[0] else m + 24 * 60 - NIGHT_EVENING_MINUTES[0]
 
 
+BMult = Annotated[float, Field(ge=B_MULT_BOUNDS[0], le=B_MULT_BOUNDS[1])]
+
+
 class CrossCondition(_Strict):
+    """``a`` crosses ``b_mult * b`` (+/- offset) between the previous bar and this one."""
+
     type: Literal["cross"]
     a: Operand
     direction: Literal["above", "below"]
     b: Operand
+    b_mult: BMult | None = None
     offset: Offset | None = None
 
 
 class CompareCondition(_Strict):
+    """``a op (b_mult * b +/- offset)``; ``b_mult`` (v2.1) is a ratio threshold, e.g. 0.7 x SMA(ATR)."""
+
     type: Literal["compare"]
     a: Operand
     op: Literal[">", ">=", "<", "<="]
     b: Operand
+    b_mult: BMult | None = None
     offset: Offset | None = None
 
 
