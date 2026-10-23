@@ -5,8 +5,10 @@ Host-side, stdlib only. ``propose`` gathers context (DSL v2 capability brief, re
 pipeline runs read through the local pipeline API with GET only, earlier proposals), asks
 an LLM for candidate ideas, de-duplicates them deterministically and writes
 ``proposals.jsonl`` plus a ready-to-send Telegram text in ``outbox/``. It never submits an
-idea to the pipeline and never sends Telegram: delivery and the "accept N" reply belong to
-the strategy bridge.
+idea to the pipeline and never sends Telegram: the strategy bridge (bridge_sync.py) delivers each
+outbox batch once, records the owner's 「接受策略 N」 replies and turns accepted proposals into runs,
+marking them ``accepted`` (with the run id) in ``proposals.jsonl``. Every write of
+``proposals.jsonl`` (scout append, bridge update) holds the flock ``<state_dir>/.proposals.lock``.
 
 Key discipline (same purpose as the pipeline's spec_generate, so the same key):
 - the only secret read is STRATEGY_PIPELINE_OPENROUTER_KEY, from the key file, with no
@@ -20,10 +22,13 @@ Key discipline (same purpose as the pipeline's spec_generate, so the same key):
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import difflib
+import fcntl
 import json
 import math
+import os
 import re
 import sys
 import unicodedata
@@ -66,21 +71,29 @@ MAX_TEXT = 300
 # --------------------------------------------------------------------------- capability brief
 
 CAPABILITY_BRIEF = """\
-The downstream pipeline turns an idea into a DSL v2 strategy for TX (Taiwan index futures) and backtests it
+The downstream pipeline turns an idea into a DSL v2.1 strategy for TX (Taiwan index futures) and backtests it
 (5m bars by default, 1m/15m possible, 1 fixed contract, data from 2020-03). It CAN express:
 - Sessions: day 08:45-13:45 and night 15:00-05:00 (Asia/Taipei); time windows, minutes elapsed since session open.
-- Price (open/high/low/close), EMA / SMA / ATR / RSI of the strategy interval, constants.
+- Price (open/high/low/close); EMA / SMA (of close), ATR, RSI of the strategy interval (periods 2-400, ATR/RSI 2-100);
+  constants.
+- One level of smoothing of such an indicator: SMA or EMA (2-400 bars) of EMA/SMA/ATR/RSI, e.g. SMA50 of ATR14
+  (volatility contraction / expansion), EMA of RSI.
+- Rolling N-bar channel (Donchian): highest/lowest of high, low or close over the previous N bars (2-400; counted in
+  bars across sessions), for N-bar breakouts and N-bar swing stops.
 - Opening-range levels (high/low/mid/range of the first N minutes, 5-120), session open/high/low/VWAP, previous-session
   and previous-day high/low/close (gap and prev-level ideas).
 - Conditions: crosses above/below, compares (> >= < <=) with point or ATR-multiple offsets, combined with all/any/none.
-- Exits: stop loss (points, ATR multiple, or a level), take profit (points, ATR multiple, R multiple, level), trailing
-  stop (points / ATR), max hold bars, flat before session end, max trades per session, no re-entry after stop,
-  close on session change. Long and short entry rules, 1-6 rules.
+  A multiplier on the compared side gives ratio thresholds (e.g. ATR < 0.7 x its SMA50; on a price level only a
+  0.9-1.1 percent envelope, e.g. close > 1.005 x EMA20).
+- Exits: stop loss (points, ATR multiple, or a level such as the N-bar low), take profit (points, ATR multiple,
+  R multiple, level), trailing stop (points / ATR, optionally after reaching some R), max hold bars, flat before session
+  end, max trades per session, no re-entry after stop, close on session change. Long and short entry rules, 1-6 rules.
 - 1-4 tunable numeric parameters per strategy (windows, stop/target sizes, thresholds).
 It CANNOT express (such ideas come back "unsupported"; do not propose them): higher timeframes (e.g. 60m EMA, daily
-RSI), indicators of indicators, rolling N-bar highest/lowest (Donchian), volume / volume profile / OI, options or implied
-volatility, order book, other instruments (NQ/ES/TE/stocks), news, fundamentals, ML models, position sizing, pyramiding.
-Companion data such as foreign flows is NOT available to the DSL. Entries must be rules on TX price/time/session levels.
+RSI), smoothing a smoothed series, standard deviation / Bollinger bands / z-score / percentile rank, volume / volume
+profile / OI, options or implied volatility, order book, other instruments (NQ/ES/TE/stocks), news, fundamentals, ML
+models, position sizing, pyramiding. Companion data such as foreign flows is NOT available to the DSL. Entries must be
+rules on TX price/time/session levels, the indicators above and N-bar channels.
 """
 
 # --------------------------------------------------------------------------- small helpers
@@ -300,6 +313,7 @@ FAMILIES = {
     "reversion": ["均值回歸", "回歸", "反轉", "fade", "reversion", "假突破"],
     "trend": ["趨勢", "順勢", "動能", "momentum", "trend"],
     "overnight": ["隔夜", "夜盤收", "overnight"],
+    "channel": ["唐奇安", "donchian", "通道突破", "根最高", "根最低", "根高點", "根低點"],
 }
 
 
@@ -491,12 +505,46 @@ def append_jsonl(path, rows) -> None:
             fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+@contextlib.contextmanager
+def proposals_lock(state_dir):
+    """Exclusive flock shared with bridge_sync.py for every write of proposals.jsonl."""
+
+    Path(state_dir).mkdir(parents=True, exist_ok=True)
+    fd = os.open(Path(state_dir) / ".proposals.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def write_atomic(path, text) -> None:
+    """The bridge polls outbox/: a reader sees the old file or the whole new one, never a partial write."""
+
+    path = Path(path)
+    tmp = path.with_name("." + path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+PROPOSAL_MAX_AGE_DAYS = 7  # the macminim4 accept verb refuses older proposals
+
+
 def telegram_text(date_str: str, proposals: list[dict]) -> str:
+    """Numbered message; ``N. `` at a line start is what the owner answers with (the delivery verb checks it)."""
+
     lines = [f"策略 scout 提案 {date_str[:4]}-{date_str[4:6]}-{date_str[6:]}（{len(proposals)} 則）"]
     for index, p in enumerate(proposals, 1):
-        lines.append(f"{index}. {one_line(p['summary'], 60)}")
+        lines.append("")
+        lines.append(f"{index}. {one_line(p['summary'], 60)}（{p['id']}）")
+        lines.append(f"   {one_line(p['idea_text'], 2000)}")
         lines.append(f"   理由：{one_line(p['rationale'] or p['behavior'], 80)}")
-    lines.append("回覆「接受 N」把第 N 則送進 pipeline。")
+    lines.append("")
+    lines.append(
+        "回覆「接受策略 N」把第 N 則送進 pipeline（多則：接受策略 1 3；全部：接受策略 全部），"
+        f"「略過策略 N」略過；{PROPOSAL_MAX_AGE_DAYS} 天內有效。"
+    )
     return "\n".join(lines)
 
 
@@ -626,16 +674,18 @@ def propose(cfg, log=print, api_request=urllib_request, llm_request=urllib_reque
                 "model": cfg["model"],
             }
         )
-    append_jsonl(proposals_path, records)
+    with proposals_lock(state):
+        append_jsonl(proposals_path, records)
     outbox = state / "outbox"
     outbox.mkdir(parents=True, exist_ok=True)
     suffix = "" if start == 1 else f"-from-p{start}"
     text = telegram_text(date_str, records)
-    (outbox / f"{date_str}{suffix}.txt").write_text(text + "\n", encoding="utf-8")
-    (outbox / f"{date_str}{suffix}.json").write_text(
+    write_atomic(outbox / f"{date_str}{suffix}.txt", text + "\n")
+    # The .json is what the bridge delivers, so it is written last.
+    write_atomic(
+        outbox / f"{date_str}{suffix}.json",
         json.dumps({"date": date_str, "ids": [r["id"] for r in records], "text": text}, ensure_ascii=False, indent=2)
         + "\n",
-        encoding="utf-8",
     )
     log(f"wrote {len(records)} proposals and outbox/{date_str}{suffix}.txt")
     return 0
