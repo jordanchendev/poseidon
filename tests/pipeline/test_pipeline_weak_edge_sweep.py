@@ -65,7 +65,17 @@ def test_weak_edge_case(pipeline_sessions, tmp_path, drift, seed):
     failed_at = next((name for name in reached if attempts[name].verdict != "pass"), None)
     later_train = [name for name in GATE_STAGES[:-1] if name not in attempts]
     t0 = time.monotonic()
-    diagnostics = diagnose(pipeline_sessions, run.id, later_train, harness.dispatcher.registry) if later_train else {}
+    diagnostics = (
+        diagnose(
+            pipeline_sessions,
+            run.id,
+            later_train,
+            harness.dispatcher.registry,
+            artifacts_root=tmp_path / "diag-artifacts",
+        )
+        if later_train
+        else {}
+    )
     diag_seconds = round(time.monotonic() - t0, 1)
 
     optimize = reports.get("optimize") or {}

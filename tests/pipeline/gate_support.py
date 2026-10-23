@@ -318,11 +318,14 @@ def stub_train_gates(**extra):
 # ----------------------------------------------------------------- reporting helpers
 
 
-def diagnose(sessions, run_id, stage_names, registry) -> dict:
+def diagnose(sessions, run_id, stage_names, registry, *, artifacts_root=None) -> dict:
     """Run gate stages *outside* the run (no attempt rows, wfe trials in memory only).
 
     For reporting which later train gates a failed candidate would also have
     failed. Never pass ``holdout``: a failed candidate does not get to look.
+    ``artifacts_root`` scopes the OHLCV cache; without it the stages use the
+    global default root, whose cache is keyed by window only, so a second
+    synthetic source in the same process would silently read the first one's bars.
     """
 
     import time
@@ -368,6 +371,7 @@ def diagnose(sessions, run_id, stage_names, registry) -> dict:
             attempt=0,
             upstream=upstream,
             trials=MemoryTrialLedger(),
+            artifacts_root=artifacts_root,
             family=DbFamily(sessions, run_id=run.id, family_id=run.family_id, stage_run_id=uuid.uuid4()),
         )
         started = time.monotonic()
