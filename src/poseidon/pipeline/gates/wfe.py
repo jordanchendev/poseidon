@@ -38,7 +38,9 @@ def _window_row(window: WindowMetrics) -> dict:
         "index": window.index,
         "is_annualized_return": finite_or_none(window.is_annualized_return),
         "oos_annualized_return": finite_or_none(window.oos_annualized_return),
-        "wfe": finite_or_none(compute_wfe(window.is_annualized_return, window.oos_annualized_return)),
+        "wfe": finite_or_none(compute_wfe(window.is_annualized_return, window.oos_annualized_return))
+        if not non_finite([("is", window.is_annualized_return), ("oos", window.oos_annualized_return)])
+        else None,
         "is_total_pnl_twd": finite_or_none(window.is_total_pnl_twd),
         "oos_total_pnl_twd": finite_or_none(window.oos_total_pnl_twd),
         "is_trade_count": window.is_trade_count,

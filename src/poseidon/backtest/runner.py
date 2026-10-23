@@ -138,6 +138,7 @@ class BacktestRunner:
         include_funding: bool = False,
         funding_rates: pd.DataFrame | None = None,
         gap_aware_stops: bool = False,
+        stop_slippage_ticks: float = 0.0,
     ) -> None:
         self.strategy = strategy
         self.feature_engine = feature_engine
@@ -153,6 +154,10 @@ class BacktestRunner:
         # that the bar gaps through fills at the worse open (long: min(open, SL),
         # short: max(open, SL)); take-profit stays at its limit price.
         self._gap_aware_stops = gap_aware_stops
+        # Off (0) by default. The strategy pipeline's cost_stress gate sets it so
+        # a stop fill slips this many ticks against the position (stops are
+        # market orders once triggered); take-profit fills never slip.
+        self._stop_slippage_ticks = float(stop_slippage_ticks)
         self._funding_costs_total = 0.0
         self._funding_costs_by_trade: list[float] = []
         self._last_funding_settlement: pd.Timestamp | None = None
@@ -428,6 +433,10 @@ class BacktestRunner:
                 if self._gap_aware_stops:
                     bar_open = float(bar["open"])
                     fill = min(bar_open, sl_price) if pos["side"] == "long" else max(bar_open, sl_price)
+                if self._stop_slippage_ticks:
+                    tick_size = getattr(self.cost_model, "tick_size", 0.0)
+                    slip = self._stop_slippage_ticks * (tick_size if tick_size > 0 else fill * 0.001)
+                    fill = fill - slip if pos["side"] == "long" else fill + slip
                 exits.append((key, fill, "sl"))
             elif tp_triggered:
                 exits.append((key, tp_price, "tp"))

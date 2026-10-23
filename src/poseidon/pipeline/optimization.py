@@ -147,7 +147,9 @@ class TrialRunner:
         window_sha256: str,
         should_stop: Callable[[], bool],
         check_stop: Callable[[], None],
+        first_trial_no: int = 1,
     ):
+        self.first_trial_no = first_trial_no  # >1 when one stage attempt runs several searches (wfe)
         self.build = build
         self.bars = bars
         self.backtest_config = backtest_config
@@ -161,7 +163,7 @@ class TrialRunner:
     def record(
         self, params: dict, source: str, state: str, metrics: dict | None, error: str | None = None, outcome=None
     ):
-        result = TrialResult(len(self.results) + 1, params, source, state, metrics, error, outcome)
+        result = TrialResult(self.first_trial_no + len(self.results), params, source, state, metrics, error, outcome)
         self.ledger.append(make_record(result.trial_no, params, state, metrics, self.window_sha256))
         self.results.append(result)
         if result.state == TRIAL_COMPLETE and (self.best is None or result.sharpe > self.best.sharpe):
@@ -184,7 +186,7 @@ class TrialRunner:
         state = TRIAL_COMPLETE if outcome.metrics.get("sharpe_daily") is not None else TRIAL_PRUNED
         logger.info(
             "optimize trial %d %s: %s sharpe_daily=%s in %.1fs",
-            len(self.results) + 1,
+            self.first_trial_no + len(self.results),
             params,
             state,
             outcome.metrics.get("sharpe_daily"),
