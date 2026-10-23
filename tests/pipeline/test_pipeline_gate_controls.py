@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from poseidon.pipeline.family import HOLDOUT_EVALUATED
-from poseidon.pipeline.plan import GATE_STAGES
+from poseidon.pipeline.plan import GATE_STAGES, V1_STAGE_PLAN
 from poseidon.pipeline.stages import build_default_registry
 from tests.pipeline.conftest import Clock, Harness
 from tests.pipeline.gate_support import (
@@ -46,7 +46,9 @@ CONTROL_CLOCK = datetime(2026, 10, 23, 1, 0, tzinfo=UTC)
 def _run(pipeline_sessions, tmp_path, spec, *, factory=None):
     registry = build_default_registry(data_source=PlantedOrbSource(), strategy_factory=factory)
     harness = Harness(pipeline_sessions, tmp_path / "artifacts", Clock(CONTROL_CLOCK), registry=registry)
-    run_id = harness.create(spec=spec, stage_plan=None, idea_text="control")
+    # the gates' verdicts only: a plan that ends at holdout (the default continues into shadow_paper)
+    plan = list(V1_STAGE_PLAN[: V1_STAGE_PLAN.index("holdout") + 1])
+    run_id = harness.create(spec=spec, stage_plan=plan, idea_text="control")
     started = time.monotonic()
     timings = []
     while harness.queue:

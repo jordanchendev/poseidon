@@ -202,6 +202,8 @@ class PipelineDispatcher:
                 return None, self._fail_run_locked(session, run, now, f"stage {stage_name} is not registered")
 
             if latest is not None and latest.status == StageStatus.WAITING:
+                if latest.wait_until is None:  # held for a human (awaiting_release); only abort moves it
+                    return None, {**base, "skipped": "held"}
                 if latest.wait_until > now:
                     return None, {**base, "skipped": "waiting", "wait_until": latest.wait_until.isoformat()}
                 row = latest
@@ -228,6 +230,9 @@ class PipelineDispatcher:
                 )
 
             upstream = self._upstream(attempts, stage)
+            own = sorted((r for r in attempts if r.stage == stage_name), key=lambda r: r.attempt, reverse=True)
+            starts = [r.started_at for r in own if r.started_at is not None]
+            stored = next((r for r in own if r.artifact_json is not None), None)
             context = StageContext(
                 run_id=run.id,
                 family_id=run.family_id,
@@ -242,6 +247,9 @@ class PipelineDispatcher:
                 artifacts_root=self.artifacts_root,
                 trials=DbTrialLedger(self.session_factory, run_id=run.id, family_id=run.family_id, stage_run_id=row.id),
                 family=DbFamily(self.session_factory, run_id=run.id, family_id=run.family_id, stage_run_id=row.id),
+                now=now,
+                stage_started_at=min(starts) if starts else now,
+                resume=self._as_upstream(stored) if stored is not None else None,
             )
             input_sha256 = content_sha256(stage.input_payload(context))
             if row.input_sha256 is not None and row.input_sha256 != input_sha256:
@@ -283,20 +291,21 @@ class PipelineDispatcher:
 
     def _upstream(self, attempts, stage) -> dict[str, UpstreamResult]:
         latest = latest_attempts(attempts)
-        upstream = {}
-        for name in stage.requires:
-            row = latest[name]  # validate_stage_plan guarantees a passing attempt exists
-            artifact = row.artifact_json or {}
-            upstream[name] = UpstreamResult(
-                name,
-                row.attempt,
-                row.input_sha256,
-                row.artifact_sha256,
-                artifact.get("report"),
-                artifact_uri=row.artifact_uri,
-                files=tuple(artifact.get("files") or ()),
-            )
-        return upstream
+        # validate_stage_plan guarantees a passing attempt exists for each
+        return {name: self._as_upstream(latest[name]) for name in stage.requires}
+
+    @staticmethod
+    def _as_upstream(row: StageRun) -> UpstreamResult:
+        artifact = row.artifact_json or {}
+        return UpstreamResult(
+            row.stage,
+            row.attempt,
+            row.input_sha256,
+            row.artifact_sha256,
+            artifact.get("report"),
+            artifact_uri=row.artifact_uri,
+            files=tuple(artifact.get("files") or ()),
+        )
 
     def _fail_run_locked(self, session, run, now, reason) -> dict:
         transition_run(run, RunStatus.ERROR, now=now, reason=reason)
@@ -382,6 +391,11 @@ class PipelineDispatcher:
             try:
                 if result.files:
                     directory = artifacts.attempt_dir(self.artifacts_root, claim.run_id, claim.stage, claim.attempt)
+                    if result.is_waiting:
+                        # Each wake-up of a waiting attempt gets its own directory: a fenced
+                        # (aborted / lease-lost) wake-up must not overwrite the files the
+                        # attempt's stored manifest still points at.
+                        directory = directory / f"wake-{claim.lease_owner.hex}"
                     manifest = artifacts.write_files(directory, result.files)
                     artifact_uri = directory.as_uri()
                 artifact_json, artifact_sha256 = artifacts.build_artifact(result.report, manifest)
@@ -440,10 +454,14 @@ class PipelineDispatcher:
                 else:
                     transition_run(run, RunStatus.ERROR, now=now, reason=f"{claim.stage}: {reason}")
                 verdict = Verdict.ERROR
-            elif result.wait_until is not None:
-                row.wait_until = result.wait_until
+            elif result.is_waiting:
+                row.wait_until = result.wait_until  # None = held until a human acts
+                if artifact_json is not None:  # a waiting attempt's artifact is its latest progress report
+                    row.artifact_json = artifact_json
+                    row.artifact_sha256 = artifact_sha256
+                    row.artifact_uri = artifact_uri
                 transition_stage(row, StageStatus.WAITING, now=now, reason=result.reason)
-                transition_run(run, RunStatus.WAITING, now=now)
+                transition_run(run, RunStatus.WAITING, now=now, reason=result.reason)
                 verdict = None
             else:
                 verdict = Verdict(result.verdict)
@@ -478,6 +496,11 @@ class PipelineDispatcher:
                     "input_sha256": row.input_sha256,
                     "artifact_sha256": row.artifact_sha256,
                     "run_status": run.status,
+                    **(
+                        {"wait_until": row.wait_until.isoformat() if row.wait_until else None}
+                        if verdict is None
+                        else {}
+                    ),
                 },
                 stage_run_id=row.id,
             )

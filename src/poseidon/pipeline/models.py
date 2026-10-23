@@ -36,6 +36,8 @@ from poseidon.pipeline.state import STAGE_TERMINAL, RunStatus, StageStatus, Verd
 ARTIFACT_JSON_MAX_BYTES = 256 * 1024
 
 RUN_SOURCES = ("telegram", "scout", "api")
+# p002: only awaiting_release may wait without a wait_until (held for a human release).
+WAITING_CHECK = "status <> 'waiting' OR wait_until IS NOT NULL OR stage IN ('awaiting_release')"
 TRIAL_STATES = ("complete", "pruned", "fail")
 
 
@@ -150,7 +152,7 @@ class StageRun(PipelineBase):
             "AND input_sha256 IS NOT NULL AND code_version IS NOT NULL)",
             name="ck_stage_runs_running_lease",
         ),
-        CheckConstraint("status <> 'waiting' OR wait_until IS NOT NULL", name="ck_stage_runs_waiting"),
+        CheckConstraint(WAITING_CHECK, name="ck_stage_runs_waiting"),
         CheckConstraint(
             "(status IN ('completed', 'aborted')) = (finished_at IS NOT NULL)",
             name="ck_stage_runs_finished",

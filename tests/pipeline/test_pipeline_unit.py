@@ -106,9 +106,10 @@ def test_transition_helpers_keep_revision_finished_and_verdict_coherent():
 # ------------------------------------------------------------------ plan/config
 
 
-def test_default_config_carries_the_plan_through_holdout_and_frozen_window():
+def test_default_config_carries_the_full_plan_and_frozen_window():
     config = default_config(stage_plan=None, as_of=date(2026, 10, 22))
-    assert tuple(config["stage_plan"]) == DEFAULT_STAGE_PLAN == V1_STAGE_PLAN[:-2]  # no shadow_paper yet
+    assert tuple(config["stage_plan"]) == DEFAULT_STAGE_PLAN == V1_STAGE_PLAN  # through awaiting_release (Step 7)
+    assert config["shadow_paper"]["max_trading_days"] == 60
     assert config["data"]["end"] == "2026-10-22"
     assert config["thresholds"]["wfe_min"] == 0.5
     assert config["optimize"]["max_trials"] <= 200 and config["spec_validator"] == "dsl_v2"

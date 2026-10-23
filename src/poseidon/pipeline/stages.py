@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import ClassVar, Protocol
 
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
-from poseidon.pipeline.plan import GATE_STAGES, V1_STAGE_PLAN
+from poseidon.pipeline.plan import V1_STAGE_PLAN
 from poseidon.pipeline.spec_validation import V2_REQUIRED, get_spec_validator
 from poseidon.pipeline.state import Verdict
 
@@ -52,6 +52,12 @@ class StageContext:
     artifacts_root: Path | None = None
     trials: object | None = None  # a trial ledger (``poseidon.pipeline.trials``); None = in memory
     family: object | None = None  # a family view (``poseidon.pipeline.family``); None = this ledger only
+    # Long-lived (waiting) stages: the dispatcher's clock at the claim, when the
+    # stage's first attempt started, and the newest artifact any attempt of this
+    # stage stored (a waiting attempt keeps its last one), to resume from.
+    now: datetime | None = None
+    stage_started_at: datetime | None = None
+    resume: UpstreamResult | None = None
 
     def check_stop(self) -> None:
         if self.should_stop():
@@ -65,6 +71,7 @@ class StageResult:
     report: dict | None = None
     files: Mapping[str, bytes] = field(default_factory=dict)
     wait_until: datetime | None = None
+    hold: bool = False  # waiting with no wait_until: never auto-advances (awaiting_release)
 
     @classmethod
     def passed(cls, report: dict | None = None, *, reason: str | None = None, files=None) -> StageResult:
@@ -79,8 +86,20 @@ class StageResult:
         return cls(Verdict.UNSUPPORTED, reason, report)
 
     @classmethod
-    def waiting(cls, until: datetime, reason: str | None = None) -> StageResult:
-        return cls(Verdict.PASS, reason, None, {}, until)
+    def waiting(cls, until: datetime, reason: str | None = None, report=None, files=None) -> StageResult:
+        """Come back at ``until``; ``report``/``files`` replace the attempt's artifact meanwhile."""
+
+        return cls(Verdict.PASS, reason, report, files or {}, until)
+
+    @classmethod
+    def held(cls, reason: str, report: dict | None = None) -> StageResult:
+        """Wait for a human: no ``wait_until``, the sweeper never advances it (abort still works)."""
+
+        return cls(Verdict.PASS, reason, report, {}, None, True)
+
+    @property
+    def is_waiting(self) -> bool:
+        return self.wait_until is not None or self.hold
 
 
 class Stage(Protocol):
@@ -425,25 +444,11 @@ class OptimizeStage(_DataStage):
         return StageResult.passed(report, reason=reason, files=files)
 
 
-class NotImplementedStage(BaseStage):
-    def run(self, ctx):
-        return StageResult.unsupported("not implemented")
-
-
-def _not_implemented(stage_name: str, required: tuple[str, ...]) -> NotImplementedStage:
-    stage_class = type(
-        f"{stage_name.title().replace('_', '')}Stage",
-        (NotImplementedStage,),
-        {"name": stage_name, "requires": required},
-    )
-    return stage_class()
-
-
 def build_default_registry(*, data_source=None, strategy_factory=None) -> dict[str, Stage]:
     """``data_source`` overrides the Thalassa reader and ``strategy_factory`` the DSL v2
     strategy factory (tests pass synthetic bars / a test-only strategy)."""
 
-    from poseidon.pipeline import gate_stages
+    from poseidon.pipeline import gate_stages, shadow_paper
 
     registry: dict[str, Stage] = {
         "spec_generate": SpecGenerateStage(),
@@ -452,8 +457,7 @@ def build_default_registry(*, data_source=None, strategy_factory=None) -> dict[s
         "optimize": OptimizeStage(data_source, strategy_factory),
     }
     registry.update(gate_stages.build_gate_stages(data_source=data_source, strategy_factory=strategy_factory))
-    registry["shadow_paper"] = _not_implemented("shadow_paper", GATE_STAGES)
-    registry["awaiting_release"] = _not_implemented("awaiting_release", ("shadow_paper",))
+    registry.update(shadow_paper.build_paper_stages(data_source=data_source, strategy_factory=strategy_factory))
     if tuple(registry) != V1_STAGE_PLAN:
         raise RuntimeError("stage registry drifted from the v1 stage plan")
     return registry

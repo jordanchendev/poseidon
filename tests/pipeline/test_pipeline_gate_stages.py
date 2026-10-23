@@ -94,11 +94,11 @@ def chain(tmp_path_factory):
 # ------------------------------------------------------------------ plan
 
 
-def test_default_plan_is_the_gate_order_and_ends_at_holdout():
+def test_default_plan_is_the_gate_order_then_shadow_paper():
     config = default_config(stage_plan=None, as_of=AS_OF)
-    assert config["version"] == CONFIG_VERSION == 3 and "gates" in config
+    assert config["version"] == CONFIG_VERSION == 4 and "gates" in config and "shadow_paper" in config
     assert config["stage_plan"] == list(DEFAULT_STAGE_PLAN)
-    assert tuple(config["stage_plan"][4:]) == GATE_STAGES
+    assert tuple(config["stage_plan"][4:10]) == GATE_STAGES
     assert GATE_STAGES == ("param_stability", "dsr", "cost_stress", "regime_split", "wfe", "holdout")
     assert V1_STAGE_PLAN[-2:] == ("shadow_paper", "awaiting_release")
     assert validate_stage_plan(list(DEFAULT_STAGE_PLAN), STAGE_REGISTRY) == list(DEFAULT_STAGE_PLAN)

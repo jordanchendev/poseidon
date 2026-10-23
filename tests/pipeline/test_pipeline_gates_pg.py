@@ -42,7 +42,7 @@ def test_the_default_plan_stops_at_the_first_failing_gate(pipeline_sessions, tmp
 def test_a_run_whose_gates_all_pass_completes_with_the_gate_reason(pipeline_sessions, tmp_path, clock):
     registry = stub_train_gates(holdout=passing("holdout", ("optimize", *GATE_STAGES[:5])))
     harness = _harness(pipeline_sessions, tmp_path, clock, registry)
-    run_id = harness.create(stage_plan=None)
+    run_id = harness.create(stage_plan=list(STEP2_PLAN) + list(GATE_STAGES))  # a plan that ends at holdout
     harness.drain()
     run = harness.run(run_id)
     assert (run.status, run.reason, run.current_stage) == ("completed", "passed all validation gates", None)
