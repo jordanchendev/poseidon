@@ -24,9 +24,10 @@ V1_STAGE_PLAN: tuple[str, ...] = (
     "awaiting_release",
 )
 GATE_STAGES: tuple[str, ...] = ("param_stability", "dsr", "cost_stress", "regime_split", "wfe", "holdout")
-# shadow_paper / awaiting_release are not implemented yet (Step 7): a new run's
-# default plan ends at holdout, so a run that passes every gate completes.
-DEFAULT_STAGE_PLAN: tuple[str, ...] = V1_STAGE_PLAN[: V1_STAGE_PLAN.index("holdout") + 1]
+# Step 7: a run that passes the holdout continues into shadow_paper and parks in
+# awaiting_release (CONFIG_VERSION 4). Runs frozen earlier keep their own
+# stage_plan, which ends at holdout.
+DEFAULT_STAGE_PLAN: tuple[str, ...] = V1_STAGE_PLAN
 ALL_GATES_PASSED = "passed all validation gates"
 ALL_STAGES_PASSED = "all stages passed"
 
@@ -63,7 +64,8 @@ DEFAULT_THRESHOLDS: dict = {
     "paper_replay_tolerance_ticks": 1,
 }
 
-CONFIG_VERSION = 3  # 3: frozen ``gates`` settings (Step 3b); older runs -> gate stages unsupported
+CONFIG_VERSION = 4  # 3: frozen ``gates`` settings (Step 3b); 4: ``shadow_paper`` settings + full plan (Step 7)
+SHADOW_PAPER_CONFIG_VERSION = 4
 GATES_CONFIG_VERSION = 3
 DEFAULT_SPEC_VALIDATOR = "dsl_v2"
 
@@ -86,6 +88,7 @@ def default_config(*, stage_plan: list[str] | None, as_of: date) -> dict:
         "backtest": copy.deepcopy(DEFAULT_BACKTEST),
         "optimize": copy.deepcopy(DEFAULT_OPTIMIZE),
         "gates": copy.deepcopy(DEFAULT_GATES),
+        "shadow_paper": copy.deepcopy(DEFAULT_SHADOW_PAPER),
         "spec_validator": DEFAULT_SPEC_VALIDATOR,
     }
 
@@ -154,6 +157,33 @@ DEFAULT_GATES: dict = {
     # during the warm-up, so it carries no trades and no PnL.
     "warmup_days": 14,
     "holdout": {"family_reuse": "report_only"},
+}
+
+
+# --- Step 7: shadow paper settings (frozen per run; min days / trades / replay match stay in ``thresholds``) ---
+#
+# One evaluation per day at 09:30 Asia/Taipei. Thalassa's TX 5m beat runs only
+# 09:00-13:55 Asia/Taipei, and on 2026-10-23 at 14:30 it held nothing after
+# that morning's 05:00 although every fetch of the day had run: a day session
+# arrives, at the earliest, with the next morning's fetches (together with the
+# night session after it). A wake-up 15 min after 13:45 or 05:00 would see no
+# new bars; 09:30 (after the 09:00 fetch) sees every completed trading day.
+# What is evaluated is decided by the bars themselves (only trading days whose
+# closing bar has arrived), so the wake time only sets latency. Weekend wake-ups
+# are cheap no-ops that catch up a failed Saturday fetch.
+DEFAULT_SHADOW_PAPER: dict = {
+    "wake_local_time": "09:30",
+    "wake_weekdays": [0, 1, 2, 3, 4, 5, 6],
+    "source_retry_minutes": 60,  # Thalassa unreachable: try again this soon (never fails the stage)
+    "stale_after_weekdays": 3,  # report (never fail) when no new bars for more weekdays than this
+    "max_trading_days": 60,  # still < paper_min_trades by then -> fail insufficient_paper_trades
+    "protection": {
+        # Daily loss beyond multiple x the train backtest's 95th-percentile daily loss,
+        # or a trade-level max drawdown beyond multiple x the train max drawdown -> fail at once.
+        "daily_loss_quantile": 0.95,
+        "daily_loss_multiple": 3.0,
+        "max_drawdown_multiple": 1.5,
+    },
 }
 
 

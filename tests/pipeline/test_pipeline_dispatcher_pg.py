@@ -171,7 +171,7 @@ def test_unsupported_stops_the_run_and_rerun_is_allowed(harness, monkeypatch):
     assert harness.attempts(v1)[1].verdict == "unsupported"
 
 
-def test_shadow_paper_is_registered_but_unsupported(pipeline_sessions, tmp_path, clock):
+def test_a_passing_holdout_continues_into_a_waiting_shadow_paper(pipeline_sessions, tmp_path, clock):
     from poseidon.pipeline.plan import GATE_STAGES, V1_STAGE_PLAN
     from tests.pipeline.gate_support import passing, stub_train_gates
 
@@ -181,8 +181,13 @@ def test_shadow_paper_is_registered_but_unsupported(pipeline_sessions, tmp_path,
     harness.drain()
     run = harness.run(run_id)
     assert run.config_json["stage_plan"][-1] == "awaiting_release"
-    assert (run.status, run.reason) == ("unsupported", "shadow_paper: not implemented")
-    assert [row.verdict for row in harness.attempts(run_id)] == ["pass"] * 10 + ["unsupported"]
+    assert (run.status, run.current_stage) == ("waiting", "shadow_paper")
+    attempts = harness.attempts(run_id)
+    assert [row.verdict for row in attempts] == ["pass"] * 10 + [None]
+    paper = attempts[-1]
+    assert paper.status == "waiting" and paper.wait_until > clock.now
+    assert paper.artifact_json["report"]["status"] == "waiting"  # a waiting attempt carries its progress report
+    assert harness.dispatcher.advance(run_id)["skipped"] == "waiting"
 
 
 def test_rerun_reuses_upstream_passes_and_rejects_another_from_stage(pipeline_sessions, tmp_path, clock):
