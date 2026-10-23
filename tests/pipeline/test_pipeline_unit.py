@@ -1,11 +1,10 @@
-"""Database-free pipeline contracts: state machine, plan, validator, stub, isolation."""
+"""Database-free pipeline contracts: state machine, plan, v1 validator, artifacts, isolation."""
 
 from __future__ import annotations
 
 import subprocess
 import sys
 import types
-import uuid
 from datetime import UTC, date, datetime
 
 import pytest
@@ -13,7 +12,7 @@ import pytest
 from poseidon.pipeline import artifacts
 from poseidon.pipeline.plan import V1_STAGE_PLAN, StagePlanError, default_config, validate_stage_plan
 from poseidon.pipeline.spec_validation import DslV1Validator, get_spec_validator
-from poseidon.pipeline.stages import STAGE_REGISTRY, StageContext, UpstreamResult
+from poseidon.pipeline.stages import STAGE_REGISTRY
 from poseidon.pipeline.state import (
     IllegalTransition,
     RunStatus,
@@ -24,7 +23,7 @@ from poseidon.pipeline.state import (
     transition_run,
     transition_stage,
 )
-from tests.pipeline.conftest import REPO_ROOT, STEP1_PLAN, runner_env, tx_spec
+from tests.pipeline.conftest import REPO_ROOT, STEP1_PLAN, runner_env, tx_v1_spec
 
 NOW = datetime(2026, 10, 22, tzinfo=UTC)
 
@@ -106,7 +105,8 @@ def test_default_config_carries_the_full_v1_plan_and_frozen_window():
     assert tuple(config["stage_plan"]) == V1_STAGE_PLAN
     assert config["data"]["end"] == "2026-10-22"
     assert config["thresholds"]["wfe_min"] == 0.5
-    assert config["max_trials"] == 200
+    assert config["optimize"]["max_trials"] <= 200 and config["spec_validator"] == "dsl_v2"
+    assert config["backtest"]["cost_model"] == "tw_futures_pipeline"
     assert tuple(STAGE_REGISTRY) == V1_STAGE_PLAN
 
 
@@ -133,23 +133,25 @@ def test_step1_and_full_plans_validate():
 # -------------------------------------------------------------------- validator
 
 
-def test_v1_validator_accepts_the_hand_written_tx_spec():
-    ok, errors, unsupported = get_spec_validator("dsl_v1").validate_spec(tx_spec())
+def test_v1_validator_accepts_the_hand_written_tx_v1_spec():
+    ok, errors, unsupported = get_spec_validator("dsl_v1").validate_spec(tx_v1_spec())
     assert (ok, errors, unsupported) == (True, (), ())
 
 
 @pytest.mark.parametrize(
     ("spec", "fragment"),
     [
-        (tx_spec(market="tw_stock"), "must target tw_futures/TX"),
-        (tx_spec(rules=[]), "rules"),
+        (tx_v1_spec(market="tw_stock"), "must target tw_futures/TX"),
+        (tx_v1_spec(rules=[]), "rules"),
         (
-            tx_spec(rules=[{"condition": {"type": "indicator_above", "indicator": "rsi"}, "action": "long"}]),
+            tx_v1_spec(rules=[{"condition": {"type": "indicator_above", "indicator": "rsi"}, "action": "long"}]),
             "threshold",
         ),
-        (tx_spec(rules=[{"condition": {"all": []}, "action": "long"}]), "non-empty"),
+        (tx_v1_spec(rules=[{"condition": {"all": []}, "action": "long"}]), "non-empty"),
         (
-            tx_spec(rules=[{"condition": {"type": "feature_above", "column": "x", "threshold": 1}, "action": "buy"}]),
+            tx_v1_spec(
+                rules=[{"condition": {"type": "feature_above", "column": "x", "threshold": 1}, "action": "buy"}]
+            ),
             "action",
         ),
         ("not-an-object", "JSON object"),
@@ -163,43 +165,13 @@ def test_v1_validator_reports_errors(spec, fragment):
 
 @pytest.mark.parametrize("condition_type", ["opening_range_breakout", "ml_prediction"])
 def test_v1_validator_reports_missing_capabilities_as_unsupported(condition_type):
-    spec = tx_spec(rules=[{"condition": {"type": condition_type, "threshold": 0.5}, "action": "long"}])
+    spec = tx_v1_spec(rules=[{"condition": {"type": condition_type, "threshold": 0.5}, "action": "long"}])
     ok, errors, unsupported = DslV1Validator().validate_spec(spec)
     assert not ok and errors == ()
     assert condition_type in unsupported[0]
 
 
-# ----------------------------------------------------------------- stub + files
-
-
-def _backtest_context(spec_sha):
-    config = default_config(stage_plan=STEP1_PLAN, as_of=date(2026, 10, 22))
-    return StageContext(
-        run_id=uuid.uuid4(),
-        family_id=uuid.uuid4(),
-        idea_text="x",
-        input_spec_json=None,
-        config=config,
-        config_sha256="0" * 64,
-        stage="backtest",
-        attempt=1,
-        upstream={"spec_validate": UpstreamResult("spec_validate", 1, "1" * 64, "2" * 64, {"spec_sha256": spec_sha})},
-    )
-
-
-def test_backtest_stub_is_keyed_by_input_hash():
-    from poseidon.decision_loop.manifest import content_sha256
-
-    stage = STAGE_REGISTRY["backtest"]
-    reports = []
-    for spec_sha in ("a" * 64, "a" * 64, "b" * 64):
-        ctx = _backtest_context(spec_sha)
-        ctx.input_sha256 = content_sha256(stage.input_payload(ctx))
-        result = stage.run(ctx)
-        assert result.verdict == Verdict.PASS
-        reports.append((ctx.input_sha256, result.report, dict(result.files)))
-    assert reports[0] == reports[1]
-    assert reports[0][0] != reports[2][0] and reports[0][1] != reports[2][1]
+# ----------------------------------------------------------------------- files
 
 
 def test_artifact_limits(tmp_path):

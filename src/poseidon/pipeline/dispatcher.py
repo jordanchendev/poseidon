@@ -50,6 +50,7 @@ from poseidon.pipeline.state import (
     transition_stage,
     utcnow,
 )
+from poseidon.pipeline.trials import DbTrialLedger
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +236,9 @@ class PipelineDispatcher:
                 stage=stage_name,
                 attempt=row.attempt,
                 upstream=upstream,
+                stage_run_id=row.id,
+                artifacts_root=self.artifacts_root,
+                trials=DbTrialLedger(self.session_factory, run_id=run.id, family_id=run.family_id, stage_run_id=row.id),
             )
             input_sha256 = content_sha256(stage.input_payload(context))
             if row.input_sha256 is not None and row.input_sha256 != input_sha256:
