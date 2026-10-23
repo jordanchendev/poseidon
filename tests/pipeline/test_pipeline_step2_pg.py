@@ -41,10 +41,13 @@ def test_step2_plan_completes_and_every_trial_is_in_the_ledger(harness):
     optimize = _optimize_attempt(harness, run_id)
     report = optimize.artifact_json["report"]
     trials = _trials(harness, run_id)
-    assert len(trials) == report["n_trials"] == 6
+    # The whole 2 x 3 grid, then the grid-edge extensions (every best of this grid sits on an edge).
+    n = report["n_trials"]
+    assert report["n_trials_by_source"]["search"] == 6 and report["n_trials_by_source"]["edge_extension"] >= 1
+    assert len(trials) == n
     assert {row.stage_run_id for row in trials} == {optimize.id}
     assert {row.family_id for row in trials} == {run.family_id}
-    assert [row.trial_no for row in trials] == list(range(1, 7))
+    assert [row.trial_no for row in trials] == list(range(1, n + 1))
     assert all(
         row.state in {"complete", "pruned"} and row.window_sha256 == report["data"]["window_sha256"] for row in trials
     )
@@ -54,9 +57,9 @@ def test_step2_plan_completes_and_every_trial_is_in_the_ledger(harness):
     assert {entry["name"] for entry in optimize.artifact_json["files"]} >= {"trials.json", "best_trades.csv"}
     assert "trials in" in optimize.reason
     with harness.sessions() as session:
-        assert family_trial_count(session, run.family_id) == 6
+        assert family_trial_count(session, run.family_id) == n
         count, rows = PipelineService(session).family_trials(run.family_id)
-    assert count == len(rows) == 6
+    assert count == len(rows) == n
 
 
 def test_identical_runs_reproduce_backtest_and_optimize_hashes(harness):
@@ -67,9 +70,11 @@ def test_identical_runs_reproduce_backtest_and_optimize_hashes(harness):
     b = {row.stage: row for row in harness.attempts(second)}
     for stage in ("backtest", "optimize"):
         assert (a[stage].input_sha256, a[stage].artifact_sha256) == (b[stage].input_sha256, b[stage].artifact_sha256)
-    assert len(_trials(harness, first)) == len(_trials(harness, second)) == 6
+    n = a["optimize"].artifact_json["report"]["n_trials"]
+    assert len(_trials(harness, first)) == len(_trials(harness, second)) == n
+    assert [row.params_json for row in _trials(harness, first)] == [row.params_json for row in _trials(harness, second)]
     with harness.sessions() as session:  # two runs, two families, each counted on its own
-        assert family_trial_count(session, harness.run(first).family_id) == 6
+        assert family_trial_count(session, harness.run(first).family_id) == n
 
 
 def test_failed_trials_are_in_the_db_ledger(harness, monkeypatch):
@@ -89,7 +94,8 @@ def test_failed_trials_are_in_the_db_ledger(harness, monkeypatch):
     assert harness.run(run_id).status == "completed"
     trials = _trials(harness, run_id)
     failed = [row for row in trials if row.state == "fail"]
-    assert len(trials) == 6 and len(failed) == 2
+    search = [row for row in trials if 15 <= row.params_json["or_min"] <= 30 and 1.0 <= row.params_json["tp_r"] <= 2.0]
+    assert len(search) == 6 and len(failed) == 2  # the grid; extensions beyond it come on top
     assert all(row.sharpe is None and row.params_json["tp_r"] == 1.0 for row in failed)
 
 

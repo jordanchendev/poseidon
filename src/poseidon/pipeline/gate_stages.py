@@ -284,6 +284,14 @@ class ParamStabilityStage(GateStage):
             "neighbour_steps": optimize.get("neighbour_steps"),
             "neighbourhood_settled": optimize.get("neighbourhood_settled"),
             "failed_neighbours_counted_unprofitable": failed_counted,
+            # Declared grid vs evaluated range (grid-edge extension); a neighbour is excluded only
+            # when it violates a DSL validator hard bound (see the neighbour rows' excluded_because).
+            "effective_range": optimize.get("effective_range"),
+            "excluded_neighbours": [
+                {"param": row["param"], "direction": row["direction"], "because": row.get("excluded_because")}
+                for row in optimize.get("neighbours") or []
+                if not row.get("in_grid")
+            ],
         }
         return to_stage_result(result, inputs)
 

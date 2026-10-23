@@ -362,12 +362,16 @@ class OptimizeStage(_DataStage):
             state = TRIAL_COMPLETE if metrics.get("sharpe_daily") is not None else opt.TRIAL_PRUNED
             runner.record({}, "base", state, metrics)
             report.update({"data": data, "search": {"stopped_because": "no_params", "duplicates_skipped": 0}})
-            neighbours, settled, factory = [], True, None
+            neighbours, settled, factory, build, extension = [], True, None, None, None
         else:
             bars = self.bars(ctx, "train")
             factory = self.strategy_builder(ctx, template)
+            # Off-grid values (edge extensions) are built from a widened copy of the template.
+            build = opt.off_grid_builder(
+                factory, template, grid, lambda effective: self.strategy_builder(ctx, effective)
+            )
             runner = opt.TrialRunner(
-                build=factory.build,
+                build=build,
                 bars=bars.frame,
                 backtest_config=ctx.config["backtest"],
                 ledger=ledger,
@@ -385,7 +389,13 @@ class OptimizeStage(_DataStage):
                 budget_seconds=settings.get("budget_seconds"),
                 reserve_trials=2 * len(grid.names) * int(settings["neighbour_steps"]),
             )
-            neighbours, settled = opt.complete_neighbourhood(runner, grid, int(settings["neighbour_steps"]))
+            extension = opt.EdgeExtension(
+                admissible=opt.hard_bound_check(template, grid),
+                budget_seconds=settings.get("budget_seconds"),
+                started=started,
+                reserve_trials=2 * len(grid.names) * int(settings["neighbour_steps"]),
+            )
+            neighbours, settled = opt.complete_neighbourhood(runner, grid, int(settings["neighbour_steps"]), extension)
             report.update(
                 {
                     "data": bars.provenance(),
@@ -406,7 +416,8 @@ class OptimizeStage(_DataStage):
             {
                 "n_trials": len(results),
                 "n_trials_by_source": {
-                    source: sum(1 for r in results if r.source == source) for source in ("base", "search", "neighbour")
+                    source: sum(1 for r in results if r.source == source)
+                    for source in ("base", "search", "edge_extension", "neighbour")
                 },
                 "n_trials_by_state": dict(sorted(by_state.items())),
                 "neighbour_steps": int(settings["neighbour_steps"]),
@@ -415,6 +426,10 @@ class OptimizeStage(_DataStage):
                 "trials_file": "trials.json",
             }
         )
+        if grid.names:
+            # The spec's declared grid stays as declared (``param_grid``); this is what was evaluated.
+            report["edge_extension"] = extension.report()
+            report["effective_range"] = grid.effective_range(results)
         files["trials.json"] = canonical_json([result.row() for result in results]).encode("utf-8")
         best = runner.best
         elapsed = time.monotonic() - started
@@ -426,7 +441,7 @@ class OptimizeStage(_DataStage):
                 report,
                 files,
             )
-        best_spec = factory.to_config_dict(factory.build(best.params)) if grid.names else validated["spec"]
+        best_spec = factory.to_config_dict(build(best.params)) if grid.names else validated["spec"]
         report["best"] = {
             "trial_no": best.trial_no,
             "params": best.params,
