@@ -270,7 +270,7 @@ class Harness:
             state_dir=str(root / "state"),
             log_file=str(root / "bridge.log"),
             scout_dir=self.scout.cfg["state_dir"],
-            scout_script=test_scout.scout.__file__,
+            capability_file=str(test_scout.scout.CAPABILITY_FILE),
         )
         self.api, self.bridge = FakeApi(), FakeBridge()
         self.log = bs.Logger(self.cfg["log_file"], echo=False)
@@ -873,31 +873,38 @@ class ScoutBridgeTests(unittest.TestCase):
 
 
 class CapabilityTests(unittest.TestCase):
-    """scout.py CAPABILITY_BRIEF -> macminim4 (strategy-capability) for Sisyphus' spec co-authoring."""
+    """capability_brief.md (the file next to scout.py) -> macminim4 (strategy-capability) for Sisyphus co-authoring."""
 
     def test_brief_is_pushed_once_and_again_only_when_it_changes(self):
         h = Harness(self)
-        brief = test_scout.scout.CAPABILITY_BRIEF
+        brief = test_scout.scout.CAPABILITY_FILE.read_text(encoding="utf-8")
+        self.assertIn("## A. Intraday", brief)
+        self.assertIn("## B. Daily", brief)  # the whole file goes to Sisyphus, not just scout's part A
         self.assertEqual(h.sync(), 0)
         self.assertEqual(h.bridge.capability, (hashlib.sha256(brief.encode("utf-8")).hexdigest(), brief))
         for _ in range(2):
             self.assertEqual(h.sync(), 0)
         self.assertEqual(sum(c[0] == "strategy-capability" for c in h.bridge.calls), 1)
-        changed = Path(h.tmp.name) / "scout.py"
-        changed.write_text('X = 1\nCAPABILITY_BRIEF = """\\\nTX only, 5m.\n"""\n', encoding="utf-8")
-        h.cfg["scout_script"] = str(changed)
+        changed = Path(h.tmp.name) / "capability_brief.md"
+        changed.write_text("TX only, 5m.\n", encoding="utf-8")
+        h.cfg["capability_file"] = str(changed)
         self.assertEqual(h.sync(), 0)
         self.assertEqual(h.bridge.capability[1], "TX only, 5m.\n")
         self.assertEqual(sum(c[0] == "strategy-capability" for c in h.bridge.calls), 2)
         self.assertEqual(h.bridge.sent, [])  # nothing goes to the owner's Telegram
 
-    def test_brief_is_read_without_running_scout(self):
+    def test_brief_is_the_file_text_and_blank_is_unreadable(self):
         h = Harness(self)
-        trap = Path(h.tmp.name) / "trap.py"
-        marker = Path(h.tmp.name) / "ran"
-        trap.write_text(f'open({str(marker)!r}, "w").write("x")\nCAPABILITY_BRIEF = "brief text"\n', encoding="utf-8")
-        self.assertEqual(bs.capability_brief(trap), "brief text")
-        self.assertFalse(marker.exists())
+        path = Path(h.tmp.name) / "brief.md"
+        path.write_text("brief text\n", encoding="utf-8")
+        self.assertEqual(bs.capability_brief(path), "brief text\n")
+        path.write_text(" \n", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            bs.capability_brief(path)
+        h.cfg["capability_file"] = str(path)
+        self.assertEqual(h.sync(), 1)
+        self.assertIsNone(h.bridge.capability)
+        self.assertIn("capability brief unreadable", h.log.lines[-1])
 
     def test_failures_are_retried_and_dry_run_sends_nothing(self):
         h = Harness(self)
@@ -909,13 +916,13 @@ class CapabilityTests(unittest.TestCase):
         self.assertFalse((Path(h.cfg["state_dir"]) / "capability.sha256").exists())
         self.assertEqual(h.sync(), 0)
         self.assertIsNotNone(h.bridge.capability)
-        h.cfg["scout_script"] = str(Path(h.tmp.name) / "missing.py")
+        h.cfg["capability_file"] = str(Path(h.tmp.name) / "missing.md")
         self.assertEqual(h.sync(), 1)
         self.assertIn("capability brief unreadable", h.log.lines[-1])
 
     def test_ideas_still_flow_when_the_brief_cannot_be_pushed(self):
         h = Harness(self)
-        h.cfg["scout_script"] = str(Path(h.tmp.name) / "missing.py")
+        h.cfg["capability_file"] = str(Path(h.tmp.name) / "missing.md")
         h.bridge.add("20261023-s1")
         self.assertEqual(h.sync(), 1)
         self.assertEqual(h.bridge.ideas["20261023-s1"]["status"], "submitted")
