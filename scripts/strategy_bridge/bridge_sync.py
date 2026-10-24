@@ -25,6 +25,11 @@ Commands
             Local state only saves calls; the bridge marker is the authority. Non-terminal milestones, once each
             per run: `shadow_paper` (all gates passed, shadow paper started) and `awaiting_release` (shadow paper
             passed, held for a human release); only for runs whose stage_plan contains those stages.
+      capability  scout.py's CAPABILITY_BRIEF (read from scout_script with ast, never imported or run) ->
+            `strategy-capability <sha256>` with the brief on stdin whenever its sha256 differs from the local marker
+            <state_dir>/capability.sha256. Sisyphus on macminim4 reads it (`strategy-ideas.sh capability`) when it
+            co-authors a spec with the owner, so the brief stays the single description of what the pipeline can
+            express. The verb is idempotent (same sha256 -> unchanged); no Telegram message.
       --dry-run reads pending ideas and run status, logs what it would do, writes nothing and sends nothing.
   bridge_sync.py preview RUN_ID [--config FILE]
       Print the terminal summary message for any run (nothing is sent).
@@ -33,18 +38,22 @@ Config (JSON, merged over DEFAULTS; default file ~/strategy-pipeline/bridge.json
   api_base, key_file (researcher key, 600, never logged), bridge, state_dir, log_file, kairos_base_url (empty -> the
   Kairos link is omitted), watch_days (how long unsupported/error/aborted runs are watched for a rerun),
   hold_windows_utc (no new runs inside these UTC windows; default 06:00-08:40 for the Phase 101 soak), scout_dir,
-  proposal_runs (create runs for accepted proposals; default true), proposal_max_age_days.
+  proposal_runs (create runs for accepted proposals; default true), proposal_max_age_days, scout_script (scout.py
+  holding CAPABILITY_BRIEF).
 State: <state_dir>/ideas/<idea id>.json, <state_dir>/runs/<run id>.json, <state_dir>/delivered/<batch>,
-<state_dir>/sync.lock; <scout_dir>/proposals.jsonl is shared with scout.py under <scout_dir>/.proposals.lock.
+<state_dir>/capability.sha256, <state_dir>/sync.lock; <scout_dir>/proposals.jsonl is shared with scout.py under
+<scout_dir>/.proposals.lock.
 Exit codes: 0 ok / nothing to do / lock busy, 1 some step failed (retried next tick), 3 key file problem.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import contextlib
 import datetime as dt
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -71,6 +80,7 @@ DEFAULTS = {
     # false: accepted scout proposals wait (no run) until it is flipped; delivery to Telegram is unaffected.
     "proposal_runs": True,
     "proposal_max_age_days": 7,  # same as the macminim4 accept verb
+    "scout_script": "~/strategy-pipeline/scout-bin/scout.py",  # CAPABILITY_BRIEF source for Sisyphus
 }
 DEFAULT_CONFIG = "~/strategy-pipeline/bridge.json"
 IDEA_ID_RE = re.compile(r"^\d{8}-[sp]\d{1,4}$")  # -sN Telegram idea, -pN accepted strategy-scout proposal
@@ -837,6 +847,50 @@ def push(api, bridge, state, cfg, log, dry_run=False) -> int:
     return failures
 
 
+def capability_brief(path) -> str:
+    """scout.py's CAPABILITY_BRIEF string, read with ast: scout.py is neither imported nor run here."""
+
+    tree = ast.parse(expand(path).read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "CAPABILITY_BRIEF" for t in node.targets
+        ):
+            value = ast.literal_eval(node.value)
+            if isinstance(value, str) and value.strip():
+                return value
+    raise ValueError("no CAPABILITY_BRIEF string")
+
+
+def push_capability(bridge, state, cfg, log, dry_run=False) -> int:
+    """Send the capability brief to macminim4 when its sha256 differs from the last one sent."""
+
+    path = cfg.get("scout_script") or DEFAULTS["scout_script"]
+    try:
+        brief = capability_brief(path)
+    except (OSError, SyntaxError, ValueError) as error:
+        log(f"capability brief unreadable from {path}: {type(error).__name__}; retry next tick")
+        return 1
+    digest = hashlib.sha256(brief.encode("utf-8")).hexdigest()
+    marker = state.root / "capability.sha256"
+    try:
+        if marker.read_text(encoding="utf-8").strip() == digest:
+            return 0
+    except FileNotFoundError:
+        pass
+    if dry_run:
+        log(f"dry-run: would push capability brief {digest[:12]} ({len(brief)} chars)")
+        return 0
+    rc, _out, err = bridge.call("strategy-capability", digest, stdin=brief)
+    if rc != 0:
+        log(f"bridge strategy-capability exit {rc}: {_one_line(err, 200)}")
+        return 1
+    tmp = marker.with_name("." + marker.name + ".tmp")
+    tmp.write_text(digest + "\n", encoding="utf-8")
+    os.replace(tmp, marker)
+    log(f"capability brief {digest[:12]} pushed to macminim4 ({len(brief)} chars)")
+    return 0
+
+
 class LockBusy(Exception):
     pass
 
@@ -886,6 +940,7 @@ def sync(cfg, log, dry_run=False, request=urllib_request, runner=subprocess.run,
                 proposal_runs=cfg.get("proposal_runs", True) is not False,
             )
             failures += push(api, bridge, state, cfg, log, dry_run=dry_run)
+            failures += push_capability(bridge, state, cfg, log, dry_run=dry_run)
     except LockBusy:
         return 0
     return 1 if failures else 0

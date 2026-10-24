@@ -10,6 +10,7 @@ FakeBridge mimics the macminim4 strategy-* verbs, including the per idea+event n
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import sys
 import tempfile
@@ -141,6 +142,7 @@ class FakeBridge:
         self.sent: list[tuple[str, str, str]] = []
         self.fail = {}  # verb -> number of upcoming calls that fail with exit 1
         self.calls = []
+        self.capability = None  # (sha256, brief) last stored by strategy-capability
 
     def add(self, idea_id, text=IDEA):
         self.ideas[idea_id] = {
@@ -182,6 +184,13 @@ class FakeBridge:
             self.proposals[batch] = {"items": payload["proposals"], "text": payload["text"]}
             self.sent.append((batch, "proposals", payload["text"]))
             return types.SimpleNamespace(returncode=0, stdout=json.dumps({"telegram_sent": True}), stderr="")
+        if verb == "strategy-capability":
+            digest = args[0]
+            if hashlib.sha256(input.encode("utf-8")).hexdigest() != digest:
+                return types.SimpleNamespace(returncode=2, stdout="", stderr="sha256 does not match the brief")
+            state = "unchanged" if self.capability and self.capability[0] == digest else "updated"
+            self.capability = (digest, input)
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps({"state": state}), stderr="")
         if verb == "strategy-pending":
             keep = ("id", "text", "source", "created_at")
             rows = [{k: r[k] for k in keep} for r in self.ideas.values() if r["status"] == "accepted"]
@@ -261,6 +270,7 @@ class Harness:
             state_dir=str(root / "state"),
             log_file=str(root / "bridge.log"),
             scout_dir=self.scout.cfg["state_dir"],
+            scout_script=test_scout.scout.__file__,
         )
         self.api, self.bridge = FakeApi(), FakeBridge()
         self.log = bs.Logger(self.cfg["log_file"], echo=False)
@@ -860,6 +870,56 @@ class ScoutBridgeTests(unittest.TestCase):
         self.assertEqual(h2.sync(), 1)
         self.assertEqual(h2.bridge.calls.count(("strategy-proposals", "20261023")), 0)
         self.assertFalse((Path(h2.cfg["state_dir"]) / "delivered" / "20261023").exists())
+
+
+class CapabilityTests(unittest.TestCase):
+    """scout.py CAPABILITY_BRIEF -> macminim4 (strategy-capability) for Sisyphus' spec co-authoring."""
+
+    def test_brief_is_pushed_once_and_again_only_when_it_changes(self):
+        h = Harness(self)
+        brief = test_scout.scout.CAPABILITY_BRIEF
+        self.assertEqual(h.sync(), 0)
+        self.assertEqual(h.bridge.capability, (hashlib.sha256(brief.encode("utf-8")).hexdigest(), brief))
+        for _ in range(2):
+            self.assertEqual(h.sync(), 0)
+        self.assertEqual(sum(c[0] == "strategy-capability" for c in h.bridge.calls), 1)
+        changed = Path(h.tmp.name) / "scout.py"
+        changed.write_text('X = 1\nCAPABILITY_BRIEF = """\\\nTX only, 5m.\n"""\n', encoding="utf-8")
+        h.cfg["scout_script"] = str(changed)
+        self.assertEqual(h.sync(), 0)
+        self.assertEqual(h.bridge.capability[1], "TX only, 5m.\n")
+        self.assertEqual(sum(c[0] == "strategy-capability" for c in h.bridge.calls), 2)
+        self.assertEqual(h.bridge.sent, [])  # nothing goes to the owner's Telegram
+
+    def test_brief_is_read_without_running_scout(self):
+        h = Harness(self)
+        trap = Path(h.tmp.name) / "trap.py"
+        marker = Path(h.tmp.name) / "ran"
+        trap.write_text(f'open({str(marker)!r}, "w").write("x")\nCAPABILITY_BRIEF = "brief text"\n', encoding="utf-8")
+        self.assertEqual(bs.capability_brief(trap), "brief text")
+        self.assertFalse(marker.exists())
+
+    def test_failures_are_retried_and_dry_run_sends_nothing(self):
+        h = Harness(self)
+        self.assertEqual(h.sync(dry_run=True), 0)
+        self.assertIsNone(h.bridge.capability)
+        self.assertTrue(any("dry-run: would push capability brief" in line for line in h.log.lines))
+        h.bridge.fail["strategy-capability"] = 1
+        self.assertEqual(h.sync(), 1)
+        self.assertFalse((Path(h.cfg["state_dir"]) / "capability.sha256").exists())
+        self.assertEqual(h.sync(), 0)
+        self.assertIsNotNone(h.bridge.capability)
+        h.cfg["scout_script"] = str(Path(h.tmp.name) / "missing.py")
+        self.assertEqual(h.sync(), 1)
+        self.assertIn("capability brief unreadable", h.log.lines[-1])
+
+    def test_ideas_still_flow_when_the_brief_cannot_be_pushed(self):
+        h = Harness(self)
+        h.cfg["scout_script"] = str(Path(h.tmp.name) / "missing.py")
+        h.bridge.add("20261023-s1")
+        self.assertEqual(h.sync(), 1)
+        self.assertEqual(h.bridge.ideas["20261023-s1"]["status"], "submitted")
+        self.assertEqual(h.events(), [("20261023-s1", "start")])
 
 
 if __name__ == "__main__":
