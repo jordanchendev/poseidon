@@ -431,5 +431,9 @@ def test_family_trial_count_includes_trials_of_errored_attempts(pipeline_session
 
 
 def test_default_registry_is_untouched_by_tests():
-    assert STAGE_REGISTRY["backtest"].__class__.__name__ == "BacktestStage"
-    assert STAGE_REGISTRY["backtest"].data_source is None and STAGE_REGISTRY["optimize"].data_source is None
+    # backtest / optimize are engine-routed: the DSL v2 body for CONFIG_VERSION <= 5, the v3 daily body for 6
+    assert STAGE_REGISTRY["backtest"].legacy.__class__.__name__ == "BacktestStage"
+    assert (
+        STAGE_REGISTRY["backtest"].legacy.data_source is None and STAGE_REGISTRY["optimize"].legacy.data_source is None
+    )
+    assert STAGE_REGISTRY["backtest"].daily.refdata is None

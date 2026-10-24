@@ -91,8 +91,11 @@ def continuous_series(
     pivots = {
         name: day.pivot(index="trade_date", columns="contract_month", values=name) for name in ("open", "high", "low")
     }
+    # A window without any after-hours row (before 2017-05-16) has NaN night_high / night_low.
     night_pivots = {
-        name: night.pivot(index="trade_date", columns="contract_month", values=name).reindex(price.index)
+        name: night.pivot(index="trade_date", columns="contract_month", values=name).reindex(
+            index=price.index, columns=price.columns
+        )
         for name in ("high", "low")
     }
     dates = pd.DatetimeIndex(price.index)

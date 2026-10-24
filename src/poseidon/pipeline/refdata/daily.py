@@ -66,7 +66,7 @@ EXTRA_UPDATERS: dict[str, UpdaterHook] = {}
 
 
 def beat_entry() -> dict:
-    """The pipeline-beat schedule entry (wired into the runner's beat by the owner, not here)."""
+    """The pipeline-beat schedule entry (``celery_app.beat_schedule["update-refdata-daily"]``)."""
 
     from celery.schedules import crontab
 

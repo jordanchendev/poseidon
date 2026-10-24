@@ -29,8 +29,8 @@ def sweep_pipelines() -> dict:
 
 @pipeline_celery_app.task(name="poseidon.pipeline.tasks.update_refdata_daily", max_retries=0)
 def update_refdata_daily() -> dict:
-    """Daily refdata update + freshness (``refdata.daily``). Not in the beat schedule yet: the owner
-    adds ``refdata.daily.beat_entry()`` to ``celery_app.beat_schedule`` when the runner is upgraded."""
+    """Daily refdata update + freshness (``refdata.daily``), on the runner beat at 09:00Z
+    (``celery_app.beat_schedule["update-refdata-daily"]``)."""
 
     from poseidon.core.config import settings
     from poseidon.pipeline.refdata.daily import run_daily

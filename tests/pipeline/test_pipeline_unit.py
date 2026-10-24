@@ -11,6 +11,7 @@ import pytest
 
 from poseidon.pipeline import artifacts
 from poseidon.pipeline.plan import (
+    CANONICAL_ORDER,
     DEFAULT_STAGE_PLAN,
     V1_STAGE_PLAN,
     StagePlanError,
@@ -114,7 +115,9 @@ def test_default_config_carries_the_full_plan_and_frozen_window():
     assert config["thresholds"]["wfe_min"] == 0.5
     assert config["optimize"]["max_trials"] <= 200 and config["spec_validator"] == "dsl_v2"
     assert config["backtest"]["cost_model"] == "tw_futures_pipeline"
-    assert tuple(STAGE_REGISTRY) == V1_STAGE_PLAN
+    # the registry follows the canonical order: v1 plus the v3-only execution_timing gate (CONFIG_VERSION 6)
+    assert tuple(STAGE_REGISTRY) == CANONICAL_ORDER
+    assert [name for name in CANONICAL_ORDER if name not in V1_STAGE_PLAN] == ["execution_timing"]
 
 
 @pytest.mark.parametrize(
@@ -196,12 +199,16 @@ def test_artifact_limits(tmp_path):
 # -------------------------------------------------------------------- isolation
 
 
-def test_pipeline_celery_app_schedules_only_the_sweeper():
+def test_pipeline_celery_app_schedules_only_the_sweeper_and_the_refdata_job():
     from poseidon.pipeline.celery_app import PIPELINE_QUEUE, pipeline_celery_app
+    from poseidon.pipeline.refdata.daily import beat_entry
 
     conf = pipeline_celery_app.conf
     assert PIPELINE_QUEUE == "poseidon_pipeline"
-    assert set(conf.beat_schedule) == {"sweep-pipelines"}
+    assert set(conf.beat_schedule) == {"sweep-pipelines", "update-refdata-daily"}
+    refdata = conf.beat_schedule["update-refdata-daily"]
+    assert refdata["task"] == beat_entry()["task"] == "poseidon.pipeline.tasks.update_refdata_daily"
+    assert refdata["schedule"] == beat_entry()["schedule"]  # 09:00Z = 17:00 Asia/Taipei
     assert conf.beat_schedule["sweep-pipelines"]["task"] == "poseidon.pipeline.tasks.sweep_pipelines"
     assert conf.beat_schedule["sweep-pipelines"]["schedule"] == 300.0
     assert conf.redbeat_key_prefix == "poseidon-pipeline:redbeat:"
@@ -290,7 +297,7 @@ def test_alembic_streams_are_separate():
     pipeline_config = Config(ini, ini_section="pipeline")
     pipeline = ScriptDirectory.from_config(pipeline_config)
     assert main.get_heads() == ["046"]
-    assert pipeline.get_heads() == ["p002"]
+    assert pipeline.get_heads() == ["p003"]
     assert all(not revision.revision.startswith("p") for revision in main.walk_revisions())
     assert pipeline_config.get_main_option("version_table") == "alembic_version_pipeline"
     assert Config(ini).get_main_option("version_table") is None

@@ -19,7 +19,15 @@ from sqlalchemy.orm import Session
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
 from poseidon.pipeline.dispatcher import add_event, latest_attempts, select_next_stage
 from poseidon.pipeline.models import PipelineEvent, PipelineRun, PipelineTrial, StageRun
-from poseidon.pipeline.plan import StagePlanError, default_config, validate_stage_plan
+from poseidon.pipeline.plan import (
+    CONFIG_VERSION,
+    SPEC_V3_CONFIG_VERSION,
+    V3_RUN_CLASSES,
+    StagePlanError,
+    default_config,
+    strategy_class_of,
+    validate_stage_plan,
+)
 from poseidon.pipeline.stages import STAGE_REGISTRY
 from poseidon.pipeline.state import (
     RUN_ABORTABLE,
@@ -156,11 +164,22 @@ def _required_key(idempotency_key: str) -> str:
     return idempotency_key
 
 
+def is_spec_v3(spec) -> bool:
+    return isinstance(spec, dict) and spec.get("spec_version") == 3
+
+
+def _default_refdata():
+    from poseidon.pipeline.refdata.store import RefdataStore
+
+    return RefdataStore()
+
+
 class PipelineService:
-    def __init__(self, session: Session, *, registry=None, clock=utcnow):
+    def __init__(self, session: Session, *, registry=None, clock=utcnow, refdata=None):
         self.session = session
         self.registry = registry if registry is not None else STAGE_REGISTRY
         self.clock = clock
+        self.refdata = refdata or _default_refdata  # () -> refdata store; read only for spec v3 runs
 
     # ------------------------------------------------------------- commands
 
@@ -177,20 +196,30 @@ class PipelineService:
         if spec is not None and len(canonical_json(spec).encode("utf-8")) > SPEC_JSON_MAX_BYTES:
             raise PipelineRequestInvalid(f"spec_json exceeds {SPEC_JSON_MAX_BYTES} bytes")
         stage_plan = body.get("stage_plan")
+        v3 = is_spec_v3(spec)
         if stage_plan is not None:
             try:
-                stage_plan = validate_stage_plan(stage_plan, self.registry)
+                version = SPEC_V3_CONFIG_VERSION if v3 else CONFIG_VERSION
+                stage_plan = validate_stage_plan(stage_plan, self.registry, version=version)
             except StagePlanError as error:
                 raise PipelineRequestInvalid(str(error)) from error
         now = self.clock()
         run_id = uuid.uuid4()
         family_id = run_id
+        root = None
         if body.get("family_id") is not None:
             root = self.session.get(PipelineRun, uuid.UUID(str(body["family_id"])))
             if root is None:
                 raise PipelineRequestInvalid("family_id does not name an existing pipeline run")
             family_id = root.family_id
-        config = default_config(stage_plan=stage_plan, as_of=now.astimezone(MARKET_TZ).date())
+        as_of = now.astimezone(MARKET_TZ).date()
+        instrument = {}
+        if v3:
+            config, instrument = self._v3_config(spec, stage_plan, as_of)
+        else:
+            config = default_config(stage_plan=stage_plan, as_of=as_of)
+        if root is not None:
+            self._check_family_class(root, config)
         run = PipelineRun(
             id=run_id,
             family_id=family_id,
@@ -207,6 +236,7 @@ class PipelineService:
             revision=1,
             created_at=now,
             updated_at=now,
+            **instrument,
         )
         savepoint = self.session.begin_nested()
         try:
@@ -230,6 +260,55 @@ class PipelineService:
         )
         self.session.flush()
         return response, False
+
+    def _check_family_class(self, root: PipelineRun, config: dict) -> None:
+        """A family's first run decides its strategy class; DSR never mixes return and TWD Sharpes (§7)."""
+
+        family_root = root if root.id == root.family_id else self.session.get(PipelineRun, root.family_id)
+        family_class = strategy_class_of(family_root.config_json)
+        run_class = strategy_class_of(config)
+        if run_class != family_class:
+            raise PipelineRequestInvalid(
+                f"family {family_root.family_id} is {family_class} (its first run decides the class); a "
+                f"{run_class} run cannot join it, DSR would mix daily-return and TWD trial Sharpes. "
+                "Start a new family (omit family_id)."
+            )
+
+    def _v3_config(self, spec: dict, stage_plan, as_of) -> tuple[dict, dict]:
+        """CONFIG_VERSION 6 config and the run's market/symbol for a spec v3 document (design §8)."""
+
+        from poseidon.pipeline.refdata.store import RefdataError
+        from poseidon.pipeline.v3.brief import render_brief
+        from poseidon.pipeline.v3.config import REFDATA_DATASETS, daily_run_config
+        from poseidon.pipeline.v3.instruments import INSTRUMENTS
+        from poseidon.pipeline.v3.validation import validate_spec_v3
+
+        result = validate_spec_v3(spec)
+        if not result.ok:
+            problems = [issue.text() for issue in (*result.errors, *result.unsupported)]
+            raise PipelineRequestInvalid(f"spec_json (spec v3) does not validate: {'; '.join(problems)[:1500]}")
+        if result.strategy_class not in V3_RUN_CLASSES:
+            raise PipelineRequestInvalid(
+                f"spec v3 runs are daily only for now ({', '.join(V3_RUN_CLASSES)}); this spec is "
+                f"{result.strategy_class}: intraday specs run as DSL v2 until DSL parity (step 7)"
+            )
+        try:
+            store = self.refdata()
+            refdata = {name: store.content_sha256(name) for name in REFDATA_DATASETS}
+        except (RefdataError, OSError) as error:
+            raise PipelineRequestInvalid(f"refdata is not available for spec v3 runs: {error}") from error
+        config = daily_run_config(
+            result.resolved, as_of=as_of, brief_text=render_brief(), refdata=refdata, stage_plan=stage_plan
+        )
+        rows = [INSTRUMENTS[decl["symbol"]] for decl in spec["instruments"].values()]
+        if len(rows) == 1:
+            market = {"future": "tw_futures", "stock": "tw_stock"}.get(rows[0].kind)
+            instrument = {"market": market, "symbol": rows[0].symbol}
+        else:
+            instrument = {"market": "multi", "symbol": "PORTFOLIO"}
+        if instrument["market"] is None:
+            raise PipelineRequestInvalid(f"no pipeline market for {rows[0].symbol} ({rows[0].kind})")
+        return config, instrument
 
     def _replay_create(self, actor_id, key, request_sha256) -> dict | None:
         run = (
