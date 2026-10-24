@@ -25,13 +25,14 @@ Data (refdata, read-only)
     still trading carry the third-Wednesday projection; noted). Trading calendar: the price
     source's day-session dates plus projected weekdays after the data (so a roll due on the last
     day is still seen; noted). Aux ``taiex`` (``twse_taiex_daily``) and ``taiex_tr``
-    (``twse_taiex_total_return``) are always attached. ``inputs`` records each dataset's
-    ``content_sha256`` for run input hashes.
+    (``twse_taiex_total_return``) are always attached (``AUX_DATASETS``, from
+    ``instruments.SIGNAL_INDICES``); a signal ref ``index:<name>`` reads aux ``<name>``.
+    ``inputs`` records each dataset's ``content_sha256`` for run input hashes.
 
 The warm-up is the largest ``history()`` of the bound components plus ``signal_lag``; the
-compiler checks that many trading days exist before ``start``. More history never changes a
-result: decisions start at ``start``, the MA-band state starts there, and every indicator is
-scale-free in the causal adjusted series.
+compiler checks that many trading days exist before ``start``, and that many rows of every
+index a signal reads. More history never changes a result: decisions start at ``start``, the
+MA-band state starts there, and every indicator is scale-free in the causal adjusted series.
 """
 
 from __future__ import annotations
@@ -52,9 +53,15 @@ from poseidon.pipeline.engine import (
     run,
     truncation_audit,
 )
-from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, TAIEX, TAIEX_TR
+from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES
 from poseidon.pipeline.refdata.store import RefdataStore
-from poseidon.pipeline.v3.instruments import INSTRUMENTS, MAX_MARGIN_UTILISATION, Instrument
+from poseidon.pipeline.v3.instruments import (
+    INSTRUMENTS,
+    MAX_MARGIN_UTILISATION,
+    SIGNAL_INDICES,
+    Instrument,
+    signal_index,
+)
 from poseidon.pipeline.v3.registry import REGISTRY
 from poseidon.pipeline.v3.runtime import (
     Bound,
@@ -67,7 +74,7 @@ from poseidon.pipeline.v3.runtime import (
 from poseidon.pipeline.v3.spec import DEFAULT_INITIAL_CAPITAL_TWD, is_param_ref, substitute, walk
 from poseidon.pipeline.v3.validation import LEVERAGE_CAP, FeasibilityContext, validate_spec_v3, warmup_calendar_days
 
-AUX_DATASETS = {"taiex": TAIEX, "taiex_tr": TAIEX_TR}
+AUX_DATASETS = {name: index.dataset for name, index in SIGNAL_INDICES.items()}
 HOOKS = {
     "direction": "step",
     "leverage": "step",
@@ -115,9 +122,19 @@ class Plan:
     initial_capital: float
 
     @property
+    def bounds(self) -> list[Bound]:
+        return [b for s in self.sleeves for b in (s.direction, *s.leverage, s.sizing, s.rebalance)]
+
+    @property
     def warmup_bars(self) -> int:
-        bounds = [b for s in self.sleeves for b in (s.direction, *s.leverage, s.sizing, s.rebalance)]
-        return max((b.component.history(b.params) for b in bounds), default=0)
+        return max((b.component.history(b.params) for b in self.bounds), default=0)
+
+    @property
+    def signal_indices(self) -> tuple[str, ...]:
+        """Aux names of the indices the components' ``signal`` refs read (``index:<name>``)."""
+
+        refs = (getattr(b.params, "signal", None) for b in self.bounds)
+        return tuple(sorted({index.name for ref in refs if isinstance(ref, str) and (index := signal_index(ref))}))
 
 
 def plan(resolved: dict) -> Plan:
@@ -321,9 +338,18 @@ def compile_spec(
         frame = store.read(dataset, start=load_from, end=upper)
         if len(frame):
             aux[name] = frame.set_index("trade_date").sort_index()
-    used_aux = set(conventions.signal_aux.values())
-    if used_aux - set(aux):
-        raise NotCompilable(f"signal aux series {sorted(used_aux - set(aux))} not loaded")
+    for name in spec_plan.signal_indices:
+        rows = aux.get(name)
+        if rows is None:
+            raise NotCompilable(
+                f"signal index:{name}: no {AUX_DATASETS[name]} rows between {load_from.date()} and {upper}"
+            )
+        rows_before = int((rows.index < start).sum())
+        if rows_before < warmup:
+            raise NotCompilable(
+                f"signal index:{name}: {rows_before} rows of {AUX_DATASETS[name]} before {start.date()}, the components "
+                f"need {warmup} for warm-up (data from {SIGNAL_INDICES[name].data_since.isoformat()})"
+            )
     inputs = {dataset: store.content_sha256(dataset) for dataset in (FUTURES, CALENDAR, *AUX_DATASETS.values())}
     return CompiledSpec(
         name=resolved["name"],

@@ -59,7 +59,7 @@ import pandas as pd
 
 from poseidon.decision_loop.manifest import canonical_json
 from poseidon.pipeline.engine import ContractSpec, EngineConfig, EngineResult, FuturesInput, TargetStrategy, run
-from poseidon.pipeline.plan import SPEC_V3_CONFIG_VERSION, config_version
+from poseidon.pipeline.plan import DAILY_SHADOW_PAPER, DAILY_THRESHOLDS, SPEC_V3_CONFIG_VERSION, config_version
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, MARKET_CALENDAR
 from poseidon.pipeline.refdata.engine_input import (
     RefdataReader,
@@ -83,27 +83,12 @@ DECISION_LOCAL = time(13, 45)  # daily decisions are taken after the futures day
 MISMATCH_REPORT_LIMIT = 50
 REVISION_REPORT_LIMIT = 50
 
-# Frozen into a v3 daily run's ``shadow_paper`` (step 4 merges it into the run config).
-DEFAULT_DAILY_SHADOW_PAPER: dict = {
-    "mode": DAILY_MODE,
-    "wake_local_time": "09:30",  # after the 17:00 refdata job of the previous day (refdata.daily)
-    "wake_weekdays": [0, 1, 2, 3, 4, 5, 6],
-    "source_retry_minutes": 60,  # refdata unreadable: try again this soon (never fails the stage)
-    "stale_after_trading_days": 3,  # report (never fail) when the data lags more scheduled trading days than this
-    "max_calendar_days": 90,  # fewer than paper_min_trading_days paper days this long after the start -> fail
-    "calendar_horizon_days": 120,  # official schedule appended after the cutoff
-    "protection": {
-        "daily_loss_quantile": 0.95,
-        "daily_loss_multiple": 3.0,
-        "max_drawdown_multiple": 1.5,
-        "fail_on_forced_liquidation": True,
-    },
-}
-# §7 daily_* row; the class threshold table (feat/pv2-class-gates) freezes these keys into ``thresholds``.
+# Frozen into a v3 daily run's ``shadow_paper`` / ``thresholds``: the daily class table in plan.py is
+# the one source (plan.class_settings), these names are views of it.
+DEFAULT_DAILY_SHADOW_PAPER: dict = DAILY_SHADOW_PAPER
 DAILY_PAPER_THRESHOLDS: dict = {
-    "paper_min_trading_days": 20,
-    "paper_target_match_min": 0.95,
-    "paper_pnl_tolerance_ticks": 1.0,
+    key: DAILY_THRESHOLDS[key]
+    for key in ("paper_min_trading_days", "paper_target_match_min", "paper_pnl_tolerance_ticks")
 }
 REQUIRED_SETTINGS = tuple(DEFAULT_DAILY_SHADOW_PAPER)
 REQUIRED_PROTECTION = tuple(DEFAULT_DAILY_SHADOW_PAPER["protection"])

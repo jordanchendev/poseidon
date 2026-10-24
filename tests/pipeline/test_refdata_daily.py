@@ -210,4 +210,4 @@ def test_beat_entry_is_17_00_taipei_outside_the_heavy_window():
     assert entry["task"] == "poseidon.pipeline.tasks.update_refdata_daily"
     assert entry["schedule"].hour == {9} and entry["schedule"].minute == {0}
     assert not 6 <= daily.DAILY_RUN_UTC.hour + daily.DAILY_RUN_UTC.minute / 60 <= 8 + 40 / 60
-    # not wired into the live runner's beat here: test_pipeline_unit checks it still schedules only the sweeper
+    # wired into the runner beat as "update-refdata-daily" (test_pipeline_unit checks the schedule)

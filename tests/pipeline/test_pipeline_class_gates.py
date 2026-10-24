@@ -16,7 +16,7 @@ from poseidon.pipeline.gates import (
     benchmark,
     cost_stress,
     dsr,
-    execution_sensitivity,
+    execution_timing,
     holdout,
     liquidation,
     param_stability,
@@ -136,7 +136,9 @@ def test_daily_thresholds_are_the_registered_section_7_numbers():
     assert D["holdout_min_days"] == 250
     assert D["regime_min_days_per_segment"] == 60
     assert D["dsr_min_obs"] == 250 and D["dsr_min"] == 0.95
-    assert D["benchmark_alpha_t_min"] == 1.0 and D["holdout_alpha_positive"] is True
+    # owner decisions 2026-10-24 afternoon: daily alpha t >= 1.65 (one-sided 5 %), blocking execution timing
+    assert D["benchmark_alpha_t_min"] == 1.65 and D["holdout_alpha_positive"] is True
+    assert D["execution_timing_pnl_positive"] is True and D["execution_timing_sharpe_ratio_min"] == 0.5
     assert D["paper_target_match_min"] == 0.95 and D["paper_min_trading_days"] == 20
     assert D["liquidation_fails"] is True
     # trade counts have no meaning for a daily class: those keys are absent (criterion off)
@@ -149,7 +151,9 @@ def test_daily_thresholds_are_the_registered_section_7_numbers():
         {"windows": 5, "is_days": 1460, "oos_days": 365},
         {"windows": 4, "is_days": 730, "oos_days": 182},
     ]
-    assert set(DAILY_GATES) == set(GATES) | {"liquidation"}
+    assert set(DAILY_GATES) == set(GATES) | {"liquidation", "execution_timing"}
+    for execution, scenarios in DEFAULT_GATES_BY_CLASS["daily_equity"]["execution_timing"]["scenarios"].items():
+        assert scenarios == list(execution_timing.scenarios_for({}, base_execution=execution))
 
 
 def test_class_settings_copies_and_refuses_unregistered_classes():
@@ -396,16 +400,69 @@ def test_cost_stress_daily_reruns_with_the_frozen_multiplier():
     check(cost_stress.evaluate_daily(mismatch, D), "fail", "multiplier_mismatch")
 
 
-def test_execution_sensitivity_is_report_only():
-    base = daily(noise(300, 0.0005))
-    alternative = daily(noise(300, 0.0002))
-    rerun = RecordingRerun(lambda request: alternative)
-    report = execution_sensitivity.measure(rerun, {"lev": 3.0}, base, base_execution="next_open", basis="return")
-    assert rerun.requests == [RerunRequest(params={"lev": 3.0}, execution="signal_close")]
-    assert report["report_only"] is True and report["alternative_execution"] == "signal_close"
-    assert report["delta_total_pnl_twd"] == pytest.approx(alternative.total_pnl_twd - base.total_pnl_twd)
-    assert report["delta_sharpe_daily"] < 0
-    canonical_json(report)
+def test_execution_timing_scenarios_follow_the_spec_execution():
+    assert execution_timing.scenarios_for({"lev": 3.0}, base_execution="next_open") == {
+        "signal_close": RerunRequest(params={"lev": 3.0}, execution="signal_close"),
+        "signal_lag_1d": RerunRequest(params={"lev": 3.0}, signal_lag_extra=1),
+    }
+    assert set(execution_timing.scenarios_for({}, base_execution="signal_close")) == {"next_open", "signal_lag_1d"}
+    with pytest.raises(ValueError):
+        RerunRequest(params={}, signal_lag_extra=-1)
+
+
+def _timing(base, scenarios, thresholds=D, execution="next_open"):
+    inputs = execution_timing.ExecutionTimingInputs(base, scenarios, "return", execution)
+    return execution_timing.evaluate_daily(inputs, thresholds)
+
+
+def test_execution_timing_passes_when_every_scenario_keeps_pnl_and_half_the_sharpe():
+    base = daily(noise(300, 0.0010))  # the same seed throughout: equal std, Sharpe ratio = ratio of means
+    close_fill = daily(noise(300, 0.0008))  # 80 %
+    lagged = daily(noise(300, 0.00055))  # 55 %
+    rerun = RecordingRerun(lambda request: close_fill if request.execution else lagged)
+    result = check(
+        execution_timing.run_daily(rerun, {"lev": 3.0}, base, base_execution="next_open", basis="return", thresholds=D),
+        "pass",
+        "pass",
+    )
+    assert rerun.requests == list(execution_timing.scenarios_for({"lev": 3.0}, base_execution="next_open").values())
+    lag = result.report["scenarios"]["signal_lag_1d"]
+    assert lag["sharpe_vs_base"] == pytest.approx(0.55) and lag["passed"]
+    assert lag["delta_total_pnl_twd"] == pytest.approx(lagged.total_pnl_twd - base.total_pnl_twd)
+    assert result.report["sharpe_floor"] == pytest.approx(0.5 * result.report["base"]["sharpe_daily"])
+    assert "signal_lag_1d Sharpe 55% of base" in result.headline
+
+
+def test_execution_timing_fails_a_sharpe_collapse_or_a_loss_in_any_scenario():
+    base = daily(noise(300, 0.0010))
+    fine = daily(noise(300, 0.0008))
+    collapsed = daily(noise(300, 0.00045))  # profitable, 45 % of the base Sharpe
+    failed = check(
+        _timing(base, {"signal_close": fine, "signal_lag_1d": collapsed}), "fail", "scenario_sharpe_below_ratio"
+    )
+    assert (
+        not failed.report["scenarios"]["signal_lag_1d"]["passed"]
+        and failed.report["scenarios"]["signal_close"]["passed"]
+    )
+    assert "signal_lag_1d Sharpe" in failed.reason
+    losing = daily(noise(300, -0.0002))
+    check(_timing(base, {"signal_close": losing, "signal_lag_1d": fine}), "fail", "scenario_not_profitable")
+    # base on signal_close: the scenarios are next_open and the lag
+    check(_timing(base, {"next_open": fine, "signal_lag_1d": fine}, execution="signal_close"), "pass", "pass")
+
+
+def test_execution_timing_refuses_other_scenario_sets_and_is_report_only_without_thresholds():
+    base, fine = daily(noise(300, 0.0010)), daily(noise(300, 0.0008))
+    check(_timing(base, {"signal_close": fine}), "fail", "invalid_input")
+    check(_timing(base, {"next_open": fine, "signal_lag_1d": fine}), "fail", "invalid_input")
+    flat = daily([0.0] * 300)
+    check(_timing(flat, {"signal_close": fine, "signal_lag_1d": fine}), "fail", "invalid_input")  # no base Sharpe
+    old = {k: v for k, v in D.items() if not k.startswith("execution_timing_")}
+    losing = daily(noise(300, -0.0002))
+    result = check(_timing(base, {"signal_close": losing, "signal_lag_1d": losing}, old), "pass", "pass")
+    assert "report only" in result.headline and result.report["criterion_enabled"] is False
+    pnl_only = {**old, "execution_timing_pnl_positive": True}
+    check(_timing(base, {"signal_close": fine, "signal_lag_1d": daily(noise(300, 0.0001))}, pnl_only), "pass", "pass")
 
 
 # ----------------------------------------------------------------------------- dsr / param_stability / wfe

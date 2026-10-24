@@ -203,6 +203,19 @@ def test_continuous_series_books_no_roll_gap(days_before):
     assert series.loc[~series["roll"], "roll_gap_points"].eq(0).all()
 
 
+def test_continuous_series_without_after_hours_rows():
+    # A window entirely before 2017-05-16 has no night session: the series is the day-session one,
+    # with NaN night extremes (the v3 daily gates read it for windows of any era).
+    quotes = quotes_2026()
+    calendar = taifex.settlement_calendar(quotes, fsp())
+    day_only = quotes[quotes["session"] == "day"].reset_index(drop=True)
+    series = continuous_series(day_only, calendar, "TX", days_before=1)
+    full = continuous_series(quotes, calendar, "TX", days_before=1)
+    assert series["night_high"].isna().all() and series["night_low"].isna().all()
+    columns = ["trade_date", "contract", "close", "close_adj_ratio", "ret", "roll"]
+    pd.testing.assert_frame_equal(series[columns], full[columns])
+
+
 def test_continuous_series_exits_at_final_settlement_price_when_held_to_expiry():
     quotes = quotes_2026()
     calendar = taifex.settlement_calendar(quotes, fsp())

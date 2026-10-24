@@ -18,7 +18,17 @@ The downstream pipeline turns an idea into a spec v3 and backtests it. A spec is
 | TMF | Micro TAIEX futures (微台指) | 10 | 1 | 20 | 2024-07-29 | TX prices (proxy) | yes |
 | TXO | TAIEX options (台指選擇權) | 50 | 0.1 | 25 | 2001-12-24 | own | not yet: M4 (TXO refdata, option engine, hedge.protective_put) |
 
-Futures: tax 0.002% of notional on both legs, 1 tick slippage per side; margin approximated as 7.0% initial / 5.4% maintenance of notional. Daily prices are TAIFEX contract-month data (signals use the back-adjusted continuous series); MTX and TMF trade on TX prices with their own contract specs, flagged as proxy in reports (before the TMF listing the contract did not exist).
+Futures: tax 0.002% of notional on both legs, 1 tick slippage per side; margin approximated as 7.0% initial / 5.4% maintenance of notional. Daily prices are TAIFEX contract-month data (a signal on the futures reads the back-adjusted continuous series); MTX and TMF trade on TX prices with their own contract specs, flagged as proxy in reports (before the TMF listing the contract did not exist).
+
+## Signal series
+
+`regime.ma_band` and `risk.vol_cap` read the daily series named by their `signal` parameter, which is required (no default). The choice is part of the strategy: the same 200-day MA band over 2000-2014 ends 49% apart on the TX adjusted series vs the TAIEX price index (49 vs 33 regime switches).
+
+- `self:adjusted`: the traded futures' back-adjusted continuous price (MTX/TMF: TX's), from 1998-07-21.
+- `index:taiex`: TAIEX price index (加權股價指數（不含息）), from 1999-01-05.
+- `index:taiex_tr`: TAIEX total-return index (加權股價報酬指數（含息）), from 2003-01-02.
+
+An idea that only says "台指", "TAIEX" or "大盤" does not say which of these it means: that is a question for the owner, answered before the idea reaches the pipeline. Never pick one silently.
 
 ## Components (what a spec CAN use)
 
@@ -57,12 +67,12 @@ Futures: tax 0.002% of notional on both legs, 1 tick slippage per side; margin a
 - `leverage.base` (1d): Base leverage L0 = value x equity (first link of the leverage chain).
   - `value`: number (0.0, 5.0], required; tunable ($param)
 - `regime.ma_band` (1d): Moving-average regime with a hysteresis band: below MA x (1 - band) switch to off_leverage, back above MA x (1 + band) restore the incoming leverage.
-  - `signal`: string "<alias|self>:<open|high|low|close|adjusted>", default "self:adjusted"
+  - `signal`: string "<alias|self>:<open|high|low|close|adjusted>" | "index:<taiex|taiex_tr>", required
   - `ma_days`: integer [20, 400], default 200; tunable ($param)
   - `band_pct`: number [0.0, 0.1], default 0.02; tunable ($param)
   - `off_leverage`: number [0.0, 5.0], default 0.5; tunable ($param)
 - `risk.vol_cap` (1d): Volatility cap: leverage = min(incoming, k / annualised realised volatility over window_days).
-  - `signal`: string "<alias|self>:<open|high|low|close|adjusted>", default "self:adjusted"
+  - `signal`: string "<alias|self>:<open|high|low|close|adjusted>" | "index:<taiex|taiex_tr>", required
   - `window_days`: integer [5, 120], default 20; tunable ($param)
   - `k`: number [0.1, 3.0], default 0.75; tunable ($param)
 
@@ -148,4 +158,4 @@ Futures: tax 0.002% of notional on both legs, 1 tick slippage per side; margin a
 
 The M1 acceptance spec (`tmf_dynamic_leverage_3x`) reads:
 
-> 每個交易日收盤後決策，次一交易時段開盤成交。商品：微台指（TMF，價格以 TX 代理），結算日前 1 個交易日換月。方向：一直做多。槓桿：基礎 3 倍；調整後的連續價格低於 200 日均線 ×(1−2%) 時改成 0.5 倍，高於 ×(1+2%) 才回到 3 倍；再取 min(目前倍數, 0.75 ÷ 20 日年化實現波動)。口數 = 權益 × 倍數 ÷ (價格 × 10)，無條件捨去；差 1 口以上才調整。可調參數：band 0.01–0.03（間隔 0.005，預設 0.02）、ma_days 150–250（間隔 25，預設 200）、vol_k 0.5–1（間隔 0.125，預設 0.75）。
+> 每個交易日收盤後決策，次一交易時段開盤成交。商品：微台指（TMF，價格以 TX 代理），結算日前 1 個交易日換月。方向：一直做多。槓桿：基礎 3 倍；加權股價指數（不含息）低於 200 日均線 ×(1−2%) 時改成 0.5 倍，高於 ×(1+2%) 才回到 3 倍；再取 min(目前倍數, 0.75 ÷ 加權股價指數（不含息） 20 日年化實現波動)。口數 = 權益 × 倍數 ÷ (價格 × 10)，無條件捨去；差 1 口以上才調整。可調參數：band 0.01–0.03（間隔 0.005，預設 0.02）、ma_days 150–250（間隔 25，預設 200）、vol_k 0.5–1（間隔 0.125，預設 0.75）。

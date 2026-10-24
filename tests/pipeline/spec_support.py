@@ -17,8 +17,14 @@ def resolved_spec(
     rebalance: tuple[str, dict] = ("rebalance.daily", {"min_change_units": 1}),
     symbol: str = "TMF",
     days_before: int = 1,
+    signal: str = "core:adjusted",
 ) -> dict:
-    """The acceptance spec with every ``$param`` bound; ``vol_k=None`` drops the volatility cap."""
+    """The acceptance spec with every ``$param`` bound; ``vol_k=None`` drops the volatility cap.
+
+    ``signal`` is the series both links read. The acceptance spec itself reads ``index:taiex``; the
+    default here is the futures' own adjusted series because most engine tests run on synthetic
+    futures without an index aux series.
+    """
 
     doc = substitute(tmf_dynamic_leverage_3x(), {"ma_days": ma_days, "band": band, "vol_k": vol_k or 0.75})
     doc["params"] = {}
@@ -27,6 +33,8 @@ def resolved_spec(
     sleeve = doc["sleeves"][0]
     sleeve["leverage"][0]["params"]["value"] = base
     sleeve["leverage"][1]["params"]["off_leverage"] = off
+    for link in sleeve["leverage"][1:]:
+        link["params"]["signal"] = signal
     if vol_k is None:
         del sleeve["leverage"][2]
     sleeve["sizing"]["params"]["rounding"] = rounding

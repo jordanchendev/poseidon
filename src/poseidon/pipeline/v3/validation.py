@@ -7,8 +7,9 @@
 3. component parameters (strict models with bounds; DSL v2 via ``validate_v2``);
 4. cross rules: frequencies, chain order, duplicates, sleeve/instrument links,
    allocation, execution, DSL fast-path constraints, component checks;
-5. data feasibility: every instrument has bars over ``[start - warm-up, end)``;
-   proxy price intervals become ``notes``;
+5. data feasibility: every instrument has bars over ``[start - warm-up, end)``, and every
+   index a signal reads (``index:taiex`` from 1999-01-05, ``index:taiex_tr`` from 2003-01-02)
+   has rows there; proxy price intervals become ``notes``;
 6. contract-count feasibility: no grid point sizes to 0 contracts or misses its
    target leverage by more than 25 %;
 7. margin feasibility: initial margin at the largest leverage <= 80 % of equity;
@@ -43,6 +44,7 @@ from poseidon.pipeline.v3.instruments import (
     Instrument,
     data_since,
     ordered_frequencies,
+    signal_index,
 )
 from poseidon.pipeline.v3.registry import (
     PLANNED_COMPONENTS,
@@ -170,7 +172,10 @@ def _check_shape(doc: dict, issues: _Issues) -> None:
     for alias, decl in doc["instruments"].items():
         base = ("instruments", alias)
         if alias in RESERVED_ALIASES:
-            issues.error(base, f"alias {alias!r} is reserved (it means the sleeve's own instrument in series refs)")
+            issues.error(
+                base,
+                f"alias {alias!r} is reserved in series refs (self: the sleeve's own instrument, index: a TWSE index)",
+            )
         instrument = INSTRUMENTS.get(decl["symbol"])
         if instrument is None:
             tradable = ", ".join(symbol for symbol, row in INSTRUMENTS.items() if row.tradable)
@@ -524,6 +529,20 @@ def _check_data(resolved: dict, template: dict, params: dict, feasibility: Feasi
         note = instrument.proxy_note(start)
         if note:
             notes.append(note)
+    for path, _slot, ref in component_slots(resolved):
+        component = REGISTRY[ref["component"]]
+        if component.name == "direction.dsl_rules":
+            continue
+        signal = getattr(component.parse(ref.get("params") or {}), "signal", None)
+        index = signal_index(signal) if isinstance(signal, str) else None
+        if index is not None and need_from < index.data_since:
+            issues.error(
+                (*path, "params", "signal"),
+                f"{signal} ({index.name_en}) data starts {index.data_since.isoformat()}; the window start "
+                f"{start.isoformat()} minus the warm-up ({bars} bars, {warmup.days} calendar days) needs data from "
+                f"{need_from.isoformat()}; start the window on or after {(index.data_since + warmup).isoformat()}, "
+                "shorten the windows or read another series",
+            )
     if feasibility.end is not None and feasibility.end <= start:
         issues.error(
             "", f"the data window end {feasibility.end.isoformat()} is not after its start {start.isoformat()}"

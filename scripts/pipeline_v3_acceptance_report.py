@@ -30,31 +30,23 @@ WINDOWS = {
     "2020..now": ("2020-01-02", None),
     "2008..now": ("2008-01-02", None),
 }
-TAIEX_LAG1 = {"signal_aux": {"core:adjusted": "taiex"}, "signal_lag": 1}
-# name -> (rounding, conventions, bars, keep the vol cap): A -> B changes one convention per step
+TAIEX, ADJUSTED = "index:taiex", "core:adjusted"
+CLOSE_LAG1 = {"execution": "signal_close", "signal_lag": 1}
+# name -> (rounding, signal series, conventions, bars, keep the vol cap): A -> B changes one convention per step
 VARIANTS = {
-    "A levtx (close fill, TAIEX t-1, nearest)": (
-        "nearest",
-        dict(execution="signal_close", **TAIEX_LAG1),
-        "night",
-        True,
-    ),
-    "A1 + floor": ("floor", dict(execution="signal_close", **TAIEX_LAG1), "night", True),
-    "A2 + TX adjusted signal (t-1)": ("floor", dict(execution="signal_close", signal_lag=1), "night", True),
-    "A3 + signal up to t (close fill)": ("floor", dict(execution="signal_close"), "night", True),
-    "B §12 defaults (next_open)": ("floor", dict(), "night", True),
-    "B' next_open, 08:45 day open only": ("floor", dict(), "day", True),
-    "C earlier harness: levtx + next_open, day open": ("nearest", dict(**TAIEX_LAG1), "day", True),
-    "C' levtx + next_open, night open": ("nearest", dict(**TAIEX_LAG1), "night", True),
+    "A levtx (close fill, TAIEX t-1, nearest)": ("nearest", TAIEX, CLOSE_LAG1, "night", True),
+    "A1 + floor": ("floor", TAIEX, CLOSE_LAG1, "night", True),
+    "A2 + TX adjusted signal (t-1)": ("floor", ADJUSTED, CLOSE_LAG1, "night", True),
+    "A3 + signal up to t (close fill)": ("floor", ADJUSTED, dict(execution="signal_close"), "night", True),
+    "B §12 defaults, TX adjusted (next_open)": ("floor", ADJUSTED, dict(), "night", True),
+    "B' next_open, 08:45 day open only": ("floor", ADJUSTED, dict(), "day", True),
+    "C earlier harness: levtx + next_open, day open": ("nearest", TAIEX, dict(signal_lag=1), "day", True),
+    "C' levtx + next_open, night open": ("nearest", TAIEX, dict(signal_lag=1), "night", True),
+    "D acceptance spec (TAIEX, next_open)": ("floor", TAIEX, dict(), "night", True),
     # controls for the signal-lag step
-    "L1 A1 with TAIEX up to t": (
-        "floor",
-        dict(execution="signal_close", signal_aux={"core:adjusted": "taiex"}),
-        "night",
-        True,
-    ),
-    "L2 A2 without vol cap": ("floor", dict(execution="signal_close", signal_lag=1), "night", False),
-    "L3 A3 without vol cap": ("floor", dict(execution="signal_close"), "night", False),
+    "L1 A1 with TAIEX up to t": ("floor", TAIEX, dict(execution="signal_close"), "night", True),
+    "L2 A2 without vol cap": ("floor", ADJUSTED, CLOSE_LAG1, "night", False),
+    "L3 A3 without vol cap": ("floor", ADJUSTED, dict(execution="signal_close"), "night", False),
 }
 AFTER_HOURS = pd.Timestamp("2017-05-16")  # first TAIFEX after-hours row date (session opened 2017-05-15 15:00)
 
@@ -207,9 +199,11 @@ def main(out_path: str) -> None:
         }
 
         window = {"compile_notes": list(base.notes), "inputs": base.inputs, "variants": {}}
-        for label, (rounding, conventions, bars, vol_cap) in VARIANTS.items():
+        for label, (rounding, signal, conventions, bars, vol_cap) in VARIANTS.items():
             doc = resolve(template)
             doc["sleeves"][0]["sizing"]["params"]["rounding"] = rounding
+            for link in doc["sleeves"][0]["leverage"][1:]:
+                link["params"]["signal"] = signal
             if not vol_cap:
                 del doc["sleeves"][0]["leverage"][2]
             compiled = compile_spec(doc, start=start, end=end, store=store, conventions=Conventions(**conventions))
@@ -226,7 +220,7 @@ def main(out_path: str) -> None:
                 regime_switches=len(strategy.state("main", "leverage.1")["switches"]),
                 events=res.events["kind"].value_counts().to_dict(),
             )
-            if label.startswith(("A levtx", "B §12")):
+            if label.startswith(("A levtx", "B §12", "D acceptance")):
                 row["yearly"] = yearly(res.equity, compiled.config.initial_capital)
             if compiled.config.execution == "next_open":
                 row["gap_attribution"] = gap_attribution(res, compiled)

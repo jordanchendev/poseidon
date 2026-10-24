@@ -6,9 +6,10 @@ Runs only when both levtx and the refdata store are available (stormtrooper):
 Optional: LEVTX_REPORT=/path/report.json to keep the numbers.
 
 The spec side is the §3.2 acceptance spec compiled from refdata by ``v3.compiler`` and run by the
-engine, configured to levtx's conventions: ``rounding: nearest`` in the spec, and
-``Conventions(execution="signal_close", signal_aux={"core:adjusted": "taiex"}, signal_lag=1)``
-(levtx signals on the TAIEX price index, decides from close t-1 and fills at close t). Two levtx
+engine, configured to levtx's conventions: ``rounding: nearest`` in the spec, both signals on
+``index:taiex`` (as the acceptance spec itself reads), and
+``Conventions(execution="signal_close", signal_lag=1)`` (levtx decides from the index close t-1 and
+fills at close t). Two levtx
 variants: "3x daily + 200DMA±2%" (the spec without ``risk.vol_cap``) and "3x + 200DMA + volcap75"
 (the acceptance chain, k = 0.75 over 20 days). levtx reads its own copy of the TAIFEX/TWSE files.
 """
@@ -45,7 +46,7 @@ VARIANTS = {
     "3x+200DMA": (dict(ma=200, band=0.02, bear_lev=0.5), dict(vol_k=None)),
     "3x+200DMA+volcap75": (dict(ma=200, band=0.02, bear_lev=0.5, vol_target=0.75), dict(vol_k=0.75)),
 }
-LEVTX_CONVENTIONS = Conventions(execution="signal_close", signal_aux={"core:adjusted": "taiex"}, signal_lag=1)
+LEVTX_CONVENTIONS = Conventions(execution="signal_close", signal_lag=1)
 REPORT: dict = {}
 
 
@@ -86,7 +87,10 @@ def test_compiled_spec_matches_levtx(levtx, market, variant, start, end):
     if r["ruined"]:
         pytest.skip(f"levtx ruined on {r['ruined']}")
     compiled = compile_spec(
-        resolved_spec(rounding="nearest", **VARIANTS[variant][1]), start=start, end=end, conventions=LEVTX_CONVENTIONS
+        resolved_spec(rounding="nearest", signal="index:taiex", **VARIANTS[variant][1]),
+        start=start,
+        end=end,
+        conventions=LEVTX_CONVENTIONS,
     )
     strategy = compiled.strategy()
     res = compiled.run(strategy)

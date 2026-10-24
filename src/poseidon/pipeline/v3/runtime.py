@@ -8,23 +8,26 @@ target becomes an order (left out of the ``Decision`` = keep the position). The 
 clips by margin and leverage caps and fills per ``execution``.
 
 Components only ever get a :class:`SleeveView` (arrays up to the decision day, read-only) and
-their own state, so no registry component can read the future. :class:`Conventions` are the
-knobs a spec cannot set: the levtx parity run and the fill-timing sensitivity (§12 #1) use them;
-a pipeline run uses the defaults.
+their own state, so no registry component can read the future. A series ref resolves to an
+instrument's series (``self:adjusted``, ``core:close``) or to an index aux series
+(``index:taiex``, ``index:taiex_tr``: the aux of that name, column ``close``). :class:`Conventions`
+are the knobs a spec cannot set: the levtx parity run and the execution-timing gate's re-runs
+(``gates.execution_timing``: other fill, signal one day late) use them; a pipeline run uses the
+defaults.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple
 
 import numpy as np
 import pandas as pd
 
 from poseidon.pipeline.engine import BookView, Decision, MarketView
-from poseidon.pipeline.v3.instruments import Instrument
+from poseidon.pipeline.v3.instruments import INDEX_ALIAS, Instrument
 from poseidon.pipeline.v3.registry import Component, StrictParams
 
 # spec series field -> engine SeriesView field
@@ -36,15 +39,13 @@ class Conventions:
     """Run conventions outside the spec. Defaults = the spec as written (§12 defaults).
 
     ``execution`` overrides the spec's execution component (``signal_close`` = fill at the
-    decision close: the levtx convention and the §12 #1 sensitivity run). ``signal_aux`` maps a
-    resolved series ref (``"core:adjusted"``; ``self`` is resolved to the sleeve's alias first)
-    to an aux series whose ``close`` replaces it, e.g. ``{"core:adjusted": "taiex"}`` signals
-    on the TAIEX price index as levtx does. ``signal_lag`` drops that many latest rows from
-    every signal series (levtx decides at close t from index data up to t-1: lag 1).
+    decision close: the levtx convention and an execution-timing scenario). ``signal_lag`` drops
+    that many latest rows from every signal series: the decision at close t reads signals up to
+    t - lag (levtx decides from index data up to t-1: lag 1; the execution-timing gate's "signal
+    one day late" scenario is ``RerunRequest.signal_lag_extra = 1``).
     """
 
     execution: Literal["next_open", "signal_close"] | None = None
-    signal_aux: Mapping[str, str] = field(default_factory=dict)
     signal_lag: int = 0
 
     def __post_init__(self) -> None:
@@ -72,13 +73,11 @@ class SleeveView:
 
     def series(self, ref: str) -> Series:
         alias, name = ref.split(":")
-        key = f"{self.alias if alias == 'self' else alias}:{name}"
-        aux = self._conventions.signal_aux.get(key)
-        if aux is not None:
-            view = self._market.aux(aux)
+        if alias == INDEX_ALIAS:
+            view = self._market.aux(name)
             dates, values = view.dates, view["close"]
         else:
-            view = self._market[key.split(":")[0]]
+            view = self._market[self.alias if alias == "self" else alias]
             dates, values = view.dates, getattr(view, SERIES_FIELD[name])
         lag = self._conventions.signal_lag
         if lag:

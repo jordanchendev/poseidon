@@ -153,16 +153,30 @@ def test_missing_warm_up_is_not_compilable(store):
         compile_spec(spec(), start=first + pd.Timedelta(days=20), store=store)
 
 
-def test_conventions_override_execution_and_route_the_signal(store):
-    levtx = Conventions(execution="signal_close", signal_aux={"core:adjusted": "taiex"}, signal_lag=1)
-    compiled = compile_spec(spec(rounding="nearest"), start=START, store=store, conventions=levtx)
+def test_index_signal_reads_the_aux_series_under_levtx_conventions(store):
+    levtx = Conventions(execution="signal_close", signal_lag=1)
+    compiled = compile_spec(spec(rounding="nearest", signal="index:taiex"), start=START, store=store, conventions=levtx)
+    assert compiled.plan.signal_indices == ("taiex",)
     assert compiled.config.execution == "signal_close"
     strategy = compiled.strategy()
     res = compiled.run(strategy)
     assert res.fills["session"].eq("close").all()
     assert strategy.state("main", "leverage.1")["rows"] == len(compiled.aux["taiex"].loc[: res.equity.index[-1]]) - 1
-    with pytest.raises(NotCompilable, match="aux"):
-        compile_spec(spec(), start=START, store=store, conventions=Conventions(signal_aux={"core:adjusted": "nope"}))
+    assert compile_spec(spec(), start=START, store=store).plan.signal_indices == ()
+    assert compiler.AUX_DATASETS == {"taiex": TAIEX, "taiex_tr": TAIEX_TR}
+
+
+def test_index_signal_needs_its_own_warm_up_rows(store, tmp_path):
+    late = RefdataStore(tmp_path)
+    _commit(late, FUTURES, store.read(FUTURES), "trade_date")
+    _commit(late, CALENDAR, store.read(CALENDAR), "last_trading_day")
+    _commit(late, TAIEX_TR, store.read(TAIEX_TR), "trade_date")
+    taiex = store.read(TAIEX)
+    _commit(late, TAIEX, taiex[taiex["trade_date"] >= START - pd.Timedelta(days=30)], "trade_date")
+    with pytest.raises(NotCompilable, match=r"signal index:taiex: \d+ rows .* need 50 for warm-up"):
+        compile_spec(spec(signal="index:taiex"), start=START, store=late)
+    lagged = Conventions(signal_lag=1)
+    assert compile_spec(spec(), start=START, store=late, conventions=lagged).plan.signal_indices == ()
 
 
 def test_compiled_spec_passes_the_truncation_audit(store):

@@ -118,7 +118,10 @@ def test_migrated_schema_matches_the_models(pipeline_engine):
 
 
 def test_run_check_constraints(pipeline_sessions):
-    _integrity(pipeline_sessions, _run(market="tw_stock"))
+    _integrity(pipeline_sessions, _run(market="crypto"))  # p003: tw_futures / tw_stock / multi only
+    _integrity(pipeline_sessions, _run(market="multi"))  # a multi-instrument run's symbol is PORTFOLIO
+    _integrity(pipeline_sessions, _run(symbol="PORTFOLIO"))  # ... and only such a run's
+    _integrity(pipeline_sessions, _run(symbol="  "))
     _integrity(pipeline_sessions, _run(config_sha256="a" * 63))
     _integrity(pipeline_sessions, _run(status="done"))
     _integrity(pipeline_sessions, _run(status="failed"))  # terminal without finished_at

@@ -33,9 +33,38 @@ GATE_STAGES: tuple[str, ...] = ("param_stability", "dsr", "cost_stress", "regime
 # plan validation (``requires_for``). A live run therefore keeps its input
 # hashes across the upgrade (shadow_paper: config_sha256 + upstream shas +
 # PAPER_VERSION).
-STAGE_INTRODUCED_AT: dict[str, int] = {"benchmark": 5}
+STAGE_INTRODUCED_AT: dict[str, int] = {"benchmark": 5, "execution_timing": 6}
 # The gates every run with a holdout has had (completion_reason).
 CORE_GATE_STAGES: tuple[str, ...] = tuple(name for name in GATE_STAGES if name not in STAGE_INTRODUCED_AT)
+# The one stage order every plan is a subsequence of (design 2026-10-24 §8). ``execution_timing`` is the
+# blocking execution-timing gate of spec v3 daily runs (CONFIG_VERSION 6, owner decision 2026-10-24 #2);
+# V1_STAGE_PLAN (the DSL v2 plan, CONFIG_VERSION <= 5) is unchanged and never contains it.
+CANONICAL_ORDER: tuple[str, ...] = (
+    *V1_STAGE_PLAN[: V1_STAGE_PLAN.index("benchmark") + 1],
+    "execution_timing",
+    *V1_STAGE_PLAN[V1_STAGE_PLAN.index("benchmark") + 1 :],
+)
+# Spec v3 daily runs (CONFIG_VERSION 6, engine target_v1): the spec is hand-written or Sisyphus-confirmed
+# (``input_spec_json``), so there is no ``spec_generate`` until spec_generate v3 (M2). Liquidation is judged
+# inside ``backtest`` and on optimize's best point (design §7).
+V3_GATE_STAGES: tuple[str, ...] = (
+    "param_stability",
+    "dsr",
+    "cost_stress",
+    "regime_split",
+    "benchmark",
+    "execution_timing",
+    "wfe",
+    "holdout",
+)
+V3_DAILY_STAGE_PLAN: tuple[str, ...] = (
+    "spec_validate",
+    "backtest",
+    "optimize",
+    *V3_GATE_STAGES,
+    "shadow_paper",
+    "awaiting_release",
+)
 # Step 7: a run that passes the holdout continues into shadow_paper and parks in
 # awaiting_release (CONFIG_VERSION 4). Runs frozen earlier keep their own
 # stage_plan, which ends at holdout. CONFIG_VERSION 5 adds ``benchmark``; runs
@@ -60,6 +89,17 @@ def requires_for(requires, version: int) -> tuple[str, ...]:
 
     return tuple(name for name in requires if STAGE_INTRODUCED_AT.get(name, 0) <= version)
 
+
+# --- Spec v3 daily runs (CONFIG_VERSION 6): settings outside the class table ---
+#
+# The daily data window (§12 #3): 2001-01-02 (after TX's first years) to the run's creation day, the
+# last HOLDOUT_FRACTION locked. Train stages read refdata only up to the day before the holdout
+# starts; only ``holdout`` reads the rest, once, last.
+DAILY_DATA_START = "2001-01-02"
+DAILY_BACKTEST: dict = {
+    # Truncation audit recorded by ``backtest`` (engine.truncation_audit; the step-3 proof used 20 cuts).
+    "truncation_audit_cuts": 5,
+}
 
 # Initial gate thresholds (PLAN "Assumptions [minor]"). They are frozen into each
 # run's config_json; v1 never accepts client overrides -- a new threshold means
@@ -101,9 +141,10 @@ DEFAULT_THRESHOLDS: dict = {
 # 5: ``benchmark`` stage + ``gates.benchmark`` + benchmark_alpha_t_min / holdout_alpha_positive
 CONFIG_VERSION = 5
 # 6: spec v3 runs (design 2026-10-24 §8): engine "target_v1", spec_validator "spec_v3",
-# registry_version, component fingerprints, strategy_class, brief sha256
-# (poseidon.pipeline.v3.config). Skeleton only: default_config() keeps freezing
-# CONFIG_VERSION for DSL v2 runs until v3 runs are wired in (step 4).
+# registry_version, component fingerprints, strategy_class, brief sha256, refdata content
+# sha256s, the class table entry (poseidon.pipeline.v3.config.daily_run_config). A run is
+# frozen at 6 only when its spec_json is a spec v3 document; default_config() keeps freezing
+# CONFIG_VERSION 5 for DSL v2 runs.
 SPEC_V3_CONFIG_VERSION = 6
 SHADOW_PAPER_CONFIG_VERSION = 4
 BENCHMARK_CONFIG_VERSION = 5
@@ -248,7 +289,10 @@ DAILY_THRESHOLDS: dict = {
     "holdout_min_days": 250,
     "holdout_pnl_positive": True,  # holdout total return (equity) / PnL (fixed) > 0
     "holdout_alpha_positive": True,  # holdout alpha over the 1x underlying > 0
-    "benchmark_alpha_t_min": 1.0,  # train alpha over the 1x underlying > 0 and HAC t >= this
+    # Owner decision 2026-10-24 afternoon #3 (set on the controls, before any real result): train alpha
+    # over the 1x underlying > 0 and HAC t >= 1.65 (one-sided 5 %). Static 2-4x leverage of the underlying
+    # (synthetic control, seeds 1-20) reached t >= 1.0 in 3/20 seeds, t >= 1.65 in none. Intraday keeps 1.0.
+    "benchmark_alpha_t_min": 1.65,
     "cost_stress_multiplier": 2.0,
     "cost_stress_pnl_positive": True,  # final equity > initial with every cost x2
     "dsr_min": 0.95,
@@ -263,6 +307,11 @@ DAILY_THRESHOLDS: dict = {
     "regime_vol_median_days": 250,
     # §12 #5: forced liquidation or ruin in the train backtest fails; a margin call is only reported.
     "liquidation_fails": True,
+    # Owner decision 2026-10-24 afternoon #2 (pre-registered before any real result): the same params on
+    # train under each timing scenario (gates.execution_timing: the other fill, signal one day late)
+    # must keep total PnL > 0 and daily Sharpe >= this share of the base run's.
+    "execution_timing_pnl_positive": True,
+    "execution_timing_sharpe_ratio_min": 0.5,
     # Daily shadow paper (§7; read by the daily paper mode, not by the gates): no trade count.
     "paper_min_trading_days": 20,
     "paper_target_match_min": 0.95,  # share of days whose paper target units equal the replay's
@@ -300,8 +349,32 @@ DAILY_GATES: dict = {
         },
     },
     "holdout": {"family_reuse": "report_only"},
-    # Report only (no threshold registered): the same params re-run with the other execution component.
-    "execution_sensitivity": {"alternative": {"next_open": "signal_close", "signal_close": "next_open"}},
+    # Blocking (thresholds execution_timing_*): the selected params re-run over the train window per scenario.
+    "execution_timing": {
+        "scenarios": {
+            "next_open": ["signal_close", "signal_lag_1d"],
+            "signal_close": ["next_open", "signal_lag_1d"],
+        },
+        "signal_lag_1d": "the spec's own execution, every signal series one row late",
+    },
+}
+
+# Daily target-position shadow paper (§7; shadow_paper_daily). Thresholds (paper_min_trading_days,
+# paper_target_match_min, paper_pnl_tolerance_ticks) are in DAILY_THRESHOLDS above: one source.
+DAILY_SHADOW_PAPER: dict = {
+    "mode": "daily_target",
+    "wake_local_time": "09:30",  # after the 17:00 refdata job of the previous day (refdata.daily)
+    "wake_weekdays": [0, 1, 2, 3, 4, 5, 6],
+    "source_retry_minutes": 60,  # refdata unreadable: try again this soon (never fails the stage)
+    "stale_after_trading_days": 3,  # report (never fail) when the data lags more scheduled trading days than this
+    "max_calendar_days": 90,  # fewer than paper_min_trading_days paper days this long after the start -> fail
+    "calendar_horizon_days": 120,  # official schedule appended after the cutoff
+    "protection": {
+        "daily_loss_quantile": 0.95,
+        "daily_loss_multiple": 3.0,
+        "max_drawdown_multiple": 1.5,
+        "fail_on_forced_liquidation": True,
+    },
 }
 
 DEFAULT_THRESHOLDS_BY_CLASS: dict[str, dict] = {
@@ -314,20 +387,37 @@ DEFAULT_GATES_BY_CLASS: dict[str, dict] = {
     "daily_equity": DAILY_GATES,
     "daily_fixed": DAILY_GATES,
 }
+# The intraday class keeps the v1 paper (DEFAULT_SHADOW_PAPER, frozen by default_config).
+SHADOW_PAPER_BY_CLASS: dict[str, dict] = {
+    "daily_equity": DAILY_SHADOW_PAPER,
+    "daily_fixed": DAILY_SHADOW_PAPER,
+}
+# Classes a spec v3 run can be created for today (the daily engine); intraday v3 waits for DSL parity (step 7).
+V3_RUN_CLASSES: tuple[str, ...] = ("daily_equity", "daily_fixed")
+# A run frozen without ``strategy_class`` (every CONFIG_VERSION <= 5 run) is the v1 / DSL class.
+LEGACY_STRATEGY_CLASS = "intraday_fixed"
+
+
+def strategy_class_of(config) -> str:
+    return (config or {}).get("strategy_class") or LEGACY_STRATEGY_CLASS
 
 
 def class_settings(strategy_class: str) -> dict:
-    """``{"thresholds", "gates"}`` frozen into a CONFIG_VERSION 6 run of ``strategy_class``.
+    """``{"thresholds", "gates"}`` (plus ``shadow_paper`` for the daily classes) frozen into a
+    CONFIG_VERSION 6 run of ``strategy_class``.
 
     ``intraday_equity`` is deferred (§7) and has no entry: such a run cannot be frozen.
     """
 
     if strategy_class not in DEFAULT_THRESHOLDS_BY_CLASS:
         raise KeyError(f"no pre-registered thresholds for strategy class {strategy_class!r}")
-    return {
+    settings = {
         "thresholds": copy.deepcopy(DEFAULT_THRESHOLDS_BY_CLASS[strategy_class]),
         "gates": copy.deepcopy(DEFAULT_GATES_BY_CLASS[strategy_class]),
     }
+    if strategy_class in SHADOW_PAPER_BY_CLASS:
+        settings["shadow_paper"] = copy.deepcopy(SHADOW_PAPER_BY_CLASS[strategy_class])
+    return settings
 
 
 def data_config(*, as_of: date, holdout_fraction: float, start: str = DATA_START) -> dict:
@@ -347,6 +437,13 @@ def data_config(*, as_of: date, holdout_fraction: float, start: str = DATA_START
     }
 
 
+def stage_requires(stage, version: int) -> tuple[str, ...]:
+    """A registry entry's ``requires`` at config ``version`` (an engine-routed stage answers per version)."""
+
+    requires_at = getattr(stage, "requires_at", None)
+    return requires_at(version) if requires_at is not None else requires_for(stage.requires, version)
+
+
 def validate_stage_plan(stage_plan: list[str], registry, *, version: int = CONFIG_VERSION) -> list[str]:
     """Reject unknown, repeated, out-of-order, or dependency-starved stages (as of config ``version``)."""
 
@@ -354,17 +451,21 @@ def validate_stage_plan(stage_plan: list[str], registry, *, version: int = CONFI
         raise StagePlanError("stage_plan must be a non-empty list")
     if len(set(stage_plan)) != len(stage_plan):
         raise StagePlanError("stage_plan repeats a stage")
-    order = {name: index for index, name in enumerate(V1_STAGE_PLAN)}
+    order = {name: index for index, name in enumerate(CANONICAL_ORDER)}
     for name in stage_plan:
         if name not in order or name not in registry:
             raise StagePlanError(f"unknown stage: {name}")
     if [order[name] for name in stage_plan] != sorted(order[name] for name in stage_plan):
         raise StagePlanError("stage_plan must follow the v1 stage order")
+    if version >= SPEC_V3_CONFIG_VERSION:
+        outside = [name for name in stage_plan if name not in V3_DAILY_STAGE_PLAN]
+        if outside:
+            raise StagePlanError(f"stage {outside[0]} is not part of a spec v3 daily run")
     seen: set[str] = set()
     for name in stage_plan:
         if STAGE_INTRODUCED_AT.get(name, 0) > version:
             raise StagePlanError(f"stage {name} does not exist at config version {version}")
-        missing = [required for required in requires_for(registry[name].requires, version) if required not in seen]
+        missing = [required for required in stage_requires(registry[name], version) if required not in seen]
         if missing:
             raise StagePlanError(f"stage {name} requires {', '.join(missing)} earlier in the plan")
         seen.add(name)

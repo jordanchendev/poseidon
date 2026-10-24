@@ -39,6 +39,12 @@ RUN_SOURCES = ("telegram", "scout", "api")
 # p002: only awaiting_release may wait without a wait_until (held for a human release).
 WAITING_CHECK = "status <> 'waiting' OR wait_until IS NOT NULL OR stage IN ('awaiting_release')"
 TRIAL_STATES = ("complete", "pruned", "fail")
+# p003: spec v3 runs store their main instrument (or PORTFOLIO for a multi-instrument run).
+RUN_MARKETS = ("tw_futures", "tw_stock", "multi")
+INSTRUMENT_CHECK = (
+    f"market IN ({', '.join(repr(m) for m in RUN_MARKETS)}) AND btrim(symbol) <> '' "
+    "AND (market = 'multi') = (symbol = 'PORTFOLIO')"
+)
 
 
 def _in(column: str, values) -> str:
@@ -61,7 +67,7 @@ class PipelineRun(PipelineBase):
         UniqueConstraint("created_by", "create_idempotency_key", name="uq_pipeline_runs_create_idempotency"),
         CheckConstraint(_in("status", list(RunStatus)), name="ck_pipeline_runs_status"),
         CheckConstraint(_in("source", RUN_SOURCES), name="ck_pipeline_runs_source"),
-        CheckConstraint("market = 'tw_futures' AND symbol = 'TX'", name="ck_pipeline_runs_instrument"),
+        CheckConstraint(INSTRUMENT_CHECK, name="ck_pipeline_runs_instrument"),
         CheckConstraint(_sha("config_sha256"), name="ck_pipeline_runs_config_sha256"),
         CheckConstraint(
             "(create_idempotency_key IS NULL AND create_request_sha256 IS NULL) OR "
