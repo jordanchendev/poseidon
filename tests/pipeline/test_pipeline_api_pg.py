@@ -222,3 +222,19 @@ def test_full_flow_reads_and_rerun_rules(api):
     assert again.status_code == 409
     for method in ("put", "delete"):
         assert getattr(api, method)(f"/api/v1/pipelines/{run_id}", headers=_headers()).status_code == 405
+
+
+def test_capabilities_serve_the_checked_in_brief_and_schema_to_readers(api):
+    from poseidon.pipeline.v3.brief import BRIEF_FILE, GENERATED_DIR, SCHEMA_FILE
+    from poseidon.pipeline.v3.registry import REGISTRY_VERSION
+
+    response = api.get("/api/v1/pipelines/capabilities", headers=_headers("viewer"))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    brief = (GENERATED_DIR / BRIEF_FILE).read_text(encoding="utf-8")
+    assert body["spec_version"] == 3 and body["registry_version"] == REGISTRY_VERSION
+    assert body["brief"] == brief and body["brief_sha256"] == hashlib.sha256(brief.encode()).hexdigest()
+    assert body["schema"] == json.loads((GENERATED_DIR / SCHEMA_FILE).read_text(encoding="utf-8"))
+    assert api.get("/api/v1/pipelines/capabilities", headers=_headers("researcher")).status_code == 200
+    assert api.get("/api/v1/pipelines/capabilities", headers=_headers("pm")).status_code == 403
+    assert api.get("/api/v1/pipelines/capabilities", headers=_headers("legacy")).status_code == 403

@@ -32,7 +32,14 @@ from poseidon.decision_loop.manifest import content_sha256
 from poseidon.pipeline import artifacts
 from poseidon.pipeline.family import DbFamily
 from poseidon.pipeline.models import PipelineEvent, PipelineRun, StageRun
-from poseidon.pipeline.plan import completion_reason, config_version, requires_for
+from poseidon.pipeline.plan import (
+    RouteError,
+    completion_reason,
+    config_version,
+    effective_config,
+    is_routed,
+    requires_for,
+)
 from poseidon.pipeline.stages import (
     STAGE_REGISTRY,
     StageContext,
@@ -80,6 +87,20 @@ def latest_attempts(attempts) -> dict[str, StageRun]:
 def upstream_names(stage, config) -> tuple[str, ...]:
     names = getattr(stage, "upstream_names", None)
     return names(config) if names is not None else requires_for(stage.requires, config_version(config))
+
+
+def run_config(config: dict, attempts) -> dict:
+    """The config the run's stages see now: a routed run (CONFIG_VERSION 7) is its own config until its
+    spec_generate passed, then the frozen config of the class it was routed to (``plan.effective_config``).
+    Raises ``RouteError`` when a passed spec_generate names no frozen class."""
+
+    row = latest_attempts(attempts).get("spec_generate")
+    route = None
+    if row is not None and row.status == StageStatus.COMPLETED and row.verdict == Verdict.PASS:
+        route = ((row.artifact_json or {}).get("report") or {}).get("route")
+        if route is None and is_routed(config):
+            raise RouteError("spec_generate passed without a route")
+    return effective_config(config, route)
 
 
 def select_next_stage(stage_plan, attempts) -> tuple[str | None, StageRun | None]:
@@ -194,7 +215,11 @@ class PipelineDispatcher:
             attempts = session.query(StageRun).filter(StageRun.run_id == run.id).with_for_update().all()
             if any(row.status == StageStatus.RUNNING for row in attempts):
                 return None, {**base, "skipped": "running"}
-            plan = run.config_json["stage_plan"]
+            try:
+                config = run_config(run.config_json, attempts)
+            except RouteError as error:
+                return None, self._fail_run_locked(session, run, now, str(error))
+            plan = config["stage_plan"]
             stage_name, latest = select_next_stage(plan, attempts)
             if stage_name is None:
                 transition_run(run, RunStatus.COMPLETED, now=now, reason=completion_reason(plan))
@@ -234,7 +259,7 @@ class PipelineDispatcher:
                     session, run, now, f"stage {stage_name} attempt {latest.attempt} ended {latest.verdict}"
                 )
 
-            upstream = self._upstream(attempts, stage, run.config_json)
+            upstream = self._upstream(attempts, stage, config)
             own = sorted((r for r in attempts if r.stage == stage_name), key=lambda r: r.attempt, reverse=True)
             starts = [r.started_at for r in own if r.started_at is not None]
             stored = next((r for r in own if r.artifact_json is not None), None)
@@ -243,7 +268,7 @@ class PipelineDispatcher:
                 family_id=run.family_id,
                 idea_text=run.idea_text,
                 input_spec_json=run.input_spec_json,
-                config=run.config_json,
+                config=config,
                 config_sha256=run.config_sha256,
                 stage=stage_name,
                 attempt=row.attempt,
@@ -477,11 +502,16 @@ class PipelineDispatcher:
                 transition_stage(row, StageStatus.COMPLETED, now=now, verdict=verdict, reason=result.reason)
                 if verdict == Verdict.PASS:
                     session.flush()
-                    next_stage, _ = select_next_stage(run.config_json["stage_plan"], attempts)
-                    if next_stage is None:
-                        transition_run(
-                            run, RunStatus.COMPLETED, now=now, reason=completion_reason(run.config_json["stage_plan"])
-                        )
+                    try:
+                        plan = run_config(run.config_json, attempts)["stage_plan"]
+                        next_stage, _ = select_next_stage(plan, attempts)
+                    except RouteError as error:  # spec_generate passed with an unusable route
+                        plan, next_stage = None, None
+                        transition_run(run, RunStatus.ERROR, now=now, reason=f"{claim.stage}: {error}")
+                    if plan is None:
+                        run.current_stage = claim.stage
+                    elif next_stage is None:
+                        transition_run(run, RunStatus.COMPLETED, now=now, reason=completion_reason(plan))
                         run.current_stage = None
                     else:
                         transition_run(run, RunStatus.QUEUED, now=now)

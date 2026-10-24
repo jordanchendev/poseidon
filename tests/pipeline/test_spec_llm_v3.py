@@ -1,0 +1,573 @@
+"""Step 6 spec_generate v3: prompt from the registry, clauses (verbatim, coverage), repair, review hook,
+ambiguous series, the intraday route to DSL v2, cost cap, routed configs (HTTP mocked, recorded replies)."""
+
+from __future__ import annotations
+
+import copy
+import json
+import re
+import uuid
+from datetime import date
+
+import pytest
+
+from poseidon.decision_loop.manifest import content_sha256
+from poseidon.pipeline import spec_llm
+from poseidon.pipeline.plan import (
+    DEFAULT_SPEC_GENERATE,
+    DEFAULT_SPEC_GENERATE_V3,
+    ROUTED_CONFIG_VERSION,
+    V1_STAGE_PLAN,
+    V3_ROUTED_DAILY_STAGE_PLAN,
+    RouteError,
+    effective_config,
+    validate_stage_plan,
+)
+from poseidon.pipeline.spec_llm_v3 import (
+    EXAMPLE_IDEA,
+    PROMPT_SHA256_V3,
+    SYSTEM_PROMPT_V3,
+    clause_errors,
+    example_reply,
+    generate_routed,
+    generate_spec_v3,
+    series_errors,
+    split_sentences,
+)
+from poseidon.pipeline.stages import STAGE_REGISTRY, SpecGenerateStage, StageContext
+from poseidon.pipeline.state import Verdict
+from poseidon.pipeline.v3.config import REFDATA_DATASETS, idea_run_config, is_v3_run
+from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
+from poseidon.pipeline.v3.registry import REGISTRY, component_fingerprints
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from tests.pipeline.test_spec_llm import ENV, KEY, LABEL, FakeClient, assert_no_key, reply
+
+AS_OF = date(2026, 10, 24)
+REFDATA = {name: f"{index:064x}" for index, name in enumerate(REFDATA_DATASETS)}
+AMBIGUOUS_IDEA = (
+    "用微台做多，槓桿 3 倍，每天收盤後依權益調整口數。台指跌破 200 日線 2% 降到 0.5 倍，站回 2% 回到 3 倍。"
+)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_identity_cache():
+    spec_llm.reset_identity_cache()
+    yield
+    spec_llm.reset_identity_cache()
+
+
+def v3_config(**overrides) -> dict:
+    cfg = copy.deepcopy(DEFAULT_SPEC_GENERATE_V3)
+    cfg.update(overrides)
+    return cfg
+
+
+def ok_reply(**changes) -> dict:
+    body = example_reply()
+    body.update(changes)
+    return body
+
+
+def run_v3(client, *, idea=EXAMPLE_IDEA, cfg=None, pin=LABEL, env=ENV, **kw):
+    created = []
+
+    def factory(key, timeout):
+        assert key == KEY
+        created.append(timeout)
+        return client
+
+    outcome = generate_spec_v3(
+        idea, cfg if cfg is not None else v3_config(), pin=pin, environ=env, client_factory=factory, **kw
+    )
+    return outcome, created
+
+
+def routed(classes=("intraday_fixed", "daily_equity", "daily_fixed"), refdata=REFDATA) -> dict:
+    return idea_run_config(as_of=AS_OF, brief_text="brief", refdata=refdata, classes=classes, refdata_error="gone")
+
+
+# --------------------------------------------------------------- prompt material
+
+
+def test_the_worked_example_passes_every_program_check():
+    body = example_reply()
+    result = validate_spec_v3(body["spec"])
+    assert result.ok and result.strategy_class == "daily_equity"
+    used = {ref["component"] for ref in _refs(body["spec"])}
+    errors, unimplemented = clause_errors(EXAMPLE_IDEA, body["clauses"], used)
+    assert errors == [] and unimplemented == []
+    assert series_errors(body["spec"], body["clauses"]) == []
+
+
+def _refs(spec):
+    from poseidon.pipeline.v3.spec import component_slots
+
+    return [ref for _path, _slot, ref in component_slots(spec)]
+
+
+def test_the_prompt_is_rendered_from_the_registry():
+    assert "untrusted_idea" in SYSTEM_PROMPT_V3 and '"status":"intraday"' in SYSTEM_PROMPT_V3
+    assert '"missing":["signal_series"]' in SYSTEM_PROMPT_V3
+    for name in REGISTRY:  # every registered component, with its catalog entry
+        assert f'"name":"{name}"' in SYSTEM_PROMPT_V3
+    assert '"hedge.protective_put"' in SYSTEM_PROMPT_V3  # listed as planned
+    assert '"leverage_cap":5.0' in SYSTEM_PROMPT_V3 and '"symbol":"TMF"' in SYSTEM_PROMPT_V3
+    for series in ('"self:adjusted"', '"index:taiex"', '"index:taiex_tr"'):
+        assert series in SYSTEM_PROMPT_V3
+    assert re.fullmatch(r"[0-9a-f]{64}", PROMPT_SHA256_V3) and PROMPT_SHA256_V3 != spec_llm.PROMPT_SHA256
+
+
+def test_sentences_split_on_cjk_and_ascii_terminators_and_skip_decoration():
+    text = "第一句。第二句！\n📈\n——-\nThird one. Fourth?"
+    assert [text[a:b] for a, b in split_sentences(text)] == ["第一句", "第二句", "Third one.", "Fourth"]
+
+
+def test_v3_settings_raise_only_the_cap_and_tokens():
+    assert DEFAULT_SPEC_GENERATE_V3["max_cost_usd_per_attempt"] == 0.10
+    assert DEFAULT_SPEC_GENERATE["max_cost_usd_per_attempt"] == 0.05  # the DSL settings are untouched
+    same = {k: v for k, v in DEFAULT_SPEC_GENERATE_V3.items() if k in DEFAULT_SPEC_GENERATE}
+    changed = {k for k, v in same.items() if v != DEFAULT_SPEC_GENERATE[k]}
+    assert changed == {"max_cost_usd_per_attempt", "max_tokens", "request_timeout_seconds"}
+
+
+# --------------------------------------------------------------- ok / clauses / repair
+
+
+def test_valid_reply_passes_with_route_clauses_and_a_bridge_summary():
+    client = FakeClient([reply(ok_reply())])
+    outcome, created = run_v3(client)
+    assert outcome.verdict == Verdict.PASS and outcome.reason is None, outcome.report
+    report = outcome.report
+    assert report["route"] == {
+        "strategy_class": "daily_equity",
+        "engine": "target_v1",
+        "components": sorted(
+            {
+                "allocation.single",
+                "direction.constant",
+                "execution.next_open",
+                "leverage.base",
+                "rebalance.daily",
+                "regime.ma_band",
+                "risk.vol_cap",
+                "roll.before_settlement",
+                "sizing.target_leverage",
+            }
+        ),
+    }
+    assert report["spec"] == tmf_dynamic_leverage_3x() and report["spec_sha256"] == content_sha256(report["spec"])
+    assert len(report["clauses"]) == 8 and report["unimplemented"] == []
+    assert report["summary"].startswith("spec_generate ✅ daily_equity：8 個子句；假設 3 項：換月")
+    assert report["prompt_sha256"] == PROMPT_SHA256_V3 and report["repair_rounds"] == 0
+    payload = client.chat_payloads[0]
+    assert payload["messages"][0]["content"] == SYSTEM_PROMPT_V3 and payload["max_tokens"] == 16000
+    assert created == [240.0] and set(outcome.files) == {"llm_transcript_v3.json"}
+    assert_no_key(outcome)
+
+
+def test_a_paraphrased_quote_is_sent_back_then_fixed():
+    bad = ok_reply()
+    bad["clauses"][2] = {**bad["clauses"][2], "quote": "槓桿三倍"}
+    client = FakeClient([reply(bad), reply(ok_reply())])
+    outcome, _ = run_v3(client)
+    assert outcome.verdict == Verdict.PASS and outcome.report["repair_rounds"] == 1
+    first = outcome.report["rounds"][0]
+    assert first["outcome"] == "invalid"
+    assert {"path": "clauses.2.quote", "msg": first["errors"][0]["msg"]} == first["errors"][0]
+    assert "verbatim" in first["errors"][0]["msg"]
+    repair = client.chat_payloads[1]["messages"][-1]["content"]
+    assert "clauses.2.quote" in repair and "槓桿 3 倍" not in repair  # only the error goes back
+
+
+def test_an_uncited_sentence_is_sent_back():
+    bad = ok_reply()
+    bad["clauses"] = [c for c in bad["clauses"] if c["id"] != "c8"]
+    client = FakeClient([reply(bad), reply(ok_reply())])
+    outcome, _ = run_v3(client)
+    assert outcome.verdict == Verdict.PASS
+    errors = outcome.report["rounds"][0]["errors"]
+    assert [e["path"] for e in errors] == ["clauses"] and "我覺得這樣比較穩" in errors[0]["msg"]
+
+
+def test_clause_component_rules():
+    body = example_reply()
+    used = {ref["component"] for ref in _refs(body["spec"])}
+    clauses = copy.deepcopy(body["clauses"])
+    clauses[3]["component"] = "rebalance.daily"  # wrong slot (clause slot sizing)
+    clauses[0]["component"] = "leverage.base"  # frame slot takes no component
+    clauses[4]["component"] = "rebalance.threshold_band"  # registered, right slot, not in the spec
+    clauses[5]["component"] = "regime.nope"
+    errors, _ = clause_errors(EXAMPLE_IDEA, clauses, used)
+    by_path = {e["path"]: e["msg"] for e in errors}
+    assert set(by_path) == {"clauses.0.component", "clauses.3.component", "clauses.4.component", "clauses.5.component"}
+    assert "rebalance component" in by_path["clauses.3.component"]
+    assert "does not use rebalance.threshold_band" in by_path["clauses.4.component"]
+
+
+def test_repair_exhaustion_fails_after_two_repair_rounds():
+    bad = ok_reply(clauses=[{"id": "c1", "quote": "not in the idea", "slot": "other", "component": None}])
+    client = FakeClient([reply(bad), reply(bad), reply(bad)])
+    outcome, _ = run_v3(client)
+    assert outcome.verdict == Verdict.FAIL and outcome.reason == "spec_invalid_after_repair"
+    assert len(client.chat_payloads) == 3 and outcome.report["stopped"] == "repair_exhausted"
+
+
+def test_validator_errors_and_clause_errors_go_back_together():
+    bad = ok_reply()
+    bad["spec"] = copy.deepcopy(bad["spec"])
+    bad["spec"]["sleeves"][0]["leverage"][0]["params"]["value"] = 9.0  # over the 5x cap of leverage.base
+    bad["clauses"][1] = {**bad["clauses"][1], "quote": "go long"}
+    client = FakeClient([reply(bad), reply(ok_reply())])
+    outcome, _ = run_v3(client)
+    paths = [e["path"] for e in outcome.report["rounds"][0]["errors"]]
+    assert "clauses.1.quote" in paths and any(p.startswith("sleeves.0.leverage.0") for p in paths)
+
+
+# --------------------------------------------------------------- signal series (owner decision #1)
+
+
+def test_model_ambiguous_is_unsupported_with_the_question():
+    answer = {
+        "status": "ambiguous",
+        "reason": "ambiguous signal series: 台指 200 日線",
+        "missing": ["signal_series"],
+        "question": "200 日線要看台指期調整價、加權指數，還是加權含息報酬指數？",
+    }
+    client = FakeClient([reply(answer)])
+    outcome, _ = run_v3(client, idea=AMBIGUOUS_IDEA)
+    assert outcome.verdict == Verdict.UNSUPPORTED and outcome.reason.startswith("ambiguous: ambiguous signal series")
+    assert outcome.report["missing_capabilities"] == ["signal_series"] and outcome.report["status"] == "ambiguous"
+    assert outcome.report["question"].startswith("200 日線要看")
+    assert outcome.report["summary"].startswith("spec_generate ⛔ ambiguous")
+
+
+def test_a_series_the_idea_never_names_is_sent_back_and_the_model_turns_ambiguous():
+    spec = tmf_dynamic_leverage_3x()
+    spec["sleeves"][0]["leverage"] = spec["sleeves"][0]["leverage"][:2]
+    del spec["params"]["vol_k"]
+    silent_pick = {
+        "status": "ok",
+        "spec": spec,
+        "clauses": [
+            {"id": "c1", "quote": "用微台", "slot": "instruments", "component": None},
+            {"id": "c2", "quote": "做多", "slot": "direction", "component": "direction.constant"},
+            {"id": "c3", "quote": "槓桿 3 倍", "slot": "leverage", "component": "leverage.base"},
+            {"id": "c4", "quote": "每天收盤後依權益調整口數", "slot": "sizing", "component": "sizing.target_leverage"},
+            {
+                "id": "c5",
+                "quote": "台指跌破 200 日線 2% 降到 0.5 倍，站回 2% 回到 3 倍",
+                "slot": "leverage",
+                "component": "regime.ma_band",
+            },
+        ],
+        "assumptions": [],
+    }
+    assert validate_spec_v3(spec).ok
+    ambiguous = {"status": "ambiguous", "reason": "台指 does not name a series", "missing": ["signal_series"]}
+    client = FakeClient([reply(silent_pick), reply(ambiguous)])
+    outcome, _ = run_v3(client, idea=AMBIGUOUS_IDEA)
+    assert outcome.verdict == Verdict.UNSUPPORTED and outcome.report["missing_capabilities"] == ["signal_series"]
+    error = outcome.report["rounds"][0]["errors"][0]
+    assert error["path"] == "sleeves.0.leverage.1.params.signal" and "ambiguous" in error["msg"]
+
+
+@pytest.mark.parametrize(
+    ("signal", "quote", "ok"),
+    [
+        ("index:taiex", "加權指數跌破 200 日線", True),
+        ("index:taiex_tr", "加權含息報酬指數跌破 200 日線", True),
+        ("self:adjusted", "台指期跌破 200 日線", True),
+        ("index:taiex", "台指跌破 200 日線", False),
+        ("index:taiex", "加權含息報酬指數跌破 200 日線", False),
+        ("index:taiex_tr", "大盤跌破 200 日線", False),
+        ("self:close", "台指期跌破 200 日線", False),
+    ],
+)
+def test_series_wording_net(signal, quote, ok):
+    spec = tmf_dynamic_leverage_3x()
+    spec["sleeves"][0]["leverage"][1]["params"]["signal"] = signal
+    spec["sleeves"][0]["leverage"][2]["params"]["signal"] = "index:taiex"
+    clauses = [
+        {"id": "c1", "quote": quote, "slot": "leverage", "component": "regime.ma_band"},
+        {"id": "c2", "quote": "加權股價指數近 20 日波動", "slot": "leverage", "component": "risk.vol_cap"},
+    ]
+    errors = series_errors(spec, clauses)
+    assert (errors == []) is ok, errors
+
+
+# --------------------------------------------------------------- unsupported / unimplemented
+
+
+def test_model_unsupported_is_aggregatable():
+    client = FakeClient([reply({"status": "unsupported", "reason": "news", "missing": ["News Sentiment"]})])
+    outcome, _ = run_v3(client)
+    assert outcome.verdict == Verdict.UNSUPPORTED and outcome.report["missing_capabilities"] == ["news_sentiment"]
+
+
+def test_a_planned_component_in_the_spec_is_unsupported_not_a_repair():
+    spec = tmf_dynamic_leverage_3x()
+    spec["sleeves"][0]["hedges"] = [{"component": "hedge.protective_put", "params": {}}]
+    client = FakeClient([reply(ok_reply(spec=spec))])
+    outcome, _ = run_v3(client)
+    assert outcome.verdict == Verdict.UNSUPPORTED and len(client.chat_payloads) == 1
+    assert outcome.report["missing_capabilities"] == ["hedge_protective_put"]
+    assert outcome.report["rejected_spec"] == spec
+
+
+def test_a_not_implemented_add_on_passes_and_is_listed():
+    idea = EXAMPLE_IDEA + "再買 put 保險。"
+    body = ok_reply()
+    body["clauses"].append({"id": "c9", "quote": "再買 put 保險", "slot": "hedge", "component": None})
+    client = FakeClient([reply(body)])
+    outcome, _ = run_v3(client, idea=idea)
+    assert outcome.verdict == Verdict.PASS, outcome.report
+    assert [c["quote"] for c in outcome.report["unimplemented"]] == ["再買 put 保險"]
+    assert "未實作 1（再買 put 保險）" in outcome.report["summary"]
+
+
+def test_a_daily_route_without_frozen_daily_config_is_unsupported():
+    client = FakeClient([reply(ok_reply())])
+    outcome, _ = run_v3(
+        client,
+        allowed_classes=("intraday_fixed",),
+        unavailable={"daily_equity": "refdata was not available at run creation: gone"},
+    )
+    assert outcome.verdict == Verdict.UNSUPPORTED and "refdata was not available" in outcome.reason
+    assert outcome.report["missing_capabilities"] == ["daily_equity"] and "route" not in outcome.report
+
+
+# --------------------------------------------------------------- review hook (JEV plugs in here)
+
+
+def test_review_items_go_back_like_validator_errors():
+    calls = []
+
+    def review(idea_text, clauses, spec):
+        calls.append((idea_text, len(clauses), spec["name"]))
+        if len(calls) == 1:
+            return [{"path": "clauses.6", "msg": "JEV: c7 maps to sizing, not leverage"}]
+        return []
+
+    client = FakeClient([reply(ok_reply()), reply(ok_reply())])
+    outcome, _ = run_v3(client, review=review)
+    assert outcome.verdict == Verdict.PASS and calls == [(EXAMPLE_IDEA, 8, "tmf_dynamic_leverage_3x")] * 2
+    assert "JEV: c7 maps to sizing" in client.chat_payloads[1]["messages"][-1]["content"]
+    assert outcome.report["rounds"][0]["outcome"] == "review"
+    assert [r["items"] for r in outcome.report["review"]] == [
+        [{"path": "clauses.6", "msg": "JEV: c7 maps to sizing, not leverage"}],
+        [],
+    ]
+    assert "review_unresolved" not in outcome.report
+
+
+def test_review_disagreement_left_after_the_last_round_is_report_only():
+    client = FakeClient([reply(ok_reply())] * 3)
+    outcome, _ = run_v3(client, review=lambda *_: ["contradicts: 3 倍 vs 2 倍"])
+    assert outcome.verdict == Verdict.PASS and len(client.chat_payloads) == 3
+    assert outcome.report["review_unresolved"] == [{"path": "review", "msg": "contradicts: 3 倍 vs 2 倍"}]
+
+
+def test_a_failing_reviewer_errors_the_attempt():
+    def review(*_):
+        raise RuntimeError("JEV key label does not match")
+
+    client = FakeClient([reply(ok_reply())])
+    with pytest.raises(RuntimeError, match="JEV key label"):
+        run_v3(client, review=review)
+    assert client.closed
+
+
+# --------------------------------------------------------------- key and cost
+
+
+def test_missing_key_or_pin_or_identity_mismatch_never_calls_the_llm():
+    client = FakeClient([reply(ok_reply())])
+    for env in ({}, {"OPENROUTER_API_KEY": KEY}):
+        outcome, created = run_v3(client, env=env)
+        assert outcome.verdict == Verdict.ERROR and created == []
+    outcome, created = run_v3(client, pin="")
+    assert outcome.verdict == Verdict.ERROR and created == []
+    mismatch = FakeClient([reply(ok_reply())], label="sk-or-v1-999...bcd")
+    outcome, _ = run_v3(mismatch)
+    assert outcome.verdict == Verdict.ERROR and mismatch.chat_payloads == []
+    assert_no_key(outcome)
+
+
+def test_worst_case_over_the_cap_refuses_the_call_up_front():
+    client = FakeClient([reply(ok_reply())])
+    outcome, _ = run_v3(client, cfg=v3_config(max_cost_usd_per_attempt=0.005))
+    assert outcome.verdict == Verdict.ERROR and "cost cap" in outcome.reason and client.chat_payloads == []
+
+
+def test_reported_cost_over_the_cap_stops_with_error():
+    client = FakeClient([reply(ok_reply(), cost=0.2)])
+    outcome, _ = run_v3(client)
+    assert outcome.verdict == Verdict.ERROR and "cost cap exceeded" in outcome.reason
+    assert outcome.report["total_cost_usd"] == 0.2
+
+
+def test_the_v3_cap_fits_the_real_prompt_with_two_repairs():
+    messages = [{"role": "system", "content": SYSTEM_PROMPT_V3}, {"role": "user", "content": "x" * 4000}]
+    first = spec_llm.worst_case_cost(messages, DEFAULT_SPEC_GENERATE_V3)
+    assert first < 0.04, first  # three rounds of this size stay under 0.10
+
+
+# --------------------------------------------------------------- routing: v3 first, intraday -> DSL v2
+
+
+def test_intraday_route_runs_the_unchanged_dsl_generation():
+    dsl_spec = spec_llm._param_example()
+    client = FakeClient(
+        [
+            reply({"status": "intraday", "reason": "5m opening range"}, cost=0.002),
+            reply({"status": "ok", "spec": dsl_spec, "assumptions": ["stop at the range"]}, cost=0.001),
+        ]
+    )
+    outcome = generate_routed(
+        "TX 30-minute opening range breakout", routed(), pin=LABEL, environ=ENV, client_factory=lambda *_: client
+    )
+    assert outcome.verdict == Verdict.PASS, outcome.report
+    report = outcome.report
+    assert report["route"] == {"strategy_class": "intraday_fixed", "engine": "dsl_v2"}
+    assert report["spec"] == dsl_spec and report["prompt_sha256"] == spec_llm.PROMPT_SHA256
+    assert report["router"]["status"] == "intraday" and report["total_cost_usd_with_router"] == 0.003
+    dsl_payload = client.chat_payloads[1]
+    assert dsl_payload["messages"][0]["content"] == spec_llm.SYSTEM_PROMPT and dsl_payload["max_tokens"] == 6000
+    assert report["max_cost_usd_per_attempt"] == 0.05  # the intraday config's own DSL cap
+    assert set(outcome.files) == {"llm_transcript_v3.json", "llm_transcript.json"}
+    assert report["summary"].startswith("spec_generate ✅ intraday_fixed（日內 → DSL v2）")
+
+
+def test_an_intraday_spec_v3_is_routed_to_dsl_too():
+    from poseidon.pipeline.v3.dsl_bridge import v2_to_v3
+    from tests.pipeline.conftest import tx_spec
+
+    client = FakeClient(
+        [
+            reply(ok_reply(spec=v2_to_v3(tx_spec()))),
+            reply({"status": "ok", "spec": spec_llm._param_example(), "assumptions": []}),
+        ]
+    )
+    outcome = generate_routed("TX ORB", routed(), pin=LABEL, environ=ENV, client_factory=lambda *_: client)
+    assert outcome.verdict == Verdict.PASS and outcome.report["route"]["engine"] == "dsl_v2"
+
+
+def test_intraday_route_outside_the_family_class_is_unsupported_without_dsl():
+    client = FakeClient([reply({"status": "intraday"})])
+    outcome = generate_routed(
+        "TX ORB", routed(classes=("daily_equity",)), pin=LABEL, environ=ENV, client_factory=lambda *_: client
+    )
+    assert outcome.verdict == Verdict.UNSUPPORTED and len(client.chat_payloads) == 1
+    assert "its family's class" in outcome.reason
+
+
+def test_a_daily_route_returns_the_v3_report():
+    client = FakeClient([reply(ok_reply())])
+    outcome = generate_routed(EXAMPLE_IDEA, routed(), pin=LABEL, environ=ENV, client_factory=lambda *_: client)
+    assert outcome.verdict == Verdict.PASS and outcome.report["route"]["strategy_class"] == "daily_equity"
+
+
+# --------------------------------------------------------------- routed config (CONFIG_VERSION 7)
+
+
+def test_idea_run_config_freezes_every_candidate_class():
+    config = routed()
+    assert config["version"] == ROUTED_CONFIG_VERSION and config["spec_generate"] == DEFAULT_SPEC_GENERATE_V3
+    assert set(config["by_class"]) == {"intraday_fixed", "daily_equity", "daily_fixed"}
+    intraday = config["by_class"]["intraday_fixed"]
+    assert intraday["version"] == 5 and intraday["stage_plan"] == list(V1_STAGE_PLAN)
+    assert intraday["spec_generate"] == DEFAULT_SPEC_GENERATE
+    daily = config["by_class"]["daily_equity"]
+    assert daily["version"] == 6 and is_v3_run(daily) and daily["spec_source"] == "spec_generate"
+    assert daily["stage_plan"] == list(V3_ROUTED_DAILY_STAGE_PLAN)
+    assert daily["components"] == component_fingerprints() and daily["refdata"]["datasets"] == REFDATA
+    assert daily["thresholds"]["benchmark_alpha_t_min"] == 1.65
+    assert config["stage_plan"][0] == "spec_generate" and "execution_timing" in config["stage_plan"]
+    assert "unavailable" not in config
+
+
+def test_without_refdata_the_daily_classes_are_listed_unavailable():
+    config = routed(refdata=None)
+    assert set(config["by_class"]) == {"intraday_fixed"}
+    assert set(config["unavailable"]) == {"daily_equity", "daily_fixed"}
+    assert config["stage_plan"] == list(V1_STAGE_PLAN)
+
+
+def test_effective_config_picks_the_routed_class_without_touching_the_frozen_config():
+    config = routed()
+    before = content_sha256(config)
+    assert effective_config(config, None) is config
+    used = ["leverage.base", "regime.ma_band", "direction.constant"]
+    daily = effective_config(config, {"strategy_class": "daily_fixed", "engine": "target_v1", "components": used})
+    assert daily["strategy_class"] == "daily_fixed"
+    assert sorted(key.split("@")[0] for key in daily["components"]) == sorted(used)
+    intraday = effective_config(config, {"strategy_class": "intraday_fixed", "engine": "dsl_v2"})
+    assert intraday == config["by_class"]["intraday_fixed"]
+    assert content_sha256(config) == before
+    with pytest.raises(RouteError):
+        effective_config(routed(classes=("daily_equity",)), {"strategy_class": "intraday_fixed"})
+    with pytest.raises(RouteError, match="not registered"):
+        effective_config(config, {"strategy_class": "daily_equity", "components": ["regime.nope"]})
+    hand_written = config["by_class"]["daily_equity"]
+    assert effective_config(hand_written, {"strategy_class": "x"}) is hand_written  # <= 6: itself
+
+
+def test_the_routed_daily_plan_validates_only_as_routed():
+    plan = list(V3_ROUTED_DAILY_STAGE_PLAN)
+    assert validate_stage_plan(plan, STAGE_REGISTRY, version=6, routed=True) == plan
+    from poseidon.pipeline.plan import StagePlanError
+
+    with pytest.raises(StagePlanError, match="not part of a spec v3 daily run"):
+        validate_stage_plan(plan, STAGE_REGISTRY, version=6)
+
+
+def test_daily_spec_validate_reads_the_generated_spec_only_for_routed_configs():
+    stage = STAGE_REGISTRY["spec_validate"]
+    routed_daily = routed()["by_class"]["daily_equity"]
+    hand_written = {k: v for k, v in routed_daily.items() if k != "spec_source"}
+    assert stage.upstream_names(routed_daily) == ("spec_generate",)
+    assert stage.upstream_names(hand_written) == ()
+
+
+# --------------------------------------------------------------- stage wiring
+
+
+def _ctx(config) -> StageContext:
+    return StageContext(
+        run_id=uuid.uuid4(),
+        family_id=uuid.uuid4(),
+        idea_text=EXAMPLE_IDEA,
+        input_spec_json=None,
+        config=config,
+        config_sha256="0" * 64,
+        stage="spec_generate",
+        attempt=1,
+        upstream={},
+    )
+
+
+def test_stage_routes_a_routed_run_through_v3_and_hashes_both_prompts(monkeypatch):
+    monkeypatch.setenv(spec_llm.KEY_ENV, KEY)
+    client = FakeClient([reply(ok_reply())])
+    seen = []
+    stage = SpecGenerateStage(
+        client_factory=lambda key, timeout: client,
+        pin_provider=lambda: LABEL,
+        review=lambda idea, clauses, spec: seen.append(len(clauses)) or [],
+    )
+    ctx = _ctx(routed())
+    payload = stage.input_payload(ctx)
+    assert payload["prompt_v3_sha256"] == PROMPT_SHA256_V3 and payload["prompt_sha256"] == spec_llm.PROMPT_SHA256
+    result = stage.run(ctx)
+    assert result.verdict == Verdict.PASS and result.report["route"]["strategy_class"] == "daily_equity"
+    assert seen == [8]
+    legacy = _ctx(routed()["by_class"]["intraday_fixed"])
+    assert "prompt_v3_sha256" not in stage.input_payload(legacy)
+
+
+def test_reply_contract_errors_are_repaired():
+    client = FakeClient([reply("not json"), reply({"status": "maybe"}), reply(ok_reply())])
+    outcome, _ = run_v3(client)
+    assert outcome.verdict == Verdict.PASS and outcome.report["repair_rounds"] == 2
+    assert [r["outcome"] for r in outcome.report["rounds"]] == ["contract_error", "contract_error", "valid"]
+    assert json.loads(outcome.files["llm_transcript_v3.json"])["prompt_sha256"] == PROMPT_SHA256_V3

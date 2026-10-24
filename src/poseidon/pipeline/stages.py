@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import ClassVar, Protocol
 
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
-from poseidon.pipeline.plan import CANONICAL_ORDER, V1_STAGE_PLAN, config_version, requires_for
+from poseidon.pipeline.plan import CANONICAL_ORDER, V1_STAGE_PLAN, config_version, is_routed, requires_for
 from poseidon.pipeline.spec_validation import V2_REQUIRED, get_spec_validator
 from poseidon.pipeline.state import Verdict
 
@@ -136,13 +136,20 @@ class BaseStage:
 
 
 class SpecGenerateStage(BaseStage):
-    """Pass a hand-written spec through, or generate one from the idea with the LLM (Step 4)."""
+    """Pass a hand-written spec through, or generate one from the idea with the LLM (Step 4).
+
+    An idea-only run frozen at CONFIG_VERSION 7 (routed) generates with spec_generate v3 first
+    (:func:`poseidon.pipeline.spec_llm_v3.generate_routed`); its report's ``route`` picks the class whose
+    frozen config the rest of the run uses. ``review(idea_text, clauses, spec) -> [{"path", "msg"}]`` is the
+    optional reviewer of v3 specs (the JEV client); its items go back to the model like validator errors.
+    """
 
     name = "spec_generate"
 
-    def __init__(self, *, client_factory=None, pin_provider=None):
+    def __init__(self, *, client_factory=None, pin_provider=None, review=None):
         self._client_factory = client_factory
         self._pin_provider = pin_provider
+        self._review = review
 
     def input_payload(self, ctx):
         payload = {
@@ -155,6 +162,10 @@ class SpecGenerateStage(BaseStage):
             from poseidon.pipeline.spec_llm import PROMPT_SHA256
 
             payload["prompt_sha256"] = PROMPT_SHA256
+            if is_routed(ctx.config):
+                from poseidon.pipeline.spec_llm_v3 import PROMPT_SHA256_V3
+
+                payload["prompt_v3_sha256"] = PROMPT_SHA256_V3
         return payload
 
     def run(self, ctx):
@@ -168,9 +179,16 @@ class SpecGenerateStage(BaseStage):
 
         ctx.check_stop()
         pin = self._pin_provider() if self._pin_provider else settings.pipeline_openrouter_key_label
-        outcome = generate_spec(
-            ctx.idea_text, ctx.config.get("spec_generate"), pin=pin, client_factory=self._client_factory
-        )
+        if is_routed(ctx.config):
+            from poseidon.pipeline.spec_llm_v3 import generate_routed
+
+            outcome = generate_routed(
+                ctx.idea_text, ctx.config, pin=pin, review=self._review, client_factory=self._client_factory
+            )
+        else:
+            outcome = generate_spec(
+                ctx.idea_text, ctx.config.get("spec_generate"), pin=pin, client_factory=self._client_factory
+            )
         return StageResult(outcome.verdict, outcome.reason, outcome.report, outcome.files)
 
 
