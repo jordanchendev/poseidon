@@ -637,8 +637,9 @@ def test_reply_contract_errors_are_repaired():
     assert json.loads(outcome.files["llm_transcript_v3.json"])["prompt_sha256"] == PROMPT_SHA256_V3
 
 
-def test_configs_of_runs_with_a_spec_are_byte_identical_to_230cb82():
-    """Hashes computed with the 230cb82 code (before step 6) on stormtrooper, 2026-10-24."""
+def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
+    """Hashes computed on stormtrooper (2026-10-24) with the integration code before this branch: the DSL
+    config at 230cb82 and f80ad21 alike; the daily config at f80ad21 (step 6b added spec_faithfulness)."""
 
     from poseidon.pipeline.plan import default_config
     from poseidon.pipeline.v3.config import daily_run_config
@@ -647,4 +648,4 @@ def test_configs_of_runs_with_a_spec_are_byte_identical_to_230cb82():
     assert content_sha256(dsl) == "60648707b1bc20e8544c9ba3baa21cee5c264ab3e34bc91d90c4dc20bc218ae2"
     resolved = validate_spec_v3(tmf_dynamic_leverage_3x()).resolved
     daily = daily_run_config(resolved, as_of=AS_OF, brief_text="brief", refdata=REFDATA)
-    assert content_sha256(daily) == "edbebf953ee6a4189c46a6b6c7cd2b652da4ced4d4e13679dc17263f16a2deb8"
+    assert content_sha256(daily) == "0f3b5c65ef757ad731b5c26c9be852b8072fb35937bbfa6940e73480639c0384"
