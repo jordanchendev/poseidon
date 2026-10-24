@@ -571,3 +571,16 @@ def test_reply_contract_errors_are_repaired():
     assert outcome.verdict == Verdict.PASS and outcome.report["repair_rounds"] == 2
     assert [r["outcome"] for r in outcome.report["rounds"]] == ["contract_error", "contract_error", "valid"]
     assert json.loads(outcome.files["llm_transcript_v3.json"])["prompt_sha256"] == PROMPT_SHA256_V3
+
+
+def test_configs_of_runs_with_a_spec_are_byte_identical_to_230cb82():
+    """Hashes computed with the 230cb82 code (before step 6) on stormtrooper, 2026-10-24."""
+
+    from poseidon.pipeline.plan import default_config
+    from poseidon.pipeline.v3.config import daily_run_config
+
+    dsl = default_config(stage_plan=None, as_of=AS_OF)
+    assert content_sha256(dsl) == "60648707b1bc20e8544c9ba3baa21cee5c264ab3e34bc91d90c4dc20bc218ae2"
+    resolved = validate_spec_v3(tmf_dynamic_leverage_3x()).resolved
+    daily = daily_run_config(resolved, as_of=AS_OF, brief_text="brief", refdata=REFDATA)
+    assert content_sha256(daily) == "edbebf953ee6a4189c46a6b6c7cd2b652da4ced4d4e13679dc17263f16a2deb8"
