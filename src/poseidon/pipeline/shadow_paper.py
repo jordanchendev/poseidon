@@ -413,9 +413,20 @@ class ShadowPaperStage(_DataStage):
     lease_seconds = 900
     max_auto_attempts = 2
 
+    def __init__(self, data_source=None, strategy_factory=None, *, refdata=None, compile_strategy=None):
+        super().__init__(data_source, strategy_factory)
+        # Daily target-position runs (CONFIG_VERSION >= 6, shadow_paper.mode "daily_target") only:
+        # ``refdata`` () -> refdata reader, ``compile_strategy`` (ctx) -> CompiledStrategy (step 4 seam).
+        self.refdata = refdata
+        self.compile_strategy = compile_strategy
+
     def input_payload(self, ctx):
+        from poseidon.pipeline.shadow_paper_daily import DAILY_PAPER_VERSION, is_daily_mode
+
         payload = super().input_payload(ctx)  # config_sha256 covers thresholds + shadow_paper settings
         payload["paper_version"] = PAPER_VERSION
+        if is_daily_mode(ctx.config):
+            payload["daily_paper_version"] = DAILY_PAPER_VERSION
         return payload
 
     def source(self):
@@ -428,6 +439,10 @@ class ShadowPaperStage(_DataStage):
     # -------------------------------------------------------------- run
 
     def run(self, ctx):
+        from poseidon.pipeline.shadow_paper_daily import DailyShadowPaper, is_daily_mode
+
+        if is_daily_mode(ctx.config):
+            return DailyShadowPaper(self.refdata, self.compile_strategy).run(ctx)
         blocked = _gates_config_missing(ctx)
         if blocked is not None:
             return blocked

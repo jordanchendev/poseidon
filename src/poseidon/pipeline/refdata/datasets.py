@@ -6,8 +6,11 @@ dataset                         rows                                        buil
 ``taifex_futures_daily``        TX/MTX/TMF per trade date, contract,        TAIFEX futDataDown, one
                                 session (see ``taifex`` docstring)          raw CSV per product-month
 ``taifex_final_settlement``     every TX/MTX/TMF final settlement           TAIFEX futIndxFSP (1 page)
-``taifex_settlement_calendar``  per product x monthly contract: last        the two datasets above
-                                trading day, final settlement date/price
+``twse_market_calendar``        official market holiday schedule (dates     TWSE holidaySchedule, one
+                                listed per year, ``closed`` flag)           raw JSON per year
+``taifex_settlement_calendar``  per product x monthly contract: last        the three datasets above
+                                trading day (official schedule for
+                                unexpired contracts), final settlement
 ``taifex_roll_r1``              R1 front-month segments per product         futures + calendar
 ``twse_taiex_daily``            TAIEX price index OHLC (1999+)              TWSE MI_5MINS_HIST
 ``twse_taiex_total_return``     TAIEX total-return index (2003+)            TWSE MFI94U
@@ -18,6 +21,10 @@ always re-fetches the last ``refresh_months`` months (current + previous by
 default), rebuilds the partitions whose raw bytes changed, then rebuilds the
 small derived datasets. Re-running it with nothing new published commits
 nothing (every ``content_sha256`` and manifest stays as it was).
+
+The market calendar re-fetches the current and the next year on every run
+(TWSE publishes next year's schedule late in the year; the daily job picks it
+up the day it appears) and fetches each earlier year once.
 """
 
 from __future__ import annotations
@@ -46,9 +53,11 @@ CALENDAR = "taifex_settlement_calendar"
 ROLL_R1 = "taifex_roll_r1"
 TAIEX = "twse_taiex_daily"
 TAIEX_TR = "twse_taiex_total_return"
+MARKET_CALENDAR = "twse_market_calendar"
 PRODUCTS = ("TX", "MTX", "TMF")
-SCHEMA_VERSION = {FUTURES: 1, FSP: 1, CALENDAR: 1, ROLL_R1: 1, TAIEX: 1, TAIEX_TR: 1}
-GROUPS = {"futures": (FUTURES, FSP, CALENDAR, ROLL_R1), "twse": (TAIEX, TAIEX_TR)}
+# CALENDAR 2: ltd_source / scheduled_last_trading_day / ltd_check; unexpired contracts on the official schedule
+SCHEMA_VERSION = {FUTURES: 1, FSP: 1, MARKET_CALENDAR: 1, CALENDAR: 2, ROLL_R1: 1, TAIEX: 1, TAIEX_TR: 1}
+GROUPS = {"futures": (FUTURES, FSP, MARKET_CALENDAR, CALENDAR, ROLL_R1), "twse": (TAIEX, TAIEX_TR)}
 
 
 @dataclass(frozen=True)
@@ -273,6 +282,36 @@ def update_fsp(store: RefdataStore, fetcher: PoliteFetcher, *, today: date, code
     return _summary(store, FSP, result.changed, int(changed), result.written)
 
 
+def update_market_calendar(
+    store: RefdataStore, fetcher: PoliteFetcher, *, today: date, code_version: str
+) -> UpdateReport:
+    """Official holiday schedule: every year once, the current and the next year on every run."""
+
+    records, fresh = [], 0
+    frames = []
+    for year in range(twse.HOLIDAY_FIRST_YEAR, today.year + 2):
+        name = f"holidays_{year}.json"
+        url, params = twse.holiday_url(year)
+        record = store.raw_record(MARKET_CALENDAR, name)
+        if record is None or year >= today.year:
+            body = fetcher.fetch(url, validate=twse.is_holiday_json)
+            record, changed = store.put_raw(MARKET_CALENDAR, name, body, url=url, params=params)
+            fresh += int(changed)
+        records.append(record)
+        frames.append(twse.parse_holidays(store.raw_bytes(MARKET_CALENDAR, name)))
+    frame = pd.concat([f for f in frames if len(f)], ignore_index=True) if any(len(f) for f in frames) else frames[0]
+    result = store.commit(
+        MARKET_CALENDAR,
+        schema_version=SCHEMA_VERSION[MARKET_CALENDAR],
+        date_column="date",
+        partitions=_by_month(frame, "date"),
+        sources=records,
+        code_version=code_version,
+        full=True,
+    )
+    return _summary(store, MARKET_CALENDAR, result.changed, fresh, result.written)
+
+
 def _derived_source(store: RefdataStore, name: str) -> SourceRecord:
     manifest = store.manifest(name)
     return SourceRecord("", f"refdata://{name}", {}, manifest["built_at"], manifest["content_sha256"])
@@ -281,14 +320,16 @@ def _derived_source(store: RefdataStore, name: str) -> SourceRecord:
 def update_derived(store: RefdataStore, *, code_version: str) -> list[UpdateReport]:
     quotes = store.read(FUTURES)
     fsp = store.read(FSP)
-    calendar = taifex.settlement_calendar(quotes, fsp)
+    market = store.read(MARKET_CALENDAR) if store.exists(MARKET_CALENDAR) else None
+    calendar = taifex.settlement_calendar(quotes, fsp, market)
     reports = []
+    inputs = [FUTURES, FSP] + ([MARKET_CALENDAR] if market is not None else [])
     result = store.commit(
         CALENDAR,
         schema_version=SCHEMA_VERSION[CALENDAR],
         date_column="last_trading_day",
         partitions=_by_month(calendar, "last_trading_day"),
-        sources=[_derived_source(store, FUTURES), _derived_source(store, FSP)],
+        sources=[_derived_source(store, name) for name in inputs],
         code_version=code_version,
         full=True,
     )
@@ -329,6 +370,7 @@ def update_all(
     if "futures" in groups:
         reports.append(update_monthly(store, MONTHLY[FUTURES], fetchers, seed_dir=seed_dirs.get("taifex"), **common))
         reports.append(update_fsp(store, fetchers["taifex"], today=today, code_version=code_version))
+        reports.append(update_market_calendar(store, fetchers["twse"], today=today, code_version=code_version))
         reports.extend(update_derived(store, code_version=code_version))
     if "twse" in groups:
         for name in (TAIEX, TAIEX_TR):

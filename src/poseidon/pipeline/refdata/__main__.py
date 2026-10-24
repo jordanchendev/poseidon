@@ -3,20 +3,17 @@
     python -m poseidon.pipeline.refdata update [--root DIR] [--group futures|twse] [--full]
                                                [--seed-taifex DIR] [--seed-twse DIR] [--refresh-months N]
     python -m poseidon.pipeline.refdata verify [--root DIR]
+    python -m poseidon.pipeline.refdata daily [--root DIR]      # update + freshness report (one JSON)
 
 ``update`` fetches every month not yet stored, re-fetches the last
 ``--refresh-months`` (default 2: current and previous month), rebuilds the
 partitions whose raw bytes changed and the derived calendar/roll tables, and
 prints one JSON line per dataset. Running it twice in a row changes nothing.
 
-Daily schedule (not wired yet): the pipeline beat will call
-``datasets.update_all(RefdataStore(), refresh_months=2, code_version=settings.pipeline_code_version)``
-from a Celery task once a day at 09:00Z (17:00 Taipei): after TAIFEX and TWSE
-publish the day session (about 14:00-15:00 Taipei), with the night session
-that ended at 05:00 that morning already out, and outside the 06:00-08:40Z
-heavy-CPU window. The daily shadow paper wakes at 09:30 Taipei the next day,
-so one missed run is caught by the next. A ``SourceBlockedError`` must stop the
-task without retries (the next day's run fills the gap).
+The daily job (schedule, freshness check, hooks for later datasets) is
+:func:`poseidon.pipeline.refdata.daily.run_daily`, also available as
+``python -m poseidon.pipeline.refdata daily``. A ``SourceBlockedError`` stops
+it without retries (the next day's run fills the gap).
 """
 
 from __future__ import annotations
@@ -63,7 +60,7 @@ def _verify(store: RefdataStore) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m poseidon.pipeline.refdata")
-    parser.add_argument("command", choices=["update", "verify"])
+    parser.add_argument("command", choices=["update", "verify", "daily"])
     parser.add_argument("--root", default=None, help="refdata root (default: settings.pipeline_refdata_root)")
     parser.add_argument("--group", action="append", choices=sorted(GROUPS), help="limit to a group (repeatable)")
     parser.add_argument("--full", action="store_true", help="rebuild every partition from the stored raw files")
@@ -76,6 +73,11 @@ def main(argv: list[str] | None = None) -> int:
     store = RefdataStore(args.root)
     if args.command == "verify":
         return _verify(store)
+    if args.command == "daily":
+        from poseidon.pipeline.refdata.daily import run_daily
+
+        print(json.dumps(run_daily(store, code_version=args.code_version), sort_keys=True, default=str))
+        return 0
     seeds = {key: value for key, value in (("taifex", args.seed_taifex), ("twse", args.seed_twse)) if value}
     reports = update_all(
         store,

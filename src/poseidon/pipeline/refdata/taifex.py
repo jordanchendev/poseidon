@@ -216,6 +216,9 @@ CALENDAR_COLUMNS = [
     "product",
     "contract_month",
     "status",
+    "ltd_source",
+    "scheduled_last_trading_day",
+    "ltd_check",
     "first_trade_date",
     "final_settlement_date",
     "final_settlement_price",
@@ -223,24 +226,85 @@ CALENDAR_COLUMNS = [
     "fsp_minus_last_close",
     "fsd_check",
 ]
+MAX_SCHEDULE_SHIFT_DAYS = 15  # longer than any scheduled break (Lunar New Year is ~9 days)
 
 
-def settlement_calendar(quotes: pd.DataFrame, fsp: pd.DataFrame) -> pd.DataFrame:
-    """Per product and monthly contract: last trading day and final settlement.
+@dataclass(frozen=True)
+class MarketSchedule:
+    """The official TWSE holiday schedule (``twse_market_calendar``) as a lookup.
 
-    ``status``:
-      ``settled``   - the contract's last day-session row is before the latest
-                      trade date of its product; ``last_trading_day`` is that row's date.
-      ``active``    - still trading; ``last_trading_day`` is projected as the
-                      third Wednesday of the contract month (TAIFEX rule; a
-                      holiday on that day moves it to the next trading day,
-                      which the projection cannot know yet).
-
-    ``fsd_check`` (settled contracts with a published final settlement):
-    True iff the final settlement date equals the last trading day (contracts
-    from 2008-12) or the next trading day of the product (earlier contracts).
+    ``published_years``: years whose schedule TWSE has published (it always lists 1 January).
     """
 
+    closed: frozenset
+    published_years: frozenset
+
+    @classmethod
+    def from_frame(cls, frame: pd.DataFrame | None) -> MarketSchedule:
+        if frame is None or not len(frame):
+            return cls(frozenset(), frozenset())
+        dates = pd.to_datetime(frame["date"])
+        closed = frozenset(dates[frame["closed"].astype(bool)].dt.normalize())
+        return cls(closed, frozenset(int(year) for year in dates.dt.year.unique()))
+
+    def is_open(self, day: pd.Timestamp) -> bool:
+        return day.weekday() < 5 and day.normalize() not in self.closed
+
+    def next_open(self, day: pd.Timestamp) -> pd.Timestamp:
+        """First scheduled trading day on or after ``day``."""
+
+        candidate = day.normalize()
+        for _ in range(MAX_SCHEDULE_SHIFT_DAYS + 1):
+            if self.is_open(candidate):
+                return candidate
+            candidate += pd.Timedelta(days=1)
+        raise ValueError(f"no scheduled trading day within {MAX_SCHEDULE_SHIFT_DAYS} days of {day.date()}")
+
+    def open_days(self, after: pd.Timestamp, through: pd.Timestamp) -> pd.DatetimeIndex:
+        """Scheduled trading days in ``(after, through]`` (weekdays when a year is unpublished)."""
+
+        days = pd.bdate_range(after.normalize() + pd.Timedelta(days=1), through.normalize())
+        return pd.DatetimeIndex([day for day in days if day not in self.closed])
+
+
+def official_last_trading_day(contract_month: str, schedule: MarketSchedule) -> tuple[pd.Timestamp, str]:
+    """TAIFEX rule on the official calendar: the third Wednesday of the contract month, or the next
+    trading day when that day is a holiday (TX/MTX/TMF contract spec).
+
+    Returns ``(day, source)``: ``twse_schedule`` when that year's schedule is published, else
+    ``rule_unpublished_year`` (the bare third Wednesday; a holiday on it is not known yet).
+    """
+
+    nominal = third_wednesday(contract_month)
+    if nominal.year not in schedule.published_years:
+        return nominal, "rule_unpublished_year"
+    return schedule.next_open(nominal), "twse_schedule"
+
+
+def settlement_calendar(quotes: pd.DataFrame, fsp: pd.DataFrame, market: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Per product and monthly contract: last trading day and final settlement.
+
+    ``market`` is the ``twse_market_calendar`` dataset (official holiday schedule); without it
+    every year counts as unpublished.
+
+    ``status`` / ``ltd_source``:
+      ``settled`` / ``traded``  - the contract's last day-session row is before the latest trade
+                      date of its product; ``last_trading_day`` is that row's date.
+      ``active``    - still trading; ``last_trading_day`` is the official schedule
+                      (:func:`official_last_trading_day`): ``twse_schedule`` or
+                      ``rule_unpublished_year``. When that day has already passed while the
+                      contract still trades (an unscheduled closure, e.g. a typhoon, on the
+                      scheduled day), it is the next scheduled trading day after the latest
+                      trade date: ``shifted_after_closure``.
+
+    ``scheduled_last_trading_day`` is the official schedule for every contract and ``ltd_check``
+    (settled contracts in a published year) says whether the contract really stopped trading on
+    it. ``fsd_check`` (settled contracts with a published final settlement): True iff the final
+    settlement date equals the last trading day (contracts from 2008-12) or the next trading day of
+    the product (earlier contracts).
+    """
+
+    schedule = MarketSchedule.from_frame(market)
     day = quotes[(quotes["session"] == "day") & quotes["contract_month"].str.fullmatch(r"\d{6}")]
     fsp_monthly = fsp[fsp["contract_month"].str.fullmatch(r"\d{6}")].set_index("contract_month")
     rows = []
@@ -251,35 +315,49 @@ def settlement_calendar(quotes: pd.DataFrame, fsp: pd.DataFrame) -> pd.DataFrame
         for contract, contract_rows in group.groupby("contract_month", sort=True):
             first, last = contract_rows["trade_date"].min(), contract_rows["trade_date"].max()
             settled = last < latest
-            ltd = last if settled else max(third_wednesday(contract), latest)
+            scheduled, scheduled_source = official_last_trading_day(contract, schedule)
+            check = None
+            if settled:
+                ltd, source = last, "traded"
+                if scheduled_source == "twse_schedule":
+                    check = bool(scheduled == last)
+            elif scheduled >= latest:
+                ltd, source = scheduled, scheduled_source
+            else:
+                ltd, source = schedule.next_open(latest + pd.Timedelta(days=1)), "shifted_after_closure"
             fsd = fsp_monthly["final_settlement_date"].get(contract, pd.NaT) if settled else pd.NaT
             price = fsp_monthly["final_settlement_price"].get(contract, np.nan) if settled else np.nan
             last_close = close.get((contract, last), np.nan) if settled else np.nan
-            check = None
+            fsd_check = None
             if settled and pd.notna(fsd):
                 position = dates.get_loc(last)
                 expected = last if contract >= "200812" else dates[position + 1] if position + 1 < len(dates) else None
-                check = bool(expected is not None and fsd == expected)
+                fsd_check = bool(expected is not None and fsd == expected)
             rows.append(
                 {
                     "last_trading_day": ltd,
                     "product": product,
                     "contract_month": contract,
                     "status": "settled" if settled else "active",
+                    "ltd_source": source,
+                    "scheduled_last_trading_day": scheduled,
+                    "ltd_check": check,
                     "first_trade_date": first,
                     "final_settlement_date": fsd,
                     "final_settlement_price": price,
                     "last_close": last_close,
                     "fsp_minus_last_close": price - last_close,
-                    "fsd_check": check,
+                    "fsd_check": fsd_check,
                 }
             )
     frame = pd.DataFrame(rows, columns=CALENDAR_COLUMNS)
-    frame["final_settlement_date"] = pd.to_datetime(frame["final_settlement_date"])
+    for column in ("last_trading_day", "scheduled_last_trading_day", "final_settlement_date"):
+        frame[column] = pd.to_datetime(frame[column]).astype("datetime64[ns]")
     for column in ("final_settlement_price", "last_close", "fsp_minus_last_close"):
         frame[column] = frame[column].astype("float64")
-    frame["fsd_check"] = frame["fsd_check"].astype("boolean")
-    for column in ("product", "contract_month", "status"):
+    for column in ("fsd_check", "ltd_check"):
+        frame[column] = frame[column].astype("boolean")
+    for column in ("product", "contract_month", "status", "ltd_source"):
         frame[column] = frame[column].astype(object)
     return frame.sort_values(["last_trading_day", "product", "contract_month"], kind="mergesort").reset_index(drop=True)
 
