@@ -169,6 +169,25 @@ class CapabilityBriefTests(unittest.TestCase):
         for word in ("higher timeframes", "smoothing a smoothed series", "standard deviation", "volume", "options"):
             self.assertIn(word, cannot)
 
+    def test_prompt_carries_part_a_only_and_the_file_has_both_engines(self):
+        text = scout.CAPABILITY_FILE.read_text(encoding="utf-8")
+        self.assertIn(scout.DAILY_HEADING, text)
+        self.assertEqual(scout.load_capability_brief(), scout.CAPABILITY_BRIEF)
+        self.assertTrue(text.split(scout.INTRADAY_HEADING)[1].lstrip().startswith(scout.CAPABILITY_BRIEF[:40]))
+        prompt = scout.system_prompt(scout.DEFAULTS)
+        self.assertIn(scout.CAPABILITY_BRIEF, prompt)
+        self.assertNotIn("regime.ma_band", prompt)  # daily ideas stay out of scout until step 7
+        self.assertIn("a 200-day MA is NOT SMA(200) on", scout.CAPABILITY_BRIEF)
+
+    def test_missing_or_headless_file_fails_loudly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "capability_brief.md"
+            with self.assertRaises(FileNotFoundError):
+                scout.load_capability_brief(path)
+            path.write_text("# no sections\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                scout.load_capability_brief(path)
+
     def test_channel_family_dedupes_channel_ideas(self):
         self.assertEqual(scout.signature("日盤收盤突破前 20 根最高點做多")[0], "channel")
         self.assertEqual(scout.signature("唐奇安通道突破")[0], "channel")

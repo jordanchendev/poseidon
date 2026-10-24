@@ -25,7 +25,8 @@ Commands
             Local state only saves calls; the bridge marker is the authority. Non-terminal milestones, once each
             per run: `shadow_paper` (all gates passed, shadow paper started) and `awaiting_release` (shadow paper
             passed, held for a human release); only for runs whose stage_plan contains those stages.
-      capability  scout.py's CAPABILITY_BRIEF (read from scout_script with ast, never imported or run) ->
+      capability  the capability brief file (capability_file, rendered from the pipeline registry and deployed next
+            to scout.py; read as text) ->
             `strategy-capability <sha256>` with the brief on stdin whenever its sha256 differs from the local marker
             <state_dir>/capability.sha256. Sisyphus on macminim4 reads it (`strategy-ideas.sh capability`) when it
             co-authors a spec with the owner, so the brief stays the single description of what the pipeline can
@@ -38,8 +39,8 @@ Config (JSON, merged over DEFAULTS; default file ~/strategy-pipeline/bridge.json
   api_base, key_file (researcher key, 600, never logged), bridge, state_dir, log_file, kairos_base_url (empty -> the
   Kairos link is omitted), watch_days (how long unsupported/error/aborted runs are watched for a rerun),
   hold_windows_utc (no new runs inside these UTC windows; default 06:00-08:40 for the Phase 101 soak), scout_dir,
-  proposal_runs (create runs for accepted proposals; default true), proposal_max_age_days, scout_script (scout.py
-  holding CAPABILITY_BRIEF).
+  proposal_runs (create runs for accepted proposals; default true), proposal_max_age_days, capability_file (the
+  capability brief markdown).
 State: <state_dir>/ideas/<idea id>.json, <state_dir>/runs/<run id>.json, <state_dir>/delivered/<batch>,
 <state_dir>/capability.sha256, <state_dir>/sync.lock; <scout_dir>/proposals.jsonl is shared with scout.py under
 <scout_dir>/.proposals.lock.
@@ -49,7 +50,6 @@ Exit codes: 0 ok / nothing to do / lock busy, 1 some step failed (retried next t
 from __future__ import annotations
 
 import argparse
-import ast
 import contextlib
 import datetime as dt
 import fcntl
@@ -80,7 +80,7 @@ DEFAULTS = {
     # false: accepted scout proposals wait (no run) until it is flipped; delivery to Telegram is unaffected.
     "proposal_runs": True,
     "proposal_max_age_days": 7,  # same as the macminim4 accept verb
-    "scout_script": "~/strategy-pipeline/scout-bin/scout.py",  # CAPABILITY_BRIEF source for Sisyphus
+    "capability_file": "~/strategy-pipeline/scout-bin/capability_brief.md",  # the brief pushed to Sisyphus
 }
 DEFAULT_CONFIG = "~/strategy-pipeline/bridge.json"
 IDEA_ID_RE = re.compile(r"^\d{8}-[sp]\d{1,4}$")  # -sN Telegram idea, -pN accepted strategy-scout proposal
@@ -848,26 +848,21 @@ def push(api, bridge, state, cfg, log, dry_run=False) -> int:
 
 
 def capability_brief(path) -> str:
-    """scout.py's CAPABILITY_BRIEF string, read with ast: scout.py is neither imported nor run here."""
+    """The checked-in capability brief file (scout-bin/capability_brief.md), read as text; nothing is run."""
 
-    tree = ast.parse(expand(path).read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "CAPABILITY_BRIEF" for t in node.targets
-        ):
-            value = ast.literal_eval(node.value)
-            if isinstance(value, str) and value.strip():
-                return value
-    raise ValueError("no CAPABILITY_BRIEF string")
+    text = expand(path).read_text(encoding="utf-8")
+    if not text.strip():
+        raise ValueError("empty capability brief")
+    return text
 
 
 def push_capability(bridge, state, cfg, log, dry_run=False) -> int:
     """Send the capability brief to macminim4 when its sha256 differs from the last one sent."""
 
-    path = cfg.get("scout_script") or DEFAULTS["scout_script"]
+    path = cfg.get("capability_file") or DEFAULTS["capability_file"]
     try:
         brief = capability_brief(path)
-    except (OSError, SyntaxError, ValueError) as error:
+    except (OSError, ValueError) as error:
         log(f"capability brief unreadable from {path}: {type(error).__name__}; retry next tick")
         return 1
     digest = hashlib.sha256(brief.encode("utf-8")).hexdigest()

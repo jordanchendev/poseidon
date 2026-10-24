@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import re
 from datetime import date
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -12,10 +14,16 @@ from poseidon.pipeline.plan import CONFIG_VERSION, SPEC_V3_CONFIG_VERSION, defau
 from poseidon.pipeline.v3.__main__ import main
 from poseidon.pipeline.v3.brief import (
     BRIEF_FILE,
+    CAPABILITY_FILE,
+    DAILY_HEADING,
+    DSL_V21_BRIEF,
     GENERATED_DIR,
+    INTRADAY_HEADING,
     SCHEMA_FILE,
     catalog,
+    intraday_section,
     render_brief,
+    render_capability_brief,
     rendered_files,
     schema_model,
 )
@@ -130,3 +138,64 @@ def test_config_version_6_skeleton_leaves_new_dsl_runs_at_5():
         "sizing.target_leverage@1",
     }
     assert re.fullmatch(r"[0-9a-f]{64}", fields["capability_brief_sha256"])
+
+
+REPO = Path(__file__).resolve().parents[2]
+CAPABILITY_PATH = REPO / CAPABILITY_FILE
+# scout.CAPABILITY_BRIEF as of 230cb82 (f8c9f1d rule included): part A must stay exactly this.
+SCOUT_BRIEF_RULES = (
+    "Never stand in for a higher-timeframe indicator by reusing its length on intraday bars: a 200-day MA is NOT SMA(200) on",
+    "5m bars (that spans 1-4 trading days, depending on the sessions). Such an idea is unsupported as written; say so instead of substituting.",
+    "1-4 tunable numeric parameters per strategy (windows, stop/target sizes, thresholds).",
+    "Companion data such as foreign flows is NOT available to the DSL.",
+)
+
+
+def test_checked_in_capability_brief_equals_the_rendering():
+    """Golden: `python -m poseidon.pipeline.v3 brief --capability-file scripts/strategy_scout/capability_brief.md`."""
+
+    assert CAPABILITY_PATH.read_text(encoding="utf-8") == render_capability_brief()
+    assert main(["brief", "--check", "--capability-file", str(CAPABILITY_PATH)]) == 0
+
+
+def test_capability_file_check_and_write(tmp_path):
+    target = tmp_path / "capability_brief.md"
+    assert main(["brief", "--check", "--out", str(GENERATED_DIR), "--capability-file", str(target)]) == 1
+    assert main(["brief", "--out", str(tmp_path), "--capability-file", str(target)]) == 0
+    assert target.read_text(encoding="utf-8") == render_capability_brief()
+
+
+def test_part_a_is_the_scout_brief_verbatim():
+    text = render_capability_brief()
+    assert intraday_section(text) == DSL_V21_BRIEF
+    assert DSL_V21_BRIEF.endswith("say so instead of substituting.\n")
+    for rule in SCOUT_BRIEF_RULES:
+        assert rule in DSL_V21_BRIEF
+
+
+def test_scout_reads_the_same_part_a_from_the_file():
+    spec = importlib.util.spec_from_file_location("scout_under_test", REPO / "scripts" / "strategy_scout" / "scout.py")
+    scout = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scout)
+    assert scout.CAPABILITY_FILE == CAPABILITY_PATH
+    assert scout.CAPABILITY_BRIEF == DSL_V21_BRIEF
+    assert (scout.INTRADAY_HEADING, scout.DAILY_HEADING) == (INTRADAY_HEADING, DAILY_HEADING)
+
+
+def test_part_b_covers_can_cannot_instruments_and_the_signal_series_rule():
+    text = render_capability_brief()
+    _, part_b = text.split("## B. Daily strategies")
+    for name, component in REGISTRY.items():
+        if "1d" in component.frequencies and name != "direction.dsl_rules":
+            assert f"`{name}`" in part_b
+    for name in PLANNED_COMPONENTS:
+        assert f"`{name}`" in part_b
+    for symbol in ("TX (", "MTX (", "TMF (", "TXO ("):
+        assert symbol in part_b
+    for since in ("1998-07-21", "1999-01-05", "2003-01-02", "2024-07-29"):
+        assert since in part_b
+    assert "49 vs 33" in part_b and "never pick silently" in part_b
+    assert "`self:adjusted`" in part_b and "`index:taiex`" in part_b and "`index:taiex_tr`" in part_b
+    assert "unsupported" in part_b and "`short_stock`" in part_b
+    assert "NOT SMA(200) on 5m bars" in part_b
+    assert len(text) < 9000
