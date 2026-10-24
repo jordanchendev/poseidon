@@ -25,7 +25,7 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 
-from poseidon.pipeline.engine import ContractSpec, Decision, EngineConfig, FuturesInput, run, target_leverage_units
+from poseidon.pipeline.engine import ContractSpec, Decision, EngineConfig, FuturesInput, run
 from poseidon.pipeline.gates import (
     DAILY_GATES,
     benchmark,
@@ -41,6 +41,7 @@ from poseidon.pipeline.gates import (
 from poseidon.pipeline.gates.daily import DailyResult, RerunRequest, choose_walk_forward, from_engine, moments, sharpe
 from poseidon.pipeline.optimization import ParamGrid
 from poseidon.pipeline.plan import class_settings
+from poseidon.pipeline.v3.components import round_units
 from poseidon.strategies.dsl.v2.schema import ParamSpec
 
 TMF = ContractSpec(symbol="TMF", point_value=10.0, tick_size=1.0, commission_per_unit=20.0, tax_rate=2e-5)
@@ -117,9 +118,11 @@ class SignalLeverage:
         s = self.signs.get(day, 0.0)
         if abs(s) <= self.threshold:
             return Decision({"TMF": 0})
-        units = target_leverage_units(
-            book.equity, self.lev, float(series.close[-1]), TMF.point_value, direction=1 if s > 0 else -1
+        direction = 1 if s > 0 else -1
+        raw = (
+            book.equity * direction * self.lev / (float(series.close[-1]) * TMF.point_value) if book.equity > 0 else 0.0
         )
+        units = round_units(raw, "floor")
         return Decision({"TMF": units}, {"TMF": self.lev})
 
 
