@@ -6,7 +6,7 @@ wiring that runs the backtests and builds the inputs lives elsewhere.
 Strategy Pipeline v2 (design 2026-10-24 §7): ``GATES_BY_CLASS`` picks the verdict
 functions by the run's frozen ``strategy_class``. ``intraday_fixed`` (v1 / DSL runs and
 every run frozen at CONFIG_VERSION <= 5) keeps ``GATES``; the daily classes judge
-``gates.daily.DailyResult`` inputs and add the ``liquidation`` gate.
+``gates.daily.DailyResult`` inputs and add the ``liquidation`` and ``execution_timing`` gates.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from poseidon.pipeline.gates import (
     benchmark,
     cost_stress,
     dsr,
+    execution_timing,
     holdout,
     liquidation,
     param_stability,
@@ -39,7 +40,8 @@ GATES: dict[str, Callable[..., GateResult]] = {
 # cost_stress -- CostStressDailyInputs (or cost_stress.run_daily with the re-run hook);
 # dsr -- dsr.inputs_daily; param_stability -- ParamStabilityInputs of
 # param_stability.neighbours_daily; regime_split -- RegimeDailyInputs; benchmark --
-# BenchmarkDailyInputs; liquidation -- the train DailyResult.
+# BenchmarkDailyInputs; liquidation -- the train DailyResult; execution_timing --
+# ExecutionTimingInputs (or execution_timing.run_daily with the re-run hook).
 DAILY_GATES: dict[str, Callable[..., GateResult]] = {
     wfe.GATE: wfe.evaluate,
     holdout.GATE: holdout.evaluate_daily,
@@ -49,6 +51,7 @@ DAILY_GATES: dict[str, Callable[..., GateResult]] = {
     regime_split.GATE: regime_split.evaluate_daily,
     benchmark.GATE: benchmark.evaluate_daily,
     liquidation.GATE: liquidation.evaluate,
+    execution_timing.GATE: execution_timing.evaluate_daily,
 }
 
 GATES_BY_CLASS: dict[str, dict[str, Callable[..., GateResult]]] = {

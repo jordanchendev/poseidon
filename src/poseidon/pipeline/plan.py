@@ -248,7 +248,10 @@ DAILY_THRESHOLDS: dict = {
     "holdout_min_days": 250,
     "holdout_pnl_positive": True,  # holdout total return (equity) / PnL (fixed) > 0
     "holdout_alpha_positive": True,  # holdout alpha over the 1x underlying > 0
-    "benchmark_alpha_t_min": 1.0,  # train alpha over the 1x underlying > 0 and HAC t >= this
+    # Owner decision 2026-10-24 afternoon #3 (set on the controls, before any real result): train alpha
+    # over the 1x underlying > 0 and HAC t >= 1.65 (one-sided 5 %). Static 2-4x leverage of the underlying
+    # (synthetic control, seeds 1-20) reached t >= 1.0 in 3/20 seeds, t >= 1.65 in none. Intraday keeps 1.0.
+    "benchmark_alpha_t_min": 1.65,
     "cost_stress_multiplier": 2.0,
     "cost_stress_pnl_positive": True,  # final equity > initial with every cost x2
     "dsr_min": 0.95,
@@ -263,6 +266,11 @@ DAILY_THRESHOLDS: dict = {
     "regime_vol_median_days": 250,
     # §12 #5: forced liquidation or ruin in the train backtest fails; a margin call is only reported.
     "liquidation_fails": True,
+    # Owner decision 2026-10-24 afternoon #2 (pre-registered before any real result): the same params on
+    # train under each timing scenario (gates.execution_timing: the other fill, signal one day late)
+    # must keep total PnL > 0 and daily Sharpe >= this share of the base run's.
+    "execution_timing_pnl_positive": True,
+    "execution_timing_sharpe_ratio_min": 0.5,
     # Daily shadow paper (§7; read by the daily paper mode, not by the gates): no trade count.
     "paper_min_trading_days": 20,
     "paper_target_match_min": 0.95,  # share of days whose paper target units equal the replay's
@@ -300,8 +308,14 @@ DAILY_GATES: dict = {
         },
     },
     "holdout": {"family_reuse": "report_only"},
-    # Report only (no threshold registered): the same params re-run with the other execution component.
-    "execution_sensitivity": {"alternative": {"next_open": "signal_close", "signal_close": "next_open"}},
+    # Blocking (thresholds execution_timing_*): the selected params re-run over the train window per scenario.
+    "execution_timing": {
+        "scenarios": {
+            "next_open": ["signal_close", "signal_lag_1d"],
+            "signal_close": ["next_open", "signal_lag_1d"],
+        },
+        "signal_lag_1d": "the spec's own execution, every signal series one row late",
+    },
 }
 
 DEFAULT_THRESHOLDS_BY_CLASS: dict[str, dict] = {
