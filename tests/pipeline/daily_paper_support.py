@@ -13,7 +13,7 @@ import pandas as pd
 
 from poseidon.decision_loop.manifest import content_sha256
 from poseidon.pipeline import artifacts
-from poseidon.pipeline.engine import BookView, ContractSpec, Decision, EngineConfig, MarketView, target_leverage_units
+from poseidon.pipeline.engine import BookView, ContractSpec, Decision, EngineConfig, MarketView
 from poseidon.pipeline.plan import GATE_STAGES, SPEC_V3_CONFIG_VERSION, default_config
 from poseidon.pipeline.refdata import taifex, twse
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, MARKET_CALENDAR, TAIEX
@@ -27,6 +27,7 @@ from poseidon.pipeline.shadow_paper_daily import (
     PaperInstrument,
 )
 from poseidon.pipeline.stages import StageContext, UpstreamResult
+from poseidon.pipeline.v3.components import round_units
 from poseidon.pipeline.window import MARKET_TZ
 
 FIXTURES = Path(__file__).parent / "fixtures" / "refdata"
@@ -245,7 +246,8 @@ class LeverageBand:
             elif self.state == 0 and closes[-1] > ma * (1 + self.band):
                 self.state = 1
         lev = self.on if self.state else self.off
-        units = target_leverage_units(book.equity, lev, float(series.close[-1]), self.spec.point_value)
+        raw = book.equity * lev / (float(series.close[-1]) * self.spec.point_value) if book.equity > 0 else 0.0
+        units = round_units(raw, "floor")
         return Decision({self.instrument: units}, {self.instrument: lev})
 
 
