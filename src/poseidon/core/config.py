@@ -101,6 +101,8 @@ class Settings(BaseSettings):
     # The production API never mounts /api/v1/pipelines unless this is enabled.
     pipeline_api_enabled: bool = False
     pipeline_artifacts_root: str = "~/strategy-pipeline/artifacts"
+    # Reference datasets (TAIFEX / TWSE) shared by pipeline stages; see pipeline/refdata/store.py.
+    pipeline_refdata_root: str = "~/strategy-pipeline/refdata"
     pipeline_code_version: str = ""  # image git sha recorded on every stage attempt
     # Runner processes refuse to start unless this is set and database_url names this database.
     pipeline_expected_database: str = ""
