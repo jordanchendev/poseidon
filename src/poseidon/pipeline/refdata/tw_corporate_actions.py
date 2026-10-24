@@ -69,7 +69,7 @@ LIMIT_CHANGE_DATE = date(2015, 6, 1)  # TWSE widened the daily limit from 7% to 
 # The down limit was cut to 3.5% from 2008-10-13 to 2008-10-24 (Executive Yuan, 2008-10-12 and
 # 2008-10-19; back to 7% on 10-27). TWT49U confirms it: 2412 on 10-17 and 0050 on 10-24.
 TEMPORARY_DOWN_LIMITS = ((date(2008, 10, 13), date(2008, 10, 24), 0.035),)
-NO_LIMIT_UP = 9999.0  # TWSE prints 9,999.95 / 0.01 for instruments without a daily limit
+NO_LIMIT = (9999.95, 0.01)  # what TWSE prints as (up, down) for instruments without a daily limit
 TICK_TOLERANCE = 0.01  # published limits sit at most one tick inside the rule (2003 ticks: <= 1%)
 LIMIT_EPSILON = 0.0025  # half the largest modern tick: TWSE rounds limit prices to a tick (0050 2008-10-16)
 PREV_CLOSE_TOLERANCE = 0.005  # TWSE prev close vs the last stored close
@@ -571,7 +571,7 @@ def check_action_limits(actions: pd.DataFrame) -> list[Finding]:
     """
     findings = []
     for _, action in actions.dropna(subset=["reference_price", "limit_up", "limit_down"]).iterrows():
-        if action["limit_up"] >= NO_LIMIT_UP:
+        if (action["limit_up"], action["limit_down"]) == NO_LIMIT:  # not a price: 2059 trades above 10,000
             findings.append(
                 Finding(
                     "warning",

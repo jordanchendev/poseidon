@@ -130,6 +130,10 @@ def test_published_limit_prices_match_the_limit_rule():
     findings = ca.check_action_limits(ca.actions_frame(rows))
     assert [f for f in findings if f.severity == "error"] == []
     assert {f.symbol for f in findings if f.kind == "no_price_limit"} == {"00673R", "00706L", "00715L", "00674R"}
+    pricey = ca.actions_frame(rows)  # 2059 trades above NT$10,000: its limits are real prices
+    columns = ["prev_close", "reference_price", "open_reference", "dividend_reference", "limit_up", "limit_down"]
+    pricey.loc[pricey["symbol"] == "2454", columns] *= 10
+    assert [f for f in ca.check_action_limits(pricey) if f.symbol == "2454"] == []
     wrong = ca.actions_frame(rows)
     wrong.loc[wrong["symbol"] == "00631L", "limit_up"] = 22.15  # a 10% band on a 2x ETF
     assert {(f.kind, f.symbol) for f in ca.check_action_limits(wrong) if f.severity == "error"} == {
