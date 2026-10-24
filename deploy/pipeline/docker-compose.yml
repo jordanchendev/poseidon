@@ -5,7 +5,8 @@
 #     2. env file (chmod 600), default ~/strategy-pipeline/pipeline.env, holding at least
 #          POSEIDON_DATABASE_URL=postgresql://poseidon:<password>@host.docker.internal:5433/poseidon_pipeline
 #          POSEIDON_API_PRINCIPALS_JSON={"<sha256 of key>": {"actor_id": "strategy-bridge", "roles": ["researcher"], "account_scopes": []}, ...}
-#     3. mkdir -p ~/strategy-pipeline/artifacts
+#     3. mkdir -p ~/strategy-pipeline/artifacts ~/strategy-pipeline/refdata
+#        (refdata seeded with `python -m poseidon.pipeline.refdata ...`; spec v3 runs refuse to start without it)
 #     4. ~/strategy-pipeline/secrets/strategy-pipeline-openrouter.env (chmod 600), one line
 #          STRATEGY_PIPELINE_OPENROUTER_KEY=<key>      (worker only)
 #        and in pipeline.env the non-secret pin of that key's masked OpenRouter label
@@ -34,8 +35,11 @@ x-pipeline-service: &pipeline-service
     POSEIDON_PIPELINE_EXPECTED_DATABASE: poseidon_pipeline
     POSEIDON_PIPELINE_CODE_VERSION: ${PIPELINE_GIT_SHA}
     POSEIDON_PIPELINE_ARTIFACTS_ROOT: /data/strategy-pipeline/artifacts
+    POSEIDON_PIPELINE_REFDATA_ROOT: /data/strategy-pipeline/refdata
+  # Spec v3 runs read the refdata store; only the worker writes it (update_refdata_daily).
   volumes:
     - ${HOME}/strategy-pipeline/artifacts:/data/strategy-pipeline/artifacts
+    - ${HOME}/strategy-pipeline/refdata:/data/strategy-pipeline/refdata:ro
   extra_hosts:
     - "host.docker.internal:host-gateway"
   restart: unless-stopped
@@ -62,6 +66,9 @@ services:
     env_file:
       - ${PIPELINE_ENV_FILE:-${HOME}/strategy-pipeline/pipeline.env}
       - ${PIPELINE_LLM_ENV_FILE:-${HOME}/strategy-pipeline/secrets/strategy-pipeline-openrouter.env}
+    volumes:
+      - ${HOME}/strategy-pipeline/artifacts:/data/strategy-pipeline/artifacts
+      - ${HOME}/strategy-pipeline/refdata:/data/strategy-pipeline/refdata
     command: celery -A poseidon.pipeline.celery_app worker -Q poseidon_pipeline -c 2 --loglevel=info
     depends_on:
       api:
