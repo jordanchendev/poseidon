@@ -501,12 +501,14 @@
           "title": "Off Leverage"
         },
         "signal": {
-          "default": "self:adjusted",
-          "pattern": "^(self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)$",
+          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr))$",
           "title": "Signal",
           "type": "string"
         }
       },
+      "required": [
+        "signal"
+      ],
       "title": "RegimeMaBandParams",
       "type": "object"
     },
@@ -547,8 +549,7 @@
           "title": "K"
         },
         "signal": {
-          "default": "self:adjusted",
-          "pattern": "^(self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)$",
+          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr))$",
           "title": "Signal",
           "type": "string"
         },
@@ -567,6 +568,9 @@
           "title": "Window Days"
         }
       },
+      "required": [
+        "signal"
+      ],
       "title": "RiskVolCapParams",
       "type": "object"
     },

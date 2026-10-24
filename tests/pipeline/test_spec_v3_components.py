@@ -63,7 +63,9 @@ BAND_SERIES = [100.0] * 20 + [97.0, 99.0, 103.0]
 
 
 def run_ma_band(values, decision_rows, **params):
-    component, p = parse("regime.ma_band", ma_days=20, band_pct=0.02, off_leverage=0.5, **params)
+    component, p = parse(
+        "regime.ma_band", signal="self:adjusted", ma_days=20, band_pct=0.02, off_leverage=0.5, **params
+    )
     state = component.init(p)
     out = [component.step(p, state, FakeView(values, n + 1), 3.0) for n in decision_rows]
     return out, state
@@ -107,7 +109,7 @@ def alternating_prices(n_returns, step=0.01, start=100.0):
 
 
 def test_vol_cap_by_hand():
-    component, p = parse("risk.vol_cap", window_days=20, k=0.3)
+    component, p = parse("risk.vol_cap", signal="self:adjusted", window_days=20, k=0.3)
     sigma = 0.01 * math.sqrt(20 / 19) * math.sqrt(252)  # sample std (ddof 1) of +-1% log returns, annualised
     assert component.step(p, None, FakeView(alternating_prices(20)), 3.0) == pytest.approx(0.3 / sigma)
     assert component.step(p, None, FakeView(alternating_prices(20)), 1.0) == 1.0  # min(L_in, k / sigma)
@@ -117,7 +119,7 @@ def test_vol_cap_by_hand():
 
 
 def test_vol_cap_passes_through_without_enough_rows_or_without_volatility():
-    component, p = parse("risk.vol_cap", window_days=20, k=0.3)
+    component, p = parse("risk.vol_cap", signal="self:adjusted", window_days=20, k=0.3)
     assert component.step(p, None, FakeView(alternating_prices(19)), 3.0) == 3.0
     assert component.step(p, None, FakeView([100.0] * 25), 3.0) == 3.0
 
@@ -245,17 +247,43 @@ def market(n_bars=4, n_aux=4):
     return MarketView(DATES[n_bars - 1], {"core": SeriesView(buffer, buffer.n)}, {"taiex": AuxView(aux, aux.n)})
 
 
-def test_sleeve_view_resolves_self_fields_aux_and_lag():
+def test_sleeve_view_resolves_self_fields_index_refs_and_lag():
     view = SleeveView(market(), "core", Conventions())
     assert view.series("self:close").values.tolist() == [100.0, 101.0, 102.0, 103.0]
     assert view.series("core:adjusted").values.tolist() == [200.0, 202.0, 204.0, 206.0]
-    routed = SleeveView(market(), "core", Conventions(signal_aux={"core:adjusted": "taiex"}, signal_lag=1))
-    series = routed.series("self:adjusted")
+    assert view.series("index:taiex").values.tolist() == [1000.0, 1001.0, 1002.0, 1003.0]
+    lagged = SleeveView(market(), "core", Conventions(signal_lag=1))
+    series = lagged.series("index:taiex")
     assert series.values.tolist() == [1000.0, 1001.0, 1002.0]
     assert list(series.dates) == list(DATES.values[:3])
-    assert routed.series("core:close").values.tolist() == [100.0, 101.0, 102.0]  # lag applies to every ref
+    assert lagged.series("core:close").values.tolist() == [100.0, 101.0, 102.0]  # lag applies to every ref
     with pytest.raises(ValueError):
         Conventions(signal_lag=-1)
+
+
+def test_signal_series_is_required_and_named_in_the_description():
+    from pydantic import ValidationError
+
+    from poseidon.pipeline.v3.registry import DescribeContext
+
+    for name in ("regime.ma_band", "risk.vol_cap"):
+        with pytest.raises(ValidationError, match="signal"):
+            REGISTRY[name].parse({})
+        with pytest.raises(ValidationError):
+            REGISTRY[name].parse({"signal": "index:nikkei"})
+    tmf = INSTRUMENTS["TMF"]
+    ctx = DescribeContext("1d", tmf, 3.0, "core")
+    band, cap = REGISTRY["regime.ma_band"], REGISTRY["risk.vol_cap"]
+    texts = {
+        ref: (band.describe(band.parse({"signal": ref}), ctx), cap.describe(cap.parse({"signal": ref}), ctx))
+        for ref in ("self:adjusted", "core:adjusted", "index:taiex", "index:taiex_tr")
+    }
+    assert texts["self:adjusted"] == texts["core:adjusted"]
+    assert texts["self:adjusted"][0].startswith("TX 期貨調整後的連續價格低於 200 日均線")
+    assert texts["index:taiex"][0].startswith("加權股價指數（不含息）低於 200 日均線")
+    assert "加權股價報酬指數" in texts["index:taiex_tr"][0]
+    assert "÷ 加權股價指數（不含息） 20 日年化實現波動" in texts["index:taiex"][1]
+    assert "÷ TX 期貨調整後的連續價格 20 日年化實現波動" in texts["self:adjusted"][1]
 
 
 # ----------------------------------------------------------------------------- SpecStrategy through the engine

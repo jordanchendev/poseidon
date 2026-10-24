@@ -28,6 +28,8 @@ from poseidon.pipeline.v3.instruments import (
     INSTRUMENTS,
     MAINTENANCE_MARGIN_RATIO,
     MAX_MARGIN_UTILISATION,
+    SIGNAL_INDICES,
+    TX_DAILY_DATA_SINCE,
     TX_INTRADAY_DATA_SINCE,
     ordered_frequencies,
 )
@@ -242,7 +244,7 @@ def _prop_text(prop: dict, required: bool) -> str:
             right = ")" if "exclusiveMaximum" in prop else "]"
             text += f" {left}{low}, {high}{right}"
         if "pattern" in prop:
-            text += ' "<alias|self>:<open|high|low|close|adjusted>"'
+            text += ' "<alias|self>:<open|high|low|close|adjusted>" | "index:<' + "|".join(SIGNAL_INDICES) + '>"'
     if required:
         return text + ", required"
     return f"{text}, default {json.dumps(prop.get('default'), ensure_ascii=False)}"
@@ -322,6 +324,32 @@ def _component_lines(component: Component) -> list[str]:
     return lines
 
 
+def _signal_series_lines() -> list[str]:
+    """Owner decision 2026-10-24 (afternoon) #1: the signal series is always named, never assumed."""
+
+    lines = [
+        "## Signal series",
+        "",
+        "`regime.ma_band` and `risk.vol_cap` read the daily series named by their `signal` parameter, which is "
+        "required (no default). The choice is part of the strategy: the same 200-day MA band over 2000-2014 ends 49% "
+        "apart on the TX adjusted series vs the TAIEX price index (49 vs 33 regime switches).",
+        "",
+        f"- `self:adjusted`: the traded futures' back-adjusted continuous price (MTX/TMF: TX's), from "
+        f"{TX_DAILY_DATA_SINCE.isoformat()}.",
+    ]
+    lines += [
+        f"- `index:{index.name}`: {index.name_en} ({index.name_zh}), from {index.data_since.isoformat()}."
+        for index in SIGNAL_INDICES.values()
+    ]
+    lines += [
+        "",
+        'An idea that only says "台指", "TAIEX" or "大盤" does not say which of these it means: that is a question for '
+        "the owner, answered before the idea reaches the pipeline. Never pick one silently.",
+        "",
+    ]
+    return lines
+
+
 def render_brief() -> str:
     acceptance = tmf_dynamic_leverage_3x()
     checked = validate_spec_v3(acceptance)
@@ -363,10 +391,11 @@ def render_brief() -> str:
         "",
         "Futures: tax 0.002% of notional on both legs, 1 tick slippage per side; margin approximated as "
         f"{INITIAL_MARGIN_RATIO:.1%} initial / {MAINTENANCE_MARGIN_RATIO:.1%} maintenance of notional. Daily prices "
-        "are TAIFEX contract-month data (signals use the back-adjusted continuous series); MTX and TMF trade on TX "
-        "prices with their own contract specs, flagged as proxy in reports (before the TMF listing the contract did "
-        "not exist).",
+        "are TAIFEX contract-month data (a signal on the futures reads the back-adjusted continuous series); MTX and "
+        "TMF trade on TX prices with their own contract specs, flagged as proxy in reports (before the TMF listing "
+        "the contract did not exist).",
         "",
+        *_signal_series_lines(),
         "## Components (what a spec CAN use)",
     ]
     for slot in SLOTS:

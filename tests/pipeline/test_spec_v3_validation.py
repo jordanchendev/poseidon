@@ -14,11 +14,13 @@ from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
 from poseidon.strategies.dsl.v2.examples import tx_atr_squeeze_breakout
 
-# Design §3.2, the describe() rendering of the acceptance spec, verbatim.
+# Design §3.2, the describe() rendering of the acceptance spec, with the signal series named
+# (owner decision 2026-10-24 afternoon #1: both links read the TAIEX price index).
 ACCEPTANCE_NARRATIVE = (
     "每個交易日收盤後決策，次一交易時段開盤成交。商品：微台指（TMF，價格以 TX 代理），結算日前 1 個交易日換月。"
-    "方向：一直做多。槓桿：基礎 3 倍；調整後的連續價格低於 200 日均線 ×(1−2%) 時改成 0.5 倍，高於 ×(1+2%) 才回到 3 倍；"
-    "再取 min(目前倍數, 0.75 ÷ 20 日年化實現波動)。口數 = 權益 × 倍數 ÷ (價格 × 10)，無條件捨去；差 1 口以上才調整。"
+    "方向：一直做多。槓桿：基礎 3 倍；加權股價指數（不含息）低於 200 日均線 ×(1−2%) 時改成 0.5 倍，高於 ×(1+2%) 才回到 "
+    "3 倍；再取 min(目前倍數, 0.75 ÷ 加權股價指數（不含息） 20 日年化實現波動)。口數 = 權益 × 倍數 ÷ (價格 × 10)，"
+    "無條件捨去；差 1 口以上才調整。"
 )
 
 
@@ -168,6 +170,34 @@ INVALID = [
         "reserved",
         "error",
     ),
+    (
+        "reserved_alias_index",
+        m(lambda d: d.update(instruments={"index": d["instruments"]["core"]})),
+        "instruments.index",
+        "reserved",
+        "error",
+    ),
+    (
+        "signal_missing",
+        m(lambda d: _lev(d, 1)["params"].pop("signal")),
+        "sleeves.0.leverage.1.params.signal",
+        "required",
+        "error",
+    ),
+    (
+        "signal_unknown_index",
+        m(lambda d: _lev(d, 2)["params"].update(signal="index:nikkei")),
+        "sleeves.0.leverage.2.params.signal",
+        "pattern",
+        "error",
+    ),
+    (
+        "signal_index_field",
+        m(lambda d: _lev(d, 1)["params"].update(signal="index:close")),
+        "sleeves.0.leverage.1.params.signal",
+        "index:taiex, index:taiex_tr",
+        "error",
+    ),
     ("future_without_roll", _drop(["instruments", "core", "roll"]), "instruments.core.roll", "roll policy", "error"),
     (
         "unknown_component",
@@ -313,7 +343,11 @@ INVALID = [
     ),
     (
         "duplicate_vol_cap",
-        m(lambda d: _sleeve(d)["leverage"].append({"component": "risk.vol_cap", "params": {"k": 1.0}})),
+        m(
+            lambda d: _sleeve(d)["leverage"].append(
+                {"component": "risk.vol_cap", "params": {"signal": "self:adjusted", "k": 1.0}}
+            )
+        ),
         "sleeves.0.leverage.3.component",
         "appears twice",
         "error",
@@ -440,8 +474,33 @@ def test_zero_contract_error_suggests_smaller_contracts():
 
 def test_data_window_before_the_daily_source_fails():
     result = validate_spec_v3(tmf_dynamic_leverage_3x(), feasibility=FeasibilityContext(start=date(1999, 1, 4)))
-    assert [issue.path for issue in result.errors] == ["instruments.core.symbol"]
+    assert result.errors[0].path == "instruments.core.symbol"
     assert "data starts 1998-07-21" in result.errors[0].msg
+    assert all(issue.path.endswith(".params.signal") for issue in result.errors[1:])  # index:taiex from 1999-01-05
+
+
+def test_signal_index_coverage_is_checked_at_the_largest_window():
+    # the acceptance spec reads index:taiex (rows from 1999-01-05); ma_days up to 250 needs ~380 calendar days
+    ok = validate_spec_v3(tmf_dynamic_leverage_3x(), feasibility=FeasibilityContext(start=date(2000, 2, 1)))
+    assert ok.ok, [issue.text() for issue in ok.errors]
+    early = validate_spec_v3(tmf_dynamic_leverage_3x(), feasibility=FeasibilityContext(start=date(1999, 12, 1)))
+    assert {issue.path for issue in early.errors} == {
+        "sleeves.0.leverage.1.params.signal",
+        "sleeves.0.leverage.2.params.signal",
+    }
+    assert "index:taiex (TAIEX price index) data starts 1999-01-05" in early.errors[0].msg
+    total_return = tmf_dynamic_leverage_3x()
+    for link in total_return["sleeves"][0]["leverage"][1:]:
+        link["params"]["signal"] = "index:taiex_tr"
+    assert (
+        validate_spec_v3(total_return)
+        .errors[0]
+        .msg.startswith("index:taiex_tr (TAIEX total-return index) data starts 2003-01-02")
+    )
+    adjusted = tmf_dynamic_leverage_3x()
+    for link in adjusted["sleeves"][0]["leverage"][1:]:
+        link["params"]["signal"] = "self:adjusted"
+    assert validate_spec_v3(adjusted, feasibility=FeasibilityContext(start=date(1999, 12, 1))).ok
 
 
 def test_first_bar_price_decides_contract_feasibility():

@@ -22,7 +22,7 @@ from typing import Annotated, Any, Literal
 import numpy as np
 from pydantic import Field
 
-from poseidon.pipeline.v3.instruments import INTRADAY_FREQUENCIES, Instrument
+from poseidon.pipeline.v3.instruments import INDEX_ALIAS, INTRADAY_FREQUENCIES, SIGNAL_INDICES, Instrument, signal_index
 from poseidon.pipeline.v3.registry import (
     AllocationComponent,
     CheckContext,
@@ -44,9 +44,15 @@ DAILY = frozenset({"1d"})
 INTRADAY = INTRADAY_FREQUENCIES
 ANY_FREQUENCY = DAILY | INTRADAY
 
-# "<alias>:<field>" -- a price series of a declared instrument alias ("self" = the sleeve's own).
+# A signal series ref (owner decision 2026-10-24 afternoon #1; required, no default):
+#   "<alias>:<field>" -- a price series of a declared instrument alias ("self" = the sleeve's own;
+#                        "adjusted" = the back-adjusted continuous futures price);
+#   "index:<name>"    -- a TWSE index (instruments.SIGNAL_INDICES: taiex price, taiex_tr total return).
 SERIES_FIELDS = ("open", "high", "low", "close", "adjusted")
-SERIES_REF_PATTERN = r"^(self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)$"
+SERIES_REF_PATTERN = (
+    r"^((self|[a-z][a-z0-9_]{0,31}):(" + "|".join(SERIES_FIELDS) + r")"
+    rf"|{INDEX_ALIAS}:(" + "|".join(SIGNAL_INDICES) + r"))$"
+)
 SeriesRef = Annotated[str, Field(pattern=SERIES_REF_PATTERN)]
 SERIES_ZH = {
     "adjusted": "調整後的連續價格",
@@ -60,13 +66,25 @@ LEVERAGE_MAX = 5.0  # parameter bound; the policy cap (validation.LEVERAGE_CAP) 
 
 
 def series_text(ref: str, ctx: DescribeContext) -> str:
+    """Which series a signal reads, in zh-TW: the index, or the instrument's (price source's) series."""
+
+    index = signal_index(ref)
+    if index is not None:
+        return index.name_zh
     alias, field = ref.split(":")
-    prefix = "" if alias in ("self", ctx.alias) else f"{alias} 的"
-    return prefix + SERIES_ZH[field]
+    if alias in ("self", ctx.alias):
+        source = ctx.instrument.price_proxy or ctx.instrument.symbol
+        return f"{source} 期貨{SERIES_ZH[field]}" if ctx.instrument.kind == "future" else SERIES_ZH[field]
+    return f"{alias} 的{SERIES_ZH[field]}"
 
 
 def series_alias_errors(field: str, ref: str, ctx: CheckContext) -> list[tuple[str, str]]:
     alias = ref.split(":")[0]
+    if alias == INDEX_ALIAS:
+        if signal_index(ref) is None:
+            names = ", ".join(f"{INDEX_ALIAS}:{name}" for name in SIGNAL_INDICES)
+            return [(field, f"series {ref!r}: an index series is one of {names}")]
+        return []
     if alias != "self" and alias not in ctx.aliases:
         return [(field, f"series {ref!r} names instrument alias {alias!r}, which is not declared in instruments")]
     return []
@@ -195,13 +213,13 @@ class MaBandRegime(LeverageComponent):
     )
 
     class Params(StrictParams):
-        signal: SeriesRef = "self:adjusted"
+        signal: SeriesRef
         ma_days: Annotated[int, Field(ge=20, le=400)] = 200
         band_pct: Annotated[float, Field(ge=0.0, le=0.10)] = 0.02
         off_leverage: Annotated[float, Field(ge=0.0, le=LEVERAGE_MAX)] = 0.5
 
     tunable = frozenset({"ma_days", "band_pct", "off_leverage"})
-    example = {"signal": "self:adjusted", "ma_days": 200, "band_pct": 0.02, "off_leverage": 0.5}
+    example = {"signal": "index:taiex", "ma_days": 200, "band_pct": 0.02, "off_leverage": 0.5}
 
     def history(self, params):
         return params.ma_days
@@ -263,12 +281,12 @@ class VolCap(LeverageComponent):
     summary = "Volatility cap: leverage = min(incoming, k / annualised realised volatility over window_days)."
 
     class Params(StrictParams):
-        signal: SeriesRef = "self:adjusted"
+        signal: SeriesRef
         window_days: Annotated[int, Field(ge=5, le=120)] = 20
         k: Annotated[float, Field(ge=0.1, le=3.0)] = 0.75
 
     tunable = frozenset({"window_days", "k"})
-    example = {"window_days": 20, "k": 0.75}
+    example = {"signal": "index:taiex", "window_days": 20, "k": 0.75}
 
     def history(self, params):
         return params.window_days + 1
@@ -287,7 +305,7 @@ class VolCap(LeverageComponent):
         return min(leverage_in, params.k / sigma)
 
     def describe(self, params, ctx):
-        return f"再取 min(目前倍數, {fmt(params.k)} ÷ {params.window_days} 日年化實現波動)"
+        return f"再取 min(目前倍數, {fmt(params.k)} ÷ {series_text(params.signal, ctx)} {params.window_days} 日年化實現波動)"
 
 
 # --------------------------------------------------------------------------- sizing

@@ -79,8 +79,11 @@ def test_daily_components_implement_their_hook_and_intraday_ones_wait_for_step_7
     with pytest.raises(NotImplementedError, match="no daily behaviour"):
         REGISTRY["direction.dsl_rules"].step({}, None, None)
     ma_band = REGISTRY["regime.ma_band"]
-    assert ma_band.history(ma_band.parse({"ma_days": 250})) == 250
-    assert REGISTRY["risk.vol_cap"].history(REGISTRY["risk.vol_cap"].parse({"window_days": 20})) == 21
+    assert ma_band.history(ma_band.parse({"signal": "index:taiex", "ma_days": 250})) == 250
+    assert (
+        REGISTRY["risk.vol_cap"].history(REGISTRY["risk.vol_cap"].parse({"signal": "self:adjusted", "window_days": 20}))
+        == 21
+    )
 
 
 def test_instrument_table_matches_the_design_defaults():
