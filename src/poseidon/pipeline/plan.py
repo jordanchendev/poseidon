@@ -100,6 +100,11 @@ DEFAULT_THRESHOLDS: dict = {
 # 3: frozen ``gates`` settings (Step 3b); 4: ``shadow_paper`` settings + full plan (Step 7);
 # 5: ``benchmark`` stage + ``gates.benchmark`` + benchmark_alpha_t_min / holdout_alpha_positive
 CONFIG_VERSION = 5
+# 6: spec v3 runs (design 2026-10-24 §8): engine "target_v1", spec_validator "spec_v3",
+# registry_version, component fingerprints, strategy_class, brief sha256
+# (poseidon.pipeline.v3.config). Skeleton only: default_config() keeps freezing
+# CONFIG_VERSION for DSL v2 runs until v3 runs are wired in (step 4).
+SPEC_V3_CONFIG_VERSION = 6
 SHADOW_PAPER_CONFIG_VERSION = 4
 BENCHMARK_CONFIG_VERSION = 5
 GATES_CONFIG_VERSION = 3

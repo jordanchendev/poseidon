@@ -3,7 +3,8 @@
 ``spec_validate`` looks its validator up by the run's frozen
 ``config_json["spec_validator"]``. ``dsl_v1`` (the Step-1 ``RuleConfig`` +
 ``CONDITION_REGISTRY`` check) stays registered for runs frozen before Step 2;
-new runs freeze ``dsl_v2``, the strict DSL v2 parser.
+new runs freeze ``dsl_v2``, the strict DSL v2 parser. ``spec_v3`` (CONFIG_VERSION 6) is
+registered for spec v3 runs, which nothing creates before step 4.
 """
 
 from __future__ import annotations
@@ -251,8 +252,29 @@ def param_count_errors(validated) -> list[dict]:
     return [{"path": "params", "msg": message, "type": "value_error"}]
 
 
+class SpecV3Validator:
+    """Spec v3 (CONFIG_VERSION 6, design 2026-10-24 §3.7); see :mod:`poseidon.pipeline.v3.validation`.
+
+    Registered so a v3 run can freeze ``spec_validator: "spec_v3"``; no run does
+    before step 4. Imported lazily: the registry pulls in the DSL and cost models.
+    """
+
+    name = "spec_v3"
+
+    def validate_spec(self, spec: dict) -> SpecValidation:
+        from poseidon.pipeline.v3.validation import SpecV3Validator as Impl
+
+        return Impl().validate_spec(spec)
+
+    def resolve(self, spec: dict) -> dict:
+        from poseidon.pipeline.v3.validation import SpecV3Validator as Impl
+
+        return Impl().resolve(spec)
+
+
 register_spec_validator(DslV1Validator())
 register_spec_validator(DslV2Validator())
+register_spec_validator(SpecV3Validator())
 
 
 def get_spec_validator(name: str) -> SpecValidator:
