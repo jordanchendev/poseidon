@@ -11,10 +11,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from poseidon.backtest.cost_model import get_cost_model
-from poseidon.pipeline.engine import ContractSpec, EngineConfig, run, target_leverage_units
+from poseidon.pipeline.engine import ContractSpec, EngineConfig, run
+from poseidon.pipeline.v3.instruments import INSTRUMENTS
 
-from .support import FAR, TMF, Scripted, bars, day, flat_bars, tmf
+from .support import FAR, TMF, TMF_PLAIN, Scripted, bars, day, flat_bars, tmf
 
 E0 = 1_000_000.0
 
@@ -26,19 +26,8 @@ def approx(x):
 # ----------------------------------------------------------------------------- sizing and fees
 
 
-def test_target_leverage_units_floor_and_nearest():
-    assert target_leverage_units(E0, 3.0, 20000, 10) == 15  # 3e6 / 2e5 exactly, not 14 on float noise
-    assert target_leverage_units(E0, 3.0, 20001, 10) == 14  # 14.9993 -> floor
-    assert target_leverage_units(E0, 3.0, 20001, 10, rounding="nearest") == 15
-    assert target_leverage_units(E0, 3.0, 20001, 10, direction=-1) == -14  # magnitude floored for shorts too
-    assert target_leverage_units(E0, 0.5, 20000, 10, weight=0.5) == 1  # 1.25
-    assert target_leverage_units(E0, 1.0, 50, 1, lot=1000) == 20000  # 20 lots of 1000 shares
-    assert target_leverage_units(-5.0, 3.0, 20000, 10) == 0
-    assert target_leverage_units(E0, 2.5 * 20000 * 10 / E0, 20000, 10, rounding="nearest") == 2  # half to even
-
-
-def test_contract_spec_reuses_pipeline_cost_model_and_fee_algorithm():
-    tx = ContractSpec.from_cost_model("TX", get_cost_model("tw_futures_pipeline"))
+def test_contract_spec_comes_from_the_instrument_table():
+    tx = ContractSpec.from_instrument(INSTRUMENTS["TX"])
     assert (tx.point_value, tx.tick_size, tx.commission_per_unit, tx.tax_rate, tx.slippage_ticks) == (
         200.0,
         1.0,
@@ -46,8 +35,21 @@ def test_contract_spec_reuses_pipeline_cost_model_and_fee_algorithm():
         2e-5,
         1.0,
     )
+    assert (TMF.point_value, TMF.commission_per_unit, TMF.price_proxy, str(TMF.listed_since)) == (
+        10.0,
+        20.0,
+        "TX",
+        "2024-07-29",
+    )
+    assert (TMF.initial_margin_ratio, TMF.maintenance_margin_ratio) == (0.07, 0.054)
+    assert ContractSpec.from_instrument(INSTRUMENTS["MTX"]).commission_per_unit == 25.0
+    with pytest.raises(ValueError, match="futures only"):
+        ContractSpec.from_instrument(INSTRUMENTS["TXO"])
+    tax_on_exit_only = dataclasses.replace(
+        INSTRUMENTS["TX"], cost_model=dataclasses.replace(INSTRUMENTS["TX"].cost_model, tax_on_entry=False)
+    )
     with pytest.raises(ValueError, match="tax_on_entry"):
-        ContractSpec.from_cost_model("TX", get_cost_model("tw_futures"))
+        ContractSpec.from_instrument(tax_on_exit_only)
     assert TMF.fill_price(15, 20000) == 20001 and TMF.fill_price(-15, 20000) == 19999
     tax, commission = TMF.leg_fees(15, 20001)
     assert tax == approx(2e-5 * 15 * 20001 * 10) and commission == 300.0
@@ -304,12 +306,11 @@ def test_positions_daily_reports_rounding_and_margin():
 
 
 def test_proxy_flag_from_listing_date_and_price_proxy():
-    spec = dataclasses.replace(TMF, listed_since=day(1).date())
+    spec = dataclasses.replace(TMF_PLAIN, listed_since=day(1).date())
     res = run(Scripted({}), tmf(flat_bars([20000] * 3), spec=spec), EngineConfig())
     assert res.positions_daily["proxy"].tolist() == [True, False, False]
-    spec = dataclasses.replace(TMF, price_proxy="TX")
-    res = run(Scripted({}), tmf(flat_bars([20000] * 2), spec=spec), EngineConfig())
-    assert res.positions_daily["proxy"].all()
+    res = run(Scripted({}), tmf(flat_bars([20000] * 2), spec=TMF), EngineConfig())
+    assert res.positions_daily["proxy"].all()  # TMF is priced from TX for the whole window
 
 
 def test_warm_up_bars_before_start_are_visible_but_not_traded():

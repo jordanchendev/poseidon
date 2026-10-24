@@ -9,7 +9,7 @@ from poseidon.pipeline.engine.audit import TruncationAuditReport, truncation_aud
 from poseidon.pipeline.engine.data import FUTURES_BAR_COLUMNS, FuturesInput
 from poseidon.pipeline.engine.records import EngineResult
 from poseidon.pipeline.engine.simulator import Decision, EngineConfig, TargetStrategy, run
-from poseidon.pipeline.engine.specs import ContractSpec, target_leverage_units
+from poseidon.pipeline.engine.specs import ContractSpec
 from poseidon.pipeline.engine.view import BookView, Fill, MarketView, SeriesView
 
 __all__ = [
@@ -26,6 +26,5 @@ __all__ = [
     "TargetStrategy",
     "TruncationAuditReport",
     "run",
-    "target_leverage_units",
     "truncation_audit",
 ]

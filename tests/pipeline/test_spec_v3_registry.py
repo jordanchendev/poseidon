@@ -66,14 +66,19 @@ def test_fingerprints_are_name_at_version_and_sha256():
     assert component_fingerprints(["leverage.base"]) == {"leverage.base@1": prints["leverage.base@1"]}
 
 
-def test_engine_seams_are_abstract_until_the_engine_lands():
+def test_daily_components_implement_their_hook_and_intraday_ones_wait_for_step_7():
+    from poseidon.pipeline.v3.compiler import HOOKS
+
+    missing = []
+    for component in REGISTRY.values():
+        hook = HOOKS.get(component.slot)
+        base = next(c for c in type(component).__mro__ if c.__dict__.get("slot") == component.slot)
+        if hook and getattr(type(component), hook) is getattr(base, hook):
+            missing.append(component.name)
+    assert sorted(missing) == ["direction.dsl_rules", "roll.at_settlement"]
+    with pytest.raises(NotImplementedError, match="no daily behaviour"):
+        REGISTRY["direction.dsl_rules"].step({}, None, None)
     ma_band = REGISTRY["regime.ma_band"]
-    with pytest.raises(NotImplementedError):
-        ma_band.step(ma_band.parse({}), None, None, 3.0)
-    with pytest.raises(NotImplementedError):
-        REGISTRY["rebalance.daily"].should_trade(
-            REGISTRY["rebalance.daily"].parse({}), None, current_units=1, target_units=2, ctx=None
-        )
     assert ma_band.history(ma_band.parse({"ma_days": 250})) == 250
     assert REGISTRY["risk.vol_cap"].history(REGISTRY["risk.vol_cap"].parse({"window_days": 20})) == 21
 
@@ -120,8 +125,11 @@ def test_target_leverage_sizing_reproduces_the_design_example(symbol, units):
 
 def test_rounding_keeps_the_sign_and_floors_the_magnitude():
     assert round_units(6.57, "floor") == 6 and round_units(-6.57, "floor") == -6
-    assert round_units(6.5, "nearest") == 7 and round_units(-6.5, "nearest") == -7
+    assert round_units(6.57, "nearest") == 7 and round_units(-6.57, "nearest") == -7
+    assert round_units(6.5, "nearest") == 6 and round_units(7.5, "nearest") == 8  # half to even, as levtx
     assert round_units(0.99, "floor") == 0 and round_units(2.9999999999, "floor") == 3  # float noise
+    with pytest.raises(ValueError, match="rounding"):
+        round_units(1.0, "ceil")
     fixed = REGISTRY["sizing.fixed_contracts"]
     assert (
         fixed.units(fixed.parse({"n": 2}), equity=1, direction=-1, leverage=0, weight=1, price=1, instrument=None) == -2
