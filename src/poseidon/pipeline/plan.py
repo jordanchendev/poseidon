@@ -33,14 +33,18 @@ GATE_STAGES: tuple[str, ...] = ("param_stability", "dsr", "cost_stress", "regime
 # plan validation (``requires_for``). A live run therefore keeps its input
 # hashes across the upgrade (shadow_paper: config_sha256 + upstream shas +
 # PAPER_VERSION).
-STAGE_INTRODUCED_AT: dict[str, int] = {"benchmark": 5, "execution_timing": 6}
+STAGE_INTRODUCED_AT: dict[str, int] = {"benchmark": 5, "execution_timing": 6, "spec_faithfulness": 6}
 # The gates every run with a holdout has had (completion_reason).
 CORE_GATE_STAGES: tuple[str, ...] = tuple(name for name in GATE_STAGES if name not in STAGE_INTRODUCED_AT)
 # The one stage order every plan is a subsequence of (design 2026-10-24 §8). ``execution_timing`` is the
 # blocking execution-timing gate of spec v3 daily runs (CONFIG_VERSION 6, owner decision 2026-10-24 #2);
-# V1_STAGE_PLAN (the DSL v2 plan, CONFIG_VERSION <= 5) is unchanged and never contains it.
+# ``spec_faithfulness`` is the report-only JEV review of the spec against the idea (§4, step 6). Nothing
+# requires it, so adding it changes no other stage's requires or input hash. V1_STAGE_PLAN (the DSL v2
+# plan, CONFIG_VERSION <= 5) is unchanged and never contains either.
 CANONICAL_ORDER: tuple[str, ...] = (
-    *V1_STAGE_PLAN[: V1_STAGE_PLAN.index("benchmark") + 1],
+    *V1_STAGE_PLAN[: V1_STAGE_PLAN.index("spec_validate") + 1],
+    "spec_faithfulness",
+    *V1_STAGE_PLAN[V1_STAGE_PLAN.index("spec_validate") + 1 : V1_STAGE_PLAN.index("benchmark") + 1],
     "execution_timing",
     *V1_STAGE_PLAN[V1_STAGE_PLAN.index("benchmark") + 1 :],
 )
@@ -57,8 +61,11 @@ V3_GATE_STAGES: tuple[str, ...] = (
     "wfe",
     "holdout",
 )
+# ``spec_faithfulness`` joined the plan of runs created after step 6b (no CONFIG_VERSION bump: a v3 run
+# frozen earlier keeps its stored plan without it, and no stage requires it).
 V3_DAILY_STAGE_PLAN: tuple[str, ...] = (
     "spec_validate",
+    "spec_faithfulness",
     "backtest",
     "optimize",
     *V3_GATE_STAGES,
@@ -486,6 +493,32 @@ def validate_stage_plan(
             raise StagePlanError(f"stage {name} requires {', '.join(missing)} earlier in the plan")
         seen.add(name)
     return list(stage_plan)
+
+
+# --- Step 6b: JEV spec faithfulness (frozen into spec v3 runs by v3.config.daily_run_config) ---
+# Key, pin and identity check are spec_generate's (poseidon.pipeline.jev). ``blocking`` stays False --
+# the verdict is pass with a warning summary -- until the owner's pipeline control set qualifies JEV
+# (``qualification``, §4 / §12 #12); the flip is frozen into new runs only. ``precheck`` "strict": only a
+# multiple or sign mismatch in a clause decides ``contradicts`` without JEV (clause_precheck).
+DEFAULT_SPEC_FAITHFULNESS: dict = {
+    "provider": "openrouter",
+    "endpoint": "/systemone",
+    "model": "typesafe/jev-1.13",
+    "blocking": False,
+    "qualification": {
+        "status": "not_qualified",
+        "control_set": "local_dev/design/pv2-jev-control-set.jsonl (owner-labelled)",
+        "agreement_min": 0.95,
+        "contradicts_recall_min": 1.0,
+    },
+    "precheck": "strict",
+    "max_clauses": 40,
+    # 3 questions per clause. Measured by research: ~$0.00002-0.00004 and ~470 ms per call.
+    "max_calls_per_attempt": 120,
+    "max_cost_usd_per_attempt": 0.05,
+    "estimate_usd_per_call": 0.0002,  # booked when OpenRouter reports no cost (5-10x the measured price)
+    "request_timeout_seconds": 30,
+}
 
 
 # --- Step 4: LLM spec generation (frozen per run) ---

@@ -16,11 +16,12 @@ from poseidon.pipeline.spec_llm_v3 import EXAMPLE_IDEA
 from poseidon.pipeline.stages import SpecGenerateStage
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from tests.pipeline.conftest import Clock, Harness, synthetic_registry
+from tests.pipeline.jev_support import FakeOpenRouter
 from tests.pipeline.test_spec_llm import KEY, LABEL, FakeClient, reply
 from tests.pipeline.v3_wiring_support import CLOCK_START, build_long_store, create_v3, planted_edge_spec, v3_registry
 
 pytestmark = pytest.mark.postgresql
-PLAN = ["spec_generate", "spec_validate", "backtest"]
+PLAN = ["spec_generate", "spec_validate", "spec_faithfulness", "backtest"]
 PLANTED_IDEA = "微台做多，槓桿 3 倍，每天收盤後依權益調整口數。台指期收盤跌破 200 日線 2% 就空手，站回 2% 回到 3 倍。"
 
 
@@ -59,7 +60,9 @@ def _llm_env(monkeypatch):
 
 def generating(registry, client):
     registry["spec_generate"] = SpecGenerateStage(
-        client_factory=lambda key, timeout: client, pin_provider=lambda: LABEL
+        client_factory=lambda key, timeout: client,
+        pin_provider=lambda: LABEL,
+        jev_client_factory=FakeOpenRouter(label=LABEL).factory(),
     )
     return registry
 
@@ -86,7 +89,7 @@ def test_idea_only_create_freezes_config_7_once(pipeline_sessions, tmp_path, sto
 
 @pytest.mark.usefixtures("pipeline_engine")
 def test_a_daily_route_runs_the_generated_spec_on_the_daily_engine(pipeline_sessions, tmp_path, store):
-    client = FakeClient([reply(planted_reply())])
+    client = FakeClient([reply(planted_reply())] * 2)  # the fake JEV disagrees once: one repair round
     harness = Harness(
         pipeline_sessions, tmp_path / "a", Clock(CLOCK_START), registry=generating(v3_registry(store), client)
     )
@@ -109,7 +112,9 @@ def test_a_daily_route_runs_the_generated_spec_on_the_daily_engine(pipeline_sess
     assert attempts["backtest"].artifact_json["report"]["summary"].startswith("backtest ✅")
     stages = [entry["stage"] for entry in PipelineService(pipeline_sessions()).stages(run_id)]
     assert stages == PLAN
-    assert len(client.chat_payloads) == 1
+    assert len(client.chat_payloads) == 2 and generated["jev_review"]["usage"]["calls"] > 0
+    faithfulness = attempts["spec_faithfulness"].artifact_json["report"]
+    assert faithfulness["clause_source"] == "spec_generate" and faithfulness["counts"]["clauses"] == 5
 
 
 @pytest.mark.usefixtures("pipeline_engine")
@@ -129,6 +134,11 @@ def test_an_intraday_route_continues_on_the_dsl_path(pipeline_sessions, tmp_path
     generated = attempts["spec_generate"].artifact_json["report"]
     assert generated["route"] == {"strategy_class": "intraday_fixed", "engine": "dsl_v2"}
     assert attempts["spec_validate"].artifact_json["report"]["validator"] == "dsl_v2"
+    assert [entry["stage"] for entry in PipelineService(pipeline_sessions()).stages(run_id)] == [
+        "spec_generate",
+        "spec_validate",
+        "backtest",
+    ]
     assert "metrics" in attempts["backtest"].artifact_json["report"]  # the legacy runner
 
 
@@ -149,7 +159,7 @@ def test_ambiguous_ends_unsupported_and_can_be_rerun(pipeline_sessions, tmp_path
 
 @pytest.mark.usefixtures("pipeline_engine")
 def test_family_members_inherit_the_routed_class(pipeline_sessions, tmp_path, store):
-    client = FakeClient([reply(planted_reply())])
+    client = FakeClient([reply(planted_reply())] * 2)  # the fake JEV disagrees once: one repair round
     harness = Harness(
         pipeline_sessions, tmp_path / "a", Clock(CLOCK_START), registry=generating(v3_registry(store), client)
     )

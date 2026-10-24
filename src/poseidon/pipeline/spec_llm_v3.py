@@ -15,9 +15,11 @@ Program checks on an ``ok`` reply, all fed back to the model (at most ``max_repa
 the v3 validator (``validate_spec_v3``); every clause quote is a verbatim substring of the idea; every
 sentence of the idea is cited by at least one clause; a cited component is one the spec uses; every
 ``signal`` series is one the idea names (a keyword net under the prompt rule); and the optional
-``review(idea_text, clauses, spec)`` hook (the JEV reviewer plugs in here), whose items are fed back
-like validator errors. Review items left after the last round are recorded, not blocking (JEV is
-report-only until the owner's control set says otherwise, §4).
+``review(idea_text, clauses, spec)`` hook (the JEV reviewer, ``faithfulness.FaithfulnessReviewer``),
+called once a spec passes every program check. Its items get at most one repair round, fed back like
+validator errors. JEV is report-only until the owner's control set qualifies it (§4): the spec the
+reviewer saw stays the fallback, so a reply to its feedback that fails a check, or a disagreement left
+after the repair, never fails the attempt (``review_unresolved`` / ``review_repair`` in the report).
 
 Key discipline, identity check and the cost cap are those of :mod:`poseidon.pipeline.spec_llm`
 (same key ``STRATEGY_PIPELINE_OPENROUTER_KEY``, same pin, no other variable is read). The idea text is
@@ -70,7 +72,12 @@ INTRADAY_CLASS = "intraday_fixed"
 # content no slot holds) and ``not_strategy`` (commentary, backtest claims, questions to the reader).
 FRAME_SLOTS = ("instruments", "frequency", "capital")
 CLAUSE_SLOTS = (*FRAME_SLOTS, *SLOTS, "other", "not_strategy")
+# Singular / plural spellings of a clause slot (JEV's labels and §3.1's slot names) -> CLAUSE_SLOTS.
+SLOT_ALIASES = {"instrument": "instruments", "exits": "exit", "hedges": "hedge"}
 MAX_CLAUSES = 150
+# Reviewer items (JEV) get at most one repair round: JEV is report-only (design §4; 61% agreement on the
+# draft control set), so its disagreements may prompt a repair but never decide the outcome.
+MAX_REVIEW_REPAIRS = 1
 MAX_QUOTE = 2000
 SERIES_PARAM = "signal"
 # What the idea must say for a signal series. Owner decision 2026-10-24 afternoon #1 names the three
@@ -317,6 +324,7 @@ def _clauses(value: Any, errors: list[dict]) -> list[dict]:
         if not isinstance(quote, str) or not quote.strip() or len(quote) > MAX_QUOTE:
             errors.append(_err(f"{path}.quote", f"quote must be a non-empty string of at most {MAX_QUOTE} characters"))
             continue
+        slot = SLOT_ALIASES.get(slot, slot) if isinstance(slot, str) else slot
         if slot not in CLAUSE_SLOTS:
             errors.append(_err(f"{path}.slot", f"slot must be one of {', '.join(CLAUSE_SLOTS)}"))
             continue
@@ -572,6 +580,8 @@ class _Rounds:
         self.review = review
         self.entry: dict = {}
         self.errors: list[dict] = []
+        self.accepted: dict | None = None  # the spec shown to the reviewer before its repair round
+        self.review_repairs = MAX_REVIEW_REPAIRS
 
     def _call(self, client, messages: list[dict], number: int) -> Any:
         report, cap = self.report, self.report["max_cost_usd_per_attempt"]
@@ -638,6 +648,8 @@ class _Rounds:
             content = self._call(client, messages, number)
             entry = self.entry
             kind, parsed = parse_reply_v3(content)
+            if self.accepted is not None and kind != "ok":
+                return self._keep_accepted(kind, number)
             if kind in ("unsupported", "ambiguous"):
                 entry["outcome"] = kind
                 report["status"] = kind
@@ -653,11 +665,15 @@ class _Rounds:
             if kind == "contract_error":
                 errors = parsed["errors"]
             else:
+                accepted = self.accepted
                 outcome = self._check_ok(parsed, reviews, last=number + 1 >= max_rounds)
                 if outcome is not None:
                     entry.setdefault("outcome", "valid" if outcome[0] == Verdict.PASS else "unsupported")
                     report["repair_rounds"] = number
                     return outcome
+                if accepted is not None:  # the reply to the review failed a program check
+                    entry["errors"] = self.errors[:MAX_ERRORS_PER_ROUND]
+                    return self._keep_accepted("invalid", number)
                 errors = self.errors
             entry["outcome"] = entry.get("outcome") or ("contract_error" if kind == "contract_error" else "invalid")
             entry["errors"] = errors[:MAX_ERRORS_PER_ROUND]
@@ -713,34 +729,72 @@ class _Rounds:
         if blocked is not None:
             report["rejected_spec"] = spec
             return blocked
+        candidate = {
+            "spec": spec,
+            "result": result,
+            "clauses": clauses,
+            "unimplemented": unimplemented,
+            "assumptions": assumptions,
+            "used": used,
+            "round": entry["round"],
+        }
         if self.review is not None:
             items = _normalize_review(self.review(self.idea, clauses, spec))
             reviews.append({"round": entry["round"], "items": items})
             report["review"] = reviews
-            if items and not last:
+            if items and self.review_repairs and not last:
+                # Report-only (design §4): one repair round with the reviewer's items; whatever the model
+                # answers, this spec stays the fallback (``_keep_accepted``).
+                self.review_repairs -= 1
+                self.accepted = candidate
                 entry["outcome"] = "review"
                 self.errors = items
                 return None
             if items:
-                report["review_unresolved"] = items  # report-only: a reviewer never blocks (design §4)
-        components = sorted(used or ())
+                report["review_unresolved"] = items
+            elif "review_unresolved" in report:
+                del report["review_unresolved"]
+        return self._finalize(candidate)
+
+    def _finalize(self, candidate: dict) -> tuple[Verdict, str | None]:
+        report, result = self.report, candidate["result"]
+        clauses, unimplemented, assumptions = candidate["clauses"], candidate["unimplemented"], candidate["assumptions"]
         report.update(
             {
                 "status": "ok",
-                "spec": spec,
-                "spec_sha256": content_sha256(spec),
+                "spec": candidate["spec"],
+                "spec_sha256": content_sha256(candidate["spec"]),
                 "params": sorted(result.params),
                 "strategy_class": result.strategy_class,
                 "clauses": clauses,
                 "unimplemented": unimplemented,
                 "assumptions": assumptions,
                 "notes": list(result.notes),
-                "route": {"strategy_class": result.strategy_class, "engine": ENGINE_V3, "components": components},
+                "spec_round": candidate["round"],
+                "route": {
+                    "strategy_class": result.strategy_class,
+                    "engine": ENGINE_V3,
+                    "components": sorted(candidate["used"] or ()),
+                },
                 "summary": pass_summary(result.strategy_class, clauses, unimplemented, assumptions),
             }
         )
-        entry["outcome"] = "valid"
+        self.entry.setdefault("outcome", "valid")
         return Verdict.PASS, None
+
+    def _keep_accepted(self, outcome: str, number: int) -> tuple[Verdict, str | None]:
+        """The reply to a review round did not pass: keep the spec the reviewer was shown (report-only)."""
+
+        self.entry["outcome"] = outcome
+        candidate = self.accepted
+        self.report["review_unresolved"] = (self.report.get("review") or [{}])[-1].get("items", [])
+        self.report["review_repair"] = {
+            "round": number,
+            "outcome": outcome,
+            "kept": f"the round {candidate['round']} spec (reviewer feedback is report-only)",
+        }
+        self.report["repair_rounds"] = number
+        return self._finalize(candidate)
 
 
 def _name(spec: dict, path: str) -> str:
@@ -767,13 +821,77 @@ def generate_routed(
     *,
     pin: str | None,
     review: Review | None = None,
+    jev_client_factory=None,
     environ: Mapping[str, str] | None = None,
     client_factory: spec_llm.ClientFactory | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> SpecGenerationOutcome:
     """spec_generate of a routed run (CONFIG_VERSION 7): v3 first; an intraday route runs the DSL v2 generation
-    with the frozen intraday config's spec_generate section, unchanged."""
+    with the frozen intraday config's spec_generate section, unchanged.
 
+    The reviewer is the JEV ``FaithfulnessReviewer`` on the run's frozen ``spec_faithfulness`` section (unless
+    ``review`` is given). It is opened before the first LLM round: JEV unavailable (key, pin, identity, limit)
+    ends the attempt with ``error``. A JEV call failing later is recorded and the review counts as empty
+    (report-only). JEV calls and cost go into ``report["jev_review"]`` and ``jev_review_calls.json``, apart
+    from the LLM cost.
+    """
+
+    reviewer = None
+    faithfulness = config.get("spec_faithfulness")
+    if review is None and isinstance(faithfulness, dict):
+        from poseidon.pipeline import jev
+        from poseidon.pipeline.faithfulness import FaithfulnessReviewer
+
+        reviewer = FaithfulnessReviewer(faithfulness, pin=pin, environ=environ, client_factory=jev_client_factory)
+        try:
+            reviewer.open()
+        except jev.JevUnavailable as error:
+            reason = reviewer.session.scrub_text(f"JEV unavailable: {error}")[:MAX_TEXT]
+            report = {"origin": "llm", "generator": "spec_v3", "jev_review": _jev_report(reviewer, [])}
+            report["summary"] = f"spec_generate ⚠️ {reason}"[:300]
+            return SpecGenerationOutcome(Verdict.ERROR, reason, report)
+        review_errors: list[str] = []
+        review = _report_only(reviewer, review_errors)
+    try:
+        outcome = _generate_routed(idea_text, config, pin, review, environ, client_factory, clock)
+    finally:
+        if reviewer is not None:
+            reviewer.close()
+    if reviewer is None:
+        return outcome
+    report = dict(outcome.report)
+    report["jev_review"] = _jev_report(reviewer, review_errors)
+    return SpecGenerationOutcome(
+        outcome.verdict, outcome.reason, report, {**outcome.files, **reviewer.session.files("jev_review_calls.json")}
+    )
+
+
+def _report_only(reviewer, errors: list[str]) -> Review:
+    from poseidon.pipeline import jev
+
+    def review(idea_text: str, clauses: list[dict], spec: dict) -> list[dict]:
+        try:
+            return reviewer(idea_text, clauses, spec)
+        except jev.JevError as error:  # report-only: a failed JEV call never decides the attempt
+            errors.append(reviewer.session.scrub_text(str(error))[:MAX_TEXT])
+            return []
+
+    return review
+
+
+def _jev_report(reviewer, errors: list[str]) -> dict:
+    return reviewer.session.scrub(
+        {
+            "blocking": bool(reviewer.config.get("blocking")),
+            "usage": reviewer.session.usage(),
+            "rounds": reviewer.rounds,
+            "errors": errors,
+            "files": {"calls": "jev_review_calls.json"} if reviewer.session.calls else {},
+        }
+    )
+
+
+def _generate_routed(idea_text, config, pin, review, environ, client_factory, clock) -> SpecGenerationOutcome:
     by_class = config.get("by_class") or {}
     allowed = tuple(name for name in (*DAILY_CLASSES, INTRADAY_CLASS) if name in by_class)
     v3 = generate_spec_v3(

@@ -6,10 +6,11 @@ constants. The rendered files are checked in under ``generated/``; a golden
 test fails when they drift from what the registry renders now. Regenerate
 with ``python -m poseidon.pipeline.v3 brief``.
 
-Consumers (step 6 switches them over): scout reads ``capability_brief.md``
-instead of its ``CAPABILITY_BRIEF`` constant, ``bridge_sync`` pushes the file
-to Sisyphus, ``spec_generate`` v3 builds its system prompt from
-:func:`catalog`.
+Consumers: ``spec_generate`` v3 builds its system prompt from :func:`catalog`.
+The compact two-engine brief (:func:`render_capability_brief`, intraday DSL v2.1
+plus the daily v3 registry) is checked in at ``scripts/strategy_scout/
+capability_brief.md``; scout and ``bridge_sync`` (which pushes it to Sisyphus)
+read that file.
 """
 
 from __future__ import annotations
@@ -102,6 +103,37 @@ HIGHER_TIMEFRAME_RULE = (
     "unsupported as written; say so instead of substituting. A daily indicator belongs on frequency 1d (a 200-day MA "
     "regime is regime.ma_band with ma_days 200)."
 )
+
+
+# The intraday section of the combined brief, moved verbatim from scout.CAPABILITY_BRIEF (2026-10-24, f8c9f1d
+# rule included). Scout's prompt is exactly this text until step 7 lets scout propose daily ideas.
+DSL_V21_BRIEF = """\
+The downstream pipeline turns an idea into a DSL v2.1 strategy for TX (Taiwan index futures) and backtests it
+(5m bars by default, 1m/15m possible, 1 fixed contract, data from 2020-03). It CAN express:
+- Sessions: day 08:45-13:45 and night 15:00-05:00 (Asia/Taipei); time windows, minutes elapsed since session open.
+- Price (open/high/low/close); EMA / SMA (of close), ATR, RSI of the strategy interval (periods 2-400, ATR/RSI 2-100);
+  constants.
+- One level of smoothing of such an indicator: SMA or EMA (2-400 bars) of EMA/SMA/ATR/RSI, e.g. SMA50 of ATR14
+  (volatility contraction / expansion), EMA of RSI.
+- Rolling N-bar channel (Donchian): highest/lowest of high, low or close over the previous N bars (2-400; counted in
+  bars across sessions), for N-bar breakouts and N-bar swing stops.
+- Opening-range levels (high/low/mid/range of the first N minutes, 5-120), session open/high/low/VWAP, previous-session
+  and previous-day high/low/close (gap and prev-level ideas).
+- Conditions: crosses above/below, compares (> >= < <=) with point or ATR-multiple offsets, combined with all/any/none.
+  A multiplier on the compared side gives ratio thresholds (e.g. ATR < 0.7 x its SMA50; on a price level only a
+  0.9-1.1 percent envelope, e.g. close > 1.005 x EMA20).
+- Exits: stop loss (points, ATR multiple, or a level such as the N-bar low), take profit (points, ATR multiple,
+  R multiple, level), trailing stop (points / ATR, optionally after reaching some R), max hold bars, flat before session
+  end, max trades per session, no re-entry after stop, close on session change. Long and short entry rules, 1-6 rules.
+- 1-4 tunable numeric parameters per strategy (windows, stop/target sizes, thresholds).
+It CANNOT express (such ideas come back "unsupported"; do not propose them): higher timeframes (e.g. 60m EMA, daily
+RSI), smoothing a smoothed series, standard deviation / Bollinger bands / z-score / percentile rank, volume / volume
+profile / OI, options or implied volatility, order book, other instruments (NQ/ES/TE/stocks), news, fundamentals, ML
+models, position sizing, pyramiding. Companion data such as foreign flows is NOT available to the DSL. Entries must be
+rules on TX price/time/session levels, the indicators above and N-bar channels.
+Never stand in for a higher-timeframe indicator by reusing its length on intraday bars: a 200-day MA is NOT SMA(200) on
+5m bars (that spans 1-4 trading days, depending on the sessions). Such an idea is unsupported as written; say so instead of substituting.
+"""
 
 
 # --------------------------------------------------------------------------- JSON Schema (export only)
@@ -437,6 +469,108 @@ def render_brief() -> str:
         "The M1 acceptance spec (`tmf_dynamic_leverage_3x`) reads:",
         "",
         "> " + describe_spec(checked.template, checked.params),
+        "",
+    ]
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- combined brief (scout, Sisyphus)
+
+CAPABILITY_FILE = Path("scripts/strategy_scout/capability_brief.md")  # relative to the repo root
+INTRADAY_HEADING = "## A. Intraday TX strategies (DSL v2.1)"
+DAILY_HEADING = "## B. Daily strategies (spec v3, component registry)"
+
+
+def intraday_section(text: str) -> str:
+    """Part A of the combined brief, exactly :data:`DSL_V21_BRIEF` (what scout puts in its prompt)."""
+
+    _, _, rest = text.partition(INTRADAY_HEADING + "\n\n")
+    if not rest:
+        raise ValueError("no intraday section in the capability brief")
+    return rest.split("\n" + DAILY_HEADING, 1)[0].rstrip("\n") + "\n"
+
+
+def _compact_param(row: dict) -> str:
+    spec = "series ref, required" if row["name"] == "signal" else row["spec"]
+    return f"{row['name']} {spec}{' *' if row['tunable'] else ''}"
+
+
+def _compact_component(component: Component) -> str:
+    params = "; ".join(_compact_param(row) for row in _param_rows(component))
+    return f"- `{component.name}`: {component.summary}" + (f" [{params}]" if params else "")
+
+
+def render_capability_brief() -> str:
+    """One file for both engines: intraday DSL v2.1 (verbatim) and the daily registry (compact)."""
+
+    checked = validate_spec_v3(tmf_dynamic_leverage_3x())
+    if not checked.ok:
+        raise RuntimeError("the acceptance example no longer validates; fix the registry first")
+    lines = [
+        "# Strategy pipeline capability brief",
+        "",
+        f"Rendered from the component registry by `python -m poseidon.pipeline.v3 brief` (REGISTRY_VERSION "
+        f"{REGISTRY_VERSION}); edit the code, not this file. Two engines: A = intraday TX rules, B = daily "
+        "strategies. An idea belongs to B when it needs daily indicators, leverage, sizing or a long history; "
+        "to A when it is a bar-by-bar rule on TX price/time/session levels.",
+        "",
+        INTRADAY_HEADING,
+        "",
+        DSL_V21_BRIEF.rstrip("\n"),
+        "",
+        DAILY_HEADING,
+        "",
+        "Decide after each daily close, fill at the next session's open (TX family: the 15:00 night session). One or "
+        f"more sleeves = instrument + direction + leverage chain + sizing + rebalance. {MIN_PARAMS}-{MAX_PARAMS} "
+        "tunable parameters per spec (`*` = may be one). Daily runs start "
+        f"{DAILY_WINDOW_START.isoformat()}; warm-up comes from earlier data.",
+        "",
+        "Instruments (point value TWD/pt, fee TWD/contract/side, daily data from):",
+    ]
+    for row in INSTRUMENTS.values():
+        if row.tradable:
+            prices = "TX prices, proxy" if row.price_proxy else "own prices"
+            lines.append(
+                f"- {row.symbol} ({row.name_zh}): {row.point_value_twd:g}, {row.cost_model.commission_per_contract:g}, "
+                f"{row.daily_data_since.isoformat() if row.daily_data_since else 'n/a'}; {prices}; listed "
+                f"{row.listed_since.isoformat()}"
+            )
+        else:
+            lines.append(f"- {row.symbol} ({row.name_zh}): not available yet ({row.planned})")
+    lines += [
+        f"Futures: tax 0.002% both legs, 1 tick slippage/side, margin ~{INITIAL_MARGIN_RATIO:.1%} initial. "
+        f"Capital {MIN_INITIAL_CAPITAL_TWD:,}-{MAX_INITIAL_CAPITAL_TWD:,} TWD (default 1,000,000); leverage at most "
+        f"{LEVERAGE_CAP:g}x; integer contracts (every grid point must buy 1+ contract within "
+        f"{MAX_ROUNDING_ERROR:.0%} of target leverage, else use MTX/TMF); initial margin at most "
+        f"{MAX_MARGIN_UTILISATION:.0%} of equity; shorts only via futures.",
+        "",
+        "### Signal series (required by regime.ma_band and risk.vol_cap; never assumed)",
+        "",
+        "The same 200-day MA band over 2000-2014 ends 49% apart on the TX adjusted series vs the TAIEX price index "
+        '(49 vs 33 regime switches). If the idea only says "台指", "TAIEX", "大盤" or a bare 均線, ask the owner which '
+        "series; never pick silently.",
+        f"- `self:adjusted`: the traded futures' back-adjusted continuous price, from "
+        f"{TX_DAILY_DATA_SINCE.isoformat()}.",
+    ]
+    lines += [
+        f"- `index:{index.name}`: {index.name_en} ({index.name_zh}), from {index.data_since.isoformat()}."
+        for index in SIGNAL_INDICES.values()
+    ]
+    lines += ["", "### What B CAN use (`*` = tunable)", ""]
+    for slot in SLOTS:
+        for component in components_for(slot):
+            if "1d" in component.frequencies and component.name != "direction.dsl_rules":
+                lines.append(_compact_component(component))
+    lines += [
+        "",
+        "### What B CANNOT express (comes back unsupported)",
+        "",
+        "Not yet (planned): " + ", ".join(f"`{name}`" for name in PLANNED_COMPONENTS) + ".",
+    ]
+    lines += [f"- {text} (`{token}`)" for token, text in UNSUPPORTED_CAPABILITIES.items()]
+    lines += [
+        "- A daily indicator is never emulated on intraday bars (a 200-day MA is NOT SMA(200) on 5m bars): such an idea "
+        "is a B strategy on frequency 1d (e.g. `regime.ma_band` with ma_days 200).",
         "",
     ]
     return "\n".join(lines)

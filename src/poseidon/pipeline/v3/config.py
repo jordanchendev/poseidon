@@ -19,6 +19,7 @@ from poseidon.pipeline.plan import (
     DAILY_BACKTEST,
     DAILY_DATA_START,
     DEFAULT_OPTIMIZE,
+    DEFAULT_SPEC_FAITHFULNESS,
     DEFAULT_SPEC_GENERATE_V3,
     HOLDOUT_FRACTION,
     ROUTED_CLASSES,
@@ -123,6 +124,7 @@ def _daily_config(fields: dict, *, as_of: date, refdata: dict[str, str], stage_p
         "seed": 0,
         "backtest": copy.deepcopy(DAILY_BACKTEST),
         "optimize": copy.deepcopy(DEFAULT_OPTIMIZE),
+        "spec_faithfulness": copy.deepcopy(DEFAULT_SPEC_FAITHFULNESS),
     }
 
 
@@ -202,6 +204,9 @@ def idea_run_config(
         },
         "stage_plan": [name for name in CANONICAL_ORDER if name in stages],
         "by_class": by_class,
+        # The JEV reviewer of spec_generate v3's repair loop (report-only; the daily classes freeze the
+        # same section for their spec_faithfulness stage).
+        "spec_faithfulness": copy.deepcopy(DEFAULT_SPEC_FAITHFULNESS),
     }
     if unavailable:
         config["unavailable"] = unavailable

@@ -40,6 +40,7 @@ from poseidon.pipeline.v3.config import REFDATA_DATASETS, idea_run_config, is_v3
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.registry import REGISTRY, component_fingerprints
 from poseidon.pipeline.v3.validation import validate_spec_v3
+from tests.pipeline.jev_support import FakeOpenRouter
 from tests.pipeline.test_spec_llm import ENV, KEY, LABEL, FakeClient, assert_no_key, reply
 
 AS_OF = date(2026, 10, 24)
@@ -80,6 +81,19 @@ def run_v3(client, *, idea=EXAMPLE_IDEA, cfg=None, pin=LABEL, env=ENV, **kw):
         idea, cfg if cfg is not None else v3_config(), pin=pin, environ=env, client_factory=factory, **kw
     )
     return outcome, created
+
+
+def jev_factory(**kw):
+    """A fake JEV behind the same key and pin as the LLM fakes (the identity check is shared)."""
+
+    fake = FakeOpenRouter(label=LABEL, **kw)
+    return fake, fake.factory()
+
+
+def run_routed(client, idea, config=None, **kw):
+    if "jev_client_factory" not in kw and "review" not in kw:
+        kw["jev_client_factory"] = jev_factory()[1]
+    return generate_routed(idea, config or routed(), pin=LABEL, environ=ENV, client_factory=lambda *_: client, **kw)
 
 
 def routed(classes=("intraday_fixed", "daily_equity", "daily_fixed"), refdata=REFDATA) -> dict:
@@ -360,10 +374,10 @@ def test_review_items_go_back_like_validator_errors():
     assert "review_unresolved" not in outcome.report
 
 
-def test_review_disagreement_left_after_the_last_round_is_report_only():
+def test_review_disagreement_left_after_its_one_repair_is_report_only():
     client = FakeClient([reply(ok_reply())] * 3)
     outcome, _ = run_v3(client, review=lambda *_: ["contradicts: 3 倍 vs 2 倍"])
-    assert outcome.verdict == Verdict.PASS and len(client.chat_payloads) == 3
+    assert outcome.verdict == Verdict.PASS and len(client.chat_payloads) == 2
     assert outcome.report["review_unresolved"] == [{"path": "review", "msg": "contradicts: 3 倍 vs 2 倍"}]
 
 
@@ -423,9 +437,7 @@ def test_intraday_route_runs_the_unchanged_dsl_generation():
             reply({"status": "ok", "spec": dsl_spec, "assumptions": ["stop at the range"]}, cost=0.001),
         ]
     )
-    outcome = generate_routed(
-        "TX 30-minute opening range breakout", routed(), pin=LABEL, environ=ENV, client_factory=lambda *_: client
-    )
+    outcome = run_routed(client, "TX 30-minute opening range breakout")
     assert outcome.verdict == Verdict.PASS, outcome.report
     report = outcome.report
     assert report["route"] == {"strategy_class": "intraday_fixed", "engine": "dsl_v2"}
@@ -448,23 +460,73 @@ def test_an_intraday_spec_v3_is_routed_to_dsl_too():
             reply({"status": "ok", "spec": spec_llm._param_example(), "assumptions": []}),
         ]
     )
-    outcome = generate_routed("TX ORB", routed(), pin=LABEL, environ=ENV, client_factory=lambda *_: client)
+    outcome = run_routed(client, "TX ORB")
     assert outcome.verdict == Verdict.PASS and outcome.report["route"]["engine"] == "dsl_v2"
 
 
 def test_intraday_route_outside_the_family_class_is_unsupported_without_dsl():
     client = FakeClient([reply({"status": "intraday"})])
-    outcome = generate_routed(
-        "TX ORB", routed(classes=("daily_equity",)), pin=LABEL, environ=ENV, client_factory=lambda *_: client
-    )
+    outcome = run_routed(client, "TX ORB", routed(classes=("daily_equity",)))
     assert outcome.verdict == Verdict.UNSUPPORTED and len(client.chat_payloads) == 1
     assert "its family's class" in outcome.reason
 
 
-def test_a_daily_route_returns_the_v3_report():
-    client = FakeClient([reply(ok_reply())])
-    outcome = generate_routed(EXAMPLE_IDEA, routed(), pin=LABEL, environ=ENV, client_factory=lambda *_: client)
+def test_a_daily_route_is_reviewed_by_jev_with_one_report_only_repair():
+    fake, factory = jev_factory()
+    client = FakeClient([reply(ok_reply()), reply(ok_reply())])
+    outcome = run_routed(client, EXAMPLE_IDEA, jev_client_factory=factory)
     assert outcome.verdict == Verdict.PASS and outcome.report["route"]["strategy_class"] == "daily_equity"
+    report = outcome.report
+    # the fake JEV puts "做多" in leverage: a slot disagreement goes back once, then stays report-only
+    assert len(client.chat_payloads) == 2 and "JEV maps clause c2" in client.chat_payloads[1]["messages"][-1]["content"]
+    assert report["rounds"][0]["outcome"] == "review" and report["review_unresolved"]
+    jev_review = report["jev_review"]
+    assert jev_review["blocking"] is False and len(jev_review["rounds"]) == 2
+    assert jev_review["usage"]["calls"] == len(fake.systemone_bodies) > 0
+    assert jev_review["usage"]["cost_usd"] == pytest.approx(0.00004 * len(fake.systemone_bodies))
+    assert report["total_cost_usd"] == 0.002  # the LLM cost alone
+    assert "jev_review_calls.json" in outcome.files and "llm_transcript_v3.json" in outcome.files
+    assert report["clauses"][0] == {"id": "c1", "quote": "用微台", "slot": "instruments", "component": None}
+    assert_no_key(outcome)
+
+
+def test_jev_unavailable_errors_before_any_llm_call():
+    _fake, factory = jev_factory(label="sk-or-v1-999...bcd")
+    client = FakeClient([reply(ok_reply())])
+    outcome = run_routed(client, EXAMPLE_IDEA, jev_client_factory=factory)
+    assert outcome.verdict == Verdict.ERROR and outcome.reason.startswith("JEV unavailable")
+    assert client.chat_payloads == [] and outcome.report["jev_review"]["usage"]["calls"] == 0
+
+
+def test_a_failing_jev_call_is_recorded_and_never_decides():
+    _fake, factory = jev_factory(systemone_status=500, error_message="upstream")
+    client = FakeClient([reply(ok_reply())])
+    outcome = run_routed(client, EXAMPLE_IDEA, jev_client_factory=factory)
+    assert outcome.verdict == Verdict.PASS and len(client.chat_payloads) == 1
+    assert "request failed" in outcome.report["jev_review"]["errors"][0]
+
+
+def test_a_reply_to_review_feedback_that_fails_a_check_keeps_the_reviewed_spec():
+    broken = ok_reply(clauses=[{"id": "c1", "quote": "paraphrase", "slot": "other", "component": None}])
+    client = FakeClient([reply(ok_reply()), reply(broken)])
+    outcome, _ = run_v3(client, review=lambda *_: [{"path": "clauses.1.slot", "msg": "JEV: leverage"}])
+    assert outcome.verdict == Verdict.PASS and outcome.report["spec"] == tmf_dynamic_leverage_3x()
+    assert outcome.report["review_repair"]["outcome"] == "invalid" and outcome.report["spec_round"] == 0
+    assert outcome.report["review_unresolved"] == [{"path": "clauses.1.slot", "msg": "JEV: leverage"}]
+
+
+def test_a_reply_to_review_feedback_that_turns_unsupported_keeps_the_reviewed_spec():
+    client = FakeClient([reply(ok_reply()), reply({"status": "unsupported", "reason": "x", "missing": ["y"]})])
+    outcome, _ = run_v3(client, review=lambda *_: ["JEV: contradicts"])
+    assert outcome.verdict == Verdict.PASS and outcome.report["review_repair"]["outcome"] == "unsupported"
+
+
+def test_slot_spellings_are_normalized():
+    body = ok_reply()
+    body["clauses"][0] = {**body["clauses"][0], "slot": "instrument"}
+    client = FakeClient([reply(body)])
+    outcome, _ = run_v3(client)
+    assert outcome.verdict == Verdict.PASS and outcome.report["clauses"][0]["slot"] == "instruments"
 
 
 # --------------------------------------------------------------- routed config (CONFIG_VERSION 7)
@@ -483,6 +545,8 @@ def test_idea_run_config_freezes_every_candidate_class():
     assert daily["components"] == component_fingerprints() and daily["refdata"]["datasets"] == REFDATA
     assert daily["thresholds"]["benchmark_alpha_t_min"] == 1.65
     assert config["stage_plan"][0] == "spec_generate" and "execution_timing" in config["stage_plan"]
+    assert config["spec_faithfulness"]["blocking"] is False == daily["spec_faithfulness"]["blocking"]
+    assert "spec_faithfulness" in daily["stage_plan"] and "spec_faithfulness" not in intraday["stage_plan"]
     assert "unavailable" not in config
 
 

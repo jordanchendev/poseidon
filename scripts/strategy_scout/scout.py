@@ -70,33 +70,23 @@ MAX_TEXT = 300
 
 # --------------------------------------------------------------------------- capability brief
 
-CAPABILITY_BRIEF = """\
-The downstream pipeline turns an idea into a DSL v2.1 strategy for TX (Taiwan index futures) and backtests it
-(5m bars by default, 1m/15m possible, 1 fixed contract, data from 2020-03). It CAN express:
-- Sessions: day 08:45-13:45 and night 15:00-05:00 (Asia/Taipei); time windows, minutes elapsed since session open.
-- Price (open/high/low/close); EMA / SMA (of close), ATR, RSI of the strategy interval (periods 2-400, ATR/RSI 2-100);
-  constants.
-- One level of smoothing of such an indicator: SMA or EMA (2-400 bars) of EMA/SMA/ATR/RSI, e.g. SMA50 of ATR14
-  (volatility contraction / expansion), EMA of RSI.
-- Rolling N-bar channel (Donchian): highest/lowest of high, low or close over the previous N bars (2-400; counted in
-  bars across sessions), for N-bar breakouts and N-bar swing stops.
-- Opening-range levels (high/low/mid/range of the first N minutes, 5-120), session open/high/low/VWAP, previous-session
-  and previous-day high/low/close (gap and prev-level ideas).
-- Conditions: crosses above/below, compares (> >= < <=) with point or ATR-multiple offsets, combined with all/any/none.
-  A multiplier on the compared side gives ratio thresholds (e.g. ATR < 0.7 x its SMA50; on a price level only a
-  0.9-1.1 percent envelope, e.g. close > 1.005 x EMA20).
-- Exits: stop loss (points, ATR multiple, or a level such as the N-bar low), take profit (points, ATR multiple,
-  R multiple, level), trailing stop (points / ATR, optionally after reaching some R), max hold bars, flat before session
-  end, max trades per session, no re-entry after stop, close on session change. Long and short entry rules, 1-6 rules.
-- 1-4 tunable numeric parameters per strategy (windows, stop/target sizes, thresholds).
-It CANNOT express (such ideas come back "unsupported"; do not propose them): higher timeframes (e.g. 60m EMA, daily
-RSI), smoothing a smoothed series, standard deviation / Bollinger bands / z-score / percentile rank, volume / volume
-profile / OI, options or implied volatility, order book, other instruments (NQ/ES/TE/stocks), news, fundamentals, ML
-models, position sizing, pyramiding. Companion data such as foreign flows is NOT available to the DSL. Entries must be
-rules on TX price/time/session levels, the indicators above and N-bar channels.
-Never stand in for a higher-timeframe indicator by reusing its length on intraday bars: a 200-day MA is NOT SMA(200) on
-5m bars (that spans 1-4 trading days, depending on the sessions). Such an idea is unsupported as written; say so instead of substituting.
-"""
+# capability_brief.md sits next to this script (rendered from the pipeline registry by
+# `python -m poseidon.pipeline.v3 brief --capability-file ...`; deploy it together with scout.py). Scout proposes
+# intraday TX ideas only, so its prompt carries part A of the file; part B (daily strategies) is for Sisyphus.
+CAPABILITY_FILE = Path(__file__).resolve().with_name("capability_brief.md")
+INTRADAY_HEADING = "## A. Intraday TX strategies (DSL v2.1)"
+DAILY_HEADING = "## B. Daily strategies (spec v3, component registry)"
+
+
+def load_capability_brief(path=CAPABILITY_FILE) -> str:
+    _, _, rest = Path(path).read_text(encoding="utf-8").partition(INTRADAY_HEADING + "\n\n")
+    brief = rest.split("\n" + DAILY_HEADING, 1)[0].rstrip("\n") + "\n" if rest else ""
+    if not brief.strip():
+        raise ValueError(f"no intraday section in {path}")
+    return brief
+
+
+CAPABILITY_BRIEF = load_capability_brief()
 
 # --------------------------------------------------------------------------- small helpers
 

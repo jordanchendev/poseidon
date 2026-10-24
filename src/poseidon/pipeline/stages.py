@@ -141,15 +141,16 @@ class SpecGenerateStage(BaseStage):
     An idea-only run frozen at CONFIG_VERSION 7 (routed) generates with spec_generate v3 first
     (:func:`poseidon.pipeline.spec_llm_v3.generate_routed`); its report's ``route`` picks the class whose
     frozen config the rest of the run uses. ``review(idea_text, clauses, spec) -> [{"path", "msg"}]`` is the
-    optional reviewer of v3 specs (the JEV client); its items go back to the model like validator errors.
+    reviewer of v3 specs; by default the JEV ``FaithfulnessReviewer`` (report-only, one repair round).
     """
 
     name = "spec_generate"
 
-    def __init__(self, *, client_factory=None, pin_provider=None, review=None):
+    def __init__(self, *, client_factory=None, pin_provider=None, review=None, jev_client_factory=None):
         self._client_factory = client_factory
         self._pin_provider = pin_provider
-        self._review = review
+        self._review = review  # None: the JEV reviewer on the run's frozen spec_faithfulness section
+        self._jev_client_factory = jev_client_factory
 
     def input_payload(self, ctx):
         payload = {
@@ -183,7 +184,12 @@ class SpecGenerateStage(BaseStage):
             from poseidon.pipeline.spec_llm_v3 import generate_routed
 
             outcome = generate_routed(
-                ctx.idea_text, ctx.config, pin=pin, review=self._review, client_factory=self._client_factory
+                ctx.idea_text,
+                ctx.config,
+                pin=pin,
+                review=self._review,
+                jev_client_factory=self._jev_client_factory,
+                client_factory=self._client_factory,
             )
         else:
             outcome = generate_spec(
@@ -529,6 +535,7 @@ def build_default_registry(*, data_source=None, strategy_factory=None, refdata=N
     the refdata store of spec v3 daily runs."""
 
     from poseidon.pipeline import daily_stages, gate_stages, shadow_paper
+    from poseidon.pipeline.faithfulness import SpecFaithfulnessStage
 
     legacy: dict[str, Stage] = {
         "spec_generate": SpecGenerateStage(),
@@ -541,12 +548,14 @@ def build_default_registry(*, data_source=None, strategy_factory=None, refdata=N
     if tuple(legacy) != V1_STAGE_PLAN:
         raise RuntimeError("stage registry drifted from the v1 stage plan")
     daily = daily_stages.build_daily_stages(refdata=refdata)
+    daily[SpecFaithfulnessStage.name] = SpecFaithfulnessStage()
     registry: dict[str, Stage] = {}
     for name in CANONICAL_ORDER:
         if name in legacy and name in daily:
             registry[name] = EngineRouted(legacy[name], daily[name])
         else:
-            registry[name] = legacy.get(name) or daily[name]  # spec_generate / awaiting_release / execution_timing
+            # spec_generate / awaiting_release / spec_faithfulness / execution_timing
+            registry[name] = legacy.get(name) or daily[name]
     return registry
 
 
