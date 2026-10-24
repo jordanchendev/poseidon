@@ -1,0 +1,9 @@
+# Build context is the repo root; send only what the sandbox image needs.
+*
+!src/poseidon/__init__.py
+!src/poseidon/pipeline/__init__.py
+!src/poseidon/pipeline/sandbox/__init__.py
+!src/poseidon/pipeline/sandbox/protocol.py
+!src/poseidon/pipeline/sandbox/static_check.py
+!src/poseidon/pipeline/sandbox/runner.py
+!deploy/pipeline/sandbox/requirements.txt

@@ -1,0 +1,21 @@
+# Merge into deploy/pipeline/docker-compose.yml ONLY when custom blocks go live (M5 wiring);
+# do not add it while POSEIDON_PIPELINE_CUSTOM_ENABLED is false. The worker gets the broker's
+# socket directory and a token -- never /var/run/docker.sock. api and beat get neither.
+#
+# The directory (not the socket file) is mounted so a broker restart, which recreates the
+# socket, is picked up without restarting the worker. /run/strategy-sandboxd is owned by
+# strategy-sandboxd:strategy-sandbox, mode 750; the socket is 660. The worker image runs as
+# root today, so group_add only matters once it does not.
+services:
+  worker:
+    env_file:
+      - ${PIPELINE_ENV_FILE:-${HOME}/strategy-pipeline/pipeline.env}
+      - ${PIPELINE_LLM_ENV_FILE:-${HOME}/strategy-pipeline/secrets/strategy-pipeline-openrouter.env}
+      - ${PIPELINE_SANDBOX_ENV_FILE:-${HOME}/strategy-pipeline/secrets/strategy-pipeline-sandbox.env}  # POSEIDON_PIPELINE_SANDBOX_TOKEN
+    environment:
+      POSEIDON_PIPELINE_CUSTOM_ENABLED: "true"
+      POSEIDON_PIPELINE_SANDBOX_SOCKET: /run/strategy-sandboxd/sandboxd.sock
+    volumes:
+      - /run/strategy-sandboxd:/run/strategy-sandboxd:ro
+    group_add:
+      - "${STRATEGY_SANDBOX_GID:?set to the gid of group strategy-sandbox}"

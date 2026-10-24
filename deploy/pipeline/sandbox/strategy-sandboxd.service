@@ -1,0 +1,41 @@
+# strategy-sandboxd -- host broker for custom strategy sandboxes (poseidon.pipeline.sandbox.broker).
+# NOT installed yet (M5 is behind POSEIDON_PIPELINE_CUSTOM_ENABLED=false). One-time owner setup:
+#   sudo groupadd --system strategy-sandbox            # socket + runtime-dir group
+#   sudo useradd --system --gid strategy-sandbox --home /nonexistent --shell /usr/sbin/nologin strategy-sandboxd
+#   sudo usermod -aG docker strategy-sandboxd          # docker group == root-equivalent: dedicated user only
+#   sudo install -d -o strategy-sandboxd -g strategy-sandbox -m 700 /etc/strategy-sandboxd
+#   sudo -u strategy-sandboxd sh -c 'umask 077; python3 -c "import secrets; print(secrets.token_urlsafe(48))" > /etc/strategy-sandboxd/token'
+#   the worker's copy: ~/strategy-pipeline/secrets/strategy-pipeline-sandbox.env (600), one line
+#     POSEIDON_PIPELINE_SANDBOX_TOKEN=<same token>   (written without echoing it to the terminal)
+#   sudo install -d -o root -g root -m 755 /opt/strategy-sandboxd
+#   copy src/poseidon/{__init__.py,pipeline/__init__.py,pipeline/sandbox/} of the released sha to /opt/strategy-sandboxd/src
+#   docker build -f deploy/pipeline/sandbox/Dockerfile -t poseidon-pipeline-sandbox:<sha> .   (from that sha)
+#   sudo cp strategy-sandboxd.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now strategy-sandboxd
+[Unit]
+Description=Poseidon strategy sandbox broker
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=strategy-sandboxd
+Group=strategy-sandbox
+SupplementaryGroups=docker
+RuntimeDirectory=strategy-sandboxd
+RuntimeDirectoryMode=0750
+Environment=PYTHONPATH=/opt/strategy-sandboxd/src
+Environment=SANDBOX_IMAGE=poseidon-pipeline-sandbox:CHANGE_ME
+ExecStart=/usr/bin/python3 -P -m poseidon.pipeline.sandbox.broker \
+    --socket /run/strategy-sandboxd/sandboxd.sock --socket-group strategy-sandbox --socket-mode 660 \
+    --token-file /etc/strategy-sandboxd/token --image ${SANDBOX_IMAGE} --max-sessions 2
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/opt/strategy-sandboxd /etc/strategy-sandboxd
+
+[Install]
+WantedBy=multi-user.target
