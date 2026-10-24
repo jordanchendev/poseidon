@@ -1,0 +1,544 @@
+"""Target-position simulator, daily futures core (design §5.1, §5.3-5.6, §5.8).
+
+Each trading day t, in this order:
+
+1. ``next_open`` only: fill yesterday's orders at today's open of the held contract, after a gap
+   check of the overnight position at the open.
+2. Intraday risk check on the position held through the day, at the bar's worst price for it
+   (low for longs, high for shorts): equity / initial-margin requirement < ``liquidation_risk_ratio``
+   -> close everything there (``forced_liquidation``).
+3. Close: daily settlement (every contract marked to its own close, PnL into cash). Equity <= 0
+   -> ``ruin`` and the run stops. Equity < maintenance margin -> ``margin_call``; the next
+   execution may not exceed the initial-margin level, whatever the strategy asks.
+4. ``next_open`` only: a roll that is due is executed now at both contracts' closes.
+5. From ``config.start`` on: the strategy gets the market view (data up to t) and the book and
+   returns signed integer targets. The engine applies the margin-call cap, the gross leverage cap
+   and the margin-utilisation cap, then the ``min_change_units`` band.
+6. Execution: ``signal_close`` fills now at the close (a due roll is netted into the same
+   execution: close the old contract, open the target on the new one); ``next_open`` queues the
+   orders for tomorrow's open.
+
+Every fill settles against the current mark immediately (cash += units x (mark - fill) x point
+value), so the position always carries the mark price and the close settles the whole position.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Literal, Protocol
+
+import pandas as pd
+
+from poseidon.pipeline.engine.data import (
+    ContractTable,
+    FuturesInput,
+    build_contract_table,
+    normalise_calendar,
+    validate_aux,
+)
+from poseidon.pipeline.engine.records import EngineResult
+from poseidon.pipeline.engine.specs import ROUNDING_EPS, ContractSpec
+from poseidon.pipeline.engine.view import (
+    AuxView,
+    BookView,
+    Fill,
+    MarketView,
+    SeriesBuffer,
+    SeriesView,
+    _Buffer,
+)
+
+Execution = Literal["next_open", "signal_close"]
+
+
+@dataclass(frozen=True)
+class Decision:
+    """Signed integer units per instrument. An instrument left out keeps its current position.
+
+    ``target_leverage`` is optional and only reported (positions_daily: target vs actual leverage
+    and the rounding error).
+    """
+
+    targets: Mapping[str, int] = field(default_factory=dict)
+    target_leverage: Mapping[str, float] = field(default_factory=dict)
+
+
+class TargetStrategy(Protocol):
+    def on_bar(self, view: MarketView, book: BookView) -> Decision: ...
+
+
+@dataclass(frozen=True)
+class EngineConfig:
+    initial_capital: float = 1_000_000.0
+    execution: Execution = "next_open"
+    leverage_cap: float = 5.0  # gross notional / equity at the decision
+    max_margin_utilisation: float = 1.0  # initial margin / equity at the decision
+    liquidation_risk_ratio: float = 0.25  # equity / initial margin below this -> forced liquidation
+    min_change_units: int = 1
+    start: Any = None  # first decision day; earlier bars only warm up the view
+    end: Any = None  # last simulated day (inclusive)
+
+    def __post_init__(self) -> None:
+        if self.execution not in ("next_open", "signal_close"):
+            raise ValueError(f"unknown execution {self.execution!r}")
+        if self.initial_capital <= 0 or self.leverage_cap <= 0 or self.max_margin_utilisation <= 0:
+            raise ValueError("initial_capital, leverage_cap and max_margin_utilisation must be positive")
+        if self.min_change_units < 1:
+            raise ValueError("min_change_units must be >= 1")
+
+
+@dataclass
+class _Position:
+    spec: ContractSpec
+    table: ContractTable
+    units: int = 0
+    contract: int | None = None  # column in table
+    mark: float = math.nan  # last settlement / mark price of the held contract
+
+    def contract_name(self, col: int | None = None) -> str | None:
+        col = self.contract if col is None else col
+        return None if col is None else self.table.contracts[col]
+
+
+def _check_targets(decision: Decision, instruments: Sequence[str]) -> dict[str, int]:
+    if not isinstance(decision, Decision):
+        raise TypeError(f"strategy must return Decision, got {type(decision).__name__}")
+    out = {}
+    for inst, units in decision.targets.items():
+        if inst not in instruments:
+            raise ValueError(f"target for unknown instrument {inst!r}")
+        if isinstance(units, bool | float) or not hasattr(units, "__index__"):
+            raise TypeError(f"target for {inst} must be an integer number of units, got {units!r}")
+        out[inst] = int(units)
+    return out
+
+
+def _scale_toward_zero(units: dict[str, int], scale: float) -> dict[str, int]:
+    """Scale each position by ``scale`` and floor the magnitude (same float guard as sizing)."""
+
+    return {
+        k: math.trunc(v * scale + math.copysign(ROUNDING_EPS * max(1.0, abs(v * scale)), v)) for k, v in units.items()
+    }
+
+
+class _Run:
+    def __init__(
+        self,
+        strategy: TargetStrategy,
+        futures: Mapping[str, FuturesInput],
+        config: EngineConfig,
+        aux: Mapping[str, pd.DataFrame],
+        calendar: Sequence[Any] | None,
+    ) -> None:
+        if not futures:
+            raise ValueError("need at least one futures instrument")
+        self.strategy = strategy
+        self.config = config
+        if calendar is None:
+            calendar = sorted({d for f in futures.values() for d in pd.to_datetime(f.bars["date"]).dt.normalize()})
+        cal = normalise_calendar(calendar)
+        self.pos = {name: _Position(f.spec, build_contract_table(name, f, cal)) for name, f in futures.items()}
+        dates = {tuple(p.table.dates) for p in self.pos.values()}
+        if len(dates) != 1:
+            raise ValueError("Phase 1 engine: all futures instruments must trade on the same dates")
+        all_dates = next(iter(self.pos.values())).table.dates
+        end = pd.Timestamp(config.end) if config.end is not None else all_dates[-1]
+        self.n_days = int(all_dates.searchsorted(end, side="right"))
+        self.dates = all_dates[: self.n_days]
+        if not self.n_days:
+            raise ValueError("no bars on or before config.end")
+        self.start = pd.Timestamp(config.start) if config.start is not None else self.dates[0]
+        self.instruments = tuple(self.pos)
+
+        self.series = {name: SeriesBuffer(self.n_days) for name in self.pos}
+        self.aux_frames = validate_aux(aux)
+        self.aux_rows = {
+            name: (frame.index[: frame.index.searchsorted(self.dates[-1], side="right")], frame.to_numpy(float))
+            for name, frame in self.aux_frames.items()
+        }
+        self.aux_buffers = {
+            name: _Buffer(len(self.aux_rows[name][0]), tuple(frame.columns)) for name, frame in self.aux_frames.items()
+        }
+        self.adjusted = dict.fromkeys(self.pos, math.nan)
+
+        self.cash = float(config.initial_capital)
+        self.pending: dict[str, int] | None = None
+        self.margin_cap: dict[str, int] | None = None
+        self.fills: list[Fill] = []
+        self.fills_today: list[Fill] = []
+        self.events: list[dict] = []
+        self.positions_daily: list[dict] = []
+        self.daily: list[dict] = []
+        self.decisions: list[dict] = []
+        self.ruined: pd.Timestamp | None = None
+
+    # ------------------------------------------------------------------ accounting primitives
+
+    def equity_at(self, prices: Mapping[str, float]) -> float:
+        return self.cash + sum(
+            p.units * (prices[k] - p.mark) * p.spec.point_value for k, p in self.pos.items() if p.units
+        )
+
+    def margin(self, prices: Mapping[str, float], units: Mapping[str, int] | None = None) -> tuple[float, float]:
+        """(initial, maintenance) margin requirement for ``units`` (default: current) at ``prices``."""
+
+        im = mm = 0.0
+        for k, p in self.pos.items():
+            u = p.units if units is None else units[k]
+            if not u:
+                continue
+            notional = p.spec.notional(u, prices[k])
+            im += notional * p.spec.initial_margin_ratio
+            mm += notional * p.spec.maintenance_margin_ratio
+        return im, mm
+
+    def trade(self, t: pd.Timestamp, name: str, units: int, ref: float, session: str, reason: str) -> None:
+        """Change the position by ``units`` at ``ref`` (before slippage); settles against the mark."""
+
+        if not units:
+            return
+        p = self.pos[name]
+        fill = p.spec.fill_price(units, ref)
+        tax, commission = p.spec.leg_fees(units, fill)
+        self.cash += units * (p.mark - fill) * p.spec.point_value - tax - commission
+        p.units += units
+        record = Fill(
+            date=t,
+            session=session,
+            instrument=name,
+            contract=p.contract_name(),
+            units=units,
+            price=fill,
+            ref_price=ref,
+            tax=tax,
+            commission=commission,
+            slippage_twd=abs(units) * abs(fill - ref) * p.spec.point_value,
+            reason=reason,
+        )
+        self.fills.append(record)
+        self.fills_today.append(record)
+
+    def event(
+        self,
+        t: pd.Timestamp,
+        kind: str,
+        instrument: str = "",
+        value: float = math.nan,
+        threshold: float = math.nan,
+        note: str = "",
+    ) -> None:
+        self.events.append(
+            {"date": t, "kind": kind, "instrument": instrument, "value": value, "threshold": threshold, "note": note}
+        )
+
+    def held_price(self, field_name: str, i: int) -> dict[str, float]:
+        return {k: p.table.price(field_name, i, p.contract) for k, p in self.pos.items() if p.contract is not None}
+
+    def liquidate(self, t: pd.Timestamp, prices: Mapping[str, float], session: str) -> None:
+        for k, p in self.pos.items():
+            if p.units:
+                self.trade(t, k, -p.units, prices[k], session, "forced_liquidation")
+
+    def risk_breached(self, t: pd.Timestamp, prices: Mapping[str, float], session: str) -> bool:
+        if not any(p.units for p in self.pos.values()):
+            return False
+        equity = self.equity_at(prices)
+        im, _ = self.margin(prices)
+        ratio = equity / im
+        if ratio >= self.config.liquidation_risk_ratio:
+            return False
+        self.event(
+            t,
+            "forced_liquidation",
+            value=ratio,
+            threshold=self.config.liquidation_risk_ratio,
+            note=f"{session}: equity {equity:,.0f} vs initial margin {im:,.0f}",
+        )
+        return True
+
+    # ------------------------------------------------------------------ the day
+
+    def feed(self, i: int, t: pd.Timestamp) -> None:
+        for k, p in self.pos.items():
+            tab = p.table
+            col = int(tab.held[i])
+            close = tab.price("close", i, col)
+            if i == 0:
+                self.adjusted[k] = close
+            else:
+                prev = int(tab.held[i - 1])
+                self.adjusted[k] *= tab.price("close", i, prev) / tab.price("close", i - 1, prev)
+            self.series[k].append_bar(
+                t,
+                tab.contracts[col],
+                {
+                    "open": tab.price("open", i, col),
+                    "high": tab.price("high", i, col),
+                    "low": tab.price("low", i, col),
+                    "close": close,
+                    "adjusted_close": self.adjusted[k],
+                },
+            )
+        for name, (index, values) in self.aux_rows.items():
+            buf = self.aux_buffers[name]
+            while buf.n < len(index) and index[buf.n] <= t:
+                buf.append(index[buf.n], dict(zip(buf.columns, values[buf.n], strict=True)))
+
+    def fill_pending(self, i: int, t: pd.Timestamp) -> None:
+        orders, self.pending = self.pending, None
+        if not orders:
+            return
+        opens = self.held_price("open", i)
+        if self.risk_breached(t, opens, "open gap"):
+            self.liquidate(t, opens, "open")
+            return
+        for k, target in orders.items():
+            reason = "margin_call" if self.margin_cap is not None and k in self.margin_cap else "rebalance"
+            self.trade(t, k, target - self.pos[k].units, opens[k], "open", reason)
+
+    def intraday_check(self, i: int, t: pd.Timestamp) -> None:
+        worst = {}
+        for k, p in self.pos.items():
+            if not p.units:
+                continue
+            bar = [p.table.price(f, i, p.contract) for f in ("open", "high", "low", "close")]
+            worst[k] = min(bar) if p.units > 0 else max(bar)
+        if worst and self.risk_breached(t, {**self.held_price("close", i), **worst}, "intraday"):
+            self.liquidate(t, worst, "intraday")
+
+    def settle(self, i: int, t: pd.Timestamp) -> dict[str, float]:
+        closes = self.held_price("close", i)
+        for k, p in self.pos.items():
+            if p.contract is not None:
+                self.cash += p.units * (closes[k] - p.mark) * p.spec.point_value
+                p.mark = closes[k]
+        return closes
+
+    def margin_call_check(self, t: pd.Timestamp, closes: Mapping[str, float]) -> None:
+        self.margin_cap = None
+        if not any(p.units for p in self.pos.values()):
+            return
+        equity = self.cash
+        im, mm = self.margin(closes)
+        if equity >= mm:
+            return
+        cap = _scale_toward_zero({k: abs(p.units) for k, p in self.pos.items()}, equity / im)
+        self.margin_cap = {k: cap[k] for k, p in self.pos.items() if p.units}
+        self.event(
+            t,
+            "margin_call",
+            value=equity,
+            threshold=mm,
+            note="cap " + ", ".join(f"{k}<={v}" for k, v in self.margin_cap.items()),
+        )
+
+    def roll(self, i: int, t: pd.Timestamp, targets: Mapping[str, int] | None) -> None:
+        """Move every instrument whose held contract changes after today's close to the new one.
+
+        ``targets`` given (``signal_close``): the new leg opens at the target directly.
+        """
+
+        for k, p in self.pos.items():
+            new = int(p.table.held[i])
+            if p.contract == new:
+                continue
+            new_close = p.table.price("close", i, new)
+            if not p.units:
+                p.contract, p.mark = new, new_close
+                continue
+            old_name = p.contract_name()
+            units = p.units
+            self.trade(t, k, -units, p.mark, "close", "roll")
+            p.contract, p.mark = new, new_close
+            target = units if targets is None else targets[k]
+            self.trade(t, k, target, new_close, "close", "roll")
+            self.event(t, "roll", k, note=f"{old_name} -> {p.contract_name()} ({units} -> {target} units)")
+
+    def decide(self, i: int, t: pd.Timestamp) -> dict[str, int]:
+        cfg = self.config
+        view = MarketView(
+            t,
+            {k: SeriesView(self.series[k], self.series[k].n) for k in self.pos},
+            {k: AuxView(b, b.n) for k, b in self.aux_buffers.items()},
+        )
+        equity = self.cash
+        prices = {k: p.table.price("close", i, int(p.table.held[i])) for k, p in self.pos.items()}
+        im, mm = self.margin(prices)
+        book = BookView(
+            date=t,
+            initial_capital=cfg.initial_capital,
+            cash=self.cash,
+            equity=equity,
+            positions={k: p.units for k, p in self.pos.items()},
+            contracts={k: p.contract_name(int(p.table.held[i])) for k, p in self.pos.items()},
+            margin_required=im,
+            maintenance_required=mm,
+            fills_today=tuple(self.fills_today),
+        )
+        decision = self.strategy.on_bar(view, book)
+        requested = _check_targets(decision, self.instruments)
+        final = {k: requested.get(k, p.units) for k, p in self.pos.items()}
+
+        if self.margin_cap is not None:
+            for k, cap in self.margin_cap.items():
+                final[k] = int(math.copysign(min(abs(final[k]), cap), final[k]))
+        gross = sum(self.pos[k].spec.notional(u, prices[k]) for k, u in final.items())
+        if gross > cfg.leverage_cap * equity:
+            clipped = _scale_toward_zero(final, cfg.leverage_cap * equity / gross)
+            self.event(
+                t, "clip_leverage", value=gross / equity, threshold=cfg.leverage_cap, note=f"{final} -> {clipped}"
+            )
+            final = clipped
+        im_target, _ = self.margin(prices, final)
+        if im_target > cfg.max_margin_utilisation * equity:
+            clipped = _scale_toward_zero(final, cfg.max_margin_utilisation * equity / im_target)
+            self.event(
+                t,
+                "clip_margin",
+                value=im_target / equity,
+                threshold=cfg.max_margin_utilisation,
+                note=f"{final} -> {clipped}",
+            )
+            final = clipped
+        if self.margin_cap is None:
+            final = {
+                k: (u if abs(u - self.pos[k].units) >= cfg.min_change_units else self.pos[k].units)
+                for k, u in final.items()
+            }
+
+        lev = decision.target_leverage
+        for k, p in self.pos.items():
+            req = requested.get(k)
+            self.decisions.append({"date": t, "instrument": k, "requested": req, "final": final[k]})
+            self.positions_daily.append(
+                {
+                    "date": t,
+                    "instrument": k,
+                    "target_units": req,
+                    "order_units": final[k],
+                    "target_leverage": lev.get(k, math.nan),
+                    "implied_target_leverage": (
+                        math.nan if req is None else req * prices[k] * p.spec.point_value / equity
+                    ),
+                }
+            )
+        return final
+
+    def execute_now(self, i: int, t: pd.Timestamp, final: Mapping[str, int]) -> None:
+        self.roll(i, t, final)
+        closes = self.held_price("close", i)
+        for k, target in final.items():
+            reason = "margin_call" if self.margin_cap is not None and k in self.margin_cap else "rebalance"
+            self.trade(t, k, target - self.pos[k].units, closes[k], "close", reason)
+
+    def record(self, i: int, t: pd.Timestamp, deciding: bool) -> None:
+        closes = self.held_price("close", i)
+        equity = self.cash  # every position is marked at today's close
+        im, mm = self.margin(closes)
+        gross = sum(p.spec.notional(p.units, closes[k]) for k, p in self.pos.items())
+        prev_equity = self.daily[-1]["equity"] if self.daily else self.config.initial_capital
+        fees = sum(f.tax + f.commission for f in self.fills_today)
+        self.daily.append(
+            {
+                "date": t,
+                "equity": equity,
+                "pnl_twd": equity - prev_equity,
+                "daily_return": (equity - prev_equity) / prev_equity,
+                "fees_twd": fees,
+                "slippage_twd": sum(f.slippage_twd for f in self.fills_today),
+                "gross_exposure_twd": gross,
+                "leverage": gross / equity if equity > 0 else math.inf,
+                "margin_required_twd": im,
+                "maintenance_required_twd": mm,
+                "margin_utilisation": im / equity if equity > 0 else math.inf,
+            }
+        )
+        held = {k: (p.units, p.contract_name(), closes[k]) for k, p in self.pos.items()}
+        rows = self.positions_daily[-len(self.pos) :] if deciding else []
+        if not deciding:
+            for k in self.pos:
+                rows.append(
+                    {
+                        "date": t,
+                        "instrument": k,
+                        "target_units": None,
+                        "order_units": None,
+                        "target_leverage": math.nan,
+                        "implied_target_leverage": math.nan,
+                    }
+                )
+            self.positions_daily.extend(rows)
+        for row in rows:
+            k = row["instrument"]
+            units, contract, close = held[k]
+            spec = self.pos[k].spec
+            row.update(
+                contract=contract,
+                held_units=units,
+                close=close,
+                actual_leverage=units * close * spec.point_value / equity if equity > 0 else math.inf,
+                rounding_error=row["target_leverage"] - row["implied_target_leverage"],
+                margin_utilisation=spec.notional(units, close) * spec.initial_margin_ratio / equity
+                if equity > 0
+                else math.inf,
+                proxy=spec.price_proxy is not None
+                or (spec.listed_since is not None and t < pd.Timestamp(spec.listed_since)),
+            )
+
+    def run(self) -> EngineResult:
+        cfg = self.config
+        for i, t in enumerate(self.dates):
+            self.fills_today = []
+            self.feed(i, t)
+            if self.pending is not None:
+                self.fill_pending(i, t)
+            self.intraday_check(i, t)
+            closes = self.settle(i, t)
+            if self.cash <= 0:
+                self.ruined = t
+                self.event(t, "ruin", value=self.cash, threshold=0.0)
+                if t >= self.start:
+                    self.record(i, t, deciding=False)
+                break
+            self.margin_call_check(t, closes)
+            deciding = t >= self.start
+            if cfg.execution == "next_open":
+                self.roll(i, t, None)
+                if deciding:
+                    final = self.decide(i, t)
+                    self.pending = {k: u for k, u in final.items() if u != self.pos[k].units}
+            elif deciding:
+                self.execute_now(i, t, self.decide(i, t))
+            else:
+                self.roll(i, t, None)
+            if deciding:
+                self.record(i, t, deciding=True)
+        unfilled = dict(self.pending or {}) if self.ruined is None else {}
+        return EngineResult.build(
+            config=cfg,
+            fills=self.fills,
+            positions_daily=self.positions_daily,
+            daily=self.daily,
+            events=self.events,
+            decisions=self.decisions,
+            ruined=self.ruined,
+            unfilled=unfilled,
+        )
+
+
+def run(
+    strategy: TargetStrategy,
+    futures: Mapping[str, FuturesInput],
+    config: EngineConfig | None = None,
+    *,
+    aux: Mapping[str, pd.DataFrame] | None = None,
+    calendar: Sequence[Any] | None = None,
+) -> EngineResult:
+    """Simulate ``strategy`` over ``futures`` (name -> input). ``calendar`` defaults to the bar dates."""
+
+    return _Run(strategy, futures, config or EngineConfig(), aux or {}, calendar).run()
+
+
+StrategyFactory = Callable[[], TargetStrategy]
