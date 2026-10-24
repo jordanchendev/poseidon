@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from poseidon.backtest.walk_forward import compute_wfe
 from poseidon.pipeline.gates.base import GateResult, failed, finite_or_none, invalid, non_finite, passed
+from poseidon.pipeline.gates.daily import Basis, DailyResult, annualised_return
 
 GATE = "wfe"
 
@@ -93,3 +94,21 @@ def evaluate(inputs: WfeInputs, thresholds: Mapping) -> GateResult:
             GATE, "oos_not_profitable", f"aggregate OOS pnl {oos_pnl:,.0f} TWD <= 0", f"OOS PnL {oos_pnl:,.0f}", report
         )
     return passed(GATE, headline, report)
+
+
+def window_metrics_daily(index: int, in_sample: DailyResult, out_of_sample: DailyResult, basis: Basis) -> WindowMetrics:
+    """Daily classes (§7): one walk-forward window from the IS run of the chosen params and its OOS run.
+
+    Annualised return: mean daily return x 252 for ``daily_equity``, pnl / initial equity x 252 / days
+    for ``daily_fixed`` (``daily.annualised_return``); trade counts are days with a fill. Windows: ``daily.choose_walk_forward``.
+    """
+
+    return WindowMetrics(
+        index=index,
+        is_annualized_return=annualised_return(in_sample, basis),
+        oos_annualized_return=annualised_return(out_of_sample, basis),
+        is_total_pnl_twd=in_sample.total_pnl_twd,
+        oos_total_pnl_twd=out_of_sample.total_pnl_twd,
+        is_trade_count=in_sample.exposure_changes,
+        oos_trade_count=out_of_sample.exposure_changes,
+    )

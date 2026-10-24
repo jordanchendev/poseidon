@@ -12,11 +12,12 @@ Pass iff evaluated >= ``param_min_neighbours`` and the share with
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from poseidon.pipeline.gates.base import GateResult, failed, finite_or_none, invalid, is_finite, passed, pct
+from poseidon.pipeline.gates.daily import DailyResult
 
 GATE = "param_stability"
 
@@ -112,3 +113,29 @@ def evaluate(inputs: ParamStabilityInputs, thresholds: Mapping) -> GateResult:
             GATE, "unstable_neighbourhood", f"profitable share {share:.0%} < {share_min:.0%}", headline, report
         )
     return passed(GATE, headline, report)
+
+
+def neighbours_daily(
+    rows: Sequence[Mapping[str, Any]], run: Callable[[Mapping[str, Any]], DailyResult | None]
+) -> tuple[list[NeighbourResult], list[dict]]:
+    """Daily classes (§7): neighbours judged on final equity > initial (= total PnL > 0).
+
+    ``rows`` are ``optimization.ParamGrid.neighbours(best, steps)`` over the spec v3 ``$param``
+    grid (``param``, ``direction``, ``in_grid``, ``params``); ``run(params)`` returns the train
+    backtest of a neighbour, or None when it failed -- counted as not profitable (pnl 0), never
+    excluded, as in the intraday stage. Returns the neighbours and the failed ones.
+    """
+
+    neighbours, failed_counted = [], []
+    for row in rows:
+        if not row.get("in_grid"):
+            neighbours.append(NeighbourResult(row["param"], int(row["direction"]), {}, None))
+            continue
+        result = run(row["params"])
+        if result is None:
+            failed_counted.append({"param": row["param"], "direction": int(row["direction"])})
+            pnl = 0.0
+        else:
+            pnl = result.total_pnl_twd
+        neighbours.append(NeighbourResult(row["param"], int(row["direction"]), dict(row["params"]), pnl))
+    return neighbours, failed_counted

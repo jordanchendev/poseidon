@@ -233,6 +233,103 @@ DEFAULT_SHADOW_PAPER: dict = {
 }
 
 
+# --- Strategy Pipeline v2 (design 2026-10-24 §7): thresholds and gate settings per strategy class ---
+#
+# A CONFIG_VERSION 6 run freezes the entry of its ``strategy_class`` (v3.spec.strategy_class) into
+# ``thresholds`` and ``gates`` (``class_settings``). Runs frozen at <= 5 never read this table.
+# The daily numbers are §7 / §12 #5, #8, #9 as approved by the owner on 2026-10-24, registered before
+# the first daily run. As before, a key missing from a frozen run turns its criterion off.
+# Daily metrics (gates/daily.py): ``daily_equity`` judges daily returns (pnl / previous equity),
+# ``daily_fixed`` daily TWD PnL; a day-count threshold counts trading days of the engine's daily_pnl.
+DAILY_THRESHOLDS: dict = {
+    "wfe_min": 0.5,
+    "holdout_sharpe_decay_max": 0.5,
+    "holdout_se_z": 1.96,  # SE from the holdout's trading-day count
+    "holdout_min_days": 250,
+    "holdout_pnl_positive": True,  # holdout total return (equity) / PnL (fixed) > 0
+    "holdout_alpha_positive": True,  # holdout alpha over the 1x underlying > 0
+    "benchmark_alpha_t_min": 1.0,  # train alpha over the 1x underlying > 0 and HAC t >= this
+    "cost_stress_multiplier": 2.0,
+    "cost_stress_pnl_positive": True,  # final equity > initial with every cost x2
+    "dsr_min": 0.95,
+    "dsr_min_obs": 250,  # daily returns
+    "param_neighbourhood_profitable_min": 0.6,  # profitable = final equity > initial
+    "param_min_neighbours": 2,
+    "regime_profitable_segments_min": 3,
+    "regime_min_segments": 3,
+    "regime_min_days_per_segment": 60,
+    "regime_trend_sma_days": 60,
+    "regime_atr_days": 20,
+    "regime_vol_median_days": 250,
+    # §12 #5: forced liquidation or ruin in the train backtest fails; a margin call is only reported.
+    "liquidation_fails": True,
+    # Daily shadow paper (§7; read by the daily paper mode, not by the gates): no trade count.
+    "paper_min_trading_days": 20,
+    "paper_target_match_min": 0.95,  # share of days whose paper target units equal the replay's
+    "paper_pnl_tolerance_ticks": 1,  # |daily pnl diff| <= ticks x units x point value
+}
+
+DAILY_GATES: dict = {
+    "cost_stress": {
+        "scope": "commission, tax and slippage of every fill (rebalance, roll, margin_call, forced_liquidation) x multiplier",
+    },
+    "regime_split": {
+        "daily_bars": "the 1x underlying's daily bars (benchmark.underlying)",
+        "day_label": "state after the latest underlying bar dated strictly before the day",
+    },
+    "wfe": {
+        # The first layout that fits in the train part (after warm-up) is used: the long history
+        # first, the Thalassa-length layout as the fallback (§7).
+        "layouts": [
+            {"windows": 5, "is_days": 1460, "oos_days": 365},
+            {"windows": 4, "is_days": 730, "oos_days": 182},
+        ],
+        "days": "calendar",
+        "max_trials_per_window": 16,
+        "budget_seconds": 3600,
+        "objective": "sharpe_daily",
+    },
+    # Daily strategy metric regressed on the 1x underlying's daily return (§12 #8): static leverage
+    # of the underlying has alpha ~ 0 - costs and fails.
+    "benchmark": {
+        "hac_lags": 5,
+        "underlying": {
+            "tw_futures": "TX back-adjusted continuous daily close (refdata TAIFEX daily, roll before settlement)",
+            "tw_stock": "0050 total return",
+            "multi": "0050 total return",
+        },
+    },
+    "holdout": {"family_reuse": "report_only"},
+    # Report only (no threshold registered): the same params re-run with the other execution component.
+    "execution_sensitivity": {"alternative": {"next_open": "signal_close", "signal_close": "next_open"}},
+}
+
+DEFAULT_THRESHOLDS_BY_CLASS: dict[str, dict] = {
+    "intraday_fixed": DEFAULT_THRESHOLDS,  # the v1 / DSL class: today's thresholds, unchanged
+    "daily_equity": DAILY_THRESHOLDS,
+    "daily_fixed": DAILY_THRESHOLDS,
+}
+DEFAULT_GATES_BY_CLASS: dict[str, dict] = {
+    "intraday_fixed": DEFAULT_GATES,
+    "daily_equity": DAILY_GATES,
+    "daily_fixed": DAILY_GATES,
+}
+
+
+def class_settings(strategy_class: str) -> dict:
+    """``{"thresholds", "gates"}`` frozen into a CONFIG_VERSION 6 run of ``strategy_class``.
+
+    ``intraday_equity`` is deferred (§7) and has no entry: such a run cannot be frozen.
+    """
+
+    if strategy_class not in DEFAULT_THRESHOLDS_BY_CLASS:
+        raise KeyError(f"no pre-registered thresholds for strategy class {strategy_class!r}")
+    return {
+        "thresholds": copy.deepcopy(DEFAULT_THRESHOLDS_BY_CLASS[strategy_class]),
+        "gates": copy.deepcopy(DEFAULT_GATES_BY_CLASS[strategy_class]),
+    }
+
+
 def data_config(*, as_of: date, holdout_fraction: float, start: str = DATA_START) -> dict:
     """Frozen data window: ``[start, end)`` in Asia/Taipei, plus the locked holdout split."""
 

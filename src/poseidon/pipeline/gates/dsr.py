@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from scipy.stats import norm
 
 from poseidon.pipeline.gates.base import GateResult, failed, invalid, is_finite, non_finite, passed
+from poseidon.pipeline.gates.daily import Basis, DailyResult, moments
 
 GATE = "dsr"
 EULER_GAMMA = 0.5772156649015329
@@ -146,3 +147,22 @@ def evaluate(inputs: DsrInputs, thresholds: Mapping) -> GateResult:
     if dsr < dsr_min:
         return failed(GATE, "dsr_below_min", f"DSR {dsr:.4f} < {dsr_min}", headline, report)
     return passed(GATE, headline, report)
+
+
+def inputs_daily(result: DailyResult, basis: Basis, trial_sharpes: Sequence[float | None]) -> DsrInputs:
+    """Daily classes (§7): the selected Sharpe and moments on the train backtest's daily metric.
+
+    T = trading days (``dsr_min_obs`` 250 for daily classes). ``trial_sharpes`` is the family ledger
+    as before; daily trials must be recorded with ``daily.moments`` of the same metric (the
+    ``trials.make_record`` keys), so N and V stay on one basis. Missing moments (fewer than 2
+    days, zero variance) are non-finite and fail ``invalid_input``.
+    """
+
+    stats = moments(result.metric(basis))
+    return DsrInputs(
+        sharpe=stats["sharpe_daily"],
+        n_obs=stats["n_obs"],
+        skew=stats["skew"],
+        kurtosis=stats["kurtosis"],
+        trial_sharpes=list(trial_sharpes),
+    )
