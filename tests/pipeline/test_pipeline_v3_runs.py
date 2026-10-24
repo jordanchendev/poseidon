@@ -95,11 +95,17 @@ def test_daily_class_table_is_the_one_source_of_the_paper_settings():
 def test_v3_plan_validates_at_6_and_never_for_older_versions():
     plan = list(V3_DAILY_STAGE_PLAN)
     assert validate_stage_plan(plan, STAGE_REGISTRY, version=6) == plan
-    assert validate_stage_plan(plan[:2], STAGE_REGISTRY, version=6) == plan[:2]  # spec_validate, backtest
+    assert plan[:3] == ["spec_validate", "spec_faithfulness", "backtest"]
+    assert validate_stage_plan(plan[:3], STAGE_REGISTRY, version=6) == plan[:3]
+    assert validate_stage_plan(["spec_validate", "backtest"], STAGE_REGISTRY, version=6)  # report-only: optional
     assert STAGE_INTRODUCED_AT["execution_timing"] == 6
     with pytest.raises(StagePlanError, match="spec_validate requires spec_generate"):
         validate_stage_plan(plan, STAGE_REGISTRY, version=5)  # read as a DSL plan
     with pytest.raises(StagePlanError, match="execution_timing does not exist at config version 5"):
+        validate_stage_plan(
+            ["spec_generate", *[n for n in plan if n != "spec_faithfulness"]], STAGE_REGISTRY, version=5
+        )
+    with pytest.raises(StagePlanError, match="spec_faithfulness does not exist at config version 5"):
         validate_stage_plan(["spec_generate", *plan], STAGE_REGISTRY, version=5)
     with pytest.raises(StagePlanError, match="not part of a spec v3 daily run"):
         validate_stage_plan(["spec_generate", *plan], STAGE_REGISTRY, version=6)

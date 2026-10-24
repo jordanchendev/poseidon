@@ -235,8 +235,14 @@ def liquidation_spec() -> dict:
 
 
 def v3_registry(store: RefdataStore | None = None):
+    """The default registry on ``store``, with ``spec_faithfulness`` on a fake JEV (no network, no key)."""
+
+    from tests.pipeline.jev_support import fake_faithfulness_stage
+
     refdata = (lambda: store) if store is not None else None
-    return build_default_registry(refdata=refdata)
+    registry = build_default_registry(refdata=refdata)
+    registry["spec_faithfulness"] = fake_faithfulness_stage()
+    return registry
 
 
 def create_v3(harness, spec: dict, *, store=None, key=None, idea="v3 daily run", **body) -> uuid.UUID:

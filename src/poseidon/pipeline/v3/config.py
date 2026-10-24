@@ -18,6 +18,7 @@ from poseidon.pipeline.plan import (
     DAILY_BACKTEST,
     DAILY_DATA_START,
     DEFAULT_OPTIMIZE,
+    DEFAULT_SPEC_FAITHFULNESS,
     HOLDOUT_FRACTION,
     SPEC_V3_CONFIG_VERSION,
     V3_DAILY_STAGE_PLAN,
@@ -109,4 +110,5 @@ def daily_run_config(
         "seed": 0,
         "backtest": copy.deepcopy(DAILY_BACKTEST),
         "optimize": copy.deepcopy(DEFAULT_OPTIMIZE),
+        "spec_faithfulness": copy.deepcopy(DEFAULT_SPEC_FAITHFULNESS),
     }
