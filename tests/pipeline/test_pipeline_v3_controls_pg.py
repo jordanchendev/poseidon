@@ -16,9 +16,8 @@ PostgreSQL through every stage of ``plan.V3_DAILY_STAGE_PLAN`` with the real sta
 * forced liquidation -- 4x long into a train day whose low is 24.3 % under the previous close:
   must fail ``backtest`` on the liquidation gate.
 
-The execution-timing gate is ``gates.execution_timing`` once feat/pv2-owner-decisions is merged;
-until then the documented rule stands in (``v3_wiring_support.documented_timing_gate``), because the
-stage's own placeholder fails closed by design. Seeds were fixed before looking at gate results.
+Every gate is the registered one, ``execution_timing`` included (signal_close and a one-day signal lag
+against the spec's next_open). Seeds were fixed before looking at gate results.
 Set ``POSEIDON_V3_CONTROLS_OUT`` to keep each control's stage trace as JSON.
 """
 
@@ -39,7 +38,6 @@ from tests.pipeline.v3_wiring_support import (
     liquidation_spec,
     planted_edge_spec,
     static_leverage_spec,
-    timing_gate,
     trace,
     v3_registry,
 )
@@ -52,9 +50,7 @@ PAPER_CLOCK_START = datetime(2026, 9, 1, 2, 0, tzinfo=UTC)  # 10:00 Taipei: the 
 
 
 def drive(sessions, root: Path, store, spec, name: str, start=CLOCK_START):
-    harness = Harness(
-        sessions, root / "artifacts", Clock(start), registry=v3_registry(store, execution_timing_gate=timing_gate())
-    )
+    harness = Harness(sessions, root / "artifacts", Clock(start), registry=v3_registry(store))
     run_id = create_v3(harness, spec, store=store, idea=f"control: {name}")
     harness.drain(limit=40)
     run = harness.run(run_id)
@@ -92,6 +88,8 @@ def test_planted_edge_passes_every_gate_into_shadow_paper(pipeline_sessions, tmp
         benchmark["alpha_per_day"] > 0
         and benchmark["alpha_t_hac"] >= run.config_json["thresholds"]["benchmark_alpha_t_min"]
     )
+    timing = report(harness, run, "execution_timing")["gate_report"]
+    assert set(timing["scenarios"]) == {"signal_close", "signal_lag_1d"} and timing["criterion_enabled"]
     holdout = report(harness, run, "holdout")
     assert holdout["inputs"]["holdout_metrics"]["n_days"] >= 250
     assert holdout["inputs"]["holdout_metrics"]["first_day"] >= run.config_json["data"]["holdout_start"]

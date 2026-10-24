@@ -125,12 +125,17 @@ def test_router_sends_v3_runs_to_the_daily_bodies_and_older_runs_to_dsl():
     assert set(STAGE_REGISTRY["shadow_paper"].upstream_names(v3)) == {"backtest", "optimize", *V3_GATE_STAGES}
 
 
-def test_execution_timing_is_a_placeholder_that_fails_closed_until_the_gate_lands():
-    from poseidon.pipeline.daily_stages import _owner_execution_timing_gate
-
-    stage = STAGE_REGISTRY["execution_timing"]
-    implementation = stage.implementation()[1]
-    assert implementation == ("owner" if _owner_execution_timing_gate() is not None else "placeholder")
+def test_frozen_config_snapshots_the_owner_decisions():
+    # owner decisions 2026-10-24 afternoon #2 / #3, registered before any real result
+    thresholds = acceptance_config()["thresholds"]
+    assert thresholds["benchmark_alpha_t_min"] == 1.65
+    assert thresholds["execution_timing_pnl_positive"] is True
+    assert thresholds["execution_timing_sharpe_ratio_min"] == 0.5
+    assert acceptance_config()["gates"]["execution_timing"]["scenarios"]["next_open"] == [
+        "signal_close",
+        "signal_lag_1d",
+    ]
+    assert class_settings("intraday_fixed")["thresholds"]["benchmark_alpha_t_min"] == 1.0
 
 
 # ----------------------------------------------------------------------------- creation (PostgreSQL)

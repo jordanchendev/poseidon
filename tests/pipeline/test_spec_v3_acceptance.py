@@ -1,8 +1,8 @@
 """The §3.2 acceptance spec end to end on the real refdata store (design 2026-10-24 §10 step 3).
 
 Runs where the store exists (stormtrooper: mount ``~/strategy-pipeline/refdata`` read-only and set
-``POSEIDON_PIPELINE_REFDATA_ROOT``). The spec runs exactly as written (TMF priced from TX, signal
-``core:adjusted``, ``execution.next_open``, floor) with its default ``$param`` values.
+``POSEIDON_PIPELINE_REFDATA_ROOT``). The spec runs exactly as written (TMF priced from TX, both
+signals on ``index:taiex``, ``execution.next_open``, floor) with its default ``$param`` values.
 """
 
 from __future__ import annotations
@@ -40,7 +40,15 @@ def test_validator_accepts_tmf_and_points_tx_to_the_smaller_contracts(accepted):
         prices={"TX": (float(closes.iloc[0]), float(closes.max()))},
     )
     checked = validate_spec_v3(tmf_dynamic_leverage_3x(), feasibility=feasibility)
+    if compiled.config.start < pd.Timestamp("2000-01-20"):
+        # The validator's warm-up estimate (245 trading days a year, at the largest ma_days 250) needs TAIEX
+        # from 1998-12; 1999 had Saturday sessions, so the compiler's exact count (266 rows) is enough.
+        assert {issue.path for issue in checked.errors} == {f"sleeves.0.leverage.{i}.params.signal" for i in (1, 2)}
+        assert "data starts 1999-01-05" in checked.errors[0].msg
+        feasibility = FeasibilityContext(prices=feasibility.prices)
+        checked = validate_spec_v3(tmf_dynamic_leverage_3x(), feasibility=feasibility)
     assert checked.ok, checked.errors
+    assert compiled.plan.signal_indices == ("taiex",)
     assert any("TMF: priced with TX prices" in note for note in checked.notes)
     tx = tmf_dynamic_leverage_3x()
     tx["instruments"]["core"]["symbol"] = "TX"

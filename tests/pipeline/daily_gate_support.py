@@ -2,14 +2,17 @@
 
 * :func:`synthetic_market` -- one TMF-like contract (no roll) over ``n_days`` business days:
   a random walk with slowly cycling volatility and a small upward drift, plus a public daily
-  signal ``s_t`` (known at the close of t). With ``edge > 0`` the next day's open-to-close move
-  carries ``edge * sign(s_t)`` on top of the noise (the planted edge).
+  signal ``s_t`` (known at the close of t; AR(1) with coefficient ``persistence``, 0 = i.i.d.).
+  With ``edge > 0`` the next day's open-to-close move carries ``edge * sign(s_t)`` on top of the
+  noise (the planted edge); with ``gap_edge > 0`` the overnight gap close(t) -> open(t+1) carries
+  ``gap_edge * sign(s_t)`` (an edge only a fill at the signal close can take).
 * :class:`SignalLeverage` -- target leverage ``lev`` in the direction of a per-day sign table
   (the signal for the planted edge, a seeded coin for random exposure, always +1 for static
-  leverage), flat when ``|s_t| <= threshold``.
+  leverage), flat when ``|s_t| <= threshold``; ``signal_lag`` reads the table that many trading
+  days late (the execution-timing gate's ``signal_lag_extra``).
 * :func:`judge` -- runs every daily gate the way step 4 will: all grid points on train (the
   trial ledger), the best one through liquidation / param_stability / dsr / cost_stress /
-  regime_split / benchmark / wfe, then the locked holdout, plus the execution-timing report.
+  regime_split / benchmark / wfe / execution_timing, then the locked holdout.
   WFE windows slice the full-train runs of each grid point (IS choice and OOS of the chosen
   params) instead of re-running per window; the engine's state at a window start is the only
   difference, which the controls do not depend on.
@@ -31,7 +34,7 @@ from poseidon.pipeline.gates import (
     benchmark,
     cost_stress,
     dsr,
-    execution_sensitivity,
+    execution_timing,
     holdout,
     liquidation,
     param_stability,
@@ -67,6 +70,8 @@ def synthetic_market(
     *,
     seed: int = 3,
     edge: float = 0.0,
+    gap_edge: float = 0.0,
+    persistence: float = 0.0,
     drift: float = 0.0003,
     crash_day: int | None = None,
     crash_low: float = 0.243,
@@ -75,6 +80,10 @@ def synthetic_market(
     rng = np.random.default_rng(seed)
     dates = pd.bdate_range("2012-01-02", periods=n_days)
     signal = rng.normal(0.0, 1.0, n_days)
+    if persistence:  # same draws, AR(1) with unit variance: the sign of s_t lasts ~1 / P(flip) days
+        innovations, scale = signal.copy(), float(np.sqrt(1.0 - persistence**2))
+        for i in range(1, n_days):
+            signal[i] = persistence * signal[i - 1] + scale * innovations[i]
     vol = 0.010 * (1.0 + 0.5 * np.sin(np.arange(n_days) * 2 * np.pi / 500.0))
     gap = rng.normal(0.0, 0.004, n_days)
     move = rng.normal(0.0, 1.0, n_days) * vol
@@ -82,8 +91,9 @@ def synthetic_market(
         signal[crash_day - 1] = 3.0  # every threshold goes long into the crash
     rows, close = [], 18000.0
     for i, t in enumerate(dates):
-        o = close * (1.0 + gap[i])
-        planted = edge * np.sign(signal[i - 1]) if i else 0.0
+        side = np.sign(signal[i - 1]) if i else 0.0
+        o = close * (1.0 + gap[i] + gap_edge * side)
+        planted = edge * side
         c = o * (1.0 + drift + planted + move[i])
         wick = abs(rng.normal(0.0, 0.3)) * vol[i]
         h, lo = max(o, c) * (1.0 + wick), min(o, c) * (1.0 - wick)
@@ -109,13 +119,13 @@ def coin(seed: int, dates) -> dict[date, float]:
 
 
 class SignalLeverage:
-    def __init__(self, signs: Mapping[date, float], *, lev: float, threshold: float = 0.0):
-        self.signs, self.lev, self.threshold = signs, float(lev), float(threshold)
+    def __init__(self, signs: Mapping[date, float], *, lev: float, threshold: float = 0.0, signal_lag: int = 0):
+        self.signs, self.lev, self.threshold, self.signal_lag = signs, float(lev), float(threshold), signal_lag
 
     def on_bar(self, view, book) -> Decision:
         series = view["TMF"]
-        day = pd.Timestamp(series.dates[-1]).date()
-        s = self.signs.get(day, 0.0)
+        row = len(series.dates) - 1 - self.signal_lag
+        s = self.signs.get(pd.Timestamp(series.dates[row]).date(), 0.0) if row >= 0 else 0.0
         if abs(s) <= self.threshold:
             return Decision({"TMF": 0})
         direction = 1 if s > 0 else -1
@@ -139,8 +149,16 @@ def grid(lev: tuple[float, float, float] = (1.0, 3.0, 1.0)) -> ParamGrid:
 class Runner:
     """The re-run hook (gates.daily.Rerun) over one window: costs scaled per RerunRequest."""
 
-    def __init__(self, market: Market, signs: Mapping[date, float], *, start: date, end: date | None):
-        self.market, self.signs, self.start, self.end = market, signs, start, end
+    def __init__(
+        self,
+        market: Market,
+        signs: Mapping[date, float],
+        *,
+        start: date,
+        end: date | None,
+        execution: str = "next_open",
+    ):
+        self.market, self.signs, self.start, self.end, self.execution = market, signs, start, end, execution
 
     def __call__(self, request: RerunRequest) -> DailyResult:
         m = float(request.cost_multiplier)
@@ -150,13 +168,20 @@ class Runner:
             tax_rate=TMF.tax_rate * m,
             slippage_ticks=TMF.slippage_ticks * m,
         )
-        config = EngineConfig(execution=request.execution or "next_open", start=self.start, end=self.end)
-        strategy = SignalLeverage(self.signs, **request.params)
+        config = EngineConfig(execution=request.execution or self.execution, start=self.start, end=self.end)
+        strategy = SignalLeverage(self.signs, **request.params, signal_lag=request.signal_lag_extra)
         futures = {"TMF": FuturesInput(spec=spec, bars=self.market.bars, expiries={"A": FAR})}
         return from_engine(run(strategy, futures, config))
 
 
-def judge(market: Market, signs: Mapping[date, float], params: ParamGrid, *, holdout_fraction: float = 0.2) -> dict:
+def judge(
+    market: Market,
+    signs: Mapping[date, float],
+    params: ParamGrid,
+    *,
+    holdout_fraction: float = 0.2,
+    execution: str = "next_open",
+) -> dict:
     settings = class_settings(CLASS)
     t, g = settings["thresholds"], settings["gates"]
     dates = market.dates
@@ -164,7 +189,7 @@ def judge(market: Market, signs: Mapping[date, float], params: ParamGrid, *, hol
     first = dates[warmup]
     holdout_start = dates[int(len(dates) * (1.0 - holdout_fraction))]
     train_end = dates[dates.index(holdout_start) - 1]
-    train = Runner(market, signs, start=first, end=train_end)
+    train = Runner(market, signs, start=first, end=train_end, execution=execution)
 
     trials = {params.key(point): (point, train(RerunRequest(point))) for point in params.points()}
     trial_sharpes = [moments(result.metric(BASIS))["sharpe_daily"] for _point, result in trials.values()]
@@ -202,10 +227,12 @@ def judge(market: Market, signs: Mapping[date, float], params: ParamGrid, *, hol
             oos = trials[pick][1].window(window["oos_start"], window["oos_end"])
             windows.append(wfe.window_metrics_daily(window["index"], in_sample[pick], oos, BASIS))
         results[wfe.GATE] = wfe.evaluate(wfe.WfeInputs(windows), t)
-    held = Runner(market, signs, start=holdout_start, end=None)(RerunRequest(best_params))
+    results[execution_timing.GATE] = execution_timing.run_daily(
+        train, best_params, best, base_execution=execution, basis=BASIS, thresholds=t
+    )
+    held = Runner(market, signs, start=holdout_start, end=None, execution=execution)(RerunRequest(best_params))
     stats = benchmark.regress_daily(held, market.underlying, basis=BASIS, lags=hac)
     results[holdout.GATE] = holdout.evaluate_daily(holdout.HoldoutDailyInputs(best, held, BASIS, stats), t)
-    sensitivity = execution_sensitivity.measure(train, best_params, best, base_execution="next_open", basis=BASIS)
     assert set(results) == set(DAILY_GATES)
     return {
         "results": results,
@@ -213,7 +240,6 @@ def judge(market: Market, signs: Mapping[date, float], params: ParamGrid, *, hol
         "train": best,
         "holdout": held,
         "wfe_layout": layout,
-        "execution_sensitivity": sensitivity,
         "n_trials": len(trial_sharpes),
     }
 

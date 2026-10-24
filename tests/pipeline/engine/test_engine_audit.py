@@ -25,8 +25,8 @@ START = pd.Timestamp("2024-04-01")
 adjusted_strategy = strategy_factory(plan(resolved_spec(ma_days=50, vol_k=None)))
 # levtx-style: signal on the index aux series, one row lagged, round to nearest
 aux_strategy = strategy_factory(
-    plan(resolved_spec(ma_days=50, band=0.01, vol_k=None, rounding="nearest")),
-    Conventions(signal_aux={"core:adjusted": "index"}, signal_lag=1),
+    plan(resolved_spec(ma_days=50, band=0.01, vol_k=None, rounding="nearest", signal="index:taiex")),
+    Conventions(signal_lag=1),
 )
 
 
@@ -39,7 +39,7 @@ def test_synthetic_fixture_exercises_rolls_and_regime_switches():
 
 
 @pytest.mark.parametrize("execution", ["next_open", "signal_close"])
-@pytest.mark.parametrize("factory,aux", [(adjusted_strategy, {}), (aux_strategy, {"index": INDEX})])
+@pytest.mark.parametrize("factory,aux", [(adjusted_strategy, {}), (aux_strategy, {"taiex": INDEX})])
 def test_truncation_audit_passes_at_20_cuts(execution, factory, aux):
     report = truncation_audit(factory, FUTURES, EngineConfig(execution=execution, start=START), aux=aux, n_cuts=20)
     assert len(report.cuts) == 20
@@ -73,8 +73,8 @@ def test_truncation_audit_catches_an_engine_that_leaks_the_next_close(monkeypatc
 @pytest.mark.parametrize("execution", ["next_open", "signal_close"])
 def test_runs_are_deterministic(execution):
     cfg = EngineConfig(execution=execution, start=START)
-    a = run(aux_strategy(), FUTURES, cfg, aux={"index": INDEX})
-    b = run(aux_strategy(), FUTURES, cfg, aux={"index": INDEX})
+    a = run(aux_strategy(), FUTURES, cfg, aux={"taiex": INDEX})
+    b = run(aux_strategy(), FUTURES, cfg, aux={"taiex": INDEX})
     for name in ("fills", "positions_daily", "daily_pnl", "events", "decisions"):
         pd.testing.assert_frame_equal(getattr(a, name), getattr(b, name))
 

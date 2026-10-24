@@ -25,7 +25,6 @@ import copy
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -200,7 +199,7 @@ def planted_edge_spec() -> dict:
             {
                 "component": "regime.ma_band",
                 "params": {
-                    "signal": "core:adjusted",
+                    "signal": "self:adjusted",
                     "ma_days": {"$param": "ma_days"},
                     "band_pct": {"$param": "band"},
                     "off_leverage": 0.0,
@@ -235,44 +234,9 @@ def liquidation_spec() -> dict:
 # ----------------------------------------------------------------------------- drivers
 
 
-def documented_timing_gate(rerun, params, base, *, base_execution, basis, thresholds):
-    """Test stand-in until ``gates.execution_timing`` (feat/pv2-owner-decisions) is importable: the owner's
-    registered rule (2026-10-24 #2) -- every scenario total PnL > 0 and daily Sharpe >= 0.5 x base -- on the
-    other fill and a one-day signal lag."""
-
-    from poseidon.pipeline.gates.base import failed, passed
-    from poseidon.pipeline.gates.daily import sharpe
-
-    other = "signal_close" if base_execution == "next_open" else "next_open"
-    requests = {
-        other: SimpleNamespace(params=dict(params), execution=other, cost_multiplier=1.0, signal_lag_extra=0),
-        "signal_lag_1d": SimpleNamespace(params=dict(params), execution=None, cost_multiplier=1.0, signal_lag_extra=1),
-    }
-    base_sharpe = sharpe(base, basis)
-    rows, problems = {}, []
-    for name, request in requests.items():
-        result = rerun(request)
-        row = {"total_pnl_twd": result.total_pnl_twd, "sharpe_daily": sharpe(result, basis)}
-        rows[name] = row
-        if not row["total_pnl_twd"] > 0 or row["sharpe_daily"] is None or row["sharpe_daily"] < 0.5 * base_sharpe:
-            problems.append(name)
-    report = {"stand_in": True, "base_sharpe_daily": base_sharpe, "scenarios": rows}
-    if problems:
-        return failed("execution_timing", "scenario_failed", f"{problems} fail the rule", "stand-in fail", report)
-    return passed("execution_timing", f"stand-in: {', '.join(rows)} hold", report)
-
-
-def timing_gate():
-    """The owner gate when this tree has it, else the documented stand-in."""
-
-    from poseidon.pipeline.daily_stages import _owner_execution_timing_gate
-
-    return None if _owner_execution_timing_gate() is not None else documented_timing_gate
-
-
-def v3_registry(store: RefdataStore | None = None, *, execution_timing_gate=None):
+def v3_registry(store: RefdataStore | None = None):
     refdata = (lambda: store) if store is not None else None
-    return build_default_registry(refdata=refdata, execution_timing_gate=execution_timing_gate)
+    return build_default_registry(refdata=refdata)
 
 
 def create_v3(harness, spec: dict, *, store=None, key=None, idea="v3 daily run", **body) -> uuid.UUID:

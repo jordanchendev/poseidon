@@ -13,7 +13,7 @@ from :func:`moments` is comparable with the DSR's selected Sharpe. "Days" are ro
 engine's ``daily_pnl`` (trading days); walk-forward windows are measured in calendar days, as
 the intraday ``wfe`` stage does.
 
-Re-runs (``cost_stress``, ``execution_sensitivity``) go through a :data:`Rerun` callable the
+Re-runs (``cost_stress``, ``execution_timing``) go through a :data:`Rerun` callable the
 stage supplies; the gates only say what they need re-run.
 """
 
@@ -313,12 +313,20 @@ class RerunRequest:
     """What a daily gate needs re-run: the same spec over the same window with ``params``.
 
     ``cost_multiplier`` scales every cost component of every instrument (commission, tax, slippage);
-    ``execution`` replaces the spec's execution component (None: keep it).
+    ``execution`` replaces the spec's execution component (None: keep it); ``signal_lag_extra``
+    delays every signal series by that many more rows (1 = the decision at close t reads signals
+    up to t-1). For a spec v3 run the hook compiles with
+    ``v3.runtime.Conventions(execution=request.execution, signal_lag=request.signal_lag_extra)``.
     """
 
     params: Mapping[str, Any]
     cost_multiplier: float = 1.0
     execution: Execution | None = None
+    signal_lag_extra: int = 0
+
+    def __post_init__(self) -> None:
+        if self.signal_lag_extra < 0:
+            raise ValueError("signal_lag_extra must be >= 0")
 
 
 Rerun = Callable[[RerunRequest], DailyResult]

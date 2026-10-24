@@ -505,12 +505,10 @@ class EngineRouted:
         return self.body(ctx.config).run(ctx)
 
 
-def build_default_registry(
-    *, data_source=None, strategy_factory=None, refdata=None, execution_timing_gate=None
-) -> dict[str, Stage]:
+def build_default_registry(*, data_source=None, strategy_factory=None, refdata=None) -> dict[str, Stage]:
     """``data_source`` overrides the Thalassa reader and ``strategy_factory`` the DSL v2
     strategy factory (tests pass synthetic bars / a test-only strategy); ``refdata`` (() -> store)
-    the refdata store of spec v3 daily runs and ``execution_timing_gate`` their execution-timing gate."""
+    the refdata store of spec v3 daily runs."""
 
     from poseidon.pipeline import daily_stages, gate_stages, shadow_paper
 
@@ -524,7 +522,7 @@ def build_default_registry(
     legacy.update(shadow_paper.build_paper_stages(data_source=data_source, strategy_factory=strategy_factory))
     if tuple(legacy) != V1_STAGE_PLAN:
         raise RuntimeError("stage registry drifted from the v1 stage plan")
-    daily = daily_stages.build_daily_stages(refdata=refdata, execution_timing_gate=execution_timing_gate)
+    daily = daily_stages.build_daily_stages(refdata=refdata)
     registry: dict[str, Stage] = {}
     for name in CANONICAL_ORDER:
         if name in legacy and name in daily:

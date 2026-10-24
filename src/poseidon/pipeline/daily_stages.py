@@ -40,7 +40,7 @@ from poseidon.decision_loop.manifest import canonical_json, content_sha256
 from poseidon.pipeline import optimization as opt
 from poseidon.pipeline.engine import ContractSpec, EngineResult
 from poseidon.pipeline.gate_stages import DsrStage, ParamStabilityStage, to_stage_result
-from poseidon.pipeline.gates import benchmark, cost_stress, holdout, liquidation, regime_split
+from poseidon.pipeline.gates import benchmark, cost_stress, execution_timing, holdout, liquidation, regime_split
 from poseidon.pipeline.gates import wfe as wfe_gate
 from poseidon.pipeline.gates.base import failed, finite_or_none, invalid
 from poseidon.pipeline.gates.daily import (
@@ -69,7 +69,6 @@ PRICE_DATASETS = frozenset({FUTURES, TAIEX, TAIEX_TR})  # clipped at the window'
 UNDERLYING_ROLL_DAYS_BEFORE = 1  # DAILY_GATES.benchmark.underlying: TX back-adjusted, roll before settlement
 TRADING_DAYS_PER_YEAR = 252.0
 EXECUTION_TIMING = "execution_timing"
-PLACEHOLDER_CODE = "gate_not_wired"
 
 
 class ComponentDrift(RuntimeError):
@@ -257,10 +256,9 @@ class SpecRunner:
         return result, from_engine(result)
 
     def rerun(self, request: RerunRequest) -> DailyResult:
-        """``gates.daily.Rerun``: costs x ``cost_multiplier``; ``execution`` / ``signal_lag`` as Conventions."""
+        """``gates.daily.Rerun``: costs x ``cost_multiplier``; ``execution`` / ``signal_lag_extra`` as Conventions."""
 
-        lag = getattr(request, "signal_lag_extra", 0) or 0  # feat/pv2-owner-decisions adds the field
-        conventions = Conventions(execution=request.execution, signal_lag=int(lag))
+        conventions = Conventions(execution=request.execution, signal_lag=request.signal_lag_extra)
         return self.run(request.params, conventions=conventions, cost_multiplier=float(request.cost_multiplier))[1]
 
 
@@ -846,68 +844,35 @@ class DailyBenchmarkStage(DailyGateStage):
         return to_stage_result(result, inputs)
 
 
-def _owner_execution_timing_gate():
-    """The blocking execution-timing gate (owner decision 2026-10-24 #2), once feat/pv2-owner-decisions
-    lands it as ``gates.execution_timing.run_daily(rerun, params, base, *, base_execution, basis,
-    thresholds) -> GateResult``."""
-
-    try:
-        from poseidon.pipeline.gates import execution_timing
-    except ImportError:
-        return None
-    return getattr(execution_timing, "run_daily", None)
-
-
 class ExecutionTimingStage(DailyGateStage):
-    """Execution-timing gate (owner decision 2026-10-24 #2; logic on feat/pv2-owner-decisions).
+    """Execution-timing gate, blocking for daily classes (owner decision 2026-10-24 afternoon #2).
 
-    The stage supplies the re-run hook (``SpecRunner.rerun``: execution and signal lag as run
-    Conventions, costs x1) and the train run of the selected params; the gate decides. Until that gate
-    is importable this stage is a clearly marked **placeholder that fails closed**: it records the
-    report-only ``gates.execution_sensitivity`` comparison and returns ``fail`` (code
-    ``gate_not_wired``), so no daily run can pass a gate that is not there.
+    The stage supplies the train run of the selected params, the spec's own fill
+    (``compile_spec(...).plan.execution``) and the re-run hook (``SpecRunner.rerun``: execution and
+    ``signal_lag_extra`` as run Conventions); ``gates.execution_timing.run_daily`` re-runs every
+    registered scenario and decides with the frozen ``execution_timing_*`` thresholds.
     """
 
     name = EXECUTION_TIMING
 
-    def __init__(self, *, refdata=None, gate=None):
-        super().__init__(refdata=refdata)
-        self.gate = gate  # tests / a later wiring may inject; None -> the owner gate, else the placeholder
-
-    def implementation(self):
-        gate = self.gate or _owner_execution_timing_gate()
-        return gate, ("injected" if self.gate else "owner") if gate else "placeholder"
-
-    def input_payload(self, ctx):
-        payload = super().input_payload(ctx)
-        payload["gate_implementation"] = self.implementation()[1]
-        return payload
-
     def evaluate(self, ctx):
-        thresholds = ctx.config["thresholds"]
-        gate, implementation = self.implementation()
         runner, base = self.train_best(ctx)
         params = self.best(ctx)["params"]
-        execution = runner.compile(params).config.execution
-        inputs = {**self.best_source(ctx), "implementation": implementation, "base_execution": execution}
-        if gate is not None:
-            result = gate(
-                runner.rerun, params, base, base_execution=execution, basis=runner.basis, thresholds=thresholds
-            )
-            return to_stage_result(result, inputs)
-        from poseidon.pipeline.gates import execution_sensitivity  # report-only module (gone once the gate lands)
-
-        sensitivity = execution_sensitivity.measure(
-            runner.rerun, params, base, base_execution=execution, basis=runner.basis
+        execution = runner.compile(params).plan.execution
+        result = execution_timing.run_daily(
+            runner.rerun,
+            params,
+            base,
+            base_execution=execution,
+            basis=runner.basis,
+            thresholds=ctx.config["thresholds"],
         )
-        result = failed(
-            EXECUTION_TIMING,
-            PLACEHOLDER_CODE,
-            "placeholder: the blocking execution-timing gate (owner decision 2026-10-24 #2, "
-            "feat/pv2-owner-decisions) is not merged; this stage fails closed",
-            "placeholder, gate not wired (fails closed)",
-            {"placeholder": True, "execution_sensitivity": sensitivity},
-        )
+        inputs = {
+            **self.best_source(ctx),
+            "base_execution": execution,
+            "scenarios": ctx.config["gates"].get("execution_timing"),
+            "window": DailyWindow.from_config(ctx.config).describe("train"),
+        }
         return to_stage_result(result, inputs)
 
 
@@ -1053,13 +1018,15 @@ class DailyHoldoutStage(DailyGateStage):
 # ----------------------------------------------------------------------------- shadow paper seam
 
 
-def compile_strategy(ctx, *, store_factory: Callable[[], Any] | None = None):
+def compile_strategy(ctx):
     """``shadow_paper_daily.compile_strategy`` for a v3 run: optimize's selected spec -> CompiledStrategy.
 
     The engine starts on the train start (the paper re-simulates the whole history every wake-up and
     books only days from its anchor on); the protection basis is the train window ``[start,
     holdout_start)``. The fingerprint covers the selected spec, the registry version and the frozen
-    component fingerprints, all verified against the live registry first.
+    component fingerprints, all verified against the live registry first. Aux series: only the indices
+    the spec's signals read (``Plan.signal_indices``, e.g. ``index:taiex``), so the paper's cutoff
+    waits for that day's index row and for nothing it does not use.
     """
 
     from poseidon.pipeline.shadow_paper_daily import CompiledStrategy, PaperInstrument, StrategyNotCompiled
@@ -1104,11 +1071,11 @@ def compile_strategy(ctx, *, store_factory: Callable[[], Any] | None = None):
         data_start=window.start - timedelta(days=warmup_calendar_days(warmup, "1d")),
         train_end=window.holdout_start,
         fingerprint=fingerprint,
-        aux=dict(AUX_DATASETS),
+        aux={name: AUX_DATASETS[name] for name in spec_plan.signal_indices},
     )
 
 
-def build_daily_stages(*, refdata=None, execution_timing_gate=None) -> dict:
+def build_daily_stages(*, refdata=None) -> dict:
     """The v3 bodies, by stage name (``stages.build_default_registry`` routes v3 runs to them)."""
 
     from poseidon.pipeline.shadow_paper import ShadowPaperStage
@@ -1125,7 +1092,7 @@ def build_daily_stages(*, refdata=None, execution_timing_gate=None) -> dict:
         DailyCostStressStage(refdata=refdata),
         DailyRegimeSplitStage(refdata=refdata),
         DailyBenchmarkStage(refdata=refdata),
-        ExecutionTimingStage(refdata=refdata, gate=execution_timing_gate),
+        ExecutionTimingStage(refdata=refdata),
         DailyWfeStage(refdata=refdata),
         DailyHoldoutStage(refdata=refdata),
         DailyShadowPaperStage(refdata=refdata, compile_strategy=compile_strategy),

@@ -19,7 +19,7 @@ SPEC_VERSION = 3
 PARAM_REF_KEY = "$param"
 ALIAS_PATTERN = r"^[a-z][a-z0-9_]{0,31}$"
 SLEEVE_ID_PATTERN = r"^[a-z][a-z0-9_]{0,31}$"
-RESERVED_ALIASES = frozenset({"self"})
+RESERVED_ALIASES = frozenset({"self", "index"})  # series refs: self:<field>, index:<name>
 
 # §12 #14: initial capital default and allowed range (TWD).
 DEFAULT_INITIAL_CAPITAL_TWD = 1_000_000

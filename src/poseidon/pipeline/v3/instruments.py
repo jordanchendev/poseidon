@@ -202,3 +202,42 @@ def data_since(instrument: Instrument, frequency: str) -> date | None:
     """First day the spec's price source has bars at ``frequency`` (proxy source included)."""
 
     return instrument.intraday_data_since if frequency in INTRADAY_FREQUENCIES else instrument.daily_data_since
+
+
+# --------------------------------------------------------------------------- signal indices
+#
+# Owner decision 2026-10-24 (afternoon) #1: a signal series is chosen explicitly. Besides the
+# instruments' own series (``self:adjusted`` = the back-adjusted continuous futures price) a
+# signal may read a TWSE index, ``index:<name>``. The same MA strategy over 2000-2014 ends 49 %
+# apart on TX adjusted vs the TAIEX price index (49 vs 33 regime switches), so the choice is part
+# of the strategy, never a default. ``data_since`` is the first row of the refdata dataset.
+
+INDEX_ALIAS = "index"
+
+
+@dataclass(frozen=True)
+class SignalIndex:
+    name: str  # the part after "index:"
+    name_en: str
+    name_zh: str
+    dataset: str  # refdata dataset (rows by trade_date, column close)
+    data_since: date
+
+
+SIGNAL_INDICES: dict[str, SignalIndex] = {
+    "taiex": SignalIndex("taiex", "TAIEX price index", "加權股價指數（不含息）", "twse_taiex_daily", date(1999, 1, 5)),
+    "taiex_tr": SignalIndex(
+        "taiex_tr",
+        "TAIEX total-return index",
+        "加權股價報酬指數（含息）",
+        "twse_taiex_total_return",
+        date(2003, 1, 2),
+    ),
+}
+
+
+def signal_index(ref: str) -> SignalIndex | None:
+    """The index a series ref ``index:<name>`` reads, or None for an instrument series."""
+
+    alias, _, name = ref.partition(":")
+    return SIGNAL_INDICES.get(name) if alias == INDEX_ALIAS else None

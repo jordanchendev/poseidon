@@ -5,7 +5,8 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-# Design 2026-10-24 §3.2, verbatim: the M1 acceptance strategy (no put).
+# Design 2026-10-24 §3.2: the M1 acceptance strategy (no put). Owner decision 2026-10-24 afternoon #1:
+# both signals read the TAIEX price index, as the offline backtest (levtx) does.
 _TMF_DYNAMIC_LEVERAGE_3X: dict[str, Any] = {
     "spec_version": 3,
     "name": "tmf_dynamic_leverage_3x",
@@ -24,13 +25,16 @@ _TMF_DYNAMIC_LEVERAGE_3X: dict[str, Any] = {
                 {
                     "component": "regime.ma_band",
                     "params": {
-                        "signal": "core:adjusted",
+                        "signal": "index:taiex",
                         "ma_days": {"$param": "ma_days"},
                         "band_pct": {"$param": "band"},
                         "off_leverage": 0.5,
                     },
                 },
-                {"component": "risk.vol_cap", "params": {"window_days": 20, "k": {"$param": "vol_k"}}},
+                {
+                    "component": "risk.vol_cap",
+                    "params": {"signal": "index:taiex", "window_days": 20, "k": {"$param": "vol_k"}},
+                },
             ],
             "sizing": {"component": "sizing.target_leverage", "params": {"rounding": "floor"}},
             "rebalance": {"component": "rebalance.daily", "params": {"min_change_units": 1}},
@@ -49,6 +53,7 @@ _TMF_DYNAMIC_LEVERAGE_3X: dict[str, Any] = {
 
 
 def tmf_dynamic_leverage_3x() -> dict[str, Any]:
-    """The M1 acceptance spec (design §3.2): 3x TMF, 200-day MA band to 0.5x, volatility cap."""
+    """The M1 acceptance spec (design §3.2): 3x TMF, 200-day MA band to 0.5x, volatility cap, both on
+    the TAIEX price index."""
 
     return copy.deepcopy(_TMF_DYNAMIC_LEVERAGE_3X)

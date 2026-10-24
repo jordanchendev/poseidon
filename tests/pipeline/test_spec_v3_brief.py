@@ -79,8 +79,21 @@ def test_catalog_is_the_machine_form_of_the_registry():
     rows = {row["name"]: row for row in ma_band["params"]}
     assert rows["ma_days"]["tunable"] and "[20, 400]" in rows["ma_days"]["spec"]
     assert not rows["signal"]["tunable"]
+    assert rows["signal"]["spec"].endswith('"index:<taiex|taiex_tr>", required')
     assert data["policy"]["leverage_cap"] == 5.0
     assert data["policy"]["initial_capital_twd"] == {"default": 1_000_000, "min": 300_000, "max": 20_000_000}
+
+
+def test_brief_says_which_signal_series_exist_and_that_ambiguity_is_asked():
+    brief = render_brief()
+    section = brief.split("## Signal series")[1].split("## Components")[0]
+    for line in (
+        "- `self:adjusted`: the traded futures' back-adjusted continuous price (MTX/TMF: TX's), from 1998-07-21.",
+        "- `index:taiex`: TAIEX price index (加權股價指數（不含息）), from 1999-01-05.",
+        "- `index:taiex_tr`: TAIEX total-return index (加權股價報酬指數（含息）), from 2003-01-02.",
+    ):
+        assert line in section
+    assert "49%" in section and '"台指"' in section and "Never pick one silently" in section
 
 
 def test_json_schema_model_accepts_the_acceptance_spec_and_rejects_bad_components():
