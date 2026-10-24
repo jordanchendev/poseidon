@@ -32,6 +32,7 @@ import numpy as np
 import pandas as pd
 
 from poseidon.pipeline.gates.base import GateResult, Trade, failed, invalid, is_finite, passed
+from poseidon.pipeline.gates.daily import Basis, DailyResult
 
 GATE = "regime_split"
 TAIPEI = ZoneInfo("Asia/Taipei")
@@ -132,6 +133,85 @@ def evaluate(inputs: RegimeInputs, thresholds: Mapping) -> GateResult:
             GATE,
             "insufficient_coverage",
             f"{len(evaluated)} buckets with >= {min_trades} trades < {min_segments}",
+            f"{len(evaluated)}/4 regimes covered",
+            report,
+        )
+    if len(profitable) < required:
+        losers = ", ".join(name for name in evaluated if name not in profitable)
+        return failed(
+            GATE,
+            "regime_concentration",
+            f"{len(profitable)} profitable buckets < {required}; losers: {losers}",
+            headline,
+            report,
+        )
+    return passed(GATE, headline, report)
+
+
+# --- daily classes (design 2026-10-24 §7) -----------------------------------------------------
+#
+# The same four buckets, but each train *day* is labelled (state of the latest underlying bar
+# dated strictly before it, i.e. known at the previous close) and a bucket counts once it has
+# >= ``regime_min_days_per_segment`` days. A bucket is profitable when the sum of its daily
+# metric (daily returns for ``daily_equity``, TWD PnL for ``daily_fixed``) is > 0. Pass iff
+# evaluated buckets >= ``regime_min_segments`` and profitable >= min(``regime_profitable_segments_min``,
+# evaluated). ``states`` comes from :func:`regime_states` on the 1x underlying's daily bars.
+
+
+@dataclass(frozen=True)
+class RegimeDailyInputs:
+    result: DailyResult  # the train backtest
+    basis: Basis
+    states: Mapping[date, str | None]
+
+
+def evaluate_daily(inputs: RegimeDailyInputs, thresholds: Mapping) -> GateResult:
+    min_days = int(thresholds["regime_min_days_per_segment"])
+    min_segments = int(thresholds["regime_min_segments"])
+    profitable_min = int(thresholds["regime_profitable_segments_min"])
+    metric = inputs.result.metric(inputs.basis)
+    pnl = inputs.result.pnl_twd
+    bad = [day.isoformat() for day, value in zip(inputs.result.dates, metric, strict=True) if not is_finite(value)]
+    if bad:
+        return invalid(GATE, "non-finite daily metric on " + ", ".join(bad[:5]) + (" ..." if len(bad) > 5 else ""))
+
+    dates = sorted(inputs.states)
+    buckets = {name: {"days": 0, "metric_sum": 0.0, "pnl_twd": 0.0} for name in BUCKETS}
+    unlabelled = 0
+    for day, value, day_pnl in zip(inputs.result.dates, metric, pnl, strict=True):
+        position = bisect.bisect_left(dates, day)
+        label = inputs.states[dates[position - 1]] if position else None
+        if label not in buckets:
+            unlabelled += 1
+            continue
+        bucket = buckets[label]
+        bucket["days"] += 1
+        bucket["metric_sum"] += float(value)
+        bucket["pnl_twd"] += float(day_pnl)
+    for bucket in buckets.values():
+        bucket["evaluated"] = bucket["days"] >= min_days
+        bucket["profitable"] = bucket["evaluated"] and bucket["metric_sum"] > 0
+
+    evaluated = [name for name, bucket in buckets.items() if bucket["evaluated"]]
+    profitable = [name for name in evaluated if buckets[name]["profitable"]]
+    required = min(profitable_min, len(evaluated))
+    report = {
+        "basis": inputs.basis,
+        "buckets": buckets,
+        "days": inputs.result.n_days,
+        "unlabelled_days": unlabelled,
+        "evaluated_buckets": len(evaluated),
+        "profitable_buckets": len(profitable),
+        "required_profitable_buckets": required,
+        "min_days_per_bucket": min_days,
+        "min_buckets": min_segments,
+    }
+    headline = f"{len(profitable)}/{len(evaluated)} regimes profitable"
+    if len(evaluated) < min_segments:
+        return failed(
+            GATE,
+            "insufficient_coverage",
+            f"{len(evaluated)} buckets with >= {min_days} days < {min_segments}",
             f"{len(evaluated)}/4 regimes covered",
             report,
         )

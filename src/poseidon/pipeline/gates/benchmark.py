@@ -23,10 +23,12 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 
 import numpy as np
 
 from poseidon.pipeline.gates.base import GateResult, failed, finite_or_none, invalid, is_finite, passed
+from poseidon.pipeline.gates.daily import Basis, DailyResult, align
 
 GATE = "benchmark"
 METHOD = "OLS strategy_daily = alpha + beta * buy_and_hold_daily; Newey-West HAC (Bartlett kernel, no df correction)"
@@ -159,4 +161,111 @@ def evaluate(inputs: BenchmarkInputs, thresholds: Mapping) -> GateResult:
             headline,
             report,
         )
+    return passed(GATE, headline, report)
+
+
+# --- daily classes (design 2026-10-24 §7, §12 #8) ---------------------------------------------
+#
+# The strategy's daily metric (daily return for ``daily_equity``, TWD PnL for ``daily_fixed``) is
+# regressed on the 1x underlying's daily *return* over the same trading days (TX family: the
+# back-adjusted continuous TX). Static leverage L of the underlying is y = L * x - costs: alpha
+# ~ -costs, so it fails, which is the point -- only timing / vol control earns alpha. Same
+# criteria as the intraday gate: alpha > 0 and HAC t >= ``benchmark_alpha_t_min`` (missing:
+# report only). Any train day without an underlying return is an input error.
+
+DAILY_METHOD = (
+    "OLS strategy_daily = alpha + beta * underlying_1x_daily_return; Newey-West HAC (Bartlett kernel, no df correction)"
+)
+_NEUTRAL_KEYS = {
+    "alpha_twd_per_day": "alpha_per_day",
+    "alpha_annualised_twd": "alpha_annualised",
+    "strategy_total_pnl_twd": "strategy_sum",
+    "benchmark_total_pnl_twd": "underlying_return_sum",
+    "beta_scaled_benchmark_pnl_twd": "beta_scaled_underlying_sum",
+    "alpha_total_pnl_twd": "alpha_sum",
+}
+
+
+@dataclass(frozen=True)
+class BenchmarkDailyInputs:
+    result: DailyResult  # the train backtest
+    underlying: Mapping[date, float]  # 1x underlying simple daily return per trading day
+    basis: Basis
+    hac_lags: int
+    annualisation_factor: float = 252.0
+
+
+def regress_daily(
+    result: DailyResult, underlying: Mapping[date, float], *, basis: Basis, lags: int, annualisation: float = 252.0
+) -> dict:
+    """:func:`regress` of the daily metric on the underlying's daily return, with unit-neutral keys."""
+
+    y, x, missing = align(result, underlying, basis)
+    stats = regress(y, x, lags=lags, annualisation=annualisation)
+    out = {_NEUTRAL_KEYS.get(key, key): value for key, value in stats.items()}
+    out.update(
+        method=DAILY_METHOD,
+        basis=basis,
+        unit="daily return" if basis == "return" else "TWD per day",
+        missing_underlying_days=len(missing),
+        first_missing_underlying_day=missing[0].isoformat() if missing else None,
+    )
+    return out
+
+
+def phrase_daily(stats: Mapping) -> str:
+    """``"alpha +0.031%/day (t 2.10), beta 2.95"`` (return basis) or the TWD phrase."""
+
+    alpha, t, beta = stats.get("alpha_per_day"), stats.get("alpha_t_hac"), stats.get("beta")
+    if not (is_finite(alpha) and is_finite(t) and is_finite(beta)):
+        return "alpha n/a"
+    if stats.get("basis") == "return":
+        return f"alpha {alpha * 100:+.3f}%/day (t {t:.2f}), beta {beta:.2f}"
+    return f"alpha {alpha:+,.0f}/day (t {t:.2f}), beta {beta:.2f}"
+
+
+def evaluate_daily(inputs: BenchmarkDailyInputs, thresholds: Mapping) -> GateResult:
+    t_min = thresholds.get("benchmark_alpha_t_min")  # missing -> report only
+    if t_min is not None and not is_finite(t_min):
+        return invalid(GATE, f"benchmark_alpha_t_min is not a finite number ({t_min!r})")
+    if not is_finite(inputs.hac_lags) or int(inputs.hac_lags) < 0:
+        return invalid(GATE, f"hac_lags must be a non-negative integer ({inputs.hac_lags!r})")
+    stats = regress_daily(
+        inputs.result,
+        inputs.underlying,
+        basis=inputs.basis,
+        lags=int(inputs.hac_lags),
+        annualisation=float(inputs.annualisation_factor),
+    )
+    report = {
+        **stats,
+        "alpha_t_min": float(t_min) if t_min is not None else None,
+        "criterion_enabled": t_min is not None,
+    }
+    if stats["missing_underlying_days"]:
+        return invalid(
+            GATE,
+            f"{stats['missing_underlying_days']} train days have no underlying return "
+            f"(first {stats['first_missing_underlying_day']})",
+            report,
+        )
+    bad = [name for name in ("alpha_per_day", "alpha_t_hac", "beta") if stats[name] is None]
+    if bad:
+        return invalid(
+            GATE, f"regression undefined on {stats['n_obs']} aligned days (non-finite {', '.join(bad)})", report
+        )
+    alpha, t = stats["alpha_per_day"], stats["alpha_t_hac"]
+    headline = phrase_daily(stats)
+    if t_min is None:
+        return passed(GATE, f"{headline} (report only)", report, reason="benchmark_alpha_t_min not frozen in this run")
+    if not alpha > 0:
+        return failed(
+            GATE,
+            "alpha_not_positive",
+            f"{headline}: alpha <= 0 over the 1x underlying",
+            headline,
+            report,
+        )
+    if t < float(t_min):
+        return failed(GATE, "alpha_not_significant", f"{headline}: HAC t < {float(t_min):g}", headline, report)
     return passed(GATE, headline, report)
