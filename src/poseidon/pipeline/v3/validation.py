@@ -478,7 +478,9 @@ def _check_dsl_sleeve(base: tuple, sleeve: dict, instrument: Instrument | None, 
 # --------------------------------------------------------------------------- stages 5-8: feasibility and policy
 
 
-def _warmup_days(bars: int, frequency: str) -> int:
+def warmup_calendar_days(bars: int, frequency: str) -> int:
+    """Calendar days of data to load before the window start for ``bars`` warm-up bars."""
+
     if frequency in INTRADAY_FREQUENCIES:
         return 0  # intraday runs warm up inside the data window (plan.DEFAULT_GATES["warmup_days"])
     return math.ceil(bars * 365 / TRADING_DAYS_PER_YEAR) + 7
@@ -503,7 +505,7 @@ def _check_data(resolved: dict, template: dict, params: dict, feasibility: Feasi
     default_start = INTRADAY_WINDOW_START if frequency in INTRADAY_FREQUENCIES else DAILY_WINDOW_START
     start = feasibility.start or default_start
     bars = _history_bars(template, params)
-    warmup = timedelta(days=_warmup_days(bars, frequency))
+    warmup = timedelta(days=warmup_calendar_days(bars, frequency))
     need_from = start - warmup
     for alias, decl in resolved["instruments"].items():
         instrument = INSTRUMENTS[decl["symbol"]]

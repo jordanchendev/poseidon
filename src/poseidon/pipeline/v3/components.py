@@ -1,9 +1,12 @@
 """Registered spec v3 components (REGISTRY_VERSION 1).
 
-Declarations only: parameters with bounds, ``$param``-able fields, zh-TW
-``describe()``, warm-up, capability tokens and component-level checks. The
-bar-by-bar behaviour each docstring states is the contract the
-target-position engine implements (design 2026-10-24 §3.3, §5).
+Parameters with bounds, ``$param``-able fields, zh-TW ``describe()``,
+warm-up, capability tokens, component-level checks, and the bar-by-bar
+behaviour each docstring states (design 2026-10-24 §3.3, §5). The behaviour
+hooks (``step``, ``units``, ``should_trade``, ``roll_due``, ``weights``) see
+only what :mod:`poseidon.pipeline.v3.runtime` hands them: a
+:class:`~poseidon.pipeline.v3.runtime.SleeveView` of data up to the decision
+close, never later, so every component is causal by construction.
 
 REGISTRY_VERSION 1 holds what the M1 acceptance spec (§3.2) needs plus the
 DSL v2 fast path (§3.4). The rest of the Phase 1 list is in
@@ -16,6 +19,7 @@ import math
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal
 
+import numpy as np
 from pydantic import Field
 
 from poseidon.pipeline.v3.instruments import INTRADAY_FREQUENCIES, Instrument
@@ -84,6 +88,9 @@ class ConstantDirection(DirectionComponent):
         side: Literal["long", "short"]
 
     example = {"side": "long"}
+
+    def step(self, params, state, view):
+        return 1 if params.side == "long" else -1
 
     def describe(self, params, ctx):
         return "一直做多" if params.side == "long" else "一直做空"
@@ -169,11 +176,14 @@ class BaseLeverage(LeverageComponent):
 class MaBandRegime(LeverageComponent):
     """Risk-off below MA x (1 - band), back on above MA x (1 + band); in between keep the previous state.
 
-    MA = simple moving average of ``signal`` over ``ma_days`` daily closes
-    (including bar t). Risk-on passes the incoming leverage through; risk-off
-    replaces it with ``off_leverage``. The state at the first decision after
-    the warm-up is risk-on iff signal >= MA. The hysteresis state lives in the
-    component state, never in the data.
+    MA = simple moving average of ``signal`` over ``ma_days`` rows of the
+    signal series (including the latest row). Risk-on passes the incoming
+    leverage through; risk-off replaces it with ``off_leverage``. The state
+    starts at the first signal row dated on or after the first decision day:
+    risk-on iff signal >= MA there (risk-on while the MA is undefined). Every
+    later row moves the state at most once, in date order, so a signal with
+    rows on days the instrument does not trade (an index) is still read row by
+    row. The hysteresis state lives in the component state, never in the data.
     """
 
     name = "regime.ma_band"
@@ -199,6 +209,33 @@ class MaBandRegime(LeverageComponent):
     def upper(self, params, leverage_in):
         return max(leverage_in, params.off_leverage)
 
+    def init(self, params):
+        # start: first decision day; rows: signal rows consumed; on: None until the start row;
+        # switches: (signal row date, risk-on after the switch), for reports.
+        return {"start": None, "rows": 0, "on": None, "switches": []}
+
+    def step(self, params, state, view, leverage_in):
+        series = view.series(params.signal)
+        if state["start"] is None:
+            state["start"] = np.datetime64(view.date, "ns")
+        values, dates = series.values, series.dates
+        n = params.ma_days
+        for k in range(state["rows"], len(values)):
+            close = float(values[k])
+            ma = float(values[k - n + 1 : k + 1].mean()) if k + 1 >= n else math.nan
+            if state["on"] is None:
+                if dates[k] >= state["start"]:
+                    state["on"] = not (math.isfinite(ma) and close < ma)
+            elif math.isfinite(ma):
+                if state["on"] and close < ma * (1 - params.band_pct):
+                    state["on"] = False
+                    state["switches"].append((dates[k], False))
+                elif not state["on"] and close > ma * (1 + params.band_pct):
+                    state["on"] = True
+                    state["switches"].append((dates[k], True))
+        state["rows"] = len(values)
+        return leverage_in if state["on"] is not False else params.off_leverage
+
     def check(self, params, ctx):
         return series_alias_errors("signal", params.signal, ctx)
 
@@ -216,8 +253,8 @@ class VolCap(LeverageComponent):
     """L = min(L_in, k / sigma), sigma = annualised realised volatility of ``signal``.
 
     sigma = sample standard deviation (ddof 1) of the last ``window_days``
-    daily log returns of ``signal`` up to bar t, times sqrt(252). sigma = 0
-    leaves L_in unchanged.
+    daily log returns of ``signal`` up to its latest row, times sqrt(252).
+    Fewer than ``window_days + 1`` rows, or sigma = 0, leaves L_in unchanged.
     """
 
     name = "risk.vol_cap"
@@ -239,6 +276,16 @@ class VolCap(LeverageComponent):
     def check(self, params, ctx):
         return series_alias_errors("signal", params.signal, ctx)
 
+    def step(self, params, state, view, leverage_in):
+        values = view.series(params.signal).values
+        window = params.window_days
+        if len(values) < window + 1:
+            return leverage_in
+        sigma = float(np.diff(np.log(values[-(window + 1) :])).std(ddof=1)) * math.sqrt(252)
+        if not math.isfinite(sigma) or sigma <= 0:
+            return leverage_in
+        return min(leverage_in, params.k / sigma)
+
     def describe(self, params, ctx):
         return f"再取 min(目前倍數, {fmt(params.k)} ÷ {params.window_days} 日年化實現波動)"
 
@@ -246,17 +293,27 @@ class VolCap(LeverageComponent):
 # --------------------------------------------------------------------------- sizing
 
 
-def round_units(raw: float, rounding: str) -> int:
-    """Round the magnitude (floor never exceeds the target leverage), keep the sign."""
+ROUNDING_EPS = 1e-9  # relative: keeps exact ratios such as 3e6 / 2e5 from flooring to 14 on float noise
 
-    magnitude = abs(raw)
-    units = math.floor(magnitude + 1e-9) if rounding == "floor" else math.floor(magnitude + 0.5)
-    return int(math.copysign(units, raw)) if units else 0
+
+def round_units(raw: float, rounding: str) -> int:
+    """``floor`` rounds the magnitude down (never above the target leverage, long or short);
+    ``nearest`` rounds half to even (Python ``round``, as the offline levtx backtest does)."""
+
+    if rounding == "floor":
+        return math.trunc(raw + math.copysign(ROUNDING_EPS * max(1.0, abs(raw)), raw))
+    if rounding == "nearest":
+        return round(raw)
+    raise ValueError(f"unknown rounding {rounding!r}")
 
 
 @register
 class TargetLeverageSizing(SizingComponent):
-    """units = round(equity x d x L x weight / (price x point value x lot)), floor by default (§5.3)."""
+    """units = round(equity x d x L x weight / (price x point value x lot)), floor by default (§5.3).
+
+    The one sizing formula: the validator's feasibility checks and the engine run both call
+    :meth:`units`. Units are contracts (board lots for stocks). Equity <= 0 sizes to 0.
+    """
 
     name = "sizing.target_leverage"
     frequencies = DAILY
@@ -270,6 +327,8 @@ class TargetLeverageSizing(SizingComponent):
     example = {"rounding": "floor"}
 
     def units(self, params, *, equity, direction, leverage, weight, price, instrument: Instrument):
+        if equity <= 0:
+            return 0
         raw = equity * direction * leverage * weight / instrument.notional_twd(price)
         return round_units(raw, params.rounding)
 
@@ -321,13 +380,21 @@ class DailyRebalance(RebalanceComponent):
     tunable = frozenset({"min_change_units"})
     example = {"min_change_units": 1}
 
+    def should_trade(self, params, state, *, current_units, target_units, ctx):
+        return abs(target_units - current_units) >= params.min_change_units
+
     def describe(self, params, ctx):
         return f"差 {params.min_change_units} 口以上才調整"
 
 
+def _side(units: int) -> int:
+    return (units > 0) - (units < 0)
+
+
 @register
 class MonthlyAtRollRebalance(RebalanceComponent):
-    """Re-size only at the roll (once per contract month), plus any direction change at once."""
+    """Re-size only on a roll day (the held contract changed at this close), by at least
+    ``min_change_units``; a change of side (enter, exit, reverse) trades at once."""
 
     name = "rebalance.monthly_at_roll"
     frequencies = DAILY
@@ -342,13 +409,21 @@ class MonthlyAtRollRebalance(RebalanceComponent):
             return [("", "rebalance.monthly_at_roll needs a futures instrument (it re-sizes at the roll)")]
         return []
 
+    def should_trade(self, params, state, *, current_units, target_units, ctx):
+        if _side(target_units) != _side(current_units):
+            return True
+        return ctx.rolled_today and abs(target_units - current_units) >= params.min_change_units
+
     def describe(self, params, ctx):
         return f"只在每月換月時調整口數（差 {params.min_change_units} 口以上），方向改變時立即調整"
 
 
 @register
 class ThresholdBandRebalance(RebalanceComponent):
-    """Trade iff |actual leverage - target leverage| / target leverage > band_pct, or the direction changes."""
+    """Trade iff |actual leverage - target leverage| / |target leverage| > band_pct, or the side changes.
+
+    Actual leverage = current units x today's close x point value / equity; target = d x L x weight.
+    """
 
     name = "rebalance.threshold_band"
     frequencies = DAILY
@@ -360,6 +435,14 @@ class ThresholdBandRebalance(RebalanceComponent):
 
     tunable = frozenset({"band_pct"})
     example = {"band_pct": 0.1}
+
+    def should_trade(self, params, state, *, current_units, target_units, ctx):
+        if target_units == current_units:
+            return False
+        if _side(target_units) != _side(current_units):
+            return True
+        drift = abs(ctx.actual_leverage - ctx.target_leverage) / abs(ctx.target_leverage)
+        return drift > params.band_pct
 
     def describe(self, params, ctx):
         return f"實際槓桿偏離目標超過 {pct(params.band_pct)}% 才調整，方向改變時立即調整"
@@ -375,6 +458,9 @@ class OnSignalChangeRebalance(RebalanceComponent):
     summary = "Trade only when the direction changes (enter / exit / reverse); no re-sizing in between."
     example = {}
 
+    def should_trade(self, params, state, *, current_units, target_units, ctx):
+        return _side(target_units) != _side(current_units)
+
     def describe(self, params, ctx):
         return "訊號改變時才進出場"
 
@@ -388,6 +474,10 @@ class BeforeSettlementRoll(RollComponent):
 
     Both legs pay costs and each contract settles at its own close, so the
     roll spread is never PnL; the signal series is back-adjusted from the same data.
+    The engine executes the roll (``FuturesInput.roll_days_before = days_before``):
+    after the close of t it holds the nearest expiry strictly after the trading day
+    ``days_before`` sessions after t, so the position moves at t iff an expiry falls
+    in (ref(t-1), ref(t)], which is what :meth:`roll_due` answers.
     """
 
     name = "roll.before_settlement"
@@ -399,6 +489,16 @@ class BeforeSettlementRoll(RollComponent):
         days_before: Annotated[int, Field(ge=0, le=5)] = 1
 
     example = {"days_before": 1}
+
+    def roll_due(self, params, *, session_date, calendar):
+        days = calendar.trading_days
+        position = days.get_loc(session_date)
+        last = len(days) - 1
+        ref = days[min(position + params.days_before, last)]
+        if position == 0:
+            return False
+        prev_ref = days[min(position - 1 + params.days_before, last)]
+        return any(prev_ref < expiry <= ref for expiry in calendar.expiries)
 
     def describe(self, params, ctx):
         if params.days_before == 0:

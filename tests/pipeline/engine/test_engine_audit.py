@@ -1,4 +1,8 @@
-"""Truncation audit (structural no-look-ahead proof) and determinism of the engine."""
+"""Truncation audit (structural no-look-ahead proof) and determinism of the engine.
+
+The strategies are compiled spec v3 documents (the §3.2 acceptance spec without the volatility
+cap, MA 50) on synthetic per-contract data.
+"""
 
 from __future__ import annotations
 
@@ -6,22 +10,24 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from poseidon.pipeline.engine import EngineConfig, FuturesInput, run, truncation_audit
+from poseidon.pipeline.engine import Decision, EngineConfig, FuturesInput, run, truncation_audit
 from poseidon.pipeline.engine import simulator as sim
+from poseidon.pipeline.v3.compiler import plan, strategy_factory
+from poseidon.pipeline.v3.runtime import Conventions
 
-from .support import TMF, MaBandLeverage, synthetic_contracts
+from ..spec_support import resolved_spec
+from .support import TMF, synthetic_contracts
 
 FRAME, EXPIRIES, INDEX = synthetic_contracts()
-FUTURES = {"TMF": FuturesInput(spec=TMF, bars=FRAME, expiries=EXPIRIES, roll_days_before=1)}
+FUTURES = {"core": FuturesInput(spec=TMF, bars=FRAME, expiries=EXPIRIES, roll_days_before=1)}
 START = pd.Timestamp("2024-04-01")
 
-
-def adjusted_strategy():
-    return MaBandLeverage(START, ma_days=50, band=0.02, rounding="floor")
-
-
-def aux_strategy():
-    return MaBandLeverage(START, aux="index", ma_days=50, band=0.01)
+adjusted_strategy = strategy_factory(plan(resolved_spec(ma_days=50, vol_k=None)))
+# levtx-style: signal on the index aux series, one row lagged, round to nearest
+aux_strategy = strategy_factory(
+    plan(resolved_spec(ma_days=50, band=0.01, vol_k=None, rounding="nearest")),
+    Conventions(signal_aux={"core:adjusted": "index"}, signal_lag=1),
+)
 
 
 def test_synthetic_fixture_exercises_rolls_and_regime_switches():
@@ -51,8 +57,15 @@ def test_truncation_audit_catches_an_engine_that_leaks_the_next_close(monkeypatc
             if np.isfinite(nxt):
                 self.series[k].columns["close"][self.series[k].n - 1] = nxt
 
+    class CloseProbe:
+        """Targets depend on the last close's units digit, so any leaked close changes a decision."""
+
+        def on_bar(self, view, book):
+            return Decision({"core": int(view["core"].close[-1]) % 5})
+
+    assert truncation_audit(CloseProbe, FUTURES, EngineConfig(start=START), n_cuts=20).ok
     monkeypatch.setattr(sim._Run, "feed", leaky_feed)
-    report = truncation_audit(adjusted_strategy, FUTURES, EngineConfig(start=START), n_cuts=20)
+    report = truncation_audit(CloseProbe, FUTURES, EngineConfig(start=START), n_cuts=20)
     assert not report.ok
     assert any("decisions" in m for m in report.mismatches)
 

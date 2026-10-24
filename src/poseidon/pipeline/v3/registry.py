@@ -3,9 +3,11 @@
 A component declares *what it is*: slot, frequencies, a strict parameter
 model with bounds, which parameters may become ``$param`` ranges, capability
 tokens, a deterministic zh-TW ``describe()`` sentence, and the warm-up it
-needs. How it behaves bar by bar is the engine's business (§5.1); each slot
-base class names that hook as an abstract method so the engine step plugs in
-without touching the declarations.
+needs. Each slot base class names its bar-by-bar hook; the components
+implement them against :mod:`poseidon.pipeline.v3.runtime` (a
+``SleeveView`` of data up to the decision close and a ``RebalanceContext``),
+and :mod:`poseidon.pipeline.v3.compiler` wires them into the target-position
+engine (§5.1).
 
 Rules for changing anything here (§3.6): any new or changed component bumps
 ``REGISTRY_VERSION``; a change that alters a component's output is a new
@@ -144,14 +146,14 @@ class DirectionComponent(Component):
     slot = "direction"
 
     def step(self, params: StrictParams, state: Any, view: Any) -> int:
-        """Engine seam (§5.1): direction at the close of the last bar in ``view``.
+        """Direction at the decision close (§5.1): -1, 0 or +1.
 
-        ``view`` is the engine's MarketView: append-only arrays up to and
-        including bar t, never later. Return -1, 0 or +1. ``state`` is what
+        ``view`` is a ``runtime.SleeveView``: append-only arrays up to and
+        including the decision day, never later. ``state`` is what
         :meth:`init` returned, mutated in place across bars.
         """
 
-        raise NotImplementedError(f"{self.name}: the target-position engine implements step()")
+        raise NotImplementedError(f"{self.name} has no daily behaviour yet")
 
 
 class LeverageComponent(Component):
@@ -160,13 +162,13 @@ class LeverageComponent(Component):
     slot = "leverage"
 
     def step(self, params: StrictParams, state: Any, view: Any, leverage_in: float) -> float:
-        """Engine seam (§3.3, §5.1): leverage after this link at the close of the last bar in ``view``.
+        """Leverage after this link at the decision close (§3.3, §5.1).
 
         ``leverage_in`` is the previous link's output (0.0 for the first link).
-        Causal by construction: only ``view`` (bars up to t) is visible.
+        Causal by construction: only ``view`` (a ``runtime.SleeveView``, data up to t) is visible.
         """
 
-        raise NotImplementedError(f"{self.name}: the target-position engine implements step()")
+        raise NotImplementedError(f"{self.name} has no daily behaviour yet")
 
     def nominal(self, params: StrictParams, leverage_in: float) -> float:
         """Output when every filter is risk-on and every cap is slack (sizing feasibility, §3.7.5)."""
@@ -209,13 +211,13 @@ class RebalanceComponent(Component):
     def should_trade(
         self, params: StrictParams, state: Any, *, current_units: int, target_units: int, ctx: Any
     ) -> bool:
-        """Engine seam (§5.1 step 4): whether to send the diff ``target_units - current_units`` now.
+        """Whether to send the diff ``target_units - current_units`` now (§5.1 step 4).
 
-        ``ctx`` is the engine's decision context (decision time, roll calendar,
-        current and target leverage).
+        ``ctx`` is a ``runtime.RebalanceContext`` (decision day, whether the
+        position rolled at this close, target and actual leverage).
         """
 
-        raise NotImplementedError(f"{self.name}: the target-position engine implements should_trade()")
+        raise NotImplementedError(f"{self.name} has no daily behaviour yet")
 
 
 class RollComponent(Component):
@@ -224,9 +226,12 @@ class RollComponent(Component):
     slot = "roll"
 
     def roll_due(self, params: StrictParams, *, session_date: Any, calendar: Any) -> bool:
-        """Engine seam (§5.5): whether the position moves to the next contract month at this session's close."""
+        """Whether the position moves to the next contract month at this session's close (§5.5).
 
-        raise NotImplementedError(f"{self.name}: the target-position engine implements roll_due()")
+        ``calendar`` is a ``runtime.RollCalendar`` (trading days, contract expiries).
+        """
+
+        raise NotImplementedError(f"{self.name} has no daily behaviour yet")
 
 
 class ExecutionComponent(Component):
@@ -244,9 +249,9 @@ class AllocationComponent(Component):
     max_sleeves: ClassVar[int] = 1
 
     def weights(self, params: StrictParams, state: Any, view: Any, sleeves: tuple[str, ...]) -> dict[str, float]:
-        """Engine seam: weight per sleeve id at the last bar in ``view``."""
+        """Weight per sleeve id at the decision close."""
 
-        raise NotImplementedError(f"{self.name}: the target-position engine implements weights()")
+        raise NotImplementedError(f"{self.name} has no daily behaviour yet")
 
 
 # --------------------------------------------------------------------------- registration

@@ -1,21 +1,23 @@
 """Cross-check against the offline backtest ``local_dev/scripts/leveraged-tx/levtx.py`` (design §10 step 3).
 
-Runs only when both are available (stormtrooper):
+Runs only when both levtx and the refdata store are available (stormtrooper):
   LEVTX_SCRIPT=/path/levtx.py  LEVTX_DATA=/path/levtx-data  (the directory holding ext/)
+  POSEIDON_PIPELINE_REFDATA_ROOT=/path/refdata              (read-only is fine)
 Optional: LEVTX_REPORT=/path/report.json to keep the numbers.
 
-levtx's "3x daily + 200DMA ±2%" is rebuilt as a target strategy (``MaBandLeverage`` with the TAIEX
-price index as an aux series) and run through the engine under levtx's conventions:
-``signal_close`` execution with the regime lagged one TAIEX day (levtx decides from close t-1 and
-trades at close t), round-to-nearest sizing, TMF specs, roll at the close of the day before final
-settlement, expiries = each contract's last day-session row (alive contracts never expire).
-Both read the same TAIFEX/TWSE files through levtx's own loaders.
+The spec side is the §3.2 acceptance spec compiled from refdata by ``v3.compiler`` and run by the
+engine, configured to levtx's conventions: ``rounding: nearest`` in the spec, and
+``Conventions(execution="signal_close", signal_aux={"core:adjusted": "taiex"}, signal_lag=1)``
+(levtx signals on the TAIEX price index, decides from close t-1 and fills at close t). Two levtx
+variants: "3x daily + 200DMA±2%" (the spec without ``risk.vol_cap``) and "3x + 200DMA + volcap75"
+(the acceptance chain, k = 0.75 over 20 days). levtx reads its own copy of the TAIFEX/TWSE files.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -24,15 +26,26 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from poseidon.pipeline.engine import EngineConfig, FuturesInput, run, truncation_audit
+from poseidon.pipeline.refdata.datasets import FUTURES
+from poseidon.pipeline.refdata.store import RefdataStore
+from poseidon.pipeline.v3.compiler import compile_spec
+from poseidon.pipeline.v3.runtime import Conventions
 
-from .support import TMF, MaBandLeverage
+from ..spec_support import resolved_spec
 
 SCRIPT = os.environ.get("LEVTX_SCRIPT")
 DATA = os.environ.get("LEVTX_DATA")
-pytestmark = pytest.mark.skipif(not (SCRIPT and DATA), reason="LEVTX_SCRIPT / LEVTX_DATA not set")
+STORE = RefdataStore()
+pytestmark = pytest.mark.skipif(
+    not (SCRIPT and DATA and STORE.exists(FUTURES)), reason="LEVTX_SCRIPT / LEVTX_DATA / refdata not available"
+)
 
 WINDOWS = [("2014-11-03", None), ("2000-01-04", "2014-10-31"), ("2020-01-02", None), ("2008-01-02", None)]
+VARIANTS = {
+    "3x+200DMA": (dict(ma=200, band=0.02, bear_lev=0.5), dict(vol_k=None)),
+    "3x+200DMA+volcap75": (dict(ma=200, band=0.02, bear_lev=0.5, vol_target=0.75), dict(vol_k=0.75)),
+}
+LEVTX_CONVENTIONS = Conventions(execution="signal_close", signal_aux={"core:adjusted": "taiex"}, signal_lag=1)
 REPORT: dict = {}
 
 
@@ -48,38 +61,16 @@ def levtx():
 
 @pytest.fixture(scope="module")
 def market(levtx):
-    tx = levtx.load_taifex()
-    mk = levtx.build_r1(tx)
+    mk = levtx.build_r1(levtx.load_taifex())
     sig = levtx.load_twse("MI_5MINS_HIST", ["open", "high", "low", "close"])
-    end = mk.index.intersection(sig.index)[-1]
-
-    day = tx[tx["session"] == "一般"]
-    night = tx[tx["session"] != "一般"]
-    frame = day[["date", "cm", "open", "high", "low", "close", "settle"]].rename(columns={"cm": "contract"})
-    ext = night.groupby(["date", "cm"]).agg(night_high=("high", "max"), night_low=("low", "min"))
-    frame = frame.merge(ext, left_on=["date", "contract"], right_index=True, how="left")
-    frame["high"] = np.fmax(frame["high"], frame["night_high"])
-    frame["low"] = np.fmin(frame["low"], frame["night_low"])
-    last_day = day.groupby("cm")["date"].max()
-    expiries = last_day.where(last_day != day["date"].max(), pd.Timestamp("2100-01-01")).to_dict()
-    futures = {
-        "TMF": FuturesInput(
-            spec=TMF, bars=frame.drop(columns=["night_high", "night_low"]), expiries=expiries, roll_days_before=1
-        )
-    }
-    calendar = list(mk.index)
-    return {
-        "mk": mk,
-        "sig": sig,
-        "end": end,
-        "futures": futures,
-        "calendar": calendar,
-        "aux": {"taiex": sig[["close"]]},
-    }
+    sig["vol20"] = np.log(sig["close"]).diff().rolling(20).std() * math.sqrt(252)  # as levtx.main
+    refdata_end = pd.Timestamp(STORE.manifest(FUTURES)["coverage"]["end"])
+    end = min(mk.index.intersection(sig.index)[-1], refdata_end)
+    return {"mk": mk, "sig": sig, "end": end}
 
 
-def _levtx_run(levtx, market, start, end):
-    spec = levtx.Spec("3x daily + 200DMA±2%", 3, "daily", ma=200, band=0.02, bear_lev=0.5)
+def _levtx_run(levtx, market, variant, start, end):
+    spec = levtx.Spec(variant, 3, "daily", **VARIANTS[variant][0])
     r = levtx.simulate(spec, market["mk"], market["sig"], start, end)
     _, state = levtx.leverage_path(spec, market["sig"], start, end)
     w = market["mk"].loc[start:end]
@@ -87,25 +78,18 @@ def _levtx_run(levtx, market, start, end):
     return r, w, units, state.loc[start:end]
 
 
-def _engine_run(market, start, end, execution="signal_close"):
-    strategy = MaBandLeverage(start, aux="taiex")
-    res = run(
-        strategy,
-        market["futures"],
-        EngineConfig(execution=execution, start=start, end=end),
-        aux=market["aux"],
-        calendar=market["calendar"],
-    )
-    return res, strategy
-
-
+@pytest.mark.parametrize("variant", list(VARIANTS))
 @pytest.mark.parametrize("start,end", WINDOWS)
-def test_engine_matches_levtx(levtx, market, start, end):
+def test_compiled_spec_matches_levtx(levtx, market, variant, start, end):
     end = pd.Timestamp(end) if end else market["end"]
-    r, w, lev_units, lev_state = _levtx_run(levtx, market, start, end)
-    res, strategy = _engine_run(market, start, end)
+    r, w, lev_units, lev_state = _levtx_run(levtx, market, variant, start, end)
     if r["ruined"]:
         pytest.skip(f"levtx ruined on {r['ruined']}")
+    compiled = compile_spec(
+        resolved_spec(rounding="nearest", **VARIANTS[variant][1]), start=start, end=end, conventions=LEVTX_CONVENTIONS
+    )
+    strategy = compiled.strategy()
+    res = compiled.run(strategy)
 
     pos = res.positions_daily.set_index("date")
     assert list(pos.index) == list(w.index)
@@ -114,31 +98,29 @@ def test_engine_matches_levtx(levtx, market, start, end):
     rebal_engine = set(pos.index[pos["held_units"].diff().fillna(pos["held_units"]) != 0])
     rebal_levtx = set(w.index[lev_units.diff().fillna(lev_units) != 0])
 
-    ours = pd.Series(dict(strategy.states))
-    switches_engine = list(ours.index[ours.diff().fillna(0) != 0])
+    switches_engine = [pd.Timestamp(d) for d, _on in strategy.state("main", "leverage.1")["switches"]]
     switches_levtx = list(lev_state.index[lev_state.diff().fillna(0) != 0])
 
     eq_engine, eq_levtx = res.equity, r["eq"]
     rel = (eq_engine / eq_levtx - 1).abs()
     final_gap = float(eq_engine.iloc[-1] / eq_levtx.iloc[-1] - 1)
-
-    next_open, _ = _engine_run(market, start, end, execution="next_open")
-    REPORT[f"{start}..{end.date()}"] = {
+    key = f"{variant} {start}..{end.date()}"
+    REPORT[key] = {
         "days": len(w),
         "unit_mismatch_days": int(unit_diff.sum()),
         "rebalance_days_engine": len(rebal_engine),
         "rebalance_days_levtx": len(rebal_levtx),
-        "switch_dates": [str(d.date()) for d in switches_levtx],
+        "switch_dates_levtx": [str(d.date()) for d in switches_levtx],
+        "switch_dates_engine": [str(d.date()) for d in switches_engine],
         "final_equity_levtx": float(eq_levtx.iloc[-1]),
         "final_equity_engine": float(eq_engine.iloc[-1]),
         "final_gap_pct": final_gap * 100,
         "max_daily_equity_gap_pct": float(rel.max() * 100),
-        "engine_margin_events": res.events["kind"].value_counts().to_dict(),
+        "engine_events": res.events["kind"].value_counts().to_dict(),
         "levtx_margin_flags": len(r["margin_flags"]),
-        "next_open_final_equity": next_open.final_equity,
-        "next_open_vs_levtx_pct": (next_open.final_equity / float(eq_levtx.iloc[-1]) - 1) * 100,
+        "refdata_inputs": compiled.inputs,
     }
-    print(json.dumps({f"{start}..{end.date()}": REPORT[f"{start}..{end.date()}"]}, indent=1, default=str))
+    print(json.dumps({key: REPORT[key]}, indent=1, default=str))
     if os.environ.get("LEVTX_REPORT"):
         Path(os.environ["LEVTX_REPORT"]).write_text(json.dumps(REPORT, indent=1, default=str))
 
@@ -146,18 +128,3 @@ def test_engine_matches_levtx(levtx, market, start, end):
     assert rebal_engine == rebal_levtx
     assert int(unit_diff.sum()) == 0
     assert abs(final_gap) <= 0.005
-
-
-def test_acceptance_strategy_passes_truncation_audit_on_real_data(market):
-    start, end = "2014-11-03", market["end"]
-    report = truncation_audit(
-        lambda: MaBandLeverage(start, aux="taiex", rounding="floor"),
-        market["futures"],
-        EngineConfig(execution="next_open", start=start, end=end),
-        aux=market["aux"],
-        calendar=market["calendar"],
-        n_cuts=20,
-        seed=20261024,
-    )
-    print("truncation audit cuts:", [str(c.date()) for c in report.cuts], "mismatches:", report.mismatches)
-    assert len(report.cuts) == 20 and report.ok

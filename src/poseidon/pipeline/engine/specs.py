@@ -1,8 +1,9 @@
 """Contract specs the engine needs, and the per-leg cost and sizing arithmetic built on them.
 
-The engine does not own an instrument table (that lives with the v3 registry); callers pass one
-``ContractSpec`` per instrument. ``ContractSpec.from_cost_model`` adapts an existing
-``backtest.cost_model.CostModel`` (for example ``tw_futures_pipeline`` for TX).
+The engine does not own an instrument table: ``ContractSpec.from_instrument`` builds one from a
+row of ``pipeline.v3.instruments.INSTRUMENTS`` (its ``CostModel``, margin ratios, listing and
+proxy). Sizing is not here either: ``sizing.target_leverage`` in the v3 registry is the one
+formula, the engine only clips what a strategy asks for.
 
 Per-leg fees follow ``BacktestPortfolio._entry_fees`` with ``tax_on_entry``: futures tax on the
 notional of every leg (entry and exit alike) plus a fixed commission per contract per side.
@@ -15,11 +16,11 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import date
-from typing import Literal
+from typing import TYPE_CHECKING
 
-from poseidon.backtest.cost_model import CostModel
+if TYPE_CHECKING:
+    from poseidon.pipeline.v3.instruments import Instrument
 
-Rounding = Literal["floor", "nearest"]
 ROUNDING_EPS = 1e-9  # keeps exact ratios such as 3e6 / 2e5 from flooring to 14 on float noise
 
 
@@ -47,21 +48,25 @@ class ContractSpec:
             raise ValueError(f"{self.symbol}: need 0 < maintenance_margin_ratio <= initial_margin_ratio")
 
     @classmethod
-    def from_cost_model(cls, symbol: str, cost: CostModel, **margin_and_listing) -> ContractSpec:
-        """Reuse a futures ``CostModel`` (tax on both legs, per-contract commission, tick slippage)."""
+    def from_instrument(cls, instrument: Instrument) -> ContractSpec:
+        """The engine's view of an instrument-table row (futures only in Phase 1)."""
 
-        if cost.tick_size <= 0:
-            raise ValueError(f"{cost.market}: a futures cost model needs tick_size > 0")
+        cost = instrument.cost_model
+        if instrument.kind != "future":
+            raise ValueError(f"{instrument.symbol}: the daily engine trades futures only, not {instrument.kind}")
         if not cost.tax_on_entry:
             raise ValueError(f"{cost.market}: the engine charges futures tax on every leg; use a tax_on_entry model")
         return cls(
-            symbol=symbol,
-            point_value=cost.point_value,
-            tick_size=cost.tick_size,
+            symbol=instrument.symbol,
+            point_value=instrument.point_value_twd * instrument.lot,
+            tick_size=instrument.tick_size,
             commission_per_unit=cost.commission_per_contract,
             tax_rate=cost.tax_rate,
             slippage_ticks=cost.slippage_ticks,
-            **margin_and_listing,
+            initial_margin_ratio=instrument.initial_margin_ratio,
+            maintenance_margin_ratio=instrument.maintenance_margin_ratio,
+            listed_since=instrument.listed_since,
+            price_proxy=instrument.price_proxy,
         )
 
     def notional(self, units: int, price: float) -> float:
@@ -76,34 +81,3 @@ class ContractSpec:
         """(tax, commission) in TWD for one leg of ``units`` contracts at ``fill_price``."""
 
         return self.tax_rate * self.notional(units, fill_price), abs(units) * self.commission_per_unit
-
-
-def target_leverage_units(
-    equity: float,
-    leverage: float,
-    price: float,
-    point_value: float,
-    *,
-    direction: int = 1,
-    weight: float = 1.0,
-    lot: int = 1,
-    rounding: Rounding = "floor",
-) -> int:
-    """§5.3 ``sizing.target_leverage``: units = round(equity x d x L x w / (price x point_value x lot)) x lot.
-
-    ``floor`` rounds the magnitude down (toward zero) so the position never exceeds the target
-    leverage, long or short. ``nearest`` uses Python's round-half-to-even.
-    """
-
-    if price <= 0 or point_value <= 0 or lot <= 0:
-        raise ValueError("price, point_value and lot must be positive")
-    if equity <= 0:
-        return 0
-    raw = equity * direction * leverage * weight / (price * point_value * lot)
-    if rounding == "floor":
-        lots = math.trunc(raw + math.copysign(ROUNDING_EPS * max(1.0, abs(raw)), raw))
-    elif rounding == "nearest":
-        lots = round(raw)
-    else:
-        raise ValueError(f"unknown rounding {rounding!r}")
-    return int(lots) * lot
