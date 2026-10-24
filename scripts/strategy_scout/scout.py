@@ -94,6 +94,8 @@ RSI), smoothing a smoothed series, standard deviation / Bollinger bands / z-scor
 profile / OI, options or implied volatility, order book, other instruments (NQ/ES/TE/stocks), news, fundamentals, ML
 models, position sizing, pyramiding. Companion data such as foreign flows is NOT available to the DSL. Entries must be
 rules on TX price/time/session levels, the indicators above and N-bar channels.
+Never stand in for a higher-timeframe indicator by reusing its length on intraday bars: a 200-day MA is NOT SMA(200) on
+5m bars (that spans 1-4 trading days, depending on the sessions). Such an idea is unsupported as written; say so instead of substituting.
 """
 
 # --------------------------------------------------------------------------- small helpers
