@@ -115,9 +115,9 @@ def test_default_config_carries_the_full_plan_and_frozen_window():
     assert config["thresholds"]["wfe_min"] == 0.5
     assert config["optimize"]["max_trials"] <= 200 and config["spec_validator"] == "dsl_v2"
     assert config["backtest"]["cost_model"] == "tw_futures_pipeline"
-    # the registry follows the canonical order: v1 plus the v3-only execution_timing gate (CONFIG_VERSION 6)
+    # the registry follows the canonical order: v1 plus the v3-only stages (CONFIG_VERSION 6)
     assert tuple(STAGE_REGISTRY) == CANONICAL_ORDER
-    assert [name for name in CANONICAL_ORDER if name not in V1_STAGE_PLAN] == ["execution_timing"]
+    assert [name for name in CANONICAL_ORDER if name not in V1_STAGE_PLAN] == ["spec_faithfulness", "execution_timing"]
 
 
 @pytest.mark.parametrize(

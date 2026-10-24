@@ -511,6 +511,7 @@ def build_default_registry(*, data_source=None, strategy_factory=None, refdata=N
     the refdata store of spec v3 daily runs."""
 
     from poseidon.pipeline import daily_stages, gate_stages, shadow_paper
+    from poseidon.pipeline.faithfulness import SpecFaithfulnessStage
 
     legacy: dict[str, Stage] = {
         "spec_generate": SpecGenerateStage(),
@@ -523,12 +524,14 @@ def build_default_registry(*, data_source=None, strategy_factory=None, refdata=N
     if tuple(legacy) != V1_STAGE_PLAN:
         raise RuntimeError("stage registry drifted from the v1 stage plan")
     daily = daily_stages.build_daily_stages(refdata=refdata)
+    daily[SpecFaithfulnessStage.name] = SpecFaithfulnessStage()
     registry: dict[str, Stage] = {}
     for name in CANONICAL_ORDER:
         if name in legacy and name in daily:
             registry[name] = EngineRouted(legacy[name], daily[name])
         else:
-            registry[name] = legacy.get(name) or daily[name]  # spec_generate / awaiting_release / execution_timing
+            # spec_generate / awaiting_release / spec_faithfulness / execution_timing
+            registry[name] = legacy.get(name) or daily[name]
     return registry
 
 
