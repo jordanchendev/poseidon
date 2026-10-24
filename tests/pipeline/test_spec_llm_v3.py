@@ -86,7 +86,7 @@ def run_v3(client, *, idea=EXAMPLE_IDEA, cfg=None, pin=LABEL, env=ENV, **kw):
 def jev_factory(**kw):
     """A fake JEV behind the same key and pin as the LLM fakes (the identity check is shared)."""
 
-    fake = FakeOpenRouter(label=LABEL, **kw)
+    fake = FakeOpenRouter(**{"label": LABEL, **kw})
     return fake, fake.factory()
 
 
