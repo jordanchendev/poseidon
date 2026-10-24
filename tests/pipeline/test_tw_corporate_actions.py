@@ -303,6 +303,15 @@ def test_actions_round_trip_through_month_partitions(tmp_path):
     assert loaded["factor"].tolist() == pytest.approx(actions["factor"].tolist())
 
 
+def test_a_zero_index_value_is_a_hole_not_a_price():
+    hole = {
+        "stat": "OK",
+        "fields": ["日期", "臺灣50指數", "臺灣50報酬指數"],
+        "data": [["92/11/26", "4,524.83", "0.00"]],
+    }
+    assert ca.parse_tai50(hole) == [{"date": date(2003, 11, 26), "tai50": 4524.83, "tai50_tr": None}]
+
+
 def test_typhoon_carry_over_days_are_not_sessions():
     frame = ca.mark_sessions(pd.DataFrame(ca.parse_tai50(payload("tai50i_201609"))))
     closed = set(frame.loc[~frame["session"], "date"])

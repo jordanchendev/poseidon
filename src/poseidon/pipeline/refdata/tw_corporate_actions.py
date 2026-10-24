@@ -368,10 +368,20 @@ def parse_par_value_change(payload: dict) -> list[dict]:
     ]
 
 
+def _positive(value) -> float | None:
+    number = _num(value)
+    return number if number is not None and number > 0 else None
+
+
 def parse_tai50(payload: dict) -> list[dict]:
-    """TAI50I: one row per TWSE session of the month (臺灣50指數, 臺灣50報酬指數)."""
+    """TAI50I: one row per day of the month (臺灣50指數, 臺灣50報酬指數). A non-positive value is
+    a hole in TWSE's file (the total-return index reads 0.00 on 2003-11-26) and becomes None."""
     return [
-        {"date": roc_date(row["日期"]), "tai50": _num(row["臺灣50指數"]), "tai50_tr": _num(row["臺灣50報酬指數"])}
+        {
+            "date": roc_date(row["日期"]),
+            "tai50": _positive(row["臺灣50指數"]),
+            "tai50_tr": _positive(row["臺灣50報酬指數"]),
+        }
         for row in _rows(payload, ("日期", "臺灣50指數", "臺灣50報酬指數"))
     ]
 
@@ -596,6 +606,7 @@ def check_action_limits(actions: pd.DataFrame) -> list[Finding]:
 # Build: three datasets in the shared refdata store
 # ---------------------------------------------------------------------------
 TAI50_DATASET = "twse_tai50"
+TAI50_SCHEMA_VERSION = 2  # 2: non-positive index values are holes (None), not prices
 CROSSCHECK_DATASET = "tw_corporate_actions_crosscheck"
 CROSSCHECK_COLUMNS = ["date", "severity", "kind", "symbol", "message", "detail"]
 
@@ -779,7 +790,7 @@ def build(
         ),
         TAI50_DATASET: store.commit(
             TAI50_DATASET,
-            schema_version=SCHEMA_VERSION,
+            schema_version=TAI50_SCHEMA_VERSION,
             date_column="trade_date",
             partitions=month_partitions(tai50.rename(columns={"date": "trade_date"}), "trade_date"),
             sources=tai50_sources,
