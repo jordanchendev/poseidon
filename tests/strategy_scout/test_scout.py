@@ -179,10 +179,10 @@ class Propose(unittest.TestCase):
         self.assertTrue(all(r["status"] == "proposed" for r in rows))
         text = (state / "outbox" / "20261023.txt").read_text()
         body = text.splitlines()
-        self.assertIn("接受 N", body[-1])
-        entries = body[1:-1]
-        self.assertEqual(len(entries), 10)  # two lines per proposal
-        self.assertTrue(entries[0].startswith("1. ") and entries[2].startswith("2. "))
+        self.assertIn("接受策略 N", body[-1])
+        numbered = [line for line in body if line[:1].isdigit()]
+        self.assertEqual([line.split(".")[0] for line in numbered], ["1", "2", "3", "4", "5"])
+        self.assertTrue(all(line.endswith(f"（20261023-p{i}）") for i, line in enumerate(numbered, 1)))
         payload = env.completions()[0][2]
         self.assertEqual(payload["user"], "strategy-scout")
         self.assertEqual(payload["reasoning"], {"enabled": False})
