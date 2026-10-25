@@ -22,10 +22,12 @@ snapshot's last day, used to size a spec when no window prices are known.
 
 from __future__ import annotations
 
+import dataclasses
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
 from poseidon.backtest.cost_model import COST_MODELS, CostModel
 from poseidon.pipeline.engine.specs import TickLadder
@@ -340,6 +342,14 @@ def price_series_key(instrument: Instrument) -> str:
 
 def stocks() -> list[Instrument]:
     return [row for row in INSTRUMENTS.values() if row.kind == "stock"]
+
+
+def declared(decl: Mapping[str, Any]) -> Instrument:
+    """The table row of a spec's instrument declaration as the spec trades it: ``unit: odd_lot``
+    makes one unit a single share (``lot`` 1), so sizing, costs and the engine all count shares."""
+
+    row = INSTRUMENTS[decl["symbol"]]
+    return dataclasses.replace(row, lot=1) if decl.get("unit") == "odd_lot" else row
 
 
 # --------------------------------------------------------------------------- signal indices

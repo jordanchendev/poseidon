@@ -35,11 +35,16 @@ M1_COMPONENTS = {
     "execution.next_open",
     "execution.signal_close",
     "allocation.single",
+    # step 8 (M3): stocks / ETFs, fixed-notional sizing, multi-sleeve allocation
+    "sizing.fixed_notional",
+    "allocation.fixed_weights",
+    "allocation.inverse_vol",
+    "allocation.regime_switch",
 }
 
 
 def test_registry_version_and_contents():
-    assert REGISTRY_VERSION == 1
+    assert REGISTRY_VERSION == 2  # step 8 added components and the stock rows
     assert set(REGISTRY) == M1_COMPONENTS
     assert not set(REGISTRY) & set(PLANNED_COMPONENTS)
     assert "hedge.protective_put" in PLANNED_COMPONENTS

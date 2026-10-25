@@ -56,10 +56,10 @@ from poseidon.pipeline.engine import (
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.v3.instruments import (
-    INSTRUMENTS,
     MAX_MARGIN_UTILISATION,
     SIGNAL_INDICES,
     Instrument,
+    declared,
     signal_index,
 )
 from poseidon.pipeline.v3.registry import REGISTRY
@@ -123,7 +123,7 @@ class Plan:
 
     @property
     def bounds(self) -> list[Bound]:
-        return [b for s in self.sleeves for b in (s.direction, *s.leverage, s.sizing, s.rebalance)]
+        return [*(b for s in self.sleeves for b in (s.direction, *s.leverage, s.sizing, s.rebalance)), self.allocation]
 
     @property
     def warmup_bars(self) -> int:
@@ -144,12 +144,15 @@ def plan(resolved: dict) -> Plan:
         raise NotCompilable("intraday specs stay on the v1 runner until DSL parity (step 7)")
     instruments, rolls = {}, {}
     for alias, decl in resolved["instruments"].items():
-        instrument = INSTRUMENTS[decl["symbol"]]
+        instrument = declared(decl)
         roll = decl.get("roll")
-        if instrument.kind != "future" or roll is None or roll["component"] != "roll.before_settlement":
-            raise NotCompilable(f"instruments.{alias}: the daily engine runs futures with roll.before_settlement")
+        if instrument.kind == "future":
+            if roll is None or roll["component"] != "roll.before_settlement":
+                raise NotCompilable(f"instruments.{alias}: the daily engine rolls futures with roll.before_settlement")
+            rolls[alias] = parse_bound(REGISTRY[roll["component"]], roll.get("params")).params.days_before
+        elif instrument.kind != "stock":
+            raise NotCompilable(f"instruments.{alias}: the daily engine has no ledger for {instrument.kind}")
         instruments[alias] = instrument
-        rolls[alias] = parse_bound(REGISTRY[roll["component"]], roll.get("params")).params.days_before
 
     def bound(ref: dict) -> Bound:
         component = REGISTRY[ref["component"]]

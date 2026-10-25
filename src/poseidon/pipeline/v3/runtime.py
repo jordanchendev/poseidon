@@ -86,6 +86,26 @@ class SleeveView:
         return Series(dates, values)
 
 
+class AllocationView:
+    """What an allocation component sees at a decision close: any declared series by ref
+    (``<alias>:<field>``, ``index:<name>``) and each sleeve's own series by sleeve id."""
+
+    def __init__(self, market: MarketView, aliases: Mapping[str, str], conventions: Conventions) -> None:
+        self._market = market
+        self._aliases = aliases  # sleeve id -> instrument alias
+        self._conventions = conventions
+
+    @property
+    def date(self) -> pd.Timestamp:
+        return self._market.date
+
+    def series(self, ref: str) -> Series:
+        return SleeveView(self._market, "", self._conventions).series(ref)
+
+    def sleeve_series(self, sleeve_id: str, field: str) -> Series:
+        return SleeveView(self._market, self._aliases[sleeve_id], self._conventions).series(f"self:{field}")
+
+
 @dataclass(frozen=True)
 class RebalanceContext:
     date: pd.Timestamp
@@ -159,7 +179,8 @@ class SpecStrategy:
             signals[sleeve.id] = (direction, leverage, links)
         a = self.allocation
         ids = tuple(sleeve.id for sleeve in self.sleeves)
-        weights = a.component.weights(a.params, self.states[("", "allocation")], view, ids)
+        allocation_view = AllocationView(view, {s.id: s.alias for s in self.sleeves}, self.conventions)
+        weights = a.component.weights(a.params, self.states[("", "allocation")], allocation_view, ids)
 
         targets, target_leverage = {}, {}
         for sleeve in self.sleeves:
@@ -182,7 +203,7 @@ class SpecStrategy:
             ctx = RebalanceContext(
                 date=view.date,
                 rolled_today=len(series) > 1 and series.contract[-1] != series.contract[-2],
-                target_leverage=direction * leverage * weight,
+                target_leverage=direction * s.component.exposure(s.params, leverage) * weight,
                 actual_leverage=current * notional / book.equity if book.equity > 0 else math.inf,
             )
             r = sleeve.rebalance

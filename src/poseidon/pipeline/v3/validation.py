@@ -24,6 +24,7 @@ raw document and what to change, so it can go back to the LLM for repair.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import itertools
 import math
 from collections.abc import Mapping
@@ -44,6 +45,7 @@ from poseidon.pipeline.v3.instruments import (
     TX_INTRADAY_DATA_SINCE,
     Instrument,
     data_since,
+    declared,
     ordered_frequencies,
     price_series_key,
     signal_index,
@@ -51,6 +53,7 @@ from poseidon.pipeline.v3.instruments import (
 from poseidon.pipeline.v3.registry import (
     PLANNED_COMPONENTS,
     REGISTRY,
+    AllocationComponent,
     CheckContext,
     Component,
     LeverageComponent,
@@ -240,6 +243,11 @@ def _check_shape(doc: dict, issues: _Issues) -> None:
             )
         if instrument.kind != "future" and decl.get("roll") is not None:
             issues.error((*base, "roll"), f"{instrument.symbol} is not a future; remove roll")
+        if decl.get("unit") is not None and instrument.kind != "stock":
+            issues.error(
+                (*base, "unit"),
+                f"unit (board_lot / odd_lot) is for stocks and ETFs; {instrument.symbol} is a {instrument.kind}",
+            )
 
 
 # --------------------------------------------------------------------------- stage 2: $param
@@ -413,7 +421,7 @@ def _sweep_grid(template: dict, params: dict, users: dict, values: dict, issues:
 
 def _check_cross(resolved: dict, parsed: dict, issues: _Issues) -> None:
     frequency = resolved["frequency"]
-    aliases = {alias: INSTRUMENTS[decl["symbol"]] for alias, decl in resolved["instruments"].items()}
+    aliases = {alias: declared(decl) for alias, decl in resolved["instruments"].items()}
     for path, _slot, ref in component_slots(resolved):
         component = REGISTRY[ref["component"]]
         if frequency not in component.frequencies:
@@ -435,15 +443,15 @@ def _check_cross(resolved: dict, parsed: dict, issues: _Issues) -> None:
         alias = sleeve["instrument"]
         instrument = aliases.get(alias)
         if instrument is None:
-            declared = ", ".join(aliases)
-            issues.error((*base, "instrument"), f"unknown instrument alias {alias!r}; declared: {declared}")
+            known = ", ".join(aliases)
+            issues.error((*base, "instrument"), f"unknown instrument alias {alias!r}; declared: {known}")
         used_aliases.add(alias)
 
         sizing: SizingComponent = REGISTRY[sleeve["sizing"]["component"]]
         bases.add(sizing.basis)
         chain = sleeve.get("leverage") or []
         names = [link["component"] for link in chain]
-        if sizing.basis == "equity":
+        if sizing.uses_leverage:
             if not chain:
                 issues.error((*base, "leverage"), f"{sizing.name} needs a leverage chain starting with leverage.base")
             elif names[0] != "leverage.base":
@@ -482,19 +490,26 @@ def _check_cross(resolved: dict, parsed: dict, issues: _Issues) -> None:
             if isinstance(signal, str) and signal.split(":")[0] != "self":
                 used_aliases.add(signal.split(":")[0])
 
+    allocation_signal = getattr(parsed[("allocation",)], "signal", None)
+    if isinstance(allocation_signal, str):
+        used_aliases.add(allocation_signal.split(":")[0])
     for alias in aliases:
         if alias not in used_aliases:
             issues.error(("instruments", alias), f"instrument alias {alias!r} is not used by any sleeve or series")
     if len(bases) > 1:
         issues.error("sleeves", "all sleeves must share one sizing basis (all equity-sized or all fixed contracts)")
 
-    allocation = REGISTRY[resolved["allocation"]["component"]]
+    allocation: AllocationComponent = REGISTRY[resolved["allocation"]["component"]]
     count = len(resolved["sleeves"])
     if not allocation.min_sleeves <= count <= allocation.max_sleeves:
         issues.error(
             "allocation.component",
             f"{allocation.name} takes {allocation.min_sleeves}-{allocation.max_sleeves} sleeves, the spec has {count}",
         )
+    else:
+        ctx = CheckContext(resolved, frequency, None, None, aliases)
+        for rel, message in allocation.check(parsed[("allocation",)], ctx):
+            issues.error(("allocation", "params", rel) if rel else ("allocation",), message)
     execution = REGISTRY[resolved["execution"]["component"]]
     all_dsl = all(sleeve["direction"]["component"] == "direction.dsl_rules" for sleeve in resolved["sleeves"])
     if execution.fill == "signal_close" and not all_dsl:
@@ -573,7 +588,7 @@ def _check_data(
     series: list[tuple[tuple, str, str | None, date, str]] = []  # (path, label, key, first day, fix)
     instruments: list[Instrument] = []
     for alias, decl in resolved["instruments"].items():
-        instrument = INSTRUMENTS[decl["symbol"]]
+        instrument = declared(decl)
         path = ("instruments", alias, "symbol")
         key = price_series_key(instrument) if daily else None
         since = known[key] if key in known else data_since(instrument, frequency)
@@ -655,11 +670,36 @@ def _chain(links: list[tuple[LeverageComponent, Any]]) -> tuple[float, float]:
     return nominal, upper
 
 
+def _noun(instrument: Instrument | None, units: int = 2) -> str:
+    noun = (
+        "contract" if instrument is None or instrument.kind != "stock" else ("share" if instrument.lot == 1 else "lot")
+    )
+    return noun + ("" if units == 1 else "s")
+
+
+def _units_text(units: int, instrument: Instrument | None = None) -> str:
+    return f"{units} {_noun(instrument, units)}"
+
+
 def _contracts(units: int) -> str:
-    return f"{units} contract" + ("" if units == 1 else "s")
+    return _units_text(units)
 
 
-def _family_hint(price: float, leverage: float, equity: float, current: Instrument, sizing, sizing_params) -> str:
+def _family_hint(
+    price: float, leverage: float, equity: float, current: Instrument, sizing, sizing_params, alias: str = ""
+) -> str:
+    if current.kind == "stock":
+        if current.lot == 1:
+            return "raise initial capital or the share of equity"
+        shares = dataclasses.replace(current, lot=1)
+        units = sizing.units(
+            sizing_params, equity=equity, direction=1, leverage=leverage, weight=1.0, price=price, instrument=shares
+        )
+        actual = units * shares.notional_twd(price) / equity
+        return (
+            f"trade odd lots: set instruments.{alias}.unit to odd_lot (one share per unit): "
+            f"{_units_text(units, shares)} ~ {actual:.2f}x"
+        )
     options = []
     for symbol in SAME_INDEX_FAMILY:
         other = INSTRUMENTS[symbol]
@@ -677,22 +717,28 @@ def _family_hint(price: float, leverage: float, equity: float, current: Instrume
 
 def _check_sizing(resolved: dict, template: dict, params: dict, feasibility: FeasibilityContext, issues) -> None:
     equity = float(resolved.get("capital", {}).get("initial_twd", DEFAULT_INITIAL_CAPITAL_TWD))
+    allocation: AllocationComponent = REGISTRY[resolved["allocation"]["component"]]
+    sleeve_ids = tuple(sleeve["id"] for sleeve in resolved["sleeves"])
+    weight_bounds = allocation.weight_bounds(allocation.parse(resolved["allocation"].get("params") or {}), sleeve_ids)
     for index, sleeve in enumerate(resolved["sleeves"]):
         sizing: SizingComponent = REGISTRY[sleeve["sizing"]["component"]]
         if sizing.basis != "equity":
             continue
         base = ("sleeves", index)
-        instrument = INSTRUMENTS[resolved["instruments"][sleeve["instrument"]]["symbol"]]
+        alias = sleeve["instrument"]
+        instrument = declared(resolved["instruments"][alias])
+        paid_in_full = instrument.kind == "stock"
         source = instrument.price_proxy or instrument.symbol
-        prices = tuple((feasibility.prices or {}).get(source) or (REFERENCE_INDEX_LEVEL,))
+        fallback = instrument.reference_price or REFERENCE_INDEX_LEVEL
+        prices = tuple((feasibility.prices or {}).get(source) or (fallback,))
+        weight, weight_upper = weight_bounds[sleeve["id"]]
         raw_sleeve = template["sleeves"][index]
         refs = [raw_sleeve["sizing"], *raw_sleeve.get("leverage", [])]
         names = sorted(
             {node[PARAM_REF_KEY] for ref in refs for _path, node in walk(ref.get("params") or {}) if is_param_ref(node)}
         )
-        sizing_params = sizing.parse(sleeve["sizing"].get("params") or {})
         defaults = {name: spec.cast(spec.default) for name, spec in params.items()}
-        reported = {"units": False, "margin": False, "cap": False}
+        reported = {"units": False, "margin": False, "cap": False, "cash": False}
         grid = []
         for point in _grid_points(names, params):
             values = {**defaults, **point}
@@ -700,15 +746,26 @@ def _check_sizing(resolved: dict, template: dict, params: dict, feasibility: Fea
             for link in raw_sleeve.get("leverage", []):
                 component = REGISTRY[link["component"]]
                 links.append((component, component.parse(substitute(link.get("params") or {}, values))))
-            grid.append((point, *_chain(links)))
-        # Name the grid point only when the leverage actually varies over the grid.
-        varies = len({(nominal, upper) for _point, nominal, upper in grid}) > 1
-        for point, nominal, upper in grid:
+            sizing_params = sizing.parse(substitute(raw_sleeve["sizing"].get("params") or {}, values))
+            nominal, upper = _chain(links)
+            grid.append((point, sizing_params, nominal, upper))
+        # Name the grid point only when the exposure actually varies over the grid.
+        exposures = {(sizing.exposure(p, nominal), sizing.exposure(p, upper)) for _point, p, nominal, upper in grid}
+        varies = len(exposures) > 1
+        for point, sizing_params, nominal, upper in grid:
             where = f" at {point}" if varies else ""
-            if upper > LEVERAGE_CAP + 1e-9 and not reported["cap"]:
+            target, reach = sizing.exposure(sizing_params, nominal), sizing.exposure(sizing_params, upper)
+            if sizing.uses_leverage and upper > LEVERAGE_CAP + 1e-9 and not reported["cap"]:
                 reported["cap"] = True
                 issues.error(
                     (*base, "leverage"), f"leverage can reach {upper:g}x{where}, above the {LEVERAGE_CAP:g}x policy cap"
+                )
+            if paid_in_full and reach * weight_upper > 1.0 + 1e-9 and not reported["cash"]:
+                reported["cash"] = True
+                issues.error(
+                    (*base, "leverage" if sizing.uses_leverage else "sizing"),
+                    f"{instrument.symbol} is paid in full (no margin loans): the position can reach "
+                    f"{reach * weight_upper:.2f}x equity{where}, above 1x; leverage only via a futures sleeve",
                 )
             for price in prices:
                 notional = instrument.notional_twd(price)
@@ -717,28 +774,30 @@ def _check_sizing(resolved: dict, template: dict, params: dict, feasibility: Fea
                     equity=equity,
                     direction=1,
                     leverage=nominal,
-                    weight=1.0,
+                    weight=weight,
                     price=price,
                     instrument=instrument,
                 )
+                goal = target * weight
                 actual = units * notional / equity
-                if not reported["units"] and (units == 0 or abs(actual - nominal) / nominal > MAX_ROUNDING_ERROR):
+                if not reported["units"] and (units == 0 or abs(actual - goal) / goal > MAX_ROUNDING_ERROR):
                     reported["units"] = True
-                    hint = _family_hint(price, nominal, equity, instrument, sizing, sizing_params)
-                    bought = f"buys {_contracts(units)} of {instrument.symbol} ({notional:,.0f} TWD notional each)"
+                    hint = _family_hint(price, nominal * weight, equity, instrument, sizing, sizing_params, alias)
+                    bought = f"buys {_units_text(units, instrument)} of {instrument.symbol} ({notional:,.0f} TWD notional each)"
                     if units:
-                        bought += f" = {actual:.2f}x, {abs(actual - nominal) / nominal:.0%} off target"
+                        bought += f" = {actual:.2f}x, {abs(actual - goal) / goal:.0%} off target"
                     issues.error(
                         (*base, "sizing"),
-                        f"target {nominal:g}x{where} on {equity:,.0f} TWD at price {price:,.0f} {bought}; "
-                        f"0 contracts or more than {MAX_ROUNDING_ERROR:.0%} rounding error is infeasible; {hint}",
+                        f"target {goal:g}x{where} on {equity:,.0f} TWD at price {price:,.0f} {bought}; "
+                        f"0 {_noun(instrument)} or more than {MAX_ROUNDING_ERROR:.0%} rounding error is infeasible; "
+                        f"{hint}",
                     )
                 upper_units = sizing.units(
                     sizing_params,
                     equity=equity,
                     direction=1,
                     leverage=upper,
-                    weight=1.0,
+                    weight=weight_upper,
                     price=price,
                     instrument=instrument,
                 )

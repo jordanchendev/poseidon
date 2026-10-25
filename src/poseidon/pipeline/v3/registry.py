@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict
 
 from poseidon.pipeline.v3.instruments import FREQUENCIES, Instrument
 
-REGISTRY_VERSION = 1
+REGISTRY_VERSION = 2
 
 SLOTS: tuple[str, ...] = (
     "roll",
@@ -182,10 +182,17 @@ class LeverageComponent(Component):
 
 
 class SizingComponent(Component):
-    """Turns d x L into signed integer units (contracts / shares)."""
+    """Turns d x L into signed integer units (contracts / board lots / shares)."""
 
     slot = "sizing"
     basis: ClassVar[Literal["equity", "fixed"]]  # strategy_class axis (§7)
+    # Whether the sleeve's leverage chain feeds this sizing (else the sleeve has no chain).
+    uses_leverage: ClassVar[bool] = True
+
+    def exposure(self, params: StrictParams, leverage: float) -> float:
+        """Gross notional / equity the sizing aims at (weight 1), for the feasibility checks."""
+
+        return leverage
 
     def units(
         self,
@@ -249,9 +256,14 @@ class AllocationComponent(Component):
     max_sleeves: ClassVar[int] = 1
 
     def weights(self, params: StrictParams, state: Any, view: Any, sleeves: tuple[str, ...]) -> dict[str, float]:
-        """Weight per sleeve id at the decision close."""
+        """Weight per sleeve id at the decision close. ``view`` is a ``runtime.AllocationView``."""
 
         raise NotImplementedError(f"{self.name} has no daily behaviour yet")
+
+    def weight_bounds(self, params: StrictParams, sleeves: tuple[str, ...]) -> dict[str, tuple[float, float]]:
+        """(nominal, largest) weight each sleeve can get, for the feasibility checks."""
+
+        return dict.fromkeys(sleeves, (1.0, 1.0))
 
 
 # --------------------------------------------------------------------------- registration
@@ -266,15 +278,11 @@ PLANNED_COMPONENTS: dict[str, str] = {
     "risk.drawdown_brake": "step 3 (daily engine components)",
     "sizing.vol_target": "step 3 (daily engine components)",
     "sizing.risk_per_trade": "step 3 (daily engine components; needs exit.stop_loss)",
-    "sizing.fixed_notional": "step 8 (TW stocks / ETFs)",
     "rebalance.every_decision": "step 3 (daily engine components)",
     "exit.stop_loss": "step 3 (daily engine components)",
     "exit.take_profit": "step 3 (daily engine components)",
     "exit.trailing": "step 3 (daily engine components)",
     "exit.max_hold": "step 3 (daily engine components)",
-    "allocation.fixed_weights": "step 8 (multi-instrument portfolios)",
-    "allocation.inverse_vol": "step 8 (multi-instrument portfolios)",
-    "allocation.regime_switch": "step 8 (multi-instrument portfolios)",
     "hedge.protective_put": "step 9 / M4 (TXO data and option engine)",
     "direction.custom": "step 10 / M5 (sandboxed custom Python, feature flag)",
     "leverage.custom": "step 10 / M5 (sandboxed custom Python, feature flag)",
@@ -284,12 +292,12 @@ PLANNED_COMPONENTS: dict[str, str] = {
 # Capabilities no Phase 1 component will offer (brief CANNOT list; LLM ``unsupported.missing`` tokens).
 UNSUPPORTED_CAPABILITIES: dict[str, str] = {
     "option_selling": "selling options (writer margin is Phase 2), including collars",
-    "short_stock": "short selling stocks or ETFs (shorts only via futures)",
+    "short_stock": "short selling stocks or ETFs, or buying them on margin (shorts and leverage only via futures)",
     "intraday_equity_sizing": "equity-based sizing on intraday bars (deferred)",
     "volume_oi_signals": "volume, volume profile or open interest signals",
     "order_book": "order book or tick data",
     "implied_volatility": "implied volatility signals",
-    "other_markets": "instruments outside TAIFEX index futures (NQ/ES/TE, crypto, US stocks)",
+    "other_markets": "instruments outside TAIFEX index futures and the listed TWSE stocks / ETFs (NQ/ES/TE, crypto, US stocks)",
     "news_fundamentals": "news, fundamentals, sentiment or companion flows (e.g. foreign investor flows)",
     "ml_models": "machine-learning model predictions",
     "pyramiding": "pyramiding (adding to a position on its own signals beyond the sizing target)",
