@@ -199,7 +199,7 @@ class AsOf:
     session TAIFEX books into the next trading day (it ended at 05:00), aux rows through ``as_of``.
     Calendars are ex-ante reference data and stay whole."""
 
-    TRUNCATED = (FUTURES, TAIEX, "twse_taiex_total_return")
+    TRUNCATED = (FUTURES, TAIEX, "twse_taiex_total_return", "thalassa_tw_stock_daily")
 
     def __init__(self, store, as_of):
         self.store = store
@@ -220,6 +220,9 @@ class AsOf:
 
     def content_sha256(self, dataset):
         return self.store.content_sha256(dataset)
+
+    def exists(self, dataset):
+        return self.store.exists(dataset)
 
 
 # ----------------------------------------------------------------- strategies

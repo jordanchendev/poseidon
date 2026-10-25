@@ -753,8 +753,10 @@ def _as_dates(frame: pd.DataFrame, column: str) -> pd.DataFrame:
 
 
 def load_actions(store: RefdataStore, symbol: str | None = None) -> pd.DataFrame:
-    """Actions with python ``date`` values, the form :func:`adjust_prices` takes."""
-    frame = _as_dates(store.read(DATASET), "date")
+    """Actions with python ``date`` values, the form :func:`adjust_prices` takes (a read that
+    spans no action, e.g. a window store clipped before the first one, gives the empty frame)."""
+    rows = store.read(DATASET)
+    frame = _as_dates(rows, "date") if len(rows) else pd.DataFrame(columns=ACTION_COLUMNS)
     return frame if symbol is None else frame[frame["symbol"] == symbol].reset_index(drop=True)
 
 

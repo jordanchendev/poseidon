@@ -48,6 +48,8 @@ class RefdataReader(Protocol):
 
     def content_sha256(self, dataset: str) -> str: ...
 
+    def exists(self, dataset: str) -> bool: ...
+
 
 def product_quotes(quotes: pd.DataFrame, product: str) -> pd.DataFrame:
     rows = quotes[(quotes["product"] == product) & quotes["contract_month"].astype(str).str.fullmatch(MONTHLY)]
