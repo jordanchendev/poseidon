@@ -186,8 +186,13 @@ class SizingComponent(Component):
 
     slot = "sizing"
     basis: ClassVar[Literal["equity", "fixed"]]  # strategy_class axis (§7)
-    # Whether the sleeve's leverage chain feeds this sizing (else the sleeve has no chain).
-    uses_leverage: ClassVar[bool] = True
+
+    @property
+    def uses_leverage(self) -> bool:
+        """Whether the sleeve's leverage chain feeds this sizing (else the sleeve has no chain): equity-based
+        sizing, unless a component says otherwise (``sizing.fixed_notional``)."""
+
+        return self.basis == "equity"
 
     def exposure(self, params: StrictParams, leverage: float) -> float:
         """Gross notional / equity the sizing aims at (weight 1), for the feasibility checks."""

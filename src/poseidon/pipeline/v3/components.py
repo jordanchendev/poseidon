@@ -111,12 +111,6 @@ class ConstantDirection(DirectionComponent):
     def step(self, params, state, view):
         return 1 if params.side == "long" else -1
 
-    def check(self, params, ctx):
-        instrument = ctx.instrument
-        if params.side == "short" and instrument is not None and instrument.kind == "stock":
-            return [("side", f"{instrument.symbol} cannot be sold short (short_stock); shorts only via futures")]
-        return []
-
     def describe(self, params, ctx):
         return "一直做多" if params.side == "long" else "一直做空"
 
@@ -407,7 +401,6 @@ class FixedContractsSizing(SizingComponent):
     name = "sizing.fixed_contracts"
     frequencies = ANY_FREQUENCY
     basis = "fixed"
-    uses_leverage = False
     capabilities = ("fixed_contracts",)
     summary = "A fixed number of contracts n whenever the direction is non-zero (v1 behaviour)."
 

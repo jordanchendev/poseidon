@@ -174,8 +174,11 @@ def stock_bars(bars: pd.DataFrame, actions: pd.DataFrame | None = None) -> pd.Da
     ``close``, optional ``traded``) and its ``tw_corporate_actions`` rows (``date``,
     ``prev_close``, ``reference_price``, ``cash_dividend``, ``action_type``).
 
-    An action lands on the first bar dated on or after its date (one dated before the first bar is
-    history: nothing is held yet, and the adjusted series starts at the first close). The ledger keeps the position's
+    An action lands on the first *traded* bar dated on or after its date (a halted ex-date carries
+    the old price, so booking it there would mark the new units at the old price; one dated before
+    the first bar is history: nothing is held yet, and the adjusted series starts at the first
+    close). An action without ``prev_close`` / ``reference_price`` raises: it cannot be booked and
+    skipping it would be silent. The ledger keeps the position's
     value at the reference price: ``unit_ratio = (prev_close - cash) / reference_price`` with the
     cash paid out, so a cash dividend leaves the units alone, a split multiplies them, and a
     rights offering or cash capital reduction is booked as its total-return equivalent (the
@@ -191,12 +194,23 @@ def stock_bars(bars: pd.DataFrame, actions: pd.DataFrame | None = None) -> pd.Da
             out[col] = default
     if actions is not None and len(actions):
         dates = out["date"].to_numpy()
+        traded = out["traded"].to_numpy(dtype=bool)
         for action in actions.sort_values("date").to_dict("records"):
             when = np.datetime64(pd.Timestamp(action["date"]).normalize())
-            i = int(np.searchsorted(dates, when))
-            if i >= len(out) or when < dates[0]:
+            if when < dates[0]:
                 continue
-            prev, ref = float(action["prev_close"]), float(action["reference_price"])
+            i = int(np.searchsorted(dates, when))
+            while i < len(out) and not traded[i]:
+                i += 1
+            if i >= len(out):
+                continue
+            prev, ref = action.get("prev_close"), action.get("reference_price")
+            if any(v is None or pd.isna(v) or float(v) <= 0 for v in (prev, ref)):
+                raise ValueError(
+                    f"{action.get('symbol')} {action.get('action_type')} on {pd.Timestamp(action['date']).date()}: "
+                    "no prev_close / reference_price, the action cannot be booked"
+                )
+            prev, ref = float(prev), float(ref)
             cash = action.get("cash_dividend")
             if cash is None or pd.isna(cash):
                 cash = prev - ref if action["action_type"] == "cash_dividend" else 0.0

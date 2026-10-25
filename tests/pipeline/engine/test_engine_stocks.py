@@ -251,9 +251,9 @@ def test_pending_orders_are_rescaled_by_a_split():
     assert result.held_units("S").tolist() == [0, 3, 16, 16]
 
 
-def test_untraded_days_keep_orders_pending():
+def test_untraded_days_fill_nothing_and_the_decision_replaces_the_queue():
     traded = [True, False, True, True]
-    # a decision replaces the queue, so the strategy asks again on the untraded day (as a re-sized spec would)
+    # the strategy asks again on the untraded day (as a re-sized spec would); its order fills at the next session
     result = run(
         Scripted({0: 2, 1: 2}, "S"), etf([100, 100, 105, 105], traded=traded), EngineConfig(execution="next_open")
     )
@@ -261,6 +261,26 @@ def test_untraded_days_keep_orders_pending():
     assert result.held_units("S").tolist() == [0, 0, 2, 2]
     now = run(Scripted({1: 2}, "S"), etf([100, 100, 105, 105], traded=traded), EngineConfig(execution="signal_close"))
     assert now.fills.empty and now.held_units("S").tolist() == [0, 0, 0, 0]
+
+
+def test_an_action_on_a_halted_ex_date_lands_on_the_next_traded_bar():
+    split = action(2, "split", prev=100.0, ref=25.0)
+    traded = [True, True, False, True, True]
+    frame = stock_bars(ohlc([100, 100, 100, 25, 26], traded=traded), split)  # the carried bar keeps 100
+    assert frame["unit_ratio"].tolist() == [1.0, 1.0, 1.0, 4.0, 1.0] and frame["factor"].tolist()[3] == 0.25
+    result = run(Scripted({0: 3}, "S"), etf([100, 100, 100, 25, 26], traded=traded, actions=split), EngineConfig())
+    assert result.held_units("S").tolist() == [0, 3, 3, 12, 12]
+    equity = result.daily_pnl["equity"].tolist()
+    assert equity[2] == approx(equity[1]) and equity[3] == approx(equity[2])  # no 4x spike on the halted day
+    halted_through_the_end = stock_bars(ohlc([100, 100, 100], traded=[True, True, False]), split)
+    assert halted_through_the_end["unit_ratio"].tolist() == [1.0, 1.0, 1.0]  # lands on a later bar, once there is one
+
+
+def test_an_action_without_prices_is_refused():
+    broken = action(2, "split", prev=100.0, ref=25.0)
+    broken.loc[0, "reference_price"] = None
+    with pytest.raises(ValueError, match="no prev_close / reference_price"):
+        stock_bars(ohlc([100, 100, 25, 26]), broken)
 
 
 def test_stock_buys_leave_cash_for_the_futures_margin():

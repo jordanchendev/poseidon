@@ -168,15 +168,13 @@ def test_regime_switch_follows_the_ma_band_with_hysteresis():
     assert text == "加權股價指數（不含息）高於 20 日均線 ×(1+2%) 時全部押 lev，低於 ×(1−2%) 時全部換成 base"
 
 
-def test_constant_direction_refuses_short_stocks():
-    direction = REGISTRY["direction.constant"]
-    ctx = CheckContext({}, "1d", None, ETF_0050, {})
-    assert direction.check(direction.parse({"side": "long"}), ctx) == []
-    [(field, message)] = direction.check(direction.parse({"side": "short"}), ctx)
-    assert field == "side" and "short_stock" in message
-    assert (
-        direction.check(direction.parse({"side": "short"}), CheckContext({}, "1d", None, INSTRUMENTS["TX"], {})) == []
-    )
+def test_a_stock_sleeve_cannot_be_sold_short():
+    doc = rotation()
+    doc["sleeves"][0]["direction"]["params"]["side"] = "short"
+    assert any("00631L cannot be sold short (short_stock)" in text for text in errors(doc))
+    tmf = tmf_dynamic_leverage_3x()
+    tmf["sleeves"][0]["direction"]["params"]["side"] = "short"
+    assert not any("short_stock" in text for text in errors(tmf))
 
 
 # ----------------------------------------------------------------------------- validation

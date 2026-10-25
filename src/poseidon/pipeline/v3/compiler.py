@@ -352,7 +352,10 @@ def compile_spec(
         except StockDataGap as error:
             raise NotCompilable(str(error)) from error
         actions = load_actions(store, instrument.symbol) if store.exists(ACTIONS) else None
-        futures[alias] = stock_input(ContractSpec.from_instrument(instrument), aligned, actions)
+        try:
+            futures[alias] = stock_input(ContractSpec.from_instrument(instrument), aligned, actions)
+        except ValueError as error:
+            raise NotCompilable(f"{alias}: {error}") from error
         carried = int((~aligned["traded"]).sum())
         if carried:
             notes.append(f"{alias}: {carried} session(s) without a {instrument.symbol} bar carried forward (no fills)")

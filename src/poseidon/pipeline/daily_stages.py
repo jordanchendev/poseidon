@@ -39,6 +39,7 @@ import pandas as pd
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
 from poseidon.pipeline import optimization as opt
 from poseidon.pipeline.engine import ContractSpec, EngineResult
+from poseidon.pipeline.engine.data import stock_bars
 from poseidon.pipeline.gate_stages import DsrStage, ParamStabilityStage, to_stage_result
 from poseidon.pipeline.gates import benchmark, cost_stress, execution_timing, holdout, liquidation, regime_split
 from poseidon.pipeline.gates import wfe as wfe_gate
@@ -57,7 +58,7 @@ from poseidon.pipeline.plan import V3_GATE_STAGES
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, TAIEX, TAIEX_TR
 from poseidon.pipeline.refdata.engine_input import StockDataGap, align_stock_bars
 from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
-from poseidon.pipeline.refdata.tw_corporate_actions import adjust_prices, load_actions
+from poseidon.pipeline.refdata.tw_corporate_actions import load_actions
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
 from poseidon.pipeline.refdata.tw_stocks import read_bars
 from poseidon.pipeline.stages import BaseStage, StageResult
@@ -166,6 +167,9 @@ class WindowStore:
     def data_sha256(self) -> str:
         from poseidon.pipeline.refdata.store import frame_sha256
 
+        unknown = sorted(self.kinds - {"future", "stock"})
+        if unknown:
+            raise NotCompilable(f"no refdata window for instrument kind(s) {unknown}")
         names = [FUTURES, CALENDAR] if "future" in self.kinds else []
         names += sorted(name for name in (TAIEX, TAIEX_TR) if self._store.exists(name))
         if "stock" in self.kinds:
@@ -875,17 +879,17 @@ def stock_underlying_daily(store, symbol: str, *, through: date) -> pd.DataFrame
     sessions = pd.DatetimeIndex(
         sorted(store.read(STOCKS, start=bars["date"].min(), end=through)["trade_date"].unique())
     )
+    actions = load_actions(store, symbol) if store.exists(ACTIONS) else None
     try:
-        bars = align_stock_bars(bars, sessions, symbol)
-    except StockDataGap as error:
+        booked = stock_bars(align_stock_bars(bars, sessions, symbol), actions)
+    except (StockDataGap, ValueError) as error:
         raise NotCompilable(f"benchmark underlying: {error}") from error
-    actions = load_actions(store, symbol) if store.exists(ACTIONS) else pd.DataFrame(columns=["date", "factor"])
-    indexed = bars.set_index(pd.Index(pd.to_datetime(bars["date"]).dt.date, name="date"))
-    adjusted = adjust_prices(indexed, actions[actions["factor"].notna()])
+    # back-adjusted like the futures series: a bar is scaled by the factors of the actions booked after it
+    after = booked["factor"].iloc[::-1].cumprod().iloc[::-1].shift(-1, fill_value=1.0).to_numpy()
     frame = pd.DataFrame(
-        {column: adjusted[f"adj_{column}"].astype(float) for column in ("open", "high", "low", "close")}
+        {column: booked[column].to_numpy(float) * after for column in ("open", "high", "low", "close")}
     )
-    frame.index = list(adjusted.index)
+    frame.index = [pd.Timestamp(day).date() for day in booked["date"]]
     return frame
 
 

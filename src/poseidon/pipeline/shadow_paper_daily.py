@@ -192,7 +192,7 @@ def _iso(value) -> str | None:
 
 # Futures bars carry the first five; a stock's bars (``engine.data.stock_input``) the rest as well, so a
 # corporate action booked late or revised shows up as a revision of that day.
-HASHED_BAR_COLUMNS = ("open", "high", "low", "close", "settle", "traded", "unit_ratio", "cash_per_share")
+HASHED_BAR_COLUMNS = ("open", "high", "low", "close", "settle", "traded", "factor", "unit_ratio", "cash_per_share")
 
 
 def input_hashes(futures: Mapping[str, FuturesInput], aux: Mapping[str, pd.DataFrame], paper_start: date):
@@ -231,6 +231,9 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
     schedule = MarketSchedule.from_frame(reader.read(MARKET_CALENDAR))
     futures_insts = {k: i for k, i in compiled.instruments.items() if i.spec.kind == "future"}
     stock_insts = {k: i for k, i in compiled.instruments.items() if i.spec.kind == "stock"}
+    other = {k: i.spec.kind for k, i in compiled.instruments.items() if k not in futures_insts and k not in stock_insts}
+    if other:
+        raise ValueError(f"the daily paper has no refdata loader for instrument kind(s) {other}")
     products = sorted({inst.product for inst in futures_insts.values()})
     quotes = reader.read(FUTURES, start=compiled.data_start) if products else pd.DataFrame()
     last = last_day_session(quotes, products) if products else {}
@@ -279,7 +282,10 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
             except StockDataGap as error:
                 raise RefdataError(str(error)) from error
             mine = actions[actions["symbol"] == symbol] if actions is not None else None
-            futures[name] = stock_input(inst.spec, aligned, mine)
+            try:
+                futures[name] = stock_input(inst.spec, aligned, mine)
+            except ValueError as error:
+                raise RefdataError(f"{name}: {error}") from error
     aux = {name: frame[frame.index <= cutoff] for name, frame in aux_full.items()}
     hashes, history = input_hashes(futures, aux, paper_start)
     datasets = [*((FUTURES, CALENDAR) if products else ()), MARKET_CALENDAR, *sorted(set(compiled.aux.values()))]

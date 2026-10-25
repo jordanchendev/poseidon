@@ -27,7 +27,8 @@ notional from cash and equity carries units x price; it has no margin, so the ma
 it and its buys are trimmed so cash never drops below the margined positions' initial margin
 (``clip_cash`` at the decision, ``trim_cash`` at the fill, sells fill first). Corporate actions
 on the bars (``data.DAY_COLUMNS``) are booked at the start of the day, before any fill. A
-``traded = False`` bar fills nothing: ``next_open`` orders wait for the next session.
+``traded = False`` bar fills nothing: its ``next_open`` orders stay queued, and the day's decision
+replaces the queue as on any other day (a re-sizing strategy asks again; ``signal_close`` fills nothing).
 """
 
 from __future__ import annotations

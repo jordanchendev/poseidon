@@ -34,6 +34,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from poseidon.pipeline.engine.specs import KIND_POLICIES
 from poseidon.pipeline.v3 import components as _components  # noqa: F401  (registers the components)
 from poseidon.pipeline.v3.dsl_bridge import DSL_MARKETS
 from poseidon.pipeline.v3.instruments import (
@@ -446,6 +447,17 @@ def _check_cross(resolved: dict, parsed: dict, issues: _Issues) -> None:
             known = ", ".join(aliases)
             issues.error((*base, "instrument"), f"unknown instrument alias {alias!r}; declared: {known}")
         used_aliases.add(alias)
+        direction = sleeve["direction"]
+        if (
+            instrument is not None
+            and not KIND_POLICIES[instrument.kind].short
+            and direction["component"] == "direction.constant"
+            and (direction.get("params") or {}).get("side") == "short"
+        ):
+            issues.error(
+                (*base, "direction", "params", "side"),
+                f"{instrument.symbol} cannot be sold short (short_stock); shorts only via futures",
+            )
 
         sizing: SizingComponent = REGISTRY[sleeve["sizing"]["component"]]
         bases.add(sizing.basis)
