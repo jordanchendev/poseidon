@@ -137,8 +137,25 @@ class Fill:
 
 
 @dataclass(frozen=True)
+class Protect:
+    """Protective orders on one position, checked intrabar by the intraday engine (design §3.4).
+
+    ``stop`` fills at the stop (gap-aware: at the open when the bar opens through it), ``take_profit``
+    at its price; the stop wins when one bar touches both. Neither slips unless the run sets
+    ``IntradayConfig.stop_slippage_ticks`` (stops only).
+    """
+
+    stop: float | None = None
+    take_profit: float | None = None
+
+
+@dataclass(frozen=True)
 class BookView:
-    """Portfolio state at the decision point (after settlement, any roll, any forced action)."""
+    """Portfolio state at the decision point (after settlement, any roll, any forced action).
+
+    Intraday engine: ``fills_today`` holds every fill since the previous decision (that decision's
+    own fills at the bar close included) and ``protective`` the orders resting on each position.
+    """
 
     date: pd.Timestamp
     initial_capital: float
@@ -149,7 +166,9 @@ class BookView:
     margin_required: float  # initial margin on current positions at today's close
     maintenance_required: float
     fills_today: tuple[Fill, ...]
+    protective: Mapping[str, Protect] = MappingProxyType({})
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "positions", MappingProxyType(dict(self.positions)))
         object.__setattr__(self, "contracts", MappingProxyType(dict(self.contracts)))
+        object.__setattr__(self, "protective", MappingProxyType(dict(self.protective)))

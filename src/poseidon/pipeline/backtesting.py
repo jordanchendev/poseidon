@@ -18,6 +18,16 @@ historically wrong for futures, see Step 0):
   Daily PnL / capital gives the same three numbers (scale invariant).
 * ``max_drawdown_twd`` -- trade-level: peak-to-trough of cumulative closed-trade
   PnL in exit order, starting from 0.
+
+Engine (``backtest.engine``, absent = ``v1``): ``v1`` is ``BacktestRunner`` +
+``BacktestPortfolio``, the engine of every run frozen so far; ``target_v1``
+runs the same ``RuleStrategyV2`` as the spec v3 fast path
+(``v3.dsl_bridge.v2_to_v3``) on the target-position engine's intraday clock
+(``engine.intraday``: signal-close fills, protective stops, the synthetic R1
+roll on settlement days). Both feed :func:`summarise`, so reports keep their
+shape; trades match v1 one for one except that a position held across a
+settlement-day 13:25 -> 13:30 switch pays the roll and is not charged the gap
+between the months (``scripts/pv2_dsl_parity.py``).
 """
 
 from __future__ import annotations
@@ -27,14 +37,15 @@ import dataclasses
 import io
 import math
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from poseidon.backtest.cost_model import CostModel, get_cost_model
-from poseidon.backtest.portfolio import SizingConfig, SizingMode
+from poseidon.backtest.portfolio import SizingConfig, SizingMode, TradeRecord
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.data.feature_engine import FeatureEngine
 from poseidon.risk.engine import RiskEngine
@@ -49,6 +60,11 @@ SHARPE_CONVENTION = (
     "weekend rolled to Monday), all trading days with bars incl. flat days; sharpe_daily = mean/std(ddof=1), "
     "sharpe_annualised = sharpe_daily*sqrt(252); skew/kurtosis are population moments, kurtosis non-excess"
 )
+
+
+V1_ENGINE = "v1"
+TARGET_ENGINE = "target_v1"
+CLOSE_ACTIONS = {"stop": "close_sl", "take_profit": "close_tp"}  # other closing fills: "close"
 
 
 class BacktestFailed(RuntimeError):
@@ -247,6 +263,13 @@ def _instrument(strategy, should_stop: Callable[[], bool], trade_from=None) -> t
     return exits, entries
 
 
+def dsl_engine(backtest_config: dict) -> str:
+    engine = backtest_config.get("engine", V1_ENGINE)
+    if engine not in (V1_ENGINE, TARGET_ENGINE):
+        raise ValueError(f"unknown backtest engine {engine!r}")
+    return engine
+
+
 def run_backtest(
     strategy,
     bars: pd.DataFrame,
@@ -256,16 +279,41 @@ def run_backtest(
     cost_model: CostModel | None = None,
     stop_slippage_ticks: float = 0.0,
     trade_from=None,
+    expiries: Mapping[str, Any] | None = None,
 ) -> BacktestOutcome:
     """Run ``strategy`` on ``bars``; raises ``StageStopped`` when asked to stop mid-run.
 
     ``cost_model`` / ``stop_slippage_ticks`` override the frozen costs (the
     cost_stress gate only). ``trade_from``: bars before it are feature warm-up
     only -- entries are refused there and the daily series starts at its
-    trading day.
+    trading day. ``expiries`` (contract month -> last trading day) places the
+    synthetic roll of the ``target_v1`` engine; by default it is read from the
+    refdata settlement calendar.
     """
 
     exits, entries = _instrument(strategy, should_stop, trade_from)
+    if dsl_engine(backtest_config) == TARGET_ENGINE:
+        cost_model = cost_model if cost_model is not None else get_cost_model(backtest_config["cost_model"])
+        records, equity_curve = run_target_engine(
+            strategy,
+            bars,
+            backtest_config,
+            cost_model=cost_model,
+            stop_slippage_ticks=stop_slippage_ticks,
+            should_stop=should_stop,
+            expiries=expiries,
+        )
+        return summarise(
+            records,
+            equity_curve,
+            backtest_config,
+            cost_model=cost_model,
+            exits=exits,
+            entries=entries,
+            bars=len(bars),
+            stop_slippage_ticks=stop_slippage_ticks,
+            trade_from=trade_from,
+        )
     runner = build_runner(strategy, backtest_config, cost_model=cost_model, stop_slippage_ticks=stop_slippage_ticks)
     result = runner.run(bars)
     if should_stop():
@@ -287,6 +335,116 @@ def run_backtest(
         stop_slippage_ticks=stop_slippage_ticks,
         trade_from=trade_from,
     )
+
+
+def settlement_expiries(product: str) -> dict[str, pd.Timestamp]:
+    """Contract month -> last trading day of ``product`` from the refdata settlement calendar."""
+
+    from poseidon.pipeline.refdata.datasets import CALENDAR
+    from poseidon.pipeline.refdata.store import RefdataStore
+
+    rows = RefdataStore().read(CALENDAR)
+    rows = rows[rows["product"] == product]
+    if rows.empty:
+        raise BacktestFailed(f"no {product} rows in the refdata settlement calendar")
+    return dict(zip(rows["contract_month"].astype(str), pd.to_datetime(rows["last_trading_day"]), strict=True))
+
+
+def target_contract_spec(symbol: str, cost_model: CostModel):
+    """The engine's ``ContractSpec`` for a frozen futures cost model (fees as ``BacktestPortfolio``)."""
+
+    from poseidon.pipeline.engine import ContractSpec
+
+    unsupported = {
+        "buy_commission_rate": cost_model.buy_commission_rate,
+        "sell_commission_rate": cost_model.sell_commission_rate,
+        "slippage_pct": cost_model.slippage_pct,
+    }
+    if any(unsupported.values()) or not cost_model.tax_on_entry or not cost_model.tick_size:
+        raise BacktestFailed(
+            f"cost model {cost_model.market} is not a per-contract futures model (tax on both legs, tick slippage)"
+        )
+    return ContractSpec(
+        symbol=symbol,
+        point_value=float(cost_model.point_value),
+        tick_size=float(cost_model.tick_size),
+        commission_per_unit=float(cost_model.commission_per_contract),
+        tax_rate=float(cost_model.tax_rate),
+        slippage_ticks=float(cost_model.slippage_ticks),
+    )
+
+
+def run_target_engine(
+    strategy,
+    bars: pd.DataFrame,
+    backtest_config: dict,
+    *,
+    cost_model: CostModel,
+    stop_slippage_ticks: float = 0.0,
+    should_stop: Callable[[], bool] = lambda: False,
+    expiries: Mapping[str, Any] | None = None,
+) -> tuple[list[TradeRecord], list[tuple]]:
+    """``RuleStrategyV2`` as its spec v3 fast path on ``engine.intraday``.
+
+    Returns what :func:`summarise` reads from ``BacktestPortfolio``: one entry ``TradeRecord`` per
+    round trip plus a closing one when it closed (``close_sl`` / ``close_tp`` / ``close``), and the
+    per-bar ``(time, equity, 0.0)`` curve.
+    """
+
+    from poseidon.pipeline.engine.intraday import IntradayConfig, IntradayInput, r1_contracts, run_intraday
+    from poseidon.pipeline.v3.compiler import plan
+    from poseidon.pipeline.v3.dsl_bridge import v2_to_v3
+    from poseidon.pipeline.v3.runtime import Conventions, SpecStrategy
+
+    sizing = backtest_config["sizing"]
+    if sizing["mode"] != SizingMode.FIXED_CONTRACTS.value:
+        raise ValueError(f"pipeline backtests size by fixed_contracts, not {sizing['mode']!r}")
+    spec = v2_to_v3(strategy.config.model_dump(mode="json", exclude_none=True))
+    spec["sleeves"][0]["sizing"]["params"]["n"] = int(sizing["contracts"])
+    spec_plan = plan(spec)
+    (sleeve,) = spec_plan.sleeves
+    target = SpecStrategy(spec_plan.sleeves, spec_plan.allocation, Conventions(), record_trace=False)
+    target.state(sleeve.id, "direction").bind(strategy, bars)
+    data = IntradayInput(
+        spec=target_contract_spec(strategy.symbol, cost_model),
+        bars=bars,
+        contracts=r1_contracts(bars.index, expiries if expiries is not None else settlement_expiries(strategy.symbol)),
+    )
+    config = IntradayConfig(
+        initial_capital=float(backtest_config["initial_capital_twd"]),
+        gap_aware_stops=bool(backtest_config["gap_aware_stops"]),
+        stop_slippage_ticks=float(stop_slippage_ticks),
+    )
+    try:
+        result = run_intraday(target, sleeve.alias, data, config)
+    except Exception as error:
+        if should_stop():
+            from poseidon.pipeline.stages import StageStopped
+
+            raise StageStopped("stage stopped during a backtest") from error
+        raise BacktestFailed(f"{type(error).__name__}: {error}") from error
+    records = []
+    for trip in result.round_trips().itertuples(index=False):
+        entry_time = trip.entry_time.to_pydatetime()
+        records.append(
+            TradeRecord(strategy.symbol, trip.side, entry_time, trip.entry_price, float(trip.units), trip.entry_fees)
+        )
+        if pd.notna(trip.exit_time):
+            records.append(
+                TradeRecord(
+                    symbol=strategy.symbol,
+                    action=CLOSE_ACTIONS.get(trip.exit_reason, "close"),
+                    entry_time=entry_time,
+                    exit_time=trip.exit_time.to_pydatetime(),
+                    entry_price=trip.entry_price,
+                    exit_price=trip.exit_price,
+                    quantity=float(trip.units),
+                    fees=trip.fees,
+                    pnl=trip.pnl,
+                )
+            )
+    curve = [(time, float(value), 0.0) for time, value in result.equity.items()]
+    return records, curve
 
 
 def summarise(

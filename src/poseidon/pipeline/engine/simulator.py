@@ -45,6 +45,7 @@ from poseidon.pipeline.engine.view import (
     BookView,
     Fill,
     MarketView,
+    Protect,
     SeriesBuffer,
     SeriesView,
     _Buffer,
@@ -58,11 +59,14 @@ class Decision:
     """Signed integer units per instrument. An instrument left out keeps its current position.
 
     ``target_leverage`` is optional and only reported (positions_daily: target vs actual leverage
-    and the rounding error).
+    and the rounding error). ``protective`` replaces the resting stop / take-profit of an
+    instrument's position after this decision (left out = keep); only the intraday engine
+    (:mod:`poseidon.pipeline.engine.intraday`) executes them, this daily engine refuses them.
     """
 
     targets: Mapping[str, int] = field(default_factory=dict)
     target_leverage: Mapping[str, float] = field(default_factory=dict)
+    protective: Mapping[str, Protect] = field(default_factory=dict)
 
 
 class TargetStrategy(Protocol):
@@ -379,6 +383,8 @@ class _Run:
         )
         decision = self.strategy.on_bar(view, book)
         requested = _check_targets(decision, self.instruments)
+        if decision.protective:
+            raise NotImplementedError("protective orders run on the intraday engine only (engine.intraday)")
         final = {k: requested.get(k, p.units) for k, p in self.pos.items()}
 
         if self.margin_cap is not None:
