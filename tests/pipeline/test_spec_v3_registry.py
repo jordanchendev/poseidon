@@ -18,6 +18,30 @@ from poseidon.pipeline.v3.registry import (
     component_fingerprints,
 )
 
+# sha256 of each class's source as the base image poseidon-pipeline:28d1ae6c4 computes it: a run frozen
+# before step 8 must still pass check_components, so an existing class is never edited (new behaviour is a
+# new component or a new version). ``direction.dsl_rules`` is the one exception: step 7 (DSL parity, 21bbe73)
+# re-based it on the intraday engine; it is intraday-only, so no daily run (the only ones check_components
+# re-checks) froze the base value.
+BASE_FINGERPRINTS = {
+    "allocation.single@1": "6b6caa2124b9b1b654728b9a4b91e81f481895fbd4e569243151bc3bf055a9d2",
+    "direction.constant@1": "94e458eb5aa40fb940c882d7d7a7f9c85a1d7fae5ada660099ca6b100366a2a9",
+    "direction.dsl_rules@1": "6ac5cd3b1b3aa9947e58e710a5aa500f7ed771a1c343d06b0f12db998c73bdbb",
+    "execution.next_open@1": "19df267b3d44c0f5aa32bfdde168fae264088dbda795ff9bd98e732a4aaa118b",
+    "execution.signal_close@1": "0b65f531e3916886ce07a9589e071135fb77745d113d4749771663b10df4897a",
+    "leverage.base@1": "c15e6fcd24e64c0a2cfe2dcbb0c95230960edb452f9366c02c11bc054eb9cd16",
+    "rebalance.daily@1": "d6182204b2f65e2294eb154e645ae1dabf32ffcc2ed9420ad695ec997c870696",
+    "rebalance.monthly_at_roll@1": "88c99293dd3031d212e0c3e52de320bd27dc6867429836a1b5d76fc41e0843c0",
+    "rebalance.on_signal_change@1": "761705bda3b62d990cd1c34887981d1e6d6c7f20fd4ad44cf6b56acc73128369",
+    "rebalance.threshold_band@1": "c93c39109c53a8b2b69c312850922e582688f49d041372b11dae2835186382f2",
+    "regime.ma_band@1": "f8a83761f5526f9a187e6d62583caf084f336a8d0da9b6c3357ed80b3b31f651",
+    "risk.vol_cap@1": "6a7ca2470b7f3103d4b7ded5a7849afe615e36309a3f624aaed4751418bfbd44",
+    "roll.at_settlement@1": "1d6f63d777631416710469c2bb904b278cd2cf9faaec24d7686e70b3ba3dc392",
+    "roll.before_settlement@1": "62355055d7924ac17fbd12a7116f2523029c43fafa8857e905774d387761dbd6",
+    "sizing.fixed_contracts@1": "57f7e14f3d47d3851de07bc2d174a2f57867616ba36b4fe2f5acbf2d82c4459e",
+    "sizing.target_leverage@1": "9dd0fba490bf5815bc8af649265d335196f7d95e5297645e97cbca5046f32334",
+}
+
 M1_COMPONENTS = {
     "direction.constant",
     "direction.dsl_rules",
@@ -35,6 +59,11 @@ M1_COMPONENTS = {
     "execution.next_open",
     "execution.signal_close",
     "allocation.single",
+    # step 8 (M3): stocks / ETFs, fixed-notional sizing, multi-sleeve allocation
+    "sizing.fixed_notional",
+    "allocation.fixed_weights",
+    "allocation.inverse_vol",
+    "allocation.regime_switch",
     "leverage.drawdown_ladder",
     "leverage.level_ladder",
 }
@@ -143,3 +172,8 @@ def test_rounding_keeps_the_sign_and_floors_the_magnitude():
     assert (
         fixed.units(fixed.parse({"n": 2}), equity=1, direction=-1, leverage=0, weight=1, price=1, instrument=None) == -2
     )
+
+
+def test_components_frozen_into_earlier_runs_have_not_drifted():
+    names = sorted(key.split("@", 1)[0] for key in BASE_FINGERPRINTS)
+    assert component_fingerprints(names) == BASE_FINGERPRINTS

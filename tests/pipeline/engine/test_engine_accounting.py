@@ -43,7 +43,7 @@ def test_contract_spec_comes_from_the_instrument_table():
     )
     assert (TMF.initial_margin_ratio, TMF.maintenance_margin_ratio) == (0.07, 0.054)
     assert ContractSpec.from_instrument(INSTRUMENTS["MTX"]).commission_per_unit == 25.0
-    with pytest.raises(ValueError, match="futures only"):
+    with pytest.raises(ValueError, match="no ledger for option"):
         ContractSpec.from_instrument(INSTRUMENTS["TXO"])
     tax_on_exit_only = dataclasses.replace(
         INSTRUMENTS["TX"], cost_model=dataclasses.replace(INSTRUMENTS["TX"].cost_model, tax_on_entry=False)

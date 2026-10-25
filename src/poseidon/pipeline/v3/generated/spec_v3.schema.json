@@ -1,5 +1,161 @@
 {
   "$defs": {
+    "AllocationFixedWeights": {
+      "additionalProperties": false,
+      "description": "Constant weights per sleeve id (sum <= 1); each sleeve's sizing is scaled by its weight.",
+      "properties": {
+        "component": {
+          "const": "allocation.fixed_weights",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/AllocationFixedWeightsParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "allocation.fixed_weights",
+      "type": "object"
+    },
+    "AllocationFixedWeightsParams": {
+      "additionalProperties": false,
+      "properties": {
+        "weights": {
+          "maxProperties": 4,
+          "minProperties": 2,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,31}$": {
+              "exclusiveMinimum": 0.0,
+              "maximum": 1.0,
+              "type": "number"
+            }
+          },
+          "title": "Weights",
+          "type": "object"
+        }
+      },
+      "required": [
+        "weights"
+      ],
+      "title": "AllocationFixedWeightsParams",
+      "type": "object"
+    },
+    "AllocationInverseVol": {
+      "additionalProperties": false,
+      "description": "Weights proportional to 1 / realised volatility of each sleeve's own series over window_days, sum 1.",
+      "properties": {
+        "component": {
+          "const": "allocation.inverse_vol",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/AllocationInverseVolParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "allocation.inverse_vol",
+      "type": "object"
+    },
+    "AllocationInverseVolParams": {
+      "additionalProperties": false,
+      "properties": {
+        "window_days": {
+          "anyOf": [
+            {
+              "maximum": 120,
+              "minimum": 10,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 20,
+          "title": "Window Days"
+        }
+      },
+      "title": "AllocationInverseVolParams",
+      "type": "object"
+    },
+    "AllocationRegimeSwitch": {
+      "additionalProperties": false,
+      "description": "Two sleeves: all weight on sleeve `on` while signal > MA x (1 + band), on sleeve `off` once < MA x (1 - band) (regime.ma_band hysteresis).",
+      "properties": {
+        "component": {
+          "const": "allocation.regime_switch",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/AllocationRegimeSwitchParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "allocation.regime_switch",
+      "type": "object"
+    },
+    "AllocationRegimeSwitchParams": {
+      "additionalProperties": false,
+      "properties": {
+        "band_pct": {
+          "anyOf": [
+            {
+              "maximum": 0.1,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 0.02,
+          "title": "Band Pct"
+        },
+        "ma_days": {
+          "anyOf": [
+            {
+              "maximum": 400,
+              "minimum": 20,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 200,
+          "title": "Ma Days"
+        },
+        "off": {
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "title": "Off",
+          "type": "string"
+        },
+        "on": {
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "title": "On",
+          "type": "string"
+        },
+        "signal": {
+          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr|vix))$",
+          "title": "Signal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "signal",
+        "on",
+        "off"
+      ],
+      "title": "AllocationRegimeSwitchParams",
+      "type": "object"
+    },
     "AllocationSingle": {
       "additionalProperties": false,
       "description": "One sleeve, weight 1.",
@@ -283,10 +439,85 @@
           "enum": [
             "TX",
             "MTX",
-            "TMF"
+            "TMF",
+            "0050",
+            "006204",
+            "00631L",
+            "00675L",
+            "1216",
+            "1301",
+            "1303",
+            "2002",
+            "2059",
+            "2301",
+            "2303",
+            "2308",
+            "2317",
+            "2327",
+            "2330",
+            "2344",
+            "2345",
+            "2357",
+            "2360",
+            "2368",
+            "2379",
+            "2382",
+            "2383",
+            "2395",
+            "2408",
+            "2412",
+            "2449",
+            "2454",
+            "2603",
+            "2615",
+            "2801",
+            "2880",
+            "2881",
+            "2882",
+            "2883",
+            "2884",
+            "2885",
+            "2886",
+            "2887",
+            "2890",
+            "2891",
+            "2892",
+            "2912",
+            "3008",
+            "3017",
+            "3034",
+            "3037",
+            "3045",
+            "3231",
+            "3653",
+            "3661",
+            "3711",
+            "4904",
+            "4938",
+            "5871",
+            "5876",
+            "5880",
+            "6505",
+            "6669"
           ],
           "title": "Symbol",
           "type": "string"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "enum": [
+                "board_lot",
+                "odd_lot"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
         }
       },
       "required": [
@@ -923,6 +1154,55 @@
       "title": "SizingFixedContractsParams",
       "type": "object"
     },
+    "SizingFixedNotional": {
+      "additionalProperties": false,
+      "description": "A fixed share of equity as notional, no leverage chain: units = equity x weight x pct_of_equity% / (price x point value x lot).",
+      "properties": {
+        "component": {
+          "const": "sizing.fixed_notional",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/SizingFixedNotionalParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "sizing.fixed_notional",
+      "type": "object"
+    },
+    "SizingFixedNotionalParams": {
+      "additionalProperties": false,
+      "properties": {
+        "pct_of_equity": {
+          "anyOf": [
+            {
+              "maximum": 300,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 100,
+          "title": "Pct Of Equity"
+        },
+        "rounding": {
+          "default": "floor",
+          "enum": [
+            "floor",
+            "nearest"
+          ],
+          "title": "Rounding",
+          "type": "string"
+        }
+      },
+      "title": "SizingFixedNotionalParams",
+      "type": "object"
+    },
     "SizingTargetLeverage": {
       "additionalProperties": false,
       "description": "Equity-based integer contracts: units = equity x direction x leverage / (price x point value).",
@@ -1067,6 +1347,7 @@
           "discriminator": {
             "mapping": {
               "sizing.fixed_contracts": "#/$defs/SizingFixedContracts",
+              "sizing.fixed_notional": "#/$defs/SizingFixedNotional",
               "sizing.target_leverage": "#/$defs/SizingTargetLeverage"
             },
             "propertyName": "component"
@@ -1074,6 +1355,9 @@
           "oneOf": [
             {
               "$ref": "#/$defs/SizingTargetLeverage"
+            },
+            {
+              "$ref": "#/$defs/SizingFixedNotional"
             },
             {
               "$ref": "#/$defs/SizingFixedContracts"
@@ -1098,7 +1382,30 @@
   "description": "Spec v3, REGISTRY_VERSION 1. Shape only: cross rules, $param policy (1-4), feasibility and the 5x leverage cap are checked by spec_validate.",
   "properties": {
     "allocation": {
-      "$ref": "#/$defs/AllocationSingle"
+      "discriminator": {
+        "mapping": {
+          "allocation.fixed_weights": "#/$defs/AllocationFixedWeights",
+          "allocation.inverse_vol": "#/$defs/AllocationInverseVol",
+          "allocation.regime_switch": "#/$defs/AllocationRegimeSwitch",
+          "allocation.single": "#/$defs/AllocationSingle"
+        },
+        "propertyName": "component"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AllocationSingle"
+        },
+        {
+          "$ref": "#/$defs/AllocationFixedWeights"
+        },
+        {
+          "$ref": "#/$defs/AllocationInverseVol"
+        },
+        {
+          "$ref": "#/$defs/AllocationRegimeSwitch"
+        }
+      ],
+      "title": "Allocation"
     },
     "capital": {
       "$ref": "#/$defs/Capital"

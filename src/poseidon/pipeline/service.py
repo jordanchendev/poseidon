@@ -234,8 +234,8 @@ class PipelineService:
         instrument = {}
         if spec is None:
             # Idea-only: spec_generate v3 decides the class (CONFIG_VERSION 7). A family member can only
-            # become its family's class. market/symbol keep the column defaults (tw_futures/TX): every
-            # instrument a spec can trade today is a TAIFEX index future; the spec names the contract.
+            # become its family's class. market/symbol keep the column defaults (tw_futures/TX): the spec,
+            # written later, names the instruments (a generated stock spec keeps the defaults: step 8 open item).
             classes = (self._family_class(root),) if root is not None else ROUTED_CLASSES
             config = self._idea_config(stage_plan, as_of, classes)
         elif v3:
@@ -325,7 +325,7 @@ class PipelineService:
 
         from poseidon.pipeline.refdata.store import RefdataError
         from poseidon.pipeline.v3.brief import render_brief
-        from poseidon.pipeline.v3.config import REFDATA_DATASETS, class_plan, idea_run_config
+        from poseidon.pipeline.v3.config import REFDATA_DATASETS, STOCK_REFDATA_DATASETS, class_plan, idea_run_config
 
         plans = None
         if stage_plan is not None:
@@ -351,7 +351,9 @@ class PipelineService:
         if any(name in V3_RUN_CLASSES for name in classes):
             try:
                 store = self.refdata()
-                refdata = {name: store.content_sha256(name) for name in REFDATA_DATASETS}
+                # the stock datasets too once the store has them: spec_generate may write a stock spec
+                datasets = REFDATA_DATASETS + tuple(name for name in STOCK_REFDATA_DATASETS if store.exists(name))
+                refdata = {name: store.content_sha256(name) for name in datasets}
             except (RefdataError, OSError) as error:
                 refdata_error = str(error)
         return idea_run_config(
@@ -369,8 +371,8 @@ class PipelineService:
         from poseidon.pipeline.refdata.store import RefdataError
         from poseidon.pipeline.v3.brief import render_brief
         from poseidon.pipeline.v3.config import (
-            REFDATA_DATASETS,
             daily_run_config,
+            refdata_datasets,
             series_first_days,
             used_index_datasets,
         )
@@ -379,7 +381,6 @@ class PipelineService:
 
         try:
             store = self.refdata()
-            refdata = {name: store.content_sha256(name) for name in REFDATA_DATASETS}
             series_since = series_first_days(store)
         except (RefdataError, OSError) as error:
             raise PipelineRequestInvalid(f"refdata is not available for spec v3 runs: {error}") from error
@@ -395,7 +396,11 @@ class PipelineService:
                 f"spec v3 runs are daily only for now ({', '.join(V3_RUN_CLASSES)}); this spec is "
                 f"{result.strategy_class}: intraday specs run as DSL v2 until DSL parity (step 7)"
             )
-        refdata |= {name: store.content_sha256(name) for name in used_index_datasets(result.resolved)}
+        try:
+            datasets = (*refdata_datasets(result.resolved), *used_index_datasets(result.resolved))
+            refdata = {name: store.content_sha256(name) for name in datasets}
+        except (RefdataError, OSError) as error:
+            raise PipelineRequestInvalid(f"refdata is not available for spec v3 runs: {error}") from error
         config = daily_run_config(
             result.resolved,
             as_of=as_of,

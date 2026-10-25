@@ -9,18 +9,30 @@ Margins are the Phase 1 notional-ratio approximation (initial 7.0 %,
 maintenance 5.4 % of contract notional, from the offline backtest's 2025
 TAIFEX figures). Because they are ratios of notional, MTX's margin is TX's
 1/4 and TMF's 1/20 automatically. Historical margin tables are Phase 2.
+
+TW stocks and ETFs (step 8): the Thalassa ``tw_stock`` 1d symbols, paid in
+full (no margin), long only, one board lot = 1,000 shares (odd lots of one
+share on request), the TWSE price-tiered tick, 0.1425 % commission both ways
+and the 0.3 % (stock) / 0.1 % (ETF) transaction tax on sells (``COST_MODELS``).
+Corporate actions come from ``tw_corporate_actions`` at read time. The table
+does not know listing dates for them: ``listed_since`` is the first Thalassa
+day (``daily_data_since``), and ``reference_price`` is the close on the data
+snapshot's last day, used to size a spec when no window prices are known.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
 import pandas as pd
 
 from poseidon.backtest.cost_model import COST_MODELS, CostModel
+from poseidon.pipeline.engine.specs import TickLadder
 
 InstrumentKind = Literal["future", "option", "stock"]
 
@@ -56,15 +68,24 @@ class Instrument:
     planned: str = ""  # when a non-tradable row becomes tradable
     initial_margin_ratio: float = INITIAL_MARGIN_RATIO
     maintenance_margin_ratio: float = MAINTENANCE_MARGIN_RATIO
-    # Price-dependent tick: ((price below, tick), ...) ascending, the last tick above the last bound.
-    tick_ladder: tuple[tuple[float, float], ...] = ()
+    # Price-tiered tick ((price below, tick), ...) ascending, the last bound inf: TWSE stocks / ETFs, TXO premiums.
+    tick_ladder: TickLadder | None = None  # None = tick_size everywhere
+    odd_lot: bool = False  # the spec may trade single shares instead of board lots
+    etf: bool = False  # stocks only: an ETF (0.1 % sell tax, the ETF tick ladder)
+    reference_price: float | None = None  # stocks only: sizing level when the window prices are unknown
     # A non-tradable row that a spec still reaches through this hedge component (TXO: bought puts).
     hedge_component: str | None = None
 
-    def notional_twd(self, price: float) -> float:
-        """Contract notional at ``price`` (one contract / lot)."""
+    def notional_twd(self, price: float, lot: int | None = None) -> float:
+        """Notional at ``price`` of one unit (a contract, a board lot, or ``lot`` shares)."""
 
-        return price * self.point_value_twd * self.lot
+        return price * self.point_value_twd * (self.lot if lot is None else lot)
+
+    @property
+    def market(self) -> str:
+        """The pipeline market (``PipelineRun.market``, p003) of a run on this instrument alone."""
+
+        return {"future": "tw_futures", "stock": "tw_stock", "option": "tw_options"}[self.kind]
 
     def proxy_note(self, start: date) -> str | None:
         """Report line for a window starting at ``start`` that relies on proxy prices, or None."""
@@ -197,6 +218,108 @@ INSTRUMENTS: dict[str, Instrument] = {
     ),
 }
 
+# --------------------------------------------------------------------------- TW stocks and ETFs
+
+# TWSE tick ladders: (price upper bound, exclusive; tick).
+STOCK_TICKS: TickLadder = ((10.0, 0.01), (50.0, 0.05), (100.0, 0.1), (500.0, 0.5), (1000.0, 1.0), (math.inf, 5.0))
+ETF_TICKS: TickLadder = ((50.0, 0.01), (math.inf, 0.05))
+BOARD_LOT = 1000
+# Refdata dataset of the Thalassa tw_stock 1d snapshot (``refdata.tw_stocks.DATASET``): rows per symbol.
+STOCK_PRICE_DATASET = "thalassa_tw_stock_daily"
+STOCK_DATA_SNAPSHOT = date(2026, 10, 22)  # last day of the snapshot the reference prices come from
+
+# (symbol, TWSE name, English name, ETF, first Thalassa 1d day, close on STOCK_DATA_SNAPSHOT).
+# The Thalassa tw_stock 1d coverage of 2026-10-24 (2823 left out: delisted 2021-12-17).
+TW_STOCKS: tuple[tuple[str, str, str, bool, date, float], ...] = (
+    ("0050", "元大台灣50", "Yuanta Taiwan 50 ETF", True, date(2003, 6, 30), 106.9),
+    ("006204", "永豐臺灣加權", "SinoPac TAIEX ETF", True, date(2011, 9, 28), 232.35),
+    ("00631L", "元大台灣50正2", "Yuanta Daily Taiwan 50 Bull 2X ETF", True, date(2014, 10, 31), 35.61),
+    ("00675L", "富邦臺灣加權正2", "Fubon TAIEX Daily Leveraged 2X ETF", True, date(2016, 10, 5), 311.0),
+    ("1216", "統一", "Uni-President", False, date(2020, 1, 2), 79.6),
+    ("1301", "台塑", "Formosa Plastics", False, date(2021, 1, 4), 73.8),
+    ("1303", "南亞", "Nan Ya Plastics", False, date(2021, 1, 4), 301.0),
+    ("2002", "中鋼", "China Steel", False, date(2021, 1, 4), 19.55),
+    ("2059", "川湖", "King Slide", False, date(2020, 1, 2), 9755.0),
+    ("2301", "光寶科", "Lite-On Technology", False, date(2020, 1, 2), 255.5),
+    ("2303", "聯電", "UMC", False, date(2021, 1, 4), 125.5),
+    ("2308", "台達電", "Delta Electronics", False, date(2021, 1, 4), 1560.0),
+    ("2317", "鴻海", "Hon Hai", False, date(2021, 1, 4), 245.0),
+    ("2327", "國巨", "Yageo", False, date(2020, 1, 2), 507.0),
+    ("2330", "台積電", "TSMC", False, date(2021, 1, 4), 2385.0),
+    ("2344", "華邦電", "Winbond", False, date(2020, 1, 2), 154.5),
+    ("2345", "智邦", "Accton", False, date(2020, 1, 2), 1775.0),
+    ("2357", "華碩", "ASUS", False, date(2021, 1, 4), 946.0),
+    ("2360", "致茂", "Chroma ATE", False, date(2020, 1, 2), 1980.0),
+    ("2368", "金像電", "Gold Circuit Electronics", False, date(2020, 1, 2), 1115.0),
+    ("2379", "瑞昱", "Realtek", False, date(2020, 1, 2), 772.0),
+    ("2382", "廣達", "Quanta Computer", False, date(2021, 1, 4), 322.0),
+    ("2383", "台光電", "Elite Material", False, date(2020, 1, 2), 5070.0),
+    ("2395", "研華", "Advantech", False, date(2020, 1, 2), 670.0),
+    ("2408", "南亞科", "Nanya Technology", False, date(2020, 1, 2), 414.0),
+    ("2412", "中華電", "Chunghwa Telecom", False, date(2021, 1, 4), 158.0),
+    ("2449", "京元電子", "King Yuan Electronics", False, date(2020, 1, 2), 262.5),
+    ("2454", "聯發科", "MediaTek", False, date(2021, 1, 4), 4010.0),
+    ("2603", "長榮", "Evergreen Marine", False, date(2021, 1, 4), 260.0),
+    ("2615", "萬海", "Wan Hai Lines", False, date(2020, 1, 2), 119.5),
+    ("2801", "彰銀", "Chang Hwa Bank", False, date(2020, 1, 2), 21.6),
+    ("2880", "華南金", "Hua Nan Financial", False, date(2021, 1, 4), 50.3),
+    ("2881", "富邦金", "Fubon Financial", False, date(2021, 1, 4), 158.5),
+    ("2882", "國泰金", "Cathay Financial", False, date(2021, 1, 4), 113.5),
+    ("2883", "凱基金", "KGI Financial", False, date(2020, 1, 2), 37.75),
+    ("2884", "玉山金", "E.Sun Financial", False, date(2020, 1, 2), 49.75),
+    ("2885", "元大金", "Yuanta Financial", False, date(2020, 1, 2), 72.4),
+    ("2886", "兆豐金", "Mega Financial", False, date(2021, 1, 4), 55.2),
+    ("2887", "台新新光金", "Taishin Shin Kong Financial", False, date(2020, 1, 2), 42.1),
+    ("2890", "永豐金", "SinoPac Financial", False, date(2020, 1, 2), 46.35),
+    ("2891", "中信金", "CTBC Financial", False, date(2021, 1, 4), 74.9),
+    ("2892", "第一金", "First Financial", False, date(2021, 1, 4), 42.35),
+    ("2912", "統一超", "President Chain Store", False, date(2020, 1, 2), 238.0),
+    ("3008", "大立光", "Largan Precision", False, date(2021, 1, 4), 6175.0),
+    ("3017", "奇鋐", "Asia Vital Components", False, date(2020, 1, 2), 3145.0),
+    ("3034", "聯詠", "Novatek", False, date(2020, 1, 2), 583.0),
+    ("3037", "欣興", "Unimicron", False, date(2020, 1, 2), 1085.0),
+    ("3045", "台灣大", "Taiwan Mobile", False, date(2021, 1, 4), 133.0),
+    ("3231", "緯創", "Wistron", False, date(2020, 1, 2), 190.0),
+    ("3653", "健策", "Jentech Precision", False, date(2020, 1, 2), 6070.0),
+    ("3661", "世芯-KY", "Alchip Technologies", False, date(2020, 1, 2), 3495.0),
+    ("3711", "日月光投控", "ASE Technology", False, date(2021, 1, 4), 654.0),
+    ("4904", "遠傳", "Far EasTone", False, date(2020, 1, 2), 115.0),
+    ("4938", "和碩", "Pegatron", False, date(2020, 1, 2), 103.5),
+    ("5871", "中租-KY", "Chailease", False, date(2020, 1, 2), 106.0),
+    ("5876", "上海商銀", "Shanghai Commercial and Savings Bank", False, date(2020, 1, 2), 54.6),
+    ("5880", "合庫金", "Taiwan Cooperative Financial", False, date(2020, 1, 2), 28.2),
+    ("6505", "台塑化", "Formosa Petrochemical", False, date(2021, 1, 4), 106.5),
+    ("6669", "緯穎", "Wiwynn", False, date(2020, 1, 2), 1925.0),
+)
+
+
+def _stock(symbol: str, name_zh: str, name_en: str, etf: bool, since: date, reference: float) -> Instrument:
+    return Instrument(
+        symbol=symbol,
+        kind="stock",
+        name_zh=name_zh,
+        name_en=name_en,
+        point_value_twd=1.0,
+        tick_size=0.01,
+        lot=BOARD_LOT,
+        cost_model=COST_MODELS["tw_stock_etf" if etf else "tw_stock"],
+        listed_since=since,
+        price_proxy=None,
+        daily_data_since=since,
+        intraday_data_since=None,
+        settlement="none",
+        tradable=True,
+        initial_margin_ratio=0.0,
+        maintenance_margin_ratio=0.0,
+        tick_ladder=ETF_TICKS if etf else STOCK_TICKS,
+        odd_lot=True,
+        etf=etf,
+        reference_price=reference,
+    )
+
+
+INSTRUMENTS.update({row[0]: _stock(*row) for row in TW_STOCKS})
+
 # Smaller contracts on the same index, used to suggest a fix when a sleeve rounds to 0 contracts.
 SAME_INDEX_FAMILY: tuple[str, ...] = ("TX", "MTX", "TMF")
 
@@ -218,9 +341,22 @@ DAILY_PRICE_DATASET = "taifex_futures_daily"
 
 
 def price_series_key(instrument: Instrument) -> str:
-    """Key of the daily price series ``instrument`` reads: ``<dataset>/<product>`` (proxy source included)."""
+    """Key of the daily price series ``instrument`` reads: ``<dataset>/<symbol>`` (proxy source included)."""
 
-    return f"{DAILY_PRICE_DATASET}/{instrument.price_proxy or instrument.symbol}"
+    dataset = STOCK_PRICE_DATASET if instrument.kind == "stock" else DAILY_PRICE_DATASET
+    return f"{dataset}/{instrument.price_proxy or instrument.symbol}"
+
+
+def stocks() -> list[Instrument]:
+    return [row for row in INSTRUMENTS.values() if row.kind == "stock"]
+
+
+def declared(decl: Mapping[str, Any]) -> Instrument:
+    """The table row of a spec's instrument declaration as the spec trades it: ``unit: odd_lot``
+    makes one unit a single share (``lot`` 1), so sizing, costs and the engine all count shares."""
+
+    row = INSTRUMENTS[decl["symbol"]]
+    return dataclasses.replace(row, lot=1) if decl.get("unit") == "odd_lot" else row
 
 
 # --------------------------------------------------------------------------- signal indices

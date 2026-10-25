@@ -198,5 +198,6 @@ def test_part_b_covers_can_cannot_instruments_and_the_signal_series_rule():
     assert "`self:adjusted`" in part_b and "`index:taiex`" in part_b and "`index:taiex_tr`" in part_b
     assert "unsupported" in part_b and "`short_stock`" in part_b
     assert "NOT SMA(200) on 5m bars" in part_b
-    # was 9000 before the two ladders and the VIX note (about 1.5 KB), 10_500 before the protective put
-    assert len(text) < 11_000
+    # was 9000 before the two ladders and the VIX note (about 1.5 KB), 10_500 before the protective put,
+    # 11_000 before the 59 stock / ETF symbols and the four step-8 components (12_283 bytes at the merge)
+    assert len(text) < 13_000

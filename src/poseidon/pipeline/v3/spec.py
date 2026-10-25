@@ -46,6 +46,8 @@ class ComponentRef(_Strict):
 class InstrumentDecl(_Strict):
     symbol: Annotated[str, Field(min_length=1, max_length=16)]
     roll: ComponentRef | None = None
+    # Stocks and ETFs only: one unit is a board lot of 1,000 shares (default) or a single share (odd lot).
+    unit: Literal["board_lot", "odd_lot"] | None = None
 
 
 class Capital(_Strict):

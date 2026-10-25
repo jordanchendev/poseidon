@@ -59,10 +59,13 @@ import pandas as pd
 
 from poseidon.decision_loop.manifest import canonical_json
 from poseidon.pipeline.engine import ContractSpec, EngineConfig, EngineResult, FuturesInput, TargetStrategy, run
+from poseidon.pipeline.engine.data import stock_input
 from poseidon.pipeline.plan import DAILY_SHADOW_PAPER, DAILY_THRESHOLDS, SPEC_V3_CONFIG_VERSION, config_version
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, MARKET_CALENDAR
 from poseidon.pipeline.refdata.engine_input import (
     RefdataReader,
+    StockDataGap,
+    align_stock_bars,
     day_session_dates,
     futures_input,
     last_day_session,
@@ -72,6 +75,10 @@ from poseidon.pipeline.refdata.engine_input import (
 )
 from poseidon.pipeline.refdata.store import RefdataError
 from poseidon.pipeline.refdata.taifex import MarketSchedule
+from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
+from poseidon.pipeline.refdata.tw_corporate_actions import load_actions
+from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
+from poseidon.pipeline.refdata.tw_stocks import read_bars
 from poseidon.pipeline.stages import StageResult
 from poseidon.pipeline.state import Verdict, utcnow
 from poseidon.pipeline.v3.instruments import align_signal_frame, complete_through
@@ -116,9 +123,9 @@ def is_daily_mode(config: dict) -> bool:
 
 @dataclass(frozen=True)
 class PaperInstrument:
-    product: str  # TAIFEX product whose quotes price it (TMF priced from TX: "TX")
-    spec: ContractSpec
-    roll_days_before: int = 1
+    product: str  # TAIFEX product whose quotes price it (TMF priced from TX: "TX"); a stock's own symbol
+    spec: ContractSpec  # ``spec.kind`` says which dataset prices it (future: FUTURES, stock: STOCKS)
+    roll_days_before: int = 1  # futures only
 
 
 @dataclass(frozen=True)
@@ -183,6 +190,11 @@ def _iso(value) -> str | None:
     return None if value is None or pd.isna(value) else pd.Timestamp(value).date().isoformat()
 
 
+# Futures bars carry the first five; a stock's bars (``engine.data.stock_input``) the rest as well, so a
+# corporate action booked late or revised shows up as a revision of that day.
+HASHED_BAR_COLUMNS = ("open", "high", "low", "close", "settle", "traded", "factor", "unit_ratio", "cash_per_share")
+
+
 def input_hashes(futures: Mapping[str, FuturesInput], aux: Mapping[str, pd.DataFrame], paper_start: date):
     """(sha256 per trading day >= paper start, one sha256 of everything before it)."""
 
@@ -195,7 +207,7 @@ def input_hashes(futures: Mapping[str, FuturesInput], aux: Mapping[str, pd.DataF
 
     for name in sorted(futures):
         bars = futures[name].bars.sort_values(["date", "contract"], kind="mergesort")
-        columns = [c for c in ("open", "high", "low", "close", "settle") if c in bars.columns]
+        columns = [c for c in HASHED_BAR_COLUMNS if c in bars.columns]
         for row in bars[["date", "contract", *columns]].itertuples(index=False, name=None):
             feed(pd.Timestamp(row[0]), f"{name}|{row[1]}|{'|'.join(repr(float(v)) for v in row[2:])}\n")
     for name in sorted(aux):
@@ -206,22 +218,38 @@ def input_hashes(futures: Mapping[str, FuturesInput], aux: Mapping[str, pd.DataF
 
 
 def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dict, paper_start: date) -> PaperInputs:
-    """Read refdata and cut it at the last complete trading day. Raises ``RefdataError``."""
+    """Read refdata and cut it at the last complete trading day. Raises ``RefdataError``.
 
-    quotes = reader.read(FUTURES, start=compiled.data_start)
-    calendar_rows = reader.read(CALENDAR)
+    The cutoff is the last day every input has: the last day session of each futures product, the
+    last bar of each stock, the last row of each aux series. The trading calendar is the futures
+    products' common day-session dates, or, with no futures, the stocks' union of bar dates; a stock
+    without a bar on a calendar day is carried forward (``align_stock_bars``), and its corporate
+    actions are booked from ``tw_corporate_actions`` when the store has that dataset, exactly as
+    ``v3.compiler.compile_spec`` does for the backtest.
+    """
+
     schedule = MarketSchedule.from_frame(reader.read(MARKET_CALENDAR))
-    products = sorted({inst.product for inst in compiled.instruments.values()})
-    last = last_day_session(quotes, products)
+    futures_insts = {k: i for k, i in compiled.instruments.items() if i.spec.kind == "future"}
+    stock_insts = {k: i for k, i in compiled.instruments.items() if i.spec.kind == "stock"}
+    other = {k: i.spec.kind for k, i in compiled.instruments.items() if k not in futures_insts and k not in stock_insts}
+    if other:
+        raise ValueError(f"the daily paper has no refdata loader for instrument kind(s) {other}")
+    products = sorted({inst.product for inst in futures_insts.values()})
+    quotes = reader.read(FUTURES, start=compiled.data_start) if products else pd.DataFrame()
+    last = last_day_session(quotes, products) if products else {}
+    stock_rows = {k: read_bars(reader, i.spec.symbol, start=compiled.data_start) for k, i in stock_insts.items()}
     aux_full = {
         name: align_signal_frame(name, reader.read(dataset, start=compiled.data_start))
         for name, dataset in compiled.aux.items()
     }
     last_dates = {f"{FUTURES}:{p}": _iso(day) for p, day in last.items()}
+    stock_last = {k: pd.Timestamp(rows["date"].max()) if len(rows) else None for k, rows in stock_rows.items()}
+    last_dates.update({f"{STOCKS}:{stock_insts[k].spec.symbol}": _iso(day) for k, day in stock_last.items()})
     last_dates.update(
         {f"aux:{name}": _iso(frame.index.max()) if len(frame) else None for name, frame in aux_full.items()}
     )
-    ends = [day for day in last.values()] + [complete_through(name, frame) for name, frame in aux_full.items()]
+    ends = [*last.values(), *stock_last.values()]
+    ends += [complete_through(name, frame) for name, frame in aux_full.items()]
     if any(day is None for day in ends):
         raise RefdataError(f"no data for {sorted(k for k, v in last_dates.items() if v is None)}")
     cutoff = pd.Timestamp(min(ends)).normalize()
@@ -229,24 +257,43 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
     for product in products:
         dates = day_session_dates(product_quotes(quotes, product))
         common = dates if common is None else common.intersection(dates)
+    if common is None:
+        common = pd.DatetimeIndex(sorted({pd.Timestamp(d) for rows in stock_rows.values() for d in rows["date"]}))
     calendar = trading_calendar(common, schedule, cutoff, int(settings["calendar_horizon_days"]))
     futures = {
         name: futures_input(
             quotes,
-            calendar_rows,
+            reader.read(CALENDAR),
             schedule,
             product=inst.product,
             spec=inst.spec,
             through=cutoff,
             roll_days_before=inst.roll_days_before,
         )
-        for name, inst in compiled.instruments.items()
+        for name, inst in futures_insts.items()
     }
+    if stock_insts:
+        data_days = calendar[calendar <= cutoff]
+        actions = load_actions(reader) if reader.exists(ACTIONS) else None
+        for name, inst in stock_insts.items():
+            symbol = inst.spec.symbol
+            rows = stock_rows[name]
+            try:
+                aligned = align_stock_bars(rows[rows["date"] <= cutoff], data_days, name)
+            except StockDataGap as error:
+                raise RefdataError(str(error)) from error
+            mine = actions[actions["symbol"] == symbol] if actions is not None else None
+            try:
+                futures[name] = stock_input(inst.spec, aligned, mine)
+            except ValueError as error:
+                raise RefdataError(f"{name}: {error}") from error
     aux = {name: frame[frame.index <= cutoff] for name, frame in aux_full.items()}
     hashes, history = input_hashes(futures, aux, paper_start)
-    datasets = [FUTURES, CALENDAR, MARKET_CALENDAR, *sorted(set(compiled.aux.values()))]
+    datasets = [*((FUTURES, CALENDAR) if products else ()), MARKET_CALENDAR, *sorted(set(compiled.aux.values()))]
+    if stock_insts:
+        datasets += [STOCKS, *((ACTIONS,) if reader.exists(ACTIONS) else ())]
     sources = {name: reader.content_sha256(name) for name in datasets}
-    closures = unscheduled_closures(product_quotes(quotes, products[0]), schedule)
+    closures = unscheduled_closures(product_quotes(quotes, products[0]), schedule) if products else pd.DatetimeIndex([])
     return PaperInputs(futures, aux, calendar, cutoff, schedule, hashes, history, sources, last_dates, closures)
 
 

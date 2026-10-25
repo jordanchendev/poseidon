@@ -21,6 +21,15 @@ Each trading day t, in this order:
 Every fill settles against the current mark immediately (cash += units x (mark - fill) x point
 value), so the position always carries the mark price and the close settles the whole position.
 
+What each step does to an instrument follows its ``spec.policy`` (``specs.KIND_POLICIES``), never
+its symbol. A kind without daily settlement (stocks) keeps mark = 0, so the fill pays the whole
+notional from cash and equity carries units x price; it has no margin, so the margin steps skip
+it and its buys are trimmed so cash never drops below the margined positions' initial margin
+(``clip_cash`` at the decision, ``trim_cash`` at the fill, sells fill first). Corporate actions
+on the bars (``data.DAY_COLUMNS``) are booked at the start of the day, before any fill. A
+``traded = False`` bar fills nothing: its ``next_open`` orders stay queued, and the day's decision
+replaces the queue as on any other day (a re-sizing strategy asks again; ``signal_close`` fills nothing).
+
 Hedges (``engine.options``, bought options only): after the futures settle, a held series that
 reaches its final settlement day is cash-settled, the hedge orders waiting for today fill at
 today's settlement prices, and every held series is marked at its settlement. Premiums move cash;
@@ -134,6 +143,18 @@ def _check_targets(decision: Decision, instruments: Sequence[str]) -> dict[str, 
     return out
 
 
+def _check_short(targets: Mapping[str, int], positions: Mapping[str, _Position]) -> None:
+    for inst, units in targets.items():
+        if units < 0 and not positions[inst].spec.policy.short:
+            raise ValueError(f"target for {inst}: a {positions[inst].spec.kind} cannot be sold short ({units})")
+
+
+def _mark_after_roll(spec: ContractSpec, close: float) -> float:
+    """Mark of a freshly held contract: its close for kinds that settle daily, else 0 (paid in full)."""
+
+    return close if spec.policy.daily_settlement else 0.0
+
+
 def _scale_toward_zero(units: dict[str, int], scale: float) -> dict[str, int]:
     """Scale each position by ``scale`` and floor the magnitude (same float guard as sizing)."""
 
@@ -154,7 +175,7 @@ class _Run:
         hedges: Sequence[HedgePolicy] = (),
     ) -> None:
         if not futures:
-            raise ValueError("need at least one futures instrument")
+            raise ValueError("need at least one instrument")
         self.strategy = strategy
         self.config = config
         if calendar is None:
@@ -163,7 +184,7 @@ class _Run:
         self.pos = {name: _Position(f.spec, build_contract_table(name, f, cal)) for name, f in futures.items()}
         dates = {tuple(p.table.dates) for p in self.pos.values()}
         if len(dates) != 1:
-            raise ValueError("Phase 1 engine: all futures instruments must trade on the same dates")
+            raise ValueError("Phase 1 engine: all instruments must have bars on the same dates")
         all_dates = next(iter(self.pos.values())).table.dates
         end = pd.Timestamp(config.end) if config.end is not None else all_dates[-1]
         self.n_days = int(all_dates.searchsorted(end, side="right"))
@@ -274,6 +295,34 @@ class _Run:
     def held_price(self, field_name: str, i: int) -> dict[str, float]:
         return {k: p.table.price(field_name, i, p.contract) for k, p in self.pos.items() if p.contract is not None}
 
+    def execute(self, t: pd.Timestamp, targets: Mapping[str, int], prices: Mapping[str, float], session: str) -> None:
+        """Fill the orders toward ``targets`` at ``prices``. Buys of instruments paid in full go last
+        and are trimmed so cash stays at or above the initial margin of the margined targets."""
+
+        floor, _ = self.margin(prices, {k: targets.get(k, p.units) for k, p in self.pos.items()})
+        paid_in_full_buy = {
+            k: u > self.pos[k].units and not self.pos[k].spec.policy.margined for k, u in targets.items()
+        }
+        for k in sorted(targets, key=paid_in_full_buy.__getitem__):
+            p = self.pos[k]
+            units = targets[k] - p.units
+            if paid_in_full_buy[k]:
+                fill = p.spec.fill_price(units, prices[k])
+                per_unit = fill * p.spec.point_value + sum(p.spec.leg_fees(1, fill))
+                affordable = max(0, math.floor((self.cash - floor) / per_unit + ROUNDING_EPS))
+                if affordable < units:
+                    self.event(
+                        t,
+                        "trim_cash",
+                        k,
+                        value=self.cash - floor,
+                        threshold=units * per_unit,
+                        note=f"{session}: {units} -> {affordable} units at {fill:g}",
+                    )
+                    units = affordable
+            reason = "margin_call" if self.margin_cap is not None and k in self.margin_cap else "rebalance"
+            self.trade(t, k, units, prices[k], session, reason)
+
     def liquidate(self, t: pd.Timestamp, prices: Mapping[str, float], session: str) -> None:
         for k, p in self.pos.items():
             if p.units:
@@ -284,6 +333,8 @@ class _Run:
             return False
         equity = self.equity_at(prices)
         im, _ = self.margin(prices)
+        if im <= 0:
+            return False
         ratio = equity / im
         if ratio >= self.config.liquidation_risk_ratio:
             return False
@@ -307,7 +358,7 @@ class _Run:
                 self.adjusted[k] = close
             else:
                 prev = int(tab.held[i - 1])
-                self.adjusted[k] *= tab.price("close", i, prev) / tab.price("close", i - 1, prev)
+                self.adjusted[k] *= tab.price("close", i, prev) / tab.price("close", i - 1, prev) / tab.factor[i]
             self.series[k].append_bar(
                 t,
                 tab.contracts[col],
@@ -324,6 +375,35 @@ class _Run:
             while buf.n < len(index) and index[buf.n] <= t:
                 buf.append(index[buf.n], dict(zip(buf.columns, values[buf.n], strict=True)))
 
+    def corporate_actions(self, i: int, t: pd.Timestamp) -> None:
+        """Book the actions effective today on the held units, before any fill: cash per share
+        into cash, units x unit_ratio (the fraction left over is paid out at the reference
+        price), and pending orders and margin caps rescaled the same way."""
+
+        for k, p in self.pos.items():
+            tab = p.table
+            ratio, cash = float(tab.unit_ratio[i]), float(tab.cash_per_share[i])
+            if ratio == 1.0 and cash == 0.0:
+                continue
+            col = int(tab.held[i])
+            reference = (tab.price("close", max(i - 1, 0), col) - cash) / ratio
+            before = p.units
+            self.cash += before * cash * p.spec.point_value
+            exact = before * ratio
+            p.units = math.trunc(exact + math.copysign(ROUNDING_EPS * max(1.0, abs(exact)), exact))
+            self.cash += (exact - p.units) * reference * p.spec.point_value
+            for orders in (self.pending, self.margin_cap):
+                if orders is not None and k in orders:
+                    orders[k] = math.trunc(orders[k] * ratio)
+            self.event(
+                t,
+                "corporate_action",
+                k,
+                value=ratio,
+                threshold=cash,
+                note=f"{before} -> {p.units} units, {cash:g} TWD/share, reference {reference:g}",
+            )
+
     def fill_pending(self, i: int, t: pd.Timestamp) -> None:
         orders, self.pending = self.pending, None
         if not orders:
@@ -332,9 +412,8 @@ class _Run:
         if self.risk_breached(t, opens, "open gap"):
             self.liquidate(t, opens, "open")
             return
-        for k, target in orders.items():
-            reason = "margin_call" if self.margin_cap is not None and k in self.margin_cap else "rebalance"
-            self.trade(t, k, target - self.pos[k].units, opens[k], "open", reason)
+        self.pending = {k: u for k, u in orders.items() if not self.pos[k].table.traded[i]} or None
+        self.execute(t, {k: u for k, u in orders.items() if self.pos[k].table.traded[i]}, opens, "open")
 
     def intraday_check(self, i: int, t: pd.Timestamp) -> None:
         worst = {}
@@ -349,7 +428,7 @@ class _Run:
     def settle(self, i: int, t: pd.Timestamp) -> dict[str, float]:
         closes = self.held_price("close", i)
         for k, p in self.pos.items():
-            if p.contract is not None:
+            if p.contract is not None and p.spec.policy.daily_settlement:
                 self.cash += p.units * (closes[k] - p.mark) * p.spec.point_value
                 p.mark = closes[k]
         return closes
@@ -358,12 +437,12 @@ class _Run:
         self.margin_cap = None
         if not any(p.units for p in self.pos.values()):
             return
-        equity = self.equity()
+        equity = self.equity_at(closes)
         im, mm = self.margin(closes)
         if equity >= mm:
             return
         cap = _scale_toward_zero({k: abs(p.units) for k, p in self.pos.items()}, equity / im)
-        self.margin_cap = {k: cap[k] for k, p in self.pos.items() if p.units}
+        self.margin_cap = {k: cap[k] for k, p in self.pos.items() if p.units and p.spec.policy.margined}
         self.event(
             t,
             "margin_call",
@@ -384,12 +463,12 @@ class _Run:
                 continue
             new_close = p.table.price("close", i, new)
             if not p.units:
-                p.contract, p.mark = new, new_close
+                p.contract, p.mark = new, _mark_after_roll(p.spec, new_close)
                 continue
             old_name = p.contract_name()
             units = p.units
             self.trade(t, k, -units, p.mark, "close", "roll")
-            p.contract, p.mark = new, new_close
+            p.contract, p.mark = new, _mark_after_roll(p.spec, new_close)
             target = units if targets is None else targets[k]
             self.trade(t, k, target, new_close, "close", "roll")
             self.event(t, "roll", k, note=f"{old_name} -> {p.contract_name()} ({units} -> {target} units)")
@@ -504,8 +583,10 @@ class _Run:
             {k: SeriesView(self.series[k], self.series[k].n) for k in self.pos},
             {k: AuxView(b, b.n) for k, b in self.aux_buffers.items()},
         )
-        equity = self.equity()
         prices = {k: p.table.price("close", i, int(p.table.held[i])) for k, p in self.pos.items()}
+        # settled kinds are marked at the close of the contract still held (a signal_close roll is
+        # executed after this decision); kinds paid in full carry units x close.
+        equity = self.equity_at(self.held_price("close", i))
         im, mm = self.margin(prices)
         book = BookView(
             date=t,
@@ -520,6 +601,7 @@ class _Run:
         )
         decision = self.strategy.on_bar(view, book)
         requested = _check_targets(decision, self.instruments)
+        _check_short(requested, self.pos)
         if decision.protective:
             raise NotImplementedError("protective orders run on the intraday engine only (engine.intraday)")
         final = {k: requested.get(k, p.units) for k, p in self.pos.items()}
@@ -545,6 +627,7 @@ class _Run:
                 note=f"{final} -> {clipped}",
             )
             final = clipped
+        final = self.clip_cash(t, final, prices)
         if self.margin_cap is None:
             final = {
                 k: (u if abs(u - self.pos[k].units) >= cfg.min_change_units else self.pos[k].units)
@@ -571,16 +654,40 @@ class _Run:
             )
         return final
 
+    def clip_cash(self, t: pd.Timestamp, final: dict[str, int], prices: Mapping[str, float]) -> dict[str, int]:
+        """Scale down the buys of instruments paid in full so that, at today's closes, cash after
+        every order stays at or above the initial margin of the margined targets."""
+
+        cash_after, buy_cost, buys = self.cash, 0.0, {}
+        for k, u in final.items():
+            p = self.pos[k]
+            delta = u - p.units
+            if not delta:
+                continue
+            fill = p.spec.fill_price(delta, prices[k])
+            mark = _mark_after_roll(p.spec, prices[k])  # what the order settles against once it fills today
+            flow = delta * (mark - fill) * p.spec.point_value - sum(p.spec.leg_fees(delta, fill))
+            if delta > 0 and not p.spec.policy.margined:
+                buy_cost -= flow
+                buys[k] = delta
+            else:
+                cash_after += flow
+        floor, _ = self.margin(prices, final)
+        if not buy_cost or buy_cost <= cash_after - floor:
+            return final
+        scaled = _scale_toward_zero(buys, max(cash_after - floor, 0.0) / buy_cost)
+        clipped = {**final, **{k: self.pos[k].units + delta for k, delta in scaled.items()}}
+        self.event(t, "clip_cash", value=buy_cost, threshold=cash_after - floor, note=f"{final} -> {clipped}")
+        return clipped
+
     def execute_now(self, i: int, t: pd.Timestamp, final: Mapping[str, int]) -> None:
         self.roll(i, t, final)
         closes = self.held_price("close", i)
-        for k, target in final.items():
-            reason = "margin_call" if self.margin_cap is not None and k in self.margin_cap else "rebalance"
-            self.trade(t, k, target - self.pos[k].units, closes[k], "close", reason)
+        self.execute(t, {k: u for k, u in final.items() if self.pos[k].table.traded[i]}, closes, "close")
 
     def record(self, i: int, t: pd.Timestamp, deciding: bool) -> None:
         closes = self.held_price("close", i)
-        equity = self.equity()  # every position is marked at today's close
+        equity = self.equity_at(closes)
         im, mm = self.margin(closes)
         gross = sum(p.spec.notional(p.units, closes[k]) for k, p in self.pos.items())
         prev_equity = self.daily[-1]["equity"] if self.daily else self.config.initial_capital
@@ -656,14 +763,16 @@ class _Run:
         for i, t in enumerate(self.dates):
             self.fills_today = []
             self.feed(i, t)
+            self.corporate_actions(i, t)
             if self.pending is not None:
                 self.fill_pending(i, t)
             self.intraday_check(i, t)
             closes = self.settle(i, t)
             self.options_close(t)
-            if self.equity() <= 0:
+            equity = self.equity_at(closes)
+            if equity <= 0:
                 self.ruined = t
-                self.event(t, "ruin", value=self.equity(), threshold=0.0)
+                self.event(t, "ruin", value=equity, threshold=0.0)
                 if t >= self.start:
                     self.record(i, t, deciding=False)
                 break

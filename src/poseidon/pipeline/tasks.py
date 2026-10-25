@@ -33,6 +33,10 @@ def update_refdata_daily() -> dict:
     (``celery_app.beat_schedule["update-refdata-daily"]``)."""
 
     from poseidon.core.config import settings
-    from poseidon.pipeline.refdata.daily import run_daily
+    from poseidon.pipeline.refdata import tw_stocks
+    from poseidon.pipeline.refdata.daily import EXTRA_UPDATERS, run_daily
 
+    EXTRA_UPDATERS.setdefault(
+        tw_stocks.DATASET, tw_stocks.update
+    )  # Thalassa stock bars, when the runner has its address
     return run_daily(code_version=settings.pipeline_code_version or "unknown")

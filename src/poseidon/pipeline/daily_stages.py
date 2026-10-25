@@ -39,6 +39,7 @@ import pandas as pd
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
 from poseidon.pipeline import optimization as opt
 from poseidon.pipeline.engine import ContractSpec, EngineResult, OptionSpec
+from poseidon.pipeline.engine.data import stock_bars
 from poseidon.pipeline.gate_stages import DsrStage, ParamStabilityStage, to_stage_result
 from poseidon.pipeline.gates import benchmark, cost_stress, execution_timing, holdout, liquidation, regime_split
 from poseidon.pipeline.gates import wfe as wfe_gate
@@ -55,6 +56,11 @@ from poseidon.pipeline.gates.daily import (
 )
 from poseidon.pipeline.plan import V3_GATE_STAGES
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, TAIEX, TAIEX_TR, VIX
+from poseidon.pipeline.refdata.engine_input import StockDataGap, align_stock_bars
+from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
+from poseidon.pipeline.refdata.tw_corporate_actions import load_actions
+from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
+from poseidon.pipeline.refdata.tw_stocks import read_bars
 from poseidon.pipeline.stages import BaseStage, StageResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.trials import TRIAL_COMPLETE, TRIAL_FAIL, TRIAL_PRUNED, MemoryTrialLedger
@@ -66,7 +72,8 @@ from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
 
 V3_WIRING_VERSION = 1  # part of every v3 stage's input hash
 # clipped at the window's last day; calendars stay whole
-PRICE_DATASETS = frozenset({FUTURES, TAIEX, TAIEX_TR, VIX, *OPTION_DATASETS})
+PRICE_DATASETS = frozenset({FUTURES, TAIEX, TAIEX_TR, VIX, STOCKS, ACTIONS, *OPTION_DATASETS})
+STOCK_UNDERLYING = "0050"  # DAILY_GATES.benchmark.underlying.tw_stock: 0050 total return
 UNDERLYING_ROLL_DAYS_BEFORE = 1  # DAILY_GATES.benchmark.underlying: TX back-adjusted, roll before settlement
 TRADING_DAYS_PER_YEAR = 252.0
 EXECUTION_TIMING = "execution_timing"
@@ -118,15 +125,25 @@ class WindowStore:
     Each dataset is read once (``store.read(..., end=upper)`` for prices, whole for calendars) and
     filtered in memory, so many engine runs over one window cost one read (a dataset in
     ``compiler.ROW_FILTERS`` through its filter, whatever ``rows`` a caller passes). ``data_sha256``
-    hashes exactly what was read: the trial ledger's window identity; ``extra`` names datasets it
-    covers beyond the futures, calendar and always-attached index ones (``index:vix``, a hedge's
+    hashes exactly what was read: the trial ledger's window identity. ``kinds`` (the spec's
+    instrument kinds, :func:`instrument_kinds`) chooses the datasets that identity covers: the
+    futures datasets for a futures spec (as before step 8), the stock bars and corporate actions
+    for a spec that trades a stock / ETF; the index series whenever the store has them. ``extra``
+    names the optional datasets the spec reads beyond those (``index:vix``, a hedge's
     ``compiler.OPTION_DATASETS``).
     """
 
-    def __init__(self, store, upper: date | None, extra: tuple[str, ...] = ()):
+    def __init__(
+        self,
+        store,
+        upper: date | None,
+        kinds: frozenset[str] = frozenset({"future"}),
+        extra: tuple[str, ...] = (),
+    ):
         self._store = store
         self.upper = upper
-        self._extra = extra  # optional datasets the spec reads (index:vix, a hedge's TXO), hashed into data_sha256
+        self.kinds = kinds
+        self._extra = extra  # hashed into data_sha256 as well
         self._frames: dict[str, pd.DataFrame] = {}
         self._columns: dict[str, str] = {}
 
@@ -158,15 +175,20 @@ class WindowStore:
     def content_sha256(self, dataset: str) -> str:
         return self._store.content_sha256(dataset)
 
+    def exists(self, dataset: str) -> bool:
+        return self._store.exists(dataset)
+
     def data_sha256(self) -> str:
         from poseidon.pipeline.refdata.store import frame_sha256
 
-        names = [
-            FUTURES,
-            CALENDAR,
-            *sorted(name for name in (TAIEX, TAIEX_TR) if self._store.exists(name)),
-            *self._extra,
-        ]
+        unknown = sorted(self.kinds - {"future", "stock"})
+        if unknown:
+            raise NotCompilable(f"no refdata window for instrument kind(s) {unknown}")
+        names = [FUTURES, CALENDAR] if "future" in self.kinds else []
+        names += sorted(name for name in (TAIEX, TAIEX_TR) if self._store.exists(name))
+        if "stock" in self.kinds:
+            names += [STOCKS, *((ACTIONS,) if self._store.exists(ACTIONS) else ())]
+        names += list(self._extra)
         return content_sha256(
             {
                 "upper": self.upper.isoformat() if self.upper else None,
@@ -208,12 +230,25 @@ def daily_metrics(result: DailyResult, basis: Basis) -> dict:
     }
 
 
+def instrument_kinds(spec) -> frozenset[str]:
+    """Kinds of the registered instruments a spec document declares (unknown symbols are left out)."""
+
+    from poseidon.pipeline.v3.instruments import INSTRUMENTS
+
+    declared = spec.get("instruments") if isinstance(spec, dict) else None
+    if not isinstance(declared, dict):
+        return frozenset()
+    rows = (INSTRUMENTS.get(decl.get("symbol")) for decl in declared.values() if isinstance(decl, dict))
+    return frozenset(row.kind for row in rows if row is not None)
+
+
 def scaled_costs(spec: ContractSpec, multiplier: float) -> ContractSpec:
     if multiplier == 1.0:
         return spec
     return dataclasses.replace(
         spec,
         commission_per_unit=spec.commission_per_unit * multiplier,
+        commission_rate=spec.commission_rate * multiplier,
         tax_rate=spec.tax_rate * multiplier,
         slippage_ticks=spec.slippage_ticks * multiplier,
     )
@@ -447,7 +482,10 @@ class DailyStage(BaseStage):
             template=template,
             grid=opt.ParamGrid(params),
             store=WindowStore(
-                self.store(), upper, used_index_datasets(template) + (OPTION_DATASETS if hedged(template) else ())
+                self.store(),
+                upper,
+                instrument_kinds(template),
+                used_index_datasets(template) + (OPTION_DATASETS if hedged(template) else ()),
             ),
             start=start,
             end=end,
@@ -484,9 +522,14 @@ def window_sha(store_sha: str, part: str, start: date, end: date, **extra) -> st
 # ----------------------------------------------------------------------------- spec_validate
 
 
-def price_points(store, symbol: str, first: date, last: date) -> tuple[float, float] | None:
-    """(close of the nearest contract on the first day, max nearest-contract close) of ``symbol`` in the window."""
+def price_points(store, row, first: date, last: date) -> tuple[float, float] | None:
+    """(close on the first day, max close) of instrument ``row``'s price source in the window: the
+    nearest monthly contract of a future, the stock's own daily close."""
 
+    if row.kind == "stock":
+        closes = read_bars(store, row.symbol, start=first, end=last)["close"]
+        return (float(closes.iloc[0]), float(closes.max())) if len(closes) else None
+    symbol = row.price_proxy or row.symbol
     quotes = store.read(FUTURES, start=first, end=last)
     rows = quotes[
         (quotes["product"] == symbol)
@@ -535,15 +578,18 @@ class DailySpecValidateStage(DailyStage):
 
         spec = self.spec(ctx)
         window = DailyWindow.from_config(ctx.config)
-        store = WindowStore(self.store(), window.train_last)
+        kinds = instrument_kinds(spec)
+        store = WindowStore(self.store(), window.train_last, kinds)
         prices: dict[str, list[float]] = {}
         if isinstance(spec, dict) and isinstance(spec.get("instruments"), dict):
             for decl in spec["instruments"].values():
                 row = INSTRUMENTS.get(decl.get("symbol")) if isinstance(decl, dict) else None
-                if row is None or row.kind != "future":
+                if row is None or row.kind not in ("future", "stock"):
+                    continue
+                if row.kind == "stock" and not store.exists(STOCKS):
                     continue
                 source = row.price_proxy or row.symbol
-                points = price_points(store, source, window.start, window.train_last)
+                points = price_points(store, row, window.start, window.train_last)
                 if points is not None:
                     prices[source] = list(points)
         series_since = frozen_series_since(ctx.config)
@@ -554,12 +600,16 @@ class DailySpecValidateStage(DailyStage):
             series_since=series_since,
         )
         result = validate_spec_v3(spec, feasibility=context)
+        sources = {
+            "future": "refdata taifex_futures_daily, nearest monthly contract's day close",
+            "stock": f"refdata {STOCKS}, the stock's own daily close (unadjusted)",
+        }
         feasibility = {
             "start": window.start.isoformat(),
             "end": window.end.isoformat(),
             "prices": prices,
-            "prices_source": "refdata taifex_futures_daily, nearest monthly contract's day close: "
-            "(first train day, max over the train part); the holdout part is not read",
+            "prices_source": "; ".join(sources[kind] for kind in sorted(kinds) if kind in sources)
+            + ": (first train day, max over the train part); the holdout part is not read",
         }
         if series_since is not None:
             feasibility["series_since"] = {key: day.isoformat() for key, day in sorted(series_since.items())}
@@ -821,12 +871,21 @@ class DailyGateStage(DailyStage):
         return payload
 
 
-def underlying_daily(store, product: str, *, through: date) -> pd.DataFrame:
-    """The 1x underlying (DAILY_GATES.benchmark.underlying): ratio back-adjusted continuous futures,
-    rolled the day before the last trading day; OHLC of the carried contract on the same scale."""
+def underlying_daily(store, symbol: str, *, through: date) -> pd.DataFrame:
+    """The 1x underlying's daily OHLC (DAILY_GATES.benchmark.underlying), indexed by trading day.
+
+    TX family: ratio back-adjusted continuous futures, rolled the day before the last trading day,
+    OHLC of the carried contract on the same scale. Stock / ETF family: 0050's own bars, total-return
+    adjusted by ``tw_corporate_actions`` (the latest bar keeps its price, earlier bars are scaled
+    down by the factors of the actions after them).
+    """
 
     from poseidon.pipeline.refdata.continuous import continuous_series
+    from poseidon.pipeline.v3.instruments import INSTRUMENTS
 
+    if INSTRUMENTS[symbol].kind == "stock":
+        return stock_underlying_daily(store, symbol, through=through)
+    product = symbol
     quotes = store.read(FUTURES, end=through)
     calendar = store.read(CALENDAR)
     series = continuous_series(quotes, calendar, product, days_before=UNDERLYING_ROLL_DAYS_BEFORE)
@@ -843,16 +902,56 @@ def underlying_daily(store, product: str, *, through: date) -> pd.DataFrame:
     return frame
 
 
+def stock_underlying_daily(store, symbol: str, *, through: date) -> pd.DataFrame:
+    """``symbol`` on every session the stock dataset has (from its first bar): a session it lacks a bar
+    for is carried forward (zero return), as ``align_stock_bars`` does for a traded stock, so every day a
+    stock run books has an underlying return."""
+
+    bars = read_bars(store, symbol, end=through)
+    if bars.empty:
+        raise NotCompilable(f"benchmark underlying: no {symbol} bars in {STOCKS} through {through}")
+    sessions = pd.DatetimeIndex(
+        sorted(store.read(STOCKS, start=bars["date"].min(), end=through)["trade_date"].unique())
+    )
+    actions = load_actions(store, symbol) if store.exists(ACTIONS) else None
+    try:
+        booked = stock_bars(align_stock_bars(bars, sessions, symbol), actions)
+    except (StockDataGap, ValueError) as error:
+        raise NotCompilable(f"benchmark underlying: {error}") from error
+    # back-adjusted like the futures series: a bar is scaled by the factors of the actions booked after it
+    after = booked["factor"].iloc[::-1].cumprod().iloc[::-1].shift(-1, fill_value=1.0).to_numpy()
+    frame = pd.DataFrame(
+        {column: booked[column].to_numpy(float) * after for column in ("open", "high", "low", "close")}
+    )
+    frame.index = [pd.Timestamp(day).date() for day in booked["date"]]
+    return frame
+
+
 def underlying_product(ctx) -> str:
+    """Symbol of the run's 1x underlying: TX for the TX futures family, 0050 for a stock / ETF spec."""
+
     from poseidon.pipeline.v3.instruments import INSTRUMENTS
 
     spec = (ctx.upstream["spec_validate"].report or {}).get("template") or {}
     symbols = [decl["symbol"] for decl in spec.get("instruments", {}).values()]
     rows = [INSTRUMENTS[symbol] for symbol in symbols]
+    kinds = {row.kind for row in rows}
+    if kinds == {"stock"}:
+        return STOCK_UNDERLYING
     sources = {row.price_proxy or row.symbol for row in rows if row.kind == "future"}
-    if len(sources) != 1 or sources != {"TX"}:
-        raise NotCompilable(f"daily benchmark/regime underlying is defined for the TX family only (spec: {symbols})")
+    if kinds != {"future"} or sources != {"TX"}:
+        raise NotCompilable(
+            "daily benchmark/regime underlying is defined for the TX futures family and for stock / ETF specs, "
+            f"not for a mix (spec: {symbols})"
+        )
     return "TX"
+
+
+def underlying_label(ctx, symbol: str) -> str:
+    """The frozen ``gates.benchmark.underlying`` text of the run's family (report only)."""
+
+    labels = ctx.config["gates"]["benchmark"]["underlying"]
+    return labels["tw_stock" if symbol == STOCK_UNDERLYING else "tw_futures"]
 
 
 class DailyCostStressStage(DailyGateStage):
@@ -905,7 +1004,8 @@ class DailyBenchmarkStage(DailyGateStage):
     def evaluate(self, ctx):
         settings = ctx.config["gates"]["benchmark"]
         runner, base = self.train_best(ctx)
-        daily = underlying_daily(runner.store, underlying_product(ctx), through=runner.end)
+        symbol = underlying_product(ctx)
+        daily = underlying_daily(runner.store, symbol, through=runner.end)
         underlying = underlying_returns(daily["close"])
         result = benchmark.evaluate_daily(
             benchmark.BenchmarkDailyInputs(base, underlying, runner.basis, int(settings["hac_lags"])),
@@ -913,7 +1013,7 @@ class DailyBenchmarkStage(DailyGateStage):
         )
         inputs = {
             **self.best_source(ctx),
-            "underlying": settings["underlying"]["tw_futures"],
+            "underlying": underlying_label(ctx, symbol),
             "hac_lags": int(settings["hac_lags"]),
             "train_metrics": daily_metrics(base, runner.basis),
         }
@@ -1133,7 +1233,7 @@ def compile_strategy(ctx):
         alias: PaperInstrument(
             product=row.price_proxy or row.symbol,
             spec=ContractSpec.from_instrument(row),
-            roll_days_before=spec_plan.rolls[alias],
+            roll_days_before=spec_plan.rolls.get(alias, 0),
         )
         for alias, row in spec_plan.instruments.items()
     }

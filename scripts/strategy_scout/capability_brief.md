@@ -32,7 +32,7 @@ Never stand in for a higher-timeframe indicator by reusing its length on intrada
 
 ## B. Daily strategies (spec v3, component registry)
 
-Decide after each daily close, fill at the next session's open (TX family: the 15:00 night session). One or more sleeves = instrument + direction + leverage chain + sizing + rebalance. 1-4 tunable parameters per spec (`*` = may be one). Daily runs start 2001-01-02, or later when a series the spec reads starts later (its first day plus the warm-up, e.g. `index:taiex_tr`); warm-up comes from earlier data.
+Decide after each daily close, fill at the next session's open (TX family: the 15:00 night session; stocks 09:00). One or more sleeves = instrument + direction + leverage chain + sizing + rebalance. 1-4 tunable parameters per spec (`*` = may be one). Daily runs start 2001-01-02, or later when a series the spec reads starts later (its first day plus the warm-up, e.g. `index:taiex_tr`); warm-up comes from earlier data.
 
 Instruments (point value TWD/pt, fee TWD/contract/side, daily data from):
 - TX (台指期): 200, 50, 1998-07-21; own prices; listed 1998-07-21
@@ -40,6 +40,7 @@ Instruments (point value TWD/pt, fee TWD/contract/side, daily data from):
 - TMF (微台指): 10, 20, 1998-07-21; TX prices, proxy; listed 2024-07-29
 - TXO (台指選擇權): bought puts only, through `hedge.protective_put`; daily data from 2001-12-24
 Futures: tax 0.002% both legs, 1 tick slippage/side, margin ~7.0% initial. Capital 300,000-20,000,000 TWD (default 1,000,000); leverage at most 5x; integer contracts (every grid point must buy 1+ contract within 25% of target leverage, else use MTX/TMF); initial margin at most 80% of equity; shorts only via futures.
+- TWSE stocks / ETFs (59): long only, paid in full (exposure <= 1x), unit = board lot of 1,000 shares (`unit: odd_lot` = 1 share), commission 0.1425%/side, sell tax 0.3% (ETF 0.1%), corporate actions booked from tw_corporate_actions, benchmark 0050 total return; data from each symbol's first Thalassa day (0050 2003-06-30, 00631L 2014-10-31, most stocks 2020-21). ETFs 0050,006204,00631L,00675L; stocks 1216,1301,1303,2002,2059,2301,2303,2308,2317,2327,2330,2344,2345,2357,2360,2368,2379,2382,2383,2395,2408,2412,2449,2454,2603,2615,2801,2880,2881,2882,2883,2884,2885,2886,2887,2890,2891,2892,2912,3008,3017,3034,3037,3045,3231,3653,3661,3711,4904,4938,5871,5876,5880,6505,6669.
 
 ### Signal series (required by regime.ma_band, risk.vol_cap and the two ladders; never assumed)
 
@@ -61,6 +62,7 @@ The same 200-day MA band over 2000-2014 ends 49% apart on the TX adjusted series
 - `leverage.drawdown_ladder`: Drawdown ladder (adds leverage when the PRICE falls): leverage steps UP as the signal falls from its rolling high, e.g. -10% -> 2x, -20% -> 3x; hold keeps the reached step until the drawdown recovers to release_drawdown_pct. Never lowers leverage. NOT the planned risk.drawdown_brake (cuts leverage after the strategy's own equity drawdown). [signal series ref, required; lookback_days integer [20, 500], default 120 *; steps array: 1-6 rungs {drawdown_pct (fraction of the rolling high, 0-0.9), leverage}, both strictly increasing, e.g. [{drawdown_pct: 0.1, leverage: 2}, {drawdown_pct: 0.2, leverage: 3}], required; hold boolean, default false; release_drawdown_pct number [0.0, 0.9), default 0.05]
 - `leverage.level_ladder`: Level ladder (adds leverage when a signal LEVEL is high): leverage steps UP as the signal reaches thresholds, e.g. VIX >= 30 -> 2x, >= 40 -> 3x; hold keeps the step until the signal falls to release_below. Never lowers leverage. [signal series ref, required; steps array: 1-6 rungs {level, leverage}, both strictly increasing, e.g. [{level: 30, leverage: 2}, {level: 40, leverage: 3}], required; hold boolean, default false; release_below number [0.0, 1000.0], default 0.0]
 - `sizing.target_leverage`: Equity-based integer contracts: units = equity x direction x leverage / (price x point value). [rounding floor | nearest, default "floor"]
+- `sizing.fixed_notional`: A fixed share of equity as notional, no leverage chain: units = equity x weight x pct_of_equity% / (price x point value x lot). [pct_of_equity integer [1, 300], default 100 *; rounding floor | nearest, default "floor"]
 - `sizing.fixed_contracts`: A fixed number of contracts n whenever the direction is non-zero (v1 behaviour). [n integer [1, 20], default 1 *]
 - `rebalance.daily`: Re-size every trading day when the target differs by at least min_change_units. [min_change_units integer [1, 100], default 1 *]
 - `rebalance.monthly_at_roll`: Re-size only when the futures position rolls (monthly); direction changes still trade at once. [min_change_units integer [1, 100], default 1 *]
@@ -68,18 +70,21 @@ The same 200-day MA band over 2000-2014 ends 49% apart on the TX adjusted series
 - `rebalance.on_signal_change`: Trade only when the direction changes (enter / exit / reverse); no re-sizing in between.
 - `hedge.protective_put`: Buy TXO monthly puts against the long futures position: strike nearest close x (1 - moneyness), roll before expiry, cover_ratio 1 = 1 put per 5 TMF; valued at daily settlement prices. [moneyness_pct number [0.0, 0.2], default 0.05 *; tenor front | next, default "front"; roll_days_before_expiry integer [1, 15], default 5 *; cover_ratio number [0.25, 1.5], default 1.0 *]
 - `allocation.single`: One sleeve, weight 1.
+- `allocation.fixed_weights`: Constant weights per sleeve id (sum <= 1); each sleeve's sizing is scaled by its weight. [weights object, required]
+- `allocation.inverse_vol`: Weights proportional to 1 / realised volatility of each sleeve's own series over window_days, sum 1. [window_days integer [10, 120], default 20 *]
+- `allocation.regime_switch`: Two sleeves: all weight on sleeve `on` while signal > MA x (1 + band), on sleeve `off` once < MA x (1 - band) (regime.ma_band hysteresis). [signal series ref, required; ma_days integer [20, 400], default 200 *; band_pct number [0.0, 0.1], default 0.02 *; on string (a sleeve id), required; off string (a sleeve id), required]
 - `execution.next_open`: Decide after the daily close, fill at the next session's open (TX family: 15:00 night open).
 
 ### What B CANNOT express (comes back unsupported)
 
-Not yet (planned): `regime.ma_cross`, `risk.vol_target`, `risk.drawdown_brake`, `sizing.vol_target`, `sizing.risk_per_trade`, `sizing.fixed_notional`, `rebalance.every_decision`, `exit.stop_loss`, `exit.take_profit`, `exit.trailing`, `exit.max_hold`, `allocation.fixed_weights`, `allocation.inverse_vol`, `allocation.regime_switch`, `direction.custom`, `leverage.custom`, `hedge.collar`.
+Not yet (planned): `regime.ma_cross`, `risk.vol_target`, `risk.drawdown_brake`, `sizing.vol_target`, `sizing.risk_per_trade`, `rebalance.every_decision`, `exit.stop_loss`, `exit.take_profit`, `exit.trailing`, `exit.max_hold`, `direction.custom`, `leverage.custom`, `hedge.collar`.
 - selling options (writer margin is Phase 2), including collars (`option_selling`)
-- short selling stocks or ETFs (shorts only via futures) (`short_stock`)
+- short selling stocks or ETFs, or buying them on margin (shorts and leverage only via futures) (`short_stock`)
 - equity-based sizing on intraday bars (deferred) (`intraday_equity_sizing`)
 - volume, volume profile or open interest signals (`volume_oi_signals`)
 - order book or tick data (`order_book`)
 - implied volatility signals (`implied_volatility`)
-- instruments outside TAIFEX index futures (NQ/ES/TE, crypto, US stocks) (`other_markets`)
+- instruments outside TAIFEX index futures and the listed TWSE stocks / ETFs (NQ/ES/TE, crypto, US stocks) (`other_markets`)
 - news, fundamentals, text or survey sentiment, or companion flows (e.g. foreign investor flows); the VIX itself IS available as `index:vix` (`news_fundamentals`)
 - machine-learning model predictions (`ml_models`)
 - pyramiding on the position's own profit or signals (adding to a winner beyond the sizing target); adding on price DECLINES is `leverage.drawdown_ladder` and adding when the VIX (or another signal level) is high is `leverage.level_ladder`, both CAN (`pyramiding`)

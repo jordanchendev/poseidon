@@ -9,7 +9,7 @@ sleeve: instrument + roll, direction, leverage chain, sizing + rebalance, hedges
 from __future__ import annotations
 
 from poseidon.pipeline.v3 import components as _components  # noqa: F401  (registers the components)
-from poseidon.pipeline.v3.instruments import INSTRUMENTS
+from poseidon.pipeline.v3.instruments import declared
 from poseidon.pipeline.v3.registry import REGISTRY, DescribeContext, fmt
 from poseidon.pipeline.v3.spec import substitute
 
@@ -24,15 +24,19 @@ def narrative(resolved: dict) -> str:
 
     frequency = resolved["frequency"]
     sleeves = resolved["sleeves"]
-    first = INSTRUMENTS[resolved["instruments"][sleeves[0]["instrument"]]["symbol"]]
+    first = declared(resolved["instruments"][sleeves[0]["instrument"]])
     sentences = [_render(resolved["execution"], DescribeContext(frequency, first))]
+    if len(sleeves) > 1:
+        sentences.append("配置：" + _render(resolved["allocation"], DescribeContext(frequency, first)))
     for sleeve in sleeves:
         prefix = f"{sleeve['id']}：" if len(sleeves) > 1 else ""
         decl = resolved["instruments"][sleeve["instrument"]]
-        instrument = INSTRUMENTS[decl["symbol"]]
+        instrument = declared(decl)
         ctx = DescribeContext(frequency, instrument, alias=sleeve["instrument"])
         proxy = f"，價格以 {instrument.price_proxy} 代理" if instrument.price_proxy else ""
         text = f"{prefix}商品：{instrument.name_zh}（{instrument.symbol}{proxy}）"
+        if decl.get("unit") == "odd_lot":
+            text += "，以零股（1 股為單位）交易"
         if decl.get("roll"):
             text += "，" + _render(decl["roll"], ctx)
         sentences.append(text)
