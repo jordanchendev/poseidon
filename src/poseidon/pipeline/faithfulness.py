@@ -16,6 +16,13 @@ verdict is always ``pass`` (``⚠️`` in the summary when something is off). ``
 frozen true for new runs once the owner's control set qualifies JEV (agreement >= 95 %, contradicts
 recall = 100 %); then a ``contradicts`` fails the stage.
 
+A drafted run (``StageContext.original``: the idea text is Sisyphus's draft, the original is the owner's own
+material) also gets a direction check, report-only and counted apart from the clause review
+(:func:`direction_check`): JEV's fall-response question (``jev.FALL_RESPONSE_QUESTION``: add / cut exposure
+on a fall, or no direction) asked once of the spec statement and once per sentence of the original. An
+original sentence answered with the opposite direction at probability >= :data:`DIRECTION_MIN_P` is flagged
+and quoted in the summary. It never fails the stage: blocking needs an owner-labelled control set first.
+
 The same review backs :class:`FaithfulnessReviewer`, the hook spec_generate v3's repair loop calls
 with ``(idea_text, clauses, spec)``; it returns ``{"path", "msg"}`` items like validator errors.
 """
@@ -41,6 +48,12 @@ STAGE = "spec_faithfulness"
 FAITHFULNESS_VERSION = 1  # report layout + clause split rules (part of the input hash)
 SUMMARY_LIST_MAX = 5
 SUMMARY_QUOTE_CHARS = 24
+DIRECTION_CHECK_VERSION = 1  # direction section layout + original sentence split (input hash with an original)
+# Probability both the statement's and an original sentence's fall-response label need before they are
+# compared. Run #11's original (2026-10-26, two live passes): the true opposites answered 0.99-1.0; the weak
+# answers sat at 0.79-0.82 (s17, a spurious cut) and 0.49-0.50 (s16, add). 0.9 sits midway between the
+# spurious cut and the true opposites; a lower bar flags the faithful dip-buy control on s17.
+DIRECTION_MIN_P = 0.9
 
 # Clause boundaries for an idea without spec_generate clauses: sentence ends, semicolons and line breaks.
 # Commas stay inside a clause, so a condition keeps its consequence ("跌破 200 日線 2% 以下，隔天降到 0.5 倍"),
@@ -201,6 +214,73 @@ def counts(entries: Sequence[dict]) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- direction check (drafted runs)
+
+
+def _fall_response(answer: jev.Answer) -> dict:
+    p = (answer.probabilities or {}).get(answer.choice)
+    if not isinstance(p, int | float) or isinstance(p, bool):
+        p = answer.confidence
+    return {"label": answer.choice, "p": p, "probabilities": answer.probabilities}
+
+
+def _direction(entry: dict) -> str | None:
+    """``add_on_fall`` / ``cut_on_fall`` when JEV said so at >= DIRECTION_MIN_P, else ``None``."""
+
+    if entry["label"] in jev.OPPOSITE_FALL_RESPONSE and (entry["p"] or 0.0) >= DIRECTION_MIN_P:
+        return entry["label"]
+    return None
+
+
+def direction_check(
+    session: jev.JevSession,
+    statement: str,
+    original_text: str,
+    *,
+    max_clauses: int,
+    check_stop: Callable[[], None] = lambda: None,
+) -> dict:
+    """The fall-response of the spec statement and of each original sentence; opposite ones flagged."""
+
+    stated = _fall_response(session.ask(jev.FALL_RESPONSE_QUESTION, {"text": statement}))
+    expected = _direction(stated)
+    opposite = jev.OPPOSITE_FALL_RESPONSE.get(expected) if expected else None
+    clauses = split_clauses(original_text)
+    entries = []
+    for clause in clauses[:max_clauses]:
+        check_stop()
+        entry = {"id": clause.id, "quote": clause.quote}
+        entry.update(_fall_response(session.ask(jev.FALL_RESPONSE_QUESTION, {"text": clause.quote})))
+        entry["flagged"] = opposite is not None and _direction(entry) == opposite
+        entries.append(entry)
+    flagged = [entry["id"] for entry in entries if entry["flagged"]]
+    return {
+        "statement": {**stated, "direction": expected},
+        "clauses": entries,
+        "not_judged": [clause.as_report() for clause in clauses[max_clauses:]],
+        "counts": {
+            "clauses": len(entries),
+            **{label: sum(1 for e in entries if _direction(e) == label) for label in jev.OPPOSITE_FALL_RESPONSE},
+            "flagged": len(flagged),
+        },
+        "flagged": flagged,
+    }
+
+
+def direction_summary(section: dict, *, blocking: bool) -> str:
+    """The direction part of the stage summary; always report-only, so marked as such in a blocking run."""
+
+    if "error" in section:
+        text = "原文方向檢查失敗"
+    elif section["statement"]["direction"] is None:
+        text = "原文方向未比對：spec 下跌時無明確方向"
+    else:
+        text = f"原文方向相反 {section['counts']['flagged']} 句{_listed(section['clauses'], section['flagged'])}"
+    if section.get("not_judged"):
+        text += f"，原文超過上限未判 {len(section['not_judged'])} 句"
+    return text + ("（report-only）" if blocking else "")
+
+
 def _quote(text: str) -> str:
     text = " ".join(text.split())
     return f"「{text[:SUMMARY_QUOTE_CHARS]}{'…' if len(text) > SUMMARY_QUOTE_CHARS else ''}」"
@@ -213,11 +293,16 @@ def _listed(entries: Sequence[dict], ids: Sequence[str]) -> str:
     return f"（{'、'.join(quotes)}{more}）" if quotes else ""
 
 
-def summary_line(result: dict, *, blocking: bool) -> tuple[str, bool]:
-    """The one-line stage summary (Telegram per-stage line, Kairos) and whether everything is clean."""
+def summary_line(result: dict, *, blocking: bool, direction: dict | None = None) -> tuple[str, bool]:
+    """The one-line stage summary (Telegram per-stage line, Kairos) and whether everything is clean.
+
+    ``direction`` is a drafted run's direction section; a flag or a failed check makes the line ⚠️, never ❌.
+    """
 
     c, entries = result["counts"], result["clauses"]
     clean = not (c["not_implemented"] or c["contradicts"] or c["mapping_disagreements"] or result["not_judged"])
+    if direction is not None and ("error" in direction or direction["counts"]["flagged"]):
+        clean = False
     text = (
         f"已實作 {c['implemented']} 句 / 未實作 {c['not_implemented']} 句{_listed(entries, result['not_implemented'])}"
         f" / contradicts {c['contradicts']}{_listed(entries, result['contradicted'])}"
@@ -229,6 +314,8 @@ def summary_line(result: dict, *, blocking: bool) -> tuple[str, bool]:
         extras.append(f"非策略 {c['not_strategy']} 句")
     if result["not_judged"]:
         extras.append(f"超過上限未判 {len(result['not_judged'])} 句")
+    if direction is not None:
+        extras.append(direction_summary(direction, blocking=blocking))
     if not blocking:
         extras.append("report-only")
     icon = "✅" if clean else ("❌" if blocking and c["contradicts"] else "⚠️")
@@ -384,6 +471,8 @@ class SpecFaithfulnessStage(BaseStage):
                 "questions_sha256": jev.questions_sha256(),
             }
         )
+        if ctx.original is not None:  # absent for an undrafted run: its input hash stays what it was
+            payload["direction_check"] = _direction_identity(ctx.original.sha256)
         return payload
 
     def run(self, ctx):
@@ -455,12 +544,58 @@ class SpecFaithfulnessStage(BaseStage):
         report.update(result)
         report["jev"] = session.usage()
         report["files"] = {"jev_calls": "jev_calls.json"}
-        summary, _clean = summary_line(result, blocking=blocking)
+        files = session.files()
+        direction = None
+        if ctx.original is not None:
+            direction, direction_files = self._direction_check(ctx, config, text, pin)
+            report["direction_check"] = direction
+            if direction_files:
+                report["files"]["jev_direction_calls"] = "jev_direction_calls.json"
+                files = {**files, **direction_files}
+        summary, _clean = summary_line(result, blocking=blocking, direction=direction)
         report["summary"] = summary
         report = session.scrub(report)
         if blocking and result["counts"]["contradicts"]:
-            return StageResult(Verdict.FAIL, report["summary"], report, session.files())
-        return StageResult.passed(report, reason=report["summary"], files=session.files())
+            return StageResult(Verdict.FAIL, report["summary"], report, files)
+        return StageResult.passed(report, reason=report["summary"], files=files)
+
+    def _direction_check(self, ctx, config: dict, statement: str, pin: str | None) -> tuple[dict, dict[str, bytes]]:
+        """The direction section in its own JEV session (own budget): an error is reported, never raised."""
+
+        section = _direction_identity(ctx.original.sha256)
+        session = jev.JevSession(config, pin=pin, environ=self._environ, client_factory=self._client_factory)
+        try:
+            session.open()
+            section.update(
+                direction_check(
+                    session,
+                    statement,
+                    ctx.original.text,
+                    max_clauses=int(config["max_clauses"]),
+                    check_stop=ctx.check_stop,
+                )
+            )
+        except (jev.JevUnavailable, jev.JevError) as error:
+            section["error"] = str(error)[:MAX_TEXT]
+        finally:
+            session.close()
+        section["jev"] = session.usage()
+        return session.scrub(section), session.files("jev_direction_calls.json")
+
+
+def _direction_identity(original_sha256: str) -> dict:
+    """What the direction check depends on besides the statement: the input hash part and the report header."""
+
+    return {
+        "version": DIRECTION_CHECK_VERSION,
+        "question": jev.FALL_RESPONSE_QUESTION.name,
+        "question_version": jev.DIRECTION_QUESTION_VERSION,
+        "question_sha256": jev.direction_question_sha256(),
+        "threshold": DIRECTION_MIN_P,
+        "blocking": False,
+        "clause_source": "sentence_split",
+        "original_sha256": original_sha256,
+    }
 
 
 def _settings_pin() -> str | None:

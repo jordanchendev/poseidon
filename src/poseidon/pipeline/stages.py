@@ -74,7 +74,7 @@ class StageContext:
     now: datetime | None = None
     stage_started_at: datetime | None = None
     resume: UpstreamResult | None = None
-    original: IdeaOriginal | None = None  # no stage reads it yet; a stage that does must hash original.sha256
+    original: IdeaOriginal | None = None  # read by spec_faithfulness; a stage that reads it hashes original.sha256
 
     def check_stop(self) -> None:
         if self.should_stop():
