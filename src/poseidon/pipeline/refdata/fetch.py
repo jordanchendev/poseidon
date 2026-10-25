@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 USER_AGENT = "Mozilla/5.0 (poseidon-refdata; daily reference data; low rate)"
 TAIFEX_MIN_INTERVAL = 1.5
 TWSE_MIN_INTERVAL = 3.0
+CBOE_MIN_INTERVAL = 3.0
 
 
 class SourceError(RuntimeError):

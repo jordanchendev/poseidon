@@ -24,6 +24,12 @@ Next year's schedule not yet published is a warning from ``SCHEDULE_WARN_FROM`` 
 and so is a contract expiring within ``LTD_WARN_DAYS`` whose last trading day is not on the
 official schedule.
 
+The CBOE VIX history (``cboe_vix_daily``, one GET) is refreshed after the Taiwan groups and never
+stops them; a caller-supplied ``fetchers`` map without a ``"cboe"`` entry skips it. Its freshness is
+against the latest *final US date* (rows are US dates), tolerating ``VIX_LAG_DAYS`` calendar days. A
+Taiwan decision reads it one calendar day late (``v3.instruments.align_signal_frame``), so the paper
+waits for the US close of the previous US day only when that row is missing.
+
 ``EXTRA_UPDATERS`` is the hook for later datasets (TXO quotes, corporate actions): each entry
 ``name -> fn(store, today=..., code_version=...) -> list[UpdateReport]`` runs after the futures
 and TWSE groups, and its failure is recorded without stopping the others.
@@ -38,6 +44,7 @@ from datetime import UTC, datetime, time
 
 import pandas as pd
 
+from poseidon.pipeline.refdata import cboe
 from poseidon.pipeline.refdata.datasets import (
     CALENDAR,
     FUTURES,
@@ -45,11 +52,13 @@ from poseidon.pipeline.refdata.datasets import (
     PRODUCTS,
     TAIEX,
     TAIEX_TR,
+    VIX,
     UpdateReport,
     update_all,
+    update_vix,
 )
 from poseidon.pipeline.refdata.engine_input import last_day_session, product_quotes, unscheduled_closures
-from poseidon.pipeline.refdata.fetch import SourceBlockedError, SourceError
+from poseidon.pipeline.refdata.fetch import CBOE_MIN_INTERVAL, PoliteFetcher, SourceBlockedError, SourceError
 from poseidon.pipeline.refdata.store import RefdataError, RefdataStore
 from poseidon.pipeline.refdata.taifex import MarketSchedule
 from poseidon.pipeline.window import MARKET_TZ
@@ -59,6 +68,7 @@ logger = logging.getLogger(__name__)
 DAILY_RUN_UTC = time(9, 0)  # 17:00 Asia/Taipei
 PUBLISHED_BY_LOCAL = time(16, 0)
 SCHEDULE_WARN_FROM = (12, 1)
+VIX_LAG_DAYS = 4  # weekend plus a US holiday between the last final US date and the last row
 LTD_WARN_DAYS = 62  # front and next monthly contract
 DAILY_TASK = "poseidon.pipeline.tasks.update_refdata_daily"
 UpdaterHook = Callable[..., list[UpdateReport]]
@@ -109,6 +119,16 @@ def freshness(store: RefdataStore, now: datetime) -> dict:
         frame = store.read(name, start=since)
         last = pd.Timestamp(frame["trade_date"].max()) if len(frame) else None
         datasets[name] = _entry(last, expected, schedule, closed)
+    if store.exists(VIX):  # a US series: its last row is the latest final US date, not a Taiwan trading day
+        frame = store.read(VIX, start=since)
+        last = pd.Timestamp(frame["trade_date"].max()) if len(frame) else None
+        wanted = pd.Timestamp(cboe.last_final_date(now))
+        fresh = last is not None and (wanted - last).days <= VIX_LAG_DAYS
+        datasets[VIX] = {
+            "last": last.date().isoformat() if last is not None else None,
+            "lag_calendar_days": None if last is None else int((wanted - last).days),
+            "fresh": bool(fresh),
+        }
     warnings = []
     local = now.astimezone(MARKET_TZ).date()
     if (local.month, local.day) >= SCHEDULE_WARN_FROM and local.year + 1 not in schedule.published_years:
@@ -151,6 +171,12 @@ def run_daily(
         result["errors"].append({"group": "core", "kind": "blocked", "error": str(error)[:500]})
     except (SourceError, RefdataError) as error:
         result["errors"].append({"group": "core", "kind": type(error).__name__, "error": str(error)[:500]})
+    if fetchers is None or "cboe" in fetchers:  # a caller-supplied fetcher map without "cboe" skips the VIX
+        try:
+            fetcher = (fetchers or {}).get("cboe") or PoliteFetcher(CBOE_MIN_INTERVAL)
+            result["updates"].append(asdict(update_vix(store, fetcher, now=now, code_version=code_version)))
+        except Exception as error:  # the US VIX must never take the Taiwan datasets down
+            result["errors"].append({"group": "cboe", "kind": type(error).__name__, "error": str(error)[:500]})
     for name, hook in EXTRA_UPDATERS.items():
         try:
             result["updates"].extend(asdict(r) for r in hook(store, today=today, code_version=code_version))

@@ -9,18 +9,22 @@ only what :mod:`poseidon.pipeline.v3.runtime` hands them: a
 close, never later, so every component is causal by construction.
 
 REGISTRY_VERSION 1 holds what the M1 acceptance spec (§3.2) needs plus the
-DSL v2 fast path (§3.4). The rest of the Phase 1 list is in
+DSL v2 fast path (§3.4), plus ``leverage.drawdown_ladder`` and ``leverage.level_ladder`` and the
+``index:vix`` signal series (``instruments.SIGNAL_INDICES``). The version number stays 1 on this
+branch: ``registry_version`` is part of the pinned daily config hash, so the integration owner
+decides when to bump it (§3.6). The rest of the Phase 1 list is in
 ``registry.PLANNED_COMPONENTS``.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal
 
 import numpy as np
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from poseidon.pipeline.v3.instruments import INDEX_ALIAS, INTRADAY_FREQUENCIES, SIGNAL_INDICES, Instrument, signal_index
 from poseidon.pipeline.v3.registry import (
@@ -47,7 +51,8 @@ ANY_FREQUENCY = DAILY | INTRADAY
 # A signal series ref (owner decision 2026-10-24 afternoon #1; required, no default):
 #   "<alias>:<field>" -- a price series of a declared instrument alias ("self" = the sleeve's own;
 #                        "adjusted" = the back-adjusted continuous futures price);
-#   "index:<name>"    -- a TWSE index (instruments.SIGNAL_INDICES: taiex price, taiex_tr total return).
+#   "index:<name>"    -- a TWSE index (instruments.SIGNAL_INDICES: taiex price, taiex_tr total return) or the
+#                        CBOE VIX ("vix", a US close read one calendar day late: no look-ahead).
 SERIES_FIELDS = ("open", "high", "low", "close", "adjusted")
 SERIES_REF_PATTERN = (
     r"^((self|[a-z][a-z0-9_]{0,31}):(" + "|".join(SERIES_FIELDS) + r")"
@@ -319,6 +324,257 @@ class VolCap(LeverageComponent):
 
     def describe(self, params, ctx):
         return f"再取 min(目前倍數, {fmt(params.k)} ÷ {series_text(params.signal, ctx)} {params.window_days} 日年化實現波動)"
+
+
+# Both ladders add leverage when a signal series gets worse for a long position (it falls, or fear rises).
+# They only ever raise the incoming leverage: output = max(incoming, the reached step's leverage). They are
+# NOT risk.drawdown_brake (planned), which cuts leverage after the strategy's own equity drawdown.
+LADDER_MAX_STEPS = 6
+FLOAT_EPS = 1e-12
+
+
+class DrawdownStep(StrictParams):
+    """From a drawdown of ``drawdown_pct`` (a fraction of the rolling high) on, the leverage is ``leverage``."""
+
+    drawdown_pct: Annotated[float, Field(gt=0.0, le=0.9)]
+    leverage: Annotated[float, Field(gt=0.0, le=LEVERAGE_MAX)]
+
+
+class LevelStep(StrictParams):
+    """From a signal level of ``level`` on, the leverage is ``leverage``."""
+
+    level: Annotated[float, Field(gt=0.0, le=1000.0)]
+    leverage: Annotated[float, Field(gt=0.0, le=LEVERAGE_MAX)]
+
+
+def ladder_problems(steps: list, key: str) -> list[str]:
+    """Rungs must climb in both ``key`` and ``leverage`` (strictly): a deeper fall never buys less leverage."""
+
+    problems = []
+    for lower, upper in itertools.pairwise(steps):
+        if getattr(upper, key) <= getattr(lower, key):
+            problems.append(
+                f"steps must have strictly increasing {key}: {fmt(getattr(lower, key))} then {fmt(getattr(upper, key))}"
+            )
+        if upper.leverage <= lower.leverage:
+            problems.append(
+                f"steps must have strictly increasing leverage: {fmt(lower.leverage)} then {fmt(upper.leverage)}"
+            )
+    return problems
+
+
+def ladder_text(pairs: list[tuple[str, float]]) -> str:
+    return "、".join(f"{at}→{fmt(leverage)} 倍" for at, leverage in pairs)
+
+
+@register
+class DrawdownLadder(LeverageComponent):
+    """Leverage steps UP as ``signal`` falls from its rolling ``lookback_days``-row high (buy the dip).
+
+    drawdown = 1 - signal / max(signal over the last ``lookback_days`` rows, latest row included). The
+    highest step whose ``drawdown_pct`` the drawdown has reached sets the leverage: output =
+    max(incoming leverage, that step's leverage); below the first step the incoming leverage passes
+    through. With fewer than ``lookback_days`` rows nothing is reached. Without ``hold`` the step follows
+    the current drawdown and moves down as the series recovers. With ``hold`` the highest step reached
+    stays until the drawdown shrinks to ``release_drawdown_pct`` or less (then all steps clear), so it does
+    not flap around a threshold. Rows are read one by one in date order, from the first row dated on or
+    after the first decision day; the held step lives in the component state.
+    This adds leverage when the PRICE falls. It is not ``risk.drawdown_brake`` (planned), which cuts
+    leverage after the STRATEGY's own equity drawdown.
+    """
+
+    name = "leverage.drawdown_ladder"
+    frequencies = DAILY
+    capabilities = ("drawdown_ladder", "buy_the_dip", "scale_in_on_decline", "leverage_step_up")
+    summary = (
+        "Drawdown ladder (adds leverage when the PRICE falls): leverage steps UP as the signal falls from its rolling "
+        "high, e.g. -10% -> 2x, -20% -> 3x; hold keeps the reached step until the drawdown recovers to "
+        "release_drawdown_pct. Never lowers leverage. NOT the planned risk.drawdown_brake (cuts leverage after the "
+        "strategy's own equity drawdown)."
+    )
+
+    class Params(StrictParams):
+        signal: SeriesRef
+        lookback_days: Annotated[int, Field(ge=20, le=500)] = 120
+        steps: Annotated[
+            list[DrawdownStep],
+            Field(
+                min_length=1,
+                max_length=LADDER_MAX_STEPS,
+                description=(
+                    "1-6 rungs {drawdown_pct (fraction of the rolling high, 0-0.9), leverage}, both strictly "
+                    "increasing, e.g. [{drawdown_pct: 0.1, leverage: 2}, {drawdown_pct: 0.2, leverage: 3}]"
+                ),
+            ),
+        ]
+        hold: bool = False
+        release_drawdown_pct: Annotated[float, Field(ge=0.0, lt=0.9)] = 0.05
+
+        @model_validator(mode="after")
+        def _ladder(self):
+            problems = ladder_problems(self.steps, "drawdown_pct")
+            if self.hold and self.release_drawdown_pct >= self.steps[0].drawdown_pct:
+                problems.append(
+                    f"release_drawdown_pct {fmt(self.release_drawdown_pct)} must be below the first step's "
+                    f"drawdown_pct {fmt(self.steps[0].drawdown_pct)}"
+                )
+            if problems:
+                raise ValueError("; ".join(problems))
+            return self
+
+    tunable = frozenset({"lookback_days"})
+    example = {
+        "signal": "index:taiex",
+        "lookback_days": 120,
+        "steps": [{"drawdown_pct": 0.1, "leverage": 2.0}, {"drawdown_pct": 0.2, "leverage": 3.0}],
+        "hold": True,
+        "release_drawdown_pct": 0.05,
+    }
+
+    def history(self, params):
+        return params.lookback_days
+
+    def upper(self, params, leverage_in):
+        return max(leverage_in, params.steps[-1].leverage)
+
+    def check(self, params, ctx):
+        return series_alias_errors("signal", params.signal, ctx)
+
+    def init(self, params):
+        # start: first decision day; rows: signal rows consumed; held: reached rung count (0 = none)
+        return {"start": None, "rows": 0, "held": 0}
+
+    def step(self, params, state, view, leverage_in):
+        series = view.series(params.signal)
+        if state["start"] is None:
+            state["start"] = np.datetime64(view.date, "ns")
+        values, dates = series.values, series.dates
+        n = params.lookback_days
+        for k in range(state["rows"], len(values)):
+            if k + 1 < n or dates[k] < state["start"]:
+                continue
+            drawdown = 1.0 - float(values[k]) / float(values[k - n + 1 : k + 1].max())
+            reached = sum(drawdown >= step.drawdown_pct - FLOAT_EPS for step in params.steps)
+            if not params.hold:
+                state["held"] = reached
+            elif drawdown <= params.release_drawdown_pct:
+                state["held"] = 0
+            else:
+                state["held"] = max(state["held"], reached)
+        state["rows"] = len(values)
+        if state["held"] == 0:
+            return leverage_in
+        return max(leverage_in, params.steps[state["held"] - 1].leverage)
+
+    def describe(self, params, ctx):
+        hold = (
+            f"，已達的倍數維持到跌幅收斂至 {pct(params.release_drawdown_pct)}% 以內才放開"
+            if params.hold
+            else "，跌幅縮小倍數就跟著回降"
+        )
+        return (
+            f"價格下跌時加碼：{series_text(params.signal, ctx)}自近 {params.lookback_days} 日高點回落達 "
+            f"{ladder_text([(pct(step.drawdown_pct) + '%', step.leverage) for step in params.steps])}（只升不降，取目前倍數與階梯倍數的較大者；"
+            f"這是價格跌時加碼，不是策略虧損時減碼）{hold}"
+        )
+
+
+@register
+class LevelLadder(LeverageComponent):
+    """Leverage steps UP as the LEVEL of ``signal`` reaches thresholds (e.g. VIX at or above 30 -> 2x).
+
+    The highest step whose ``level`` the latest signal value has reached or passed sets the leverage:
+    output = max(incoming leverage, that step's leverage); below the first level the incoming leverage
+    passes through. Without ``hold`` the step follows the current level. With ``hold`` the highest step
+    reached stays until the signal falls to ``release_below`` or lower (then all steps clear). Rows are read
+    one by one in date order from the first row dated on or after the first decision day (the same rule
+    as ``leverage.drawdown_ladder``), so a spike between two decision days is not missed.
+    """
+
+    name = "leverage.level_ladder"
+    frequencies = DAILY
+    capabilities = ("level_ladder", "signal_level_threshold", "vix_threshold", "leverage_step_up")
+    summary = (
+        "Level ladder (adds leverage when a signal LEVEL is high): leverage steps UP as the signal reaches "
+        "thresholds, e.g. VIX >= 30 -> 2x, >= 40 -> 3x; hold keeps the step until the signal falls to "
+        "release_below. Never lowers leverage."
+    )
+
+    class Params(StrictParams):
+        signal: SeriesRef
+        steps: Annotated[
+            list[LevelStep],
+            Field(
+                min_length=1,
+                max_length=LADDER_MAX_STEPS,
+                description=(
+                    "1-6 rungs {level, leverage}, both strictly increasing, "
+                    "e.g. [{level: 30, leverage: 2}, {level: 40, leverage: 3}]"
+                ),
+            ),
+        ]
+        hold: bool = False
+        release_below: Annotated[float, Field(ge=0.0, le=1000.0)] = 0.0
+
+        @model_validator(mode="after")
+        def _ladder(self):
+            problems = ladder_problems(self.steps, "level")
+            if self.hold and not 0.0 < self.release_below < self.steps[0].level:
+                problems.append(
+                    f"with hold, release_below ({fmt(self.release_below)}) must be above 0 and below the first "
+                    f"step's level ({fmt(self.steps[0].level)})"
+                )
+            if problems:
+                raise ValueError("; ".join(problems))
+            return self
+
+    example = {
+        "signal": "index:vix",
+        "steps": [{"level": 30.0, "leverage": 2.0}, {"level": 40.0, "leverage": 3.0}],
+        "hold": True,
+        "release_below": 22.0,
+    }
+
+    def upper(self, params, leverage_in):
+        return max(leverage_in, params.steps[-1].leverage)
+
+    def check(self, params, ctx):
+        return series_alias_errors("signal", params.signal, ctx)
+
+    def init(self, params):
+        return {"start": None, "rows": 0, "held": 0}
+
+    def step(self, params, state, view, leverage_in):
+        series = view.series(params.signal)
+        if state["start"] is None:
+            state["start"] = np.datetime64(view.date, "ns")
+        values, dates = series.values, series.dates
+        for k in range(state["rows"], len(values)):
+            if dates[k] < state["start"]:
+                continue
+            level = float(values[k])
+            reached = sum(level >= step.level for step in params.steps)
+            if not params.hold:
+                state["held"] = reached
+            elif level <= params.release_below:
+                state["held"] = 0
+            else:
+                state["held"] = max(state["held"], reached)
+        state["rows"] = len(values)
+        if state["held"] == 0:
+            return leverage_in
+        return max(leverage_in, params.steps[state["held"] - 1].leverage)
+
+    def describe(self, params, ctx):
+        hold = (
+            f"，已達的倍數維持到降至 {fmt(params.release_below)} 以下才放開"
+            if params.hold
+            else "，水位回落倍數就跟著回降"
+        )
+        return (
+            f"{series_text(params.signal, ctx)}水位偏高時加碼：達 {ladder_text([(fmt(step.level), step.leverage) for step in params.steps])}"
+            f"（只升不降，取目前倍數與階梯倍數的較大者）{hold}"
+        )
 
 
 # --------------------------------------------------------------------------- sizing

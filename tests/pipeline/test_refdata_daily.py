@@ -211,3 +211,32 @@ def test_beat_entry_is_17_00_taipei_outside_the_heavy_window():
     assert entry["schedule"].hour == {9} and entry["schedule"].minute == {0}
     assert not 6 <= daily.DAILY_RUN_UTC.hour + daily.DAILY_RUN_UTC.minute / 60 <= 8 + 40 / 60
     # wired into the runner beat as "update-refdata-daily" (test_pipeline_unit checks the schedule)
+
+
+def test_daily_job_updates_the_vix_when_given_a_cboe_fetcher_and_reports_its_freshness(tmp_path, small_world):
+    from .test_spec_v3_ladders import FakeCboe, vix_csv
+
+    now = local(2026, 10, 27, 17, 0)
+    fetchers = {**small_world, "cboe": FakeCboe(vix_csv([("2026-10-22", 19.03), ("2026-10-23", 19.45)]))}
+    store = RefdataStore(tmp_path)
+    result = daily.run_daily(store, now=now, fetchers=fetchers, code_version="t")
+    assert D.VIX in result["changed"] and result["errors"] == []
+    # 17:00 Taipei on Tue 10-27 is 09:00Z: the last final US date is Mon 10-26 (no row on 10-26 in the fake)
+    assert result["freshness"]["datasets"][D.VIX] == {"last": "2026-10-23", "lag_calendar_days": 3, "fresh": True}
+    again = daily.run_daily(store, now=now, fetchers=fetchers, code_version="t")
+    assert D.VIX not in again["changed"]
+
+
+def test_a_failing_vix_source_never_stops_the_taiwan_datasets(tmp_path, small_world):
+    class Down:
+        def fetch(self, url, *, data=None, validate=None):
+            raise RuntimeError("cboe down")
+
+    result = daily.run_daily(
+        RefdataStore(tmp_path),
+        now=local(2026, 10, 27, 17, 0),
+        fetchers={**small_world, "cboe": Down()},
+        code_version="t",
+    )
+    assert {"group": "cboe", "kind": "RuntimeError", "error": "cboe down"} in result["errors"]
+    assert result["updates"]

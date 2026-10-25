@@ -88,6 +88,7 @@ SERIES_WORDS: dict[str, tuple[str, ...]] = {
     "adjusted": ("台指期", "期貨價格", "期貨的價格", "期貨收盤", "調整價", "futures price", "adjusted"),
     "index:taiex_tr": ("含息", "報酬指數", "total return", "total-return"),
     "index:taiex": ("加權指數", "加權股價指數", "不含息", "價格指數", "price index"),
+    "index:vix": ("vix", "恐慌指數", "波動率指數", "fear index"),
 }
 _SENTENCE_END = re.compile(r"[。！？!?；;\n]+|(?<=[.])\s+")
 _WORD = re.compile(r"\w")
@@ -152,13 +153,14 @@ def _series_lines() -> str:
         for index in SIGNAL_INDICES.values()
     )
     return f"""SIGNAL SERIES (owner rule; never pick one silently)
-- Every component with a "signal" parameter (regime.ma_band, risk.vol_cap) reads one daily series:
+- Every component with a "signal" parameter (regime.ma_band, risk.vol_cap, leverage.drawdown_ladder,
+  leverage.level_ladder) reads one daily series:
   * "self:adjusted" = the traded futures' back-adjusted continuous price (MTX/TMF read TX's)
 {indices}
   No other value: never "self:close", "self:open" or an alias field.
 - Map only explicit wording: 台指期 / 期貨價格 / 調整價 -> "self:adjusted"; 含息 / 報酬指數 / total return ->
   "index:taiex_tr"; 加權指數 / 加權股價指數 / 不含息 / 價格指數 / price index (without 含息 or 報酬) ->
-  "index:taiex". The wording must name the series the signal is computed on, not only the traded contract,
+  "index:taiex"; VIX / 恐慌指數 -> "index:vix" (the previous US close; the pipeline applies the lag). The wording must name the series the signal is computed on, not only the traded contract,
   and it must be inside the quote of the clause citing that component (or of an "other" clause that states the
   series for every signal).
 - "台指", "大盤", "TAIEX", "指數" or a bare "200 日線" alone does NOT say which series: answer
@@ -427,7 +429,12 @@ def series_errors(spec: dict, clauses: list[dict]) -> list[dict]:
         where = ".".join(str(part) for part in (*path, "params", SERIES_PARAM))
         kind = _series_kind(value)
         if kind is None:
-            errors.append(_err(where, f'{value!r}: use "self:adjusted", "index:taiex" or "index:taiex_tr"'))
+            errors.append(
+                _err(
+                    where,
+                    f'{value!r}: use "self:adjusted" or one of ' + ", ".join(f'"index:{n}"' for n in SIGNAL_INDICES),
+                )
+            )
             continue
         quotes = " ".join(
             c["quote"] for c in clauses if c["component"] == ref.get("component") or c["slot"] == "other"
