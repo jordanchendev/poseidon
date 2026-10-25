@@ -25,7 +25,7 @@ from typing import Any
 from poseidon.pipeline.v3.spec import PARAM_REF_KEY, component_slots
 from poseidon.pipeline.v3.validation import LEVERAGE_CAP
 
-PRECHECK_VERSION = 1
+PRECHECK_VERSION = 2  # 2: 做空間 (space planning) is not 做空
 DECIDING_KINDS: dict[str, frozenset[str]] = {
     "strict": frozenset({"multiple", "sign"}),
     "any": frozenset({"multiple", "sign", "percent", "days", "number"}),
@@ -51,7 +51,7 @@ _PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
 )
 _NEGATION = re.compile(r"(?:不|不會|不要|不能|沒有|禁止|never|no|not|don't)\s*$", re.I)
 _LONG = re.compile(r"做多|多單|買進期貨|(?<!as )\blong\b(?! as)", re.I)
-_SHORT = re.compile(r"做空|放空|空單|反向|\bshort\b(?![- ]term)", re.I)
+_SHORT = re.compile(r"做空(?!間)|放空|空單|反向|\bshort\b(?![- ]term)", re.I)
 
 
 @dataclass(frozen=True)

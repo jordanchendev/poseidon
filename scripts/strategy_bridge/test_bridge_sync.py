@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import importlib.util
 import json
 import sys
 import tempfile
@@ -25,7 +26,24 @@ sys.path.insert(0, str(HERE.parent / "strategy_scout"))  # repo layout
 sys.path.insert(0, str(HERE.parent / "scout-bin"))  # deployed: ~/strategy-pipeline/{bridge,scout-bin}
 
 import bridge_sync as bs  # noqa: E402
-import test_scout  # noqa: E402  (ScoutFixture: the real scout.propose with fake LLM / API)
+
+
+def _load_scout_tests() -> types.ModuleType:
+    """scout's ``test_scout.py`` (ScoutFixture: the real scout.propose with fake LLM / API) under its own module
+    name: pytest imports ``tests/strategy_scout/test_scout.py`` as ``test_scout`` when it collects both."""
+
+    for folder in ("strategy_scout", "scout-bin"):
+        path = HERE.parent / folder / "test_scout.py"
+        if path.exists():
+            spec = importlib.util.spec_from_file_location("strategy_scout_test_scout", path)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+            return module
+    raise ImportError(f"no test_scout.py in {HERE.parent / 'strategy_scout'} or {HERE.parent / 'scout-bin'}")
+
+
+test_scout = _load_scout_tests()
 
 KEY = "sentinel-key-" + "x" * 30
 IDEA = "台指期夜盤前一日高低點反轉：價格突破前一日日盤高點後跌回高點下方做空，跌破低點後站回做多，停損 30 點"
