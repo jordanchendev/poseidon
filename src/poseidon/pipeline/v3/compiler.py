@@ -26,7 +26,10 @@ Data (refdata, read-only)
     source's day-session dates plus projected weekdays after the data (so a roll due on the last
     day is still seen; noted). Aux ``taiex`` (``twse_taiex_daily``) and ``taiex_tr``
     (``twse_taiex_total_return``) are always attached (``AUX_DATASETS``, from
-    ``instruments.SIGNAL_INDICES``); a signal ref ``index:<name>`` reads aux ``<name>``.
+    ``instruments.SIGNAL_INDICES``); a signal ref ``index:<name>`` reads aux ``<name>``, attached
+    (and recorded in ``inputs``) only when a component reads it (``index:vix``). Aux rows are
+    re-dated by the index's ``lag_days`` (``instruments.align_signal_frame``): the VIX close of US
+    date u is a row dated u + 1, so a decision on TW date t reads US dates <= t - 1.
     ``inputs`` records each dataset's ``content_sha256`` for run input hashes.
 
 The warm-up is the largest ``history()`` of the bound components plus ``signal_lag``; the
@@ -54,12 +57,13 @@ from poseidon.pipeline.engine import (
     truncation_audit,
 )
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES
-from poseidon.pipeline.refdata.store import RefdataStore
+from poseidon.pipeline.refdata.store import DatasetMissingError, RefdataStore
 from poseidon.pipeline.v3.instruments import (
     INSTRUMENTS,
     MAX_MARGIN_UTILISATION,
     SIGNAL_INDICES,
     Instrument,
+    align_signal_frame,
     signal_index,
 )
 from poseidon.pipeline.v3.registry import REGISTRY
@@ -75,6 +79,7 @@ from poseidon.pipeline.v3.spec import DEFAULT_INITIAL_CAPITAL_TWD, is_param_ref,
 from poseidon.pipeline.v3.validation import LEVERAGE_CAP, FeasibilityContext, validate_spec_v3, warmup_calendar_days
 
 AUX_DATASETS = {name: index.dataset for name, index in SIGNAL_INDICES.items()}
+ALWAYS_ATTACHED = tuple(name for name, index in SIGNAL_INDICES.items() if index.always_attached)
 HOOKS = {
     "direction": "step",
     "leverage": "step",
@@ -334,10 +339,14 @@ def compile_spec(
         "(holidays unknown) so a roll due on the last day is seen"
     )
     aux = {}
-    for name, dataset in AUX_DATASETS.items():
-        frame = store.read(dataset, start=load_from, end=upper)
+    attached = sorted({*ALWAYS_ATTACHED, *spec_plan.signal_indices})
+    for name in attached:
+        try:
+            frame = store.read(AUX_DATASETS[name], start=load_from, end=upper)
+        except DatasetMissingError as error:
+            raise NotCompilable(f"signal index:{name}: {error}") from error
         if len(frame):
-            aux[name] = frame.set_index("trade_date").sort_index()
+            aux[name] = align_signal_frame(name, frame)
     for name in spec_plan.signal_indices:
         rows = aux.get(name)
         if rows is None:
@@ -350,7 +359,9 @@ def compile_spec(
                 f"signal index:{name}: {rows_before} rows of {AUX_DATASETS[name]} before {start.date()}, the components "
                 f"need {warmup} for warm-up (data from {SIGNAL_INDICES[name].data_since.isoformat()})"
             )
-    inputs = {dataset: store.content_sha256(dataset) for dataset in (FUTURES, CALENDAR, *AUX_DATASETS.values())}
+    inputs = {
+        dataset: store.content_sha256(dataset) for dataset in (FUTURES, CALENDAR, *(AUX_DATASETS[n] for n in attached))
+    }
     return CompiledSpec(
         name=resolved["name"],
         plan=spec_plan,

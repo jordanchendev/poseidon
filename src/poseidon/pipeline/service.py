@@ -352,7 +352,12 @@ class PipelineService:
 
         from poseidon.pipeline.refdata.store import RefdataError
         from poseidon.pipeline.v3.brief import render_brief
-        from poseidon.pipeline.v3.config import REFDATA_DATASETS, daily_run_config, series_first_days
+        from poseidon.pipeline.v3.config import (
+            REFDATA_DATASETS,
+            daily_run_config,
+            series_first_days,
+            used_index_datasets,
+        )
         from poseidon.pipeline.v3.instruments import INSTRUMENTS
         from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
 
@@ -374,6 +379,7 @@ class PipelineService:
                 f"spec v3 runs are daily only for now ({', '.join(V3_RUN_CLASSES)}); this spec is "
                 f"{result.strategy_class}: intraday specs run as DSL v2 until DSL parity (step 7)"
             )
+        refdata |= {name: store.content_sha256(name) for name in used_index_datasets(result.resolved)}
         config = daily_run_config(
             result.resolved,
             as_of=as_of,

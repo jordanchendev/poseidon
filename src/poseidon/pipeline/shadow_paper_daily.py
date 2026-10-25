@@ -63,7 +63,6 @@ from poseidon.pipeline.plan import DAILY_SHADOW_PAPER, DAILY_THRESHOLDS, SPEC_V3
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, MARKET_CALENDAR
 from poseidon.pipeline.refdata.engine_input import (
     RefdataReader,
-    aux_frame,
     day_session_dates,
     futures_input,
     last_day_session,
@@ -75,6 +74,7 @@ from poseidon.pipeline.refdata.store import RefdataError
 from poseidon.pipeline.refdata.taifex import MarketSchedule
 from poseidon.pipeline.stages import StageResult
 from poseidon.pipeline.state import Verdict, utcnow
+from poseidon.pipeline.v3.instruments import align_signal_frame, complete_through
 from poseidon.pipeline.window import MARKET_TZ
 
 DAILY_MODE = "daily_target"
@@ -214,13 +214,14 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
     products = sorted({inst.product for inst in compiled.instruments.values()})
     last = last_day_session(quotes, products)
     aux_full = {
-        name: aux_frame(reader.read(dataset, start=compiled.data_start)) for name, dataset in compiled.aux.items()
+        name: align_signal_frame(name, reader.read(dataset, start=compiled.data_start))
+        for name, dataset in compiled.aux.items()
     }
     last_dates = {f"{FUTURES}:{p}": _iso(day) for p, day in last.items()}
     last_dates.update(
         {f"aux:{name}": _iso(frame.index.max()) if len(frame) else None for name, frame in aux_full.items()}
     )
-    ends = [day for day in last.values()] + [frame.index.max() if len(frame) else None for frame in aux_full.values()]
+    ends = [day for day in last.values()] + [complete_through(name, frame) for name, frame in aux_full.items()]
     if any(day is None for day in ends):
         raise RefdataError(f"no data for {sorted(k for k, v in last_dates.items() if v is None)}")
     cutoff = pd.Timestamp(min(ends)).normalize()

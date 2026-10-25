@@ -54,18 +54,18 @@ from poseidon.pipeline.gates.daily import (
     underlying_returns,
 )
 from poseidon.pipeline.plan import V3_GATE_STAGES
-from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, TAIEX, TAIEX_TR
+from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, TAIEX, TAIEX_TR, VIX
 from poseidon.pipeline.stages import BaseStage, StageResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.trials import TRIAL_COMPLETE, TRIAL_FAIL, TRIAL_PRUNED, MemoryTrialLedger
 from poseidon.pipeline.v3.compiler import NotCompilable, compile_spec
-from poseidon.pipeline.v3.config import ENGINE, SPEC_VALIDATOR
+from poseidon.pipeline.v3.config import ENGINE, SPEC_VALIDATOR, used_index_datasets
 from poseidon.pipeline.v3.runtime import Conventions
 from poseidon.pipeline.v3.spec import substitute
 from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
 
 V3_WIRING_VERSION = 1  # part of every v3 stage's input hash
-PRICE_DATASETS = frozenset({FUTURES, TAIEX, TAIEX_TR})  # clipped at the window's last day; calendars stay whole
+PRICE_DATASETS = frozenset({FUTURES, TAIEX, TAIEX_TR, VIX})  # clipped at the window's last day; calendars stay whole
 UNDERLYING_ROLL_DAYS_BEFORE = 1  # DAILY_GATES.benchmark.underlying: TX back-adjusted, roll before settlement
 TRADING_DAYS_PER_YEAR = 252.0
 EXECUTION_TIMING = "execution_timing"
@@ -119,9 +119,10 @@ class WindowStore:
     exactly what was read: the trial ledger's window identity.
     """
 
-    def __init__(self, store, upper: date | None):
+    def __init__(self, store, upper: date | None, extra: tuple[str, ...] = ()):
         self._store = store
         self.upper = upper
+        self._extra = extra  # optional datasets the spec reads (index:vix), hashed into data_sha256
         self._frames: dict[str, pd.DataFrame] = {}
         self._columns: dict[str, str] = {}
 
@@ -153,7 +154,12 @@ class WindowStore:
     def data_sha256(self) -> str:
         from poseidon.pipeline.refdata.store import frame_sha256
 
-        names = [FUTURES, CALENDAR, *sorted(name for name in (TAIEX, TAIEX_TR) if self._store.exists(name))]
+        names = [
+            FUTURES,
+            CALENDAR,
+            *sorted(name for name in (TAIEX, TAIEX_TR) if self._store.exists(name)),
+            *self._extra,
+        ]
         return content_sha256(
             {
                 "upper": self.upper.isoformat() if self.upper else None,
@@ -419,7 +425,7 @@ class DailyStage(BaseStage):
         return SpecRunner(
             template=template,
             grid=opt.ParamGrid(params),
-            store=WindowStore(self.store(), upper),
+            store=WindowStore(self.store(), upper, used_index_datasets(template)),
             start=start,
             end=end,
             basis=self.basis(ctx),

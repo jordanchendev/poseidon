@@ -44,6 +44,7 @@ from poseidon.pipeline.v3.instruments import (
     INSTRUMENTS,
     SIGNAL_INDICES,
     price_series_key,
+    signal_index,
 )
 from poseidon.pipeline.v3.registry import REGISTRY_VERSION, component_fingerprints
 from poseidon.pipeline.v3.spec import SPEC_VERSION, component_slots, strategy_class
@@ -113,6 +114,23 @@ def daily_data_config(
     return data
 
 
+def used_index_datasets(resolved: dict) -> tuple[str, ...]:
+    """Refdata datasets of the optional indices (``index:vix``) the spec's signals read, beyond ``REFDATA_DATASETS``.
+
+    A spec that reads none keeps the exact refdata map it always had, so existing hashes do not move.
+    """
+
+    found = set()
+    for _path, _slot, ref in component_slots(resolved):
+        if ref["component"] == "direction.dsl_rules":
+            continue
+        signal = (ref.get("params") or {}).get("signal")
+        index = signal_index(signal) if isinstance(signal, str) else None
+        if index is not None and not index.always_attached:
+            found.add(index.dataset)
+    return tuple(sorted(found))
+
+
 def series_first_days(store) -> dict[str, date]:
     """First day of every daily series a spec can read, keyed as the validator keys them.
 
@@ -127,6 +145,7 @@ def series_first_days(store) -> dict[str, date]:
     days = {
         index.dataset: date.fromisoformat(store.manifest(index.dataset)["coverage"]["start"])
         for index in SIGNAL_INDICES.values()
+        if index.always_attached or store.exists(index.dataset)  # others: a spec that reads one needs it built
     }
     products = sorted({row.price_proxy or row.symbol for row in INSTRUMENTS.values() if row.tradable})
     manifest = store.manifest(DAILY_PRICE_DATASET)
