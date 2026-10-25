@@ -22,17 +22,21 @@ from typing import Annotated, Any, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from poseidon.pipeline.v3 import components as _components  # noqa: F401  (registers the components)
+from poseidon.pipeline.v3.components import SERIES_REF_PATTERN
 from poseidon.pipeline.v3.describe import describe_spec
-from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
+from poseidon.pipeline.v3.examples import etf_rotation_00631l_0050, tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.instruments import (
+    BOARD_LOT,
     INITIAL_MARGIN_RATIO,
     INSTRUMENTS,
     MAINTENANCE_MARGIN_RATIO,
     MAX_MARGIN_UTILISATION,
     SIGNAL_INDICES,
+    STOCK_DATA_SNAPSHOT,
     TX_DAILY_DATA_SINCE,
     TX_INTRADAY_DATA_SINCE,
     ordered_frequencies,
+    stocks,
 )
 from poseidon.pipeline.v3.registry import (
     PLANNED_COMPONENTS,
@@ -49,10 +53,17 @@ from poseidon.pipeline.v3.spec import (
     MAX_SLEEVES,
     MIN_INITIAL_CAPITAL_TWD,
     MIN_PARAMS,
+    SLEEVE_ID_PATTERN,
     SPEC_VERSION,
     Capital,
 )
-from poseidon.pipeline.v3.validation import DAILY_WINDOW_START, LEVERAGE_CAP, MAX_ROUNDING_ERROR, validate_spec_v3
+from poseidon.pipeline.v3.validation import (
+    DAILY_WINDOW_START,
+    LEVERAGE_CAP,
+    MAX_ROUNDING_ERROR,
+    FeasibilityContext,
+    validate_spec_v3,
+)
 from poseidon.strategies.dsl.v2.schema import NAME_PATTERN, PARAM_NAME_PATTERN, ParamSpec
 
 GENERATED_DIR = Path(__file__).parent / "generated"
@@ -202,6 +213,7 @@ def schema_model() -> type[BaseModel]:
         __config__=config,
         symbol=(Literal[tuple(symbol for symbol, row in INSTRUMENTS.items() if row.tradable)], ...),
         roll=(_slot_type("roll") | None, None),
+        unit=(Literal["board_lot", "odd_lot"] | None, None),
     )
     sleeve = create_model(
         "Sleeve",
@@ -275,8 +287,10 @@ def _prop_text(prop: dict, required: bool) -> str:
             left = "(" if "exclusiveMinimum" in prop else "["
             right = ")" if "exclusiveMaximum" in prop else "]"
             text += f" {left}{low}, {high}{right}"
-        if "pattern" in prop:
+        if prop.get("pattern") == SERIES_REF_PATTERN:
             text += ' "<alias|self>:<open|high|low|close|adjusted>" | "index:<' + "|".join(SIGNAL_INDICES) + '>"'
+        elif prop.get("pattern") == SLEEVE_ID_PATTERN:
+            text += " (a sleeve id)"
     if required:
         return text + ", required"
     return f"{text}, default {json.dumps(prop.get('default'), ensure_ascii=False)}"
@@ -318,7 +332,11 @@ def _instrument_row(row) -> dict:
         "point_value_twd": row.point_value_twd,
         "tick": row.tick_size,
         "fee_twd_per_side": row.cost_model.commission_per_contract,
+        "commission_rate": row.cost_model.buy_commission_rate,
         "tax_rate": row.cost_model.tax_rate,
+        "lot": row.lot,
+        "etf": row.etf,
+        "odd_lot": row.odd_lot,
         "listed_since": row.listed_since.isoformat(),
         "price_proxy": row.price_proxy,
         "daily_data_since": row.daily_data_since.isoformat() if row.daily_data_since else None,
@@ -382,11 +400,28 @@ def _signal_series_lines() -> list[str]:
     return lines
 
 
+def _stock_rules() -> list[str]:
+    stock, etf = INSTRUMENTS["2330"].cost_model, INSTRUMENTS["0050"].cost_model
+    return [
+        f"Stocks / ETFs: long only, paid in full (no margin loans, no short selling); one unit is a board lot of "
+        f"{BOARD_LOT:,} shares, or one share when the declaration says `unit: odd_lot`. Commission "
+        f"{stock.buy_commission_rate:.4%} of notional per side, transaction tax {stock.tax_rate:.1%} (ETF "
+        f"{etf.tax_rate:.1%}) on sells, 1 tick slippage per side on the TWSE tick ladder (stocks 0.01 under 10 up to "
+        "5 from 1,000; ETFs 0.01 under 50, else 0.05). Prices are Thalassa's unadjusted daily bars; splits, dividends, "
+        "rights offerings and capital reductions are booked at read time from `tw_corporate_actions` (a position's "
+        "value is kept at the reference price, cash dividends are paid out), so a signal on a stock reads its "
+        f"adjusted close (`<alias>` 收盤價). The listed symbols have data to {STOCK_DATA_SNAPSHOT.isoformat()}. "
+        "The benchmark and regime underlying of a stock / ETF spec is 0050 total return.",
+    ]
+
+
 def render_brief() -> str:
     acceptance = tmf_dynamic_leverage_3x()
     checked = validate_spec_v3(acceptance)
-    if not checked.ok:
-        raise RuntimeError("the acceptance example no longer validates; fix the registry first")
+    # the ETF data starts after the default window start: the window is chosen as the service does
+    rotation = validate_spec_v3(etf_rotation_00631l_0050(), feasibility=FeasibilityContext(choose_start=True))
+    if not checked.ok or not rotation.ok:
+        raise RuntimeError("an acceptance example no longer validates; fix the registry first")
     lines = [
         "# Strategy pipeline capability brief",
         "",
@@ -402,18 +437,22 @@ def render_brief() -> str:
         "## Frequencies",
         "",
         "- `1d`: decide after every instrument's daily close, fill at the next session's open (TX family: the 15:00 "
-        f"night session). Daily runs start {DAILY_WINDOW_START.isoformat()} by default; a series that starts later "
-        "(an index a signal reads) moves the run's start to that series' first day plus the warm-up. The warm-up "
-        "comes from earlier data.",
+        f"night session; stocks / ETFs: the 09:00 open). Daily runs start {DAILY_WINDOW_START.isoformat()} by "
+        "default; a series that starts later (an index a signal reads, a stock's own bars) moves the run's start to "
+        "that series' first day plus the warm-up. The warm-up comes from earlier data.",
         f"- `1m` / `5m` / `15m` (intraday): only `direction.dsl_rules` (DSL v2.1), data from "
         f"{TX_INTRADAY_DATA_SINCE.isoformat()}.",
         "",
         "## Instruments",
         "",
+        "### TAIFEX futures and options",
+        "",
         "| symbol | name | point value (TWD) | tick | fee (TWD/contract/side) | listed | prices | available |",
         "|---|---|---|---|---|---|---|---|",
     ]
     for row in INSTRUMENTS.values():
+        if row.kind == "stock":
+            continue
         prices = f"{row.price_proxy} prices (proxy)" if row.price_proxy else "own"
         available = "yes" if row.tradable else f"not yet: {row.planned}"
         lines.append(
@@ -427,6 +466,20 @@ def render_brief() -> str:
         "are TAIFEX contract-month data (a signal on the futures reads the back-adjusted continuous series); MTX and "
         "TMF trade on TX prices with their own contract specs, flagged as proxy in reports (before the TMF listing "
         "the contract did not exist).",
+        "",
+        "### TWSE stocks and ETFs",
+        "",
+        "| symbol | name | ETF | daily data from |",
+        "|---|---|---|---|",
+    ]
+    for row in stocks():
+        lines.append(
+            f"| {row.symbol} | {row.name_en} ({row.name_zh}) | {'yes' if row.etf else 'no'} | "
+            f"{row.daily_data_since.isoformat()} |"
+        )
+    lines += [
+        "",
+        *_stock_rules(),
         "",
         *_signal_series_lines(),
         "## Components (what a spec CAN use)",
@@ -447,6 +500,9 @@ def render_brief() -> str:
         "point must buy at least 1 contract and land within "
         f"{MAX_ROUNDING_ERROR:.0%} of its target leverage (otherwise use MTX or TMF); initial margin at the largest "
         f"leverage at most {MAX_MARGIN_UTILISATION:.0%} of equity.",
+        "- Stock / ETF sleeves: bought in full, exposure at most 1x of equity (`sizing.fixed_notional` or "
+        "`sizing.fixed_contracts`); at the first bar every grid point must afford at least 1 unit (a board lot, or a "
+        "share with `unit: odd_lot`).",
         "- Shorts only through futures; no option selling.",
         "- Each slot holds a component at most once (e.g. one volatility cap).",
         "",
@@ -470,6 +526,10 @@ def render_brief() -> str:
         "The M1 acceptance spec (`tmf_dynamic_leverage_3x`) reads:",
         "",
         "> " + describe_spec(checked.template, checked.params),
+        "",
+        "The M3 acceptance spec (`etf_rotation_00631l_0050`, two ETF sleeves under `allocation.regime_switch`) reads:",
+        "",
+        "> " + describe_spec(rotation.template, rotation.params),
         "",
     ]
     return "\n".join(lines)
@@ -521,8 +581,8 @@ def render_capability_brief() -> str:
         "",
         DAILY_HEADING,
         "",
-        "Decide after each daily close, fill at the next session's open (TX family: the 15:00 night session). One or "
-        f"more sleeves = instrument + direction + leverage chain + sizing + rebalance. {MIN_PARAMS}-{MAX_PARAMS} "
+        "Decide after each daily close, fill at the next session's open (TX family: the 15:00 night session; stocks "
+        f"09:00). One or more sleeves = instrument + direction + leverage chain + sizing + rebalance. {MIN_PARAMS}-{MAX_PARAMS} "
         "tunable parameters per spec (`*` = may be one). Daily runs start "
         f"{DAILY_WINDOW_START.isoformat()}, or later when a series the spec reads starts later (its first day plus "
         "the warm-up, e.g. `index:taiex_tr`); warm-up comes from earlier data.",
@@ -530,6 +590,8 @@ def render_capability_brief() -> str:
         "Instruments (point value TWD/pt, fee TWD/contract/side, daily data from):",
     ]
     for row in INSTRUMENTS.values():
+        if row.kind == "stock":
+            continue
         if row.tradable:
             prices = "TX prices, proxy" if row.price_proxy else "own prices"
             lines.append(
@@ -545,6 +607,14 @@ def render_capability_brief() -> str:
         f"{LEVERAGE_CAP:g}x; integer contracts (every grid point must buy 1+ contract within "
         f"{MAX_ROUNDING_ERROR:.0%} of target leverage, else use MTX/TMF); initial margin at most "
         f"{MAX_MARGIN_UTILISATION:.0%} of equity; shorts only via futures.",
+        f"- TWSE stocks / ETFs ({len(stocks())}): long only, paid in full (exposure <= 1x), unit = board lot of "
+        f"{BOARD_LOT:,} shares (`unit: odd_lot` = 1 share), commission 0.1425%/side, sell tax 0.3% (ETF 0.1%), "
+        "corporate actions booked from tw_corporate_actions, benchmark 0050 total return; data from each symbol's "
+        "first Thalassa day (0050 2003-06-30, 00631L 2014-10-31, most stocks 2020-21). ETFs "
+        + ",".join(row.symbol for row in stocks() if row.etf)
+        + "; stocks "
+        + ",".join(row.symbol for row in stocks() if not row.etf)
+        + ".",
         "",
         "### Signal series (required by regime.ma_band and risk.vol_cap; never assumed)",
         "",

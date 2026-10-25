@@ -374,8 +374,8 @@ class FixedNotionalSizing(SizingComponent):
     uses_leverage = False
     capabilities = ("equity_sizing", "integer_contracts", "fixed_notional")
     summary = (
-        "A fixed percentage of equity as notional, no leverage chain: "
-        "units = equity x direction x weight x pct_of_equity / 100 / (price x point value x lot)."
+        "A fixed share of equity as notional, no leverage chain: "
+        "units = equity x weight x pct_of_equity% / (price x point value x lot)."
     )
 
     class Params(StrictParams):
@@ -733,8 +733,8 @@ class RegimeSwitchAllocation(AllocationComponent):
     max_sleeves = 2
     capabilities = ("multi_sleeve", "ma_regime", "hysteresis_band", "regime_switch")
     summary = (
-        "Two sleeves: weight 1 on sleeve `on` while signal is above its MA x (1 + band), weight 1 on sleeve `off` "
-        "once below MA x (1 - band) (regime.ma_band hysteresis)."
+        "Two sleeves: all weight on sleeve `on` while signal > MA x (1 + band), on sleeve `off` once < MA x (1 - band) "
+        "(regime.ma_band hysteresis)."
     )
 
     class Params(StrictParams):

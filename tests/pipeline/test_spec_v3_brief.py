@@ -198,4 +198,4 @@ def test_part_b_covers_can_cannot_instruments_and_the_signal_series_rule():
     assert "`self:adjusted`" in part_b and "`index:taiex`" in part_b and "`index:taiex_tr`" in part_b
     assert "unsupported" in part_b and "`short_stock`" in part_b
     assert "NOT SMA(200) on 5m bars" in part_b
-    assert len(text) < 9000
+    assert len(text) < 10_000  # step 8 added the 59 stock / ETF symbols and four components
