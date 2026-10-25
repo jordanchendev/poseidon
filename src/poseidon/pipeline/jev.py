@@ -4,7 +4,9 @@ JEV is ``typesafe/jev-1.13`` behind OpenRouter ``POST /v1/systemone``: a request
 object and named ``choice`` questions; the reply has ``answers.<q>.{choice, confidence, probabilities}``
 and ``usage.cost``. The pipeline asks three questions per idea clause (``spec_faithfulness`` and the
 spec_generate v3 review hook): which slot, which registered component within that slot, and whether
-the spec's fixed statement supports / contradicts / says nothing about the clause.
+the spec's fixed statement supports / contradicts / says nothing about the clause. A drafted run's
+``spec_faithfulness`` also asks the fall-response question (add / cut exposure on a fall) of the spec
+statement and of each sentence of the owner's original.
 
 Key discipline (the pipeline's own traffic, same purpose as spec_generate; owner 2026-10-24):
 
@@ -147,6 +149,25 @@ FAITHFULNESS_QUESTION = Question(
 )
 
 
+# The fall-response question (spec_faithfulness's direction check on a drafted run, report-only): asked once
+# of the spec statement and once per sentence of the owner's original. Its identity enters the stage input
+# hash only for a run with an original (``direction_question_sha256``), never ``questions_sha256``.
+DIRECTION_QUESTION_VERSION = 1
+FALL_RESPONSE_QUESTION = Question(
+    "fall_response",
+    f"{UNTRUSTED} When the traded market's price falls (a drop, a crash, a fall toward or below a moving "
+    "average or a support level), what does the text want the long exposure to do?",
+    {
+        "add_on_fall": "Buy more or raise exposure as price falls: buy dips, buy in batches lower, build positions "
+        "in panic, raise leverage below a level.",
+        "cut_on_fall": "Sell or lower exposure as price falls: cut leverage or exit below a moving average or level, "
+        "stop out, wait for an uptrend before buying.",
+        "no_direction": "The text says nothing about how exposure responds to falling prices.",
+    },
+)
+OPPOSITE_FALL_RESPONSE = {"add_on_fall": "cut_on_fall", "cut_on_fall": "add_on_fall"}
+
+
 def component_options(slot: str) -> list[str]:
     """Registered components of the JEV ``slot`` (sorted, at most :data:`MAX_COMPONENT_OPTIONS`)."""
 
@@ -174,13 +195,23 @@ def component_question(slot: str) -> Question | None:
 
 
 def questions_sha256() -> str:
-    """Identity of every question template (part of the stage input hash and report)."""
+    """Identity of every per-clause question template (part of the stage input hash and report)."""
 
     templates = [SLOT_QUESTION, FAITHFULNESS_QUESTION]
     templates += [q for q in (component_question(slot) for slot in REGISTRY_SLOT) if q is not None]
+    return _templates_sha256(QUESTIONS_VERSION, templates)
+
+
+def direction_question_sha256() -> str:
+    """Identity of the fall-response question (input hash and report of a run with an original only)."""
+
+    return _templates_sha256(DIRECTION_QUESTION_VERSION, [FALL_RESPONSE_QUESTION])
+
+
+def _templates_sha256(version: int, templates: list[Question]) -> str:
     material = [{"name": q.name, "instructions": q.instructions, "criteria": dict(q.criteria)} for q in templates]
     return hashlib.sha256(
-        canonical_json({"questions_version": QUESTIONS_VERSION, "questions": material}).encode("utf-8")
+        canonical_json({"questions_version": version, "questions": material}).encode("utf-8")
     ).hexdigest()
 
 
