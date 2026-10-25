@@ -644,9 +644,12 @@ def test_the_put_spec_reads_txo_from_its_listing():
     assert not uncovered.errors and [issue.path for issue in uncovered.unsupported] == ["sleeves.0.hedges.0.component"]
     assert "TXO 1d data starts 2001-12-24, after the run's data window start 2001-01-02" in uncovered.unsupported[0].msg
     assert validate_spec_v3(put, feasibility=FeasibilityContext(start=date(2014, 11, 3))).ok
+    # the chain needs no warm-up: a window may start on the first TXO day, while the signals still get theirs
     chosen = choose(put)
-    assert chosen.ok and chosen.window.binding == "taifex_txo_daily"
-    assert chosen.window.start == date(2001, 12, 24) + timedelta(days=chosen.window.warmup_calendar_days)
+    assert chosen.ok and chosen.window.binding == "taifex_txo_daily" and chosen.window.start == date(2001, 12, 24)
+    assert chosen.window.as_config()["no_warmup_series"] == ["taifex_txo_daily"]
+    assert validate_spec_v3(put, feasibility=FeasibilityContext(start=date(2001, 12, 24))).ok
+    assert "no_warmup_series" not in choose(total_return_spec()).window.as_config()
 
 
 def test_the_put_spec_renders_the_hedge_sentence():

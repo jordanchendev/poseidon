@@ -133,6 +133,7 @@ class WindowStart:
     binding: str | None  # the series that moved the start; None: the default start stands
     warmup_bars: int
     warmup_calendar_days: int
+    no_warmup: tuple[str, ...] = ()  # series read from the start on only (a hedge's option chain): no warm-up added
 
     @property
     def moved(self) -> bool:
@@ -149,7 +150,7 @@ class WindowStart:
             "warmup_bars": self.warmup_bars,
             "warmup_calendar_days": self.warmup_calendar_days,
             "source": "refdata dataset manifests (coverage.start; futures: the product's first row)",
-        }
+        } | ({"no_warmup_series": list(self.no_warmup)} if self.no_warmup else {})
 
 
 @dataclass(frozen=True)
@@ -579,6 +580,7 @@ def _check_data(
     warmup = timedelta(days=warmup_calendar_days(bars, frequency))
     known = feasibility.series_since or {}
     series: list[tuple[tuple, str, str | None, date, str]] = []  # (path, label, key, first day, fix)
+    no_warmup: set[str] = set()  # keys read from the window start on only (a hedge's option chain)
     instruments: list[Instrument] = []
     for alias, decl in resolved["instruments"].items():
         instrument = INSTRUMENTS[decl["symbol"]]
@@ -606,11 +608,15 @@ def _check_data(
             key = OPTION_PRICE_DATASET
             since = known.get(key, option.daily_data_since)
             series.append(((*path, "component"), f"{option.symbol} {frequency}", key, since, "remove the hedge"))
+            no_warmup.add(key)
 
     window = None
     if feasibility.choose_start and daily and series:
         lagged = warmup_calendar_days(bars + SIGNAL_LAG_WARMUP_BARS, frequency)
-        latest, binding = max((since + timedelta(days=lagged), key) for _path, _label, key, since, _fix in series)
+        latest, binding = max(
+            (since + timedelta(days=0 if key in no_warmup else lagged), key)
+            for _path, _label, key, since, _fix in series
+        )
         window = WindowStart(
             start=max(start, latest),
             default_start=start,
@@ -618,13 +624,14 @@ def _check_data(
             binding=binding if latest > start else None,
             warmup_bars=bars + SIGNAL_LAG_WARMUP_BARS,
             warmup_calendar_days=lagged,
+            no_warmup=tuple(sorted(no_warmup)),
         )
         start = window.start
     need_from = start - warmup
-    for path, label, _key, since, fix in series:
+    for path, label, key, since, fix in series:
         if start < since:
             issues.unsupported_(path, _window_uncovered(label, since, start))
-        elif need_from < since:
+        elif need_from < since and key not in no_warmup:
             issues.error(
                 path,
                 f"{label} data starts {since.isoformat()}; the window start {start.isoformat()} minus the warm-up "
