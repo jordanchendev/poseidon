@@ -195,13 +195,38 @@ def pipeline_engine():
     engine.dispose()
 
 
+class TrackedSessions:
+    """``sessionmaker`` that remembers every session it hands out, so a test that leaves one open fails.
+
+    A session used without ``with``/``close()`` stays ``idle in transaction`` until the garbage collector
+    gets to it, and the next test's TRUNCATE then waits on its locks forever (a silent suite hang)."""
+
+    def __init__(self, engine):
+        self._factory = sessionmaker(bind=engine, autoflush=False, future=True)
+        self.opened = []
+
+    def __call__(self, **kwargs):
+        session = self._factory(**kwargs)
+        self.opened.append(session)
+        return session
+
+    def leaked(self) -> list:
+        return [session for session in self.opened if session.in_transaction()]
+
+
 @pytest.fixture
 def pipeline_sessions(pipeline_engine):
     with pipeline_engine.begin() as connection:
+        connection.execute(text("SET LOCAL lock_timeout = '30s'"))  # a leaked lock fails here, never hangs
         connection.execute(
             text("TRUNCATE pipeline_events, pipeline_trials, stage_runs, pipeline_runs RESTART IDENTITY CASCADE")
         )
-    return sessionmaker(bind=pipeline_engine, autoflush=False, future=True)
+    sessions = TrackedSessions(pipeline_engine)
+    yield sessions
+    leaked = sessions.leaked()
+    for session in leaked:
+        session.close()
+    assert not leaked, f"{len(leaked)} pipeline session(s) left open in a transaction; use `with sessions() as s:`"
 
 
 @pytest.fixture

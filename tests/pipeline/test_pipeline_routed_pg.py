@@ -71,6 +71,11 @@ def idea_run(harness, store, idea, **body):
     return create_v3(harness, None, store=store, idea=idea, **body)
 
 
+def stage_names(sessions, run_id) -> list[str]:
+    with sessions() as session:
+        return [entry["stage"] for entry in PipelineService(session).stages(run_id)]
+
+
 @pytest.mark.usefixtures("pipeline_engine")
 def test_idea_only_create_freezes_config_7_once(pipeline_sessions, tmp_path, store):
     harness = Harness(pipeline_sessions, tmp_path / "a", Clock(CLOCK_START), registry=v3_registry(store))
@@ -83,7 +88,7 @@ def test_idea_only_create_freezes_config_7_once(pipeline_sessions, tmp_path, sto
     daily = config["by_class"]["daily_equity"]
     assert daily["refdata"]["datasets"]["taifex_futures_daily"] == store.content_sha256("taifex_futures_daily")
     assert idea_run(harness, store, EXAMPLE_IDEA, key="idea-1") == run_id  # idempotent replay
-    stages = [entry["stage"] for entry in PipelineService(pipeline_sessions()).stages(run_id)]
+    stages = stage_names(pipeline_sessions, run_id)
     assert stages == config["stage_plan"]  # not routed yet: every candidate stage
 
 
@@ -110,7 +115,7 @@ def test_a_daily_route_runs_the_generated_spec_on_the_daily_engine(pipeline_sess
         planted_edge_spec()
     )
     assert attempts["backtest"].artifact_json["report"]["summary"].startswith("backtest ✅")
-    stages = [entry["stage"] for entry in PipelineService(pipeline_sessions()).stages(run_id)]
+    stages = stage_names(pipeline_sessions, run_id)
     assert stages == PLAN
     assert len(client.chat_payloads) == 2 and generated["jev_review"]["usage"]["calls"] > 0
     faithfulness = attempts["spec_faithfulness"].artifact_json["report"]
@@ -134,7 +139,7 @@ def test_an_intraday_route_continues_on_the_dsl_path(pipeline_sessions, tmp_path
     generated = attempts["spec_generate"].artifact_json["report"]
     assert generated["route"] == {"strategy_class": "intraday_fixed", "engine": "dsl_v2"}
     assert attempts["spec_validate"].artifact_json["report"]["validator"] == "dsl_v2"
-    assert [entry["stage"] for entry in PipelineService(pipeline_sessions()).stages(run_id)] == [
+    assert stage_names(pipeline_sessions, run_id) == [
         "spec_generate",
         "spec_validate",
         "backtest",
