@@ -161,6 +161,7 @@ def test_a_failed_request_is_an_error_with_the_calls_so_far_and_no_key():
         ("槓桿不超過 5 倍", False, []),  # the policy cap
         ("做空台指", True, ["sign"]),
         ("不做空", False, []),
+        ("左側依技術分析和估值計算做空間規劃", False, []),  # 做空間 is space planning, not a short
         ("空頭時降到 0.5 倍", False, []),  # a bear regime, not a short position
         ("用 300 日均線", False, []),  # days outside the $param range: advisory only
         ("MA200 濾網", False, []),
