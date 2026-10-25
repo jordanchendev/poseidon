@@ -124,6 +124,8 @@ class DslRulesDirection(DirectionComponent):
     trailing, session rules) stays inside; the engine turns the initial
     SL/TP and trailing updates into protective orders it checks intrabar
     with the v1 gap-aware logic. Validated by ``validate_v2`` (strict DSL v2.1).
+    The run binds the state to a ``RuleStrategyV2`` and its bars
+    (``dsl_runtime.DslRulesState.bind``) before the first bar.
     """
 
     name = "direction.dsl_rules"
@@ -149,6 +151,17 @@ class DslRulesDirection(DirectionComponent):
 
     def parse(self, raw):
         return dict(raw)  # validated as a whole DSL v2 document by validation._check_dsl_rules
+
+    def init(self, params):
+        from poseidon.pipeline.v3.dsl_runtime import DslRulesState
+
+        return DslRulesState()
+
+    def step(self, params, state, view):
+        return state.step(view)
+
+    def protect(self, params, state):
+        return state.pending_protect
 
     def describe(self, params: Mapping[str, Any], ctx):
         action_zh = {"long": "做多", "short": "做空", "close": "平倉"}

@@ -155,6 +155,12 @@ class DirectionComponent(Component):
 
         raise NotImplementedError(f"{self.name} has no daily behaviour yet")
 
+    def protect(self, params: StrictParams, state: Any) -> Any:
+        """Protective orders (``engine.Protect``) set by the last :meth:`step`, or None to keep the resting
+        ones. Only ``direction.dsl_rules`` places them (its DSL risk block); the intraday engine runs them."""
+
+        return None
+
 
 class LeverageComponent(Component):
     """One link of the ordered leverage chain L0 -> f1 -> f2 ... (non-negative multiples of equity)."""
