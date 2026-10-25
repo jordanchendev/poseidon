@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import copy
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -31,15 +31,25 @@ from poseidon.pipeline.plan import (
 from poseidon.pipeline.service import PipelineRequestInvalid
 from poseidon.pipeline.shadow_paper_daily import DAILY_PAPER_THRESHOLDS, DEFAULT_DAILY_SHADOW_PAPER
 from poseidon.pipeline.stages import STAGE_REGISTRY, EngineRouted
-from poseidon.pipeline.v3.config import ENGINE, REFDATA_DATASETS, daily_data_config, daily_run_config, is_v3_run
+from poseidon.pipeline.v3.config import (
+    ENGINE,
+    REFDATA_DATASETS,
+    daily_data_config,
+    daily_run_config,
+    is_v3_run,
+    series_first_days,
+)
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
-from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3, warmup_calendar_days
 from tests.pipeline.conftest import Clock, Harness, tx_spec
 from tests.pipeline.v3_wiring_support import (
     CLOCK_START,
+    Observe,
     build_long_store,
     create_v3,
     planted_edge_spec,
+    series_store,
+    trace,
     v3_registry,
 )
 
@@ -80,6 +90,61 @@ def test_daily_run_config_freezes_the_class_entry_and_the_window():
     assert config["optimize"]["objective"] == "sharpe_daily" and config["seed"] == 0
     # the DSL default config is untouched (still CONFIG_VERSION 5, no engine)
     assert not is_v3_run(default_config(stage_plan=None, as_of=AS_OF))
+
+
+SERIES = {
+    "taifex_futures_daily/TX": date(1998, 7, 21),
+    "twse_taiex_daily": date(1999, 1, 5),
+    "twse_taiex_total_return": date(2003, 1, 2),
+}
+
+
+def chosen(spec):
+    result = validate_spec_v3(spec, feasibility=FeasibilityContext(series_since=SERIES, choose_start=True))
+    assert result.ok
+    return result
+
+
+def test_a_moved_start_is_frozen_with_its_rule_and_an_unmoved_one_freezes_the_same_bytes():
+    unmoved = chosen(tmf_dynamic_leverage_3x())  # index:taiex: 2001-01-02 keeps its warm-up
+    assert not unmoved.window.moved
+    same = daily_run_config(unmoved.resolved, as_of=AS_OF, brief_text="brief", refdata=REFDATA, window=unmoved.window)
+    assert content_sha256(same) == content_sha256(acceptance_config())
+
+    moved = chosen(planted_edge_spec("index:taiex_tr"))
+    config = daily_run_config(moved.resolved, as_of=AS_OF, brief_text="brief", refdata=REFDATA, window=moved.window)
+    data = config["data"]
+    assert data["start"] == moved.window.start.isoformat() > "2003-01-02"
+    assert data["start_rule"] == moved.window.as_config()
+    assert data["start_rule"]["binding_series"] == "twse_taiex_total_return"
+    # the holdout is the last 20 % of the shorter window, computed once here
+    plain = daily_data_config(as_of=AS_OF, start=data["start"])
+    assert data["holdout_start"] == plain["holdout_start"] > acceptance_config()["data"]["holdout_start"]
+    assert {key: data[key] for key in plain} == plain
+
+
+def test_series_first_days_read_the_manifests(tmp_path):
+    from poseidon.pipeline.refdata.datasets import FUTURES
+    from poseidon.pipeline.refdata.store import DatasetMissingError, RefdataError
+    from poseidon.pipeline.v3.instruments import DAILY_PRICE_DATASET
+
+    assert DAILY_PRICE_DATASET == FUTURES
+    indices = {"twse_taiex_daily": "1999-01-05", "twse_taiex_total_return": "2003-01-02"}
+    # MTX rows first: the TX price source starts with TX's own first row, a month later
+    store = series_store(tmp_path / "a", futures={"MTX": "1998-06-01", "TX": "1998-07-21"}, indices=indices)
+    assert series_first_days(store) == {
+        "taifex_futures_daily/TX": date(1998, 7, 21),
+        "twse_taiex_daily": date(1999, 1, 5),
+        "twse_taiex_total_return": date(2003, 1, 2),
+    }
+    late = series_store(
+        tmp_path / "b", futures={"TX": "1998-07-21"}, indices={**indices, "twse_taiex_daily": "2004-02-02"}
+    )
+    assert series_first_days(late)["twse_taiex_daily"] == date(2004, 2, 2)
+    with pytest.raises(RefdataError, match="no rows for TX"):
+        series_first_days(series_store(tmp_path / "c", futures={"MTX": "2001-04-09"}, indices=indices))
+    with pytest.raises(DatasetMissingError):
+        series_first_days(series_store(tmp_path / "d", futures={"TX": "1998-07-21"}, indices={}))
 
 
 def test_daily_class_table_is_the_one_source_of_the_paper_settings():
@@ -222,6 +287,72 @@ def test_spec_validate_and_backtest_on_the_engine(v3_harness, store):
     files = {entry["name"] for entry in attempts["backtest"].artifact_json["files"]}
     assert files == {"fills.csv", "positions_daily.csv", "daily_pnl.csv", "events.csv"}
     assert backtest["summary"].startswith("backtest ✅")
+
+
+@pytest.fixture(scope="module")
+def tr_store(tmp_path_factory):
+    """The total-return index starts 2003-01-02, as the real one does."""
+
+    return build_long_store(tmp_path_factory.mktemp("refdata_tr"), kind="ma_band", seed=5, tr_from="2003-01-02")
+
+
+@pytest.mark.usefixtures("pipeline_engine")
+def test_a_spec_on_a_late_series_runs_from_a_later_frozen_start(pipeline_sessions, tmp_path, store, tr_store):
+    spec = planted_edge_spec("index:taiex_tr")
+    harness = Harness(pipeline_sessions, tmp_path / "artifacts", Clock(CLOCK_START), registry=v3_registry(tr_store))
+    run_id = create_v3(harness, spec, store=tr_store, stage_plan=["spec_validate", "backtest"])
+    run = harness.run(run_id)
+    data = run.config_json["data"]
+    rule = data["start_rule"]
+    assert rule["binding_series"] == "twse_taiex_total_return"
+    assert rule["series_since"]["twse_taiex_total_return"] == "2003-01-02"  # from the store's manifest
+    assert rule["warmup_calendar_days"] == warmup_calendar_days(rule["warmup_bars"], "1d")
+    start = date.fromisoformat(data["start"])
+    assert start == date(2003, 1, 2) + timedelta(days=rule["warmup_calendar_days"])
+    assert run.config_sha256 == content_sha256(run.config_json)
+
+    harness.drain()
+    attempts = {row.stage: row for row in harness.attempts(run_id)}
+    assert harness.run(run_id).status == "completed", [(r.stage, r.verdict, r.reason) for r in attempts.values()]
+    validated = attempts["spec_validate"].artifact_json["report"]
+    assert validated["feasibility"]["start"] == data["start"]
+    assert validated["feasibility"]["series_since"] == rule["series_since"]
+    assert (
+        f"window from {data['start']} (twse_taiex_total_return data from 2003-01-02 + warm-up)" in validated["summary"]
+    )
+    backtest = attempts["backtest"].artifact_json["report"]
+    assert backtest["window"]["first_day"] == data["start"]
+    assert backtest["metrics"]["first_day"] >= data["start"] and backtest["truncation_audit"]["ok"]
+
+    # the same spec on a store whose total-return index has the default window's warm-up: nothing moves
+    early = harness.run(create_v3(harness, spec, store=store, stage_plan=["spec_validate"])).config_json["data"]
+    assert early["start"] == "2001-01-02" and "start_rule" not in early
+
+
+@pytest.mark.usefixtures("pipeline_engine")
+def test_a_series_too_late_for_the_walk_forward_fails_wfe(pipeline_sessions, tmp_path):
+    """Three years of total-return index before the holdout: the run starts, the gates judge the short window."""
+
+    late = build_long_store(tmp_path / "refdata", kind="ma_band", seed=5, tr_from="2022-01-03")
+    registry = v3_registry(late)
+    for name in V3_GATE_STAGES:  # record each gate's verdict and go on, so every gate runs
+        registry[name] = Observe(registry[name])
+    harness = Harness(pipeline_sessions, tmp_path / "artifacts", Clock(CLOCK_START), registry=registry)
+    plan = list(V3_DAILY_STAGE_PLAN[: V3_DAILY_STAGE_PLAN.index("holdout") + 1])
+    run_id = create_v3(harness, planted_edge_spec("index:taiex_tr"), store=late, stage_plan=plan)
+    data = harness.run(run_id).config_json["data"]
+    assert data["start"] > "2023-01-01" and data["start_rule"]["binding_series"] == "twse_taiex_total_return"
+    harness.drain(limit=40)
+    rows = {row["stage"]: row for row in trace(harness, run_id)}
+    assert list(rows) == plan, rows
+    assert all(row["verdict"] == "pass" for row in rows.values()), rows  # Observe: no stage errored
+    wfe = rows["wfe"]
+    assert wfe["observed_verdict"] == "fail" and "fits none of the frozen layouts" in wfe["reason"], wfe
+    # the shorter window's holdout (its last 20 %) has fewer days than the registered minimum: a fail, not a pass
+    holdout = next(r for r in harness.attempts(run_id) if r.stage == "holdout").artifact_json["report"]
+    min_days = harness.run(run_id).config_json["thresholds"]["holdout_min_days"]
+    assert rows["holdout"]["observed_verdict"] == "fail", rows["holdout"]
+    assert holdout["inputs"]["holdout_metrics"]["n_days"] < min_days == 250
 
 
 @pytest.mark.usefixtures("pipeline_engine")

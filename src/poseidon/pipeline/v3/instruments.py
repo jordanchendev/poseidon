@@ -204,6 +204,16 @@ def data_since(instrument: Instrument, frequency: str) -> date | None:
     return instrument.intraday_data_since if frequency in INTRADAY_FREQUENCIES else instrument.daily_data_since
 
 
+# Refdata dataset of the daily futures prices (``refdata.datasets.FUTURES``): one dataset, rows per product.
+DAILY_PRICE_DATASET = "taifex_futures_daily"
+
+
+def price_series_key(instrument: Instrument) -> str:
+    """Key of the daily price series ``instrument`` reads: ``<dataset>/<product>`` (proxy source included)."""
+
+    return f"{DAILY_PRICE_DATASET}/{instrument.price_proxy or instrument.symbol}"
+
+
 # --------------------------------------------------------------------------- signal indices
 #
 # Owner decision 2026-10-24 (afternoon) #1: a signal series is chosen explicitly. Besides the

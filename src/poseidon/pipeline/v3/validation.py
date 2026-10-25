@@ -9,7 +9,8 @@
    allocation, execution, DSL fast-path constraints, component checks;
 5. data feasibility: every instrument has bars over ``[start - warm-up, end)``, and every
    index a signal reads (``index:taiex`` from 1999-01-05, ``index:taiex_tr`` from 2003-01-02)
-   has rows there; proxy price intervals become ``notes``;
+   has rows there; proxy price intervals become ``notes``. With ``FeasibilityContext.choose_start``
+   (run creation, spec_generate) the daily window start is chosen first (:class:`WindowStart`);
 6. contract-count feasibility: no grid point sizes to 0 contracts or misses its
    target leverage by more than 25 %;
 7. margin feasibility: initial margin at the largest leverage <= 80 % of equity;
@@ -44,6 +45,7 @@ from poseidon.pipeline.v3.instruments import (
     Instrument,
     data_since,
     ordered_frequencies,
+    price_series_key,
     signal_index,
 )
 from poseidon.pipeline.v3.registry import (
@@ -75,6 +77,9 @@ MAX_ROUNDING_ERROR = 0.25  # §3.7.5: |actual - target| / target
 DAILY_WINDOW_START = date(2001, 1, 2)  # §12 #3
 INTRADAY_WINDOW_START = TX_INTRADAY_DATA_SINCE  # plan.DATA_START
 TRADING_DAYS_PER_YEAR = 245
+# The execution_timing gate's signal_lag_1d scenario reads every signal series one row late, and the
+# compiler adds that lag to the warm-up; a window start chosen from a series' first day leaves room for it.
+SIGNAL_LAG_WARMUP_BARS = 1
 GRID_ENUMERATION_LIMIT = 20_000  # beyond this, sizing feasibility checks the grid corners only
 DSL_SYMBOLS = tuple(DSL_MARKETS)
 
@@ -103,6 +108,47 @@ class FeasibilityContext:
     start: date | None = None
     end: date | None = None
     prices: Mapping[str, tuple[float, ...]] | None = None
+    # First day of each daily series in the run's refdata (``price_series_key`` / ``SignalIndex.dataset``
+    # -> date), read from the dataset manifests. A series not listed falls back to the checked-in table.
+    series_since: Mapping[str, date] | None = None
+    # Daily specs: the window start is not frozen yet. The validator chooses it (``V3Validation.window``)
+    # as max(``start`` or the default start, the latest first day of a series the spec reads + warm-up).
+    choose_start: bool = False
+
+
+@dataclass(frozen=True)
+class WindowStart:
+    """The daily window start chosen for a spec (owner decision 2026-10-25).
+
+    A series that starts after the default window start moves the run's start to that series' first day
+    plus the warm-up (``warmup_calendar_days`` of the history at each ``$param``'s largest grid value plus
+    the signal-lag scenario), so the first tradable bar has full indicators. Chosen once, when the run's
+    config is frozen; later stages read the frozen start.
+    """
+
+    start: date
+    default_start: date
+    series_since: Mapping[str, date]  # every daily series the spec reads -> its first day
+    binding: str | None  # the series that moved the start; None: the default start stands
+    warmup_bars: int
+    warmup_calendar_days: int
+
+    @property
+    def moved(self) -> bool:
+        return self.binding is not None
+
+    def as_config(self) -> dict:
+        """The frozen record (``config["data"]["start_rule"]``) of a start that moved."""
+
+        return {
+            "rule": "start = max(default_start, latest first day of a series the spec reads + warm-up)",
+            "default_start": self.default_start.isoformat(),
+            "series_since": {key: day.isoformat() for key, day in sorted(self.series_since.items())},
+            "binding_series": self.binding,
+            "warmup_bars": self.warmup_bars,
+            "warmup_calendar_days": self.warmup_calendar_days,
+            "source": "refdata dataset manifests (coverage.start; futures: the product's first row)",
+        }
 
 
 @dataclass(frozen=True)
@@ -115,6 +161,7 @@ class V3Validation:
     resolved: dict | None = None  # every $param at its default
     params: dict = field(default_factory=dict)  # name -> ParamSpec
     strategy_class: str | None = None
+    window: WindowStart | None = None  # with ``FeasibilityContext.choose_start``: the chosen daily start
 
 
 class _Issues:
@@ -514,55 +561,79 @@ def _window_uncovered(series: str, since: date, start: date) -> str:
     )
 
 
-def _check_data(resolved: dict, template: dict, params: dict, feasibility: FeasibilityContext, issues, notes) -> None:
+def _check_data(
+    resolved: dict, template: dict, params: dict, feasibility: FeasibilityContext, issues, notes
+) -> WindowStart | None:
     frequency = resolved["frequency"]
-    default_start = INTRADAY_WINDOW_START if frequency in INTRADAY_FREQUENCIES else DAILY_WINDOW_START
-    start = feasibility.start or default_start
+    daily = frequency not in INTRADAY_FREQUENCIES
+    start = feasibility.start or (DAILY_WINDOW_START if daily else INTRADAY_WINDOW_START)
     bars = _history_bars(template, params)
     warmup = timedelta(days=warmup_calendar_days(bars, frequency))
-    need_from = start - warmup
+    known = feasibility.series_since or {}
+    series: list[tuple[tuple, str, str | None, date, str]] = []  # (path, label, key, first day, fix)
+    instruments: list[Instrument] = []
     for alias, decl in resolved["instruments"].items():
         instrument = INSTRUMENTS[decl["symbol"]]
-        since = data_since(instrument, frequency)
         path = ("instruments", alias, "symbol")
+        key = price_series_key(instrument) if daily else None
+        since = known[key] if key in known else data_since(instrument, frequency)
         if since is None:
             issues.error(path, f"{instrument.symbol} has no {frequency} data source")
             continue
-        if start < since:
-            issues.unsupported_(path, _window_uncovered(f"{instrument.symbol} {frequency}", since, start))
-        elif need_from < since:
-            issues.error(
-                path,
-                f"{instrument.symbol} {frequency} data starts {since.isoformat()}; the window start {start.isoformat()} "
-                f"minus the warm-up ({bars} bars, {warmup.days} calendar days) needs data from {need_from.isoformat()}; "
-                "shorten the warm-up windows",
-            )
-        note = instrument.proxy_note(start)
-        if note:
-            notes.append(note)
+        instruments.append(instrument)
+        series.append((path, f"{instrument.symbol} {frequency}", key, since, "shorten the warm-up windows"))
     for path, _slot, ref in component_slots(resolved):
         component = REGISTRY[ref["component"]]
         if component.name == "direction.dsl_rules":
             continue
         signal = getattr(component.parse(ref.get("params") or {}), "signal", None)
         index = signal_index(signal) if isinstance(signal, str) else None
-        if index is None:
-            continue
-        if start < index.data_since:
-            issues.unsupported_(
-                (*path, "params", "signal"), _window_uncovered(f"{signal} ({index.name_en})", index.data_since, start)
-            )
-        elif need_from < index.data_since:
-            issues.error(
-                (*path, "params", "signal"),
-                f"{signal} ({index.name_en}) data starts {index.data_since.isoformat()}; the window start "
-                f"{start.isoformat()} minus the warm-up ({bars} bars, {warmup.days} calendar days) needs data from "
-                f"{need_from.isoformat()}; shorten the warm-up windows or read another series",
-            )
-    if feasibility.end is not None and feasibility.end <= start:
-        issues.error(
-            "", f"the data window end {feasibility.end.isoformat()} is not after its start {start.isoformat()}"
+        if index is not None:
+            since = known.get(index.dataset, index.data_since)
+            label, fix = f"{signal} ({index.name_en})", "shorten the warm-up windows or read another series"
+            series.append(((*path, "params", "signal"), label, index.dataset, since, fix))
+
+    window = None
+    if feasibility.choose_start and daily and series:
+        lagged = warmup_calendar_days(bars + SIGNAL_LAG_WARMUP_BARS, frequency)
+        latest, binding = max((since + timedelta(days=lagged), key) for _path, _label, key, since, _fix in series)
+        window = WindowStart(
+            start=max(start, latest),
+            default_start=start,
+            series_since={key: since for _path, _label, key, since, _fix in series if key is not None},
+            binding=binding if latest > start else None,
+            warmup_bars=bars + SIGNAL_LAG_WARMUP_BARS,
+            warmup_calendar_days=lagged,
         )
+        start = window.start
+    need_from = start - warmup
+    for path, label, _key, since, fix in series:
+        if start < since:
+            issues.unsupported_(path, _window_uncovered(label, since, start))
+        elif need_from < since:
+            issues.error(
+                path,
+                f"{label} data starts {since.isoformat()}; the window start {start.isoformat()} minus the warm-up "
+                f"({bars} bars, {warmup.days} calendar days) needs data from {need_from.isoformat()}; {fix}",
+            )
+    for instrument in instruments:
+        note = instrument.proxy_note(start)
+        if note:
+            notes.append(note)
+    if feasibility.end is not None and feasibility.end <= start:
+        if window is not None and window.moved:
+            path, label, _key, since, _fix = next(item for item in series if item[2] == window.binding)
+            issues.unsupported_(
+                path,
+                f"{label} data starts {since.isoformat()}; with the warm-up ({window.warmup_bars} bars, "
+                f"{window.warmup_calendar_days} calendar days) the run's window would start {start.isoformat()}, "
+                f"not before the data end {feasibility.end.isoformat()}",
+            )
+        else:
+            issues.error(
+                "", f"the data window end {feasibility.end.isoformat()} is not after its start {start.isoformat()}"
+            )
+    return window
 
 
 def _grid_points(names: list[str], params: dict):
@@ -721,7 +792,7 @@ def validate_spec_v3(doc: Any, *, feasibility: FeasibilityContext | None = None)
         return _result(issues, template=template, resolved=resolved, params=params)
 
     notes: list[str] = []
-    _check_data(resolved, template, params, feasibility, issues, notes)
+    window = _check_data(resolved, template, params, feasibility, issues, notes)
     _check_sizing(resolved, template, params, feasibility, issues)
     return _result(
         issues,
@@ -730,6 +801,7 @@ def validate_spec_v3(doc: Any, *, feasibility: FeasibilityContext | None = None)
         resolved=resolved,
         params=params,
         strategy_class=strategy_class(resolved),
+        window=window,
     )
 
 

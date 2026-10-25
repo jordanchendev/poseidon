@@ -7,13 +7,15 @@
     index is "on" by the 200-day MA band rule with a 2 % hysteresis (the very rule of
     ``regime.ma_band``, applied to the index's own closes) and ``DRIFT_OFF`` while it is off;
   - ``"drift"``: a constant drift, no structure (static leverage earns only beta);
-  - ``crash``: one day whose low is ``crash_low`` under the previous close.
+  - ``crash``: one day whose low is ``crash_low`` under the previous close;
+  - ``tr_from``: the total-return index starts that day (the real one starts 2003-01-02), not in 1999.
 
   Contracts carry no basis (every listed month trades at the index), so rolls move no price; the
   overnight gap is small noise and the drift is intraday, so ``execution.next_open`` earns it.
 * control specs: :func:`planted_edge_spec` (3x TMF switched off below the MA band: times the planted
   regime), :func:`static_leverage_spec` (always long at 2-4x: leveraged beta),
   :func:`liquidation_spec` (4x long, a crash in train).
+* :func:`series_store` -- only what ``v3.config.series_first_days`` reads (a few rows per dataset).
 * :func:`create_v3` -- create a run through ``PipelineService`` with an explicit refdata store.
 * :class:`Observe` -- test-only wrapper: the real stage runs, a ``fail`` is recorded and turned into a
   pass so the run goes on and every later stage's wiring is exercised (e2e on real refdata).
@@ -133,7 +135,9 @@ def long_quotes(days: pd.DatetimeIndex, prices) -> pd.DataFrame:
     return quotes.reset_index(drop=True)
 
 
-def build_long_store(root: Path, *, kind: str, seed: int = 5, crash: str | None = None, **kw) -> RefdataStore:
+def build_long_store(
+    root: Path, *, kind: str, seed: int = 5, crash: str | None = None, tr_from: str | None = None, **kw
+) -> RefdataStore:
     store = RefdataStore(root)
 
     def commit(name, frame, column, schema=1):
@@ -154,7 +158,38 @@ def build_long_store(root: Path, *, kind: str, seed: int = 5, crash: str | None 
     opens, highs, lows, closes = prices
     index = pd.DataFrame({"trade_date": days, "open": opens, "high": highs, "low": lows, "close": closes})
     commit(TAIEX, index, "trade_date")
-    commit(TAIEX_TR, index.copy(), "trade_date")
+    total_return = index if tr_from is None else index[index["trade_date"] >= pd.Timestamp(tr_from)]
+    commit(TAIEX_TR, total_return.reset_index(drop=True), "trade_date")
+    return store
+
+
+def series_store(root: Path, *, futures: dict[str, str], indices: dict[str, str]) -> RefdataStore:
+    """Only what ``v3.config.series_first_days`` reads: two futures rows per product from its first day
+    (``futures``: product -> day) and one row per index dataset (``indices``: dataset -> day)."""
+
+    from poseidon.pipeline.refdata.datasets import FUTURES
+
+    store = RefdataStore(root)
+
+    def commit(name, frame):
+        store.commit(
+            name,
+            schema_version=1,
+            date_column="trade_date",
+            partitions=_by_month(frame.reset_index(drop=True), "trade_date"),
+            sources=[],
+            code_version="t",
+            full=True,
+        )
+
+    rows = [
+        {"trade_date": pd.Timestamp(day) + pd.Timedelta(days=offset), "product": product}
+        for product, day in futures.items()
+        for offset in (0, 1)
+    ]
+    commit(FUTURES, pd.DataFrame(rows).sort_values(["trade_date", "product"]))
+    for name, day in indices.items():
+        commit(name, pd.DataFrame({"trade_date": [pd.Timestamp(day)], "close": [1.0]}))
     return store
 
 
@@ -191,7 +226,7 @@ def _spec(name: str, leverage: list, params: dict) -> dict:
     return doc
 
 
-def planted_edge_spec() -> dict:
+def planted_edge_spec(signal: str = "self:adjusted") -> dict:
     return _spec(
         "planted_ma_band_edge",
         [
@@ -199,7 +234,7 @@ def planted_edge_spec() -> dict:
             {
                 "component": "regime.ma_band",
                 "params": {
-                    "signal": "self:adjusted",
+                    "signal": signal,
                     "ma_days": {"$param": "ma_days"},
                     "band_pct": {"$param": "band"},
                     "off_leverage": 0.0,

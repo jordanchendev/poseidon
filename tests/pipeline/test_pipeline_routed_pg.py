@@ -58,11 +58,12 @@ def _llm_env(monkeypatch):
     spec_llm.reset_identity_cache()
 
 
-def generating(registry, client):
+def generating(registry, client, store):
     registry["spec_generate"] = SpecGenerateStage(
         client_factory=lambda key, timeout: client,
         pin_provider=lambda: LABEL,
         jev_client_factory=FakeOpenRouter(label=LABEL).factory(),
+        refdata=lambda: store,
     )
     return registry
 
@@ -96,7 +97,7 @@ def test_idea_only_create_freezes_config_7_once(pipeline_sessions, tmp_path, sto
 def test_a_daily_route_runs_the_generated_spec_on_the_daily_engine(pipeline_sessions, tmp_path, store):
     client = FakeClient([reply(planted_reply())] * 2)  # the fake JEV disagrees once: one repair round
     harness = Harness(
-        pipeline_sessions, tmp_path / "a", Clock(CLOCK_START), registry=generating(v3_registry(store), client)
+        pipeline_sessions, tmp_path / "a", Clock(CLOCK_START), registry=generating(v3_registry(store), client, store)
     )
     run_id = idea_run(harness, store, PLANTED_IDEA, stage_plan=PLAN)
     frozen = harness.run(run_id)
@@ -122,6 +123,41 @@ def test_a_daily_route_runs_the_generated_spec_on_the_daily_engine(pipeline_sess
     assert faithfulness["clause_source"] == "spec_generate" and faithfulness["counts"]["clauses"] == 5
 
 
+TR_IDEA = (
+    "微台做多，槓桿 3 倍，每天收盤後依權益調整口數。加權含息報酬指數收盤跌破 200 日線 2% 就空手，站回 2% 回到 3 倍。"
+)
+
+
+@pytest.mark.usefixtures("pipeline_engine")
+def test_a_daily_route_on_a_late_series_freezes_its_window_in_the_route(pipeline_sessions, tmp_path):
+    """Owner decision 2026-10-25: the total-return index starts 2003-01-02, so the run starts later; spec_generate
+    chooses that start once (route ``data``) and every later stage reads it, the frozen config untouched."""
+
+    store = build_long_store(tmp_path / "refdata", kind="ma_band", seed=5, tr_from="2003-01-02")
+    body = planted_reply()
+    body["spec"] = planted_edge_spec("index:taiex_tr")
+    body["clauses"][4]["quote"] = "加權含息報酬指數收盤跌破 200 日線 2% 就空手，站回 2% 回到 3 倍"
+    client = FakeClient([reply(body)] * 2)
+    harness = Harness(
+        pipeline_sessions, tmp_path / "a", Clock(CLOCK_START), registry=generating(v3_registry(store), client, store)
+    )
+    run_id = idea_run(harness, store, TR_IDEA, stage_plan=PLAN)
+    frozen = harness.run(run_id)
+    harness.drain()
+    run = harness.run(run_id)
+    attempts = {row.stage: row for row in harness.attempts(run_id)}
+    assert run.status == "completed", [(r.stage, r.verdict, r.reason) for r in attempts.values()]
+    assert (run.config_sha256, run.config_json) == (frozen.config_sha256, frozen.config_json)
+    assert run.config_json["by_class"]["daily_equity"]["data"]["start"] == "2001-01-02"
+    route = attempts["spec_generate"].artifact_json["report"]["route"]
+    data = route["data"]
+    assert data["start"] > "2003-01-02" and data["start_rule"]["binding_series"] == "twse_taiex_total_return"
+    assert data["end"] == run.config_json["by_class"]["daily_equity"]["data"]["end"]
+    validated = attempts["spec_validate"].artifact_json["report"]
+    assert validated["feasibility"]["start"] == data["start"]
+    assert attempts["backtest"].artifact_json["report"]["window"]["first_day"] == data["start"]
+
+
 @pytest.mark.usefixtures("pipeline_engine")
 def test_an_intraday_route_continues_on_the_dsl_path(pipeline_sessions, tmp_path, store):
     dsl_spec = spec_llm._param_example()
@@ -129,7 +165,7 @@ def test_an_intraday_route_continues_on_the_dsl_path(pipeline_sessions, tmp_path
         [reply({"status": "intraday", "reason": "opening range"}), reply({"status": "ok", "spec": dsl_spec})]
     )
     harness = Harness(
-        pipeline_sessions, tmp_path / "a", Clock(CLOCK_START), registry=generating(synthetic_registry(), client)
+        pipeline_sessions, tmp_path / "a", Clock(CLOCK_START), registry=generating(synthetic_registry(), client, store)
     )
     run_id = idea_run(harness, store, "TX 30-minute opening range breakout", stage_plan=PLAN)
     harness.drain()
@@ -152,7 +188,7 @@ def test_ambiguous_ends_unsupported_and_can_be_rerun(pipeline_sessions, tmp_path
     ambiguous = {"status": "ambiguous", "reason": "台指 names no series", "missing": ["signal_series"]}
     client = FakeClient([reply(ambiguous)])
     harness = Harness(
-        pipeline_sessions, tmp_path / "a", Clock(CLOCK_START), registry=generating(v3_registry(store), client)
+        pipeline_sessions, tmp_path / "a", Clock(CLOCK_START), registry=generating(v3_registry(store), client, store)
     )
     run_id = idea_run(harness, store, "微台 3 倍，台指跌破 200 日線降槓桿")
     harness.drain()
@@ -166,7 +202,7 @@ def test_ambiguous_ends_unsupported_and_can_be_rerun(pipeline_sessions, tmp_path
 def test_family_members_inherit_the_routed_class(pipeline_sessions, tmp_path, store):
     client = FakeClient([reply(planted_reply())] * 2)  # the fake JEV disagrees once: one repair round
     harness = Harness(
-        pipeline_sessions, tmp_path / "a", Clock(CLOCK_START), registry=generating(v3_registry(store), client)
+        pipeline_sessions, tmp_path / "a", Clock(CLOCK_START), registry=generating(v3_registry(store), client, store)
     )
     first = idea_run(harness, store, PLANTED_IDEA, stage_plan=["spec_generate"])
     with pytest.raises(PipelineRequestInvalid, match="no strategy class yet"):

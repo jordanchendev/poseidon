@@ -32,7 +32,7 @@ Never stand in for a higher-timeframe indicator by reusing its length on intrada
 
 ## B. Daily strategies (spec v3, component registry)
 
-Decide after each daily close, fill at the next session's open (TX family: the 15:00 night session). One or more sleeves = instrument + direction + leverage chain + sizing + rebalance. 1-4 tunable parameters per spec (`*` = may be one). Daily runs start 2001-01-02; warm-up comes from earlier data.
+Decide after each daily close, fill at the next session's open (TX family: the 15:00 night session). One or more sleeves = instrument + direction + leverage chain + sizing + rebalance. 1-4 tunable parameters per spec (`*` = may be one). Daily runs start 2001-01-02, or later when a series the spec reads starts later (its first day plus the warm-up, e.g. `index:taiex_tr`); warm-up comes from earlier data.
 
 Instruments (point value TWD/pt, fee TWD/contract/side, daily data from):
 - TX (台指期): 200, 50, 1998-07-21; own prices; listed 1998-07-21
