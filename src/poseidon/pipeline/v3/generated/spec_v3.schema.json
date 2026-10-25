@@ -149,6 +149,83 @@
       "title": "ExecutionSignalCloseParams",
       "type": "object"
     },
+    "HedgeProtectivePut": {
+      "additionalProperties": false,
+      "description": "Buy TXO monthly puts against the long futures position: strike nearest close x (1 - moneyness), roll before expiry, cover_ratio 1 = 1 put per 5 TMF; valued at daily settlement prices.",
+      "properties": {
+        "component": {
+          "const": "hedge.protective_put",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/HedgeProtectivePutParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "hedge.protective_put",
+      "type": "object"
+    },
+    "HedgeProtectivePutParams": {
+      "additionalProperties": false,
+      "properties": {
+        "cover_ratio": {
+          "anyOf": [
+            {
+              "maximum": 1.5,
+              "minimum": 0.25,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 1.0,
+          "title": "Cover Ratio"
+        },
+        "moneyness_pct": {
+          "anyOf": [
+            {
+              "maximum": 0.2,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 0.05,
+          "title": "Moneyness Pct"
+        },
+        "roll_days_before_expiry": {
+          "anyOf": [
+            {
+              "maximum": 15,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 5,
+          "title": "Roll Days Before Expiry"
+        },
+        "tenor": {
+          "default": "front",
+          "enum": [
+            "front",
+            "next"
+          ],
+          "title": "Tenor",
+          "type": "string"
+        }
+      },
+      "title": "HedgeProtectivePutParams",
+      "type": "object"
+    },
     "InstrumentDecl": {
       "additionalProperties": false,
       "properties": {
@@ -739,10 +816,8 @@
         },
         "hedges": {
           "items": {
-            "additionalProperties": true,
-            "type": "object"
+            "$ref": "#/$defs/HedgeProtectivePut"
           },
-          "maxItems": 0,
           "title": "Hedges",
           "type": "array"
         },

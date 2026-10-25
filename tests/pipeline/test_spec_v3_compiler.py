@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 
 import numpy as np
 import pandas as pd
@@ -11,9 +12,19 @@ import pytest
 from poseidon.pipeline.engine import ContractSpec
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, TAIEX, TAIEX_TR
 from poseidon.pipeline.refdata.store import RefdataStore
+from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
+from poseidon.pipeline.refdata.taifex_options import FSP_DATASET as OPTION_FINAL
 from poseidon.pipeline.v3 import compiler
-from poseidon.pipeline.v3.compiler import NotCompilable, compile_spec, futures_bars, plan, resolve
-from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
+from poseidon.pipeline.v3.compiler import (
+    OPTION_DATASETS,
+    HedgeCoverageError,
+    NotCompilable,
+    compile_spec,
+    futures_bars,
+    plan,
+    resolve,
+)
+from poseidon.pipeline.v3.examples import PROTECTIVE_PUT, tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.instruments import INSTRUMENTS
 from poseidon.pipeline.v3.runtime import Conventions
 
@@ -216,3 +227,113 @@ def test_resolve_validates_and_binds_params():
     broken["sleeves"][0]["sizing"]["component"] = "sizing.nope"
     with pytest.raises(ValueError, match="does not validate"):
         resolve(broken)
+
+
+# ----------------------------------------------------------------------------- hedges (TXO, M4)
+
+
+def _hedged(**kwargs) -> dict:
+    doc = spec(**kwargs)
+    doc["sleeves"][0]["hedges"] = [copy.deepcopy(PROTECTIVE_PUT)]
+    return doc
+
+
+@pytest.fixture(scope="module")
+def hedged_store(store, tmp_path_factory):
+    """The futures store plus TXO puts on every monthly expiry: strikes every 100 points around the index,
+    settlement = intrinsic + 40 (one row per strike per day), final settlement = the index on the expiry day."""
+
+    _frame, expiries, index = synthetic_contracts(n_days=480)
+    rows, finals = [], []
+    for month, expiry in expiries.items():
+        for t, level in index["close"].items():
+            if t > expiry or (expiry - t).days > 95:
+                continue
+            for strike in np.arange(round(level / 100) * 100 - 1500, round(level / 100) * 100 + 600, 100.0):
+                settle = np.nan if t == expiry else max(strike - level, 0.0) + 40.0
+                rows.append((t, "day", month, "monthly", expiry, strike, "P", settle))
+                rows.append((t, "night", month, "monthly", expiry, strike, "P", np.nan))
+                rows.append((t, "day", month, "monthly", expiry, strike, "C", 1.0))
+        if expiry <= index.index[-1]:
+            finals.append((expiry, month, "monthly", float(index["close"][expiry])))
+    quotes = pd.DataFrame(
+        rows,
+        columns=["trade_date", "session", "contract_month", "expiry_kind", "expiry_date", "strike", "cp", "settlement"],
+    )
+    final = pd.DataFrame(
+        finals, columns=["final_settlement_date", "contract_month", "expiry_kind", "final_settlement_price"]
+    )
+    hedged = RefdataStore(tmp_path_factory.mktemp("refdata_txo"))
+    for dataset in (FUTURES, CALENDAR, TAIEX, TAIEX_TR):
+        _commit(hedged, dataset, store.read(dataset), store.manifest(dataset)["date_column"])
+    _commit(hedged, OPTION_QUOTES, quotes, "trade_date")
+    _commit(hedged, OPTION_FINAL, final, "final_settlement_date")
+    return hedged
+
+
+def test_a_hedged_spec_compiles_to_an_option_chain_and_a_put_policy(hedged_store):
+    compiled = compile_spec(_hedged(), start=START, store=hedged_store)
+    (policy,) = compiled.hedges
+    assert (policy.name, policy.underlying, policy.chain, policy.moneyness, policy.roll_days, policy.cover_ratio) == (
+        "core.protective_put",
+        "core",
+        "TXO",
+        0.05,
+        5,
+        1.0,
+    )
+    chain = compiled.options["TXO"]
+    assert set(chain.quotes["cp"]) == {"P"} and chain.quotes["settlement"].notna().any()
+    assert set(OPTION_DATASETS) <= set(compiled.inputs) and any(note.startswith("TXO:") for note in compiled.notes)
+    res = compiled.run()
+    fills = res.fills[res.fills["instrument"] == "core.protective_put"]
+    assert len(fills) and set(fills["reason"]) <= {"rebalance", "roll"} and (fills["session"] == "close").all()
+    # one put per five TMF of the engine's final futures order at each decision
+    rows = res.positions_daily.set_index(["instrument", "date"])
+    assert (rows.loc["core.protective_put", "target_units"] == rows.loc["core", "order_units"] // 5).all()
+    plain = compile_spec(spec(), start=START, store=hedged_store)
+    assert not plain.hedges and not plain.options and not set(OPTION_DATASETS) & set(plain.inputs)
+
+
+def test_a_hedged_spec_passes_the_truncation_audit(hedged_store):
+    report = compile_spec(_hedged(), start=START, store=hedged_store).audit(n_cuts=8, seed=5)
+    assert len(report.cuts) == 8 and report.ok, report.mismatches
+
+
+def test_more_than_five_percent_unavailable_hedge_days_fail_the_run(hedged_store):
+    compiled = compile_spec(_hedged(), start=START, store=hedged_store)
+    chain = compiled.options["TXO"]
+    far = dataclasses.replace(chain, quotes=chain.quotes.assign(strike=chain.quotes["strike"] - 5000.0))
+    broken = dataclasses.replace(compiled, options={"TXO": far})
+    with pytest.raises(HedgeCoverageError, match=r"hedge unavailable on \d+ of \d+ hedged days"):
+        broken.run()
+    assert "hedge_unavailable" in set(broken.engine_run().events["kind"])  # the report path does not raise
+
+
+def test_the_window_store_clips_the_chain_and_hashes_it_only_for_hedged_runs(hedged_store):
+    from poseidon.pipeline.daily_stages import WindowStore
+
+    upper = START.date()
+    clipped = WindowStore(hedged_store, upper, extra=OPTION_DATASETS)
+    rows = clipped.read(OPTION_QUOTES)
+    assert (
+        rows["trade_date"].max() <= START
+        and set(rows["cp"]) == {"P"}
+        and set(rows.columns) == set(compiler.OPTION_QUOTE_FIELDS)
+    )
+    plain = WindowStore(hedged_store, upper)
+    assert plain.data_sha256() != clipped.data_sha256()
+    assert plain.data_sha256() == WindowStore(hedged_store, upper).data_sha256()
+
+
+def test_daily_shadow_paper_refuses_a_hedged_spec_instead_of_dropping_the_hedge():
+    from types import SimpleNamespace
+
+    from poseidon.pipeline.daily_stages import compile_strategy
+    from poseidon.pipeline.shadow_paper_daily import StrategyNotCompiled
+
+    ctx = SimpleNamespace(
+        config={"components": {}}, upstream={"optimize": SimpleNamespace(report={"best_spec": _hedged()})}
+    )
+    with pytest.raises(StrategyNotCompiled, match="does not run hedges"):
+        compile_strategy(ctx)

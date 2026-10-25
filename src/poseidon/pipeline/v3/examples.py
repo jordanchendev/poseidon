@@ -57,3 +57,20 @@ def tmf_dynamic_leverage_3x() -> dict[str, Any]:
     the TAIEX price index."""
 
     return copy.deepcopy(_TMF_DYNAMIC_LEVERAGE_3X)
+
+
+# Design §3.2 / §10 M4: the same strategy with the protective put of the design example (a 5 % out-of-the-money
+# front-month TXO put, rolled 5 trading days before expiry, one put per five TMF).
+PROTECTIVE_PUT: dict[str, Any] = {
+    "component": "hedge.protective_put",
+    "params": {"moneyness_pct": 0.05, "tenor": "front", "roll_days_before_expiry": 5, "cover_ratio": 1.0},
+}
+
+
+def tmf_dynamic_leverage_3x_put() -> dict[str, Any]:
+    """The M4 acceptance spec: :func:`tmf_dynamic_leverage_3x` plus ``hedge.protective_put``."""
+
+    doc = tmf_dynamic_leverage_3x()
+    doc["name"] = "tmf_dynamic_leverage_3x_put"
+    doc["sleeves"][0]["hedges"] = [copy.deepcopy(PROTECTIVE_PUT)]
+    return doc

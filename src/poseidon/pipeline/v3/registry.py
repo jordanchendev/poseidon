@@ -234,6 +234,19 @@ class RollComponent(Component):
         raise NotImplementedError(f"{self.name} has no daily behaviour yet")
 
 
+class HedgeComponent(Component):
+    """A bought-option overlay on the sleeve's futures position. The engine sizes, selects, rolls,
+    values and settles it (``engine.options``); the component turns its parameters into that policy."""
+
+    slot = "hedge"
+    option_symbol: ClassVar[str]  # instrument-table row of the option it buys
+
+    def policy(self, params: StrictParams, *, name: str, underlying: str, chain: str) -> Any:
+        """The ``engine.HedgePolicy`` for a sleeve trading engine instrument ``underlying``."""
+
+        raise NotImplementedError(f"{self.name} has no daily behaviour yet")
+
+
 class ExecutionComponent(Component):
     """Decision-to-fill timing; the engine reads ``fill`` (§5.1)."""
 
@@ -275,7 +288,6 @@ PLANNED_COMPONENTS: dict[str, str] = {
     "allocation.fixed_weights": "step 8 (multi-instrument portfolios)",
     "allocation.inverse_vol": "step 8 (multi-instrument portfolios)",
     "allocation.regime_switch": "step 8 (multi-instrument portfolios)",
-    "hedge.protective_put": "step 9 / M4 (TXO data and option engine)",
     "direction.custom": "step 10 / M5 (sandboxed custom Python, feature flag)",
     "leverage.custom": "step 10 / M5 (sandboxed custom Python, feature flag)",
     "hedge.collar": "Phase 2 (needs option-writer margin)",

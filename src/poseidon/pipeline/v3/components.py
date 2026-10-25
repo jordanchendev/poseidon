@@ -22,13 +22,23 @@ from typing import Annotated, Any, Literal
 import numpy as np
 from pydantic import Field
 
-from poseidon.pipeline.v3.instruments import INDEX_ALIAS, INTRADAY_FREQUENCIES, SIGNAL_INDICES, Instrument, signal_index
+from poseidon.pipeline.engine.options import HedgePolicy
+from poseidon.pipeline.v3.instruments import (
+    INDEX_ALIAS,
+    INSTRUMENTS,
+    INTRADAY_FREQUENCIES,
+    SAME_INDEX_FAMILY,
+    SIGNAL_INDICES,
+    Instrument,
+    signal_index,
+)
 from poseidon.pipeline.v3.registry import (
     AllocationComponent,
     CheckContext,
     DescribeContext,
     DirectionComponent,
     ExecutionComponent,
+    HedgeComponent,
     LeverageComponent,
     RebalanceComponent,
     RollComponent,
@@ -536,6 +546,83 @@ class AtSettlementRoll(RollComponent):
 
     def describe(self, params, ctx):
         return "結算日 13:25→13:30 合成換月"
+
+
+# --------------------------------------------------------------------------- hedge
+
+
+@register
+class ProtectivePut(HedgeComponent):
+    """Bought TXO monthly puts against the sleeve's long futures position (design §5.7).
+
+    At each decision the engine sizes the hedge from the sleeve's final target units: puts =
+    floor(cover_ratio x units x futures point value / 50), so at cover 1 one put covers five TMF
+    (a flat or short position holds none). It keeps the held put until it has
+    ``roll_days_before_expiry`` or fewer trading days left, then sells it and buys a new one:
+    the ``front`` (or ``next``) monthly expiry with more trading days left than that, at the
+    listed strike nearest to the futures close x (1 - moneyness_pct) that has a settlement price.
+    A nearest strike more than 5 % from that target is ``hedge_unavailable`` (no new put that day;
+    over 5 % of the hedged days fails the run). Valued and filled at daily settlement prices plus
+    max(1 tick, 5 % of premium) slippage; a put held to expiry is cash-settled at the final
+    settlement price. Behaviour lives in ``engine.options``.
+    """
+
+    name = "hedge.protective_put"
+    frequencies = DAILY
+    option_symbol = "TXO"
+    capabilities = ("protective_put", "option_hedge", "tail_hedge")
+    summary = (
+        "Buy TXO monthly puts against the long futures position: strike nearest close x (1 - moneyness), "
+        "roll before expiry, cover_ratio 1 = 1 put per 5 TMF; valued at daily settlement prices."
+    )
+
+    class Params(StrictParams):
+        moneyness_pct: Annotated[float, Field(ge=0.0, le=0.20)] = 0.05
+        tenor: Literal["front", "next"] = "front"
+        roll_days_before_expiry: Annotated[int, Field(ge=1, le=15)] = 5
+        cover_ratio: Annotated[float, Field(ge=0.25, le=1.5)] = 1.0
+
+    tunable = frozenset({"moneyness_pct", "roll_days_before_expiry", "cover_ratio"})
+    example = {"moneyness_pct": 0.05, "tenor": "front", "roll_days_before_expiry": 5, "cover_ratio": 1.0}
+
+    def check(self, params, ctx):
+        problems = []
+        if ctx.instrument is not None and ctx.instrument.symbol not in SAME_INDEX_FAMILY:
+            family = ", ".join(SAME_INDEX_FAMILY)
+            problems.append(("", f"hedge.protective_put buys TXO puts and only hedges {family} sleeves"))
+        direction = (ctx.sleeve or {}).get("direction") or {}
+        if (
+            direction.get("component") == "direction.constant"
+            and (direction.get("params") or {}).get("side") == "short"
+        ):
+            problems.append(("", "a protective put hedges a long position; this sleeve is always short"))
+        return problems
+
+    def policy(self, params, *, name, underlying, chain):
+        return HedgePolicy(
+            name=name,
+            underlying=underlying,
+            chain=chain,
+            moneyness=params.moneyness_pct,
+            roll_days=params.roll_days_before_expiry,
+            cover_ratio=params.cover_ratio,
+            tenor=0 if params.tenor == "front" else 1,
+            cp="P",
+        )
+
+    def describe(self, params, ctx):
+        option = INSTRUMENTS[self.option_symbol]
+        source = ctx.instrument.price_proxy or ctx.instrument.symbol
+        per_put = option.point_value_twd / (ctx.instrument.point_value_twd * ctx.instrument.lot * params.cover_ratio)
+        tenor = "近月" if params.tenor == "front" else "次近月"
+        return (
+            f"買進{option.name_zh}月選賣權保護多單：履約價取 {source} 期貨收盤價 ×(1−{pct(params.moneyness_pct)}%) "
+            f"最近、有結算價的序列，{tenor}（剩餘超過 {params.roll_days_before_expiry} 個交易日的到期），"
+            f"到期前 {params.roll_days_before_expiry} 個交易日換到下一個到期；口數 = {ctx.instrument.symbol} 口數 × "
+            f"{fmt(ctx.instrument.point_value_twd * ctx.instrument.lot)} × {fmt(params.cover_ratio)} ÷ "
+            f"{fmt(option.point_value_twd)}，無條件捨去（每 {fmt(per_put)} 口 {ctx.instrument.symbol} 一口賣權）；"
+            "以每日結算價估值和成交（另加滑價），到期以最後結算價現金結算"
+        )
 
 
 # --------------------------------------------------------------------------- execution

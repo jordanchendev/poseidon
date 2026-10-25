@@ -125,7 +125,7 @@ def test_the_prompt_is_rendered_from_the_registry():
     assert '"missing":["signal_series"]' in SYSTEM_PROMPT_V3
     for name in REGISTRY:  # every registered component, with its catalog entry
         assert f'"name":"{name}"' in SYSTEM_PROMPT_V3
-    assert '"hedge.protective_put"' in SYSTEM_PROMPT_V3  # listed as planned
+    assert '"hedge.collar"' in SYSTEM_PROMPT_V3  # listed as planned
     assert '"leverage_cap":5.0' in SYSTEM_PROMPT_V3 and '"symbol":"TMF"' in SYSTEM_PROMPT_V3
     for series in ('"self:adjusted"', '"index:taiex"', '"index:taiex_tr"'):
         assert series in SYSTEM_PROMPT_V3
@@ -321,11 +321,11 @@ def test_model_unsupported_is_aggregatable():
 
 def test_a_planned_component_in_the_spec_is_unsupported_not_a_repair():
     spec = tmf_dynamic_leverage_3x()
-    spec["sleeves"][0]["hedges"] = [{"component": "hedge.protective_put", "params": {}}]
+    spec["sleeves"][0]["exits"] = [{"component": "exit.stop_loss", "params": {}}]
     client = FakeClient([reply(ok_reply(spec=spec))])
     outcome, _ = run_v3(client)
     assert outcome.verdict == Verdict.UNSUPPORTED and len(client.chat_payloads) == 1
-    assert outcome.report["missing_capabilities"] == ["hedge_protective_put"]
+    assert outcome.report["missing_capabilities"] == ["exit_stop_loss"]
     assert outcome.report["rejected_spec"] == spec
 
 

@@ -246,7 +246,8 @@ def test_hand_written_run_reports_implemented_and_missing_clauses():
     }
     put = report["clauses"][2]
     assert put["jev_slot"]["choice"] == "hedge"
-    assert put["jev_component"] == {"choice": "none_fits", "decided_by": "registry (no registered component)"}
+    # JEV maps the clause to the registered put; the acceptance spec has no hedge, so it stays not implemented
+    assert put["jev_component"]["choice"] == "hedge.protective_put" and put["faithfulness"]["label"] == "says_nothing"
     # the statement JEV judged against is describe_spec of the validated template
     checked = validate_spec_v3(acceptance())
     assert report["statement"] == describe_spec(checked.template, checked.params)
@@ -296,10 +297,10 @@ def test_every_call_is_stored_for_replay_with_its_cost():
         if _name == "clause_component":
             assert "none_fits" in question["criteria"] and len(question["criteria"]) <= jev.MAX_COMPONENT_OPTIONS + 1
     usage = result.report["jev"]
-    # slot + faithfulness per clause, plus a component question for the leverage clause (instrument: none
-    # to choose; hedge: no registered component)
-    assert usage["calls"] == len(calls) == 7
-    assert usage["cost_usd"] == pytest.approx(7 * COST) and usage["cost_sources"] == ["openrouter"]
+    # slot + faithfulness per clause, plus a component question for the leverage and the hedge clause
+    # (instrument: none to choose)
+    assert usage["calls"] == len(calls) == 8
+    assert usage["cost_usd"] == pytest.approx(8 * COST) and usage["cost_sources"] == ["openrouter"]
     assert result.report["files"] == {"jev_calls": "jev_calls.json"}
 
 
@@ -360,8 +361,7 @@ def test_review_hook_returns_validator_style_items():
         "clauses.2.slot",  # JEV: leverage
         "clauses.2.component",
         "clauses.3",  # 2x against the spec's 3x: precheck contradicts
-        "clauses.4.component",  # no registered hedge component fits
-    ]
+    ]  # clauses.4: JEV agrees on hedge.protective_put
     assert "contradicts clause c4" in items[2]["msg"] and "2 倍 (multiple)" in items[2]["msg"]
     assert review.session.cost_usd > 0 and review.session.files()["jev_calls.json"]
     assert len(review.rounds) == 1
