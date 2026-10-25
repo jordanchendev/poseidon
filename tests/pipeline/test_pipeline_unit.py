@@ -297,7 +297,7 @@ def test_alembic_streams_are_separate():
     pipeline_config = Config(ini, ini_section="pipeline")
     pipeline = ScriptDirectory.from_config(pipeline_config)
     assert main.get_heads() == ["046"]
-    assert pipeline.get_heads() == ["p003"]
+    assert pipeline.get_heads() == ["p004"]
     assert all(not revision.revision.startswith("p") for revision in main.walk_revisions())
     assert pipeline_config.get_main_option("version_table") == "alembic_version_pipeline"
     assert Config(ini).get_main_option("version_table") is None

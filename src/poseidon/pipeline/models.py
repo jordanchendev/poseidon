@@ -46,6 +46,15 @@ INSTRUMENT_CHECK = (
     "AND (market = 'multi') = (symbol = 'PORTFOLIO')"
 )
 
+# p004: a Sisyphus-drafted idea keeps the owner's original text beside the draft (all three set or all NULL).
+DRAFTERS = ("sisyphus",)
+ORIGINAL_CHECK = (
+    "(original_text IS NULL AND original_sha256 IS NULL AND drafted_by IS NULL) OR "
+    "(original_text IS NOT NULL AND original_sha256 IS NOT NULL AND drafted_by IS NOT NULL "
+    f"AND btrim(original_text) <> '' AND drafted_by IN ({', '.join(repr(d) for d in DRAFTERS)}) "
+    "AND original_sha256 = encode(sha256(convert_to(original_text, 'UTF8')), 'hex'))"
+)
+
 
 def _in(column: str, values) -> str:
     return f"{column} IN ({', '.join(repr(str(value)) for value in values)})"
@@ -76,6 +85,7 @@ class PipelineRun(PipelineBase):
             name="ck_pipeline_runs_idempotency_pair",
         ),
         CheckConstraint("btrim(idea_text) <> ''", name="ck_pipeline_runs_idea_text"),
+        CheckConstraint(ORIGINAL_CHECK, name="ck_pipeline_runs_original"),
         CheckConstraint("btrim(created_by) <> ''", name="ck_pipeline_runs_created_by"),
         CheckConstraint("revision >= 1", name="ck_pipeline_runs_revision"),
         CheckConstraint(
@@ -99,6 +109,9 @@ class PipelineRun(PipelineBase):
     input_spec_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     config_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
     config_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    original_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    drafted_by: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_by: Mapped[str] = mapped_column(String(256), nullable=False)
     create_idempotency_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
     create_request_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -131,6 +144,9 @@ RUN_FROZEN_COLUMNS = (
     "create_idempotency_key",
     "create_request_sha256",
     "created_at",
+    "original_text",
+    "original_sha256",
+    "drafted_by",
 )
 
 

@@ -42,6 +42,15 @@ class UpstreamResult:
     files: tuple = ()  # the attempt's file manifest: ({"name", "sha256", "bytes"}, ...)
 
 
+@dataclass(frozen=True)
+class IdeaOriginal:
+    """The owner's own material behind a drafted ``idea_text`` (the draft is what the owner confirmed)."""
+
+    text: str
+    sha256: str
+    drafted_by: str
+
+
 @dataclass
 class StageContext:
     run_id: uuid.UUID
@@ -65,6 +74,7 @@ class StageContext:
     now: datetime | None = None
     stage_started_at: datetime | None = None
     resume: UpstreamResult | None = None
+    original: IdeaOriginal | None = None  # no stage reads it yet; a stage that does must hash original.sha256
 
     def check_stop(self) -> None:
         if self.should_stop():

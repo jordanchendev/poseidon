@@ -11,8 +11,10 @@ Commands
             <state_dir>/delivered/<batch>. Batches older than proposal_max_age_days are skipped, not sent.
       pull  `ssh research-bridge strategy-pending` -> POST /api/v1/pipelines {idea_text, source: "telegram"} with
             Idempotency-Key "telegram-idea-<idea id>" (default stage_plan = full pipeline) -> `strategy-ack <id>
-            <run_no> <run_id>`. A crash between POST and ack is harmless: the next tick POSTs the same key and the
-            API replays the same run.
+            <run_no> <run_id>`. A Sisyphus-drafted idea carries the owner's original {text, sha256, drafted_by},
+            posted as `original` beside the draft; one whose original macminim4 reports as unavailable
+            (original_error) gets no run, logged once and not retried. A crash between POST and ack is harmless:
+            the next tick POSTs the same key and the API replays the same run.
             Accepted scout proposals arrive here too, with the proposal id (YYYYMMDD-pN) as idea id: the run is created
             with source "scout", Idempotency-Key "scout-proposal-<id>" and the idea_text from this host's
             proposals.jsonl (macminim4 only says which proposal; an unknown id or a different text is refused), and
@@ -195,10 +197,12 @@ class Api:
     def get(self, path):
         return self.request("GET", self.base + path, None, self._headers())
 
-    def create(self, idea_id, text, source="telegram"):
+    def create(self, idea_id, text, source="telegram", original=None):
         prefix = "scout-proposal" if source == "scout" else "telegram-idea"
         headers = self._headers({"Content-Type": "application/json", "Idempotency-Key": f"{prefix}-{idea_id}"})
         body = {"idea_text": text, "source": source}  # no stage_plan: the server default (full pipeline)
+        if original is not None:
+            body["original"] = original  # the API checks its shape and sha256
         return self.request("POST", self.base + "/api/v1/pipelines", body, headers)
 
 
@@ -687,6 +691,14 @@ def pull(api, bridge, state, log, dry_run=False, hold=None, now=None, scout=None
         rec = state.idea(idea_id)
         if rec and rec.get("rejected"):
             continue  # logged once when it was rejected
+        if rec is None and idea.get("original_error"):
+            # A drafted idea whose original macminim4 cannot hand over: never run the draft without it.
+            why = f"original unavailable: {_one_line(idea['original_error'], 120)}"
+            if not dry_run:
+                state.save_idea({"idea_id": idea_id, "rejected": True, "reason": why, "at": utcnow().isoformat()})
+            log(f"idea {idea_id} refused: {why}; not retried")
+            failures += 1
+            continue
         is_proposal = bool(PROPOSAL_ID_RE.match(idea_id))
         if is_proposal:
             # macminim4 only names the proposal; the text that becomes the run is this host's own proposal text.
@@ -722,7 +734,9 @@ def pull(api, bridge, state, log, dry_run=False, hold=None, now=None, scout=None
             continue
         if rec is None:
             try:
-                status, body = api.create(idea_id, text, source="scout" if is_proposal else "telegram")
+                status, body = api.create(
+                    idea_id, text, source="scout" if is_proposal else "telegram", original=idea.get("original")
+                )
             except OSError as error:
                 log(f"create for idea {idea_id} failed: {type(error).__name__}")
                 failures += 1
