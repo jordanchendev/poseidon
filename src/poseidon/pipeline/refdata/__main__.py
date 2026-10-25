@@ -1,6 +1,6 @@
 """Build or update the refdata datasets (idempotent).
 
-    python -m poseidon.pipeline.refdata update [--root DIR] [--group futures|twse] [--full]
+    python -m poseidon.pipeline.refdata update [--root DIR] [--group futures|twse|cboe] [--full]
                                                [--seed-taifex DIR] [--seed-twse DIR] [--refresh-months N]
     python -m poseidon.pipeline.refdata verify [--root DIR]
     python -m poseidon.pipeline.refdata daily [--root DIR]      # update + freshness report (one JSON)

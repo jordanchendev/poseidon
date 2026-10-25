@@ -1,0 +1,111 @@
+{
+  "spec_version": 3,
+  "name": "tmf_dip_ladder_vix_fear",
+  "frequency": "1d",
+  "capital": {
+    "initial_twd": 1000000
+  },
+  "instruments": {
+    "core": {
+      "symbol": "TMF",
+      "roll": {
+        "component": "roll.before_settlement",
+        "params": {
+          "days_before": 1
+        }
+      }
+    }
+  },
+  "sleeves": [
+    {
+      "id": "main",
+      "instrument": "core",
+      "direction": {
+        "component": "direction.constant",
+        "params": {
+          "side": "long"
+        }
+      },
+      "leverage": [
+        {
+          "component": "leverage.base",
+          "params": {
+            "value": 1.0
+          }
+        },
+        {
+          "component": "leverage.drawdown_ladder",
+          "params": {
+            "signal": "index:taiex",
+            "lookback_days": {
+              "$param": "lookback"
+            },
+            "steps": [
+              {
+                "drawdown_pct": 0.08,
+                "leverage": 1.5
+              },
+              {
+                "drawdown_pct": 0.15,
+                "leverage": 2.0
+              },
+              {
+                "drawdown_pct": 0.25,
+                "leverage": 2.5
+              }
+            ],
+            "hold": true,
+            "release_drawdown_pct": 0.04
+          }
+        },
+        {
+          "component": "leverage.level_ladder",
+          "params": {
+            "signal": "index:vix",
+            "steps": [
+              {
+                "level": 30.0,
+                "leverage": 2.5
+              },
+              {
+                "level": 40.0,
+                "leverage": 3.0
+              }
+            ],
+            "hold": true,
+            "release_below": 22.0
+          }
+        }
+      ],
+      "sizing": {
+        "component": "sizing.target_leverage",
+        "params": {
+          "rounding": "floor"
+        }
+      },
+      "rebalance": {
+        "component": "rebalance.threshold_band",
+        "params": {
+          "band_pct": 0.1
+        }
+      },
+      "exits": [],
+      "hedges": []
+    }
+  ],
+  "allocation": {
+    "component": "allocation.single"
+  },
+  "execution": {
+    "component": "execution.next_open"
+  },
+  "params": {
+    "lookback": {
+      "type": "int",
+      "low": 60,
+      "high": 240,
+      "step": 60,
+      "default": 120
+    }
+  }
+}

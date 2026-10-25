@@ -35,6 +35,8 @@ M1_COMPONENTS = {
     "execution.next_open",
     "execution.signal_close",
     "allocation.single",
+    "leverage.drawdown_ladder",
+    "leverage.level_ladder",
 }
 M4_COMPONENTS = {"hedge.protective_put"}
 COMPONENTS = M1_COMPONENTS | M4_COMPONENTS

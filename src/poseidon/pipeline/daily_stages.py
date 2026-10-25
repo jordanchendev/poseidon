@@ -54,19 +54,19 @@ from poseidon.pipeline.gates.daily import (
     underlying_returns,
 )
 from poseidon.pipeline.plan import V3_GATE_STAGES
-from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, TAIEX, TAIEX_TR
+from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, TAIEX, TAIEX_TR, VIX
 from poseidon.pipeline.stages import BaseStage, StageResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.trials import TRIAL_COMPLETE, TRIAL_FAIL, TRIAL_PRUNED, MemoryTrialLedger
 from poseidon.pipeline.v3.compiler import OPTION_DATASETS, ROW_FILTERS, NotCompilable, compile_spec, hedged
-from poseidon.pipeline.v3.config import ENGINE, SPEC_VALIDATOR
+from poseidon.pipeline.v3.config import ENGINE, SPEC_VALIDATOR, used_index_datasets
 from poseidon.pipeline.v3.runtime import Conventions
 from poseidon.pipeline.v3.spec import substitute
 from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
 
 V3_WIRING_VERSION = 1  # part of every v3 stage's input hash
 # clipped at the window's last day; calendars stay whole
-PRICE_DATASETS = frozenset({FUTURES, TAIEX, TAIEX_TR, *OPTION_DATASETS})
+PRICE_DATASETS = frozenset({FUTURES, TAIEX, TAIEX_TR, VIX, *OPTION_DATASETS})
 UNDERLYING_ROLL_DAYS_BEFORE = 1  # DAILY_GATES.benchmark.underlying: TX back-adjusted, roll before settlement
 TRADING_DAYS_PER_YEAR = 252.0
 EXECUTION_TIMING = "execution_timing"
@@ -119,13 +119,14 @@ class WindowStore:
     filtered in memory, so many engine runs over one window cost one read (a dataset in
     ``compiler.ROW_FILTERS`` through its filter, whatever ``rows`` a caller passes). ``data_sha256``
     hashes exactly what was read: the trial ledger's window identity; ``extra`` names datasets it
-    covers beyond the futures, calendar and index ones (a hedged spec: ``compiler.OPTION_DATASETS``).
+    covers beyond the futures, calendar and always-attached index ones (``index:vix``, a hedge's
+    ``compiler.OPTION_DATASETS``).
     """
 
     def __init__(self, store, upper: date | None, extra: tuple[str, ...] = ()):
         self._store = store
         self.upper = upper
-        self.extra = extra
+        self._extra = extra  # optional datasets the spec reads (index:vix, a hedge's TXO), hashed into data_sha256
         self._frames: dict[str, pd.DataFrame] = {}
         self._columns: dict[str, str] = {}
 
@@ -164,7 +165,7 @@ class WindowStore:
             FUTURES,
             CALENDAR,
             *sorted(name for name in (TAIEX, TAIEX_TR) if self._store.exists(name)),
-            *self.extra,
+            *self._extra,
         ]
         return content_sha256(
             {
@@ -445,7 +446,9 @@ class DailyStage(BaseStage):
         return SpecRunner(
             template=template,
             grid=opt.ParamGrid(params),
-            store=WindowStore(self.store(), upper, extra=OPTION_DATASETS if hedged(template) else ()),
+            store=WindowStore(
+                self.store(), upper, used_index_datasets(template) + (OPTION_DATASETS if hedged(template) else ())
+            ),
             start=start,
             end=end,
             basis=self.basis(ctx),

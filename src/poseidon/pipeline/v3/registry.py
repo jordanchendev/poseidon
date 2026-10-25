@@ -308,9 +308,16 @@ UNSUPPORTED_CAPABILITIES: dict[str, str] = {
     "order_book": "order book or tick data",
     "implied_volatility": "implied volatility signals",
     "other_markets": "instruments outside TAIFEX index futures (NQ/ES/TE, crypto, US stocks)",
-    "news_fundamentals": "news, fundamentals, sentiment or companion flows (e.g. foreign investor flows)",
+    "news_fundamentals": (
+        "news, fundamentals, text or survey sentiment, or companion flows (e.g. foreign investor flows); the VIX "
+        "itself IS available as `index:vix`"
+    ),
     "ml_models": "machine-learning model predictions",
-    "pyramiding": "pyramiding (adding to a position on its own signals beyond the sizing target)",
+    "pyramiding": (
+        "pyramiding on the position's own profit or signals (adding to a winner beyond the sizing target); adding on "
+        "price DECLINES is `leverage.drawdown_ladder` and adding when the VIX (or another signal level) is high is "
+        "`leverage.level_ladder`, both CAN"
+    ),
 }
 
 

@@ -87,7 +87,7 @@ def test_catalog_is_the_machine_form_of_the_registry():
     rows = {row["name"]: row for row in ma_band["params"]}
     assert rows["ma_days"]["tunable"] and "[20, 400]" in rows["ma_days"]["spec"]
     assert not rows["signal"]["tunable"]
-    assert rows["signal"]["spec"].endswith('"index:<taiex|taiex_tr>", required')
+    assert rows["signal"]["spec"].endswith('"index:<taiex|taiex_tr|vix>", required')
     assert data["policy"]["leverage_cap"] == 5.0
     assert data["policy"]["initial_capital_twd"] == {"default": 1_000_000, "min": 300_000, "max": 20_000_000}
 
@@ -198,4 +198,5 @@ def test_part_b_covers_can_cannot_instruments_and_the_signal_series_rule():
     assert "`self:adjusted`" in part_b and "`index:taiex`" in part_b and "`index:taiex_tr`" in part_b
     assert "unsupported" in part_b and "`short_stock`" in part_b
     assert "NOT SMA(200) on 5m bars" in part_b
-    assert len(text) < 9000
+    # was 9000 before the two ladders and the VIX note (about 1.5 KB), 10_500 before the protective put
+    assert len(text) < 11_000

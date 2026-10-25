@@ -14,6 +14,7 @@ dataset                         rows                                        buil
 ``taifex_roll_r1``              R1 front-month segments per product         futures + calendar
 ``twse_taiex_daily``            TAIEX price index OHLC (1999+)              TWSE MI_5MINS_HIST
 ``twse_taiex_total_return``     TAIEX total-return index (2003+)            TWSE MFI94U
+``cboe_vix_daily``              CBOE VIX OHLC (1990+), trade_date = US date CBOE VIX_History.csv (1 file)
 ==============================  ==========================================  =========================
 
 :func:`update_all` is the only entry point. It fetches every missing month,
@@ -37,7 +38,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from poseidon.pipeline.refdata import taifex, twse
+from poseidon.pipeline.refdata import cboe, taifex, twse
 from poseidon.pipeline.refdata.fetch import PoliteFetcher
 from poseidon.pipeline.refdata.store import (
     DatasetMissingError,
@@ -53,11 +54,17 @@ CALENDAR = "taifex_settlement_calendar"
 ROLL_R1 = "taifex_roll_r1"
 TAIEX = "twse_taiex_daily"
 TAIEX_TR = "twse_taiex_total_return"
+VIX = "cboe_vix_daily"
 MARKET_CALENDAR = "twse_market_calendar"
 PRODUCTS = ("TX", "MTX", "TMF")
 # CALENDAR 2: ltd_source / scheduled_last_trading_day / ltd_check; unexpired contracts on the official schedule
-SCHEMA_VERSION = {FUTURES: 1, FSP: 1, MARKET_CALENDAR: 1, CALENDAR: 2, ROLL_R1: 1, TAIEX: 1, TAIEX_TR: 1}
-GROUPS = {"futures": (FUTURES, FSP, MARKET_CALENDAR, CALENDAR, ROLL_R1), "twse": (TAIEX, TAIEX_TR)}
+SCHEMA_VERSION = {FUTURES: 1, FSP: 1, MARKET_CALENDAR: 1, CALENDAR: 2, ROLL_R1: 1, TAIEX: 1, TAIEX_TR: 1, VIX: 1}
+GROUPS = {
+    "futures": (FUTURES, FSP, MARKET_CALENDAR, CALENDAR, ROLL_R1),
+    "twse": (TAIEX, TAIEX_TR),
+    "cboe": (VIX,),
+}
+VIX_RAW = "VIX_History.csv"
 
 
 @dataclass(frozen=True)
@@ -135,9 +142,13 @@ MONTHLY = {
 
 
 def default_fetchers() -> dict[str, PoliteFetcher]:
-    from poseidon.pipeline.refdata.fetch import TAIFEX_MIN_INTERVAL, TWSE_MIN_INTERVAL
+    from poseidon.pipeline.refdata.fetch import CBOE_MIN_INTERVAL, TAIFEX_MIN_INTERVAL, TWSE_MIN_INTERVAL
 
-    return {"taifex": PoliteFetcher(TAIFEX_MIN_INTERVAL), "twse": PoliteFetcher(TWSE_MIN_INTERVAL)}
+    return {
+        "taifex": PoliteFetcher(TAIFEX_MIN_INTERVAL),
+        "twse": PoliteFetcher(TWSE_MIN_INTERVAL),
+        "cboe": PoliteFetcher(CBOE_MIN_INTERVAL),
+    }
 
 
 def _months(first: tuple[int, int], today: date) -> list[tuple[int, int]]:
@@ -282,6 +293,24 @@ def update_fsp(store: RefdataStore, fetcher: PoliteFetcher, *, today: date, code
     return _summary(store, FSP, result.changed, int(changed), result.written)
 
 
+def update_vix(store: RefdataStore, fetcher: PoliteFetcher, *, now: datetime, code_version: str) -> UpdateReport:
+    """The whole VIX history in one GET; rows not yet final at ``now`` (UTC) are left out."""
+
+    body = fetcher.fetch(cboe.VIX_URL, validate=cboe.is_vix_csv)
+    record, changed = store.put_raw(VIX, VIX_RAW, body, url=cboe.VIX_URL, params={})
+    frame = cboe.parse_vix(store.raw_bytes(VIX, record.name), final_through=cboe.last_final_date(now))
+    result = store.commit(
+        VIX,
+        schema_version=SCHEMA_VERSION[VIX],
+        date_column="trade_date",
+        partitions=_by_month(frame, "trade_date"),
+        sources=[record],
+        code_version=code_version,
+        full=True,
+    )
+    return _summary(store, VIX, result.changed, int(changed), result.written)
+
+
 def update_market_calendar(
     store: RefdataStore, fetcher: PoliteFetcher, *, today: date, code_version: str
 ) -> UpdateReport:
@@ -354,6 +383,7 @@ def update_all(
     groups: Iterable[str] = ("futures", "twse"),
     fetchers: dict[str, PoliteFetcher] | None = None,
     today: date | None = None,
+    now: datetime | None = None,
     refresh_months: int = 2,
     full: bool = False,
     code_version: str = "unknown",
@@ -362,7 +392,8 @@ def update_all(
     """Fetch what is new and rebuild what changed; safe to re-run at any time."""
 
     fetchers = fetchers if fetchers is not None else default_fetchers()
-    today = today or datetime.now(UTC).date()
+    now = now or datetime.now(UTC)
+    today = today or now.date()
     seed_dirs = seed_dirs or {}
     groups = list(groups)
     reports = []
@@ -375,4 +406,6 @@ def update_all(
     if "twse" in groups:
         for name in (TAIEX, TAIEX_TR):
             reports.append(update_monthly(store, MONTHLY[name], fetchers, seed_dir=seed_dirs.get("twse"), **common))
+    if "cboe" in groups:
+        reports.append(update_vix(store, fetchers["cboe"], now=now, code_version=code_version))
     return reports

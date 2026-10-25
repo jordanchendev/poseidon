@@ -41,12 +41,15 @@ Instruments (point value TWD/pt, fee TWD/contract/side, daily data from):
 - TXO (台指選擇權): bought puts only, through `hedge.protective_put`; daily data from 2001-12-24
 Futures: tax 0.002% both legs, 1 tick slippage/side, margin ~7.0% initial. Capital 300,000-20,000,000 TWD (default 1,000,000); leverage at most 5x; integer contracts (every grid point must buy 1+ contract within 25% of target leverage, else use MTX/TMF); initial margin at most 80% of equity; shorts only via futures.
 
-### Signal series (required by regime.ma_band and risk.vol_cap; never assumed)
+### Signal series (required by regime.ma_band, risk.vol_cap and the two ladders; never assumed)
 
 The same 200-day MA band over 2000-2014 ends 49% apart on the TX adjusted series vs the TAIEX price index (49 vs 33 regime switches). If the idea only says "台指", "TAIEX", "大盤" or a bare 均線, ask the owner which series; never pick silently.
 - `self:adjusted`: the traded futures' back-adjusted continuous price, from 1998-07-21.
 - `index:taiex`: TAIEX price index (加權股價指數（不含息）), from 1999-01-05.
 - `index:taiex_tr`: TAIEX total-return index (加權股價報酬指數（含息）), from 2003-01-02.
+- `index:vix`: CBOE VIX volatility index (previous US session close) (CBOE 恐慌指數 VIX（前一個美股交易日收盤）), from 1990-01-02.
+
+`index:vix` is the previous US session's close: a Taiwan decision on date t reads US dates t-1 and earlier only (the VIX of US date t is not known yet). Scale-in ideas are CAN: "add when price falls N%" is `leverage.drawdown_ladder` (the opposite of the planned `risk.drawdown_brake`, which cuts leverage after the strategy's own equity drawdown) and "add when VIX is above X" is `leverage.level_ladder` on `index:vix`. Both only raise the incoming leverage, within the 5x cap and the margin limit.
 
 ### What B CAN use (`*` = tunable)
 
@@ -55,6 +58,8 @@ The same 200-day MA band over 2000-2014 ends 49% apart on the TX adjusted series
 - `leverage.base`: Base leverage L0 = value x equity (first link of the leverage chain). [value number (0.0, 5.0], required *]
 - `regime.ma_band`: Moving-average regime with a hysteresis band: below MA x (1 - band) switch to off_leverage, back above MA x (1 + band) restore the incoming leverage. [signal series ref, required; ma_days integer [20, 400], default 200 *; band_pct number [0.0, 0.1], default 0.02 *; off_leverage number [0.0, 5.0], default 0.5 *]
 - `risk.vol_cap`: Volatility cap: leverage = min(incoming, k / annualised realised volatility over window_days). [signal series ref, required; window_days integer [5, 120], default 20 *; k number [0.1, 3.0], default 0.75 *]
+- `leverage.drawdown_ladder`: Drawdown ladder (adds leverage when the PRICE falls): leverage steps UP as the signal falls from its rolling high, e.g. -10% -> 2x, -20% -> 3x; hold keeps the reached step until the drawdown recovers to release_drawdown_pct. Never lowers leverage. NOT the planned risk.drawdown_brake (cuts leverage after the strategy's own equity drawdown). [signal series ref, required; lookback_days integer [20, 500], default 120 *; steps array: 1-6 rungs {drawdown_pct (fraction of the rolling high, 0-0.9), leverage}, both strictly increasing, e.g. [{drawdown_pct: 0.1, leverage: 2}, {drawdown_pct: 0.2, leverage: 3}], required; hold boolean, default false; release_drawdown_pct number [0.0, 0.9), default 0.05]
+- `leverage.level_ladder`: Level ladder (adds leverage when a signal LEVEL is high): leverage steps UP as the signal reaches thresholds, e.g. VIX >= 30 -> 2x, >= 40 -> 3x; hold keeps the step until the signal falls to release_below. Never lowers leverage. [signal series ref, required; steps array: 1-6 rungs {level, leverage}, both strictly increasing, e.g. [{level: 30, leverage: 2}, {level: 40, leverage: 3}], required; hold boolean, default false; release_below number [0.0, 1000.0], default 0.0]
 - `sizing.target_leverage`: Equity-based integer contracts: units = equity x direction x leverage / (price x point value). [rounding floor | nearest, default "floor"]
 - `sizing.fixed_contracts`: A fixed number of contracts n whenever the direction is non-zero (v1 behaviour). [n integer [1, 20], default 1 *]
 - `rebalance.daily`: Re-size every trading day when the target differs by at least min_change_units. [min_change_units integer [1, 100], default 1 *]
@@ -75,7 +80,7 @@ Not yet (planned): `regime.ma_cross`, `risk.vol_target`, `risk.drawdown_brake`, 
 - order book or tick data (`order_book`)
 - implied volatility signals (`implied_volatility`)
 - instruments outside TAIFEX index futures (NQ/ES/TE, crypto, US stocks) (`other_markets`)
-- news, fundamentals, sentiment or companion flows (e.g. foreign investor flows) (`news_fundamentals`)
+- news, fundamentals, text or survey sentiment, or companion flows (e.g. foreign investor flows); the VIX itself IS available as `index:vix` (`news_fundamentals`)
 - machine-learning model predictions (`ml_models`)
-- pyramiding (adding to a position on its own signals beyond the sizing target) (`pyramiding`)
+- pyramiding on the position's own profit or signals (adding to a winner beyond the sizing target); adding on price DECLINES is `leverage.drawdown_ladder` and adding when the VIX (or another signal level) is high is `leverage.level_ladder`, both CAN (`pyramiding`)
 - A daily indicator is never emulated on intraday bars (a 200-day MA is NOT SMA(200) on 5m bars): such an idea is a B strategy on frequency 1d (e.g. `regime.ma_band` with ma_days 200).

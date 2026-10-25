@@ -99,6 +99,30 @@
       "title": "direction.dsl_rules",
       "type": "object"
     },
+    "DrawdownStep": {
+      "additionalProperties": false,
+      "description": "From a drawdown of ``drawdown_pct`` (a fraction of the rolling high) on, the leverage is ``leverage``.",
+      "properties": {
+        "drawdown_pct": {
+          "exclusiveMinimum": 0.0,
+          "maximum": 0.9,
+          "title": "Drawdown Pct",
+          "type": "number"
+        },
+        "leverage": {
+          "exclusiveMinimum": 0.0,
+          "maximum": 5.0,
+          "title": "Leverage",
+          "type": "number"
+        }
+      },
+      "required": [
+        "drawdown_pct",
+        "leverage"
+      ],
+      "title": "DrawdownStep",
+      "type": "object"
+    },
     "ExecutionNextOpen": {
       "additionalProperties": false,
       "description": "Decide after the daily close, fill at the next session's open (TX family: 15:00 night open).",
@@ -271,6 +295,30 @@
       "title": "InstrumentDecl",
       "type": "object"
     },
+    "LevelStep": {
+      "additionalProperties": false,
+      "description": "From a signal level of ``level`` on, the leverage is ``leverage``.",
+      "properties": {
+        "level": {
+          "exclusiveMinimum": 0.0,
+          "maximum": 1000.0,
+          "title": "Level",
+          "type": "number"
+        },
+        "leverage": {
+          "exclusiveMinimum": 0.0,
+          "maximum": 5.0,
+          "title": "Leverage",
+          "type": "number"
+        }
+      },
+      "required": [
+        "level",
+        "leverage"
+      ],
+      "title": "LevelStep",
+      "type": "object"
+    },
     "LeverageBase": {
       "additionalProperties": false,
       "description": "Base leverage L0 = value x equity (first link of the leverage chain).",
@@ -311,6 +359,132 @@
         "value"
       ],
       "title": "LeverageBaseParams",
+      "type": "object"
+    },
+    "LeverageDrawdownLadder": {
+      "additionalProperties": false,
+      "description": "Drawdown ladder (adds leverage when the PRICE falls): leverage steps UP as the signal falls from its rolling high, e.g. -10% -> 2x, -20% -> 3x; hold keeps the reached step until the drawdown recovers to release_drawdown_pct. Never lowers leverage. NOT the planned risk.drawdown_brake (cuts leverage after the strategy's own equity drawdown).",
+      "properties": {
+        "component": {
+          "const": "leverage.drawdown_ladder",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/LeverageDrawdownLadderParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "leverage.drawdown_ladder",
+      "type": "object"
+    },
+    "LeverageDrawdownLadderParams": {
+      "additionalProperties": false,
+      "properties": {
+        "hold": {
+          "default": false,
+          "title": "Hold",
+          "type": "boolean"
+        },
+        "lookback_days": {
+          "anyOf": [
+            {
+              "maximum": 500,
+              "minimum": 20,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 120,
+          "title": "Lookback Days"
+        },
+        "release_drawdown_pct": {
+          "default": 0.05,
+          "exclusiveMaximum": 0.9,
+          "minimum": 0.0,
+          "title": "Release Drawdown Pct",
+          "type": "number"
+        },
+        "signal": {
+          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr|vix))$",
+          "title": "Signal",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/DrawdownStep"
+          },
+          "maxItems": 6,
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "signal",
+        "steps"
+      ],
+      "title": "LeverageDrawdownLadderParams",
+      "type": "object"
+    },
+    "LeverageLevelLadder": {
+      "additionalProperties": false,
+      "description": "Level ladder (adds leverage when a signal LEVEL is high): leverage steps UP as the signal reaches thresholds, e.g. VIX >= 30 -> 2x, >= 40 -> 3x; hold keeps the step until the signal falls to release_below. Never lowers leverage.",
+      "properties": {
+        "component": {
+          "const": "leverage.level_ladder",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/LeverageLevelLadderParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "leverage.level_ladder",
+      "type": "object"
+    },
+    "LeverageLevelLadderParams": {
+      "additionalProperties": false,
+      "properties": {
+        "hold": {
+          "default": false,
+          "title": "Hold",
+          "type": "boolean"
+        },
+        "release_below": {
+          "default": 0.0,
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "title": "Release Below",
+          "type": "number"
+        },
+        "signal": {
+          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr|vix))$",
+          "title": "Signal",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/LevelStep"
+          },
+          "maxItems": 6,
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "signal",
+        "steps"
+      ],
+      "title": "LeverageLevelLadderParams",
       "type": "object"
     },
     "ParamRef": {
@@ -578,7 +752,7 @@
           "title": "Off Leverage"
         },
         "signal": {
-          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr))$",
+          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr|vix))$",
           "title": "Signal",
           "type": "string"
         }
@@ -626,7 +800,7 @@
           "title": "K"
         },
         "signal": {
-          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr))$",
+          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr|vix))$",
           "title": "Signal",
           "type": "string"
         },
@@ -835,6 +1009,8 @@
             "discriminator": {
               "mapping": {
                 "leverage.base": "#/$defs/LeverageBase",
+                "leverage.drawdown_ladder": "#/$defs/LeverageDrawdownLadder",
+                "leverage.level_ladder": "#/$defs/LeverageLevelLadder",
                 "regime.ma_band": "#/$defs/RegimeMaBand",
                 "risk.vol_cap": "#/$defs/RiskVolCap"
               },
@@ -849,6 +1025,12 @@
               },
               {
                 "$ref": "#/$defs/RiskVolCap"
+              },
+              {
+                "$ref": "#/$defs/LeverageDrawdownLadder"
+              },
+              {
+                "$ref": "#/$defs/LeverageLevelLadder"
               }
             ]
           },
