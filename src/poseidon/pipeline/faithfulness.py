@@ -35,7 +35,7 @@ from poseidon.pipeline.spec_llm import MAX_TEXT, _err
 from poseidon.pipeline.stages import BaseStage, StageResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.v3.describe import describe_spec
-from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
 
 STAGE = "spec_faithfulness"
 FAITHFULNESS_VERSION = 1  # report layout + clause split rules (part of the input hash)
@@ -97,9 +97,13 @@ def generated_clauses(raw: Any, idea_text: str) -> list[Clause] | None:
 
 
 def spec_statement(template: dict) -> tuple[str, dict] | None:
-    """``(describe_spec text, template)`` for a valid spec v3 template; ``None`` when it does not validate."""
+    """``(describe_spec text, template)`` for a valid spec v3 template; ``None`` when it does not validate.
 
-    result = validate_spec_v3(template)
+    The statement describes the spec, not a run: the daily window start is chosen for it (``choose_start``),
+    so a series that starts after the default start is described, not rejected.
+    """
+
+    result = validate_spec_v3(template, feasibility=FeasibilityContext(choose_start=True))
     if not result.ok:
         return None
     return describe_spec(result.template, result.params), result.template

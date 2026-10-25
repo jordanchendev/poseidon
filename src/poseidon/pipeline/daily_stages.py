@@ -324,13 +324,35 @@ def check_components(config: dict) -> dict:
     return frozen
 
 
+def frozen_series_since(config: dict) -> dict[str, date] | None:
+    """The series first days frozen with a window start that moved (``data.start_rule``), else None."""
+
+    rule = (config.get("data") or {}).get("start_rule")
+    if not rule:
+        return None
+    return {key: date.fromisoformat(day) for key, day in rule["series_since"].items()}
+
+
+def moved_start_text(config: dict) -> str | None:
+    """``", window from <start> (<series> data from <day> + warm-up)"`` for a start that moved, else None."""
+
+    data = config.get("data") or {}
+    rule = data.get("start_rule")
+    if not rule:
+        return None
+    binding = rule["binding_series"]
+    return f", window from {data['start']} ({binding} data from {rule['series_since'][binding]} + warm-up)"
+
+
 def feasibility_from(report: dict) -> FeasibilityContext:
     block = report.get("feasibility") or {}
     prices = {name: tuple(values) for name, values in (block.get("prices") or {}).items()}
+    series = {key: date.fromisoformat(day) for key, day in (block.get("series_since") or {}).items()}
     return FeasibilityContext(
         start=date.fromisoformat(block["start"]) if block.get("start") else None,
         end=date.fromisoformat(block["end"]) if block.get("end") else None,
         prices=prices or None,
+        series_since=series or None,
     )
 
 
@@ -495,8 +517,12 @@ class DailySpecValidateStage(DailyStage):
                 points = price_points(store, source, window.start, window.train_last)
                 if points is not None:
                     prices[source] = list(points)
+        series_since = frozen_series_since(ctx.config)
         context = FeasibilityContext(
-            start=window.start, end=window.end, prices={k: tuple(v) for k, v in prices.items()} or None
+            start=window.start,
+            end=window.end,
+            prices={k: tuple(v) for k, v in prices.items()} or None,
+            series_since=series_since,
         )
         result = validate_spec_v3(spec, feasibility=context)
         feasibility = {
@@ -506,6 +532,8 @@ class DailySpecValidateStage(DailyStage):
             "prices_source": "refdata taifex_futures_daily, nearest monthly contract's day close: "
             "(first train day, max over the train part); the holdout part is not read",
         }
+        if series_since is not None:
+            feasibility["series_since"] = {key: day.isoformat() for key, day in sorted(series_since.items())}
         report = {
             "validator": SPEC_VALIDATOR,
             "spec_sha256": content_sha256(spec),
@@ -537,7 +565,8 @@ class DailySpecValidateStage(DailyStage):
                 "grid_size": grid.size() if grid.names else 1,
                 "summary": f"spec_validate ✅ {result.strategy_class}, {len(grid.names)} $params "
                 f"({grid.size() if grid.names else 1} grid points)"
-                + (f", {len(result.notes)} note(s)" if result.notes else ""),
+                + (f", {len(result.notes)} note(s)" if result.notes else "")
+                + (moved_start_text(ctx.config) or ""),
             }
         )
         return StageResult.passed(report, reason=report["summary"])

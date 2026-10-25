@@ -352,11 +352,20 @@ class PipelineService:
 
         from poseidon.pipeline.refdata.store import RefdataError
         from poseidon.pipeline.v3.brief import render_brief
-        from poseidon.pipeline.v3.config import REFDATA_DATASETS, daily_run_config
+        from poseidon.pipeline.v3.config import REFDATA_DATASETS, daily_run_config, series_first_days
         from poseidon.pipeline.v3.instruments import INSTRUMENTS
-        from poseidon.pipeline.v3.validation import validate_spec_v3
+        from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
 
-        result = validate_spec_v3(spec)
+        try:
+            store = self.refdata()
+            refdata = {name: store.content_sha256(name) for name in REFDATA_DATASETS}
+            series_since = series_first_days(store)
+        except (RefdataError, OSError) as error:
+            raise PipelineRequestInvalid(f"refdata is not available for spec v3 runs: {error}") from error
+        # The window start is chosen here, once, and frozen (a series that starts late moves it; owner 2026-10-25).
+        result = validate_spec_v3(
+            spec, feasibility=FeasibilityContext(end=as_of, series_since=series_since, choose_start=True)
+        )
         if not result.ok:
             problems = [issue.text() for issue in (*result.errors, *result.unsupported)]
             raise PipelineRequestInvalid(f"spec_json (spec v3) does not validate: {'; '.join(problems)[:1500]}")
@@ -365,13 +374,13 @@ class PipelineService:
                 f"spec v3 runs are daily only for now ({', '.join(V3_RUN_CLASSES)}); this spec is "
                 f"{result.strategy_class}: intraday specs run as DSL v2 until DSL parity (step 7)"
             )
-        try:
-            store = self.refdata()
-            refdata = {name: store.content_sha256(name) for name in REFDATA_DATASETS}
-        except (RefdataError, OSError) as error:
-            raise PipelineRequestInvalid(f"refdata is not available for spec v3 runs: {error}") from error
         config = daily_run_config(
-            result.resolved, as_of=as_of, brief_text=render_brief(), refdata=refdata, stage_plan=stage_plan
+            result.resolved,
+            as_of=as_of,
+            brief_text=render_brief(),
+            refdata=refdata,
+            stage_plan=stage_plan,
+            window=result.window,
         )
         rows = [INSTRUMENTS[decl["symbol"]] for decl in spec["instruments"].values()]
         if len(rows) == 1:

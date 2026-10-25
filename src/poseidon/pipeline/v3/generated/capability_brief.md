@@ -6,7 +6,7 @@ The downstream pipeline turns an idea into a spec v3 and backtests it. A spec is
 
 ## Frequencies
 
-- `1d`: decide after every instrument's daily close, fill at the next session's open (TX family: the 15:00 night session). Daily runs start 2001-01-02 by default; the warm-up comes from earlier data.
+- `1d`: decide after every instrument's daily close, fill at the next session's open (TX family: the 15:00 night session). Daily runs start 2001-01-02 by default; a series that starts later (an index a signal reads) moves the run's start to that series' first day plus the warm-up. The warm-up comes from earlier data.
 - `1m` / `5m` / `15m` (intraday): only `direction.dsl_rules` (DSL v2.1), data from 2020-03-02.
 
 ## Instruments

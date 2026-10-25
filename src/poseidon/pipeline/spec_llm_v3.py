@@ -34,6 +34,7 @@ import os
 import re
 import time
 from collections.abc import Callable, Mapping
+from datetime import date
 from typing import Any
 
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
@@ -61,7 +62,7 @@ from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.instruments import SIGNAL_INDICES
 from poseidon.pipeline.v3.registry import REGISTRY, REGISTRY_VERSION, SLOTS
 from poseidon.pipeline.v3.spec import MAX_PARAMS, MIN_PARAMS, component_slots
-from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation import FeasibilityContext, WindowStart, validate_spec_v3
 
 PROMPT_VERSION_V3 = 7  # design §3.6: the v3 prompt versions start at 7 (DSL prompts are <= 6)
 ENGINE_V3 = "target_v1"
@@ -475,13 +476,23 @@ def generate_spec_v3(
     allowed_classes: tuple[str, ...] = (*DAILY_CLASSES, INTRADAY_CLASS),
     unavailable: Mapping[str, str] | None = None,
     review: Review | None = None,
+    series_since: Mapping[str, date] | None = None,
+    data_end: date | None = None,
     environ: Mapping[str, str] | None = None,
     client_factory: spec_llm.ClientFactory | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> SpecGenerationOutcome:
     """One spec_generate v3 attempt. A PASS carries ``report["route"]``; ``report["status"] == "intraday"``
-    (verdict PASS, no spec) asks the caller to run the DSL v2 generation."""
+    (verdict PASS, no spec) asks the caller to run the DSL v2 generation.
 
+    ``series_since`` (the refdata manifests' first day per series, ``v3.config.series_first_days``) and
+    ``data_end`` (the frozen daily window end): the daily window start is chosen for the generated spec
+    (owner decision 2026-10-25: a series that starts late moves it) and a start that moved is frozen into
+    ``route["data"]``. Without ``series_since`` the window is the fixed default.
+    """
+
+    if series_since is not None and data_end is None:
+        raise ValueError("series_since needs data_end, the frozen daily window end")
     report: dict = {
         "origin": "llm",
         "generator": "spec_v3",
@@ -526,7 +537,14 @@ def generate_spec_v3(
             return stop(
                 Verdict.ERROR, "key limit_remaining is below the per-attempt cost cap; refusing to call the LLM"
             )
-        run = _Rounds(idea_text, config, report, transcript, allowed_classes, dict(unavailable or {}), review)
+        feasibility = (
+            FeasibilityContext(end=data_end, series_since=series_since, choose_start=True)
+            if series_since is not None
+            else None
+        )
+        run = _Rounds(
+            idea_text, config, report, transcript, allowed_classes, dict(unavailable or {}), review, feasibility
+        )
         try:
             verdict, reason = run.loop(client)
         except _Stop as error:
@@ -557,12 +575,22 @@ def _finish(verdict: Verdict, reason: str | None, report: dict, transcript: list
     return SpecGenerationOutcome(verdict, reason, report, files)
 
 
-def pass_summary(strategy_class: str, clauses: list[dict], unimplemented: list[dict], assumptions: list[str]) -> str:
-    """The one line Telegram shows for spec_generate: class, clause count, what is not implemented, assumptions."""
+def pass_summary(
+    strategy_class: str,
+    clauses: list[dict],
+    unimplemented: list[dict],
+    assumptions: list[str],
+    window: WindowStart | None = None,
+) -> str:
+    """The one line Telegram shows for spec_generate: class, clause count, what is not implemented, a moved
+    window start, assumptions."""
 
     text = f"spec_generate ✅ {strategy_class}：{len(clauses)} 個子句"
     if unimplemented:
         text += f"，未實作 {len(unimplemented)}（" + "；".join(c["quote"][:24] for c in unimplemented) + "）"
+    if window is not None and window.moved:
+        since = window.series_since[window.binding].isoformat()
+        text += f"；資料起點 {window.start.isoformat()}（{window.binding} 從 {since} 起，加暖機）"
     text += f"；假設 {len(assumptions)} 項"
     if assumptions:
         text += "：" + "；".join(assumptions)
@@ -570,8 +598,9 @@ def pass_summary(strategy_class: str, clauses: list[dict], unimplemented: list[d
 
 
 class _Rounds:
-    def __init__(self, idea_text, config, report, transcript, allowed, unavailable, review):
+    def __init__(self, idea_text, config, report, transcript, allowed, unavailable, review, feasibility=None):
         self.idea = idea_text
+        self.feasibility = feasibility  # None: the fixed default window
         self.config = config
         self.report = report
         self.transcript = transcript
@@ -698,7 +727,7 @@ class _Rounds:
 
         report, entry = self.report, self.entry
         spec, clauses, assumptions = parsed["spec"], parsed["clauses"], parsed["assumptions"]
-        result = validate_spec_v3(spec)
+        result = validate_spec_v3(spec, feasibility=self.feasibility)
         errors = [_err(issue.path, issue.msg) for issue in result.errors]
         if result.unsupported and not result.errors:
             entry["outcome"] = "unsupported"
@@ -776,9 +805,16 @@ class _Rounds:
                     "engine": ENGINE_V3,
                     "components": sorted(candidate["used"] or ()),
                 },
-                "summary": pass_summary(result.strategy_class, clauses, unimplemented, assumptions),
+                "summary": pass_summary(result.strategy_class, clauses, unimplemented, assumptions, result.window),
             }
         )
+        window = result.window
+        if window is not None and window.moved:
+            # Frozen here, once: every later stage reads this window from the route (plan.effective_config).
+            from poseidon.pipeline.v3.config import daily_data_config
+
+            report["window_start"] = window.as_config()
+            report["route"]["data"] = daily_data_config(as_of=self.feasibility.end, window=window)
         self.entry.setdefault("outcome", "valid")
         return Verdict.PASS, None
 
@@ -822,6 +858,7 @@ def generate_routed(
     pin: str | None,
     review: Review | None = None,
     jev_client_factory=None,
+    series_since: Mapping[str, date] | None = None,
     environ: Mapping[str, str] | None = None,
     client_factory: spec_llm.ClientFactory | None = None,
     clock: Callable[[], float] = time.monotonic,
@@ -853,7 +890,7 @@ def generate_routed(
         review_errors: list[str] = []
         review = _report_only(reviewer, review_errors)
     try:
-        outcome = _generate_routed(idea_text, config, pin, review, environ, client_factory, clock)
+        outcome = _generate_routed(idea_text, config, pin, review, series_since, environ, client_factory, clock)
     finally:
         if reviewer is not None:
             reviewer.close()
@@ -891,9 +928,15 @@ def _jev_report(reviewer, errors: list[str]) -> dict:
     )
 
 
-def _generate_routed(idea_text, config, pin, review, environ, client_factory, clock) -> SpecGenerationOutcome:
+def _generate_routed(
+    idea_text, config, pin, review, series_since, environ, client_factory, clock
+) -> SpecGenerationOutcome:
     by_class = config.get("by_class") or {}
     allowed = tuple(name for name in (*DAILY_CLASSES, INTRADAY_CLASS) if name in by_class)
+    # Every daily class froze the same window end (the run's creation day).
+    ends = {by_class[name]["data"]["end"] for name in DAILY_CLASSES if name in by_class}
+    if len(ends) > 1:
+        raise ValueError(f"the daily classes of a routed run froze different window ends: {sorted(ends)}")
     v3 = generate_spec_v3(
         idea_text,
         config.get("spec_generate"),
@@ -901,6 +944,8 @@ def _generate_routed(idea_text, config, pin, review, environ, client_factory, cl
         allowed_classes=allowed,
         unavailable=config.get("unavailable"),
         review=review,
+        series_since=series_since if ends else None,
+        data_end=date.fromisoformat(ends.pop()) if ends else None,
         environ=environ,
         client_factory=client_factory,
         clock=clock,

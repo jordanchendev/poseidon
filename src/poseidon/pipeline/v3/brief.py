@@ -402,8 +402,9 @@ def render_brief() -> str:
         "## Frequencies",
         "",
         "- `1d`: decide after every instrument's daily close, fill at the next session's open (TX family: the 15:00 "
-        f"night session). Daily runs start {DAILY_WINDOW_START.isoformat()} by default; the warm-up comes from "
-        "earlier data.",
+        f"night session). Daily runs start {DAILY_WINDOW_START.isoformat()} by default; a series that starts later "
+        "(an index a signal reads) moves the run's start to that series' first day plus the warm-up. The warm-up "
+        "comes from earlier data.",
         f"- `1m` / `5m` / `15m` (intraday): only `direction.dsl_rules` (DSL v2.1), data from "
         f"{TX_INTRADAY_DATA_SINCE.isoformat()}.",
         "",
@@ -523,7 +524,8 @@ def render_capability_brief() -> str:
         "Decide after each daily close, fill at the next session's open (TX family: the 15:00 night session). One or "
         f"more sleeves = instrument + direction + leverage chain + sizing + rebalance. {MIN_PARAMS}-{MAX_PARAMS} "
         "tunable parameters per spec (`*` = may be one). Daily runs start "
-        f"{DAILY_WINDOW_START.isoformat()}; warm-up comes from earlier data.",
+        f"{DAILY_WINDOW_START.isoformat()}, or later when a series the spec reads starts later (its first day plus "
+        "the warm-up, e.g. `index:taiex_tr`); warm-up comes from earlier data.",
         "",
         "Instruments (point value TWD/pt, fee TWD/contract/side, daily data from):",
     ]

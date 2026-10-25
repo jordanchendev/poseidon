@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -513,6 +513,90 @@ def test_signal_index_coverage_is_checked_at_the_largest_window():
     for link in adjusted["sleeves"][0]["leverage"][1:]:
         link["params"]["signal"] = "self:adjusted"
     assert validate_spec_v3(adjusted, feasibility=FeasibilityContext(start=date(1999, 12, 1))).ok
+
+
+# --------------------------------------------------------------------------- the chosen window start
+# Owner decision 2026-10-25: a series that starts after the default daily start moves the run's start to that
+# series' first day plus the warm-up. ``series_since`` stands for the refdata manifests (v3.config.series_first_days).
+
+SERIES = {
+    "taifex_futures_daily/TX": date(1998, 7, 21),
+    "twse_taiex_daily": date(1999, 1, 5),
+    "twse_taiex_total_return": date(2003, 1, 2),
+}
+
+
+def total_return_spec() -> dict:
+    doc = tmf_dynamic_leverage_3x()
+    for link in doc["sleeves"][0]["leverage"][1:]:
+        link["params"]["signal"] = "index:taiex_tr"
+    return doc
+
+
+def choose(doc, series=SERIES, **kw):
+    return validate_spec_v3(doc, feasibility=FeasibilityContext(series_since=series, choose_start=True, **kw))
+
+
+def test_a_series_that_starts_late_moves_the_chosen_start_by_its_warm_up():
+    result = choose(total_return_spec())
+    assert result.ok, [issue.text() for issue in result.errors + result.unsupported]
+    window = result.window
+    # ma_days up to 250 (the largest grid value) plus the execution_timing scenario's one-row signal lag
+    bars = validation._history_bars(result.template, result.params)
+    assert window.warmup_bars == bars + validation.SIGNAL_LAG_WARMUP_BARS
+    assert window.warmup_calendar_days == validation.warmup_calendar_days(window.warmup_bars, "1d")
+    assert window.start == date(2003, 1, 2) + timedelta(days=window.warmup_calendar_days)
+    assert window.moved and window.binding == "twse_taiex_total_return"
+    assert window.default_start == validation.DAILY_WINDOW_START == date(2001, 1, 2)
+    assert window.series_since == {
+        "taifex_futures_daily/TX": date(1998, 7, 21),
+        "twse_taiex_total_return": date(2003, 1, 2),
+    }
+    # spec_validate later checks the same spec against the frozen start (fixed window): it passes
+    frozen = FeasibilityContext(start=window.start, series_since=SERIES)
+    assert validate_spec_v3(total_return_spec(), feasibility=frozen).ok
+    assert window.as_config() == {
+        "rule": "start = max(default_start, latest first day of a series the spec reads + warm-up)",
+        "default_start": "2001-01-02",
+        "series_since": {"taifex_futures_daily/TX": "1998-07-21", "twse_taiex_total_return": "2003-01-02"},
+        "binding_series": "twse_taiex_total_return",
+        "warmup_bars": window.warmup_bars,
+        "warmup_calendar_days": window.warmup_calendar_days,
+        "source": "refdata dataset manifests (coverage.start; futures: the product's first row)",
+    }
+
+
+def test_the_default_start_stands_when_every_series_starts_early_enough():
+    result = choose(tmf_dynamic_leverage_3x())  # index:taiex from 1999-01-05: 2001-01-02 has its warm-up
+    assert result.ok and result.window.start == date(2001, 1, 2)
+    assert not result.window.moved and result.window.binding is None
+    assert validate_spec_v3(tmf_dynamic_leverage_3x()).window is None  # no choice without choose_start
+
+
+def test_the_first_days_come_from_the_caller_not_the_checked_in_table():
+    late = {**SERIES, "twse_taiex_daily": date(2005, 3, 1)}  # as if the manifest started later
+    result = choose(tmf_dynamic_leverage_3x(), late)
+    assert result.ok and result.window.binding == "twse_taiex_daily" and result.window.start > date(2005, 3, 1)
+    fixed = validate_spec_v3(
+        tmf_dynamic_leverage_3x(), feasibility=FeasibilityContext(start=date(2004, 1, 5), series_since=late)
+    )
+    assert fixed.unsupported and "data starts 2005-03-01, after the run's data window start" in fixed.unsupported[0].msg
+
+
+def test_a_series_that_starts_too_late_for_any_window_is_unsupported():
+    late = {**SERIES, "twse_taiex_total_return": date(2026, 6, 1)}
+    result = choose(total_return_spec(), late, end=date(2026, 10, 24))
+    assert not result.ok and not result.errors
+    assert result.unsupported[0].path == "sleeves.0.leverage.1.params.signal"
+    assert "data starts 2026-06-01" in result.unsupported[0].msg
+    assert "not before the data end 2026-10-24" in result.unsupported[0].msg
+
+
+def test_the_warm_up_leaves_room_for_the_execution_timing_signal_lag():
+    from poseidon.pipeline.gates.execution_timing import scenarios_for
+
+    lags = [request.signal_lag_extra for request in scenarios_for({}, base_execution="next_open").values()]
+    assert max(lags) == validation.SIGNAL_LAG_WARMUP_BARS
 
 
 def test_first_bar_price_decides_contract_feasibility():

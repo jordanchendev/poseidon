@@ -11,7 +11,14 @@ from pathlib import Path
 from typing import ClassVar, Protocol
 
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
-from poseidon.pipeline.plan import CANONICAL_ORDER, V1_STAGE_PLAN, config_version, is_routed, requires_for
+from poseidon.pipeline.plan import (
+    CANONICAL_ORDER,
+    V1_STAGE_PLAN,
+    V3_RUN_CLASSES,
+    config_version,
+    is_routed,
+    requires_for,
+)
 from poseidon.pipeline.spec_validation import V2_REQUIRED, get_spec_validator
 from poseidon.pipeline.state import Verdict
 
@@ -142,15 +149,33 @@ class SpecGenerateStage(BaseStage):
     (:func:`poseidon.pipeline.spec_llm_v3.generate_routed`); its report's ``route`` picks the class whose
     frozen config the rest of the run uses. ``review(idea_text, clauses, spec) -> [{"path", "msg"}]`` is the
     reviewer of v3 specs; by default the JEV ``FaithfulnessReviewer`` (report-only, one repair round).
+    ``refdata`` (() -> store) is read, before any LLM call, for the first day of every daily series
+    (``v3.config.series_first_days``): a daily spec's window start is chosen from it.
     """
 
     name = "spec_generate"
 
-    def __init__(self, *, client_factory=None, pin_provider=None, review=None, jev_client_factory=None):
+    def __init__(self, *, client_factory=None, pin_provider=None, review=None, jev_client_factory=None, refdata=None):
         self._client_factory = client_factory
         self._pin_provider = pin_provider
         self._review = review  # None: the JEV reviewer on the run's frozen spec_faithfulness section
         self._jev_client_factory = jev_client_factory
+        self._refdata = refdata
+
+    def series_since(self, config):
+        """First day per daily series from the refdata manifests; None when the run froze no daily class."""
+
+        if not any(name in V3_RUN_CLASSES for name in (config.get("by_class") or {})):
+            return None
+        from poseidon.pipeline.v3.config import series_first_days
+
+        if self._refdata is not None:
+            store = self._refdata()
+        else:
+            from poseidon.pipeline.refdata.store import RefdataStore
+
+            store = RefdataStore()
+        return series_first_days(store)
 
     def input_payload(self, ctx):
         payload = {
@@ -181,14 +206,21 @@ class SpecGenerateStage(BaseStage):
         ctx.check_stop()
         pin = self._pin_provider() if self._pin_provider else settings.pipeline_openrouter_key_label
         if is_routed(ctx.config):
+            from poseidon.pipeline.refdata.store import RefdataError
             from poseidon.pipeline.spec_llm_v3 import generate_routed
 
+            try:
+                series_since = self.series_since(ctx.config)
+            except (RefdataError, OSError) as error:
+                reason = f"refdata is not readable for the daily window start: {error}"[:300]
+                return StageResult(Verdict.ERROR, reason, {"summary": f"spec_generate ⚠️ {reason}"[:300]})
             outcome = generate_routed(
                 ctx.idea_text,
                 ctx.config,
                 pin=pin,
                 review=self._review,
                 jev_client_factory=self._jev_client_factory,
+                series_since=series_since,
                 client_factory=self._client_factory,
             )
         else:
@@ -538,7 +570,7 @@ def build_default_registry(*, data_source=None, strategy_factory=None, refdata=N
     from poseidon.pipeline.faithfulness import SpecFaithfulnessStage
 
     legacy: dict[str, Stage] = {
-        "spec_generate": SpecGenerateStage(),
+        "spec_generate": SpecGenerateStage(refdata=refdata),
         "spec_validate": SpecValidateStage(),
         "backtest": BacktestStage(data_source, strategy_factory),
         "optimize": OptimizeStage(data_source, strategy_factory),

@@ -6,6 +6,12 @@ spec document alone plus the refdata content hashes: the spec/registry identity
 (``plan.class_settings``: thresholds, gate settings, daily shadow paper), the daily data window
 with its locked holdout, and the optimizer/backtest settings. Runs frozen at <= 5 have no
 ``engine`` key and keep the old runner, gates and paper byte for byte (``is_v3_run``).
+
+The window starts at ``DAILY_DATA_START`` unless a series the spec reads starts later (owner decision
+2026-10-25): then at that series' first day plus the warm-up (``validation.WindowStart``), chosen once
+from the refdata manifests (``series_first_days``) when the config is frozen -- at creation for a spec
+run, in spec_generate's ``route`` for an idea-only run (``plan.effective_config``) -- and recorded as
+``data.start_rule``. A window that did not move freezes exactly the bytes it did before.
 """
 
 from __future__ import annotations
@@ -33,8 +39,15 @@ from poseidon.pipeline.plan import (
     config_version,
     default_config,
 )
+from poseidon.pipeline.v3.instruments import (
+    DAILY_PRICE_DATASET,
+    INSTRUMENTS,
+    SIGNAL_INDICES,
+    price_series_key,
+)
 from poseidon.pipeline.v3.registry import REGISTRY_VERSION, component_fingerprints
 from poseidon.pipeline.v3.spec import SPEC_VERSION, component_slots, strategy_class
+from poseidon.pipeline.v3.validation import WindowStart
 
 ENGINE = "target_v1"
 SPEC_VALIDATOR = "spec_v3"
@@ -70,13 +83,22 @@ def v3_config_fields(resolved: dict, *, brief_text: str) -> dict:
     }
 
 
-def daily_data_config(*, as_of: date, start: str = DAILY_DATA_START, fraction: float = HOLDOUT_FRACTION) -> dict:
-    """``[start, as_of)`` in trading days (Asia/Taipei dates); the last ``fraction`` is the locked holdout."""
+def daily_data_config(
+    *, as_of: date, start: str = DAILY_DATA_START, fraction: float = HOLDOUT_FRACTION, window: WindowStart | None = None
+) -> dict:
+    """``[start, as_of)`` in trading days (Asia/Taipei dates); the last ``fraction`` is the locked holdout.
+
+    ``window``: the spec's chosen start; when it moved, the window starts there (the holdout is the last
+    ``fraction`` of the shorter window) and ``start_rule`` records why.
+    """
 
     from poseidon.pipeline.window import MARKET_TZ, holdout_split
 
+    moved = window is not None and window.moved
+    if moved:
+        start = window.start.isoformat()
     split = holdout_split(start, as_of, fraction).astimezone(MARKET_TZ).date()
-    return {
+    data = {
         "source": "refdata",
         "frequency": "1d",
         "timezone": "Asia/Taipei",
@@ -86,6 +108,46 @@ def daily_data_config(*, as_of: date, start: str = DAILY_DATA_START, fraction: f
         "holdout_start": split.isoformat(),
         "parts": "train = trading days in [start, holdout_start); holdout = [holdout_start, end)",
     }
+    if moved:
+        data["start_rule"] = window.as_config()
+    return data
+
+
+def series_first_days(store) -> dict[str, date]:
+    """First day of every daily series a spec can read, keyed as the validator keys them.
+
+    From the refdata dataset manifests: an index dataset holds one series (``coverage.start``); the futures
+    dataset holds every product, so a price source's first day is its first row, found by reading the
+    partitions in order. Raises ``RefdataError`` (``DatasetMissingError``) when a dataset or product is
+    missing.
+    """
+
+    from poseidon.pipeline.refdata.store import RefdataError
+
+    days = {
+        index.dataset: date.fromisoformat(store.manifest(index.dataset)["coverage"]["start"])
+        for index in SIGNAL_INDICES.values()
+    }
+    products = sorted({row.price_proxy or row.symbol for row in INSTRUMENTS.values() if row.tradable})
+    manifest = store.manifest(DAILY_PRICE_DATASET)
+    column = manifest["date_column"]
+    found: dict[str, date] = {}
+    for part in manifest["partitions"]:
+        rows = store.read(DAILY_PRICE_DATASET, start=part["start"], end=part["end"])
+        for product in products:
+            if product not in found and len(rows):
+                hits = rows.loc[rows["product"] == product, column]
+                if len(hits):
+                    found[product] = hits.min().date()
+        if len(found) == len(products):
+            break
+    missing = sorted(set(products) - set(found))
+    if missing:
+        raise RefdataError(f"{DAILY_PRICE_DATASET} has no rows for {', '.join(missing)}")
+    for symbol, row in INSTRUMENTS.items():
+        if row.tradable:
+            days[price_series_key(row)] = found[row.price_proxy or symbol]
+    return dict(sorted(days.items()))
 
 
 def daily_run_config(
@@ -95,16 +157,22 @@ def daily_run_config(
     brief_text: str,
     refdata: dict[str, str],
     stage_plan: list[str] | None = None,
+    window: WindowStart | None = None,
 ) -> dict:
-    """Everything a daily v3 run is frozen with (``resolved``: the spec with every ``$param`` at its default)."""
+    """Everything a daily v3 run is frozen with (``resolved``: the spec with every ``$param`` at its default;
+    ``window``: the validator's chosen start, ``V3Validation.window``)."""
 
     fields = v3_config_fields(resolved, brief_text=brief_text)
     return _daily_config(
-        fields, as_of=as_of, refdata=refdata, stage_plan=stage_plan if stage_plan is not None else V3_DAILY_STAGE_PLAN
+        fields,
+        as_of=as_of,
+        refdata=refdata,
+        stage_plan=stage_plan if stage_plan is not None else V3_DAILY_STAGE_PLAN,
+        window=window,
     )
 
 
-def _daily_config(fields: dict, *, as_of: date, refdata: dict[str, str], stage_plan) -> dict:
+def _daily_config(fields: dict, *, as_of: date, refdata: dict[str, str], stage_plan, window=None) -> dict:
     settings = class_settings(fields["strategy_class"])
     if "shadow_paper" not in settings:
         raise KeyError(f"strategy class {fields['strategy_class']} has no daily shadow paper settings")
@@ -114,7 +182,7 @@ def _daily_config(fields: dict, *, as_of: date, refdata: dict[str, str], stage_p
         "thresholds": settings["thresholds"],
         "gates": settings["gates"],
         "shadow_paper": settings["shadow_paper"],
-        "data": daily_data_config(as_of=as_of),
+        "data": daily_data_config(as_of=as_of, window=window),
         "holdout": {"fraction": HOLDOUT_FRACTION, "locked": True},
         "refdata": {
             "datasets": dict(sorted(refdata.items())),

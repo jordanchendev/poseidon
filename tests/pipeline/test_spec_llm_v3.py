@@ -7,7 +7,7 @@ import copy
 import json
 import re
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -330,14 +330,52 @@ def test_a_planned_component_in_the_spec_is_unsupported_not_a_repair():
 
 
 def test_a_series_that_starts_after_the_frozen_window_is_unsupported_not_a_repair():
-    # live sample 8_daily_vol: index:taiex_tr starts 2003-01-02, the daily window 2001-01-02; the window is in
-    # the run config, not the spec, so the two repair rounds it used to get could never succeed
+    # live sample 8_daily_vol: index:taiex_tr starts 2003-01-02, the daily window 2001-01-02. Without the refdata
+    # first days (no series_since) the window is the fixed default, so no repair round could fix it
     sample = json.loads((Path(__file__).parent / "fixtures" / "spec_v3_live_8_daily_vol.json").read_text())
     client = FakeClient([reply(sample["reply"])])
     outcome, _ = run_v3(client, idea=sample["idea"])
     assert outcome.verdict == Verdict.UNSUPPORTED and len(client.chat_payloads) == 1, outcome.report
     assert outcome.report["missing_capabilities"] == ["index_taiex_tr"]
     assert "after the run's data window start 2001-01-02" in outcome.report["unsupported"]["reason"]
+
+
+SERIES = {
+    "taifex_futures_daily/TX": date(1998, 7, 21),
+    "twse_taiex_daily": date(1999, 1, 5),
+    "twse_taiex_total_return": date(2003, 1, 2),
+}
+
+
+def test_with_the_refdata_first_days_a_late_series_moves_the_window_into_the_route():
+    # owner decision 2026-10-25: the same live sample is accepted; its window starts at 2003-01-02 + warm-up
+    sample = json.loads((Path(__file__).parent / "fixtures" / "spec_v3_live_8_daily_vol.json").read_text())
+    client = FakeClient([reply(sample["reply"])])
+    outcome, _ = run_v3(client, idea=sample["idea"], series_since=SERIES, data_end=AS_OF)
+    assert outcome.verdict == Verdict.PASS and len(client.chat_payloads) == 1, outcome.report
+    rule = outcome.report["window_start"]
+    assert (
+        rule["binding_series"] == "twse_taiex_total_return"
+        and rule["series_since"]["twse_taiex_total_return"] == "2003-01-02"
+    )
+    data = outcome.report["route"]["data"]
+    assert data["start"] == (date(2003, 1, 2) + timedelta(days=rule["warmup_calendar_days"])).isoformat()
+    assert data["end"] == AS_OF.isoformat() and data["start_rule"] == rule
+    assert f"資料起點 {data['start']}（twse_taiex_total_return 從 2003-01-02 起，加暖機）" in outcome.report["summary"]
+    # later stages see that window: the routed class's frozen config with the route's data
+    config = routed()
+    seen = effective_config(config, outcome.report["route"])
+    assert seen["data"] == data and config["by_class"]["daily_equity"]["data"]["start"] == "2001-01-02"
+    with pytest.raises(RouteError, match="keep the frozen window end"):
+        effective_config(config, {**outcome.report["route"], "data": {**data, "end": "2026-10-25"}})
+    with pytest.raises(ValueError, match="needs data_end"):
+        run_v3(FakeClient([]), series_since=SERIES)
+
+
+def test_a_spec_whose_series_start_early_routes_without_window_data():
+    outcome, _ = run_v3(FakeClient([reply(ok_reply())]), series_since=SERIES, data_end=AS_OF)
+    assert outcome.verdict == Verdict.PASS and "data" not in outcome.report["route"]
+    assert "window_start" not in outcome.report and "資料起點" not in outcome.report["summary"]
 
 
 def test_a_not_implemented_add_on_passes_and_is_listed():
@@ -622,14 +660,26 @@ def _ctx(config) -> StageContext:
     )
 
 
-def test_stage_routes_a_routed_run_through_v3_and_hashes_both_prompts(monkeypatch):
+def first_days_store(root):
+    from tests.pipeline.v3_wiring_support import series_store
+
+    return series_store(
+        root,
+        futures={"TX": "1998-07-21"},
+        indices={"twse_taiex_daily": "1999-01-05", "twse_taiex_total_return": "2003-01-02"},
+    )
+
+
+def test_stage_routes_a_routed_run_through_v3_and_hashes_both_prompts(monkeypatch, tmp_path):
     monkeypatch.setenv(spec_llm.KEY_ENV, KEY)
     client = FakeClient([reply(ok_reply())])
     seen = []
+    store = first_days_store(tmp_path)
     stage = SpecGenerateStage(
         client_factory=lambda key, timeout: client,
         pin_provider=lambda: LABEL,
         review=lambda idea, clauses, spec: seen.append(len(clauses)) or [],
+        refdata=lambda: store,
     )
     ctx = _ctx(routed())
     payload = stage.input_payload(ctx)
@@ -639,6 +689,22 @@ def test_stage_routes_a_routed_run_through_v3_and_hashes_both_prompts(monkeypatc
     assert seen == [8]
     legacy = _ctx(routed()["by_class"]["intraday_fixed"])
     assert "prompt_v3_sha256" not in stage.input_payload(legacy)
+
+
+def test_stage_errors_before_any_llm_call_when_refdata_is_unreadable(monkeypatch, tmp_path):
+    from poseidon.pipeline.refdata.store import RefdataStore
+
+    monkeypatch.setenv(spec_llm.KEY_ENV, KEY)
+    stage = SpecGenerateStage(
+        client_factory=lambda *_: pytest.fail("no LLM call without the series first days"),
+        pin_provider=lambda: LABEL,
+        review=lambda *_: [],
+        refdata=lambda: RefdataStore(tmp_path / "empty"),
+    )
+    result = stage.run(_ctx(routed()))
+    assert result.verdict == Verdict.ERROR and result.reason.startswith("refdata is not readable")
+    # a routed run that froze no daily class never reads refdata
+    assert stage.series_since(routed(classes=("intraday_fixed",))) is None
 
 
 def test_reply_contract_errors_are_repaired():
