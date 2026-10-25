@@ -19,7 +19,8 @@ LABEL = "sk-or-v1-fee...567"
 ENV = {KEY_ENV: KEY}
 COST = 0.00004
 
-Rule = Callable[[str, dict, dict], str]  # (question name, state, criteria) -> choice
+# (question name, state, criteria) -> choice, or (choice, probability) to set the reply's probability
+Rule = Callable[[str, dict, dict], str | tuple[str, float]]
 
 
 def default_rule(name: str, state: dict, criteria: dict) -> str:
@@ -80,6 +81,7 @@ class FakeOpenRouter:
         body = json.loads(request.content)
         ((name, question),) = body["questions"].items()
         choice = self.rule(name, body["state"], question["criteria"])
+        choice, p = choice if isinstance(choice, tuple) else (choice, 0.9)
         usage = {"input_tokens": 800, "output_tokens": 40}
         if self.cost is not None:
             usage["cost"] = self.cost
@@ -87,9 +89,7 @@ class FakeOpenRouter:
             200,
             json={
                 "model": "typesafe/jev-1.13-20260917",
-                "answers": {
-                    name: {"type": "choice", "choice": choice, "probabilities": {choice: 0.9}, "confidence": 0.9}
-                },
+                "answers": {name: {"type": "choice", "choice": choice, "probabilities": {choice: p}, "confidence": p}},
                 "usage": usage,
                 "provider": "TypeSafe",
             },

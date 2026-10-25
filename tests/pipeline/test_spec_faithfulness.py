@@ -12,7 +12,7 @@ from datetime import date
 import pytest
 
 from poseidon.decision_loop.manifest import content_sha256
-from poseidon.pipeline import jev, spec_llm
+from poseidon.pipeline import faithfulness, jev, spec_llm
 from poseidon.pipeline.clause_precheck import extract_quantities, precheck
 from poseidon.pipeline.faithfulness import (
     FaithfulnessReviewer,
@@ -29,7 +29,7 @@ from poseidon.pipeline.plan import (
     StagePlanError,
     validate_stage_plan,
 )
-from poseidon.pipeline.stages import STAGE_REGISTRY, StageContext, UpstreamResult
+from poseidon.pipeline.stages import STAGE_REGISTRY, IdeaOriginal, StageContext, UpstreamResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.v3.config import REFDATA_DATASETS, daily_run_config
 from poseidon.pipeline.v3.describe import describe_spec
@@ -60,7 +60,7 @@ def run_config(**section) -> dict:
     return config
 
 
-def ctx(config=None, *, idea=IDEA, template=None, generate_report=None) -> StageContext:
+def ctx(config=None, *, idea=IDEA, template=None, generate_report=None, original=None) -> StageContext:
     config = config or run_config()
     upstream = {
         "spec_validate": UpstreamResult(
@@ -80,6 +80,7 @@ def ctx(config=None, *, idea=IDEA, template=None, generate_report=None) -> Stage
         stage="spec_faithfulness",
         attempt=1,
         upstream=upstream,
+        original=original,
     )
 
 
@@ -161,6 +162,7 @@ def test_a_failed_request_is_an_error_with_the_calls_so_far_and_no_key():
         ("槓桿不超過 5 倍", False, []),  # the policy cap
         ("做空台指", True, ["sign"]),
         ("不做空", False, []),
+        ("左側依技術分析和估值計算做空間規劃", False, []),  # 做空間 is space planning, not a short
         ("空頭時降到 0.5 倍", False, []),  # a bear regime, not a short position
         ("用 300 日均線", False, []),  # days outside the $param range: advisory only
         ("MA200 濾網", False, []),
@@ -246,7 +248,8 @@ def test_hand_written_run_reports_implemented_and_missing_clauses():
     }
     put = report["clauses"][2]
     assert put["jev_slot"]["choice"] == "hedge"
-    assert put["jev_component"] == {"choice": "none_fits", "decided_by": "registry (no registered component)"}
+    # JEV maps the clause to the registered put; the acceptance spec has no hedge, so it stays not implemented
+    assert put["jev_component"]["choice"] == "hedge.protective_put" and put["faithfulness"]["label"] == "says_nothing"
     # the statement JEV judged against is describe_spec of the validated template
     checked = validate_spec_v3(acceptance())
     assert report["statement"] == describe_spec(checked.template, checked.params)
@@ -296,10 +299,10 @@ def test_every_call_is_stored_for_replay_with_its_cost():
         if _name == "clause_component":
             assert "none_fits" in question["criteria"] and len(question["criteria"]) <= jev.MAX_COMPONENT_OPTIONS + 1
     usage = result.report["jev"]
-    # slot + faithfulness per clause, plus a component question for the leverage clause (instrument: none
-    # to choose; hedge: no registered component)
-    assert usage["calls"] == len(calls) == 7
-    assert usage["cost_usd"] == pytest.approx(7 * COST) and usage["cost_sources"] == ["openrouter"]
+    # slot + faithfulness per clause, plus a component question for the leverage and the hedge clause
+    # (instrument: none to choose)
+    assert usage["calls"] == len(calls) == 8
+    assert usage["cost_usd"] == pytest.approx(8 * COST) and usage["cost_sources"] == ["openrouter"]
     assert result.report["files"] == {"jev_calls": "jev_calls.json"}
 
 
@@ -360,8 +363,7 @@ def test_review_hook_returns_validator_style_items():
         "clauses.2.slot",  # JEV: leverage
         "clauses.2.component",
         "clauses.3",  # 2x against the spec's 3x: precheck contradicts
-        "clauses.4.component",  # no registered hedge component fits
-    ]
+    ]  # clauses.4: JEV agrees on hedge.protective_put
     assert "contradicts clause c4" in items[2]["msg"] and "2 倍 (multiple)" in items[2]["msg"]
     assert review.session.cost_usd > 0 and review.session.files()["jev_calls.json"]
     assert len(review.rounds) == 1
@@ -435,3 +437,124 @@ def test_summary_lists_at_most_five_quotes():
     }
     line, clean = summary_line(result, blocking=False)
     assert not clean and line.count("「") == 5 and "等 7 句" in line and "…」" in line
+
+
+# ----------------------------------------------------------------------------- direction check (drafted runs)
+
+ORIGINAL_TEXT = "左側分批買入。恐慌時建倉。跌破季線就停損。過去低點在 -30% 附近。末日點位即整個頭部型態壓下來"
+ORIGINAL = IdeaOriginal(ORIGINAL_TEXT, "e" * 64, "sisyphus")
+# fall-response answers per original sentence: two clear adds (0.99, and 0.9 at the bar), a clear cut, and
+# the experiment's two weak answers (an add at 0.49, a spurious cut at 0.79)
+FALLS = {
+    "左側分批買入": ("add_on_fall", 0.99),
+    "恐慌時建倉": ("add_on_fall", 0.9),
+    "跌破季線就停損": ("cut_on_fall", 0.99),
+    "過去低點在 -30% 附近": ("add_on_fall", 0.49),
+    "末日點位即整個頭部型態壓下來": ("cut_on_fall", 0.79),
+}
+
+
+def falls(statement_answer):
+    def rule(name, state, criteria):
+        if name == "fall_response":
+            return FALLS.get(state["text"], statement_answer)
+        return default_rule(name, state, criteria)
+
+    return FakeOpenRouter(rule)
+
+
+def test_a_drafted_run_flags_original_sentences_opposite_to_the_spec_direction():
+    fake = falls(("cut_on_fall", 1.0))  # run #11: the spec cuts leverage below the MA band
+    result = fake_faithfulness_stage(fake).run(ctx(original=ORIGINAL))
+    section = result.report["direction_check"]
+    assert result.verdict == Verdict.PASS
+    assert section["statement"]["direction"] == "cut_on_fall"
+    assert section["flagged"] == ["s1", "s2"]  # the 0.49 add stays under the bar; the cuts agree
+    assert section["counts"] == {"clauses": 5, "add_on_fall": 2, "cut_on_fall": 1, "flagged": 2}
+    assert (section["threshold"], section["question_version"], section["blocking"]) == (0.9, 1, False)
+    assert section["original_sha256"] == "e" * 64 and section["clause_source"] == "sentence_split"
+    assert result.report["summary"] == (
+        "spec_faithfulness ⚠️ 已實作 2 句 / 未實作 1 句（「買 put 保護」） / contradicts 0；"
+        "原文方向相反 2 句（「左側分批買入」、「恐慌時建倉」）；report-only"
+    )
+    # counted apart: the clause review is the idea's, unchanged by the original
+    undrafted = fake_faithfulness_stage().run(ctx())
+    assert result.report["counts"] == undrafted.report["counts"]
+    assert json.loads(result.files["jev_calls.json"]) == json.loads(undrafted.files["jev_calls.json"])
+    direction_calls = json.loads(result.files["jev_direction_calls.json"])["calls"]
+    assert [c["request"]["state"]["text"] for c in direction_calls] == [result.report["statement"], *FALLS]
+    assert section["jev"]["calls"] == 6
+
+
+def test_a_faithful_control_is_not_flagged_by_a_weak_opposite_answer():
+    result = fake_faithfulness_stage(falls(("add_on_fall", 0.99))).run(ctx(original=ORIGINAL))
+    section = result.report["direction_check"]
+    assert section["flagged"] == ["s3"]  # the 0.99 cut; the 0.79 cut (s5) is under the bar
+    assert "原文方向相反 1 句（「跌破季線就停損」）" in result.report["summary"]
+    capped = fake_faithfulness_stage(falls(("add_on_fall", 0.99))).run(
+        ctx(run_config(max_clauses=3), original=ORIGINAL)
+    )
+    assert [c["id"] for c in capped.report["direction_check"]["not_judged"]] == ["s4", "s5"]
+    assert "原文方向相反 1 句（「跌破季線就停損」），原文超過上限未判 2 句" in capped.report["summary"]
+
+
+@pytest.mark.parametrize("statement_answer", [("no_direction", 0.99), ("cut_on_fall", 0.8)])
+def test_no_comparison_when_the_spec_direction_is_unclear(statement_answer):
+    result = fake_faithfulness_stage(falls(statement_answer)).run(ctx(original=ORIGINAL))
+    section = result.report["direction_check"]
+    assert section["statement"]["direction"] is None and section["flagged"] == []
+    assert "原文方向未比對：spec 下跌時無明確方向；report-only" in result.report["summary"]
+
+
+def test_the_direction_check_never_fails_the_stage():
+    blocking = run_config(blocking=True)
+    flagged = fake_faithfulness_stage(falls(("cut_on_fall", 1.0))).run(ctx(blocking, original=ORIGINAL))
+    assert flagged.verdict == Verdict.PASS and flagged.report["direction_check"]["counts"]["flagged"] == 2
+    assert "原文方向相反 2 句（「左側分批買入」、「恐慌時建倉」）（report-only）" in flagged.report["summary"]
+
+    def broken(name, state, criteria):
+        return "bogus" if name == "fall_response" else default_rule(name, state, criteria)
+
+    result = fake_faithfulness_stage(FakeOpenRouter(broken)).run(ctx(original=ORIGINAL))
+    assert result.verdict == Verdict.PASS
+    assert "no valid choice" in result.report["direction_check"]["error"]
+    assert result.report["summary"].startswith("spec_faithfulness ⚠️")
+    assert "原文方向檢查失敗" in result.report["summary"]
+    assert len(json.loads(result.files["jev_direction_calls.json"])["calls"]) == 1
+
+
+def test_the_direction_question_enters_the_input_hash_only_with_an_original(monkeypatch):
+    stage = STAGE_REGISTRY["spec_faithfulness"]
+    undrafted, drafted = ctx(), ctx(original=ORIGINAL)
+    before = {
+        "undrafted": content_sha256(stage.input_payload(undrafted)),
+        "drafted": content_sha256(stage.input_payload(drafted)),
+        "questions": jev.questions_sha256(),
+    }
+    assert set(stage.input_payload(undrafted)) == {
+        "stage",
+        "config_sha256",
+        "upstream",
+        "idea_sha256",
+        "faithfulness_version",
+        "precheck_version",
+        "questions_sha256",
+    }
+    assert before["drafted"] != before["undrafted"]
+    other = IdeaOriginal(ORIGINAL_TEXT + "。", "f" * 64, "sisyphus")
+    assert content_sha256(stage.input_payload(ctx(original=other))) != before["drafted"]
+
+    changes = [
+        ("FALL_RESPONSE_QUESTION", jev.Question("fall_response", "reworded", jev.FALL_RESPONSE_QUESTION.criteria)),
+        ("DIRECTION_QUESTION_VERSION", 2),
+    ]
+    for name, value in changes:
+        with monkeypatch.context() as patch:
+            patch.setattr(jev, name, value)
+            assert content_sha256(stage.input_payload(undrafted)) == before["undrafted"]
+            assert jev.questions_sha256() == before["questions"]
+            assert content_sha256(stage.input_payload(drafted)) != before["drafted"]
+    with monkeypatch.context() as patch:
+        patch.setattr(faithfulness, "DIRECTION_MIN_P", 0.8)
+        assert content_sha256(stage.input_payload(undrafted)) == before["undrafted"]
+        assert content_sha256(stage.input_payload(drafted)) != before["drafted"]

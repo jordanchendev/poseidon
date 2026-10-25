@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -236,3 +237,73 @@ def test_trials_and_events_are_append_only(pipeline_sessions):
             run_id=run.id, event_type="x", actor_id="a", expected_revision=1, payload_json={}, idempotency_key="k"
         ),
     )
+
+
+ORIGINAL = "240MA 剛好差不多在估值目標附近\n可以算好每跌幾%買一單"
+
+
+def _original(text=ORIGINAL, **overrides) -> dict:
+    values = {
+        "original_text": text,
+        "original_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "drafted_by": "sisyphus",
+    }
+    values.update(overrides)
+    return values
+
+
+def test_p004_original_is_all_or_none_matches_its_sha256_and_is_frozen(pipeline_sessions):
+    run = _run(**_original())
+    _seed(pipeline_sessions, run)
+    with pipeline_sessions() as session:
+        loaded = session.get(PipelineRun, run.id)
+        assert (loaded.original_text, loaded.drafted_by) == (ORIGINAL, "sisyphus")
+    for partial in (
+        _original(original_sha256=None),
+        _original(drafted_by=None),
+        {"original_text": None, "original_sha256": None, "drafted_by": "sisyphus"},
+        _original(original_sha256="b" * 64),  # sha256 of another text
+        _original(drafted_by="kairos"),
+        _original(text="   "),
+    ):
+        _integrity(pipeline_sessions, _run(**partial))
+    _rejects(
+        pipeline_sessions,
+        "UPDATE pipeline_runs SET original_text = 'other', original_sha256 = :sha WHERE id = :id",
+        {"id": run.id, "sha": hashlib.sha256(b"other").hexdigest()},
+        "frozen",
+    )
+    _rejects(
+        pipeline_sessions,
+        "UPDATE pipeline_runs SET drafted_by = NULL, original_text = NULL, original_sha256 = NULL WHERE id = :id",
+        {"id": run.id},
+        "frozen",
+    )
+
+
+@pytest.mark.usefixtures("pipeline_engine")
+def test_p004_downgrade_is_refused_while_a_run_holds_an_original(pipeline_engine, pipeline_sessions):
+    from alembic import command
+    from poseidon.core.config import settings
+    from tests.pipeline.conftest import pipeline_alembic_config
+
+    url = pipeline_engine.url.render_as_string(hide_password=False)
+    original = settings.database_url
+    settings.database_url = url
+    try:
+        config = pipeline_alembic_config(url)
+        command.downgrade(config, "p003")  # no original yet: the columns go
+        with pipeline_engine.connect() as connection:
+            columns = connection.execute(
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = 'pipeline_runs'")
+            ).scalars()
+            assert "original_text" not in set(columns)
+        command.upgrade(config, "head")
+        _seed(pipeline_sessions, _run(**_original()))
+        with pytest.raises(Exception, match="ck_pipeline_runs_original"):
+            command.downgrade(config, "p003")
+        with pipeline_engine.connect() as connection:
+            assert connection.execute(text("SELECT version_num FROM alembic_version_pipeline")).scalar() == "p004"
+    finally:
+        command.upgrade(pipeline_alembic_config(url), "head")
+        settings.database_url = original

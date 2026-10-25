@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import importlib.util
 import json
 import sys
 import tempfile
@@ -25,7 +26,24 @@ sys.path.insert(0, str(HERE.parent / "strategy_scout"))  # repo layout
 sys.path.insert(0, str(HERE.parent / "scout-bin"))  # deployed: ~/strategy-pipeline/{bridge,scout-bin}
 
 import bridge_sync as bs  # noqa: E402
-import test_scout  # noqa: E402  (ScoutFixture: the real scout.propose with fake LLM / API)
+
+
+def _load_scout_tests() -> types.ModuleType:
+    """scout's ``test_scout.py`` (ScoutFixture: the real scout.propose with fake LLM / API) under its own module
+    name: pytest imports ``tests/strategy_scout/test_scout.py`` as ``test_scout`` when it collects both."""
+
+    for folder in ("strategy_scout", "scout-bin"):
+        path = HERE.parent / folder / "test_scout.py"
+        if path.exists():
+            spec = importlib.util.spec_from_file_location("strategy_scout_test_scout", path)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+            return module
+    raise ImportError(f"no test_scout.py in {HERE.parent / 'strategy_scout'} or {HERE.parent / 'scout-bin'}")
+
+
+test_scout = _load_scout_tests()
 
 KEY = "sentinel-key-" + "x" * 30
 IDEA = "台指期夜盤前一日高低點反轉：價格突破前一日日盤高點後跌回高點下方做空，跌破低點後站回做多，停損 30 點"
@@ -51,6 +69,7 @@ class FakeApi:
         self.stages: dict[str, list] = {}
         self.attempts: dict[tuple, dict] = {}
         self.posts = 0
+        self.bodies = []
         self.seen_headers = []
         self.fail_next_get = False
         self.plan = PLAN  # PAPER_PLAN for runs created after the shadow-paper branch merged
@@ -62,7 +81,8 @@ class FakeApi:
         if method == "POST":
             assert path == "/api/v1/pipelines"
             self.posts += 1
-            assert set(body) == {"idea_text", "source"} and body["source"] in ("telegram", "scout")
+            assert set(body) - {"original"} == {"idea_text", "source"} and body["source"] in ("telegram", "scout")
+            self.bodies.append(body)
             key = headers["Idempotency-Key"]
             assert body["source"] != "scout" or key.startswith("scout-proposal-"), key
             if key in self.by_key:
@@ -192,8 +212,8 @@ class FakeBridge:
             self.capability = (digest, input)
             return types.SimpleNamespace(returncode=0, stdout=json.dumps({"state": state}), stderr="")
         if verb == "strategy-pending":
-            keep = ("id", "text", "source", "created_at")
-            rows = [{k: r[k] for k in keep} for r in self.ideas.values() if r["status"] == "accepted"]
+            keep = ("id", "text", "source", "created_at", "original", "original_error")
+            rows = [{k: r[k] for k in keep if k in r} for r in self.ideas.values() if r["status"] == "accepted"]
             return types.SimpleNamespace(returncode=0, stdout=json.dumps(rows, ensure_ascii=False), stderr="")
         row = self.ideas.get(args[0])
         if row is None:
@@ -334,6 +354,26 @@ class PullTests(unittest.TestCase):
         self.assertEqual(h.sync(), 1)
         self.assertEqual(h.sync(), 0)
         self.assertEqual(sum("rejected http 422" in line for line in h.log.lines), 1)
+
+    def test_drafted_idea_posts_the_original_beside_the_draft(self):
+        h = Harness(self)
+        h.bridge.add("20261026-s1")
+        original = {"text": "240MA 附近是估值目標，左側分批買", "sha256": "a" * 64, "drafted_by": "sisyphus"}
+        h.bridge.ideas["20261026-s1"]["original"] = original
+        h.bridge.add("20261026-s2")
+        self.assertEqual(h.sync(), 0)
+        self.assertEqual(h.api.bodies[0], {"idea_text": IDEA, "source": "telegram", "original": original})
+        self.assertEqual(h.api.bodies[1], {"idea_text": IDEA, "source": "telegram"})  # owner's own idea: unchanged
+
+    def test_drafted_idea_without_its_original_gets_no_run(self):
+        h = Harness(self)
+        h.bridge.add("20261026-s1")
+        h.bridge.ideas["20261026-s1"]["original_error"] = "original does not match original_sha256"
+        self.assertEqual(h.sync(), 1)
+        self.assertEqual(h.sync(), 0)
+        self.assertEqual((h.api.posts, h.bridge.ideas["20261026-s1"]["status"]), (0, "accepted"))
+        refused = [line for line in h.log.lines if "refused: original unavailable" in line]
+        self.assertEqual(len(refused), 1, h.log.lines)
 
     def test_malformed_pending_rows_are_skipped(self):
         h = Harness(self)

@@ -20,11 +20,13 @@ from poseidon.pipeline.v3.registry import (
 
 # sha256 of each class's source as the base image poseidon-pipeline:28d1ae6c4 computes it: a run frozen
 # before step 8 must still pass check_components, so an existing class is never edited (new behaviour is a
-# new component or a new version).
+# new component or a new version). ``direction.dsl_rules`` is the one exception: step 7 (DSL parity, 21bbe73)
+# re-based it on the intraday engine; it is intraday-only, so no daily run (the only ones check_components
+# re-checks) froze the base value.
 BASE_FINGERPRINTS = {
     "allocation.single@1": "6b6caa2124b9b1b654728b9a4b91e81f481895fbd4e569243151bc3bf055a9d2",
     "direction.constant@1": "94e458eb5aa40fb940c882d7d7a7f9c85a1d7fae5ada660099ca6b100366a2a9",
-    "direction.dsl_rules@1": "bbfb349a88d562c30e66b708fbea03e2b4d634c65e5608566f85bff37444a0e8",
+    "direction.dsl_rules@1": "6ac5cd3b1b3aa9947e58e710a5aa500f7ed771a1c343d06b0f12db998c73bdbb",
     "execution.next_open@1": "19df267b3d44c0f5aa32bfdde168fae264088dbda795ff9bd98e732a4aaa118b",
     "execution.signal_close@1": "0b65f531e3916886ce07a9589e071135fb77745d113d4749771663b10df4897a",
     "leverage.base@1": "c15e6fcd24e64c0a2cfe2dcbb0c95230960edb452f9366c02c11bc054eb9cd16",
@@ -62,17 +64,21 @@ M1_COMPONENTS = {
     "allocation.fixed_weights",
     "allocation.inverse_vol",
     "allocation.regime_switch",
+    "leverage.drawdown_ladder",
+    "leverage.level_ladder",
 }
+M4_COMPONENTS = {"hedge.protective_put"}
+COMPONENTS = M1_COMPONENTS | M4_COMPONENTS
 
 
 def test_registry_version_and_contents():
-    assert REGISTRY_VERSION == 2  # step 8 added components and the stock rows
-    assert set(REGISTRY) == M1_COMPONENTS
+    assert REGISTRY_VERSION == 1
+    assert set(REGISTRY) == COMPONENTS
     assert not set(REGISTRY) & set(PLANNED_COMPONENTS)
-    assert "hedge.protective_put" in PLANNED_COMPONENTS
+    assert "hedge.collar" in PLANNED_COMPONENTS
 
 
-@pytest.mark.parametrize("name", sorted(M1_COMPONENTS))
+@pytest.mark.parametrize("name", sorted(COMPONENTS))
 def test_every_component_declares_and_describes_its_example(name):
     component = REGISTRY[name]
     assert component.summary and component.capabilities
@@ -88,12 +94,12 @@ def test_every_component_declares_and_describes_its_example(name):
 
 def test_fingerprints_are_name_at_version_and_sha256():
     prints = component_fingerprints()
-    assert set(prints) == {f"{name}@1" for name in M1_COMPONENTS}
+    assert set(prints) == {f"{name}@1" for name in COMPONENTS}
     assert all(re.fullmatch(r"[0-9a-f]{64}", sha) for sha in prints.values())
     assert component_fingerprints(["leverage.base"]) == {"leverage.base@1": prints["leverage.base@1"]}
 
 
-def test_daily_components_implement_their_hook_and_intraday_ones_wait_for_step_7():
+def test_every_component_implements_its_hook_but_the_r1_roll_which_the_intraday_engine_runs():
     from poseidon.pipeline.v3.compiler import HOOKS
 
     missing = []
@@ -102,9 +108,10 @@ def test_daily_components_implement_their_hook_and_intraday_ones_wait_for_step_7
         base = next(c for c in type(component).__mro__ if c.__dict__.get("slot") == component.slot)
         if hook and getattr(type(component), hook) is getattr(base, hook):
             missing.append(component.name)
-    assert sorted(missing) == ["direction.dsl_rules", "roll.at_settlement"]
-    with pytest.raises(NotImplementedError, match="no daily behaviour"):
-        REGISTRY["direction.dsl_rules"].step({}, None, None)
+    assert sorted(missing) == ["roll.at_settlement"]
+    with pytest.raises(RuntimeError, match="not bound"):
+        dsl = REGISTRY["direction.dsl_rules"]
+        dsl.step({}, dsl.init({}), None)
     ma_band = REGISTRY["regime.ma_band"]
     assert ma_band.history(ma_band.parse({"signal": "index:taiex", "ma_days": 250})) == 250
     assert (
@@ -127,7 +134,8 @@ def test_instrument_table_matches_the_design_defaults():
         assert row.cost_model.tax_rate == 0.00002 and row.cost_model.tax_on_entry
         assert (row.initial_margin_ratio, row.maintenance_margin_ratio) == (0.07, 0.054)
     assert tmf.listed_since == date(2024, 7, 29) and tmf.price_proxy == "TX" and mtx.price_proxy == "TX"
-    assert tx.price_proxy is None and not txo.tradable and "M4" in txo.planned
+    assert tx.price_proxy is None and not txo.tradable and txo.hedge_component == "hedge.protective_put"
+    assert txo.daily_data_since == date(2001, 12, 24) and txo.tick_ladder[:2] == ((10.0, 0.1), (50.0, 0.5))
     # margin is a notional ratio, so MTX = TX / 4 and TMF = TX / 20
     assert mtx.notional_twd(20_000) * 4 == tx.notional_twd(20_000) == tmf.notional_twd(20_000) * 20
     assert "TMF" in tmf.proxy_note(date(2001, 1, 2)) and "2024-07-29" in tmf.proxy_note(date(2001, 1, 2))

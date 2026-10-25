@@ -2,7 +2,7 @@
 
 Owner, Kairos and JEV read the same text: every sentence comes from a
 component's ``describe()``, joined in a fixed order (execution, then per
-sleeve: instrument + roll, direction, leverage chain, sizing + rebalance).
+sleeve: instrument + roll, direction, leverage chain, sizing + rebalance, hedges).
 ``$param`` fields show their default; :func:`params_line` lists the ranges.
 """
 
@@ -54,6 +54,7 @@ def narrative(resolved: dict) -> str:
                 leverage = component.nominal(params, leverage)
             sentences.append("槓桿：" + "；".join(fragments))
         sentences.append(_render(sleeve["sizing"], ctx) + "；" + _render(sleeve["rebalance"], ctx))
+        sentences.extend("避險：" + _render(hedge, ctx) for hedge in sleeve.get("hedges") or [])
     return "。".join(sentences) + "。"
 
 

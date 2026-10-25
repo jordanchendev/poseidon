@@ -75,6 +75,11 @@ def run_json(run: PipelineRun) -> dict:
         "market": run.market,
         "symbol": run.symbol,
         "input_spec_json": run.input_spec_json,
+        "original": (
+            {"text": run.original_text, "sha256": run.original_sha256, "drafted_by": run.drafted_by}
+            if run.original_text is not None
+            else None
+        ),
         "config_json": run.config_json,
         "config_sha256": run.config_sha256,
         "created_by": run.created_by,
@@ -86,6 +91,16 @@ def run_json(run: PipelineRun) -> dict:
         "created_at": _iso(run.created_at),
         "updated_at": _iso(run.updated_at),
         "finished_at": _iso(run.finished_at),
+    }
+
+
+def _original_columns(original: dict | None) -> dict:
+    if original is None:
+        return {}
+    return {
+        "original_text": original["text"],
+        "original_sha256": original["sha256"],
+        "drafted_by": original["drafted_by"],
     }
 
 
@@ -235,6 +250,7 @@ class PipelineService:
             source=body["source"],
             idea_text=body["idea_text"],
             input_spec_json=spec,
+            **_original_columns(body.get("original")),
             config_json=config,
             config_sha256=content_sha256(config),
             created_by=actor_id,
@@ -354,7 +370,12 @@ class PipelineService:
 
         from poseidon.pipeline.refdata.store import RefdataError
         from poseidon.pipeline.v3.brief import render_brief
-        from poseidon.pipeline.v3.config import daily_run_config, refdata_datasets, series_first_days
+        from poseidon.pipeline.v3.config import (
+            daily_run_config,
+            refdata_datasets,
+            series_first_days,
+            used_index_datasets,
+        )
         from poseidon.pipeline.v3.instruments import INSTRUMENTS
         from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
 
@@ -376,7 +397,8 @@ class PipelineService:
                 f"{result.strategy_class}: intraday specs run as DSL v2 until DSL parity (step 7)"
             )
         try:
-            refdata = {name: store.content_sha256(name) for name in refdata_datasets(result.resolved)}
+            datasets = (*refdata_datasets(result.resolved), *used_index_datasets(result.resolved))
+            refdata = {name: store.content_sha256(name) for name in datasets}
         except (RefdataError, OSError) as error:
             raise PipelineRequestInvalid(f"refdata is not available for spec v3 runs: {error}") from error
         config = daily_run_config(

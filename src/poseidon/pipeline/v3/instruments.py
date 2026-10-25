@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal
 
+import pandas as pd
+
 from poseidon.backtest.cost_model import COST_MODELS, CostModel
 from poseidon.pipeline.engine.specs import TickLadder
 
@@ -66,10 +68,13 @@ class Instrument:
     planned: str = ""  # when a non-tradable row becomes tradable
     initial_margin_ratio: float = INITIAL_MARGIN_RATIO
     maintenance_margin_ratio: float = MAINTENANCE_MARGIN_RATIO
-    tick_ladder: TickLadder | None = None  # price-tiered tick (stocks / ETFs); None = tick_size everywhere
+    # Price-tiered tick ((price below, tick), ...) ascending, the last bound inf: TWSE stocks / ETFs, TXO premiums.
+    tick_ladder: TickLadder | None = None  # None = tick_size everywhere
     odd_lot: bool = False  # the spec may trade single shares instead of board lots
     etf: bool = False  # stocks only: an ETF (0.1 % sell tax, the ETF tick ladder)
     reference_price: float | None = None  # stocks only: sizing level when the window prices are unknown
+    # A non-tradable row that a spec still reaches through this hedge component (TXO: bought puts).
+    hedge_component: str | None = None
 
     def notional_twd(self, price: float, lot: int | None = None) -> float:
         """Notional at ``price`` of one unit (a contract, a board lot, or ``lot`` shares)."""
@@ -177,9 +182,10 @@ INSTRUMENTS: dict[str, Instrument] = {
         settlement="third_wednesday",
         tradable=True,
     ),
-    # TXO is listed so the brief and the validator can say "not yet" precisely.
-    # Its premium tick ladder awaits the data spike (§9.2), so tick_size is the
-    # smallest step only; the fee is the §12 #6 default, tax 0.1 % of premium.
+    # TXO is no sleeve instrument: specs buy it only through hedge.protective_put (§5.7).
+    # Premium ticks per the TAIFEX TXO rules, unchanged since listing (data spike 2026-10-24:
+    # every traded close 2001-2026 fits); tick_size is the smallest step. Fee: §12 #6 default;
+    # tax 0.1 % of the premium value (and of the cash-settlement value at expiry).
     "TXO": Instrument(
         symbol="TXO",
         kind="option",
@@ -203,11 +209,12 @@ INSTRUMENTS: dict[str, Instrument] = {
         ),
         listed_since=date(2001, 12, 24),
         price_proxy=None,
-        daily_data_since=None,
+        daily_data_since=date(2001, 12, 24),  # TAIFEX optDataDown, refdata taifex_txo_daily
         intraday_data_since=None,
         settlement="third_wednesday",
         tradable=False,
-        planned="M4 (TXO refdata, option engine, hedge.protective_put)",
+        tick_ladder=((10.0, 0.1), (50.0, 0.5), (500.0, 1.0), (1000.0, 5.0), (math.inf, 10.0)),
+        hedge_component="hedge.protective_put",
     ),
 }
 
@@ -370,16 +377,40 @@ class SignalIndex:
     name_zh: str
     dataset: str  # refdata dataset (rows by trade_date, column close)
     data_since: date
+    # Calendar days a row is held back: a row dated d (the index's own trade date) is visible from d + lag_days.
+    # 0 for a TWSE index (its close precedes the TW decision). 1 for a US index: the US close of date u comes
+    # after the TW close of date u, so a TW decision on date t may only read US dates <= t - 1.
+    lag_days: int = 0
+    # Attached to every compiled spec (the TWSE indices, legacy); the others only when a signal reads them.
+    always_attached: bool = False
 
 
 SIGNAL_INDICES: dict[str, SignalIndex] = {
-    "taiex": SignalIndex("taiex", "TAIEX price index", "加權股價指數（不含息）", "twse_taiex_daily", date(1999, 1, 5)),
+    "taiex": SignalIndex(
+        "taiex",
+        "TAIEX price index",
+        "加權股價指數（不含息）",
+        "twse_taiex_daily",
+        date(1999, 1, 5),
+        always_attached=True,
+    ),
     "taiex_tr": SignalIndex(
         "taiex_tr",
         "TAIEX total-return index",
         "加權股價報酬指數（含息）",
         "twse_taiex_total_return",
         date(2003, 1, 2),
+        always_attached=True,
+    ),
+    # CBOE VIX close (cboe_vix_daily, trade_date = the US date). Chosen over Thalassa's macro_vix (2024-01-02 on,
+    # forward-filled over holidays and weekends) for its full 1990 history; see refdata.cboe.
+    "vix": SignalIndex(
+        "vix",
+        "CBOE VIX volatility index (previous US session close)",
+        "CBOE 恐慌指數 VIX（前一個美股交易日收盤）",
+        "cboe_vix_daily",
+        date(1990, 1, 2),
+        lag_days=1,
     ),
 }
 
@@ -389,3 +420,36 @@ def signal_index(ref: str) -> SignalIndex | None:
 
     alias, _, name = ref.partition(":")
     return SIGNAL_INDICES.get(name) if alias == INDEX_ALIAS else None
+
+
+def align_signal_frame(name: str, frame: pd.DataFrame) -> pd.DataFrame:
+    """A refdata index frame (``trade_date`` column, numeric columns) as the engine's aux frame of ``index:<name>``.
+
+    Rows are re-dated by the index's ``lag_days`` so the engine's "rows dated on or before the decision day" rule
+    is the look-ahead rule: the VIX close of US date u appears on TW date u + 1 and a TW decision on t reads US
+    dates <= t - 1 only (a Friday close shows from Saturday, so Monday sees it).
+    """
+
+    if frame.empty:
+        return pd.DataFrame(index=pd.DatetimeIndex([]))
+    out = frame.set_index(pd.DatetimeIndex(pd.to_datetime(frame["trade_date"])).normalize())
+    out = out.drop(columns=["trade_date"]).select_dtypes("number").sort_index().astype(float)
+    lag = SIGNAL_INDICES[name].lag_days
+    if lag:
+        out.index = out.index + pd.Timedelta(days=lag)
+    return out
+
+
+def complete_through(name: str, aux: pd.DataFrame) -> pd.Timestamp | None:
+    """Last TW calendar day on which the aligned aux frame holds everything a decision can read, or None if empty.
+
+    The latest row's date, moved past a weekend for a lagged index (the Friday US close shows from Saturday and
+    is the whole story for Monday's decision).
+    """
+
+    if not len(aux):
+        return None
+    last = pd.Timestamp(aux.index.max())
+    if SIGNAL_INDICES[name].lag_days and last.dayofweek >= 5:
+        last = last + pd.Timedelta(days=7 - last.dayofweek)
+    return last

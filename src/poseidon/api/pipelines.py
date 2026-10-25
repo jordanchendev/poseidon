@@ -9,6 +9,7 @@ always 403. There is no PUT or DELETE, and thresholds are server defaults only.
 from __future__ import annotations
 
 import functools
+import hashlib
 import logging
 import uuid
 from collections.abc import Callable
@@ -16,12 +17,13 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, model_validator
 from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal, get_auth_principal
 from poseidon.core.database import get_db
 from poseidon.decision_loop.manifest import content_sha256
+from poseidon.pipeline.models import DRAFTERS
 from poseidon.pipeline.service import (
     PipelineConflict,
     PipelineNotFound,
@@ -43,6 +45,28 @@ IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=1, ma
 Revision = Annotated[int, Field(strict=True, ge=1)]
 Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1024)]
 StageName = Annotated[str, StringConstraints(min_length=1, max_length=32)]
+ORIGINAL_TEXT_MAX_CHARS = 64 * 1024  # macminim4 reads at most 64 KiB of stdin per draft
+
+
+class IdeaOriginalRequest(BaseModel):
+    """The owner's material behind a Sisyphus-drafted ``idea_text`` (macminim4 ``strategy-pending``).
+
+    ``text`` is kept byte for byte (no stripping): ``sha256`` is macminim4's hash of exactly this text.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: Annotated[str, StringConstraints(min_length=1, max_length=ORIGINAL_TEXT_MAX_CHARS)]
+    sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    drafted_by: Literal[DRAFTERS]
+
+    @model_validator(mode="after")
+    def _sha256_matches(self):
+        if not self.text.strip():
+            raise ValueError("original text is blank")
+        if hashlib.sha256(self.text.encode("utf-8")).hexdigest() != self.sha256:
+            raise ValueError("original sha256 does not match its text")
+        return self
 
 
 class CreatePipelineRequest(BaseModel):
@@ -53,6 +77,7 @@ class CreatePipelineRequest(BaseModel):
     family_id: uuid.UUID | None = None
     spec_json: dict[str, JsonValue] | None = None
     stage_plan: Annotated[list[StageName], Field(min_length=1, max_length=32)] | None = None
+    original: IdeaOriginalRequest | None = None
 
 
 class RerunRequest(BaseModel):
@@ -126,7 +151,8 @@ def create_pipeline(
     enqueue=Depends(get_pipeline_enqueuer),
 ):
     principal.require_role(WRITE_ROLE)
-    payload = body.model_dump(mode="json")
+    # A request without an original hashes exactly as before p004 (Idempotency-Key replays stay valid).
+    payload = body.model_dump(mode="json", exclude={"original"} if body.original is None else None)
     return _mutate(
         db,
         enqueue,

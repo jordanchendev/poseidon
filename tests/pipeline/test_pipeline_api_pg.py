@@ -238,3 +238,92 @@ def test_capabilities_serve_the_checked_in_brief_and_schema_to_readers(api):
     assert api.get("/api/v1/pipelines/capabilities", headers=_headers("researcher")).status_code == 200
     assert api.get("/api/v1/pipelines/capabilities", headers=_headers("pm")).status_code == 403
     assert api.get("/api/v1/pipelines/capabilities", headers=_headers("legacy")).status_code == 403
+
+
+ORIGINAL_TEXT = "  240MA 剛好差不多在估值目標附近\n可以算好每跌幾%買一單  "  # kept byte for byte, spaces included
+
+
+def _original(text=ORIGINAL_TEXT, **overrides) -> dict:
+    original = {"text": text, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "drafted_by": "sisyphus"}
+    original.update(overrides)
+    return original
+
+
+class _SeesOriginal:
+    """Wraps a stage and records the ``original`` each attempt's context carried."""
+
+    def __init__(self, inner):
+        self.inner, self.seen = inner, []
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+    def run(self, ctx):
+        self.seen.append(ctx.original)
+        return self.inner.run(ctx)
+
+
+def _input_hashes(pipeline_sessions, run_id):
+    from poseidon.pipeline.models import StageRun
+
+    with pipeline_sessions() as session:
+        rows = session.query(StageRun).filter(StageRun.run_id == uuid.UUID(run_id)).order_by(StageRun.seq).all()
+        return [(row.stage, row.input_sha256) for row in rows]
+
+
+def test_drafted_idea_keeps_the_original_beside_the_draft(api, pipeline_sessions):
+    from poseidon.pipeline.stages import IdeaOriginal
+
+    registry = api.harness.dispatcher.registry
+    recorder = registry["spec_generate"] = _SeesOriginal(registry["spec_generate"])
+    drafted = _create(api, key="drafted", original=_original())
+    plain = _create(api, key="plain")
+    assert (drafted.status_code, plain.status_code) == (201, 201), drafted.text
+    drafted, plain = drafted.json(), plain.json()
+    assert drafted["idea_text"] == "TX ORB" and drafted["original"] == _original()
+    assert plain["original"] is None
+    assert drafted["config_sha256"] == plain["config_sha256"]
+    detail = api.get(f"/api/v1/pipelines/{drafted['id']}", headers=_headers("viewer")).json()
+    assert detail["original"] == _original()
+
+    api.harness.drain()
+    expected = IdeaOriginal(ORIGINAL_TEXT, _original()["sha256"], "sisyphus")
+    assert recorder.seen == [expected, None]
+    hashes = _input_hashes(pipeline_sessions, drafted["id"])
+    assert len(hashes) == 3 and hashes == _input_hashes(pipeline_sessions, plain["id"])
+
+
+def test_create_without_an_original_hashes_the_request_as_before(api, pipeline_sessions):
+    from poseidon.decision_loop.manifest import content_sha256
+
+    created = _create(api).json()
+    before_p004 = {
+        "idea_text": "TX ORB",
+        "source": "telegram",
+        "family_id": None,
+        "spec_json": tx_spec(),
+        "stage_plan": STEP1_PLAN,
+    }
+    with pipeline_sessions() as session:
+        run = session.get(PipelineRun, uuid.UUID(created["id"]))
+        assert run.create_request_sha256 == content_sha256({"operation": "create", "body": before_p004})
+    with_original = _create(api, original=_original())
+    assert with_original.status_code == 409  # same key, a different request
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        _original(sha256="0" * 64),
+        _original(drafted_by="kairos"),
+        _original(text="   "),
+        {**_original(), "excerpt": "x"},
+        {"text": ORIGINAL_TEXT, "drafted_by": "sisyphus"},
+    ],
+    ids=["sha256-mismatch", "unknown-drafter", "blank", "extra-key", "no-sha256"],
+)
+def test_a_malformed_original_is_refused_at_the_api(api, pipeline_sessions, original):
+    response = _create(api, original=original)
+    assert response.status_code == 422, response.text
+    with pipeline_sessions() as session:
+        assert session.query(PipelineRun).count() == 0

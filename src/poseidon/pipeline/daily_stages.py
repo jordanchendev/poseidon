@@ -38,7 +38,7 @@ import pandas as pd
 
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
 from poseidon.pipeline import optimization as opt
-from poseidon.pipeline.engine import ContractSpec, EngineResult
+from poseidon.pipeline.engine import ContractSpec, EngineResult, OptionSpec
 from poseidon.pipeline.engine.data import stock_bars
 from poseidon.pipeline.gate_stages import DsrStage, ParamStabilityStage, to_stage_result
 from poseidon.pipeline.gates import benchmark, cost_stress, execution_timing, holdout, liquidation, regime_split
@@ -55,7 +55,7 @@ from poseidon.pipeline.gates.daily import (
     underlying_returns,
 )
 from poseidon.pipeline.plan import V3_GATE_STAGES
-from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, TAIEX, TAIEX_TR
+from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, TAIEX, TAIEX_TR, VIX
 from poseidon.pipeline.refdata.engine_input import StockDataGap, align_stock_bars
 from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
 from poseidon.pipeline.refdata.tw_corporate_actions import load_actions
@@ -64,14 +64,15 @@ from poseidon.pipeline.refdata.tw_stocks import read_bars
 from poseidon.pipeline.stages import BaseStage, StageResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.trials import TRIAL_COMPLETE, TRIAL_FAIL, TRIAL_PRUNED, MemoryTrialLedger
-from poseidon.pipeline.v3.compiler import NotCompilable, compile_spec
-from poseidon.pipeline.v3.config import ENGINE, SPEC_VALIDATOR
+from poseidon.pipeline.v3.compiler import OPTION_DATASETS, ROW_FILTERS, NotCompilable, compile_spec, hedged
+from poseidon.pipeline.v3.config import ENGINE, SPEC_VALIDATOR, used_index_datasets
 from poseidon.pipeline.v3.runtime import Conventions
 from poseidon.pipeline.v3.spec import substitute
 from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
 
 V3_WIRING_VERSION = 1  # part of every v3 stage's input hash
-PRICE_DATASETS = frozenset({FUTURES, TAIEX, TAIEX_TR, STOCKS, ACTIONS})  # clipped at the window's last day
+# clipped at the window's last day; calendars stay whole
+PRICE_DATASETS = frozenset({FUTURES, TAIEX, TAIEX_TR, VIX, STOCKS, ACTIONS, *OPTION_DATASETS})
 STOCK_UNDERLYING = "0050"  # DAILY_GATES.benchmark.underlying.tw_stock: 0050 total return
 UNDERLYING_ROLL_DAYS_BEFORE = 1  # DAILY_GATES.benchmark.underlying: TX back-adjusted, roll before settlement
 TRADING_DAYS_PER_YEAR = 252.0
@@ -122,28 +123,41 @@ class WindowStore:
     """Read-through cache over a refdata store whose price datasets end at ``upper`` (inclusive).
 
     Each dataset is read once (``store.read(..., end=upper)`` for prices, whole for calendars) and
-    filtered in memory, so many engine runs over one window cost one read. ``data_sha256`` hashes
-    exactly what was read: the trial ledger's window identity. ``kinds`` (the spec's instrument
-    kinds, :func:`instrument_kinds`) chooses the datasets that identity covers: the futures
-    datasets for a futures spec (as before step 8), the stock bars and corporate actions for a
-    spec that trades a stock / ETF; the index series whenever the store has them.
+    filtered in memory, so many engine runs over one window cost one read (a dataset in
+    ``compiler.ROW_FILTERS`` through its filter, whatever ``rows`` a caller passes). ``data_sha256``
+    hashes exactly what was read: the trial ledger's window identity. ``kinds`` (the spec's
+    instrument kinds, :func:`instrument_kinds`) chooses the datasets that identity covers: the
+    futures datasets for a futures spec (as before step 8), the stock bars and corporate actions
+    for a spec that trades a stock / ETF; the index series whenever the store has them. ``extra``
+    names the optional datasets the spec reads beyond those (``index:vix``, a hedge's
+    ``compiler.OPTION_DATASETS``).
     """
 
-    def __init__(self, store, upper: date | None, kinds: frozenset[str] = frozenset({"future"})):
+    def __init__(
+        self,
+        store,
+        upper: date | None,
+        kinds: frozenset[str] = frozenset({"future"}),
+        extra: tuple[str, ...] = (),
+    ):
         self._store = store
         self.upper = upper
         self.kinds = kinds
+        self._extra = extra  # hashed into data_sha256 as well
         self._frames: dict[str, pd.DataFrame] = {}
         self._columns: dict[str, str] = {}
 
     def _full(self, dataset: str) -> pd.DataFrame:
         if dataset not in self._frames:
             clip = self.upper if dataset in PRICE_DATASETS else None
-            self._frames[dataset] = self._store.read(dataset, end=clip)
+            rows = ROW_FILTERS.get(dataset)
+            self._frames[dataset] = (
+                self._store.read(dataset, end=clip) if rows is None else self._store.read(dataset, end=clip, rows=rows)
+            )
             self._columns[dataset] = self._store.manifest(dataset)["date_column"]
         return self._frames[dataset]
 
-    def read(self, dataset: str, start=None, end=None) -> pd.DataFrame:
+    def read(self, dataset: str, start=None, end=None, rows=None) -> pd.DataFrame:
         frame = self._full(dataset)
         if not len(frame):
             return frame
@@ -174,6 +188,7 @@ class WindowStore:
         names += sorted(name for name in (TAIEX, TAIEX_TR) if self._store.exists(name))
         if "stock" in self.kinds:
             names += [STOCKS, *((ACTIONS,) if self._store.exists(ACTIONS) else ())]
+        names += list(self._extra)
         return content_sha256(
             {
                 "upper": self.upper.isoformat() if self.upper else None,
@@ -239,6 +254,16 @@ def scaled_costs(spec: ContractSpec, multiplier: float) -> ContractSpec:
     )
 
 
+def scaled_option_costs(spec: OptionSpec, multiplier: float) -> OptionSpec:
+    return dataclasses.replace(
+        spec,
+        commission_per_unit=spec.commission_per_unit * multiplier,
+        tax_rate=spec.tax_rate * multiplier,
+        slippage_ticks=spec.slippage_ticks * multiplier,
+        slippage_pct=spec.slippage_pct * multiplier,
+    )
+
+
 @dataclass
 class SpecRunner:
     """Engine runs of one spec template over one window ``[start, end]`` (both inclusive).
@@ -281,7 +306,11 @@ class SpecRunner:
                 name: dataclasses.replace(f, spec=scaled_costs(f.spec, cost_multiplier))
                 for name, f in compiled.futures.items()
             }
-            compiled = dataclasses.replace(compiled, futures=futures)
+            options = {
+                name: dataclasses.replace(o, spec=scaled_option_costs(o.spec, cost_multiplier))
+                for name, o in compiled.options.items()
+            }
+            compiled = dataclasses.replace(compiled, futures=futures, options=options)
         return compiled
 
     def run(self, values: Mapping, **kwargs) -> tuple[EngineResult, DailyResult]:
@@ -452,7 +481,12 @@ class DailyStage(BaseStage):
         return SpecRunner(
             template=template,
             grid=opt.ParamGrid(params),
-            store=WindowStore(self.store(), upper, instrument_kinds(template)),
+            store=WindowStore(
+                self.store(),
+                upper,
+                instrument_kinds(template),
+                used_index_datasets(template) + (OPTION_DATASETS if hedged(template) else ()),
+            ),
             start=start,
             end=end,
             basis=self.basis(ctx),
@@ -1187,6 +1221,11 @@ def compile_strategy(ctx):
         spec_plan = plan(best_spec)
     except NotCompilable as error:
         raise StrategyNotCompiled(str(error)) from error
+    if spec_plan.hedges:
+        raise StrategyNotCompiled(
+            "daily shadow paper does not run hedges yet: it needs a daily TXO refdata update and option rows in "
+            "the paper ledger (the backtest stages do run them)"
+        )
     window = DailyWindow.from_config(ctx.config)
     conventions = Conventions()
     warmup = spec_plan.warmup_bars + conventions.signal_lag

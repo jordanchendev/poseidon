@@ -26,8 +26,16 @@ Data (refdata, read-only)
     source's day-session dates plus projected weekdays after the data (so a roll due on the last
     day is still seen; noted). Aux ``taiex`` (``twse_taiex_daily``) and ``taiex_tr``
     (``twse_taiex_total_return``) are always attached (``AUX_DATASETS``, from
-    ``instruments.SIGNAL_INDICES``); a signal ref ``index:<name>`` reads aux ``<name>``.
+    ``instruments.SIGNAL_INDICES``); a signal ref ``index:<name>`` reads aux ``<name>``, attached
+    (and recorded in ``inputs``) only when a component reads it (``index:vix``). Aux rows are
+    re-dated by the index's ``lag_days`` (``instruments.align_signal_frame``): the VIX close of US
+    date u is a row dated u + 1, so a decision on TW date t reads US dates <= t - 1.
     ``inputs`` records each dataset's ``content_sha256`` for run input hashes.
+    Hedged specs only: ``taifex_txo_daily`` day-session monthly puts (settlement prices, expiry
+    dates) and ``taifex_txo_final_settlement`` become the ``TXO`` option chain, and each
+    ``hedges`` entry an ``engine.HedgePolicy`` named ``<alias>.<component suffix>``. A run whose
+    hedge was unavailable on more than 5 % of the days it wanted one raises
+    :class:`HedgeCoverageError` (§5.7).
 
 The warm-up is the largest ``history()`` of the bound components plus ``signal_lag``; the
 compiler checks that many trading days exist before ``start``, and that many rows of every
@@ -49,22 +57,31 @@ from poseidon.pipeline.engine import (
     EngineConfig,
     EngineResult,
     FuturesInput,
+    HedgePolicy,
+    OptionInput,
+    OptionSpec,
     TruncationAuditReport,
+    hedge_coverage,
     run,
     truncation_audit,
 )
 from poseidon.pipeline.engine.data import stock_input
+from poseidon.pipeline.engine.options import MAX_UNAVAILABLE_SHARE
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES
 from poseidon.pipeline.refdata.engine_input import StockDataGap, align_stock_bars
-from poseidon.pipeline.refdata.store import RefdataStore
+from poseidon.pipeline.refdata.store import DatasetMissingError, RefdataStore
+from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
+from poseidon.pipeline.refdata.taifex_options import FSP_DATASET as OPTION_FINAL
 from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
 from poseidon.pipeline.refdata.tw_corporate_actions import load_actions
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
 from poseidon.pipeline.refdata.tw_stocks import read_bars
 from poseidon.pipeline.v3.instruments import (
+    INSTRUMENTS,
     MAX_MARGIN_UTILISATION,
     SIGNAL_INDICES,
     Instrument,
+    align_signal_frame,
     declared,
     signal_index,
 )
@@ -81,6 +98,7 @@ from poseidon.pipeline.v3.spec import DEFAULT_INITIAL_CAPITAL_TWD, is_param_ref,
 from poseidon.pipeline.v3.validation import LEVERAGE_CAP, FeasibilityContext, validate_spec_v3, warmup_calendar_days
 
 AUX_DATASETS = {name: index.dataset for name, index in SIGNAL_INDICES.items()}
+ALWAYS_ATTACHED = tuple(name for name, index in SIGNAL_INDICES.items() if index.always_attached)
 HOOKS = {
     "direction": "step",
     "leverage": "step",
@@ -88,8 +106,32 @@ HOOKS = {
     "rebalance": "should_trade",
     "allocation": "weights",
     "roll": "roll_due",
+    "hedge": "policy",
 }
 PROJECTED_CALENDAR_DAYS = 10
+OPTION_DATASETS = (OPTION_QUOTES, OPTION_FINAL)
+OPTION_QUOTE_FIELDS = ["trade_date", "contract_month", "expiry_date", "strike", "cp", "settlement"]
+
+
+class HedgeCoverageError(ValueError):
+    """A hedge was unavailable on more than ``MAX_UNAVAILABLE_SHARE`` of the days it wanted a position (§5.7)."""
+
+
+def hedged(spec: dict) -> bool:
+    """Whether any sleeve of a (template or resolved) spec carries a hedge."""
+
+    return any(sleeve.get("hedges") for sleeve in spec.get("sleeves") or [])
+
+
+def option_quote_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    """The rows and columns a protective put reads: day session, monthly expiries, puts."""
+
+    keep = (frame["session"] == "day") & (frame["expiry_kind"] == "monthly") & (frame["cp"] == "P")
+    return frame.loc[keep, OPTION_QUOTE_FIELDS].reset_index(drop=True)
+
+
+# Datasets read through a row filter (``RefdataStore.read(rows=)``): what a hedged run reads of them.
+ROW_FILTERS = {OPTION_QUOTES: option_quote_rows}
 
 
 class NotCompilable(ValueError):
@@ -126,6 +168,7 @@ class Plan:
     rolls: dict[str, int]  # alias -> days_before
     instruments: dict[str, Instrument]  # alias -> row
     initial_capital: float
+    hedges: tuple[tuple[str, Bound], ...] = ()  # (sleeve instrument alias, hedge component)
 
     @property
     def bounds(self) -> list[Bound]:
@@ -144,20 +187,27 @@ class Plan:
 
 
 def plan(resolved: dict) -> Plan:
+    """The engine plan of a resolved spec. An intraday spec (the DSL v2 fast path, validated to one
+    ``direction.dsl_rules`` sleeve) runs on ``engine.intraday`` with the synthetic R1 roll, so its
+    ``rolls`` is empty; :func:`compile_spec` loads daily refdata and takes daily specs only."""
+
     if any(is_param_ref(node) for _path, node in walk(resolved)):
         raise ValueError("compile a resolved spec: bind every $param first (see resolve())")
-    if resolved["frequency"] != "1d":
-        raise NotCompilable("intraday specs stay on the v1 runner until DSL parity (step 7)")
+    intraday = resolved["frequency"] != "1d"
+    expected_roll = "roll.at_settlement" if intraday else "roll.before_settlement"
     instruments, rolls = {}, {}
     for alias, decl in resolved["instruments"].items():
         instrument = declared(decl)
         roll = decl.get("roll")
         if instrument.kind == "future":
-            if roll is None or roll["component"] != "roll.before_settlement":
-                raise NotCompilable(f"instruments.{alias}: the daily engine rolls futures with roll.before_settlement")
-            rolls[alias] = parse_bound(REGISTRY[roll["component"]], roll.get("params")).params.days_before
-        elif instrument.kind != "stock":
-            raise NotCompilable(f"instruments.{alias}: the daily engine has no ledger for {instrument.kind}")
+            if roll is None or roll["component"] != expected_roll:
+                kind = "intraday" if intraday else "daily"
+                raise NotCompilable(f"instruments.{alias}: {kind} specs trade futures with {expected_roll}")
+            if not intraday:
+                rolls[alias] = parse_bound(REGISTRY[roll["component"]], roll.get("params")).params.days_before
+        elif intraday or instrument.kind != "stock":
+            engine = "intraday" if intraday else "daily"
+            raise NotCompilable(f"instruments.{alias}: the {engine} engine has no ledger for {instrument.kind}")
         instruments[alias] = instrument
 
     def bound(ref: dict) -> Bound:
@@ -168,12 +218,15 @@ def plan(resolved: dict) -> Plan:
             raise NotCompilable(f"{component.name} has no daily behaviour ({hook}) yet")
         return parse_bound(component, ref.get("params"))
 
-    sleeves, traded = [], set()
+    sleeves, traded, hedges = [], set(), []
     for sleeve in resolved["sleeves"]:
-        if sleeve["direction"]["component"] == "direction.dsl_rules":
-            raise NotCompilable("direction.dsl_rules runs on the new engine from step 7")
-        if sleeve.get("exits") or sleeve.get("hedges"):
-            raise NotCompilable(f"sleeve {sleeve['id']}: exits and hedges are not in the daily engine yet")
+        if (sleeve["direction"]["component"] == "direction.dsl_rules") != intraday:
+            raise NotCompilable("direction.dsl_rules is the only direction on intraday bars, and only there")
+        if intraday and (sleeve.get("exits") or sleeve.get("hedges")):
+            raise NotCompilable(f"sleeve {sleeve['id']}: exits and hedges are not in the intraday engine")
+        if sleeve.get("exits"):
+            raise NotCompilable(f"sleeve {sleeve['id']}: exits are not in the daily engine yet")
+        hedges.extend((sleeve["instrument"], bound(ref)) for ref in sleeve.get("hedges") or [])
         if sleeve["instrument"] in traded:
             raise NotCompilable(f"instrument alias {sleeve['instrument']!r} is traded by two sleeves")
         traded.add(sleeve["instrument"])
@@ -197,6 +250,7 @@ def plan(resolved: dict) -> Plan:
         rolls=rolls,
         instruments=instruments,
         initial_capital=capital,
+        hedges=tuple(hedges),
     )
 
 
@@ -252,12 +306,37 @@ class CompiledSpec:
     calendar: pd.DatetimeIndex
     inputs: dict[str, str]  # refdata dataset -> content_sha256
     notes: tuple[str, ...] = field(default_factory=tuple)
+    options: dict[str, OptionInput] = field(default_factory=dict)
+    hedges: tuple[HedgePolicy, ...] = ()
 
     def strategy(self) -> SpecStrategy:
         return strategy_factory(self.plan, self.conventions)()
 
     def run(self, strategy: SpecStrategy | None = None) -> EngineResult:
-        return run(strategy or self.strategy(), self.futures, self.config, aux=self.aux, calendar=self.calendar)
+        """The engine run; raises :class:`HedgeCoverageError` past the §5.7 hedge-unavailable share."""
+
+        result = self.engine_run(strategy)
+        for name, cover in hedge_coverage(result.positions_daily, result.events, [h.name for h in self.hedges]).items():
+            if cover["unavailable_share"] > MAX_UNAVAILABLE_SHARE:
+                raise HedgeCoverageError(
+                    f"{name}: hedge unavailable on {cover['unavailable_days']} of {cover['hedged_days']} hedged days "
+                    f"({cover['unavailable_share']:.1%} > {MAX_UNAVAILABLE_SHARE:.0%}), first "
+                    f"{', '.join(cover['unavailable_dates'][:5])}"
+                )
+        return result
+
+    def engine_run(self, strategy: SpecStrategy | None = None) -> EngineResult:
+        """The engine run without the hedge-coverage rule (reports that list unavailable days)."""
+
+        return run(
+            strategy or self.strategy(),
+            self.futures,
+            self.config,
+            aux=self.aux,
+            calendar=self.calendar,
+            options=self.options,
+            hedges=self.hedges,
+        )
 
     def audit(self, n_cuts: int = 20, seed: int = 0) -> TruncationAuditReport:
         return truncation_audit(
@@ -268,6 +347,8 @@ class CompiledSpec:
             calendar=self.calendar,
             n_cuts=n_cuts,
             seed=seed,
+            options=self.options,
+            hedges=self.hedges,
         )
 
 
@@ -281,6 +362,8 @@ def compile_spec(
 ) -> CompiledSpec:
     """Strategy, config and refdata inputs for a resolved daily spec over ``[start, end]``."""
 
+    if resolved["frequency"] != "1d":
+        raise NotCompilable("compile_spec reads daily refdata; intraday specs run on engine.intraday")
     spec_plan = plan(resolved)
     store = store or RefdataStore()
     start = pd.Timestamp(start).normalize()
@@ -375,10 +458,14 @@ def compile_spec(
         "(holidays unknown) so a roll due on the last day is seen"
     )
     aux = {}
-    for name, dataset in AUX_DATASETS.items():
-        frame = store.read(dataset, start=load_from, end=upper)
+    attached = sorted({*ALWAYS_ATTACHED, *spec_plan.signal_indices})
+    for name in attached:
+        try:
+            frame = store.read(AUX_DATASETS[name], start=load_from, end=upper)
+        except DatasetMissingError as error:
+            raise NotCompilable(f"signal index:{name}: {error}") from error
         if len(frame):
-            aux[name] = frame.set_index("trade_date").sort_index()
+            aux[name] = align_signal_frame(name, frame)
     for name in spec_plan.signal_indices:
         rows = aux.get(name)
         if rows is None:
@@ -391,10 +478,18 @@ def compile_spec(
                 f"signal index:{name}: {rows_before} rows of {AUX_DATASETS[name]} before {start.date()}, the components "
                 f"need {warmup} for warm-up (data from {SIGNAL_INDICES[name].data_since.isoformat()})"
             )
-    datasets = [*((FUTURES, CALENDAR) if by_kind["future"] else ()), *AUX_DATASETS.values()]
+    datasets = [*((FUTURES, CALENDAR) if by_kind["future"] else ()), *(AUX_DATASETS[n] for n in attached)]
     if by_kind["stock"]:
         datasets += [STOCKS, *((ACTIONS,) if store.exists(ACTIONS) else ())]
     inputs = {dataset: store.content_sha256(dataset) for dataset in datasets}
+    options, hedges = {}, []
+    if spec_plan.hedges:
+        options, hedges = option_inputs(spec_plan, store, load_from, upper)
+        inputs.update({dataset: store.content_sha256(dataset) for dataset in OPTION_DATASETS})
+        notes.append(
+            "TXO: monthly puts from taifex_txo_daily, valued and filled at daily settlement prices plus "
+            "max(1 tick, 5% of premium) slippage; a put held to expiry is cash-settled at the final settlement price"
+        )
     return CompiledSpec(
         name=resolved["name"],
         plan=spec_plan,
@@ -405,4 +500,34 @@ def compile_spec(
         calendar=calendar,
         inputs=inputs,
         notes=tuple(notes),
+        options=options,
+        hedges=tuple(hedges),
     )
+
+
+def option_inputs(spec_plan: Plan, store, load_from: pd.Timestamp, upper) -> tuple[dict, list[HedgePolicy]]:
+    """The option chains and hedge policies of a hedged plan, from refdata over ``[load_from, upper]``."""
+
+    options: dict[str, OptionInput] = {}
+    hedges = []
+    for alias, bound_hedge in spec_plan.hedges:
+        component = bound_hedge.component
+        symbol = component.option_symbol
+        if symbol not in options:
+            quotes = store.read(OPTION_QUOTES, start=load_from, end=upper, rows=ROW_FILTERS[OPTION_QUOTES])
+            if quotes.empty:
+                raise NotCompilable(f"no {symbol} quotes in refdata between {load_from.date()} and {upper}")
+            final = store.read(OPTION_FINAL)
+            final = final[final["expiry_kind"] == "monthly"]
+            options[symbol] = OptionInput(
+                spec=OptionSpec.from_instrument(INSTRUMENTS[symbol]),
+                quotes=quotes.rename(columns={"trade_date": "date"}),
+                expiries=dict(quotes.groupby("contract_month")["expiry_date"].first()),
+                final_settlement={
+                    row.contract_month: (row.final_settlement_date, row.final_settlement_price)
+                    for row in final.itertuples()
+                },
+            )
+        name = f"{alias}.{component.name.split('.', 1)[1]}"
+        hedges.append(component.policy(bound_hedge.params, name=name, underlying=alias, chain=symbol))
+    return options, hedges

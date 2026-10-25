@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict
 
 from poseidon.pipeline.v3.instruments import FREQUENCIES, Instrument
 
-REGISTRY_VERSION = 2
+REGISTRY_VERSION = 1
 
 SLOTS: tuple[str, ...] = (
     "roll",
@@ -155,6 +155,12 @@ class DirectionComponent(Component):
 
         raise NotImplementedError(f"{self.name} has no daily behaviour yet")
 
+    def protect(self, params: StrictParams, state: Any) -> Any:
+        """Protective orders (``engine.Protect``) set by the last :meth:`step`, or None to keep the resting
+        ones. Only ``direction.dsl_rules`` places them (its DSL risk block); the intraday engine runs them."""
+
+        return None
+
 
 class LeverageComponent(Component):
     """One link of the ordered leverage chain L0 -> f1 -> f2 ... (non-negative multiples of equity)."""
@@ -246,6 +252,19 @@ class RollComponent(Component):
         raise NotImplementedError(f"{self.name} has no daily behaviour yet")
 
 
+class HedgeComponent(Component):
+    """A bought-option overlay on the sleeve's futures position. The engine sizes, selects, rolls,
+    values and settles it (``engine.options``); the component turns its parameters into that policy."""
+
+    slot = "hedge"
+    option_symbol: ClassVar[str]  # instrument-table row of the option it buys
+
+    def policy(self, params: StrictParams, *, name: str, underlying: str, chain: str) -> Any:
+        """The ``engine.HedgePolicy`` for a sleeve trading engine instrument ``underlying``."""
+
+        raise NotImplementedError(f"{self.name} has no daily behaviour yet")
+
+
 class ExecutionComponent(Component):
     """Decision-to-fill timing; the engine reads ``fill`` (§5.1)."""
 
@@ -288,7 +307,6 @@ PLANNED_COMPONENTS: dict[str, str] = {
     "exit.take_profit": "step 3 (daily engine components)",
     "exit.trailing": "step 3 (daily engine components)",
     "exit.max_hold": "step 3 (daily engine components)",
-    "hedge.protective_put": "step 9 / M4 (TXO data and option engine)",
     "direction.custom": "step 10 / M5 (sandboxed custom Python, feature flag)",
     "leverage.custom": "step 10 / M5 (sandboxed custom Python, feature flag)",
     "hedge.collar": "Phase 2 (needs option-writer margin)",
@@ -303,9 +321,16 @@ UNSUPPORTED_CAPABILITIES: dict[str, str] = {
     "order_book": "order book or tick data",
     "implied_volatility": "implied volatility signals",
     "other_markets": "instruments outside TAIFEX index futures and the listed TWSE stocks / ETFs (NQ/ES/TE, crypto, US stocks)",
-    "news_fundamentals": "news, fundamentals, sentiment or companion flows (e.g. foreign investor flows)",
+    "news_fundamentals": (
+        "news, fundamentals, text or survey sentiment, or companion flows (e.g. foreign investor flows); the VIX "
+        "itself IS available as `index:vix`"
+    ),
     "ml_models": "machine-learning model predictions",
-    "pyramiding": "pyramiding (adding to a position on its own signals beyond the sizing target)",
+    "pyramiding": (
+        "pyramiding on the position's own profit or signals (adding to a winner beyond the sizing target); adding on "
+        "price DECLINES is `leverage.drawdown_ladder` and adding when the VIX (or another signal level) is high is "
+        "`leverage.level_ladder`, both CAN"
+    ),
 }
 
 

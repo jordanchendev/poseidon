@@ -42,6 +42,7 @@ from poseidon.pipeline.plan import (
 )
 from poseidon.pipeline.stages import (
     STAGE_REGISTRY,
+    IdeaOriginal,
     StageContext,
     StageResult,
     StageStopped,
@@ -280,6 +281,11 @@ class PipelineDispatcher:
                 now=now,
                 stage_started_at=min(starts) if starts else now,
                 resume=self._as_upstream(stored) if stored is not None else None,
+                original=(
+                    IdeaOriginal(run.original_text, run.original_sha256, run.drafted_by)
+                    if run.original_text is not None
+                    else None
+                ),
             )
             input_sha256 = content_sha256(stage.input_payload(context))
             if row.input_sha256 is not None and row.input_sha256 != input_sha256:

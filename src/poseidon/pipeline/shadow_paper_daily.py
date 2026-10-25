@@ -66,7 +66,6 @@ from poseidon.pipeline.refdata.engine_input import (
     RefdataReader,
     StockDataGap,
     align_stock_bars,
-    aux_frame,
     day_session_dates,
     futures_input,
     last_day_session,
@@ -82,6 +81,7 @@ from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
 from poseidon.pipeline.refdata.tw_stocks import read_bars
 from poseidon.pipeline.stages import StageResult
 from poseidon.pipeline.state import Verdict, utcnow
+from poseidon.pipeline.v3.instruments import align_signal_frame, complete_through
 from poseidon.pipeline.window import MARKET_TZ
 
 DAILY_MODE = "daily_target"
@@ -239,7 +239,8 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
     last = last_day_session(quotes, products) if products else {}
     stock_rows = {k: read_bars(reader, i.spec.symbol, start=compiled.data_start) for k, i in stock_insts.items()}
     aux_full = {
-        name: aux_frame(reader.read(dataset, start=compiled.data_start)) for name, dataset in compiled.aux.items()
+        name: align_signal_frame(name, reader.read(dataset, start=compiled.data_start))
+        for name, dataset in compiled.aux.items()
     }
     last_dates = {f"{FUTURES}:{p}": _iso(day) for p, day in last.items()}
     stock_last = {k: pd.Timestamp(rows["date"].max()) if len(rows) else None for k, rows in stock_rows.items()}
@@ -248,7 +249,7 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
         {f"aux:{name}": _iso(frame.index.max()) if len(frame) else None for name, frame in aux_full.items()}
     )
     ends = [*last.values(), *stock_last.values()]
-    ends += [frame.index.max() if len(frame) else None for frame in aux_full.values()]
+    ends += [complete_through(name, frame) for name, frame in aux_full.items()]
     if any(day is None for day in ends):
         raise RefdataError(f"no data for {sorted(k for k, v in last_dates.items() if v is None)}")
     cutoff = pd.Timestamp(min(ends)).normalize()

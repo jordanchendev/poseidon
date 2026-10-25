@@ -281,6 +281,8 @@ def _prop_text(prop: dict, required: bool) -> str:
         text = str(prop["const"])
     else:
         text = prop.get("type", "value")
+        if text == "array" and prop.get("description"):
+            text = f"array: {prop['description']}"
         low = prop.get("minimum", prop.get("exclusiveMinimum"))
         high = prop.get("maximum", prop.get("exclusiveMaximum"))
         if low is not None or high is not None:
@@ -374,14 +376,23 @@ def _component_lines(component: Component) -> list[str]:
     return lines
 
 
+VIX_NOTE = (
+    "`index:vix` is the previous US session's close: a Taiwan decision on date t reads US dates t-1 and earlier only "
+    '(the VIX of US date t is not known yet). Scale-in ideas are CAN: "add when price falls N%" is '
+    "`leverage.drawdown_ladder` (the opposite of the planned `risk.drawdown_brake`, which cuts leverage after the "
+    'strategy\'s own equity drawdown) and "add when VIX is above X" is `leverage.level_ladder` on `index:vix`. '
+    "Both only raise the incoming leverage, within the 5x cap and the margin limit."
+)
+
+
 def _signal_series_lines() -> list[str]:
     """Owner decision 2026-10-24 (afternoon) #1: the signal series is always named, never assumed."""
 
     lines = [
         "## Signal series",
         "",
-        "`regime.ma_band` and `risk.vol_cap` read the daily series named by their `signal` parameter, which is "
-        "required (no default). The choice is part of the strategy: the same 200-day MA band over 2000-2014 ends 49% "
+        "`regime.ma_band`, `risk.vol_cap`, `leverage.drawdown_ladder` and `leverage.level_ladder` read the daily "
+        "series named by their `signal` parameter, which is required (no default). The choice is part of the strategy: the same 200-day MA band over 2000-2014 ends 49% "
         "apart on the TX adjusted series vs the TAIEX price index (49 vs 33 regime switches).",
         "",
         f"- `self:adjusted`: the traded futures' back-adjusted continuous price (MTX/TMF: TX's), from "
@@ -395,6 +406,8 @@ def _signal_series_lines() -> list[str]:
         "",
         'An idea that only says "台指", "TAIEX" or "大盤" does not say which of these it means: that is a question for '
         "the owner, answered before the idea reaches the pipeline. Never pick one silently.",
+        "",
+        VIX_NOTE,
         "",
     ]
     return lines
@@ -454,7 +467,13 @@ def render_brief() -> str:
         if row.kind == "stock":
             continue
         prices = f"{row.price_proxy} prices (proxy)" if row.price_proxy else "own"
-        available = "yes" if row.tradable else f"not yet: {row.planned}"
+        available = (
+            "yes"
+            if row.tradable
+            else f"hedges only (`{row.hedge_component}`)"
+            if row.hedge_component
+            else f"not yet: {row.planned}"
+        )
         lines.append(
             f"| {row.symbol} | {row.name_en} ({row.name_zh}) | {row.point_value_twd:g} | {row.tick_size:g} | "
             f"{row.cost_model.commission_per_contract:g} | {row.listed_since.isoformat()} | {prices} | {available} |"
@@ -517,7 +536,7 @@ def render_brief() -> str:
     ]
     lines += [f"- {text} (`{token}`)" for token, text in UNSUPPORTED_CAPABILITIES.items()]
     lines += [
-        "- options or implied volatility beyond the planned protective put; standalone volume / OI conditions.",
+        "- options or implied volatility beyond bought protective puts; standalone volume / OI conditions.",
         f"- {CANNOT_DSL}",
         f"- {HIGHER_TIMEFRAME_RULE}",
         "",
@@ -599,6 +618,11 @@ def render_capability_brief() -> str:
                 f"{row.daily_data_since.isoformat() if row.daily_data_since else 'n/a'}; {prices}; listed "
                 f"{row.listed_since.isoformat()}"
             )
+        elif row.hedge_component:
+            lines.append(
+                f"- {row.symbol} ({row.name_zh}): bought puts only, through `{row.hedge_component}`; "
+                f"daily data from {row.daily_data_since.isoformat()}"
+            )
         else:
             lines.append(f"- {row.symbol} ({row.name_zh}): not available yet ({row.planned})")
     lines += [
@@ -616,7 +640,7 @@ def render_capability_brief() -> str:
         + ",".join(row.symbol for row in stocks() if not row.etf)
         + ".",
         "",
-        "### Signal series (required by regime.ma_band and risk.vol_cap; never assumed)",
+        "### Signal series (required by regime.ma_band, risk.vol_cap and the two ladders; never assumed)",
         "",
         "The same 200-day MA band over 2000-2014 ends 49% apart on the TX adjusted series vs the TAIEX price index "
         '(49 vs 33 regime switches). If the idea only says "台指", "TAIEX", "大盤" or a bare 均線, ask the owner which '
@@ -628,7 +652,7 @@ def render_capability_brief() -> str:
         f"- `index:{index.name}`: {index.name_en} ({index.name_zh}), from {index.data_since.isoformat()}."
         for index in SIGNAL_INDICES.values()
     ]
-    lines += ["", "### What B CAN use (`*` = tunable)", ""]
+    lines += ["", VIX_NOTE, "", "### What B CAN use (`*` = tunable)", ""]
     for slot in SLOTS:
         for component in components_for(slot):
             if "1d" in component.frequencies and component.name != "direction.dsl_rules":

@@ -113,3 +113,20 @@ def etf_rotation_00631l_0050() -> dict[str, Any]:
     """The M3 acceptance spec: 00631L / 0050 rotation on the TAIEX MA band (step 8)."""
 
     return copy.deepcopy(_ETF_ROTATION_00631L_0050)
+
+
+# Design §3.2 / §10 M4: the same strategy with the protective put of the design example (a 5 % out-of-the-money
+# front-month TXO put, rolled 5 trading days before expiry, one put per five TMF).
+PROTECTIVE_PUT: dict[str, Any] = {
+    "component": "hedge.protective_put",
+    "params": {"moneyness_pct": 0.05, "tenor": "front", "roll_days_before_expiry": 5, "cover_ratio": 1.0},
+}
+
+
+def tmf_dynamic_leverage_3x_put() -> dict[str, Any]:
+    """The M4 acceptance spec: :func:`tmf_dynamic_leverage_3x` plus ``hedge.protective_put``."""
+
+    doc = tmf_dynamic_leverage_3x()
+    doc["name"] = "tmf_dynamic_leverage_3x_put"
+    doc["sleeves"][0]["hedges"] = [copy.deepcopy(PROTECTIVE_PUT)]
+    return doc
