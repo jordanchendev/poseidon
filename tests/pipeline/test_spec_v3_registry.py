@@ -38,16 +38,18 @@ M1_COMPONENTS = {
     "leverage.drawdown_ladder",
     "leverage.level_ladder",
 }
+M4_COMPONENTS = {"hedge.protective_put"}
+COMPONENTS = M1_COMPONENTS | M4_COMPONENTS
 
 
 def test_registry_version_and_contents():
     assert REGISTRY_VERSION == 1
-    assert set(REGISTRY) == M1_COMPONENTS
+    assert set(REGISTRY) == COMPONENTS
     assert not set(REGISTRY) & set(PLANNED_COMPONENTS)
-    assert "hedge.protective_put" in PLANNED_COMPONENTS
+    assert "hedge.collar" in PLANNED_COMPONENTS
 
 
-@pytest.mark.parametrize("name", sorted(M1_COMPONENTS))
+@pytest.mark.parametrize("name", sorted(COMPONENTS))
 def test_every_component_declares_and_describes_its_example(name):
     component = REGISTRY[name]
     assert component.summary and component.capabilities
@@ -63,7 +65,7 @@ def test_every_component_declares_and_describes_its_example(name):
 
 def test_fingerprints_are_name_at_version_and_sha256():
     prints = component_fingerprints()
-    assert set(prints) == {f"{name}@1" for name in M1_COMPONENTS}
+    assert set(prints) == {f"{name}@1" for name in COMPONENTS}
     assert all(re.fullmatch(r"[0-9a-f]{64}", sha) for sha in prints.values())
     assert component_fingerprints(["leverage.base"]) == {"leverage.base@1": prints["leverage.base@1"]}
 
@@ -103,7 +105,8 @@ def test_instrument_table_matches_the_design_defaults():
         assert row.cost_model.tax_rate == 0.00002 and row.cost_model.tax_on_entry
         assert (row.initial_margin_ratio, row.maintenance_margin_ratio) == (0.07, 0.054)
     assert tmf.listed_since == date(2024, 7, 29) and tmf.price_proxy == "TX" and mtx.price_proxy == "TX"
-    assert tx.price_proxy is None and not txo.tradable and "M4" in txo.planned
+    assert tx.price_proxy is None and not txo.tradable and txo.hedge_component == "hedge.protective_put"
+    assert txo.daily_data_since == date(2001, 12, 24) and txo.tick_ladder[:2] == ((10.0, 0.1), (50.0, 0.5))
     # margin is a notional ratio, so MTX = TX / 4 and TMF = TX / 20
     assert mtx.notional_twd(20_000) * 4 == tx.notional_twd(20_000) == tmf.notional_twd(20_000) * 20
     assert "TMF" in tmf.proxy_note(date(2001, 1, 2)) and "2024-07-29" in tmf.proxy_note(date(2001, 1, 2))

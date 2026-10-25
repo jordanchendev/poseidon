@@ -20,6 +20,13 @@ Each trading day t, in this order:
 
 Every fill settles against the current mark immediately (cash += units x (mark - fill) x point
 value), so the position always carries the mark price and the close settles the whole position.
+
+Hedges (``engine.options``, bought options only): after the futures settle, a held series that
+reaches its final settlement day is cash-settled, the hedge orders waiting for today fill at
+today's settlement prices, and every held series is marked at its settlement. Premiums move cash;
+equity = cash + the marked option value. Each decision sizes and selects the hedge from its
+underlying's final target units; ``next_open`` fills it at the next day's settlement,
+``signal_close`` at today's.
 """
 
 from __future__ import annotations
@@ -37,6 +44,14 @@ from poseidon.pipeline.engine.data import (
     build_contract_table,
     normalise_calendar,
     validate_aux,
+)
+from poseidon.pipeline.engine.options import (
+    HEDGE_UNAVAILABLE,
+    HedgeBook,
+    HedgePolicy,
+    OptionChain,
+    OptionInput,
+    OptionSeries,
 )
 from poseidon.pipeline.engine.records import EngineResult
 from poseidon.pipeline.engine.specs import ROUNDING_EPS, ContractSpec
@@ -135,6 +150,8 @@ class _Run:
         config: EngineConfig,
         aux: Mapping[str, pd.DataFrame],
         calendar: Sequence[Any] | None,
+        options: Mapping[str, OptionInput] | None = None,
+        hedges: Sequence[HedgePolicy] = (),
     ) -> None:
         if not futures:
             raise ValueError("need at least one futures instrument")
@@ -155,6 +172,13 @@ class _Run:
             raise ValueError("no bars on or before config.end")
         self.start = pd.Timestamp(config.start) if config.start is not None else self.dates[0]
         self.instruments = tuple(self.pos)
+        self.chains = {name: OptionChain(name, option, cal) for name, option in (options or {}).items()}
+        self.hedges = {policy.name: HedgeBook(policy) for policy in hedges}
+        for policy in hedges:
+            if policy.underlying not in self.pos or policy.chain not in self.chains:
+                raise ValueError(f"hedge {policy.name}: unknown underlying {policy.underlying} or chain {policy.chain}")
+        if len(self.hedges) != len(hedges) or set(self.hedges) & set(self.pos):
+            raise ValueError("hedge names must be unique and differ from instrument names")
 
         self.series = {name: SeriesBuffer(self.n_days) for name in self.pos}
         self.aux_frames = validate_aux(aux)
@@ -180,8 +204,18 @@ class _Run:
 
     # ------------------------------------------------------------------ accounting primitives
 
+    def option_value(self) -> float:
+        return sum(
+            b.units * b.mark * self.chains[b.policy.chain].spec.point_value for b in self.hedges.values() if b.units
+        )
+
+    def equity(self) -> float:
+        """After the close: every future is settled, so cash plus the marked options."""
+
+        return self.cash + self.option_value()
+
     def equity_at(self, prices: Mapping[str, float]) -> float:
-        return self.cash + sum(
+        return self.equity() + sum(
             p.units * (prices[k] - p.mark) * p.spec.point_value for k, p in self.pos.items() if p.units
         )
 
@@ -324,7 +358,7 @@ class _Run:
         self.margin_cap = None
         if not any(p.units for p in self.pos.values()):
             return
-        equity = self.cash
+        equity = self.equity()
         im, mm = self.margin(closes)
         if equity >= mm:
             return
@@ -360,6 +394,109 @@ class _Run:
             self.trade(t, k, target, new_close, "close", "roll")
             self.event(t, "roll", k, note=f"{old_name} -> {p.contract_name()} ({units} -> {target} units)")
 
+    # ------------------------------------------------------------------ hedges (engine.options)
+
+    def option_trade(
+        self, t: pd.Timestamp, book: HedgeBook, series: OptionSeries, units: int, settle: float, reason: str
+    ):
+        spec = self.chains[book.policy.chain].spec
+        fill = spec.fill_price(units, settle)
+        tax, commission = spec.leg_fees(units, fill)
+        self.cash -= units * fill * spec.point_value + tax + commission
+        book.units += units
+        book.series, book.mark = (series, settle) if book.units else (None, math.nan)
+        record = Fill(
+            date=t,
+            session="close",
+            instrument=book.policy.name,
+            contract=series.key,
+            units=units,
+            price=fill,
+            ref_price=settle,
+            tax=tax,
+            commission=commission,
+            slippage_twd=abs(units) * abs(fill - settle) * spec.point_value,
+            reason=reason,
+        )
+        self.fills.append(record)
+        self.fills_today.append(record)
+
+    def option_expiry(self, t: pd.Timestamp, book: HedgeBook) -> None:
+        chain, series = self.chains[book.policy.chain], book.series
+        final = chain.final.get(series.contract_month)
+        if final is None or final[0] > t:
+            return
+        day, price = final
+        units, intrinsic = book.units, series.intrinsic(price)
+        value = units * intrinsic * chain.spec.point_value
+        tax, commission = chain.spec.leg_fees(units, intrinsic) if intrinsic > 0 else (0.0, 0.0)
+        self.cash += value - tax - commission
+        book.series, book.units, book.mark = None, 0, math.nan
+        record = Fill(
+            t, "close", book.policy.name, series.key, -units, intrinsic, intrinsic, tax, commission, 0.0, "expiry"
+        )
+        self.fills.append(record)
+        self.fills_today.append(record)
+        self.event(
+            t,
+            "option_expiry",
+            book.policy.name,
+            value=value,
+            note=f"{series.key}: final settlement {price:g} on {day.date()}, intrinsic {intrinsic:g} x {units} units",
+        )
+
+    def fill_hedge(self, t: pd.Timestamp, book: HedgeBook) -> None:
+        chain = self.chains[book.policy.chain]
+        series, target = book.pending
+        book.pending = None
+        reason = "rebalance" if series is None or book.series in (None, series) else "roll"
+        if book.series is not None and series != book.series:
+            settle = chain.settlement(t, book.series)
+            if not math.isfinite(settle):
+                self.event(t, "hedge_fill_missing", book.policy.name, note=f"{book.series.key}: no settlement, kept")
+                return
+            self.option_trade(t, book, book.series, -book.units, settle, reason)
+        if series is None or target == book.units:
+            return
+        settle = chain.settlement(t, series)
+        if not math.isfinite(settle):
+            self.event(t, "hedge_fill_missing", book.policy.name, note=f"{series.key}: no settlement, not bought")
+            return
+        self.option_trade(t, book, series, target - book.units, settle, reason)
+
+    def options_close(self, t: pd.Timestamp) -> None:
+        """Expiry, then the orders due today, then the marks (all at today's settlement prices)."""
+
+        for book in self.hedges.values():
+            if book.series is not None:
+                self.option_expiry(t, book)
+            if book.pending is not None:
+                self.fill_hedge(t, book)
+            if book.series is not None:
+                settle = self.chains[book.policy.chain].settlement(t, book.series)
+                if math.isfinite(settle):
+                    book.mark = settle
+
+    def decide_hedge(self, t: pd.Timestamp, book: HedgeBook, final: Mapping[str, int], prices: Mapping[str, float]):
+        policy = book.policy
+        chain = self.chains[policy.chain]
+        target = policy.units(
+            final[policy.underlying], self.pos[policy.underlying].spec.point_value, chain.spec.point_value
+        )
+        book.target_units = target
+        held = book.series
+        if not target:
+            book.pending = (None, 0) if held is not None else None
+        elif held is not None and chain.days_left(t, held.expiry) > policy.roll_days:
+            book.pending = (held, target) if target != book.units else None
+        else:
+            series, why = chain.select(t, policy, prices[policy.underlying])
+            if series is None:
+                self.event(t, HEDGE_UNAVAILABLE, policy.name, threshold=policy.max_strike_gap, note=why)
+            book.pending = None if series is None else (series, target)
+        order = book.units if book.pending is None else book.pending[1]
+        self.decisions.append({"date": t, "instrument": policy.name, "requested": target, "final": order})
+
     def decide(self, i: int, t: pd.Timestamp) -> dict[str, int]:
         cfg = self.config
         view = MarketView(
@@ -367,7 +504,7 @@ class _Run:
             {k: SeriesView(self.series[k], self.series[k].n) for k in self.pos},
             {k: AuxView(b, b.n) for k, b in self.aux_buffers.items()},
         )
-        equity = self.cash
+        equity = self.equity()
         prices = {k: p.table.price("close", i, int(p.table.held[i])) for k, p in self.pos.items()}
         im, mm = self.margin(prices)
         book = BookView(
@@ -413,6 +550,8 @@ class _Run:
                 k: (u if abs(u - self.pos[k].units) >= cfg.min_change_units else self.pos[k].units)
                 for k, u in final.items()
             }
+        for book in self.hedges.values():
+            self.decide_hedge(t, book, final, prices)
 
         lev = decision.target_leverage
         for k, p in self.pos.items():
@@ -441,7 +580,7 @@ class _Run:
 
     def record(self, i: int, t: pd.Timestamp, deciding: bool) -> None:
         closes = self.held_price("close", i)
-        equity = self.cash  # every position is marked at today's close
+        equity = self.equity()  # every position is marked at today's close
         im, mm = self.margin(closes)
         gross = sum(p.spec.notional(p.units, closes[k]) for k, p in self.pos.items())
         prev_equity = self.daily[-1]["equity"] if self.daily else self.config.initial_capital
@@ -492,6 +631,25 @@ class _Run:
                 proxy=spec.price_proxy is not None
                 or (spec.listed_since is not None and t < pd.Timestamp(spec.listed_since)),
             )
+        for name, book in self.hedges.items():
+            order = book.units if book.pending is None else book.pending[1]
+            self.positions_daily.append(
+                {
+                    "date": t,
+                    "instrument": name,
+                    "contract": None if book.series is None else book.series.key,
+                    "target_units": book.target_units if deciding else None,
+                    "order_units": order if deciding else None,
+                    "held_units": book.units,
+                    "close": book.mark,
+                    "target_leverage": math.nan,
+                    "implied_target_leverage": math.nan,
+                    "rounding_error": math.nan,
+                    "actual_leverage": math.nan,
+                    "margin_utilisation": 0.0,
+                    "proxy": False,
+                }
+            )
 
     def run(self) -> EngineResult:
         cfg = self.config
@@ -502,9 +660,10 @@ class _Run:
                 self.fill_pending(i, t)
             self.intraday_check(i, t)
             closes = self.settle(i, t)
-            if self.cash <= 0:
+            self.options_close(t)
+            if self.equity() <= 0:
                 self.ruined = t
-                self.event(t, "ruin", value=self.cash, threshold=0.0)
+                self.event(t, "ruin", value=self.equity(), threshold=0.0)
                 if t >= self.start:
                     self.record(i, t, deciding=False)
                 break
@@ -517,11 +676,16 @@ class _Run:
                     self.pending = {k: u for k, u in final.items() if u != self.pos[k].units}
             elif deciding:
                 self.execute_now(i, t, self.decide(i, t))
+                for book in self.hedges.values():
+                    if book.pending is not None:
+                        self.fill_hedge(t, book)
             else:
                 self.roll(i, t, None)
             if deciding:
                 self.record(i, t, deciding=True)
         unfilled = dict(self.pending or {}) if self.ruined is None else {}
+        if self.ruined is None:
+            unfilled.update({k: b.pending[1] for k, b in self.hedges.items() if b.pending is not None})
         return EngineResult.build(
             config=cfg,
             fills=self.fills,
@@ -541,10 +705,14 @@ def run(
     *,
     aux: Mapping[str, pd.DataFrame] | None = None,
     calendar: Sequence[Any] | None = None,
+    options: Mapping[str, OptionInput] | None = None,
+    hedges: Sequence[HedgePolicy] = (),
 ) -> EngineResult:
-    """Simulate ``strategy`` over ``futures`` (name -> input). ``calendar`` defaults to the bar dates."""
+    """Simulate ``strategy`` over ``futures`` (name -> input). ``calendar`` defaults to the bar dates.
 
-    return _Run(strategy, futures, config or EngineConfig(), aux or {}, calendar).run()
+    ``options`` (chain name -> input) and ``hedges`` add bought-option overlays (``engine.options``)."""
+
+    return _Run(strategy, futures, config or EngineConfig(), aux or {}, calendar, options, hedges).run()
 
 
 StrategyFactory = Callable[[], TargetStrategy]

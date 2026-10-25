@@ -266,8 +266,12 @@ class RefdataStore:
     def content_sha256(self, dataset: str) -> str:
         return self.manifest(dataset)["content_sha256"]
 
-    def read(self, dataset: str, start=None, end=None) -> pd.DataFrame:
-        """Rows with ``start <= date_column <= end`` (inclusive, both optional)."""
+    def read(self, dataset: str, start=None, end=None, rows=None) -> pd.DataFrame:
+        """Rows with ``start <= date_column <= end`` (inclusive, both optional).
+
+        ``rows``: a frame -> frame filter applied to each partition as it is read (it must keep the
+        date column), so a large dataset is never held whole in memory.
+        """
 
         lower = pd.Timestamp(start) if start is not None else None
         upper = pd.Timestamp(end) if end is not None else None
@@ -283,7 +287,8 @@ class RefdataStore:
                 path = directory / PARTITIONS / f"{part['key']}.parquet"
                 if not path.exists() or _sha256_file(path) != part["file_sha256"]:
                     raise RefdataError(f"{dataset} partition {part['key']} does not match its manifest")
-                frames.append(pd.read_parquet(path))
+                frame = pd.read_parquet(path)
+                frames.append(frame if rows is None else rows(frame))
         if not frames:
             return pd.DataFrame()
         frame = pd.concat(frames, ignore_index=True)

@@ -33,6 +33,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_PRICE_DATASET
 from poseidon.pipeline.v3 import components as _components  # noqa: F401  (registers the components)
 from poseidon.pipeline.v3.dsl_bridge import DSL_MARKETS
 from poseidon.pipeline.v3.instruments import (
@@ -132,6 +133,7 @@ class WindowStart:
     binding: str | None  # the series that moved the start; None: the default start stands
     warmup_bars: int
     warmup_calendar_days: int
+    no_warmup: tuple[str, ...] = ()  # series read from the start on only (a hedge's option chain): no warm-up added
 
     @property
     def moved(self) -> bool:
@@ -148,7 +150,7 @@ class WindowStart:
             "warmup_bars": self.warmup_bars,
             "warmup_calendar_days": self.warmup_calendar_days,
             "source": "refdata dataset manifests (coverage.start; futures: the product's first row)",
-        }
+        } | ({"no_warmup_series": list(self.no_warmup)} if self.no_warmup else {})
 
 
 @dataclass(frozen=True)
@@ -227,6 +229,13 @@ def _check_shape(doc: dict, issues: _Issues) -> None:
         if instrument is None:
             tradable = ", ".join(symbol for symbol, row in INSTRUMENTS.items() if row.tradable)
             issues.error((*base, "symbol"), f"unknown symbol {decl['symbol']!r}; choose one of: {tradable}")
+            continue
+        if instrument.hedge_component is not None:
+            issues.error(
+                (*base, "symbol"),
+                f"{instrument.symbol} is not a sleeve instrument; buy it with {instrument.hedge_component} in the "
+                "hedges of a TX, MTX or TMF sleeve",
+            )
             continue
         if not instrument.tradable:
             issues.unsupported_(
@@ -571,6 +580,7 @@ def _check_data(
     warmup = timedelta(days=warmup_calendar_days(bars, frequency))
     known = feasibility.series_since or {}
     series: list[tuple[tuple, str, str | None, date, str]] = []  # (path, label, key, first day, fix)
+    no_warmup: set[str] = set()  # keys read from the window start on only (a hedge's option chain)
     instruments: list[Instrument] = []
     for alias, decl in resolved["instruments"].items():
         instrument = INSTRUMENTS[decl["symbol"]]
@@ -592,11 +602,21 @@ def _check_data(
             since = known.get(index.dataset, index.data_since)
             label, fix = f"{signal} ({index.name_en})", "shorten the warm-up windows or read another series"
             series.append(((*path, "params", "signal"), label, index.dataset, since, fix))
+        option_symbol = getattr(component, "option_symbol", None)
+        if option_symbol is not None:
+            option = INSTRUMENTS[option_symbol]
+            key = OPTION_PRICE_DATASET
+            since = known.get(key, option.daily_data_since)
+            series.append(((*path, "component"), f"{option.symbol} {frequency}", key, since, "remove the hedge"))
+            no_warmup.add(key)
 
     window = None
     if feasibility.choose_start and daily and series:
         lagged = warmup_calendar_days(bars + SIGNAL_LAG_WARMUP_BARS, frequency)
-        latest, binding = max((since + timedelta(days=lagged), key) for _path, _label, key, since, _fix in series)
+        latest, binding = max(
+            (since + timedelta(days=0 if key in no_warmup else lagged), key)
+            for _path, _label, key, since, _fix in series
+        )
         window = WindowStart(
             start=max(start, latest),
             default_start=start,
@@ -604,13 +624,14 @@ def _check_data(
             binding=binding if latest > start else None,
             warmup_bars=bars + SIGNAL_LAG_WARMUP_BARS,
             warmup_calendar_days=lagged,
+            no_warmup=tuple(sorted(no_warmup)),
         )
         start = window.start
     need_from = start - warmup
-    for path, label, _key, since, fix in series:
+    for path, label, key, since, fix in series:
         if start < since:
             issues.unsupported_(path, _window_uncovered(label, since, start))
-        elif need_from < since:
+        elif need_from < since and key not in no_warmup:
             issues.error(
                 path,
                 f"{label} data starts {since.isoformat()}; the window start {start.isoformat()} minus the warm-up "
@@ -692,7 +713,7 @@ def _check_sizing(resolved: dict, template: dict, params: dict, feasibility: Fea
         )
         sizing_params = sizing.parse(sleeve["sizing"].get("params") or {})
         defaults = {name: spec.cast(spec.default) for name, spec in params.items()}
-        reported = {"units": False, "margin": False, "cap": False}
+        reported = {"units": False, "margin": False, "cap": False, "hedge": False}
         grid = []
         for point in _grid_points(names, params):
             values = {**defaults, **point}
@@ -722,6 +743,22 @@ def _check_sizing(resolved: dict, template: dict, params: dict, feasibility: Fea
                     instrument=instrument,
                 )
                 actual = units * notional / equity
+                for position, hedge in enumerate(sleeve.get("hedges") or []):
+                    component = REGISTRY[hedge["component"]]
+                    policy = component.policy(
+                        component.parse(hedge.get("params") or {}), name="hedge", underlying="", chain=""
+                    )
+                    option = INSTRUMENTS[component.option_symbol]
+                    covered = policy.units(units, instrument.point_value_twd * instrument.lot, option.point_value_twd)
+                    if units and not covered and not reported["hedge"]:
+                        reported["hedge"] = True
+                        issues.error(
+                            (*base, "hedges", position),
+                            f"target {nominal:g}x{where} on {equity:,.0f} TWD at price {price:,.0f} buys "
+                            f"{_contracts(units)} of {instrument.symbol}, which sizes to 0 {option.symbol} puts "
+                            f"(cover_ratio {policy.cover_ratio:g} x {units} x {instrument.point_value_twd:g} / "
+                            f"{option.point_value_twd:g} < 1); raise cover_ratio, capital or leverage",
+                        )
                 if not reported["units"] and (units == 0 or abs(actual - nominal) / nominal > MAX_ROUNDING_ERROR):
                     reported["units"] = True
                     hint = _family_hint(price, nominal, equity, instrument, sizing, sizing_params)

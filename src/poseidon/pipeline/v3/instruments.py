@@ -13,6 +13,7 @@ TAIFEX figures). Because they are ratios of notional, MTX's margin is TX's
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal
@@ -55,6 +56,10 @@ class Instrument:
     planned: str = ""  # when a non-tradable row becomes tradable
     initial_margin_ratio: float = INITIAL_MARGIN_RATIO
     maintenance_margin_ratio: float = MAINTENANCE_MARGIN_RATIO
+    # Price-dependent tick: ((price below, tick), ...) ascending, the last tick above the last bound.
+    tick_ladder: tuple[tuple[float, float], ...] = ()
+    # A non-tradable row that a spec still reaches through this hedge component (TXO: bought puts).
+    hedge_component: str | None = None
 
     def notional_twd(self, price: float) -> float:
         """Contract notional at ``price`` (one contract / lot)."""
@@ -156,9 +161,10 @@ INSTRUMENTS: dict[str, Instrument] = {
         settlement="third_wednesday",
         tradable=True,
     ),
-    # TXO is listed so the brief and the validator can say "not yet" precisely.
-    # Its premium tick ladder awaits the data spike (§9.2), so tick_size is the
-    # smallest step only; the fee is the §12 #6 default, tax 0.1 % of premium.
+    # TXO is no sleeve instrument: specs buy it only through hedge.protective_put (§5.7).
+    # Premium ticks per the TAIFEX TXO rules, unchanged since listing (data spike 2026-10-24:
+    # every traded close 2001-2026 fits); tick_size is the smallest step. Fee: §12 #6 default;
+    # tax 0.1 % of the premium value (and of the cash-settlement value at expiry).
     "TXO": Instrument(
         symbol="TXO",
         kind="option",
@@ -182,11 +188,12 @@ INSTRUMENTS: dict[str, Instrument] = {
         ),
         listed_since=date(2001, 12, 24),
         price_proxy=None,
-        daily_data_since=None,
+        daily_data_since=date(2001, 12, 24),  # TAIFEX optDataDown, refdata taifex_txo_daily
         intraday_data_since=None,
         settlement="third_wednesday",
         tradable=False,
-        planned="M4 (TXO refdata, option engine, hedge.protective_put)",
+        tick_ladder=((10.0, 0.1), (50.0, 0.5), (500.0, 1.0), (1000.0, 5.0), (math.inf, 10.0)),
+        hedge_component="hedge.protective_put",
     ),
 }
 

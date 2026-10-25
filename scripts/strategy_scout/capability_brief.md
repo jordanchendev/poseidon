@@ -38,7 +38,7 @@ Instruments (point value TWD/pt, fee TWD/contract/side, daily data from):
 - TX (台指期): 200, 50, 1998-07-21; own prices; listed 1998-07-21
 - MTX (小台指): 50, 25, 1998-07-21; TX prices, proxy; listed 2001-04-09
 - TMF (微台指): 10, 20, 1998-07-21; TX prices, proxy; listed 2024-07-29
-- TXO (台指選擇權): not available yet (M4 (TXO refdata, option engine, hedge.protective_put))
+- TXO (台指選擇權): bought puts only, through `hedge.protective_put`; daily data from 2001-12-24
 Futures: tax 0.002% both legs, 1 tick slippage/side, margin ~7.0% initial. Capital 300,000-20,000,000 TWD (default 1,000,000); leverage at most 5x; integer contracts (every grid point must buy 1+ contract within 25% of target leverage, else use MTX/TMF); initial margin at most 80% of equity; shorts only via futures.
 
 ### Signal series (required by regime.ma_band, risk.vol_cap and the two ladders; never assumed)
@@ -66,12 +66,13 @@ The same 200-day MA band over 2000-2014 ends 49% apart on the TX adjusted series
 - `rebalance.monthly_at_roll`: Re-size only when the futures position rolls (monthly); direction changes still trade at once. [min_change_units integer [1, 100], default 1 *]
 - `rebalance.threshold_band`: Re-size when the actual leverage drifts more than band_pct from the target (relative). [band_pct number [0.01, 0.5], default 0.1 *]
 - `rebalance.on_signal_change`: Trade only when the direction changes (enter / exit / reverse); no re-sizing in between.
+- `hedge.protective_put`: Buy TXO monthly puts against the long futures position: strike nearest close x (1 - moneyness), roll before expiry, cover_ratio 1 = 1 put per 5 TMF; valued at daily settlement prices. [moneyness_pct number [0.0, 0.2], default 0.05 *; tenor front | next, default "front"; roll_days_before_expiry integer [1, 15], default 5 *; cover_ratio number [0.25, 1.5], default 1.0 *]
 - `allocation.single`: One sleeve, weight 1.
 - `execution.next_open`: Decide after the daily close, fill at the next session's open (TX family: 15:00 night open).
 
 ### What B CANNOT express (comes back unsupported)
 
-Not yet (planned): `regime.ma_cross`, `risk.vol_target`, `risk.drawdown_brake`, `sizing.vol_target`, `sizing.risk_per_trade`, `sizing.fixed_notional`, `rebalance.every_decision`, `exit.stop_loss`, `exit.take_profit`, `exit.trailing`, `exit.max_hold`, `allocation.fixed_weights`, `allocation.inverse_vol`, `allocation.regime_switch`, `hedge.protective_put`, `direction.custom`, `leverage.custom`, `hedge.collar`.
+Not yet (planned): `regime.ma_cross`, `risk.vol_target`, `risk.drawdown_brake`, `sizing.vol_target`, `sizing.risk_per_trade`, `sizing.fixed_notional`, `rebalance.every_decision`, `exit.stop_loss`, `exit.take_profit`, `exit.trailing`, `exit.max_hold`, `allocation.fixed_weights`, `allocation.inverse_vol`, `allocation.regime_switch`, `direction.custom`, `leverage.custom`, `hedge.collar`.
 - selling options (writer margin is Phase 2), including collars (`option_selling`)
 - short selling stocks or ETFs (shorts only via futures) (`short_stock`)
 - equity-based sizing on intraday bars (deferred) (`intraday_equity_sizing`)

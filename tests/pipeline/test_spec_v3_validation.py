@@ -10,7 +10,7 @@ from poseidon.pipeline.spec_validation import get_spec_validator
 from poseidon.pipeline.v3 import validation
 from poseidon.pipeline.v3.describe import describe_spec, narrative
 from poseidon.pipeline.v3.dsl_bridge import v2_to_v3
-from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
+from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x, tmf_dynamic_leverage_3x_put
 from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
 from poseidon.strategies.dsl.v2.examples import tx_atr_squeeze_breakout
 
@@ -162,7 +162,13 @@ INVALID = [
         "TX, MTX, TMF",
         "error",
     ),
-    ("txo_not_yet", _set(["instruments", "core", "symbol"], "TXO"), "instruments.core.symbol", "M4", "unsupported"),
+    (
+        "txo_is_no_sleeve_instrument",
+        _set(["instruments", "core", "symbol"], "TXO"),
+        "instruments.core.symbol",
+        "buy it with hedge.protective_put",
+        "error",
+    ),
     (
         "reserved_alias",
         m(lambda d: d.update(instruments={"self": d["instruments"]["core"]})),
@@ -215,10 +221,33 @@ INVALID = [
     ),
     (
         "planned_component",
-        m(lambda d: _sleeve(d)["hedges"].append({"component": "hedge.protective_put", "params": {"moneyness_pct": 5}})),
-        "sleeves.0.hedges.0.component",
-        "M4",
+        m(lambda d: _sleeve(d)["exits"].append({"component": "exit.stop_loss", "params": {}})),
+        "sleeves.0.exits.0.component",
+        "planned: step 3",
         "unsupported",
+    ),
+    (
+        "put_moneyness_in_percent",
+        m(
+            lambda d: _sleeve(d)["hedges"].append(
+                {"component": "hedge.protective_put", "params": {"moneyness_pct": 5.0}}
+            )
+        ),
+        "sleeves.0.hedges.0.params.moneyness_pct",
+        "less than or equal to 0.2",
+        "error",
+    ),
+    (
+        "put_on_a_short_sleeve",
+        m(
+            lambda d: (
+                _sleeve(d)["direction"]["params"].update(side="short"),
+                _sleeve(d)["hedges"].append({"component": "hedge.protective_put"}),
+            )
+        ),
+        "sleeves.0.hedges.0",
+        "always short",
+        "error",
     ),
     (
         "base_above_bound",
@@ -597,6 +626,46 @@ def test_the_warm_up_leaves_room_for_the_execution_timing_signal_lag():
 
     lags = [request.signal_lag_extra for request in scenarios_for({}, base_execution="next_open").values()]
     assert max(lags) == validation.SIGNAL_LAG_WARMUP_BARS
+
+
+# --------------------------------------------------------------------------- the protective put (M4)
+
+PUT_NARRATIVE = (
+    "避險：買進台指選擇權月選賣權保護多單：履約價取 TX 期貨收盤價 ×(1−5%) 最近、有結算價的序列，近月（剩餘超過 5 個交易日的到期），"
+    "到期前 5 個交易日換到下一個到期；口數 = TMF 口數 × 10 × 1 ÷ 50，無條件捨去（每 5 口 TMF 一口賣權）；"
+    "以每日結算價估值和成交（另加滑價），到期以最後結算價現金結算。"
+)
+
+
+def test_the_put_spec_reads_txo_from_its_listing():
+    put = tmf_dynamic_leverage_3x_put()
+    # the default daily window starts 2001-01-02, before the first TXO day: no spec edit reaches it
+    uncovered = validate_spec_v3(put)
+    assert not uncovered.errors and [issue.path for issue in uncovered.unsupported] == ["sleeves.0.hedges.0.component"]
+    assert "TXO 1d data starts 2001-12-24, after the run's data window start 2001-01-02" in uncovered.unsupported[0].msg
+    assert validate_spec_v3(put, feasibility=FeasibilityContext(start=date(2014, 11, 3))).ok
+    # the chain needs no warm-up: a window may start on the first TXO day, while the signals still get theirs
+    chosen = choose(put)
+    assert chosen.ok and chosen.window.binding == "taifex_txo_daily" and chosen.window.start == date(2001, 12, 24)
+    assert chosen.window.as_config()["no_warmup_series"] == ["taifex_txo_daily"]
+    assert validate_spec_v3(put, feasibility=FeasibilityContext(start=date(2001, 12, 24))).ok
+    assert "no_warmup_series" not in choose(total_return_spec()).window.as_config()
+
+
+def test_the_put_spec_renders_the_hedge_sentence():
+    result = validate_spec_v3(tmf_dynamic_leverage_3x_put(), feasibility=FeasibilityContext(start=date(2014, 11, 3)))
+    assert narrative(result.resolved) == ACCEPTANCE_NARRATIVE + PUT_NARRATIVE
+
+
+def test_a_put_that_sizes_to_zero_contracts_is_an_error():
+    small = tmf_dynamic_leverage_3x_put()
+    small["capital"]["initial_twd"] = 600_000  # 3x at 45,654 buys 3 TMF (2.28x), which cover 0.6 puts
+    result = validate_spec_v3(small, feasibility=FeasibilityContext(start=date(2014, 11, 3)))
+    assert [issue.path for issue in result.errors] == ["sleeves.0.hedges.0"]
+    assert "sizes to 0 TXO puts" in result.errors[0].msg
+    assert validate_spec_v3(
+        small, feasibility=FeasibilityContext(start=date(2014, 11, 3), prices={"TX": (9_000.0,)})
+    ).ok  # at 9,000 the same capital buys 20 TMF: 4 puts
 
 
 def test_first_bar_price_decides_contract_feasibility():

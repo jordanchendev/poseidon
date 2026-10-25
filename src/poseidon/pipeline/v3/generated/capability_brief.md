@@ -16,7 +16,7 @@ The downstream pipeline turns an idea into a spec v3 and backtests it. A spec is
 | TX | TAIEX futures (台指期) | 200 | 1 | 50 | 1998-07-21 | own | yes |
 | MTX | Mini-TAIEX futures (小台指) | 50 | 1 | 25 | 2001-04-09 | TX prices (proxy) | yes |
 | TMF | Micro TAIEX futures (微台指) | 10 | 1 | 20 | 2024-07-29 | TX prices (proxy) | yes |
-| TXO | TAIEX options (台指選擇權) | 50 | 0.1 | 25 | 2001-12-24 | own | not yet: M4 (TXO refdata, option engine, hedge.protective_put) |
+| TXO | TAIEX options (台指選擇權) | 50 | 0.1 | 25 | 2001-12-24 | own | hedges only (`hedge.protective_put`) |
 
 Futures: tax 0.002% of notional on both legs, 1 tick slippage per side; margin approximated as 7.0% initial / 5.4% maintenance of notional. Daily prices are TAIFEX contract-month data (a signal on the futures reads the back-adjusted continuous series); MTX and TMF trade on TX prices with their own contract specs, flagged as proxy in reports (before the TMF listing the contract did not exist).
 
@@ -113,7 +113,11 @@ An idea that only says "台指", "TAIEX" or "大盤" does not say which of these
 
 ### hedges (per sleeve)
 
-- none yet (see Planned)
+- `hedge.protective_put` (1d): Buy TXO monthly puts against the long futures position: strike nearest close x (1 - moneyness), roll before expiry, cover_ratio 1 = 1 put per 5 TMF; valued at daily settlement prices.
+  - `moneyness_pct`: number [0.0, 0.2], default 0.05; tunable ($param)
+  - `tenor`: front | next, default "front"
+  - `roll_days_before_expiry`: integer [1, 15], default 5; tunable ($param)
+  - `cover_ratio`: number [0.25, 1.5], default 1.0; tunable ($param)
 
 ### allocation (weights across sleeves)
 
@@ -147,7 +151,6 @@ An idea that only says "台指", "TAIEX" or "大盤" does not say which of these
 - `allocation.fixed_weights`: step 8 (multi-instrument portfolios)
 - `allocation.inverse_vol`: step 8 (multi-instrument portfolios)
 - `allocation.regime_switch`: step 8 (multi-instrument portfolios)
-- `hedge.protective_put`: step 9 / M4 (TXO data and option engine)
 - `direction.custom`: step 10 / M5 (sandboxed custom Python, feature flag)
 - `leverage.custom`: step 10 / M5 (sandboxed custom Python, feature flag)
 - `hedge.collar`: Phase 2 (needs option-writer margin)
@@ -164,7 +167,7 @@ An idea that only says "台指", "TAIEX" or "大盤" does not say which of these
 - news, fundamentals, text or survey sentiment, or companion flows (e.g. foreign investor flows); the VIX itself IS available as `index:vix` (`news_fundamentals`)
 - machine-learning model predictions (`ml_models`)
 - pyramiding on the position's own profit or signals (adding to a winner beyond the sizing target); adding on price DECLINES is `leverage.drawdown_ladder` and adding when the VIX (or another signal level) is high is `leverage.level_ladder`, both CAN (`pyramiding`)
-- options or implied volatility beyond the planned protective put; standalone volume / OI conditions.
+- options or implied volatility beyond bought protective puts; standalone volume / OI conditions.
 - Inside direction.dsl_rules (intraday): higher timeframes (e.g. 60m EMA, daily RSI), smoothing a smoothed series, standard deviation / Bollinger bands / z-score / percentile rank, entries on anything but TX price, time, session levels, the indicators above and N-bar channels.
 - Never stand in for a higher-timeframe indicator by reusing its length on intraday bars: a 200-day MA is NOT SMA(200) on 5m bars (that spans 1-4 trading days, depending on the sessions). On intraday bars such an idea is unsupported as written; say so instead of substituting. A daily indicator belongs on frequency 1d (a 200-day MA regime is regime.ma_band with ma_days 200).
 

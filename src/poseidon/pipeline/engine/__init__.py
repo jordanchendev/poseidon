@@ -7,6 +7,14 @@ rolls continuous futures and reports §5.8 outputs; ``truncation_audit`` proves 
 
 from poseidon.pipeline.engine.audit import TruncationAuditReport, truncation_audit
 from poseidon.pipeline.engine.data import FUTURES_BAR_COLUMNS, FuturesInput
+from poseidon.pipeline.engine.options import (
+    OPTION_QUOTE_COLUMNS,
+    HedgePolicy,
+    OptionInput,
+    OptionSeries,
+    OptionSpec,
+    hedge_coverage,
+)
 from poseidon.pipeline.engine.records import EngineResult
 from poseidon.pipeline.engine.simulator import Decision, EngineConfig, TargetStrategy, run
 from poseidon.pipeline.engine.specs import ContractSpec
@@ -14,6 +22,7 @@ from poseidon.pipeline.engine.view import BookView, Fill, MarketView, SeriesView
 
 __all__ = [
     "FUTURES_BAR_COLUMNS",
+    "OPTION_QUOTE_COLUMNS",
     "BookView",
     "ContractSpec",
     "Decision",
@@ -21,10 +30,15 @@ __all__ = [
     "EngineResult",
     "Fill",
     "FuturesInput",
+    "HedgePolicy",
     "MarketView",
+    "OptionInput",
+    "OptionSeries",
+    "OptionSpec",
     "SeriesView",
     "TargetStrategy",
     "TruncationAuditReport",
+    "hedge_coverage",
     "run",
     "truncation_audit",
 ]

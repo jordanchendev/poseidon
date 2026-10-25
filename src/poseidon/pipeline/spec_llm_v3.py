@@ -193,7 +193,7 @@ ROUTING
 - Ideas whose core needs something outside the catalog (other markets, option selling, order book, news,
   machine learning, a component listed under "planned" or "unsupported"): answer unsupported; "missing" holds
   short snake_case tokens (the catalog's unsupported keys or planned component names) so they aggregate.
-- An idea with an optional add-on the catalog cannot express yet (e.g. a protective put, planned for M4), whose
+- An idea with an optional add-on the catalog cannot express yet (e.g. a stop-loss exit, still planned), whose
   remaining rules are still a coherent strategy: translate the rest and cite the add-on with a clause whose
   component is null (reported to the owner as not implemented). If the add-on is the core, answer unsupported.
 

@@ -428,7 +428,13 @@ def render_brief() -> str:
     ]
     for row in INSTRUMENTS.values():
         prices = f"{row.price_proxy} prices (proxy)" if row.price_proxy else "own"
-        available = "yes" if row.tradable else f"not yet: {row.planned}"
+        available = (
+            "yes"
+            if row.tradable
+            else f"hedges only (`{row.hedge_component}`)"
+            if row.hedge_component
+            else f"not yet: {row.planned}"
+        )
         lines.append(
             f"| {row.symbol} | {row.name_en} ({row.name_zh}) | {row.point_value_twd:g} | {row.tick_size:g} | "
             f"{row.cost_model.commission_per_contract:g} | {row.listed_since.isoformat()} | {prices} | {available} |"
@@ -474,7 +480,7 @@ def render_brief() -> str:
     ]
     lines += [f"- {text} (`{token}`)" for token, text in UNSUPPORTED_CAPABILITIES.items()]
     lines += [
-        "- options or implied volatility beyond the planned protective put; standalone volume / OI conditions.",
+        "- options or implied volatility beyond bought protective puts; standalone volume / OI conditions.",
         f"- {CANNOT_DSL}",
         f"- {HIGHER_TIMEFRAME_RULE}",
         "",
@@ -549,6 +555,11 @@ def render_capability_brief() -> str:
                 f"- {row.symbol} ({row.name_zh}): {row.point_value_twd:g}, {row.cost_model.commission_per_contract:g}, "
                 f"{row.daily_data_since.isoformat() if row.daily_data_since else 'n/a'}; {prices}; listed "
                 f"{row.listed_since.isoformat()}"
+            )
+        elif row.hedge_component:
+            lines.append(
+                f"- {row.symbol} ({row.name_zh}): bought puts only, through `{row.hedge_component}`; "
+                f"daily data from {row.daily_data_since.isoformat()}"
             )
         else:
             lines.append(f"- {row.symbol} ({row.name_zh}): not available yet ({row.planned})")

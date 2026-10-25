@@ -2,7 +2,8 @@
 
 Run the strategy once on the full data, then again on the data cut at each of ``n_cuts`` decision
 days (bars and aux rows after the cut removed; the trading calendar and settlement calendar are
-ex-ante reference data and stay whole). Every decision on or before the cut, and every end-of-day
+ex-ante reference data and stay whole; option quotes and final settlement prices are cut too, the
+option expiry calendar stays whole). Every decision on or before the cut, and every end-of-day
 equity, must be identical to the full run. Any difference means something read data from after
 the decision day.
 """
@@ -17,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from poseidon.pipeline.engine.data import FuturesInput, truncate_aux
+from poseidon.pipeline.engine.options import HedgePolicy, OptionInput
 from poseidon.pipeline.engine.simulator import EngineConfig, TargetStrategy, run
 
 
@@ -51,14 +53,17 @@ def truncation_audit(
     calendar: Sequence[Any] | None = None,
     n_cuts: int = 20,
     seed: int = 0,
+    options: Mapping[str, OptionInput] | None = None,
+    hedges: Sequence[HedgePolicy] = (),
 ) -> TruncationAuditReport:
     """``strategy_factory`` must build a fresh strategy per run (strategies may keep state)."""
 
     config = config or EngineConfig()
     aux = aux or {}
+    options = options or {}
     if calendar is None:
         calendar = sorted({d for f in futures.values() for d in pd.to_datetime(f.bars["date"]).dt.normalize()})
-    full = run(strategy_factory(), futures, config, aux=aux, calendar=calendar)
+    full = run(strategy_factory(), futures, config, aux=aux, calendar=calendar, options=options, hedges=hedges)
     days = pd.DatetimeIndex(full.decisions["date"].unique())
     candidates = days[:-1]  # cutting at the last day is the full run
     if not len(candidates):
@@ -75,6 +80,8 @@ def truncation_audit(
             replace(config, end=None),
             aux=truncate_aux(aux, cut),
             calendar=calendar,
+            options={k: o.truncated(cut) for k, o in options.items()},
+            hedges=hedges,
         )
         checks = (
             ("decisions", full.decisions, truncated.decisions, ("requested", "final")),
