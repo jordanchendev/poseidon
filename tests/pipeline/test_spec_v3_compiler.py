@@ -163,7 +163,8 @@ def test_index_signal_reads_the_aux_series_under_levtx_conventions(store):
     assert res.fills["session"].eq("close").all()
     assert strategy.state("main", "leverage.1")["rows"] == len(compiled.aux["taiex"].loc[: res.equity.index[-1]]) - 1
     assert compile_spec(spec(), start=START, store=store).plan.signal_indices == ()
-    assert compiler.AUX_DATASETS == {"taiex": TAIEX, "taiex_tr": TAIEX_TR}
+    assert compiler.AUX_DATASETS == {"taiex": TAIEX, "taiex_tr": TAIEX_TR, "vix": "cboe_vix_daily"}
+    assert compiler.ALWAYS_ATTACHED == ("taiex", "taiex_tr")  # the VIX is attached only when a signal reads it
 
 
 def test_index_signal_needs_its_own_warm_up_rows(store, tmp_path):

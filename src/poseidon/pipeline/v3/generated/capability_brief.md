@@ -22,13 +22,16 @@ Futures: tax 0.002% of notional on both legs, 1 tick slippage per side; margin a
 
 ## Signal series
 
-`regime.ma_band` and `risk.vol_cap` read the daily series named by their `signal` parameter, which is required (no default). The choice is part of the strategy: the same 200-day MA band over 2000-2014 ends 49% apart on the TX adjusted series vs the TAIEX price index (49 vs 33 regime switches).
+`regime.ma_band`, `risk.vol_cap`, `leverage.drawdown_ladder` and `leverage.level_ladder` read the daily series named by their `signal` parameter, which is required (no default). The choice is part of the strategy: the same 200-day MA band over 2000-2014 ends 49% apart on the TX adjusted series vs the TAIEX price index (49 vs 33 regime switches).
 
 - `self:adjusted`: the traded futures' back-adjusted continuous price (MTX/TMF: TX's), from 1998-07-21.
 - `index:taiex`: TAIEX price index (加權股價指數（不含息）), from 1999-01-05.
 - `index:taiex_tr`: TAIEX total-return index (加權股價報酬指數（含息）), from 2003-01-02.
+- `index:vix`: CBOE VIX volatility index (previous US session close) (CBOE 恐慌指數 VIX（前一個美股交易日收盤）), from 1990-01-02.
 
 An idea that only says "台指", "TAIEX" or "大盤" does not say which of these it means: that is a question for the owner, answered before the idea reaches the pipeline. Never pick one silently.
+
+`index:vix` is the previous US session's close: a Taiwan decision on date t reads US dates t-1 and earlier only (the VIX of US date t is not known yet). Scale-in ideas are CAN: "add when price falls N%" is `leverage.drawdown_ladder` (the opposite of the planned `risk.drawdown_brake`, which cuts leverage after the strategy's own equity drawdown) and "add when VIX is above X" is `leverage.level_ladder` on `index:vix`. Both only raise the incoming leverage, within the 5x cap and the margin limit.
 
 ## Components (what a spec CAN use)
 
@@ -67,14 +70,25 @@ An idea that only says "台指", "TAIEX" or "大盤" does not say which of these
 - `leverage.base` (1d): Base leverage L0 = value x equity (first link of the leverage chain).
   - `value`: number (0.0, 5.0], required; tunable ($param)
 - `regime.ma_band` (1d): Moving-average regime with a hysteresis band: below MA x (1 - band) switch to off_leverage, back above MA x (1 + band) restore the incoming leverage.
-  - `signal`: string "<alias|self>:<open|high|low|close|adjusted>" | "index:<taiex|taiex_tr>", required
+  - `signal`: string "<alias|self>:<open|high|low|close|adjusted>" | "index:<taiex|taiex_tr|vix>", required
   - `ma_days`: integer [20, 400], default 200; tunable ($param)
   - `band_pct`: number [0.0, 0.1], default 0.02; tunable ($param)
   - `off_leverage`: number [0.0, 5.0], default 0.5; tunable ($param)
 - `risk.vol_cap` (1d): Volatility cap: leverage = min(incoming, k / annualised realised volatility over window_days).
-  - `signal`: string "<alias|self>:<open|high|low|close|adjusted>" | "index:<taiex|taiex_tr>", required
+  - `signal`: string "<alias|self>:<open|high|low|close|adjusted>" | "index:<taiex|taiex_tr|vix>", required
   - `window_days`: integer [5, 120], default 20; tunable ($param)
   - `k`: number [0.1, 3.0], default 0.75; tunable ($param)
+- `leverage.drawdown_ladder` (1d): Drawdown ladder (adds leverage when the PRICE falls): leverage steps UP as the signal falls from its rolling high, e.g. -10% -> 2x, -20% -> 3x; hold keeps the reached step until the drawdown recovers to release_drawdown_pct. Never lowers leverage. NOT the planned risk.drawdown_brake (cuts leverage after the strategy's own equity drawdown).
+  - `signal`: string "<alias|self>:<open|high|low|close|adjusted>" | "index:<taiex|taiex_tr|vix>", required
+  - `lookback_days`: integer [20, 500], default 120; tunable ($param)
+  - `steps`: array: 1-6 rungs {drawdown_pct (fraction of the rolling high, 0-0.9), leverage}, both strictly increasing, e.g. [{drawdown_pct: 0.1, leverage: 2}, {drawdown_pct: 0.2, leverage: 3}], required
+  - `hold`: boolean, default false
+  - `release_drawdown_pct`: number [0.0, 0.9), default 0.05
+- `leverage.level_ladder` (1d): Level ladder (adds leverage when a signal LEVEL is high): leverage steps UP as the signal reaches thresholds, e.g. VIX >= 30 -> 2x, >= 40 -> 3x; hold keeps the step until the signal falls to release_below. Never lowers leverage.
+  - `signal`: string "<alias|self>:<open|high|low|close|adjusted>" | "index:<taiex|taiex_tr|vix>", required
+  - `steps`: array: 1-6 rungs {level, leverage}, both strictly increasing, e.g. [{level: 30, leverage: 2}, {level: 40, leverage: 3}], required
+  - `hold`: boolean, default false
+  - `release_below`: number [0.0, 1000.0], default 0.0
 
 ### sizing (per sleeve: d x L -> integer contracts)
 
@@ -147,9 +161,9 @@ An idea that only says "台指", "TAIEX" or "大盤" does not say which of these
 - order book or tick data (`order_book`)
 - implied volatility signals (`implied_volatility`)
 - instruments outside TAIFEX index futures (NQ/ES/TE, crypto, US stocks) (`other_markets`)
-- news, fundamentals, sentiment or companion flows (e.g. foreign investor flows) (`news_fundamentals`)
+- news, fundamentals, text or survey sentiment, or companion flows (e.g. foreign investor flows); the VIX itself IS available as `index:vix` (`news_fundamentals`)
 - machine-learning model predictions (`ml_models`)
-- pyramiding (adding to a position on its own signals beyond the sizing target) (`pyramiding`)
+- pyramiding on the position's own profit or signals (adding to a winner beyond the sizing target); adding on price DECLINES is `leverage.drawdown_ladder` and adding when the VIX (or another signal level) is high is `leverage.level_ladder`, both CAN (`pyramiding`)
 - options or implied volatility beyond the planned protective put; standalone volume / OI conditions.
 - Inside direction.dsl_rules (intraday): higher timeframes (e.g. 60m EMA, daily RSI), smoothing a smoothed series, standard deviation / Bollinger bands / z-score / percentile rank, entries on anything but TX price, time, session levels, the indicators above and N-bar channels.
 - Never stand in for a higher-timeframe indicator by reusing its length on intraday bars: a 200-day MA is NOT SMA(200) on 5m bars (that spans 1-4 trading days, depending on the sessions). On intraday bars such an idea is unsupported as written; say so instead of substituting. A daily indicator belongs on frequency 1d (a 200-day MA regime is regime.ma_band with ma_days 200).
