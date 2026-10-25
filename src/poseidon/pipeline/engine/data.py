@@ -34,6 +34,14 @@ gap is never booked as PnL.
 
 ``aux`` series (index levels, rates, ...) are DataFrames with a sorted, unique DatetimeIndex and
 numeric columns. The strategy sees the rows dated on or before the decision day.
+
+Stocks (``spec.kind == "stock"``) use the same table with one contract column held forever
+(:func:`stock_input`). Their bars may carry per-day columns the futures bars leave out
+(:data:`DAY_COLUMNS` defaults): ``traded`` (False = no session for this instrument that day,
+the bar is a carry-forward: orders wait, nothing fills), and the corporate action effective on
+that day, ``factor`` (reference / previous close: the causal adjusted series divides by it),
+``unit_ratio`` (held units are multiplied by it: a 1 -> 4 split is 4) and ``cash_per_share``
+(paid into cash). :func:`stock_bars` fills them from ``tw_corporate_actions`` rows.
 """
 
 from __future__ import annotations
@@ -48,6 +56,9 @@ import pandas as pd
 from poseidon.pipeline.engine.specs import ContractSpec
 
 FUTURES_BAR_COLUMNS = ("date", "contract", "open", "high", "low", "close")
+# Optional per-day bar columns and their value when a bar leaves them out.
+DAY_COLUMNS = {"traded": True, "factor": 1.0, "unit_ratio": 1.0, "cash_per_share": 0.0}
+FOREVER = pd.Timestamp("2200-01-01")  # expiry of a stock's one "contract"
 
 
 @dataclass(frozen=True)
@@ -78,6 +89,10 @@ class ContractTable:
     low: np.ndarray
     close: np.ndarray
     held: np.ndarray  # contract column held after the close of each date
+    traded: np.ndarray  # bool per date; False = carry-forward bar, no fills
+    factor: np.ndarray  # corporate-action price factor effective that day (1.0 = none)
+    unit_ratio: np.ndarray  # held units x this at the start of the day (1.0 = none)
+    cash_per_share: np.ndarray  # TWD per share (per price point) paid at the start of the day
 
     def price(self, field: str, i: int, contract: int) -> float:
         value = float(getattr(self, field)[i, contract])
@@ -132,6 +147,15 @@ def build_contract_table(name: str, fut: FuturesInput, calendar: pd.DatetimeInde
         )
 
     close = pivot("close")
+    per_day = df.drop_duplicates("date").set_index("date").reindex(dates)
+    day_columns = {}
+    for col, default in DAY_COLUMNS.items():
+        values = per_day[col].fillna(default) if col in per_day.columns else pd.Series(default, index=dates)
+        day_columns[col] = values.to_numpy(bool if col == "traded" else float)
+    if (day_columns["factor"] <= 0).any() or (day_columns["unit_ratio"] <= 0).any():
+        raise ValueError(f"{name}: factor and unit_ratio must be positive")
+    if (day_columns["cash_per_share"] < 0).any():
+        raise ValueError(f"{name}: cash_per_share must be non-negative")
     expiry = np.array([expiries[c] for c in contracts], dtype="datetime64[ns]")
     cal_pos = calendar.get_indexer(dates)
     ref_pos = np.minimum(cal_pos + fut.roll_days_before, len(calendar) - 1)
@@ -142,7 +166,52 @@ def build_contract_table(name: str, fut: FuturesInput, calendar: pd.DatetimeInde
         if not len(candidates):
             raise ValueError(f"{name}: no contract to hold after the close of {dates[i].date()}")
         held[i] = candidates[0]  # columns are sorted by expiry
-    return ContractTable(dates, contracts, pivot("open"), pivot("high"), pivot("low"), close, held)
+    return ContractTable(dates, contracts, pivot("open"), pivot("high"), pivot("low"), close, held, **day_columns)
+
+
+def stock_bars(bars: pd.DataFrame, actions: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Engine bars of one stock from daily OHLC rows (``date``, ``open``, ``high``, ``low``,
+    ``close``, optional ``traded``) and its ``tw_corporate_actions`` rows (``date``,
+    ``prev_close``, ``reference_price``, ``cash_dividend``, ``action_type``).
+
+    An action lands on the first bar dated on or after its date. The ledger keeps the position's
+    value at the reference price: ``unit_ratio = (prev_close - cash) / reference_price`` with the
+    cash paid out, so a cash dividend leaves the units alone, a split multiplies them, and a
+    rights offering or cash capital reduction is booked as its total-return equivalent (the
+    adjusted series makes the same assumption). A cash dividend row without an amount
+    (old TWSE layouts) pays ``prev_close - reference_price``; other untyped rows pay nothing.
+    """
+
+    out = bars.copy()
+    out["date"] = pd.to_datetime(out["date"]).dt.normalize()
+    out = out.sort_values("date").reset_index(drop=True)
+    for col, default in DAY_COLUMNS.items():
+        if col not in out.columns:
+            out[col] = default
+    if actions is not None and len(actions):
+        dates = out["date"].to_numpy()
+        for action in actions.sort_values("date").to_dict("records"):
+            i = int(np.searchsorted(dates, np.datetime64(pd.Timestamp(action["date"]).normalize())))
+            if i >= len(out):
+                continue
+            prev, ref = float(action["prev_close"]), float(action["reference_price"])
+            cash = action.get("cash_dividend")
+            if cash is None or pd.isna(cash):
+                cash = prev - ref if action["action_type"] == "cash_dividend" else 0.0
+            out.loc[i, "factor"] *= ref / prev
+            out.loc[i, "unit_ratio"] *= (prev - float(cash)) / ref
+            out.loc[i, "cash_per_share"] += float(cash)
+    return out
+
+
+def stock_input(spec: ContractSpec, bars: pd.DataFrame, actions: pd.DataFrame | None = None) -> FuturesInput:
+    """A stock as an engine input: one contract named after the symbol, never expiring or rolling."""
+
+    if spec.policy.rolls:
+        raise ValueError(f"{spec.symbol}: stock_input is for instrument kinds without a roll schedule")
+    frame = stock_bars(bars, actions)
+    frame["contract"] = spec.symbol
+    return FuturesInput(spec=spec, bars=frame, expiries={spec.symbol: FOREVER}, roll_days_before=0)
 
 
 def validate_aux(aux: Mapping[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
