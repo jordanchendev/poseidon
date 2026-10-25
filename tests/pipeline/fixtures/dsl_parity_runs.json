@@ -1,0 +1,465 @@
+[
+    {
+        "data": {
+            "bars": 294520,
+            "part": "train",
+            "market": "tw_futures",
+            "symbol": "TX",
+            "from_utc": "2020-03-01T16:00:00+00:00",
+            "interval": "5m",
+            "last_bar": "2025-06-23T20:55:00+00:00",
+            "first_bar": "2020-03-02T00:45:00+00:00",
+            "until_utc": "2025-06-24T00:00:00+00:00",
+            "bar_labels": {
+                "convention": "open",
+                "sessions_open": 242,
+                "sessions_close_shifted": 3008,
+                "last_close_labelled_session": "2026-04-29 night"
+            },
+            "data_sha256": "750d78b3f41e88eb7b5f6a526587e7a87305532ef2ed99b57b8994b3e90212da",
+            "window_sha256": "96a4537a9fc76132e64678a8cfe6d70e001de0a986d340ed41edc0f2f0cca8b1",
+            "upper_exclusive": true
+        },
+        "run_id": "3ce345d1-82f8-47f0-85b9-8920e207384a",
+        "run_no": 3,
+        "best_spec": {
+            "name": "tx_night_prevday_highlow_fade",
+            "risk": {
+                "stop_loss": {
+                    "type": "points",
+                    "value": 60.0
+                },
+                "no_reentry_after_stop": true,
+                "max_trades_per_session": 2,
+                "flat_before_session_end_minutes": 10
+            },
+            "rules": [
+                {
+                    "id": "fade_prev_high_short",
+                    "action": "short",
+                    "condition": {
+                        "all": [
+                            {
+                                "end": "04:50",
+                                "type": "time_window",
+                                "start": "15:00",
+                                "session": "night"
+                            },
+                            {
+                                "a": {
+                                    "price": "close"
+                                },
+                                "b": {
+                                    "session": "prev_day_high"
+                                },
+                                "op": "<",
+                                "type": "compare"
+                            },
+                            {
+                                "a": {
+                                    "price": "high"
+                                },
+                                "b": {
+                                    "session": "prev_day_high"
+                                },
+                                "op": ">",
+                                "type": "compare"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "id": "fade_prev_low_long",
+                    "action": "long",
+                    "condition": {
+                        "all": [
+                            {
+                                "end": "04:50",
+                                "type": "time_window",
+                                "start": "15:00",
+                                "session": "night"
+                            },
+                            {
+                                "a": {
+                                    "price": "close"
+                                },
+                                "b": {
+                                    "session": "prev_day_low"
+                                },
+                                "op": ">",
+                                "type": "compare"
+                            },
+                            {
+                                "a": {
+                                    "price": "low"
+                                },
+                                "b": {
+                                    "session": "prev_day_low"
+                                },
+                                "op": "<",
+                                "type": "compare"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "market": "tw_futures",
+            "symbol": "TX",
+            "interval": "5m",
+            "description": "Night-session fade of failed breaks of the previous day-session high/low: short after price crosses back below prev day high, long after price crosses back above prev day low.",
+            "dsl_version": 2
+        },
+        "best_files": [
+            {
+                "name": "best_daily_pnl.csv",
+                "bytes": 57633,
+                "sha256": "8d256fe12b9550bba97114f6eb873c90fac7ffd23b39dcde0174a4bd1e9500a8"
+            },
+            {
+                "name": "best_trades.csv",
+                "bytes": 136077,
+                "sha256": "ac8af1eb11608998debbd29b0fd7848ffca881925dc4736dd683482b3d94e859"
+            },
+            {
+                "name": "trials.json",
+                "bytes": 6632,
+                "sha256": "b1072b09eeb78df5708e7e60156bc0380f860b750d94b0e89a3302091664222a"
+            }
+        ],
+        "best_params": {
+            "stop_pts": 60
+        },
+        "config_json": {
+            "data": {
+                "end": "2026-10-23",
+                "start": "2020-03-02",
+                "source": "thalassa",
+                "interval": "5m",
+                "timezone": "Asia/Taipei",
+                "end_exclusive": true,
+                "holdout_start": "2025-06-24T00:00:00+00:00"
+            },
+            "seed": 0,
+            "gates": {
+                "wfe": {
+                    "is_days": 730,
+                    "windows": 4,
+                    "oos_days": 182,
+                    "objective": "sharpe_daily",
+                    "budget_seconds": 3600,
+                    "max_trials_per_window": 16
+                },
+                "holdout": {
+                    "family_reuse": "report_only"
+                },
+                "cost_stress": {
+                    "stop_slippage_ticks": 1.0
+                },
+                "warmup_days": 14,
+                "regime_split": {
+                    "daily_bars": "train-part 5m bars resampled per TX trading day (night session -> next day session)"
+                }
+            },
+            "holdout": {
+                "locked": true,
+                "fraction": 0.2
+            },
+            "version": 3,
+            "backtest": {
+                "market": "tw_futures",
+                "sharpe": {
+                    "period": "trading_day",
+                    "annualisation_factor": 252
+                },
+                "sizing": {
+                    "mode": "fixed_contracts",
+                    "contracts": 1
+                },
+                "symbol": "TX",
+                "bar_label": "open",
+                "cost_model": "tw_futures_pipeline",
+                "gap_aware_stops": true,
+                "initial_capital_twd": 1000000.0
+            },
+            "optimize": {
+                "sampler": "tpe",
+                "objective": "sharpe_daily",
+                "max_trials": 45,
+                "budget_seconds": 3600,
+                "neighbour_steps": 1,
+                "max_consecutive_duplicates": 100
+            },
+            "stage_plan": [
+                "spec_generate",
+                "spec_validate",
+                "backtest",
+                "optimize",
+                "param_stability",
+                "dsr",
+                "cost_stress",
+                "regime_split",
+                "wfe",
+                "holdout"
+            ],
+            "thresholds": {
+                "dsr_min": 0.95,
+                "wfe_min": 0.5,
+                "dsr_min_obs": 30,
+                "regime_atr_days": 20,
+                "paper_min_trades": 10,
+                "holdout_min_trades": 20,
+                "regime_min_segments": 3,
+                "holdout_pnl_positive": true,
+                "param_min_neighbours": 2,
+                "regime_trend_sma_days": 60,
+                "cost_stress_multiplier": 2.0,
+                "paper_min_trading_days": 20,
+                "paper_replay_match_min": 0.9,
+                "regime_vol_median_days": 250,
+                "cost_stress_pnl_positive": true,
+                "holdout_sharpe_decay_max": 0.5,
+                "paper_replay_tolerance_ticks": 1,
+                "regime_min_trades_per_segment": 5,
+                "regime_profitable_segments_min": 3,
+                "param_neighbourhood_profitable_min": 0.6
+            },
+            "spec_generate": {
+                "model": "deepseek/deepseek-v4.1-flash-1017",
+                "provider": "openrouter",
+                "max_tokens": 6000,
+                "temperature": 0.0,
+                "max_idea_chars": 4000,
+                "max_repair_rounds": 2,
+                "reasoning_enabled": false,
+                "estimate_usd_per_mtok": {
+                    "prompt": 0.3,
+                    "completion": 1.2
+                },
+                "request_timeout_seconds": 120,
+                "max_cost_usd_per_attempt": 0.05
+            },
+            "spec_validator": "dsl_v2"
+        },
+        "best_metrics": {
+            "n_trades": 909,
+            "total_pnl_twd": 515791.40799999994
+        },
+        "config_sha256": "105e3b69635e565f624ad65607a36aa3569f1f83fd9a837f79727cda6ad00eeb"
+    },
+    {
+        "data": {
+            "bars": 294520,
+            "part": "train",
+            "market": "tw_futures",
+            "symbol": "TX",
+            "from_utc": "2020-03-01T16:00:00+00:00",
+            "interval": "5m",
+            "last_bar": "2025-06-23T20:55:00+00:00",
+            "first_bar": "2020-03-02T00:45:00+00:00",
+            "until_utc": "2025-06-24T00:00:00+00:00",
+            "bar_labels": {
+                "convention": "open",
+                "sessions_open": 242,
+                "sessions_close_shifted": 3008,
+                "last_close_labelled_session": "2026-04-29 night"
+            },
+            "data_sha256": "750d78b3f41e88eb7b5f6a526587e7a87305532ef2ed99b57b8994b3e90212da",
+            "window_sha256": "96a4537a9fc76132e64678a8cfe6d70e001de0a986d340ed41edc0f2f0cca8b1",
+            "upper_exclusive": true
+        },
+        "run_id": "b45daf54-f77f-4651-92a8-f47fa0be7d72",
+        "run_no": 6,
+        "best_spec": {
+            "name": "tx_overnight_long_day_close",
+            "risk": {
+                "no_reentry_after_stop": true,
+                "max_trades_per_session": 1,
+                "close_on_session_change": false
+            },
+            "rules": [
+                {
+                    "id": "overnight_long",
+                    "risk": {
+                        "stop_loss": {
+                            "type": "atr_mult",
+                            "value": 10.0,
+                            "atr_period": 14
+                        },
+                        "max_hold_bars": 172
+                    },
+                    "action": "long",
+                    "condition": {
+                        "end": "13:40",
+                        "type": "time_window",
+                        "start": "13:40",
+                        "session": "day"
+                    }
+                }
+            ],
+            "market": "tw_futures",
+            "symbol": "TX",
+            "interval": "5m",
+            "description": "Go long at the close of the 13:40 day-session 5m bar, hold overnight across the session change, exit after a fixed number of bars (about next day 09:00). Disaster stop at 10x ATR(14) below entry.",
+            "dsl_version": 2
+        },
+        "best_files": [
+            {
+                "name": "best_daily_pnl.csv",
+                "bytes": 64228,
+                "sha256": "0472ae53fe274159ebf7bcbba2633bdb1d2eb8e61e58f3fc8d18f08c2194ef85"
+            },
+            {
+                "name": "best_trades.csv",
+                "bytes": 180593,
+                "sha256": "65c055be42c4a0acf23d4364ad15846b8e2f67618ed794c90c975c7bc085015c"
+            },
+            {
+                "name": "trials.json",
+                "bytes": 13487,
+                "sha256": "e5b3f19b016c50e1053d52bfe261e15595d60c26fe98a91661a4794c5cfcbefc"
+            }
+        ],
+        "best_params": {
+            "sl_atr": 10,
+            "max_hold_bars": 172
+        },
+        "config_json": {
+            "data": {
+                "end": "2026-10-23",
+                "start": "2020-03-02",
+                "source": "thalassa",
+                "interval": "5m",
+                "timezone": "Asia/Taipei",
+                "end_exclusive": true,
+                "holdout_start": "2025-06-24T00:00:00+00:00"
+            },
+            "seed": 0,
+            "gates": {
+                "wfe": {
+                    "is_days": 730,
+                    "windows": 4,
+                    "oos_days": 182,
+                    "objective": "sharpe_daily",
+                    "budget_seconds": 3600,
+                    "max_trials_per_window": 16
+                },
+                "holdout": {
+                    "family_reuse": "report_only"
+                },
+                "cost_stress": {
+                    "stop_slippage_ticks": 1.0
+                },
+                "warmup_days": 14,
+                "regime_split": {
+                    "daily_bars": "train-part 5m bars resampled per TX trading day (night session -> next day session)"
+                }
+            },
+            "holdout": {
+                "locked": true,
+                "fraction": 0.2
+            },
+            "version": 4,
+            "backtest": {
+                "market": "tw_futures",
+                "sharpe": {
+                    "period": "trading_day",
+                    "annualisation_factor": 252
+                },
+                "sizing": {
+                    "mode": "fixed_contracts",
+                    "contracts": 1
+                },
+                "symbol": "TX",
+                "bar_label": "open",
+                "cost_model": "tw_futures_pipeline",
+                "gap_aware_stops": true,
+                "initial_capital_twd": 1000000.0
+            },
+            "optimize": {
+                "sampler": "tpe",
+                "objective": "sharpe_daily",
+                "max_trials": 45,
+                "budget_seconds": 3600,
+                "neighbour_steps": 1,
+                "max_consecutive_duplicates": 100
+            },
+            "stage_plan": [
+                "spec_generate",
+                "spec_validate",
+                "backtest",
+                "optimize",
+                "param_stability",
+                "dsr",
+                "cost_stress",
+                "regime_split",
+                "wfe",
+                "holdout",
+                "shadow_paper",
+                "awaiting_release"
+            ],
+            "thresholds": {
+                "dsr_min": 0.95,
+                "wfe_min": 0.5,
+                "dsr_min_obs": 30,
+                "regime_atr_days": 20,
+                "paper_min_trades": 10,
+                "holdout_min_trades": 20,
+                "regime_min_segments": 3,
+                "holdout_pnl_positive": true,
+                "param_min_neighbours": 2,
+                "regime_trend_sma_days": 60,
+                "cost_stress_multiplier": 2.0,
+                "paper_min_trading_days": 20,
+                "paper_replay_match_min": 0.9,
+                "regime_vol_median_days": 250,
+                "cost_stress_pnl_positive": true,
+                "holdout_sharpe_decay_max": 0.5,
+                "paper_replay_tolerance_ticks": 1,
+                "regime_min_trades_per_segment": 5,
+                "regime_profitable_segments_min": 3,
+                "param_neighbourhood_profitable_min": 0.6
+            },
+            "shadow_paper": {
+                "protection": {
+                    "daily_loss_multiple": 3.0,
+                    "daily_loss_quantile": 0.95,
+                    "max_drawdown_multiple": 1.5
+                },
+                "wake_weekdays": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6
+                ],
+                "wake_local_time": "09:30",
+                "max_trading_days": 60,
+                "source_retry_minutes": 60,
+                "stale_after_weekdays": 3
+            },
+            "spec_generate": {
+                "model": "deepseek/deepseek-v4.1-flash-1017",
+                "provider": "openrouter",
+                "max_tokens": 6000,
+                "temperature": 0.0,
+                "max_idea_chars": 4000,
+                "max_repair_rounds": 2,
+                "reasoning_enabled": false,
+                "estimate_usd_per_mtok": {
+                    "prompt": 0.3,
+                    "completion": 1.2
+                },
+                "request_timeout_seconds": 120,
+                "max_cost_usd_per_attempt": 0.05
+            },
+            "spec_validator": "dsl_v2"
+        },
+        "best_metrics": {
+            "n_trades": 1247,
+            "total_pnl_twd": 3807603.461714281
+        },
+        "config_sha256": "5869d705bc200a7de5883a7682347777ee77ce78bdaef4af73412b4ae8a335dd"
+    }
+]

@@ -51,6 +51,7 @@ class FakeApi:
         self.stages: dict[str, list] = {}
         self.attempts: dict[tuple, dict] = {}
         self.posts = 0
+        self.bodies = []
         self.seen_headers = []
         self.fail_next_get = False
         self.plan = PLAN  # PAPER_PLAN for runs created after the shadow-paper branch merged
@@ -62,7 +63,8 @@ class FakeApi:
         if method == "POST":
             assert path == "/api/v1/pipelines"
             self.posts += 1
-            assert set(body) == {"idea_text", "source"} and body["source"] in ("telegram", "scout")
+            assert set(body) - {"original"} == {"idea_text", "source"} and body["source"] in ("telegram", "scout")
+            self.bodies.append(body)
             key = headers["Idempotency-Key"]
             assert body["source"] != "scout" or key.startswith("scout-proposal-"), key
             if key in self.by_key:
@@ -192,8 +194,8 @@ class FakeBridge:
             self.capability = (digest, input)
             return types.SimpleNamespace(returncode=0, stdout=json.dumps({"state": state}), stderr="")
         if verb == "strategy-pending":
-            keep = ("id", "text", "source", "created_at")
-            rows = [{k: r[k] for k in keep} for r in self.ideas.values() if r["status"] == "accepted"]
+            keep = ("id", "text", "source", "created_at", "original", "original_error")
+            rows = [{k: r[k] for k in keep if k in r} for r in self.ideas.values() if r["status"] == "accepted"]
             return types.SimpleNamespace(returncode=0, stdout=json.dumps(rows, ensure_ascii=False), stderr="")
         row = self.ideas.get(args[0])
         if row is None:
@@ -334,6 +336,26 @@ class PullTests(unittest.TestCase):
         self.assertEqual(h.sync(), 1)
         self.assertEqual(h.sync(), 0)
         self.assertEqual(sum("rejected http 422" in line for line in h.log.lines), 1)
+
+    def test_drafted_idea_posts_the_original_beside_the_draft(self):
+        h = Harness(self)
+        h.bridge.add("20261026-s1")
+        original = {"text": "240MA 附近是估值目標，左側分批買", "sha256": "a" * 64, "drafted_by": "sisyphus"}
+        h.bridge.ideas["20261026-s1"]["original"] = original
+        h.bridge.add("20261026-s2")
+        self.assertEqual(h.sync(), 0)
+        self.assertEqual(h.api.bodies[0], {"idea_text": IDEA, "source": "telegram", "original": original})
+        self.assertEqual(h.api.bodies[1], {"idea_text": IDEA, "source": "telegram"})  # owner's own idea: unchanged
+
+    def test_drafted_idea_without_its_original_gets_no_run(self):
+        h = Harness(self)
+        h.bridge.add("20261026-s1")
+        h.bridge.ideas["20261026-s1"]["original_error"] = "original does not match original_sha256"
+        self.assertEqual(h.sync(), 1)
+        self.assertEqual(h.sync(), 0)
+        self.assertEqual((h.api.posts, h.bridge.ideas["20261026-s1"]["status"]), (0, "accepted"))
+        refused = [line for line in h.log.lines if "refused: original unavailable" in line]
+        self.assertEqual(len(refused), 1, h.log.lines)
 
     def test_malformed_pending_rows_are_skipped(self):
         h = Harness(self)

@@ -175,18 +175,24 @@ class Plan:
 
 
 def plan(resolved: dict) -> Plan:
+    """The engine plan of a resolved spec. An intraday spec (the DSL v2 fast path, validated to one
+    ``direction.dsl_rules`` sleeve) runs on ``engine.intraday`` with the synthetic R1 roll, so its
+    ``rolls`` is empty; :func:`compile_spec` loads daily refdata and takes daily specs only."""
+
     if any(is_param_ref(node) for _path, node in walk(resolved)):
         raise ValueError("compile a resolved spec: bind every $param first (see resolve())")
-    if resolved["frequency"] != "1d":
-        raise NotCompilable("intraday specs stay on the v1 runner until DSL parity (step 7)")
+    intraday = resolved["frequency"] != "1d"
+    expected_roll = "roll.at_settlement" if intraday else "roll.before_settlement"
     instruments, rolls = {}, {}
     for alias, decl in resolved["instruments"].items():
         instrument = INSTRUMENTS[decl["symbol"]]
         roll = decl.get("roll")
-        if instrument.kind != "future" or roll is None or roll["component"] != "roll.before_settlement":
-            raise NotCompilable(f"instruments.{alias}: the daily engine runs futures with roll.before_settlement")
+        if instrument.kind != "future" or roll is None or roll["component"] != expected_roll:
+            kind = "intraday" if intraday else "daily"
+            raise NotCompilable(f"instruments.{alias}: {kind} specs trade futures with {expected_roll}")
         instruments[alias] = instrument
-        rolls[alias] = parse_bound(REGISTRY[roll["component"]], roll.get("params")).params.days_before
+        if not intraday:
+            rolls[alias] = parse_bound(REGISTRY[roll["component"]], roll.get("params")).params.days_before
 
     def bound(ref: dict) -> Bound:
         component = REGISTRY[ref["component"]]
@@ -198,8 +204,10 @@ def plan(resolved: dict) -> Plan:
 
     sleeves, traded, hedges = [], set(), []
     for sleeve in resolved["sleeves"]:
-        if sleeve["direction"]["component"] == "direction.dsl_rules":
-            raise NotCompilable("direction.dsl_rules runs on the new engine from step 7")
+        if (sleeve["direction"]["component"] == "direction.dsl_rules") != intraday:
+            raise NotCompilable("direction.dsl_rules is the only direction on intraday bars, and only there")
+        if intraday and (sleeve.get("exits") or sleeve.get("hedges")):
+            raise NotCompilable(f"sleeve {sleeve['id']}: exits and hedges are not in the intraday engine")
         if sleeve.get("exits"):
             raise NotCompilable(f"sleeve {sleeve['id']}: exits are not in the daily engine yet")
         hedges.extend((sleeve["instrument"], bound(ref)) for ref in sleeve.get("hedges") or [])
@@ -338,6 +346,8 @@ def compile_spec(
 ) -> CompiledSpec:
     """Strategy, config and refdata inputs for a resolved daily spec over ``[start, end]``."""
 
+    if resolved["frequency"] != "1d":
+        raise NotCompilable("compile_spec reads daily refdata; intraday specs run on engine.intraday")
     spec_plan = plan(resolved)
     store = store or RefdataStore()
     start = pd.Timestamp(start).normalize()

@@ -68,7 +68,7 @@ def test_fingerprints_are_name_at_version_and_sha256():
     assert component_fingerprints(["leverage.base"]) == {"leverage.base@1": prints["leverage.base@1"]}
 
 
-def test_daily_components_implement_their_hook_and_intraday_ones_wait_for_step_7():
+def test_every_component_implements_its_hook_but_the_r1_roll_which_the_intraday_engine_runs():
     from poseidon.pipeline.v3.compiler import HOOKS
 
     missing = []
@@ -77,9 +77,10 @@ def test_daily_components_implement_their_hook_and_intraday_ones_wait_for_step_7
         base = next(c for c in type(component).__mro__ if c.__dict__.get("slot") == component.slot)
         if hook and getattr(type(component), hook) is getattr(base, hook):
             missing.append(component.name)
-    assert sorted(missing) == ["direction.dsl_rules", "roll.at_settlement"]
-    with pytest.raises(NotImplementedError, match="no daily behaviour"):
-        REGISTRY["direction.dsl_rules"].step({}, None, None)
+    assert sorted(missing) == ["roll.at_settlement"]
+    with pytest.raises(RuntimeError, match="not bound"):
+        dsl = REGISTRY["direction.dsl_rules"]
+        dsl.step({}, dsl.init({}), None)
     ma_band = REGISTRY["regime.ma_band"]
     assert ma_band.history(ma_band.parse({"signal": "index:taiex", "ma_days": 250})) == 250
     assert (

@@ -60,12 +60,14 @@ class Series(NamedTuple):
 
 class SleeveView:
     """One sleeve's window on the market at a decision close: series refs resolve to arrays
-    ending at (or, with ``signal_lag``, before) the decision day."""
+    ending at (or, with ``signal_lag``, before) the decision day. ``book`` is the engine's read-only
+    book at that close (``direction.dsl_rules`` reads its position and fills from it)."""
 
-    def __init__(self, market: MarketView, alias: str, conventions: Conventions) -> None:
+    def __init__(self, market: MarketView, alias: str, conventions: Conventions, book: BookView | None = None) -> None:
         self._market = market
         self.alias = alias
         self._conventions = conventions
+        self.book = book
 
     @property
     def date(self) -> pd.Timestamp:
@@ -123,13 +125,23 @@ class SpecStrategy:
     """A compiled spec v3 as an engine ``TargetStrategy``. Build a fresh one per run.
 
     ``trace`` gets one row per sleeve per decision (direction, every leverage link, target
-    units, whether the rebalance rule let it through) for reports.
+    units, whether the rebalance rule let it through) for reports; ``record_trace=False`` skips it
+    (intraday runs decide at every bar). A direction's protective orders go into
+    ``Decision.protective``.
     """
 
-    def __init__(self, sleeves: tuple[SleevePlan, ...], allocation: Bound, conventions: Conventions) -> None:
+    def __init__(
+        self,
+        sleeves: tuple[SleevePlan, ...],
+        allocation: Bound,
+        conventions: Conventions,
+        *,
+        record_trace: bool = True,
+    ) -> None:
         self.sleeves = sleeves
         self.allocation = allocation
         self.conventions = conventions
+        self.record_trace = record_trace
         self.states: dict[tuple[str, str], Any] = {}
         for sleeve in sleeves:
             for slot, bound in self._bound(sleeve):
@@ -146,11 +158,14 @@ class SpecStrategy:
         return self.states[(sleeve_id, slot)]
 
     def on_bar(self, view: MarketView, book: BookView) -> Decision:
-        signals = {}
+        signals, protective = {}, {}
         for sleeve in self.sleeves:
-            sleeve_view = SleeveView(view, sleeve.alias, self.conventions)
+            sleeve_view = SleeveView(view, sleeve.alias, self.conventions, book)
             d = sleeve.direction
             direction = d.component.step(d.params, self.states[(sleeve.id, "direction")], sleeve_view)
+            protect = d.component.protect(d.params, self.states[(sleeve.id, "direction")])
+            if protect is not None:
+                protective[sleeve.alias] = protect
             leverage, links = 0.0, []
             for index, link in enumerate(sleeve.leverage):
                 state = self.states[(sleeve.id, f"leverage.{index}")]
@@ -196,6 +211,8 @@ class SpecStrategy:
             if trade:
                 targets[sleeve.alias] = units
             target_leverage[sleeve.alias] = ctx.target_leverage
+            if not self.record_trace:
+                continue
             self.trace.append(
                 {
                     "date": view.date,
@@ -208,7 +225,7 @@ class SpecStrategy:
                     "traded": trade,
                 }
             )
-        return Decision(targets, target_leverage)
+        return Decision(targets, target_leverage, protective)
 
 
 StrategyFactory = Callable[[], SpecStrategy]
