@@ -450,21 +450,39 @@ def price_points(store, symbol: str, first: date, last: date) -> tuple[float, fl
 
 
 class DailySpecValidateStage(DailyStage):
-    """§3.7 in order on ``input_spec_json``, with the run's data window for feasibility (train part only)."""
+    """§3.7 in order on the run's spec, with the run's data window for feasibility (train part only).
+
+    The spec is ``input_spec_json`` (hand-written / Sisyphus-confirmed), or, for an idea-only run routed
+    here (``spec_source`` = spec_generate, CONFIG_VERSION 7), the spec spec_generate v3 wrote.
+    """
 
     name = "spec_validate"
     requires: ClassVar[tuple[str, ...]] = ()
     lease_seconds = 300
 
+    @staticmethod
+    def generated(config) -> bool:
+        from poseidon.pipeline.v3.config import SPEC_SOURCE_GENERATED
+
+        return (config or {}).get("spec_source") == SPEC_SOURCE_GENERATED
+
+    def upstream_names(self, config) -> tuple[str, ...]:
+        return ("spec_generate",) if self.generated(config) else super().upstream_names(config)
+
+    def spec(self, ctx):
+        if self.generated(ctx.config):
+            return (ctx.upstream["spec_generate"].report or {}).get("spec")
+        return ctx.input_spec_json
+
     def input_payload(self, ctx):
         payload = super().input_payload(ctx)
-        payload.update({"validator": SPEC_VALIDATOR, "input_spec_sha256": content_sha256(ctx.input_spec_json)})
+        payload.update({"validator": SPEC_VALIDATOR, "input_spec_sha256": content_sha256(self.spec(ctx))})
         return payload
 
     def evaluate(self, ctx):
         from poseidon.pipeline.v3.instruments import INSTRUMENTS
 
-        spec = ctx.input_spec_json
+        spec = self.spec(ctx)
         window = DailyWindow.from_config(ctx.config)
         store = WindowStore(self.store(), window.train_last)
         prices: dict[str, list[float]] = {}

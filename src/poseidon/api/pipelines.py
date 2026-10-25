@@ -8,6 +8,7 @@ always 403. There is no PUT or DELETE, and thresholds are server defaults only.
 
 from __future__ import annotations
 
+import functools
 import logging
 import uuid
 from collections.abc import Callable
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal, get_auth_principal
 from poseidon.core.database import get_db
+from poseidon.decision_loop.manifest import content_sha256
 from poseidon.pipeline.service import (
     PipelineConflict,
     PipelineNotFound,
@@ -147,6 +149,35 @@ def list_pipelines(
         status=status.value if status else None, family_id=family_id, limit=limit, offset=offset
     )
     return {"items": [run_json(run) for run in runs], "limit": limit, "offset": offset}
+
+
+@router.get("/capabilities")
+def pipeline_capabilities(principal: AuthPrincipal = Depends(get_auth_principal)):
+    """What a spec can express: the capability brief, the spec v3 JSON Schema and the registry version
+    (design §3.9, §8), rendered from the registry (the same text a new idea-only run freezes the sha256 of)."""
+
+    _require_reader(principal)
+    return capabilities_document()
+
+
+@functools.cache
+def capabilities_document() -> dict:
+    import hashlib
+
+    from poseidon.pipeline.v3.brief import render_brief, spec_json_schema
+    from poseidon.pipeline.v3.registry import REGISTRY_VERSION
+    from poseidon.pipeline.v3.spec import SPEC_VERSION
+
+    brief = render_brief()
+    schema = spec_json_schema()
+    return {
+        "spec_version": SPEC_VERSION,
+        "registry_version": REGISTRY_VERSION,
+        "brief": brief,
+        "brief_sha256": hashlib.sha256(brief.encode("utf-8")).hexdigest(),
+        "schema": schema,
+        "schema_sha256": content_sha256(schema),
+    }
 
 
 @router.get("/families/{family_id}/trials")

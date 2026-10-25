@@ -17,14 +17,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from poseidon.decision_loop.manifest import canonical_json, content_sha256
-from poseidon.pipeline.dispatcher import add_event, latest_attempts, select_next_stage
+from poseidon.pipeline.dispatcher import add_event, latest_attempts, run_config, select_next_stage
 from poseidon.pipeline.models import PipelineEvent, PipelineRun, PipelineTrial, StageRun
 from poseidon.pipeline.plan import (
     CONFIG_VERSION,
+    ROUTED_CLASSES,
     SPEC_V3_CONFIG_VERSION,
     V3_RUN_CLASSES,
+    RouteError,
     StagePlanError,
     default_config,
+    is_routed,
     strategy_class_of,
     validate_stage_plan,
 )
@@ -197,7 +200,7 @@ class PipelineService:
             raise PipelineRequestInvalid(f"spec_json exceeds {SPEC_JSON_MAX_BYTES} bytes")
         stage_plan = body.get("stage_plan")
         v3 = is_spec_v3(spec)
-        if stage_plan is not None:
+        if stage_plan is not None and spec is not None:
             try:
                 version = SPEC_V3_CONFIG_VERSION if v3 else CONFIG_VERSION
                 stage_plan = validate_stage_plan(stage_plan, self.registry, version=version)
@@ -214,11 +217,17 @@ class PipelineService:
             family_id = root.family_id
         as_of = now.astimezone(MARKET_TZ).date()
         instrument = {}
-        if v3:
+        if spec is None:
+            # Idea-only: spec_generate v3 decides the class (CONFIG_VERSION 7). A family member can only
+            # become its family's class. market/symbol keep the column defaults (tw_futures/TX): every
+            # instrument a spec can trade today is a TAIFEX index future; the spec names the contract.
+            classes = (self._family_class(root),) if root is not None else ROUTED_CLASSES
+            config = self._idea_config(stage_plan, as_of, classes)
+        elif v3:
             config, instrument = self._v3_config(spec, stage_plan, as_of)
         else:
             config = default_config(stage_plan=stage_plan, as_of=as_of)
-        if root is not None:
+        if root is not None and spec is not None:
             self._check_family_class(root, config)
         run = PipelineRun(
             id=run_id,
@@ -261,18 +270,82 @@ class PipelineService:
         self.session.flush()
         return response, False
 
+    def _family_class(self, root: PipelineRun) -> str:
+        """The family's strategy class: its first run's, from spec_generate's route for an idea-only first run."""
+
+        family_root = root if root.id == root.family_id else self.session.get(PipelineRun, root.family_id)
+        if not is_routed(family_root.config_json):
+            return strategy_class_of(family_root.config_json)
+        attempts = self.session.query(StageRun).filter(StageRun.run_id == family_root.id).all()
+        try:
+            config = run_config(family_root.config_json, attempts)
+        except RouteError as error:
+            raise PipelineRequestInvalid(f"family {family_root.family_id} has no usable class: {error}") from error
+        if is_routed(config):
+            raise PipelineRequestInvalid(
+                f"family {family_root.family_id}: its first run has no strategy class yet (spec_generate has not "
+                "passed); wait for it or start a new family (omit family_id)"
+            )
+        return strategy_class_of(config)
+
     def _check_family_class(self, root: PipelineRun, config: dict) -> None:
         """A family's first run decides its strategy class; DSR never mixes return and TWD Sharpes (§7)."""
 
-        family_root = root if root.id == root.family_id else self.session.get(PipelineRun, root.family_id)
-        family_class = strategy_class_of(family_root.config_json)
+        family_class = self._family_class(root)
         run_class = strategy_class_of(config)
         if run_class != family_class:
             raise PipelineRequestInvalid(
-                f"family {family_root.family_id} is {family_class} (its first run decides the class); a "
+                f"family {root.family_id} is {family_class} (its first run decides the class); a "
                 f"{run_class} run cannot join it, DSR would mix daily-return and TWD trial Sharpes. "
                 "Start a new family (omit family_id)."
             )
+
+    def _idea_config(self, stage_plan, as_of, classes: tuple[str, ...]) -> dict:
+        """CONFIG_VERSION 7 for an idea-only run (``v3.config.idea_run_config``).
+
+        A client ``stage_plan`` (it must start with spec_generate) is a filter: each class runs the stages
+        of its own plan that the request lists, validated per class here at creation.
+        """
+
+        from poseidon.pipeline.refdata.store import RefdataError
+        from poseidon.pipeline.v3.brief import render_brief
+        from poseidon.pipeline.v3.config import REFDATA_DATASETS, class_plan, idea_run_config
+
+        plans = None
+        if stage_plan is not None:
+            if not isinstance(stage_plan, list) or not stage_plan or stage_plan[0] != "spec_generate":
+                raise PipelineRequestInvalid("an idea-only run's stage_plan must start with spec_generate")
+            unknown = sorted(set(stage_plan) - {name for c in classes for name in class_plan(c)})
+            if unknown:
+                raise PipelineRequestInvalid(f"unknown stage for an idea-only run: {unknown[0]}")
+            plans = {}
+            for strategy_class in classes:
+                plan = [name for name in class_plan(strategy_class) if name in stage_plan]
+                daily = strategy_class in V3_RUN_CLASSES
+                try:
+                    plans[strategy_class] = validate_stage_plan(
+                        plan,
+                        self.registry,
+                        version=SPEC_V3_CONFIG_VERSION if daily else CONFIG_VERSION,
+                        routed=daily,
+                    )
+                except StagePlanError as error:
+                    raise PipelineRequestInvalid(f"{strategy_class}: {error}") from error
+        refdata, refdata_error = None, None
+        if any(name in V3_RUN_CLASSES for name in classes):
+            try:
+                store = self.refdata()
+                refdata = {name: store.content_sha256(name) for name in REFDATA_DATASETS}
+            except (RefdataError, OSError) as error:
+                refdata_error = str(error)
+        return idea_run_config(
+            as_of=as_of,
+            brief_text=render_brief(),
+            refdata=refdata,
+            classes=classes,
+            plans=plans,
+            refdata_error=refdata_error,
+        )
 
     def _v3_config(self, spec: dict, stage_plan, as_of) -> tuple[dict, dict]:
         """CONFIG_VERSION 6 config and the run's market/symbol for a spec v3 document (design §8)."""
@@ -351,7 +424,11 @@ class PipelineService:
         attempts = self.session.query(StageRun).filter(StageRun.run_id == run.id).with_for_update().all()
         if any(row.status in STAGE_OPEN for row in attempts):
             raise PipelineConflict("run still has an open stage attempt")
-        stage, _ = select_next_stage(run.config_json["stage_plan"], attempts)
+        try:
+            plan = run_config(run.config_json, attempts)["stage_plan"]
+        except RouteError as error:
+            raise PipelineConflict(f"run cannot continue: {error}") from error
+        stage, _ = select_next_stage(plan, attempts)
         if stage is None:
             raise PipelineConflict("every stage already passed")
         from_stage = body.get("from_stage")
@@ -366,7 +443,7 @@ class PipelineService:
                 id=uuid.uuid4(),
                 run_id=run.id,
                 stage=stage,
-                seq=run.config_json["stage_plan"].index(stage),
+                seq=plan.index(stage),
                 attempt=(previous.attempt + 1) if previous is not None else 1,
                 trigger=AttemptTrigger.RERUN.value,
                 status=StageStatus.PENDING.value,
@@ -453,8 +530,12 @@ class PipelineService:
         by_stage: dict[str, list[StageRun]] = {}
         for row in attempts:
             by_stage.setdefault(row.stage, []).append(row)
+        try:
+            plan = run_config(run.config_json, attempts)["stage_plan"]
+        except RouteError:
+            plan = run.config_json["stage_plan"]
         result = []
-        for seq, stage in enumerate(run.config_json["stage_plan"]):
+        for seq, stage in enumerate(plan):
             rows = by_stage.get(stage, [])
             result.append(
                 {

@@ -1,0 +1,147 @@
+{
+ "source": "live sample 8_daily_vol, stormtrooper ~/pv2gen-out/live2 (2026-10-25, deepseek-v4.1-flash, prompt v7), round 0 reply",
+ "idea": "微台做多，基礎 3 倍槓桿，再用加權含息報酬指數最近 20 個交易日的年化波動設上限：槓桿不超過 0.6 除以波動。口數只在每月換倉時調整。",
+ "reply": {
+  "status": "ok",
+  "spec": {
+   "spec_version": 3,
+   "name": "tmf_vol_cap_3x_monthly",
+   "frequency": "1d",
+   "capital": {
+    "initial_twd": 1000000
+   },
+   "instruments": {
+    "core": {
+     "symbol": "TMF",
+     "roll": {
+      "component": "roll.before_settlement",
+      "params": {
+       "days_before": 1
+      }
+     }
+    }
+   },
+   "sleeves": [
+    {
+     "id": "main",
+     "instrument": "core",
+     "direction": {
+      "component": "direction.constant",
+      "params": {
+       "side": "long"
+      }
+     },
+     "leverage": [
+      {
+       "component": "leverage.base",
+       "params": {
+        "value": {
+         "$param": "base_lev"
+        }
+       }
+      },
+      {
+       "component": "risk.vol_cap",
+       "params": {
+        "signal": "index:taiex_tr",
+        "window_days": {
+         "$param": "vol_window"
+        },
+        "k": {
+         "$param": "vol_k"
+        }
+       }
+      }
+     ],
+     "sizing": {
+      "component": "sizing.target_leverage",
+      "params": {
+       "rounding": "floor"
+      }
+     },
+     "rebalance": {
+      "component": "rebalance.monthly_at_roll",
+      "params": {
+       "min_change_units": 1
+      }
+     },
+     "exits": [],
+     "hedges": []
+    }
+   ],
+   "allocation": {
+    "component": "allocation.single"
+   },
+   "execution": {
+    "component": "execution.next_open"
+   },
+   "params": {
+    "base_lev": {
+     "type": "float",
+     "low": 2.0,
+     "high": 4.0,
+     "step": 0.5,
+     "default": 3.0
+    },
+    "vol_window": {
+     "type": "int",
+     "low": 10,
+     "high": 30,
+     "step": 5,
+     "default": 20
+    },
+    "vol_k": {
+     "type": "float",
+     "low": 0.4,
+     "high": 0.8,
+     "step": 0.1,
+     "default": 0.6
+    }
+   }
+  },
+  "clauses": [
+   {
+    "id": "c1",
+    "quote": "微台",
+    "slot": "instruments",
+    "component": null
+   },
+   {
+    "id": "c2",
+    "quote": "做多",
+    "slot": "direction",
+    "component": "direction.constant"
+   },
+   {
+    "id": "c3",
+    "quote": "基礎 3 倍槓桿",
+    "slot": "leverage",
+    "component": "leverage.base"
+   },
+   {
+    "id": "c4",
+    "quote": "再用加權含息報酬指數最近 20 個交易日的年化波動設上限：槓桿不超過 0.6 除以波動",
+    "slot": "leverage",
+    "component": "risk.vol_cap"
+   },
+   {
+    "id": "c5",
+    "quote": "口數只在每月換倉時調整",
+    "slot": "rebalance",
+    "component": "rebalance.monthly_at_roll"
+   },
+   {
+    "id": "c6",
+    "quote": "口數只在每月換倉時調整",
+    "slot": "sizing",
+    "component": "sizing.target_leverage"
+   }
+  ],
+  "assumptions": [
+   "換月：結算日前 1 個交易日換到次月（idea 沒有說）",
+   "初始資金 1,000,000 TWD（預設）",
+   "口數依權益與目標槓桿計算，採 floor 取整（idea 沒有說）",
+   "可調參數：base_lev 2.0-4.0、vol_window 10-30、vol_k 0.4-0.8，預設為 idea 的 3 倍、20 日、0.6"
+  ]
+ }
+}
