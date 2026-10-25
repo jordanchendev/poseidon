@@ -53,8 +53,14 @@ from poseidon.pipeline.engine import (
     run,
     truncation_audit,
 )
+from poseidon.pipeline.engine.data import stock_input
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES
+from poseidon.pipeline.refdata.engine_input import StockDataGap, align_stock_bars
 from poseidon.pipeline.refdata.store import RefdataStore
+from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
+from poseidon.pipeline.refdata.tw_corporate_actions import load_actions
+from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
+from poseidon.pipeline.refdata.tw_stocks import read_bars
 from poseidon.pipeline.v3.instruments import (
     MAX_MARGIN_UTILISATION,
     SIGNAL_INDICES,
@@ -282,14 +288,17 @@ def compile_spec(
     load_from = start - timedelta(days=warmup_calendar_days(warmup, "1d"))
     upper = None if end is None else pd.Timestamp(end).normalize()
 
-    quotes = store.read(FUTURES, start=load_from, end=upper)
-    settlement = store.read(CALENDAR)
+    by_kind = {kind: [a for a, i in spec_plan.instruments.items() if i.kind == kind] for kind in ("future", "stock")}
+    if by_kind["future"]:
+        quotes = store.read(FUTURES, start=load_from, end=upper)
+        settlement = store.read(CALENDAR)
     sources = {
         alias: instrument.price_proxy or instrument.symbol for alias, instrument in spec_plan.instruments.items()
     }
     notes: list[str] = []
     futures, calendars = {}, []
-    for alias, instrument in spec_plan.instruments.items():
+    for alias in by_kind["future"]:
+        instrument = spec_plan.instruments[alias]
         product = sources[alias]
         bars = futures_bars(quotes, product)
         if bars.empty:
@@ -321,10 +330,36 @@ def compile_spec(
                 f"{alias}: before the first {product} after-hours session in the data, next_open fills at the "
                 "next 08:45 day-session open"
             )
-    calendar = calendars[0]
-    if any(not other.equals(calendar) for other in calendars[1:]):
-        raise NotCompilable("all instruments must share one trading calendar")
+    stock_rows = {}
+    for alias in by_kind["stock"]:
+        symbol = spec_plan.instruments[alias].symbol
+        rows = read_bars(store, symbol, start=load_from, end=upper) if store.exists(STOCKS) else pd.DataFrame()
+        if rows.empty:
+            raise NotCompilable(f"no {symbol} bars in {STOCKS} between {load_from.date()} and {upper}")
+        stock_rows[alias] = rows
+    if calendars:
+        calendar = calendars[0]
+        if any(not other.equals(calendar) for other in calendars[1:]):
+            raise NotCompilable("all futures instruments must share one trading calendar")
+    else:
+        union = pd.concat([rows[["date"]] for rows in stock_rows.values()], ignore_index=True)
+        calendar = trading_calendar(union)
     data_days = calendar[: len(calendar) - PROJECTED_CALENDAR_DAYS]
+    for alias, rows in stock_rows.items():
+        instrument = spec_plan.instruments[alias]
+        try:
+            aligned = align_stock_bars(rows, data_days, alias)
+        except StockDataGap as error:
+            raise NotCompilable(str(error)) from error
+        actions = load_actions(store, instrument.symbol) if store.exists(ACTIONS) else None
+        futures[alias] = stock_input(ContractSpec.from_instrument(instrument), aligned, actions)
+        carried = int((~aligned["traded"]).sum())
+        if carried:
+            notes.append(f"{alias}: {carried} session(s) without a {instrument.symbol} bar carried forward (no fills)")
+        booked = futures[alias].bars
+        applied = int(((booked["unit_ratio"] != 1.0) | (booked["cash_per_share"] != 0.0)).sum())
+        if applied:
+            notes.append(f"{alias}: {applied} corporate action day(s) of {instrument.symbol} booked from {ACTIONS}")
     before = int((data_days < start).sum())
     if before < warmup:
         raise NotCompilable(
@@ -353,7 +388,10 @@ def compile_spec(
                 f"signal index:{name}: {rows_before} rows of {AUX_DATASETS[name]} before {start.date()}, the components "
                 f"need {warmup} for warm-up (data from {SIGNAL_INDICES[name].data_since.isoformat()})"
             )
-    inputs = {dataset: store.content_sha256(dataset) for dataset in (FUTURES, CALENDAR, *AUX_DATASETS.values())}
+    datasets = [*((FUTURES, CALENDAR) if by_kind["future"] else ()), *AUX_DATASETS.values()]
+    if by_kind["stock"]:
+        datasets += [STOCKS, *((ACTIONS,) if store.exists(ACTIONS) else ())]
+    inputs = {dataset: store.content_sha256(dataset) for dataset in datasets}
     return CompiledSpec(
         name=resolved["name"],
         plan=spec_plan,

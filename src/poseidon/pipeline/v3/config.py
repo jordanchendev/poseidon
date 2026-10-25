@@ -43,6 +43,7 @@ from poseidon.pipeline.v3.instruments import (
     DAILY_PRICE_DATASET,
     INSTRUMENTS,
     SIGNAL_INDICES,
+    STOCK_PRICE_DATASET,
     price_series_key,
 )
 from poseidon.pipeline.v3.registry import REGISTRY_VERSION, component_fingerprints
@@ -59,6 +60,16 @@ REFDATA_DATASETS = (
     "twse_taiex_daily",
     "twse_taiex_total_return",
 )
+# Read as well by a run whose spec trades a stock / ETF (step 8); futures-only runs freeze the same
+# provenance as before.
+STOCK_REFDATA_DATASETS = (STOCK_PRICE_DATASET, "tw_corporate_actions")
+
+
+def refdata_datasets(resolved: dict) -> tuple[str, ...]:
+    """Datasets whose manifest hash a run of ``resolved`` freezes as provenance."""
+
+    kinds = {INSTRUMENTS[decl["symbol"]].kind for decl in resolved["instruments"].values()}
+    return REFDATA_DATASETS + (STOCK_REFDATA_DATASETS if "stock" in kinds else ())
 
 
 def is_v3_run(config) -> bool:
@@ -128,7 +139,8 @@ def series_first_days(store) -> dict[str, date]:
         index.dataset: date.fromisoformat(store.manifest(index.dataset)["coverage"]["start"])
         for index in SIGNAL_INDICES.values()
     }
-    products = sorted({row.price_proxy or row.symbol for row in INSTRUMENTS.values() if row.tradable})
+    futures = [row for row in INSTRUMENTS.values() if row.tradable and row.kind != "stock"]
+    products = sorted({row.price_proxy or row.symbol for row in futures})
     manifest = store.manifest(DAILY_PRICE_DATASET)
     column = manifest["date_column"]
     found: dict[str, date] = {}
@@ -145,8 +157,15 @@ def series_first_days(store) -> dict[str, date]:
     if missing:
         raise RefdataError(f"{DAILY_PRICE_DATASET} has no rows for {', '.join(missing)}")
     for symbol, row in INSTRUMENTS.items():
-        if row.tradable:
+        if row.tradable and row.kind != "stock":
             days[price_series_key(row)] = found[row.price_proxy or symbol]
+    if store.exists(STOCK_PRICE_DATASET):
+        from poseidon.pipeline.refdata.tw_stocks import first_days
+
+        stock_first = first_days(store)
+        for row in INSTRUMENTS.values():
+            if row.kind == "stock" and row.symbol in stock_first:
+                days[price_series_key(row)] = stock_first[row.symbol]
     return dict(sorted(days.items()))
 
 

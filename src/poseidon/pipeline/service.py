@@ -352,13 +352,13 @@ class PipelineService:
 
         from poseidon.pipeline.refdata.store import RefdataError
         from poseidon.pipeline.v3.brief import render_brief
-        from poseidon.pipeline.v3.config import REFDATA_DATASETS, daily_run_config, series_first_days
+        from poseidon.pipeline.v3.config import daily_run_config, refdata_datasets, series_first_days
         from poseidon.pipeline.v3.instruments import INSTRUMENTS
         from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
 
         try:
             store = self.refdata()
-            refdata = {name: store.content_sha256(name) for name in REFDATA_DATASETS}
+            refdata = {name: store.content_sha256(name) for name in refdata_datasets(spec)}
             series_since = series_first_days(store)
         except (RefdataError, OSError) as error:
             raise PipelineRequestInvalid(f"refdata is not available for spec v3 runs: {error}") from error

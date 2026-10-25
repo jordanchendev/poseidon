@@ -34,6 +34,11 @@ from poseidon.pipeline.refdata.taifex import MarketSchedule, official_last_tradi
 
 MONTHLY = r"\d{6}"
 CALENDAR_HORIZON_DAYS = 120
+MAX_STOCK_GAP_DAYS = 10  # sessions a stock may miss (carried forward) before its data counts as ended
+
+
+class StockDataGap(ValueError):
+    """A stock's bars do not cover the run's calendar (listed later, delisted, or a long hole)."""
 
 
 class RefdataReader(Protocol):
@@ -104,6 +109,41 @@ def futures_input(
     bars = bars[bars["date"] <= through].reset_index(drop=True)
     expiries = expiries_for(calendar, product, bars["contract"].unique(), schedule)
     return FuturesInput(spec=spec, bars=bars, expiries=expiries, roll_days_before=roll_days_before)
+
+
+def align_stock_bars(bars: pd.DataFrame, days: pd.DatetimeIndex, name: str) -> pd.DataFrame:
+    """``bars`` (``date``, OHLC, optional ``volume``) on exactly the trading ``days``: a day without
+    a bar carries the previous close (open = high = low = close) with ``traded = False``, so the
+    engine fills nothing there. More than ``MAX_STOCK_GAP_DAYS`` missing in a row, bars starting
+    after the first day or ending before the last one raise :class:`StockDataGap`."""
+
+    frame = bars.assign(date=pd.to_datetime(bars["date"]).dt.normalize()).set_index("date").sort_index()
+    frame = frame[~frame.index.duplicated(keep="last")]
+    if frame.empty:
+        raise StockDataGap(f"{name}: no bars")
+    if frame.index[0] > days[0]:
+        raise StockDataGap(f"{name}: bars start {frame.index[0].date()}, after the window's first day {days[0].date()}")
+    on_calendar = frame.index.isin(days)
+    if not on_calendar.all():
+        extra = frame.index[~on_calendar][:3]
+        raise StockDataGap(f"{name}: bars on days outside the trading calendar, e.g. {[d.date() for d in extra]}")
+    present = pd.Series(days.isin(frame.index), index=days)
+    missing = ~present
+    run = missing.groupby((~missing).cumsum()).cumsum()
+    if run.max() > MAX_STOCK_GAP_DAYS:
+        first = run[run > MAX_STOCK_GAP_DAYS].index[0]
+        raise StockDataGap(
+            f"{name}: more than {MAX_STOCK_GAP_DAYS} sessions without a bar before {first.date()} "
+            f"(last bar {frame.index[-1].date()})"
+        )
+    out = frame.reindex(days)
+    out["close"] = out["close"].ffill()
+    for column in ("open", "high", "low"):
+        out[column] = out[column].where(present, out["close"])
+    if "volume" in out.columns:
+        out["volume"] = out["volume"].where(present, 0.0)
+    out["traded"] = present.to_numpy()
+    return out.rename_axis("date").reset_index()
 
 
 def aux_frame(frame: pd.DataFrame, date_column: str = "trade_date") -> pd.DataFrame:
