@@ -75,6 +75,11 @@ def run_json(run: PipelineRun) -> dict:
         "market": run.market,
         "symbol": run.symbol,
         "input_spec_json": run.input_spec_json,
+        "original": (
+            {"text": run.original_text, "sha256": run.original_sha256, "drafted_by": run.drafted_by}
+            if run.original_text is not None
+            else None
+        ),
         "config_json": run.config_json,
         "config_sha256": run.config_sha256,
         "created_by": run.created_by,
@@ -86,6 +91,16 @@ def run_json(run: PipelineRun) -> dict:
         "created_at": _iso(run.created_at),
         "updated_at": _iso(run.updated_at),
         "finished_at": _iso(run.finished_at),
+    }
+
+
+def _original_columns(original: dict | None) -> dict:
+    if original is None:
+        return {}
+    return {
+        "original_text": original["text"],
+        "original_sha256": original["sha256"],
+        "drafted_by": original["drafted_by"],
     }
 
 
@@ -235,6 +250,7 @@ class PipelineService:
             source=body["source"],
             idea_text=body["idea_text"],
             input_spec_json=spec,
+            **_original_columns(body.get("original")),
             config_json=config,
             config_sha256=content_sha256(config),
             created_by=actor_id,

@@ -408,7 +408,7 @@ def test_p003_accepts_v3_instruments_and_round_trips(pipeline_engine, pipeline_s
         with pytest.raises(Exception, match="ck_pipeline_runs_instrument"):
             command.downgrade(config, "p002")
         with pipeline_engine.connect() as connection:
-            assert connection.execute(text("SELECT version_num FROM alembic_version_pipeline")).scalar() == "p003"
+            assert connection.execute(text("SELECT version_num FROM alembic_version_pipeline")).scalar() == "p004"
     finally:
         command.upgrade(pipeline_alembic_config(url), "head")  # env.py migrates settings.database_url
         settings.database_url = original
