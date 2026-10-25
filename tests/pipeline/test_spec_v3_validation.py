@@ -475,8 +475,16 @@ def test_zero_contract_error_suggests_smaller_contracts():
 def test_data_window_before_the_daily_source_fails():
     result = validate_spec_v3(tmf_dynamic_leverage_3x(), feasibility=FeasibilityContext(start=date(1999, 1, 4)))
     assert result.errors[0].path == "instruments.core.symbol"
-    assert "data starts 1998-07-21" in result.errors[0].msg
-    assert all(issue.path.endswith(".params.signal") for issue in result.errors[1:])  # index:taiex from 1999-01-05
+    assert "data starts 1998-07-21" in result.errors[0].msg and len(result.errors) == 1
+    # index:taiex starts 1999-01-05, after the window start: no spec edit can reach it
+    assert result.unsupported and all(issue.path.endswith(".params.signal") for issue in result.unsupported)
+
+
+def test_a_source_that_starts_after_the_window_start_is_unsupported_not_an_error():
+    early = validate_spec_v3(tmf_dynamic_leverage_3x(), feasibility=FeasibilityContext(start=date(1998, 1, 5)))
+    assert "instruments.core.symbol" in {issue.path for issue in early.unsupported}
+    assert not early.errors
+    assert "1d data starts 1998-07-21, after the run's data window start 1998-01-05" in early.unsupported[0].msg
 
 
 def test_signal_index_coverage_is_checked_at_the_largest_window():
@@ -492,11 +500,15 @@ def test_signal_index_coverage_is_checked_at_the_largest_window():
     total_return = tmf_dynamic_leverage_3x()
     for link in total_return["sleeves"][0]["leverage"][1:]:
         link["params"]["signal"] = "index:taiex_tr"
-    assert (
-        validate_spec_v3(total_return)
-        .errors[0]
-        .msg.startswith("index:taiex_tr (TAIEX total-return index) data starts 2003-01-02")
+    uncovered = validate_spec_v3(total_return)  # the daily window starts 2001-01-02
+    assert not uncovered.errors and {issue.path for issue in uncovered.unsupported} == {
+        "sleeves.0.leverage.1.params.signal",
+        "sleeves.0.leverage.2.params.signal",
+    }
+    assert uncovered.unsupported[0].msg.startswith(
+        "index:taiex_tr (TAIEX total-return index) data starts 2003-01-02, after the run's data window start"
     )
+    assert validate_spec_v3(total_return, feasibility=FeasibilityContext(start=date(2004, 6, 1))).ok
     adjusted = tmf_dynamic_leverage_3x()
     for link in adjusted["sleeves"][0]["leverage"][1:]:
         link["params"]["signal"] = "self:adjusted"

@@ -8,6 +8,7 @@ import json
 import re
 import uuid
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -326,6 +327,17 @@ def test_a_planned_component_in_the_spec_is_unsupported_not_a_repair():
     assert outcome.verdict == Verdict.UNSUPPORTED and len(client.chat_payloads) == 1
     assert outcome.report["missing_capabilities"] == ["hedge_protective_put"]
     assert outcome.report["rejected_spec"] == spec
+
+
+def test_a_series_that_starts_after_the_frozen_window_is_unsupported_not_a_repair():
+    # live sample 8_daily_vol: index:taiex_tr starts 2003-01-02, the daily window 2001-01-02; the window is in
+    # the run config, not the spec, so the two repair rounds it used to get could never succeed
+    sample = json.loads((Path(__file__).parent / "fixtures" / "spec_v3_live_8_daily_vol.json").read_text())
+    client = FakeClient([reply(sample["reply"])])
+    outcome, _ = run_v3(client, idea=sample["idea"])
+    assert outcome.verdict == Verdict.UNSUPPORTED and len(client.chat_payloads) == 1, outcome.report
+    assert outcome.report["missing_capabilities"] == ["index_taiex_tr"]
+    assert "after the run's data window start 2001-01-02" in outcome.report["unsupported"]["reason"]
 
 
 def test_a_not_implemented_add_on_passes_and_is_listed():

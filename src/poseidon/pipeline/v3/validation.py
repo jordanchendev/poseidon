@@ -505,6 +505,15 @@ def _history_bars(template: dict, params: dict) -> int:
     return bars
 
 
+def _window_uncovered(series: str, since: date, start: date) -> str:
+    """The run's data window is frozen in its config, not in the spec, so no spec edit can fix this."""
+
+    return (
+        f"{series} data starts {since.isoformat()}, after the run's data window start {start.isoformat()}; "
+        "the window is fixed by the run config, so this series cannot be read in this run"
+    )
+
+
 def _check_data(resolved: dict, template: dict, params: dict, feasibility: FeasibilityContext, issues, notes) -> None:
     frequency = resolved["frequency"]
     default_start = INTRADAY_WINDOW_START if frequency in INTRADAY_FREQUENCIES else DAILY_WINDOW_START
@@ -519,12 +528,14 @@ def _check_data(resolved: dict, template: dict, params: dict, feasibility: Feasi
         if since is None:
             issues.error(path, f"{instrument.symbol} has no {frequency} data source")
             continue
-        if need_from < since:
+        if start < since:
+            issues.unsupported_(path, _window_uncovered(f"{instrument.symbol} {frequency}", since, start))
+        elif need_from < since:
             issues.error(
                 path,
                 f"{instrument.symbol} {frequency} data starts {since.isoformat()}; the window start {start.isoformat()} "
                 f"minus the warm-up ({bars} bars, {warmup.days} calendar days) needs data from {need_from.isoformat()}; "
-                f"start the window on or after {(since + warmup).isoformat()} or shorten the windows",
+                "shorten the warm-up windows",
             )
         note = instrument.proxy_note(start)
         if note:
@@ -535,13 +546,18 @@ def _check_data(resolved: dict, template: dict, params: dict, feasibility: Feasi
             continue
         signal = getattr(component.parse(ref.get("params") or {}), "signal", None)
         index = signal_index(signal) if isinstance(signal, str) else None
-        if index is not None and need_from < index.data_since:
+        if index is None:
+            continue
+        if start < index.data_since:
+            issues.unsupported_(
+                (*path, "params", "signal"), _window_uncovered(f"{signal} ({index.name_en})", index.data_since, start)
+            )
+        elif need_from < index.data_since:
             issues.error(
                 (*path, "params", "signal"),
                 f"{signal} ({index.name_en}) data starts {index.data_since.isoformat()}; the window start "
                 f"{start.isoformat()} minus the warm-up ({bars} bars, {warmup.days} calendar days) needs data from "
-                f"{need_from.isoformat()}; start the window on or after {(index.data_since + warmup).isoformat()}, "
-                "shorten the windows or read another series",
+                f"{need_from.isoformat()}; shorten the warm-up windows or read another series",
             )
     if feasibility.end is not None and feasibility.end <= start:
         issues.error(
