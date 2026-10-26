@@ -1379,7 +1379,7 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Spec v3, REGISTRY_VERSION 1. Shape only: cross rules, $param policy (1-4), feasibility and the 5x leverage cap are checked by spec_validate.",
+  "description": "Spec v3, REGISTRY_VERSION 2. Shape only: cross rules, $param policy (1-4), feasibility and the 5x leverage cap are checked by spec_validate.",
   "properties": {
     "allocation": {
       "discriminator": {
@@ -1491,6 +1491,6 @@
     "allocation",
     "execution"
   ],
-  "title": "Strategy spec v3 (registry 1)",
+  "title": "Strategy spec v3 (registry 2)",
   "type": "object"
 }

@@ -1,4 +1,4 @@
-"""Registered spec v3 components (REGISTRY_VERSION 1).
+"""Registered spec v3 components (REGISTRY_VERSION 2).
 
 Parameters with bounds, ``$param``-able fields, zh-TW ``describe()``,
 warm-up, capability tokens, component-level checks, and the bar-by-bar
@@ -8,12 +8,13 @@ only what :mod:`poseidon.pipeline.v3.runtime` hands them: a
 :class:`~poseidon.pipeline.v3.runtime.SleeveView` of data up to the decision
 close, never later, so every component is causal by construction.
 
-REGISTRY_VERSION 1 holds what the M1 acceptance spec (§3.2) needs plus the
-DSL v2 fast path (§3.4), plus ``leverage.drawdown_ladder`` and ``leverage.level_ladder`` and the
-``index:vix`` signal series (``instruments.SIGNAL_INDICES``). The version number stays 1 on this
-branch: ``registry_version`` is part of the pinned daily config hash, so the integration owner
-decides when to bump it (§3.6). The rest of the Phase 1 list is in
-``registry.PLANNED_COMPONENTS``.
+REGISTRY_VERSION 2 holds what the M1 acceptance spec (§3.2) needs plus the
+DSL v2 fast path (§3.4), ``leverage.drawdown_ladder`` and ``leverage.level_ladder``, the
+``index:vix`` signal series (``instruments.SIGNAL_INDICES``), ``hedge.protective_put``,
+``allocation.fixed_weights`` / ``inverse_vol`` / ``regime_switch``, ``sizing.fixed_notional`` and the
+stock instrument kinds. Version 1 stopped at the M1 set; wave 4 added the rest and the bump to 2
+(§3.6) followed, because ``registry_version`` is part of the pinned daily config hash. The rest of the
+Phase 1 list is in ``registry.PLANNED_COMPONENTS``.
 """
 
 from __future__ import annotations

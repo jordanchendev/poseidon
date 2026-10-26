@@ -72,10 +72,18 @@ COMPONENTS = M1_COMPONENTS | M4_COMPONENTS
 
 
 def test_registry_version_and_contents():
-    assert REGISTRY_VERSION == 1
+    assert REGISTRY_VERSION == 2
     assert set(REGISTRY) == COMPONENTS
     assert not set(REGISTRY) & set(PLANNED_COMPONENTS)
     assert "hedge.collar" in PLANNED_COMPONENTS
+
+
+def test_a_run_frozen_at_registry_version_1_still_passes_the_component_check():
+    from poseidon.pipeline.daily_stages import check_components
+
+    frozen = {"registry_version": 1, "components": component_fingerprints(["leverage.base"])}
+    assert frozen["registry_version"] != REGISTRY_VERSION
+    assert check_components(frozen) == frozen["components"]
 
 
 @pytest.mark.parametrize("name", sorted(COMPONENTS))

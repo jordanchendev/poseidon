@@ -1,6 +1,6 @@
 # Strategy pipeline capability brief
 
-Rendered from the component registry by `python -m poseidon.pipeline.v3 brief` (REGISTRY_VERSION 1); edit the code, not this file. Two engines: A = intraday TX rules, B = daily strategies. An idea belongs to B when it needs daily indicators, leverage, sizing or a long history; to A when it is a bar-by-bar rule on TX price/time/session levels.
+Rendered from the component registry by `python -m poseidon.pipeline.v3 brief` (REGISTRY_VERSION 2); edit the code, not this file. Two engines: A = intraday TX rules, B = daily strategies. An idea belongs to B when it needs daily indicators, leverage, sizing or a long history; to A when it is a bar-by-bar rule on TX price/time/session levels.
 
 ## A. Intraday TX strategies (DSL v2.1)
 

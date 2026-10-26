@@ -726,4 +726,4 @@ def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
     assert content_sha256(dsl) == "60648707b1bc20e8544c9ba3baa21cee5c264ab3e34bc91d90c4dc20bc218ae2"
     resolved = validate_spec_v3(tmf_dynamic_leverage_3x()).resolved
     daily = daily_run_config(resolved, as_of=AS_OF, brief_text="brief", refdata=REFDATA)
-    assert content_sha256(daily) == "0f3b5c65ef757ad731b5c26c9be852b8072fb35937bbfa6940e73480639c0384"
+    assert content_sha256(daily) == "db24f9f423d26d1338c1957849229475805fdbe0d60b602a92afdfaf9eda8529"
