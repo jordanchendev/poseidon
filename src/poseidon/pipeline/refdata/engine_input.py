@@ -50,6 +50,8 @@ class RefdataReader(Protocol):
 
     def exists(self, dataset: str) -> bool: ...
 
+    def manifest(self, dataset: str) -> dict: ...
+
 
 def product_quotes(quotes: pd.DataFrame, product: str) -> pd.DataFrame:
     rows = quotes[(quotes["product"] == product) & quotes["contract_month"].astype(str).str.fullmatch(MONTHLY)]

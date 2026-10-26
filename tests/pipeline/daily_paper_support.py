@@ -224,6 +224,14 @@ class AsOf:
     def exists(self, dataset):
         return self.store.exists(dataset)
 
+    def manifest(self, dataset):
+        """The corporate actions are complete through the day of this view, as a fresh daily job leaves them."""
+
+        manifest = self.store.manifest(dataset)
+        if dataset == "tw_corporate_actions":
+            manifest = {**manifest, "meta": {"complete_through": self.as_of.date().isoformat()}}
+        return manifest
+
 
 # ----------------------------------------------------------------- strategies
 

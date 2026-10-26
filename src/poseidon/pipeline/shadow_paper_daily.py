@@ -75,8 +75,8 @@ from poseidon.pipeline.refdata.engine_input import (
 )
 from poseidon.pipeline.refdata.store import RefdataError
 from poseidon.pipeline.refdata.taifex import MarketSchedule
+from poseidon.pipeline.refdata.tw_corporate_actions import COMPLETE_THROUGH, actions_complete_through, load_actions
 from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
-from poseidon.pipeline.refdata.tw_corporate_actions import load_actions
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
 from poseidon.pipeline.refdata.tw_stocks import read_bars
 from poseidon.pipeline.stages import StageResult
@@ -221,7 +221,9 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
     """Read refdata and cut it at the last complete trading day. Raises ``RefdataError``.
 
     The cutoff is the last day every input has: the last day session of each futures product, the
-    last bar of each stock, the last row of each aux series. The trading calendar is the futures
+    last bar of each stock, the last row of each aux series, and for stocks the day the corporate
+    actions dataset is complete through (stale actions make the paper wait, as a lagged price series
+    does). The trading calendar is the futures
     products' common day-session dates, or, with no futures, the stocks' union of bar dates; a stock
     without a bar on a calendar day is carried forward (``align_stock_bars``), and its corporate
     actions are booked from ``tw_corporate_actions`` when the store has that dataset, exactly as
@@ -250,6 +252,10 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
     )
     ends = [*last.values(), *stock_last.values()]
     ends += [complete_through(name, frame) for name, frame in aux_full.items()]
+    if stock_insts and reader.exists(ACTIONS):  # an action dated after the snapshot is not booked, so wait for it
+        actions_end = pd.Timestamp(actions_complete_through(reader))
+        ends.append(actions_end)
+        last_dates[f"{ACTIONS}:{COMPLETE_THROUGH}"] = _iso(actions_end)
     if any(day is None for day in ends):
         raise RefdataError(f"no data for {sorted(k for k, v in last_dates.items() if v is None)}")
     cutoff = pd.Timestamp(min(ends)).normalize()
@@ -669,6 +675,8 @@ class DailyShadowPaper:
             "last_dates": inputs.last_dates,
             "sources": inputs.sources,
         }
+        if lag and inputs.last_dates.get(f"{ACTIONS}:{COMPLETE_THROUGH}") == cutoff:
+            data["waiting_on"] = [ACTIONS]
         if ledger["cutoff"] is not None and cutoff < ledger["cutoff"]:
             return {
                 "snapshot": {
@@ -785,6 +793,9 @@ class DailyShadowPaper:
                 f"shadow_paper ⏳ day {len(days)}/{min_days} · target match {_pct(ratio)} · "
                 f"paper return {ret_text} · cutoff {ledger['cutoff']}"
             )
+        waiting_on = (snapshot.get("data") or {}).get("waiting_on")
+        if status == "waiting" and waiting_on:
+            summary += f" · waiting for {', '.join(waiting_on)} (complete through {ledger['cutoff']})"
         held = days[-1]["positions"] if days else {}
         report = {
             "summary": summary,

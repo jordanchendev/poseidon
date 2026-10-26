@@ -43,8 +43,9 @@ from urllib.parse import urlencode
 
 import pandas as pd
 
+from poseidon.pipeline.refdata.datasets import UpdateReport
 from poseidon.pipeline.refdata.fetch import PoliteFetcher
-from poseidon.pipeline.refdata.store import CommitResult, RefdataStore, SourceRecord
+from poseidon.pipeline.refdata.store import CommitResult, RefdataError, RefdataStore, SourceRecord
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,8 @@ CAPITAL_REDUCTION_FIRST = date(2011, 1, 1)  # TWTAUU refuses earlier start dates
 TAI50_FIRST = date(2002, 10, 18)
 
 TWSE_MIN_INTERVAL = 3.5
+REFRESH_TAIL_DAYS = 7  # raw TWSE files whose range ends this close to the build day are fetched again
+COMPLETE_THROUGH = "complete_through"  # manifest meta key of DATASET
 USER_AGENT = "Mozilla/5.0 (compatible; poseidon-refdata)"
 NO_DATA_MARKERS = ("沒有符合條件", "查無資料")
 
@@ -631,7 +634,9 @@ def fetch_actions(source: RawSource, end: date) -> tuple[pd.DataFrame, list[Sour
     ]
     rows, records = [], []
     for name, url, parser, start, stop in plan:
-        payload, record = source.get(name, url, _range(start, stop), refresh=stop >= end - timedelta(days=1))
+        payload, record = source.get(
+            name, url, _range(start, stop), refresh=stop >= end - timedelta(days=REFRESH_TAIL_DAYS)
+        )
         records.append(record)
         parsed = parser(payload)
         logger.info("%s %s..%s: %d rows", name, start, stop, len(parsed))
@@ -684,7 +689,8 @@ def fetch_tai50(source: RawSource, start: date, end: date) -> tuple[pd.DataFrame
     rows, records = [], []
     month = date(start.year, start.month, 1)
     while month <= end:
-        current = month.year == end.year and month.month == end.month
+        tail = end - timedelta(days=REFRESH_TAIL_DAYS)
+        current = (month.year, month.month) >= (tail.year, tail.month)
         payload, record = source.get(
             f"TAI50I_{month:%Y%m}.json",
             TAI50_URL,
@@ -715,11 +721,11 @@ def thalassa_bars(payload: dict) -> pd.DataFrame:
     return frame.sort_index()
 
 
-def thalassa_source(store: RefdataStore, base_url: str, api_key: str) -> tuple[RawSource, str]:
+def thalassa_source(store: RefdataStore, base_url: str, api_key: str, client=None) -> tuple[RawSource, str]:
     """Reads Thalassa (GET only); the key rides in the client headers and is never stored."""
     import httpx
 
-    client = httpx.Client(timeout=300, headers={"X-API-Key": api_key})
+    client = client or httpx.Client(timeout=300, headers={"X-API-Key": api_key})
     return RawSource(store, CROSSCHECK_DATASET, PoliteFetcher(0.5, client=client)), base_url.rstrip("/")
 
 
@@ -773,11 +779,18 @@ def build(
     api_key: str,
     end: date,
     refresh_thalassa: bool = False,
+    complete_through: date | None = None,
+    twse: PoliteFetcher | None = None,
+    thalassa_client=None,
 ) -> dict[str, CommitResult]:
-    twse = public_fetcher()
+    """Rebuild the three datasets. ``complete_through`` (default ``end``) is the last day on which
+    TWSE has published every action dated on or before it; it is kept in the manifest of
+    ``tw_corporate_actions`` for the paper's cutoff (:func:`actions_complete_through`)."""
+
+    twse = twse or public_fetcher()
     actions, action_sources = fetch_actions(RawSource(store, DATASET, twse), end)
     tai50, tai50_sources = fetch_tai50(RawSource(store, TAI50_DATASET, twse), TAI50_FIRST, end)
-    thalassa, base = thalassa_source(store, thalassa_url, api_key)
+    thalassa, base = thalassa_source(store, thalassa_url, api_key, thalassa_client)
     bars, thalassa_sources = fetch_thalassa(thalassa, base, refresh=refresh_thalassa)
     actions, detail_sources, findings = classify_in_range(RawSource(store, DATASET, twse), actions, bars)
     results = {
@@ -789,6 +802,7 @@ def build(
             sources=action_sources + detail_sources,
             code_version=code_version,
             full=True,
+            meta={COMPLETE_THROUGH: (complete_through or end).isoformat()},
         ),
         TAI50_DATASET: store.commit(
             TAI50_DATASET,
@@ -829,6 +843,56 @@ def build(
         twse.requests,
     )
     return results
+
+
+def actions_complete_through(reader) -> date:
+    """The last day for which ``tw_corporate_actions`` holds every action: the ``complete_through`` its
+    build recorded, or, for a snapshot built before that field existed, the day it was built (Taipei)."""
+
+    manifest = reader.manifest(DATASET)
+    recorded = (manifest.get("meta") or {}).get(COMPLETE_THROUGH)
+    if recorded:
+        return date.fromisoformat(recorded)
+    try:
+        built = pd.Timestamp(manifest["built_at"])
+    except (KeyError, ValueError) as error:
+        raise RefdataError(f"{DATASET} manifest has no usable built_at") from error
+    return built.tz_convert("Asia/Taipei").date()
+
+
+def update(store: RefdataStore, *, today: date, code_version: str) -> list[UpdateReport]:
+    """The ``refdata.daily.EXTRA_UPDATERS`` hook: rebuild the actions, the TAI50 sessions and the
+    cross-check from TWSE and Thalassa, complete through ``today`` (the job runs after the 16:00
+    Taipei publication). The three datasets are idempotent: ``changed`` follows the content hash, so
+    a day with no new action reports nothing."""
+
+    from poseidon.core.config import settings
+
+    if not settings.thalassa_base_url or not settings.thalassa_api_key:
+        logger.info("%s: POSEIDON_THALASSA_BASE_URL / API_KEY not set; skipped", DATASET)
+        return []
+    before = {name: _content(store, name) for name in (DATASET, TAI50_DATASET, CROSSCHECK_DATASET)}
+    results = build(
+        store,
+        code_version=code_version,
+        thalassa_url=settings.thalassa_base_url,
+        api_key=settings.thalassa_api_key,
+        end=today,
+        refresh_thalassa=True,
+    )
+    reports = []
+    for name, result in results.items():
+        manifest = result.manifest
+        rows = sum(part["rows"] for part in manifest["partitions"])
+        changed = before[name] != manifest["content_sha256"]
+        reports.append(
+            UpdateReport(name, changed, rows, manifest["coverage"], manifest["content_sha256"], 0, result.written)
+        )
+    return reports
+
+
+def _content(store: RefdataStore, dataset: str) -> str | None:
+    return store.content_sha256(dataset) if store.exists(dataset) else None
 
 
 def main(argv: list[str] | None = None) -> None:
