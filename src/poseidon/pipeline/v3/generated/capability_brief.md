@@ -1,6 +1,6 @@
 # Strategy pipeline capability brief
 
-Spec v3, REGISTRY_VERSION 1. Rendered from the component registry and the instrument table by `python -m poseidon.pipeline.v3 brief`; edit the registry, not this file.
+Spec v3, REGISTRY_VERSION 2. Rendered from the component registry and the instrument table by `python -m poseidon.pipeline.v3 brief`; edit the registry, not this file.
 
 The downstream pipeline turns an idea into a spec v3 and backtests it. A spec is one or more sleeves; each sleeve is one instrument + a direction + an ordered leverage chain + sizing + rebalance (+ exits, hedges), plus one allocation and one execution rule. Every slot is filled by picking a registered component below and setting its parameters. 1-4 numeric parameters per spec are tunable ranges (`$param`) that the optimizer searches; only fields marked tunable can be one.
 

@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict
 
 from poseidon.pipeline.v3.instruments import FREQUENCIES, Instrument
 
-REGISTRY_VERSION = 1
+REGISTRY_VERSION = 2
 
 SLOTS: tuple[str, ...] = (
     "roll",
