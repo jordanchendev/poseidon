@@ -1,6 +1,6 @@
 # Strategy pipeline capability brief
 
-Rendered from the component registry by `python -m poseidon.pipeline.v3 brief` (REGISTRY_VERSION 2); edit the code, not this file. Two engines: A = intraday TX rules, B = daily strategies. An idea belongs to B when it needs daily indicators, leverage, sizing or a long history; to A when it is a bar-by-bar rule on TX price/time/session levels.
+Rendered from the component registry by `python -m poseidon.pipeline.v3 brief` (REGISTRY_VERSION 3); edit the code, not this file. Two engines: A = intraday TX rules, B = daily strategies. An idea belongs to B when it needs daily indicators, leverage, sizing or a long history; to A when it is a bar-by-bar rule on TX price/time/session levels.
 
 ## A. Intraday TX strategies (DSL v2.1)
 
@@ -32,7 +32,7 @@ Never stand in for a higher-timeframe indicator by reusing its length on intrada
 
 ## B. Daily strategies (spec v3, component registry)
 
-Decide after each daily close, fill at the next session's open (TX family: the 15:00 night session; stocks 09:00). One or more sleeves = instrument + direction + leverage chain + sizing + rebalance. 1-4 tunable parameters per spec (`*` = may be one). Daily runs start 2001-01-02, or later when a series the spec reads starts later (its first day plus the warm-up, e.g. `index:taiex_tr`); warm-up comes from earlier data.
+Decide after each daily close, fill at the next session's open (TX family: the 15:00 night session; stocks 09:00). One or more sleeves = instrument + direction + leverage chain + sizing + rebalance. 1-4 tunable parameters per spec (`*` = may be one). Daily runs start 2001-01-02, or later when a series the spec reads starts later (its first day plus the warm-up, e.g. `index:taiex_tr`); warm-up comes from earlier data. Deciding at every close is not trading every day: the rebalance component picks the days that trade (`rebalance.monthly` = once a month on a set trading day, stocks / ETFs and futures alike, e.g. 每月最後一個交易日檢查一次).
 
 Instruments (point value TWD/pt, fee TWD/contract/side, daily data from):
 - TX (台指期): 200, 50, 1998-07-21; own prices; listed 1998-07-21
@@ -68,6 +68,7 @@ The same 200-day MA band over 2000-2014 ends 49% apart on the TX adjusted series
 - `rebalance.monthly_at_roll`: Re-size only when the futures position rolls (monthly); direction changes still trade at once. [min_change_units integer [1, 100], default 1 *]
 - `rebalance.threshold_band`: Re-size when the actual leverage drifts more than band_pct from the target (relative). [band_pct number [0.01, 0.5], default 0.1 *]
 - `rebalance.on_signal_change`: Trade only when the direction changes (enter / exit / reverse); no re-sizing in between.
+- `rebalance.monthly`: Trade once a month only, on the first, last or n-th trading day of the month (n only with nth_trading_day; TWSE / TAIFEX calendar, closures included): switch and re-size to the target there, hold in between; a run's first day enters. [day last_trading_day | first_trading_day | nth_trading_day, default "last_trading_day"; n integer [1, 20], default 1; min_change_units integer [1, 100], default 1 *]
 - `hedge.protective_put`: Buy TXO monthly puts against the long futures position: strike nearest close x (1 - moneyness), roll before expiry, cover_ratio 1 = 1 put per 5 TMF; valued at daily settlement prices. [moneyness_pct number [0.0, 0.2], default 0.05 *; tenor front | next, default "front"; roll_days_before_expiry integer [1, 15], default 5 *; cover_ratio number [0.25, 1.5], default 1.0 *]
 - `allocation.single`: One sleeve, weight 1.
 - `allocation.fixed_weights`: Constant weights per sleeve id (sum <= 1); each sleeve's sizing is scaled by its weight. [weights object, required]

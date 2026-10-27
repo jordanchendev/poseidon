@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, NamedTuple
 
 import numpy as np
@@ -114,6 +114,7 @@ class RebalanceContext:
     rolled_today: bool  # the held contract changed at this close
     target_leverage: float  # d x L x weight (signed)
     actual_leverage: float  # current units x close x point value / equity (signed)
+    calendar: pd.DatetimeIndex = field(default_factory=lambda: pd.DatetimeIndex([]))  # MarketView.calendar
 
 
 @dataclass(frozen=True)
@@ -220,6 +221,7 @@ class SpecStrategy:
                 rolled_today=len(series) > 1 and series.contract[-1] != series.contract[-2],
                 target_leverage=direction * s.component.exposure(s.params, leverage) * weight,
                 actual_leverage=current * notional / book.equity if book.equity > 0 else math.inf,
+                calendar=view.calendar,
             )
             r = sleeve.rebalance
             trade = r.component.should_trade(

@@ -62,8 +62,9 @@ SLOT_CRITERIA: dict[str, str] = {
     "drawdown brakes.",
     "sizing": "How the exposure becomes a whole number of contracts or shares: fixed contracts, equity x leverage "
     "/ contract value, rounding.",
-    "rebalance": "When the position is actually re-sized: every day, monthly at the roll, when drift exceeds a "
-    "band, only when the signal changes.",
+    "rebalance": "When the position is actually re-sized or switched: every day, once a month on a set trading day "
+    "(e.g. checked on the last trading day of each month), monthly at the futures roll, when drift exceeds a band, "
+    "only when the signal changes.",
     "exit": "Protective exits on an open position: stop loss, take profit, trailing stop, maximum holding time.",
     "hedge": "A hedge added on top of the position, e.g. buying protective puts.",
     "allocation": "Weights across several instruments or sleeves.",

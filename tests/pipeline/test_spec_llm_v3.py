@@ -726,4 +726,5 @@ def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
     assert content_sha256(dsl) == "60648707b1bc20e8544c9ba3baa21cee5c264ab3e34bc91d90c4dc20bc218ae2"
     resolved = validate_spec_v3(tmf_dynamic_leverage_3x()).resolved
     daily = daily_run_config(resolved, as_of=AS_OF, brief_text="brief", refdata=REFDATA)
-    assert content_sha256(daily) == "db24f9f423d26d1338c1957849229475805fdbe0d60b602a92afdfaf9eda8529"
+    # db24f9f4 at REGISTRY_VERSION 2; registry_version is the only input that moved (3 adds rebalance.monthly)
+    assert content_sha256(daily) == "b3ce5b0dadae872b4fb3908e1fb31ec5e2531e405e2492fca1c6faae951ea14c"

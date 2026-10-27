@@ -1,4 +1,4 @@
-"""Registered spec v3 components (REGISTRY_VERSION 2).
+"""Registered spec v3 components (REGISTRY_VERSION 3).
 
 Parameters with bounds, ``$param``-able fields, zh-TW ``describe()``,
 warm-up, capability tokens, component-level checks, and the bar-by-bar
@@ -13,8 +13,9 @@ DSL v2 fast path (§3.4), ``leverage.drawdown_ladder`` and ``leverage.level_ladd
 ``index:vix`` signal series (``instruments.SIGNAL_INDICES``), ``hedge.protective_put``,
 ``allocation.fixed_weights`` / ``inverse_vol`` / ``regime_switch``, ``sizing.fixed_notional`` and the
 stock instrument kinds. Version 1 stopped at the M1 set; wave 4 added the rest and the bump to 2
-(§3.6) followed, because ``registry_version`` is part of the pinned daily config hash. The rest of the
-Phase 1 list is in ``registry.PLANNED_COMPONENTS``.
+(§3.6) followed, because ``registry_version`` is part of the pinned daily config hash. Version 3 adds
+``rebalance.monthly`` (trade on one calendar day a month, any instrument). The rest of the Phase 1 list is
+in ``registry.PLANNED_COMPONENTS``.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from collections.abc import Mapping
 from typing import Annotated, Any, Literal
 
 import numpy as np
+import pandas as pd
 from pydantic import Field, model_validator
 
 from poseidon.pipeline.engine.options import HedgePolicy
@@ -799,6 +801,83 @@ class OnSignalChangeRebalance(RebalanceComponent):
 
     def describe(self, params, ctx):
         return "訊號改變時才進出場"
+
+
+@register
+class MonthlyRebalance(RebalanceComponent):
+    """Trade only on the month's decision day, plus the run's first decision (the initial entry). There the
+    target goes through when it differs by at least ``min_change_units``: a regime switch and a re-size to the
+    sizing target alike. On every other day nothing is sent, so the position drifts with prices; the engine still
+    books corporate actions, rolls futures and runs margin calls and forced liquidation.
+
+    The decision day is a session of the run's trading calendar (``RebalanceContext.calendar``: the sessions
+    that traded, then the official TWSE schedule): the first, the last or the ``n``-th session of the calendar
+    month, the last one when the month has fewer than ``n``. An unscheduled closure (the 2026-10-23 typhoon) is
+    not a session: when it takes the scheduled last day, the decision falls on the last day that traded, and
+    ``n`` counts traded sessions only. The decision reads data through its own close; ``execution.next_open``
+    fills it at the next session's open. The other components still step at every close (an allocation's
+    hysteresis band sees every daily row); this rule only decides on which day their target becomes an order.
+    """
+
+    name = "rebalance.monthly"
+    frequencies = DAILY
+    capabilities = ("monthly_rebalance", "calendar_rebalance", "month_end_rebalance")
+    summary = (
+        "Trade once a month only, on the first, last or n-th trading day of the month (n only with nth_trading_day; "
+        "TWSE / TAIFEX calendar, closures included): switch and re-size to the target there, hold in between; a "
+        "run's first day enters."
+    )
+
+    class Params(StrictParams):
+        day: Literal["last_trading_day", "first_trading_day", "nth_trading_day"] = "last_trading_day"
+        n: Annotated[int, Field(ge=1, le=20)] = 1
+        min_change_units: Annotated[int, Field(ge=1, le=100)] = 1
+
+        @model_validator(mode="after")
+        def _n(self):
+            if self.n != 1 and self.day != "nth_trading_day":
+                raise ValueError("n is only read with day nth_trading_day")
+            return self
+
+    tunable = frozenset({"min_change_units"})
+    example = {"day": "last_trading_day", "min_change_units": 1}
+    # inside the class, so its fingerprint covers the schedule and the sentence
+    DAY_ZH = {"first_trading_day": "第一個交易日", "last_trading_day": "最後一個交易日"}
+
+    def init(self, params):
+        return {"entered": False}
+
+    def check(self, params, ctx):
+        for sleeve in ctx.spec["sleeves"]:
+            ref = sleeve["rebalance"]
+            if ref["component"] != self.name or self.parse(ref.get("params") or {}) != params:
+                return [("", f"every sleeve needs the same {self.name} (a switch sells and buys on one day)")]
+        return []
+
+    def decision_day(self, params, calendar: pd.DatetimeIndex, day: pd.Timestamp) -> pd.Timestamp:
+        first = day.normalize().replace(day=1)
+        sessions = calendar[calendar.searchsorted(first) : calendar.searchsorted(first + pd.offsets.MonthBegin(1))]
+        if day not in sessions:
+            raise ValueError(f"{day.date()} is not a session of the run's trading calendar")
+        if params.day == "first_trading_day":
+            return sessions[0]
+        if params.day == "last_trading_day":
+            return sessions[-1]
+        return sessions[min(params.n, len(sessions)) - 1]
+
+    def should_trade(self, params, state, *, current_units, target_units, ctx):
+        entry, state["entered"] = not state["entered"], True
+        if not entry and ctx.date != self.decision_day(params, ctx.calendar, ctx.date):
+            return False
+        return abs(target_units - current_units) >= params.min_change_units
+
+    def describe(self, params, ctx):
+        day = self.DAY_ZH.get(params.day, f"第 {params.n} 個交易日（不足 {params.n} 個交易日的月份取最後一個）")
+        unit = "口" if ctx.instrument.kind == "future" else ("股" if ctx.instrument.lot == 1 else "張")
+        return (
+            f"開始時先建立部位，之後每月只在當月{day}收盤後檢查一次（依交易所行事曆，颱風等臨時休市日不算），"
+            f"換到目標部位、差 {params.min_change_units} {unit}以上就調整，其餘交易日不調整"
+        )
 
 
 # --------------------------------------------------------------------------- roll

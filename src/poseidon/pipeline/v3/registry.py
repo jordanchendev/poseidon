@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict
 
 from poseidon.pipeline.v3.instruments import FREQUENCIES, Instrument
 
-REGISTRY_VERSION = 2
+REGISTRY_VERSION = 3
 
 SLOTS: tuple[str, ...] = (
     "roll",
@@ -232,7 +232,8 @@ class RebalanceComponent(Component):
         """Whether to send the diff ``target_units - current_units`` now (§5.1 step 4).
 
         ``ctx`` is a ``runtime.RebalanceContext`` (decision day, whether the
-        position rolled at this close, target and actual leverage).
+        position rolled at this close, target and actual leverage, the run's
+        trading calendar).
         """
 
         raise NotImplementedError(f"{self.name} has no daily behaviour yet")
