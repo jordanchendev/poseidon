@@ -311,11 +311,14 @@ class RefdataStore:
         sources: Sequence[SourceRecord],
         code_version: str,
         full: bool = False,
+        meta: Mapping | None = None,
     ) -> CommitResult:
         """Write rebuilt partitions (an empty frame removes the key) and the manifest.
 
         ``sources`` is the complete source list of the dataset after this
-        commit. Without ``full`` the partitions not named are kept.
+        commit. Without ``full`` the partitions not named are kept. ``meta`` is a small JSON mapping
+        kept in the manifest beside the content hash (it never enters it), e.g. the day a snapshot is
+        complete through; a changed ``meta`` rewrites the manifest.
         """
 
         for key, frame in partitions.items():
@@ -381,6 +384,7 @@ class RefdataStore:
                 and old["sources"] == source_list
                 and old["date_column"] == date_column
                 and old["partitions"] == ordered
+                and old.get("meta") == (None if meta is None else dict(meta))
             )
             if unchanged:
                 return CommitResult(old, False, tuple(written), tuple(removed))
@@ -397,6 +401,7 @@ class RefdataStore:
                 "content_sha256": content,
                 "built_at": utc_now(),
                 "code_version": code_version,
+                **({} if meta is None else {"meta": dict(meta)}),
             }
             _atomic_write(directory / MANIFEST, json.dumps(manifest, indent=1, sort_keys=True).encode())
             return CommitResult(manifest, True, tuple(written), tuple(removed))

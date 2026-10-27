@@ -210,7 +210,7 @@ def test_load_inputs_reads_stock_bars_and_books_the_split(stock_store):
     )
     assert inputs.cutoff == as_of and len(inputs.closures) == 0
     assert set(inputs.sources) == {MARKET_CALENDAR, TAIEX, STOCKS, ACTIONS}
-    assert set(inputs.last_dates) == {f"{STOCKS}:00631L", f"{STOCKS}:0050", "aux:taiex"}
+    assert set(inputs.last_dates) == {f"{STOCKS}:00631L", f"{STOCKS}:0050", "aux:taiex", f"{ACTIONS}:complete_through"}
     assert all(day == as_of.date().isoformat() for day in inputs.last_dates.values())
     past = inputs.calendar[inputs.calendar <= as_of]
     assert past.equals(DAYS[: len(past)]) and past[-1] == as_of and inputs.calendar[-1] > as_of
@@ -243,7 +243,11 @@ def test_the_cutoff_waits_for_the_slowest_stock(stock_store):
         Late(stock_store, "2026-09-10"), stock_strategy(), spd.DEFAULT_DAILY_SHADOW_PAPER, PAPER_START.date()
     )
     assert inputs.cutoff == pd.Timestamp("2026-09-03")
-    assert inputs.last_dates == {f"{STOCKS}:00631L": "2026-09-10", f"{STOCKS}:0050": "2026-09-03"}
+    assert inputs.last_dates == {
+        f"{STOCKS}:00631L": "2026-09-10",
+        f"{STOCKS}:0050": "2026-09-03",
+        f"{ACTIONS}:complete_through": "2026-09-10",
+    }
 
 
 def test_the_daily_paper_books_stock_days_and_its_replay_matches(stock_store, tmp_path):
