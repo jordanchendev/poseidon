@@ -402,7 +402,8 @@ def _repair_items(clause: Clause, entry: dict) -> list[dict]:
             _err(
                 f"{base}.component",
                 f"JEV finds no registered component that fits clause {clause.id} {quote} (you chose "
-                f"{clause.component!r}); pick one that does what the clause says, or reply unsupported",
+                f"{clause.component!r}); pick one that does what the clause says; if none does, set this clause's "
+                "component to null (reported as not implemented), or reply unsupported if the clause is the core",
             )
         )
     elif "component_disagrees" in entry["flags"]:
@@ -419,7 +420,11 @@ def _repair_items(clause: Clause, entry: dict) -> list[dict]:
         else:
             why = "JEV judges the spec statement contradicts it"
         items.append(
-            _err(base, f"the spec contradicts clause {clause.id} {quote}: {why}; make the spec do what it says")
+            _err(
+                base,
+                f"the spec contradicts clause {clause.id} {quote}: {why}; make the spec do what it says, or, if no "
+                "registered component can, set this clause's component to null (reported as not implemented)",
+            )
         )
     return items
 
