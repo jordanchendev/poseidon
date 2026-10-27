@@ -1,0 +1,759 @@
+{
+ "source": "pipeline run #16 (75f7bfaa-5920-4054-a7a2-6247c23fb650), spec_generate attempt 1, 2026-10-27",
+ "idea_text": "商品：0050 元大台灣50；00631L 元大台灣50正2\n時段：日線，每月最後一個交易日收盤判斷，隔日開盤執行\n方向：只做多\n週期：1d\n訊號序列：index:taiex_tr\n避險：無\n進場：加權股價報酬指數 > 200 日均線 ×(1+2%) 時，切到 00631L\n停損：無（以均線 regime 切換出場，跌破 200 日均線即切回 0050）\n出場：加權股價報酬指數 < 200 日均線 ×(1-2%) 時，切回 0050\n每盤最多交易：（不適用，日線每月檢視）\n參數：$ma_days 預設 200，範圍 150-250，步長 25\n假設：\n- 訊號序列採 index:taiex_tr（加權股價報酬指數／含息，使用者選）；回測起點約 2004（需 200 日暖機）。\n- 使用 allocation.regime_switch 的均線區間（band 預設 2%）做遲滯，避免在均線附近反覆換倉。\n- 執行為「每月最後一個交易日收盤判斷、隔日開盤切換」，月中不動作。\n- 部位：任何時候 100% 押單邊（00631L 或 0050），不保留現金、不做部分配置。\n- 停損為無：B 段無 exit.stop_loss 元件，出場純由 regime 切換驅動。\n- 兩檔 ETF 皆只做多、全額買進、不融資、不放空。",
+ "config": {
+  "spec_generate": {
+   "model": "deepseek/deepseek-v4.1-flash-1017",
+   "prompt": "spec_v3",
+   "provider": "openrouter",
+   "max_tokens": 16000,
+   "temperature": 0.0,
+   "max_idea_chars": 4000,
+   "max_repair_rounds": 2,
+   "reasoning_enabled": false,
+   "estimate_usd_per_mtok": {
+    "prompt": 0.3,
+    "completion": 1.2
+   },
+   "request_timeout_seconds": 240,
+   "max_cost_usd_per_attempt": 0.1
+  },
+  "spec_faithfulness": {
+   "model": "typesafe/jev-1.13",
+   "blocking": false,
+   "endpoint": "/systemone",
+   "precheck": "strict",
+   "provider": "openrouter",
+   "max_clauses": 40,
+   "qualification": {
+    "status": "not_qualified",
+    "control_set": "local_dev/design/pv2-jev-control-set.jsonl (owner-labelled)",
+    "agreement_min": 0.95,
+    "contradicts_recall_min": 1.0
+   },
+   "estimate_usd_per_call": 0.0002,
+   "max_calls_per_attempt": 120,
+   "request_timeout_seconds": 30,
+   "max_cost_usd_per_attempt": 0.05
+  },
+  "by_class": {
+   "daily_fixed": {
+    "data": {
+     "end": "2026-10-27"
+    }
+   },
+   "daily_equity": {
+    "data": {
+     "end": "2026-10-27"
+    }
+   },
+   "intraday_fixed": {
+    "data": {
+     "end": "2026-10-27"
+    }
+   }
+  }
+ },
+ "series_since": {
+  "twse_taiex_total_return": "2003-01-02",
+  "thalassa_tw_stock_daily/0050": "2003-06-30",
+  "thalassa_tw_stock_daily/00631L": "2014-10-31"
+ },
+ "llm_replies": [
+  "{\"status\":\"ok\",\"spec\":{\"spec_version\":3,\"name\":\"taiex_tr_regime_switch_0050_00631l\",\"frequency\":\"1d\",\"capital\":{\"initial_twd\":1000000},\"instruments\":{\"core\":{\"symbol\":\"0050\"},\"leveraged\":{\"symbol\":\"00631L\"}},\"sleeves\":[{\"id\":\"risk_on\",\"instrument\":\"leveraged\",\"direction\":{\"component\":\"direction.constant\",\"params\":{\"side\":\"long\"}},\"sizing\":{\"component\":\"sizing.fixed_notional\",\"params\":{\"pct_of_equity\":100,\"rounding\":\"floor\"}},\"rebalance\":{\"component\":\"rebalance.monthly_at_roll\",\"params\":{\"min_change_units\":1}},\"exits\":[],\"hedges\":[]},{\"id\":\"risk_off\",\"instrument\":\"core\",\"direction\":{\"component\":\"direction.constant\",\"params\":{\"side\":\"long\"}},\"sizing\":{\"component\":\"sizing.fixed_notional\",\"params\":{\"pct_of_equity\":100,\"rounding\":\"floor\"}},\"rebalance\":{\"component\":\"rebalance.monthly_at_roll\",\"params\":{\"min_change_units\":1}},\"exits\":[],\"hedges\":[]}],\"allocation\":{\"component\":\"allocation.regime_switch\",\"params\":{\"signal\":\"index:taiex_tr\",\"ma_days\":{\"$param\":\"ma_days\"},\"band_pct\":0.02,\"on\":\"risk_on\",\"off\":\"risk_off\"}},\"execution\":{\"component\":\"execution.next_open\"},\"params\":{\"ma_days\":{\"type\":\"int\",\"low\":150,\"high\":250,\"step\":25,\"default\":200}}},\"clauses\":[{\"id\":\"c1\",\"quote\":\"商品：0050 元大台灣50；00631L 元大台灣50正2\",\"slot\":\"instruments\",\"component\":null},{\"id\":\"c2\",\"quote\":\"時段：日線，每月最後一個交易日收盤判斷，隔日開盤執行\",\"slot\":\"frequency\",\"component\":null},{\"id\":\"c3\",\"quote\":\"時段：日線，每月最後一個交易日收盤判斷，隔日開盤執行\",\"slot\":\"execution\",\"component\":\"execution.next_open\"},{\"id\":\"c4\",\"quote\":\"時段：日線，每月最後一個交易日收盤判斷，隔日開盤執行\",\"slot\":\"rebalance\",\"component\":\"rebalance.monthly_at_roll\"},{\"id\":\"c5\",\"quote\":\"方向：只做多\",\"slot\":\"direction\",\"component\":\"direction.constant\"},{\"id\":\"c6\",\"quote\":\"週期：1d\",\"slot\":\"frequency\",\"component\":null},{\"id\":\"c7\",\"quote\":\"訊號序列：index:taiex_tr\",\"slot\":\"other\",\"component\":null},{\"id\":\"c8\",\"quote\":\"避險：無\",\"slot\":\"hedge\",\"component\":null},{\"id\":\"c9\",\"quote\":\"進場：加權股價報酬指數 > 200 日均線 ×(1+2%) 時，切到 00631L\",\"slot\":\"allocation\",\"component\":\"allocation.regime_switch\"},{\"id\":\"c10\",\"quote\":\"停損：無（以均線 regime 切換出場，跌破 200 日均線即切回 0050）\",\"slot\":\"exit\",\"component\":null},{\"id\":\"c11\",\"quote\":\"出場：加權股價報酬指數 < 200 日均線 ×(1-2%) 時，切回 0050\",\"slot\":\"allocation\",\"component\":\"allocation.regime_switch\"},{\"id\":\"c12\",\"quote\":\"每盤最多交易：（不適用，日線每月檢視）\",\"slot\":\"not_strategy\",\"component\":null},{\"id\":\"c13\",\"quote\":\"參數：$ma_days 預設 200，範圍 150-250，步長 25\",\"slot\":\"other\",\"component\":null},{\"id\":\"c14\",\"quote\":\"假設：\",\"slot\":\"not_strategy\",\"component\":null},{\"id\":\"c15\",\"quote\":\"- 訊號序列採 index:taiex_tr（加權股價報酬指數／含息，使用者選）；回測起點約 2004（需 200 日暖機）。\",\"slot\":\"other\",\"component\":null},{\"id\":\"c16\",\"quote\":\"- 使用 allocation.regime_switch 的均線區間（band 預設 2%）做遲滯，避免在均線附近反覆換倉。\",\"slot\":\"allocation\",\"component\":\"allocation.regime_switch\"},{\"id\":\"c17\",\"quote\":\"- 執行為「每月最後一個交易日收盤判斷、隔日開盤切換」，月中不動作。\",\"slot\":\"rebalance\",\"component\":\"rebalance.monthly_at_roll\"},{\"id\":\"c18\",\"quote\":\"- 部位：任何時候 100% 押單邊（00631L 或 0050），不保留現金、不做部分配置。\",\"slot\":\"sizing\",\"component\":\"sizing.fixed_notional\"},{\"id\":\"c19\",\"quote\":\"- 停損為無：B 段無 exit.stop_loss 元件，出場純由 regime 切換驅動。\",\"slot\":\"exit\",\"component\":null},{\"id\":\"c20\",\"quote\":\"- 兩檔 ETF 皆只做多、全額買進、不融資、不放空。\",\"slot\":\"direction\",\"component\":\"direction.constant\"}],\"assumptions\":[\"以 allocation.regime_switch 的 on/off 兩檔 ETF 表達切換，訊號用 index:taiex_tr、band 2%（idea 指定）\",\"兩檔 ETF 各用 sizing.fixed_notional 100% 押單邊（idea 指定全額、不保留現金）\",\"rebalance.monthly_at_roll 用來近似「每月最後一個交易日檢視、月中不動作」\",\"執行為收盤判斷、隔日開盤（execution.next_open）\",\"初始資金 1,000,000 TWD（預設）\",\"可調參數 ma_days 150-250、步長 25、預設 200（idea 指定）\",\"停損為無，未加入 exit.stop_loss（catalog 亦無此元件）\"]}",
+  "{\"status\":\"ok\",\"spec\":{\"spec_version\":3,\"name\":\"taiex_tr_regime_switch_0050_00631l\",\"frequency\":\"1d\",\"capital\":{\"initial_twd\":1000000},\"instruments\":{\"core\":{\"symbol\":\"0050\"},\"leveraged\":{\"symbol\":\"00631L\"}},\"sleeves\":[{\"id\":\"risk_on\",\"instrument\":\"leveraged\",\"direction\":{\"component\":\"direction.constant\",\"params\":{\"side\":\"long\"}},\"sizing\":{\"component\":\"sizing.fixed_notional\",\"params\":{\"pct_of_equity\":100,\"rounding\":\"floor\"}},\"rebalance\":{\"component\":\"rebalance.on_signal_change\",\"params\":{}},\"exits\":[],\"hedges\":[]},{\"id\":\"risk_off\",\"instrument\":\"core\",\"direction\":{\"component\":\"direction.constant\",\"params\":{\"side\":\"long\"}},\"sizing\":{\"component\":\"sizing.fixed_notional\",\"params\":{\"pct_of_equity\":100,\"rounding\":\"floor\"}},\"rebalance\":{\"component\":\"rebalance.on_signal_change\",\"params\":{}},\"exits\":[],\"hedges\":[]}],\"allocation\":{\"component\":\"allocation.regime_switch\",\"params\":{\"signal\":\"index:taiex_tr\",\"ma_days\":{\"$param\":\"ma_days\"},\"band_pct\":0.02,\"on\":\"risk_on\",\"off\":\"risk_off\"}},\"execution\":{\"component\":\"execution.next_open\"},\"params\":{\"ma_days\":{\"type\":\"int\",\"low\":150,\"high\":250,\"step\":25,\"default\":200}}},\"clauses\":[{\"id\":\"c1\",\"quote\":\"商品：0050 元大台灣50；00631L 元大台灣50正2\",\"slot\":\"instruments\",\"component\":null},{\"id\":\"c2\",\"quote\":\"時段：日線，每月最後一個交易日收盤判斷，隔日開盤執行\",\"slot\":\"frequency\",\"component\":null},{\"id\":\"c3\",\"quote\":\"時段：日線，每月最後一個交易日收盤判斷，隔日開盤執行\",\"slot\":\"execution\",\"component\":\"execution.next_open\"},{\"id\":\"c4\",\"quote\":\"時段：日線，每月最後一個交易日收盤判斷，隔日開盤執行\",\"slot\":\"rebalance\",\"component\":\"rebalance.on_signal_change\"},{\"id\":\"c5\",\"quote\":\"方向：只做多\",\"slot\":\"direction\",\"component\":\"direction.constant\"},{\"id\":\"c6\",\"quote\":\"週期：1d\",\"slot\":\"frequency\",\"component\":null},{\"id\":\"c7\",\"quote\":\"訊號序列：index:taiex_tr\",\"slot\":\"other\",\"component\":null},{\"id\":\"c8\",\"quote\":\"避險：無\",\"slot\":\"hedge\",\"component\":null},{\"id\":\"c9\",\"quote\":\"進場：加權股價報酬指數 > 200 日均線 ×(1+2%) 時，切到 00631L\",\"slot\":\"allocation\",\"component\":\"allocation.regime_switch\"},{\"id\":\"c10\",\"quote\":\"停損：無（以均線 regime 切換出場，跌破 200 日均線即切回 0050）\",\"slot\":\"exit\",\"component\":null},{\"id\":\"c11\",\"quote\":\"出場：加權股價報酬指數 < 200 日均線 ×(1-2%) 時，切回 0050\",\"slot\":\"allocation\",\"component\":\"allocation.regime_switch\"},{\"id\":\"c12\",\"quote\":\"每盤最多交易：（不適用，日線每月檢視）\",\"slot\":\"not_strategy\",\"component\":null},{\"id\":\"c13\",\"quote\":\"參數：$ma_days 預設 200，範圍 150-250，步長 25\",\"slot\":\"other\",\"component\":null},{\"id\":\"c14\",\"quote\":\"假設：\",\"slot\":\"not_strategy\",\"component\":null},{\"id\":\"c15\",\"quote\":\"- 訊號序列採 index:taiex_tr（加權股價報酬指數／含息，使用者選）；回測起點約 2004（需 200 日暖機）。\",\"slot\":\"other\",\"component\":null},{\"id\":\"c16\",\"quote\":\"- 使用 allocation.regime_switch 的均線區間（band 預設 2%）做遲滯，避免在均線附近反覆換倉。\",\"slot\":\"allocation\",\"component\":\"allocation.regime_switch\"},{\"id\":\"c17\",\"quote\":\"- 執行為「每月最後一個交易日收盤判斷、隔日開盤切換」，月中不動作。\",\"slot\":\"rebalance\",\"component\":\"rebalance.on_signal_change\"},{\"id\":\"c18\",\"quote\":\"- 部位：任何時候 100% 押單邊（00631L 或 0050），不保留現金、不做部分配置。\",\"slot\":\"sizing\",\"component\":\"sizing.fixed_notional\"},{\"id\":\"c19\",\"quote\":\"- 停損為無：B 段無 exit.stop_loss 元件，出場純由 regime 切換驅動。\",\"slot\":\"exit\",\"component\":null},{\"id\":\"c20\",\"quote\":\"- 兩檔 ETF 皆只做多、全額買進、不融資、不放空。\",\"slot\":\"direction\",\"component\":\"direction.constant\"}],\"assumptions\":[\"以 allocation.regime_switch 的 on/off 兩檔 ETF 表達切換，訊號用 index:taiex_tr、band 2%（idea 指定）\",\"兩檔 ETF 各用 sizing.fixed_notional 100% 押單邊（idea 指定全額、不保留現金）\",\"ETF 無換月，rebalance 改用 rebalance.on_signal_change（僅在 regime 切換時換倉，近似「月中不動作」）\",\"執行為收盤判斷、隔日開盤（execution.next_open）\",\"初始資金 1,000,000 TWD（預設）\",\"可調參數 ma_days 150-250、步長 25、預設 200（idea 指定）\",\"停損為無，未加入 exit.stop_loss（catalog 亦無此元件）\"]}",
+  "{\"status\":\"ok\",\"spec\":{\"spec_version\":3,\"name\":\"taiex_tr_regime_switch_0050_00631l\",\"frequency\":\"1d\",\"capital\":{\"initial_twd\":1000000},\"instruments\":{\"core\":{\"symbol\":\"0050\"},\"leveraged\":{\"symbol\":\"00631L\"}},\"sleeves\":[{\"id\":\"risk_on\",\"instrument\":\"leveraged\",\"direction\":{\"component\":\"direction.constant\",\"params\":{\"side\":\"long\"}},\"sizing\":{\"component\":\"sizing.fixed_notional\",\"params\":{\"pct_of_equity\":100,\"rounding\":\"floor\"}},\"rebalance\":{\"component\":\"rebalance.on_signal_change\",\"params\":{}},\"exits\":[],\"hedges\":[]},{\"id\":\"risk_off\",\"instrument\":\"core\",\"direction\":{\"component\":\"direction.constant\",\"params\":{\"side\":\"long\"}},\"sizing\":{\"component\":\"sizing.fixed_notional\",\"params\":{\"pct_of_equity\":100,\"rounding\":\"floor\"}},\"rebalance\":{\"component\":\"rebalance.on_signal_change\",\"params\":{}},\"exits\":[],\"hedges\":[]}],\"allocation\":{\"component\":\"allocation.regime_switch\",\"params\":{\"signal\":\"index:taiex_tr\",\"ma_days\":{\"$param\":\"ma_days\"},\"band_pct\":0.02,\"on\":\"risk_on\",\"off\":\"risk_off\"}},\"execution\":{\"component\":\"execution.next_open\"},\"params\":{\"ma_days\":{\"type\":\"int\",\"low\":150,\"high\":250,\"step\":25,\"default\":200}}},\"clauses\":[{\"id\":\"c1\",\"quote\":\"商品：0050 元大台灣50；00631L 元大台灣50正2\",\"slot\":\"instruments\",\"component\":null},{\"id\":\"c2\",\"quote\":\"時段：日線，每月最後一個交易日收盤判斷，隔日開盤執行\",\"slot\":\"execution\",\"component\":\"execution.next_open\"},{\"id\":\"c3\",\"quote\":\"時段：日線，每月最後一個交易日收盤判斷，隔日開盤執行\",\"slot\":\"frequency\",\"component\":null},{\"id\":\"c4\",\"quote\":\"時段：日線，每月最後一個交易日收盤判斷，隔日開盤執行\",\"slot\":\"execution\",\"component\":\"execution.next_open\"},{\"id\":\"c5\",\"quote\":\"方向：只做多\",\"slot\":\"direction\",\"component\":\"direction.constant\"},{\"id\":\"c6\",\"quote\":\"週期：1d\",\"slot\":\"rebalance\",\"component\":\"rebalance.on_signal_change\"},{\"id\":\"c7\",\"quote\":\"訊號序列：index:taiex_tr\",\"slot\":\"other\",\"component\":null},{\"id\":\"c8\",\"quote\":\"避險：無\",\"slot\":\"hedge\",\"component\":null},{\"id\":\"c9\",\"quote\":\"進場：加權股價報酬指數 > 200 日均線 ×(1+2%) 時，切到 00631L\",\"slot\":\"direction\",\"component\":\"direction.constant\"},{\"id\":\"c10\",\"quote\":\"停損：無（以均線 regime 切換出場，跌破 200 日均線即切回 0050）\",\"slot\":\"exit\",\"component\":null},{\"id\":\"c11\",\"quote\":\"出場：加權股價報酬指數 < 200 日均線 ×(1-2%) 時，切回 0050\",\"slot\":\"exit\",\"component\":null},{\"id\":\"c12\",\"quote\":\"每盤最多交易：（不適用，日線每月檢視）\",\"slot\":\"rebalance\",\"component\":\"rebalance.on_signal_change\"},{\"id\":\"c13\",\"quote\":\"參數：$ma_days 預設 200，範圍 150-250，步長 25\",\"slot\":\"other\",\"component\":null},{\"id\":\"c14\",\"quote\":\"假設：\",\"slot\":\"not_strategy\",\"component\":null},{\"id\":\"c15\",\"quote\":\"- 訊號序列採 index:taiex_tr（加權股價報酬指數／含息，使用者選）；回測起點約 2004（需 200 日暖機）。\",\"slot\":\"other\",\"component\":null},{\"id\":\"c16\",\"quote\":\"- 使用 allocation.regime_switch 的均線區間（band 預設 2%）做遲滯，避免在均線附近反覆換倉。\",\"slot\":\"rebalance\",\"component\":\"rebalance.on_signal_change\"},{\"id\":\"c17\",\"quote\":\"- 執行為「每月最後一個交易日收盤判斷、隔日開盤切換」，月中不動作。\",\"slot\":\"execution\",\"component\":\"execution.next_open\"},{\"id\":\"c18\",\"quote\":\"- 部位：任何時候 100% 押單邊（00631L 或 0050），不保留現金、不做部分配置。\",\"slot\":\"direction\",\"component\":\"direction.constant\"},{\"id\":\"c19\",\"quote\":\"- 停損為無：B 段無 exit.stop_loss 元件，出場純由 regime 切換驅動。\",\"slot\":\"exit\",\"component\":null},{\"id\":\"c20\",\"quote\":\"- 兩檔 ETF 皆只做多、全額買進、不融資、不放空。\",\"slot\":\"direction\",\"component\":\"direction.constant\"}],\"assumptions\":[\"以 allocation.regime_switch 的 on/off 兩檔 ETF 表達切換，訊號用 index:taiex_tr、band 2%（idea 指定）\",\"兩檔 ETF 各用 sizing.fixed_notional 100% 押單邊（idea 指定全額、不保留現金）\",\"ETF 無換月，rebalance 改用 rebalance.on_signal_change（僅在 regime 切換時換倉，近似「月中不動作」）\",\"執行為收盤判斷、隔日開盤（execution.next_open）\",\"初始資金 1,000,000 TWD（預設）\",\"可調參數 ma_days 150-250、步長 25、預設 200（idea 指定）\",\"停損為無，未加入 exit.stop_loss（catalog 亦無此元件）\"]}"
+ ],
+ "jev_calls": [
+  {
+   "question": "clause_slot",
+   "state_sha256": "3257ebe6f046c2029bddeccfc09069ccc1210dac317c29e7275dc6531387b463",
+   "choice": "instrument",
+   "confidence": 0.97
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "d238a274864eaf8295916221954372261bd42434b29d495db3dca8052450db76",
+   "choice": "supports",
+   "confidence": 0.77
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "b75a36745a13f4b6182ec0ce4b4fba4b81101a8128f268e90cf52935c1557b71",
+   "choice": "execution",
+   "confidence": 0.99
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "b75a36745a13f4b6182ec0ce4b4fba4b81101a8128f268e90cf52935c1557b71",
+   "choice": "execution.next_open",
+   "confidence": 0.95
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "c4e57baa78cd963a0d25216dffa98287c0cb679b20a6a9ecd61356597ef71fd0",
+   "choice": "contradicts",
+   "confidence": 0.94
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "b75a36745a13f4b6182ec0ce4b4fba4b81101a8128f268e90cf52935c1557b71",
+   "choice": "execution",
+   "confidence": 0.99
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "b75a36745a13f4b6182ec0ce4b4fba4b81101a8128f268e90cf52935c1557b71",
+   "choice": "execution.next_open",
+   "confidence": 0.94
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "c4e57baa78cd963a0d25216dffa98287c0cb679b20a6a9ecd61356597ef71fd0",
+   "choice": "contradicts",
+   "confidence": 0.92
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "b75a36745a13f4b6182ec0ce4b4fba4b81101a8128f268e90cf52935c1557b71",
+   "choice": "execution",
+   "confidence": 0.99
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "b75a36745a13f4b6182ec0ce4b4fba4b81101a8128f268e90cf52935c1557b71",
+   "choice": "execution.next_open",
+   "confidence": 0.95
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "c4e57baa78cd963a0d25216dffa98287c0cb679b20a6a9ecd61356597ef71fd0",
+   "choice": "contradicts",
+   "confidence": 0.94
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "eb6d1c5197b8b822563eaecd2bdf95c2dd6df697ceeeb6dbfe7098967e850a2d",
+   "choice": "direction",
+   "confidence": 1
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "eb6d1c5197b8b822563eaecd2bdf95c2dd6df697ceeeb6dbfe7098967e850a2d",
+   "choice": "direction.constant",
+   "confidence": 0.95
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "231f7d4ab8f4b99e28a6c26f2538c34f205c36c36ca766d57eff5efae43b31fb",
+   "choice": "supports",
+   "confidence": 0.74
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "75995b8e62ea1501c2d9e28a85c34dd34a2158c9cceb5ad81d266bb1db35d043",
+   "choice": "rebalance",
+   "confidence": 0.87
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "75995b8e62ea1501c2d9e28a85c34dd34a2158c9cceb5ad81d266bb1db35d043",
+   "choice": "rebalance.daily",
+   "confidence": 0.86
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "e4f00ae95a939a7d71a84995f7b9eb525495f507276ebfecbfe754725c226f00",
+   "choice": "supports",
+   "confidence": 0.37
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "86fc1456b48fc4b15c170f919330659505ddeae79189ae58c8a7f8a8477349a4",
+   "choice": "other",
+   "confidence": 0.49
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "89190e7fa42049fe660b6d1b2967e11e0c50233a2211f2f1e5724757aad5d952",
+   "choice": "supports",
+   "confidence": 0.51
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "2b54f281e99315e9da1a5c13f65c61192042823ddbf5b8df0b65f64586166fd5",
+   "choice": "hedge",
+   "confidence": 0.86
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "2b54f281e99315e9da1a5c13f65c61192042823ddbf5b8df0b65f64586166fd5",
+   "choice": "none_fits",
+   "confidence": 0.98
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "f1810fa2a27499543ee57f06a3d98b444668d2ef15546e03ad2ac046e4af7509",
+   "choice": "supports",
+   "confidence": 0.3
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "0bfadbe9fa21e58e069b4dcd642f5803efd4c6f1dd9dca944715e112fb37a7c5",
+   "choice": "direction",
+   "confidence": 0.69
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "0bfadbe9fa21e58e069b4dcd642f5803efd4c6f1dd9dca944715e112fb37a7c5",
+   "choice": "direction.dsl_rules",
+   "confidence": 0.38
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "fbb6ad71f141e034fd050addd1f354549a4e012e2683c3b093e9841040d77822",
+   "choice": "supports",
+   "confidence": 0.89
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "0efdd2b57476ed115aac126f229ba55047993a9e1a7c605358e123ff44b3bcf3",
+   "choice": "exit",
+   "confidence": 0.96
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "785b91b996b75885854b72430af0e32c3ba4b9c21251a7e01c468fc7a671c484",
+   "choice": "supports",
+   "confidence": 0.33
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "bc2c602ee534894215c926df76441e24170f1b52418c09b99e2484ee9a4f2c79",
+   "choice": "exit",
+   "confidence": 0.67
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "13ecc5ec96ede8b102a67be5a8a3bae6aad256cf53ce82b0839670b021c33923",
+   "choice": "supports",
+   "confidence": 0.7
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "6dcbb698c4f0f87e4fa8f788203e9d842d4e556368c77745c5835db08eff390a",
+   "choice": "rebalance",
+   "confidence": 0.39
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "6dcbb698c4f0f87e4fa8f788203e9d842d4e556368c77745c5835db08eff390a",
+   "choice": "rebalance.monthly_at_roll",
+   "confidence": 0.39
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "2325b56233b831c987d6815f3d55ffebc0049442028b45bced0cadd5e8e7b37e",
+   "choice": "contradicts",
+   "confidence": 0.14
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "3596b9434ef1ec8769a50bce1373c36eb354f53fe791f067212114bbf742bc45",
+   "choice": "other",
+   "confidence": 0.67
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "3d9b46591fe6c161d449b5561229e9bd930cb2e9cec2664507d1b2045ab82887",
+   "choice": "supports",
+   "confidence": 0.88
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "e7fe59eb2b1d5a84a4f0e683f98589d92df573cbef9dd0c104bdab83c323604d",
+   "choice": "not_strategy",
+   "confidence": 0.97
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "7eed678acab7c3c7a4e26908368442763e283aae9ba03c21ec21b7d6d1fa0ce0",
+   "choice": "supports",
+   "confidence": 0.34
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "352e719b9e34d4805be0bb38ef9cdcb33bc47715b340123c4fd5926c50fe9105",
+   "choice": "other",
+   "confidence": 0.61
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "7fae0cc9682aa5d50a5b7b8c2c7f3f4bb364a5ce25101babf3374ea2161de1a5",
+   "choice": "supports",
+   "confidence": 0.67
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "1be3535d644afc82165282f8b31ff6d38cfec2e9e9561e7a50dba04784d28bdb",
+   "choice": "rebalance",
+   "confidence": 0.79
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "1be3535d644afc82165282f8b31ff6d38cfec2e9e9561e7a50dba04784d28bdb",
+   "choice": "rebalance.threshold_band",
+   "confidence": 0.79
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "2815f1b71dc310867e14ac07a95bfe2ab2780f21ecd3f866a948e9f52f888db3",
+   "choice": "supports",
+   "confidence": 0.92
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "b7d6857cbf420fe7926a5b8781010c3867377abece52a02dec041f4ae79c470c",
+   "choice": "execution",
+   "confidence": 0.96
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "b7d6857cbf420fe7926a5b8781010c3867377abece52a02dec041f4ae79c470c",
+   "choice": "execution.next_open",
+   "confidence": 0.91
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "1f28abf4fa43c6c82048a620e7c9eaaa5cfa04ae098b4c10038b36312c43f4c0",
+   "choice": "contradicts",
+   "confidence": 0.98
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "474b09d4ce247cfef1ed793b7082f20130e682d362be4ab1ce647d45af09082b",
+   "choice": "direction",
+   "confidence": 0.4
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "474b09d4ce247cfef1ed793b7082f20130e682d362be4ab1ce647d45af09082b",
+   "choice": "direction.constant",
+   "confidence": 0.67
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "6e63df06cc89d1bbb6371cf40ab95751c4fda1641c64f07d9568043d30f85b87",
+   "choice": "supports",
+   "confidence": 0.89
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "da9739012e5002fd405d35fe74edd7dd29ff6be3d983ff5347c807de8b0c2ada",
+   "choice": "exit",
+   "confidence": 0.99
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "38306cd745ed20fad3b313744f6ec81c4080104e48b36ec7bbeacfe0bc33a6c3",
+   "choice": "supports",
+   "confidence": 0.86
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "631c4e2f980e16c9b9a214e5c78e8250e2b8101e829e4764dd18e0f6153c1bc9",
+   "choice": "direction",
+   "confidence": 0.77
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "631c4e2f980e16c9b9a214e5c78e8250e2b8101e829e4764dd18e0f6153c1bc9",
+   "choice": "direction.constant",
+   "confidence": 0.76
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "0fe9ecec398efd034cbe474b3b0c58b087475a9291e2c1142949764569221ab9",
+   "choice": "supports",
+   "confidence": 0.82
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "3257ebe6f046c2029bddeccfc09069ccc1210dac317c29e7275dc6531387b463",
+   "choice": "instrument",
+   "confidence": 0.98
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "d238a274864eaf8295916221954372261bd42434b29d495db3dca8052450db76",
+   "choice": "supports",
+   "confidence": 0.76
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "b75a36745a13f4b6182ec0ce4b4fba4b81101a8128f268e90cf52935c1557b71",
+   "choice": "execution",
+   "confidence": 0.99
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "b75a36745a13f4b6182ec0ce4b4fba4b81101a8128f268e90cf52935c1557b71",
+   "choice": "execution.next_open",
+   "confidence": 0.94
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "c4e57baa78cd963a0d25216dffa98287c0cb679b20a6a9ecd61356597ef71fd0",
+   "choice": "contradicts",
+   "confidence": 0.92
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "b75a36745a13f4b6182ec0ce4b4fba4b81101a8128f268e90cf52935c1557b71",
+   "choice": "execution",
+   "confidence": 0.99
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "b75a36745a13f4b6182ec0ce4b4fba4b81101a8128f268e90cf52935c1557b71",
+   "choice": "execution.next_open",
+   "confidence": 0.97
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "c4e57baa78cd963a0d25216dffa98287c0cb679b20a6a9ecd61356597ef71fd0",
+   "choice": "contradicts",
+   "confidence": 0.94
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "b75a36745a13f4b6182ec0ce4b4fba4b81101a8128f268e90cf52935c1557b71",
+   "choice": "execution",
+   "confidence": 0.99
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "b75a36745a13f4b6182ec0ce4b4fba4b81101a8128f268e90cf52935c1557b71",
+   "choice": "execution.next_open",
+   "confidence": 0.95
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "c4e57baa78cd963a0d25216dffa98287c0cb679b20a6a9ecd61356597ef71fd0",
+   "choice": "contradicts",
+   "confidence": 0.95
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "eb6d1c5197b8b822563eaecd2bdf95c2dd6df697ceeeb6dbfe7098967e850a2d",
+   "choice": "direction",
+   "confidence": 1
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "eb6d1c5197b8b822563eaecd2bdf95c2dd6df697ceeeb6dbfe7098967e850a2d",
+   "choice": "direction.constant",
+   "confidence": 0.94
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "231f7d4ab8f4b99e28a6c26f2538c34f205c36c36ca766d57eff5efae43b31fb",
+   "choice": "supports",
+   "confidence": 0.79
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "75995b8e62ea1501c2d9e28a85c34dd34a2158c9cceb5ad81d266bb1db35d043",
+   "choice": "rebalance",
+   "confidence": 0.89
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "75995b8e62ea1501c2d9e28a85c34dd34a2158c9cceb5ad81d266bb1db35d043",
+   "choice": "rebalance.daily",
+   "confidence": 0.85
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "e4f00ae95a939a7d71a84995f7b9eb525495f507276ebfecbfe754725c226f00",
+   "choice": "supports",
+   "confidence": 0.49
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "86fc1456b48fc4b15c170f919330659505ddeae79189ae58c8a7f8a8477349a4",
+   "choice": "other",
+   "confidence": 0.5
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "89190e7fa42049fe660b6d1b2967e11e0c50233a2211f2f1e5724757aad5d952",
+   "choice": "supports",
+   "confidence": 0.49
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "2b54f281e99315e9da1a5c13f65c61192042823ddbf5b8df0b65f64586166fd5",
+   "choice": "hedge",
+   "confidence": 0.85
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "2b54f281e99315e9da1a5c13f65c61192042823ddbf5b8df0b65f64586166fd5",
+   "choice": "none_fits",
+   "confidence": 1
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "f1810fa2a27499543ee57f06a3d98b444668d2ef15546e03ad2ac046e4af7509",
+   "choice": "supports",
+   "confidence": 0.2
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "0bfadbe9fa21e58e069b4dcd642f5803efd4c6f1dd9dca944715e112fb37a7c5",
+   "choice": "direction",
+   "confidence": 0.69
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "0bfadbe9fa21e58e069b4dcd642f5803efd4c6f1dd9dca944715e112fb37a7c5",
+   "choice": "direction.dsl_rules",
+   "confidence": 0.4
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "fbb6ad71f141e034fd050addd1f354549a4e012e2683c3b093e9841040d77822",
+   "choice": "supports",
+   "confidence": 0.89
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "0efdd2b57476ed115aac126f229ba55047993a9e1a7c605358e123ff44b3bcf3",
+   "choice": "exit",
+   "confidence": 0.98
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "785b91b996b75885854b72430af0e32c3ba4b9c21251a7e01c468fc7a671c484",
+   "choice": "contradicts",
+   "confidence": 0.31
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "bc2c602ee534894215c926df76441e24170f1b52418c09b99e2484ee9a4f2c79",
+   "choice": "exit",
+   "confidence": 0.64
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "13ecc5ec96ede8b102a67be5a8a3bae6aad256cf53ce82b0839670b021c33923",
+   "choice": "supports",
+   "confidence": 0.69
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "6dcbb698c4f0f87e4fa8f788203e9d842d4e556368c77745c5835db08eff390a",
+   "choice": "rebalance",
+   "confidence": 0.37
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "6dcbb698c4f0f87e4fa8f788203e9d842d4e556368c77745c5835db08eff390a",
+   "choice": "none_fits",
+   "confidence": 0.46
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "2325b56233b831c987d6815f3d55ffebc0049442028b45bced0cadd5e8e7b37e",
+   "choice": "contradicts",
+   "confidence": 0.34
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "3596b9434ef1ec8769a50bce1373c36eb354f53fe791f067212114bbf742bc45",
+   "choice": "other",
+   "confidence": 0.68
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "3d9b46591fe6c161d449b5561229e9bd930cb2e9cec2664507d1b2045ab82887",
+   "choice": "supports",
+   "confidence": 0.85
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "e7fe59eb2b1d5a84a4f0e683f98589d92df573cbef9dd0c104bdab83c323604d",
+   "choice": "not_strategy",
+   "confidence": 0.97
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "7eed678acab7c3c7a4e26908368442763e283aae9ba03c21ec21b7d6d1fa0ce0",
+   "choice": "supports",
+   "confidence": 0.37
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "352e719b9e34d4805be0bb38ef9cdcb33bc47715b340123c4fd5926c50fe9105",
+   "choice": "other",
+   "confidence": 0.67
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "7fae0cc9682aa5d50a5b7b8c2c7f3f4bb364a5ce25101babf3374ea2161de1a5",
+   "choice": "supports",
+   "confidence": 0.67
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "1be3535d644afc82165282f8b31ff6d38cfec2e9e9561e7a50dba04784d28bdb",
+   "choice": "rebalance",
+   "confidence": 0.75
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "1be3535d644afc82165282f8b31ff6d38cfec2e9e9561e7a50dba04784d28bdb",
+   "choice": "rebalance.threshold_band",
+   "confidence": 0.8
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "2815f1b71dc310867e14ac07a95bfe2ab2780f21ecd3f866a948e9f52f888db3",
+   "choice": "supports",
+   "confidence": 0.95
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "b7d6857cbf420fe7926a5b8781010c3867377abece52a02dec041f4ae79c470c",
+   "choice": "execution",
+   "confidence": 0.97
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "b7d6857cbf420fe7926a5b8781010c3867377abece52a02dec041f4ae79c470c",
+   "choice": "execution.next_open",
+   "confidence": 0.86
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "1f28abf4fa43c6c82048a620e7c9eaaa5cfa04ae098b4c10038b36312c43f4c0",
+   "choice": "contradicts",
+   "confidence": 0.98
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "474b09d4ce247cfef1ed793b7082f20130e682d362be4ab1ce647d45af09082b",
+   "choice": "allocation",
+   "confidence": 0.42
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "474b09d4ce247cfef1ed793b7082f20130e682d362be4ab1ce647d45af09082b",
+   "choice": "allocation.single",
+   "confidence": 0.91
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "6e63df06cc89d1bbb6371cf40ab95751c4fda1641c64f07d9568043d30f85b87",
+   "choice": "supports",
+   "confidence": 0.86
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "da9739012e5002fd405d35fe74edd7dd29ff6be3d983ff5347c807de8b0c2ada",
+   "choice": "exit",
+   "confidence": 0.99
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "38306cd745ed20fad3b313744f6ec81c4080104e48b36ec7bbeacfe0bc33a6c3",
+   "choice": "supports",
+   "confidence": 0.86
+  },
+  {
+   "question": "clause_slot",
+   "state_sha256": "631c4e2f980e16c9b9a214e5c78e8250e2b8101e829e4764dd18e0f6153c1bc9",
+   "choice": "direction",
+   "confidence": 0.78
+  },
+  {
+   "question": "clause_component",
+   "state_sha256": "631c4e2f980e16c9b9a214e5c78e8250e2b8101e829e4764dd18e0f6153c1bc9",
+   "choice": "direction.constant",
+   "confidence": 0.77
+  },
+  {
+   "question": "spec_faithfulness",
+   "state_sha256": "0fe9ecec398efd034cbe474b3b0c58b087475a9291e2c1142949764569221ab9",
+   "choice": "supports",
+   "confidence": 0.88
+  }
+ ],
+ "observed": {
+  "prompt_sha256": "24f94965798194a479b8706290610dbc9fb3efd5a2b8cebc3fdbd1e8a7b9a901",
+  "spec_sha256": "d1ebd5fd53590528a88ef6e4dd4fd0fcd1e7d957b7e7f2771c255d1ae9d59c50",
+  "spec_round": 2,
+  "unimplemented": [
+   "c8",
+   "c10",
+   "c11",
+   "c19"
+  ],
+  "review_unresolved": [
+   {
+    "msg": "the spec contradicts clause c2 「時段：日線，每月最後一個交易日收盤判斷，隔日開盤…」: JEV judges the spec statement contradicts it; make the spec do what it says",
+    "path": "clauses.1"
+   },
+   {
+    "msg": "JEV maps clause c3 「時段：日線，每月最後一個交易日收盤判斷，隔日開盤…」 to slot 'execution', not 'frequency'; recheck which slot implements it",
+    "path": "clauses.2.slot"
+   },
+   {
+    "msg": "the spec contradicts clause c3 「時段：日線，每月最後一個交易日收盤判斷，隔日開盤…」: JEV judges the spec statement contradicts it; make the spec do what it says",
+    "path": "clauses.2"
+   },
+   {
+    "msg": "the spec contradicts clause c4 「時段：日線，每月最後一個交易日收盤判斷，隔日開盤…」: JEV judges the spec statement contradicts it; make the spec do what it says",
+    "path": "clauses.3"
+   },
+   {
+    "msg": "JEV picks 'rebalance.daily' for clause c6 「週期：1d」, not 'rebalance.on_signal_change'",
+    "path": "clauses.5.component"
+   },
+   {
+    "msg": "JEV picks 'direction.dsl_rules' for clause c9 「進場：加權股價報酬指數 > 200 日均線 ×(…」, not 'direction.constant'",
+    "path": "clauses.8.component"
+   },
+   {
+    "msg": "the spec contradicts clause c10 「停損：無（以均線 regime 切換出場，跌破 …」: JEV judges the spec statement contradicts it; make the spec do what it says",
+    "path": "clauses.9"
+   },
+   {
+    "msg": "JEV finds no registered component that fits clause c12 「每盤最多交易：（不適用，日線每月檢視）」 (you chose 'rebalance.on_signal_change'); pick one that does what the clause says, or reply unsupported",
+    "path": "clauses.11.component"
+   },
+   {
+    "msg": "the spec contradicts clause c12 「每盤最多交易：（不適用，日線每月檢視）」: JEV judges the spec statement contradicts it; make the spec do what it says",
+    "path": "clauses.11"
+   },
+   {
+    "msg": "JEV picks 'rebalance.threshold_band' for clause c16 「- 使用 allocation.regime_s…」, not 'rebalance.on_signal_change'",
+    "path": "clauses.15.component"
+   },
+   {
+    "msg": "the spec contradicts clause c17 「- 執行為「每月最後一個交易日收盤判斷、隔日開盤…」: JEV judges the spec statement contradicts it; make the spec do what it says",
+    "path": "clauses.16"
+   },
+   {
+    "msg": "JEV maps clause c18 「- 部位：任何時候 100% 押單邊（00631…」 to slot 'allocation', not 'direction'; recheck which slot implements it",
+    "path": "clauses.17.slot"
+   },
+   {
+    "msg": "JEV picks 'allocation.single' for clause c18 「- 部位：任何時候 100% 押單邊（00631…」, not 'direction.constant'",
+    "path": "clauses.17.component"
+   }
+  ],
+  "summary": "spec_generate ✅ daily_equity：20 個子句，未實作 4（避險：無；停損：無（以均線 regime 切換出場，跌破 ；出場：加權股價報酬指數 < 200 日均線 ×(；- 停損為無：B 段無 exit.stop_lo）；資料起點 2015-11-16（thalassa_tw_stock_daily/00631L 從 2014-10-31 起，加暖機）；假設 7 項：以 allocation.regime_switch 的 on/off 兩檔 ETF 表達切換，訊號用 index:taiex_tr、band 2%（idea 指定）；兩檔 ETF 各用 sizing.fixed_notional 100% 押單邊（idea 指定全額、不保留現金）；ETF 無換月，rebalance 改用 rebalance.on_signal_change（僅在 regime 切換時換倉，近似「月中不動作」）；執行為收盤判斷、隔日開盤（execution.next_open）；初始資金 1,000,000 TWD（預設）；可調參數 ma_days 150-250、步長 25、預設 200（idea 指定）；停損為無，未加入 exit.stop_loss（catalog 亦無此元件）"
+ }
+}
