@@ -803,16 +803,6 @@ class OnSignalChangeRebalance(RebalanceComponent):
         return "訊號改變時才進出場"
 
 
-def month_sessions(calendar: pd.DatetimeIndex, day: pd.Timestamp) -> pd.DatetimeIndex:
-    """The sessions of ``calendar`` in ``day``'s calendar month."""
-
-    first = day.normalize().replace(day=1)
-    return calendar[calendar.searchsorted(first) : calendar.searchsorted(first + pd.offsets.MonthBegin(1))]
-
-
-MONTH_DAY_ZH = {"first_trading_day": "第一個交易日", "last_trading_day": "最後一個交易日"}
-
-
 @register
 class MonthlyRebalance(RebalanceComponent):
     """Trade only on the month's decision day, plus the run's first decision (the initial entry). There the
@@ -851,6 +841,8 @@ class MonthlyRebalance(RebalanceComponent):
 
     tunable = frozenset({"min_change_units"})
     example = {"day": "last_trading_day", "min_change_units": 1}
+    # inside the class, so its fingerprint covers the schedule and the sentence
+    DAY_ZH = {"first_trading_day": "第一個交易日", "last_trading_day": "最後一個交易日"}
 
     def init(self, params):
         return {"entered": False}
@@ -863,7 +855,8 @@ class MonthlyRebalance(RebalanceComponent):
         return []
 
     def decision_day(self, params, calendar: pd.DatetimeIndex, day: pd.Timestamp) -> pd.Timestamp:
-        sessions = month_sessions(calendar, day)
+        first = day.normalize().replace(day=1)
+        sessions = calendar[calendar.searchsorted(first) : calendar.searchsorted(first + pd.offsets.MonthBegin(1))]
         if day not in sessions:
             raise ValueError(f"{day.date()} is not a session of the run's trading calendar")
         if params.day == "first_trading_day":
@@ -879,7 +872,7 @@ class MonthlyRebalance(RebalanceComponent):
         return abs(target_units - current_units) >= params.min_change_units
 
     def describe(self, params, ctx):
-        day = MONTH_DAY_ZH.get(params.day, f"第 {params.n} 個交易日（不足 {params.n} 個交易日的月份取最後一個）")
+        day = self.DAY_ZH.get(params.day, f"第 {params.n} 個交易日（不足 {params.n} 個交易日的月份取最後一個）")
         unit = "口" if ctx.instrument.kind == "future" else ("股" if ctx.instrument.lot == 1 else "張")
         return (
             f"開始時先建立部位，之後每月只在當月{day}收盤後檢查一次（依交易所行事曆，颱風等臨時休市日不算），"
