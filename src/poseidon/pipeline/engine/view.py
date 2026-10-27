@@ -7,6 +7,7 @@ not merely discouraged. Arrays handed out are read-only.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -106,9 +107,14 @@ class AuxView:
 
 @dataclass(frozen=True)
 class MarketView:
+    """The market at a decision close. ``calendar`` is the run's whole trading calendar: reference data
+    known ex ante (sessions that traded, then the official schedule), which the truncation audit keeps
+    whole too; it holds no prices. Empty on the intraday engine."""
+
     date: pd.Timestamp
     _series: Mapping[str, SeriesView]
     _aux: Mapping[str, AuxView]
+    calendar: pd.DatetimeIndex = dataclasses.field(default_factory=lambda: pd.DatetimeIndex([]))
 
     @property
     def instruments(self) -> tuple[str, ...]:

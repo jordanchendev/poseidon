@@ -181,6 +181,7 @@ class _Run:
         if calendar is None:
             calendar = sorted({d for f in futures.values() for d in pd.to_datetime(f.bars["date"]).dt.normalize()})
         cal = normalise_calendar(calendar)
+        self.calendar = cal
         self.pos = {name: _Position(f.spec, build_contract_table(name, f, cal)) for name, f in futures.items()}
         dates = {tuple(p.table.dates) for p in self.pos.values()}
         if len(dates) != 1:
@@ -582,6 +583,7 @@ class _Run:
             t,
             {k: SeriesView(self.series[k], self.series[k].n) for k in self.pos},
             {k: AuxView(b, b.n) for k, b in self.aux_buffers.items()},
+            self.calendar,
         )
         prices = {k: p.table.price("close", i, int(p.table.held[i])) for k, p in self.pos.items()}
         # settled kinds are marked at the close of the contract still held (a signal_close roll is
