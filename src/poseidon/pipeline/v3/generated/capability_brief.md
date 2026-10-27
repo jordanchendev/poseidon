@@ -1,12 +1,12 @@
 # Strategy pipeline capability brief
 
-Spec v3, REGISTRY_VERSION 2. Rendered from the component registry and the instrument table by `python -m poseidon.pipeline.v3 brief`; edit the registry, not this file.
+Spec v3, REGISTRY_VERSION 3. Rendered from the component registry and the instrument table by `python -m poseidon.pipeline.v3 brief`; edit the registry, not this file.
 
 The downstream pipeline turns an idea into a spec v3 and backtests it. A spec is one or more sleeves; each sleeve is one instrument + a direction + an ordered leverage chain + sizing + rebalance (+ exits, hedges), plus one allocation and one execution rule. Every slot is filled by picking a registered component below and setting its parameters. 1-4 numeric parameters per spec are tunable ranges (`$param`) that the optimizer searches; only fields marked tunable can be one.
 
 ## Frequencies
 
-- `1d`: decide after every instrument's daily close, fill at the next session's open (TX family: the 15:00 night session; stocks / ETFs: the 09:00 open). Daily runs start 2001-01-02 by default; a series that starts later (an index a signal reads, a stock's own bars) moves the run's start to that series' first day plus the warm-up. The warm-up comes from earlier data.
+- `1d`: decide after every instrument's daily close, fill at the next session's open (TX family: the 15:00 night session; stocks / ETFs: the 09:00 open). Daily runs start 2001-01-02 by default; a series that starts later (an index a signal reads, a stock's own bars) moves the run's start to that series' first day plus the warm-up. The warm-up comes from earlier data. A decision at every close does not mean a trade every day: the rebalance rule picks the days that trade (`rebalance.monthly`: one set trading day a month, for stocks / ETFs and futures alike).
 - `1m` / `5m` / `15m` (intraday): only `direction.dsl_rules` (DSL v2.1), data from 2020-03-02.
 
 ## Instruments
@@ -177,6 +177,10 @@ An idea that only says "台指", "TAIEX" or "大盤" does not say which of these
 - `rebalance.threshold_band` (1d): Re-size when the actual leverage drifts more than band_pct from the target (relative).
   - `band_pct`: number [0.01, 0.5], default 0.1; tunable ($param)
 - `rebalance.on_signal_change` (1d, 1m, 5m, 15m): Trade only when the direction changes (enter / exit / reverse); no re-sizing in between.
+- `rebalance.monthly` (1d): Trade once a month only, on the first, last or n-th trading day of the month (n only with nth_trading_day; TWSE / TAIFEX calendar, closures included): switch and re-size to the target there, hold in between; a run's first day enters.
+  - `day`: last_trading_day | first_trading_day | nth_trading_day, default "last_trading_day"
+  - `n`: integer [1, 20], default 1
+  - `min_change_units`: integer [1, 100], default 1; tunable ($param)
 
 ### exits (per sleeve: protective orders)
 

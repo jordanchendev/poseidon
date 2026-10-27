@@ -813,6 +813,25 @@
       "title": "RebalanceDailyParams",
       "type": "object"
     },
+    "RebalanceMonthly": {
+      "additionalProperties": false,
+      "description": "Trade once a month only, on the first, last or n-th trading day of the month (n only with nth_trading_day; TWSE / TAIFEX calendar, closures included): switch and re-size to the target there, hold in between; a run's first day enters.",
+      "properties": {
+        "component": {
+          "const": "rebalance.monthly",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/RebalanceMonthlyParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "rebalance.monthly",
+      "type": "object"
+    },
     "RebalanceMonthlyAtRoll": {
       "additionalProperties": false,
       "description": "Re-size only when the futures position rolls (monthly); direction changes still trade at once.",
@@ -851,6 +870,44 @@
         }
       },
       "title": "RebalanceMonthlyAtRollParams",
+      "type": "object"
+    },
+    "RebalanceMonthlyParams": {
+      "additionalProperties": false,
+      "properties": {
+        "day": {
+          "default": "last_trading_day",
+          "enum": [
+            "last_trading_day",
+            "first_trading_day",
+            "nth_trading_day"
+          ],
+          "title": "Day",
+          "type": "string"
+        },
+        "min_change_units": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 1,
+          "title": "Min Change Units"
+        },
+        "n": {
+          "default": 1,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "N",
+          "type": "integer"
+        }
+      },
+      "title": "RebalanceMonthlyParams",
       "type": "object"
     },
     "RebalanceOnSignalChange": {
@@ -1321,6 +1378,7 @@
           "discriminator": {
             "mapping": {
               "rebalance.daily": "#/$defs/RebalanceDaily",
+              "rebalance.monthly": "#/$defs/RebalanceMonthly",
               "rebalance.monthly_at_roll": "#/$defs/RebalanceMonthlyAtRoll",
               "rebalance.on_signal_change": "#/$defs/RebalanceOnSignalChange",
               "rebalance.threshold_band": "#/$defs/RebalanceThresholdBand"
@@ -1339,6 +1397,9 @@
             },
             {
               "$ref": "#/$defs/RebalanceOnSignalChange"
+            },
+            {
+              "$ref": "#/$defs/RebalanceMonthly"
             }
           ],
           "title": "Rebalance"
@@ -1379,7 +1440,7 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Spec v3, REGISTRY_VERSION 2. Shape only: cross rules, $param policy (1-4), feasibility and the 5x leverage cap are checked by spec_validate.",
+  "description": "Spec v3, REGISTRY_VERSION 3. Shape only: cross rules, $param policy (1-4), feasibility and the 5x leverage cap are checked by spec_validate.",
   "properties": {
     "allocation": {
       "discriminator": {
@@ -1491,6 +1552,6 @@
     "allocation",
     "execution"
   ],
-  "title": "Strategy spec v3 (registry 2)",
+  "title": "Strategy spec v3 (registry 3)",
   "type": "object"
 }

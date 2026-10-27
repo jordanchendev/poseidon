@@ -452,7 +452,9 @@ def render_brief() -> str:
         "- `1d`: decide after every instrument's daily close, fill at the next session's open (TX family: the 15:00 "
         f"night session; stocks / ETFs: the 09:00 open). Daily runs start {DAILY_WINDOW_START.isoformat()} by "
         "default; a series that starts later (an index a signal reads, a stock's own bars) moves the run's start to "
-        "that series' first day plus the warm-up. The warm-up comes from earlier data.",
+        "that series' first day plus the warm-up. The warm-up comes from earlier data. A decision at every close "
+        "does not mean a trade every day: the rebalance rule picks the days that trade (`rebalance.monthly`: one "
+        "set trading day a month, for stocks / ETFs and futures alike).",
         f"- `1m` / `5m` / `15m` (intraday): only `direction.dsl_rules` (DSL v2.1), data from "
         f"{TX_INTRADAY_DATA_SINCE.isoformat()}.",
         "",
@@ -604,7 +606,9 @@ def render_capability_brief() -> str:
         f"09:00). One or more sleeves = instrument + direction + leverage chain + sizing + rebalance. {MIN_PARAMS}-{MAX_PARAMS} "
         "tunable parameters per spec (`*` = may be one). Daily runs start "
         f"{DAILY_WINDOW_START.isoformat()}, or later when a series the spec reads starts later (its first day plus "
-        "the warm-up, e.g. `index:taiex_tr`); warm-up comes from earlier data.",
+        "the warm-up, e.g. `index:taiex_tr`); warm-up comes from earlier data. Deciding at every close is not "
+        "trading every day: the rebalance component picks the days that trade (`rebalance.monthly` = once a month on "
+        "a set trading day, stocks / ETFs and futures alike, e.g. 每月最後一個交易日檢查一次).",
         "",
         "Instruments (point value TWD/pt, fee TWD/contract/side, daily data from):",
     ]

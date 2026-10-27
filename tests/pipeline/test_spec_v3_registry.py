@@ -41,6 +41,17 @@ BASE_FINGERPRINTS = {
     "sizing.fixed_contracts@1": "57f7e14f3d47d3851de07bc2d174a2f57867616ba36b4fe2f5acbf2d82c4459e",
     "sizing.target_leverage@1": "9dd0fba490bf5815bc8af649265d335196f7d95e5297645e97cbca5046f32334",
 }
+# The components REGISTRY_VERSION 2 added, as the deployed runner image poseidon-pipeline:764f41bc3 computes them:
+# runs frozen at version 2 (e.g. run #16, the 00631L / 0050 rotation) re-check these in check_components.
+V2_FINGERPRINTS = {
+    "allocation.fixed_weights@1": "35f5dc519362de72e52afd95b585e7d45e5c3559e420e50bc0b169af85686a50",
+    "allocation.inverse_vol@1": "a13d145f1044e04e6e1df25dde6fccd11be82d3a53206e9a78d554a708cc5bc0",
+    "allocation.regime_switch@1": "90056bcf1f812448f2749529146c060132de7219b9b6c19e9e06349144d286f5",
+    "hedge.protective_put@1": "08a358fc1d55bddb7c28c29a80a6ba879ce16302b8488e46c3f2199b12e6cec9",
+    "leverage.drawdown_ladder@1": "2147e2a667034bd0d0f8ab701a999e57c9e0c877f79684d56b6276de49458224",
+    "leverage.level_ladder@1": "aa401d7d8ff44c4f7d47863970a40f6aaaada7c7411813257da70828c9c0a2ab",
+    "sizing.fixed_notional@1": "f29aaeb220dc1201768a67ce5289e4c3638a2c8b32231c9e0ec4d0204681d316",
+}
 
 M1_COMPONENTS = {
     "direction.constant",
@@ -68,20 +79,25 @@ M1_COMPONENTS = {
     "leverage.level_ladder",
 }
 M4_COMPONENTS = {"hedge.protective_put"}
-COMPONENTS = M1_COMPONENTS | M4_COMPONENTS
+V3_COMPONENTS = {"rebalance.monthly"}
+COMPONENTS = M1_COMPONENTS | M4_COMPONENTS | V3_COMPONENTS
 
 
 def test_registry_version_and_contents():
-    assert REGISTRY_VERSION == 2
+    assert REGISTRY_VERSION == 3
     assert set(REGISTRY) == COMPONENTS
     assert not set(REGISTRY) & set(PLANNED_COMPONENTS)
     assert "hedge.collar" in PLANNED_COMPONENTS
 
 
-def test_a_run_frozen_at_registry_version_1_still_passes_the_component_check():
+@pytest.mark.parametrize(
+    "version,prints",
+    [(1, {"leverage.base@1": BASE_FINGERPRINTS["leverage.base@1"]}), (2, {**BASE_FINGERPRINTS, **V2_FINGERPRINTS})],
+)
+def test_a_run_frozen_at_an_earlier_registry_version_still_passes_the_component_check(version, prints):
     from poseidon.pipeline.daily_stages import check_components
 
-    frozen = {"registry_version": 1, "components": component_fingerprints(["leverage.base"])}
+    frozen = {"registry_version": version, "components": prints}
     assert frozen["registry_version"] != REGISTRY_VERSION
     assert check_components(frozen) == frozen["components"]
 
@@ -183,5 +199,7 @@ def test_rounding_keeps_the_sign_and_floors_the_magnitude():
 
 
 def test_components_frozen_into_earlier_runs_have_not_drifted():
-    names = sorted(key.split("@", 1)[0] for key in BASE_FINGERPRINTS)
-    assert component_fingerprints(names) == BASE_FINGERPRINTS
+    frozen = {**BASE_FINGERPRINTS, **V2_FINGERPRINTS}
+    names = sorted(key.split("@", 1)[0] for key in frozen)
+    assert component_fingerprints(names) == frozen
+    assert set(frozen) | {f"{name}@1" for name in V3_COMPONENTS} == set(component_fingerprints())
