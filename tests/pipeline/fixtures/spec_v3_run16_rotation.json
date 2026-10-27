@@ -1,0 +1,99 @@
+{
+ "source": "live run #16 (poseidon_pipeline, read-only, 2026-10-27): spec_validate report.template; optimize best #5",
+ "idea": "0050 和 00631L 輪動：加權指數在 200 日均線上方時持有 00631L，跌破就換成 0050，每月檢查一次。",
+ "window": {
+  "first_day": "2015-11-16",
+  "last_day": "2024-08-16"
+ },
+ "best_params": {
+  "ma_days": 175
+ },
+ "template": {
+  "allocation": {
+   "component": "allocation.regime_switch",
+   "params": {
+    "band_pct": 0.02,
+    "ma_days": {
+     "$param": "ma_days"
+    },
+    "off": "risk_off",
+    "on": "risk_on",
+    "signal": "index:taiex_tr"
+   }
+  },
+  "capital": {
+   "initial_twd": 1000000
+  },
+  "execution": {
+   "component": "execution.next_open"
+  },
+  "frequency": "1d",
+  "instruments": {
+   "core": {
+    "symbol": "0050"
+   },
+   "leveraged": {
+    "symbol": "00631L"
+   }
+  },
+  "name": "taiex_tr_regime_switch_0050_00631l",
+  "params": {
+   "ma_days": {
+    "default": 200,
+    "high": 250,
+    "low": 150,
+    "step": 25,
+    "type": "int"
+   }
+  },
+  "sleeves": [
+   {
+    "direction": {
+     "component": "direction.constant",
+     "params": {
+      "side": "long"
+     }
+    },
+    "exits": [],
+    "hedges": [],
+    "id": "risk_on",
+    "instrument": "leveraged",
+    "rebalance": {
+     "component": "rebalance.on_signal_change",
+     "params": {}
+    },
+    "sizing": {
+     "component": "sizing.fixed_notional",
+     "params": {
+      "pct_of_equity": 100,
+      "rounding": "floor"
+     }
+    }
+   },
+   {
+    "direction": {
+     "component": "direction.constant",
+     "params": {
+      "side": "long"
+     }
+    },
+    "exits": [],
+    "hedges": [],
+    "id": "risk_off",
+    "instrument": "core",
+    "rebalance": {
+     "component": "rebalance.on_signal_change",
+     "params": {}
+    },
+    "sizing": {
+     "component": "sizing.fixed_notional",
+     "params": {
+      "pct_of_equity": 100,
+      "rounding": "floor"
+     }
+    }
+   }
+  ],
+  "spec_version": 3
+ }
+}
