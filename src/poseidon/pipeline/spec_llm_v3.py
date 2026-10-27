@@ -33,7 +33,7 @@ import json
 import os
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date
 from typing import Any
 
@@ -64,7 +64,8 @@ from poseidon.pipeline.v3.registry import REGISTRY, REGISTRY_VERSION, SLOTS
 from poseidon.pipeline.v3.spec import MAX_PARAMS, MIN_PARAMS, component_slots
 from poseidon.pipeline.v3.validation import FeasibilityContext, WindowStart, validate_spec_v3
 
-PROMPT_VERSION_V3 = 7  # design §3.6: the v3 prompt versions start at 7 (DSL prompts are <= 6)
+PROMPT_VERSION_V3 = 8  # design §3.6: the v3 prompt versions start at 7 (DSL prompts are <= 6); 8: null for an
+# approximated clause, in the prompt and in every repair message
 ENGINE_V3 = "target_v1"
 ENGINE_DSL = "dsl_v2"
 DAILY_CLASSES = ("daily_equity", "daily_fixed")
@@ -90,6 +91,7 @@ SERIES_WORDS: dict[str, tuple[str, ...]] = {
     "index:taiex": ("加權指數", "加權股價指數", "不含息", "價格指數", "price index"),
     "index:vix": ("vix", "恐慌指數", "波動率指數", "fear index"),
 }
+_CLAUSE_ITEM = re.compile(r"clauses\.(\d+)")  # a reviewer item on a whole clause: the spec contradicts it
 _SENTENCE_END = re.compile(r"[。！？!?；;\n]+|(?<=[.])\s+")
 _WORD = re.compile(r"\w")
 
@@ -193,9 +195,10 @@ ROUTING
 - Ideas whose core needs something outside the catalog (other markets, option selling, order book, news,
   machine learning, a component listed under "planned" or "unsupported"): answer unsupported; "missing" holds
   short snake_case tokens (the catalog's unsupported keys or planned component names) so they aggregate.
-- An idea with an optional add-on the catalog cannot express yet (e.g. a stop-loss exit, still planned), whose
-  remaining rules are still a coherent strategy: translate the rest and cite the add-on with a clause whose
-  component is null (reported to the owner as not implemented). If the add-on is the core, answer unsupported.
+- An idea with an optional add-on the catalog cannot express (e.g. a stop-loss exit, still planned, or a rule
+  whose only component is for other instruments), whose remaining rules are still a coherent strategy: translate
+  the rest and cite the add-on with a clause whose component is null (reported to the owner as not implemented).
+  If the add-on is the core, answer unsupported.
 
 {_series_lines()}
 
@@ -219,9 +222,11 @@ CLAUSES (checked by a program; a reply that fails is sent back)
 - Every sentence of the idea must be inside at least one quote, including commentary, backtest claims and
   questions to the reader (slot "not_strategy"); one long quote may cover a whole narrative paragraph.
 - slot: one of {", ".join(CLAUSE_SLOTS)}.
-- component: for a registry slot ({", ".join(SLOTS)}) the component of the spec that implements the clause,
-  or null when the spec does not implement it (not implemented). For instruments, frequency, capital, other and
-  not_strategy it is null. A clause may repeat a quote under another slot (one rule can fill two slots).
+- component: for a registry slot ({", ".join(SLOTS)}) the component of the spec that does what the clause
+  says, or null when no component of the spec does (not implemented). A component that only approximates the
+  clause (another frequency, timing, threshold or instrument) does not implement it: cite null and state the
+  approximation in "assumptions". For instruments, frequency, capital, other and not_strategy it is null. A
+  clause may repeat a quote under another slot (one rule can fill two slots).
 - id: "c1", "c2", ... in order.
 
 WORKED EXAMPLE
@@ -254,8 +259,10 @@ def build_repair_message_v3(errors: list[dict]) -> str:
         "Your previous reply was rejected:\n"
         f"{lines}\n"
         "Fix every error listed and keep everything else unchanged. Reply with the complete corrected JSON object "
-        "(same reply shape, with spec, every clause and assumptions, still faithful to the idea). If the idea cannot "
-        "be expressed, reply unsupported; if it does not say which series a signal reads, reply ambiguous."
+        "(same reply shape, with spec, every clause and assumptions, still faithful to the idea). Cite component null "
+        "(not implemented) for a clause no component of the spec does, including one whose component you removed or "
+        "replaced. If the idea cannot be expressed, reply unsupported; if it does not say which series a signal "
+        "reads, reply ambiguous."
     )
 
 
@@ -458,6 +465,18 @@ def _used_components(spec: dict) -> set[str] | None:
         return None
 
 
+def review_contradicted(clauses: list[dict], items: list[dict]) -> list[dict]:
+    """The clauses the reviewer still says the spec contradicts (``clauses.<i>`` items of
+    ``faithfulness.FaithfulnessReviewer``), except those already listed as not implemented."""
+
+    indices = {int(m.group(1)) for item in items if (m := _CLAUSE_ITEM.fullmatch(item["path"]))}
+    return [
+        clauses[i]
+        for i in sorted(indices)
+        if i < len(clauses) and not (clauses[i]["slot"] in SLOTS and clauses[i]["component"] is None)
+    ]
+
+
 def _normalize_review(items: Any) -> list[dict]:
     if not isinstance(items, list):
         raise TypeError("review() must return a list of {path, msg} items")
@@ -588,13 +607,17 @@ def pass_summary(
     unimplemented: list[dict],
     assumptions: list[str],
     window: WindowStart | None = None,
+    contradicted: Sequence[dict] = (),
 ) -> str:
-    """The one line Telegram shows for spec_generate: class, clause count, what is not implemented, a moved
-    window start, assumptions."""
+    """The one line Telegram shows for spec_generate: class, clause count, what is not implemented, what the
+    reviewer still says the spec contradicts (report-only), a moved window start, assumptions."""
 
     text = f"spec_generate ✅ {strategy_class}：{len(clauses)} 個子句"
     if unimplemented:
         text += f"，未實作 {len(unimplemented)}（" + "；".join(c["quote"][:24] for c in unimplemented) + "）"
+    if contradicted:
+        quotes = list(dict.fromkeys(c["quote"] for c in contradicted))
+        text += f"，JEV 判違背 {len(quotes)}（report-only：" + "；".join(q[:24] for q in quotes) + "）"
     if window is not None and window.moved:
         since = window.series_since[window.binding].isoformat()
         text += f"；資料起點 {window.start.isoformat()}（{window.binding} 從 {since} 起，加暖機）"
@@ -795,6 +818,7 @@ class _Rounds:
     def _finalize(self, candidate: dict) -> tuple[Verdict, str | None]:
         report, result = self.report, candidate["result"]
         clauses, unimplemented, assumptions = candidate["clauses"], candidate["unimplemented"], candidate["assumptions"]
+        contradicted = review_contradicted(clauses, report.get("review_unresolved") or [])
         report.update(
             {
                 "status": "ok",
@@ -804,6 +828,7 @@ class _Rounds:
                 "strategy_class": result.strategy_class,
                 "clauses": clauses,
                 "unimplemented": unimplemented,
+                "review_contradicted": contradicted,
                 "assumptions": assumptions,
                 "notes": list(result.notes),
                 "spec_round": candidate["round"],
@@ -812,7 +837,9 @@ class _Rounds:
                     "engine": ENGINE_V3,
                     "components": sorted(candidate["used"] or ()),
                 },
-                "summary": pass_summary(result.strategy_class, clauses, unimplemented, assumptions, result.window),
+                "summary": pass_summary(
+                    result.strategy_class, clauses, unimplemented, assumptions, result.window, contradicted
+                ),
             }
         )
         window = result.window

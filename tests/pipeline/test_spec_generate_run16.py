@@ -65,7 +65,8 @@ def test_the_replay_reproduces_run16():
     assert outcome.verdict == Verdict.PASS and report["strategy_class"] == "daily_equity"
     assert report["spec_sha256"] == observed["spec_sha256"] and report["spec_round"] == observed["spec_round"]
     assert [c["id"] for c in report["unimplemented"]] == observed["unimplemented"] == ["c8", "c10", "c11", "c19"]
-    assert report["review_unresolved"] == observed["review_unresolved"]
+    paths = [item["path"] for item in report["review_unresolved"]]
+    assert paths == [item["path"] for item in observed["review_unresolved"]]  # same items; the wording may change
     # the final reply still cites a component for the monthly clause
     assert [(c["id"], c["component"]) for c in report["clauses"] if c["quote"] == MONTHLY] == [
         ("c2", "execution.next_open"),
