@@ -40,6 +40,7 @@ from poseidon.pipeline.v3.config import (
     daily_run_config,
     is_v3_run,
     series_first_days,
+    trading_calendar_record,
     warmup_record,
 )
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
@@ -85,6 +86,7 @@ def test_daily_run_config_freezes_the_class_entry_and_the_window():
         "holdout_start": daily_data_config(as_of=AS_OF)["holdout_start"],
         "parts": "train = trading days in [start, holdout_start); holdout = [holdout_start, end)",
         "warmup": warmup_record(),
+        "trading_calendar": trading_calendar_record(),
     }
     split = date.fromisoformat(config["data"]["holdout_start"])
     assert date(2021, 8, 1) <= split <= date(2021, 9, 30)  # the last 20 % of 2001-01-02 .. 2026-10-22

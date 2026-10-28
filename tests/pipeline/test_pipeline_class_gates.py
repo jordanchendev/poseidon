@@ -128,6 +128,9 @@ def test_dsl_class_thresholds_equal_todays_values():
 def test_default_config_is_byte_identical_to_the_base():
     config = default_config(stage_plan=None, as_of=date(2026, 10, 22))
     assert config["version"] == CONFIG_VERSION == 5
+    # backtest.night_session (DSL configs frozen from 2026-10-28 on) is the one key added since fd2294d
+    assert content_sha256(config) == "179499b88cb0edf12b3630e7b7cfac2a95b280bfbb70bedc2797badb51467d8a"
+    del config["backtest"]["night_session"]
     assert content_sha256(config) == DEFAULT_CONFIG_SHA_AT_BASE
 
 

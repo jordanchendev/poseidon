@@ -345,7 +345,10 @@ def test_no_new_bars_for_more_than_three_weekdays_is_reported_not_failed(tmp_pat
         source.available_until = frozen  # Thalassa stopped ingesting after Wed 05:00
         result = driver.wake(now, thalassa_lag=False)
         gaps.append(
-            (result.report["snapshot"]["data"]["weekdays_without_new_bars"], result.report["snapshot"]["data"]["stale"])
+            (
+                result.report["snapshot"]["data"]["trading_days_without_new_bars"],
+                result.report["snapshot"]["data"]["stale"],
+            )
         )
     # last bar Wed 10-28 05:00 (Wednesday's trading day); missing: Thu, Fri, (weekend), Mon, Tue
     assert gaps == [(0, False), (1, False), (2, False), (2, False), (2, False), (3, False), (4, True)]

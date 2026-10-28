@@ -591,7 +591,9 @@ def build_default_registry(*, data_source=None, strategy_factory=None, refdata=N
         "optimize": OptimizeStage(data_source, strategy_factory),
     }
     legacy.update(gate_stages.build_gate_stages(data_source=data_source, strategy_factory=strategy_factory))
-    legacy.update(shadow_paper.build_paper_stages(data_source=data_source, strategy_factory=strategy_factory))
+    legacy.update(
+        shadow_paper.build_paper_stages(data_source=data_source, strategy_factory=strategy_factory, refdata=refdata)
+    )
     if tuple(legacy) != V1_STAGE_PLAN:
         raise RuntimeError("stage registry drifted from the v1 stage plan")
     daily = daily_stages.build_daily_stages(refdata=refdata)

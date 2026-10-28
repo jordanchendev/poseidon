@@ -207,6 +207,9 @@ DEFAULT_BACKTEST: dict = {
     "initial_capital_twd": 1_000_000.0,
     "bar_label": "open",
     "sharpe": {"period": "trading_day", "annualisation_factor": 252},
+    # Configs frozen from 2026-10-28 on: a night session belongs to the next day session in the bars, as TAIFEX
+    # books it. Runs frozen without the key (run #6) roll it to the next weekday (backtesting.trading_days).
+    "night_session": "next_day_session",
 }
 
 DEFAULT_OPTIMIZE: dict = {
@@ -573,7 +576,8 @@ def effective_config(config: dict, route: dict | None) -> dict:
     froze every registry component's fingerprint at creation; only the components the generated spec uses
     stay, so the frozen-component check is the same as for a hand-written run of that spec. A route with
     ``data`` (a series the generated spec reads starts after the default window start; owner decision
-    2026-10-25) replaces the entry's data window with the one spec_generate froze; the end stays.
+    2026-10-25) replaces the entry's data window with the one spec_generate froze; the end and the entry's
+    ``trading_calendar`` rule stay.
     """
 
     if not is_routed(config) or route is None:
@@ -596,5 +600,8 @@ def effective_config(config: dict, route: dict | None) -> dict:
     if data is not None:
         if not isinstance(data, dict) or data.get("end") != (variant.get("data") or {}).get("end"):
             raise RouteError("spec_generate route data must keep the frozen window end")
+        rule = (variant.get("data") or {}).get("trading_calendar")
         variant["data"] = copy.deepcopy(data)
+        if rule is not None:
+            variant["data"]["trading_calendar"] = rule
     return variant
