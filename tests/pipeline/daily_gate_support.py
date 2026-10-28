@@ -209,8 +209,15 @@ def judge(
     ).to_dict()
     results[regime_split.GATE] = regime_split.evaluate_daily(regime_split.RegimeDailyInputs(best, BASIS, states), t)
     hac = int(g["benchmark"]["hac_lags"])
+    always_long = dict.fromkeys(dates, 1.0)
+
+    def matched(leverage: float) -> DailyResult:  # the risk route's beta-matched run: long at a constant leverage
+        return Runner(market, always_long, start=first, end=train_end, execution=execution)(
+            RerunRequest({"lev": leverage, "threshold": 0.0})
+        )
+
     results[benchmark.GATE] = benchmark.evaluate_daily(
-        benchmark.BenchmarkDailyInputs(best, market.underlying, BASIS, hac), t
+        benchmark.BenchmarkDailyInputs(best, market.underlying, BASIS, hac, matched=matched), t
     )
     chosen = choose_walk_forward(first, train_end + timedelta(days=1), g["wfe"]["layouts"])
     layout = None
