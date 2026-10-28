@@ -177,6 +177,7 @@ def test_default_config_freezes_the_window_and_the_holdout_split():
         "initial_capital_twd": 1_000_000.0,
         "bar_label": "open",
         "sharpe": {"period": "trading_day", "annualisation_factor": 252},
+        "night_session": "next_day_session",
     }
 
 
