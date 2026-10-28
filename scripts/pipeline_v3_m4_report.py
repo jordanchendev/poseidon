@@ -110,6 +110,7 @@ def put_stats(res, name: str) -> dict:
         "costs_twd": round(float(fills["tax"].sum() + fills["commission"].sum() + fills["slippage_twd"].sum())),
         "fills": len(fills),
         "rolls": int((fills["reason"] == "roll").sum() // 2),
+        "take_profit_sales": int(((fills["reason"] == "take_profit") & (fills["units"] < 0)).sum()),
         "expiries": int((fills["reason"] == "expiry").sum()),
         "avg_puts_held": round(float(rows["held_units"].astype(float).mean()), 2),
         "unavailable_days": cover["unavailable_days"],
