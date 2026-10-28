@@ -65,10 +65,10 @@ from poseidon.pipeline.stages import BaseStage, StageResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.trials import TRIAL_COMPLETE, TRIAL_FAIL, TRIAL_PRUNED, MemoryTrialLedger
 from poseidon.pipeline.v3.compiler import OPTION_DATASETS, ROW_FILTERS, NotCompilable, compile_spec, hedged
-from poseidon.pipeline.v3.config import ENGINE, SPEC_VALIDATOR, used_index_datasets
+from poseidon.pipeline.v3.config import ENGINE, SPEC_VALIDATOR, session_warmup, used_index_datasets
 from poseidon.pipeline.v3.runtime import Conventions
 from poseidon.pipeline.v3.spec import substitute
-from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
+from poseidon.pipeline.v3.validation import FeasibilityContext, SessionWarmup, validate_spec_v3
 
 V3_WIRING_VERSION = 1  # part of every v3 stage's input hash
 # clipped at the window's last day; calendars stay whole
@@ -299,7 +299,12 @@ class SpecRunner:
 
     def compile(self, values: Mapping, *, conventions: Conventions = Conventions(), cost_multiplier: float = 1.0):
         compiled = compile_spec(
-            self.bind(values), start=self.start, end=self.end, store=self.store, conventions=conventions
+            self.bind(values),
+            start=self.start,
+            end=self.end,
+            store=self.store,
+            conventions=conventions,
+            sessions=self.feasibility.warmup,
         )
         if cost_multiplier != 1.0:
             futures = {
@@ -406,7 +411,7 @@ def moved_start_text(config: dict) -> str | None:
     return f", window from {data['start']} ({binding} data from {rule['series_since'][binding]} + warm-up)"
 
 
-def feasibility_from(report: dict) -> FeasibilityContext:
+def feasibility_from(report: dict, warmup: SessionWarmup | None = None) -> FeasibilityContext:
     block = report.get("feasibility") or {}
     prices = {name: tuple(values) for name, values in (block.get("prices") or {}).items()}
     series = {key: date.fromisoformat(day) for key, day in (block.get("series_since") or {}).items()}
@@ -415,6 +420,7 @@ def feasibility_from(report: dict) -> FeasibilityContext:
         end=date.fromisoformat(block["end"]) if block.get("end") else None,
         prices=prices or None,
         series_since=series or None,
+        warmup=warmup,
     )
 
 
@@ -477,20 +483,22 @@ class DailyStage(BaseStage):
         if end > upper:
             raise ValueError(f"{self.name} may not read {part} data after {upper}")
         template = validated["template"]
-        params = validate_spec_v3(template, feasibility=feasibility_from(validated)).params
+        store = WindowStore(
+            self.store(),
+            upper,
+            instrument_kinds(template),
+            used_index_datasets(template) + (OPTION_DATASETS if hedged(template) else ()),
+        )
+        feasibility = feasibility_from(validated, session_warmup(ctx.config["data"].get("warmup"), store))
+        params = validate_spec_v3(template, feasibility=feasibility).params
         return SpecRunner(
             template=template,
             grid=opt.ParamGrid(params),
-            store=WindowStore(
-                self.store(),
-                upper,
-                instrument_kinds(template),
-                used_index_datasets(template) + (OPTION_DATASETS if hedged(template) else ()),
-            ),
+            store=store,
             start=start,
             end=end,
             basis=self.basis(ctx),
-            feasibility=feasibility_from(validated),
+            feasibility=feasibility,
         )
 
     @staticmethod
@@ -598,6 +606,7 @@ class DailySpecValidateStage(DailyStage):
             end=window.end,
             prices={k: tuple(v) for k, v in prices.items()} or None,
             series_since=series_since,
+            warmup=session_warmup(ctx.config["data"].get("warmup"), store),
         )
         result = validate_spec_v3(spec, feasibility=context)
         sources = {
@@ -1202,7 +1211,8 @@ def compile_strategy(ctx):
     holdout_start)``. The fingerprint covers the selected spec, the registry version and the frozen
     component fingerprints, all verified against the live registry first. Aux series: only the indices
     the spec's signals read (``Plan.signal_indices``, e.g. ``index:taiex``), so the paper's cutoff
-    waits for that day's index row and for nothing it does not use.
+    waits for that day's index row and for nothing it does not use. The warm-up loads as the backtest's
+    does (``compile_spec``): in sessions for a run frozen with ``data.warmup``, else in calendar days.
     """
 
     from poseidon.pipeline.shadow_paper_daily import CompiledStrategy, PaperInstrument, StrategyNotCompiled
@@ -1229,6 +1239,8 @@ def compile_strategy(ctx):
     window = DailyWindow.from_config(ctx.config)
     conventions = Conventions()
     warmup = spec_plan.warmup_bars + conventions.signal_lag
+    record = ctx.config["data"].get("warmup")
+    data_start = None if record else window.start - timedelta(days=warmup_calendar_days(warmup, "1d"))
     instruments = {
         alias: PaperInstrument(
             product=row.price_proxy or row.symbol,
@@ -1249,10 +1261,11 @@ def compile_strategy(ctx):
         factory=strategy_factory(spec_plan, conventions),
         instruments=instruments,
         engine=engine_config(spec_plan, start=window.start, end=None, conventions=conventions),
-        data_start=window.start - timedelta(days=warmup_calendar_days(warmup, "1d")),
+        data_start=data_start,
         train_end=window.holdout_start,
         fingerprint=fingerprint,
         aux={name: AUX_DATASETS[name] for name in spec_plan.signal_indices},
+        warmup=(record, warmup) if record else None,
     )
 
 

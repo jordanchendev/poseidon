@@ -62,7 +62,7 @@ from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.instruments import SIGNAL_INDICES
 from poseidon.pipeline.v3.registry import REGISTRY, REGISTRY_VERSION, SLOTS
 from poseidon.pipeline.v3.spec import MAX_PARAMS, MIN_PARAMS, component_slots
-from poseidon.pipeline.v3.validation import FeasibilityContext, WindowStart, validate_spec_v3
+from poseidon.pipeline.v3.validation import FeasibilityContext, SessionWarmup, WindowStart, validate_spec_v3
 
 PROMPT_VERSION_V3 = 8  # design §3.6: the v3 prompt versions start at 7 (DSL prompts are <= 6); 8: null for an
 # approximated clause, in the prompt and in every repair message
@@ -504,6 +504,7 @@ def generate_spec_v3(
     review: Review | None = None,
     series_since: Mapping[str, date] | None = None,
     data_end: date | None = None,
+    warmup: SessionWarmup | None = None,
     environ: Mapping[str, str] | None = None,
     client_factory: spec_llm.ClientFactory | None = None,
     clock: Callable[[], float] = time.monotonic,
@@ -514,7 +515,9 @@ def generate_spec_v3(
     ``series_since`` (the refdata manifests' first day per series, ``v3.config.series_first_days``) and
     ``data_end`` (the frozen daily window end): the daily window start is chosen for the generated spec
     (owner decision 2026-10-25: a series that starts late moves it) and a start that moved is frozen into
-    ``route["data"]``. Without ``series_since`` the window is the fixed default.
+    ``route["data"]``. Without ``series_since`` the window is the fixed default. ``warmup``: the session
+    calendar of the daily classes' frozen ``data.warmup`` rule; the start is chosen in its sessions and
+    ``route["data"]`` keeps the rule (None: calendar days, no rule, as the classes froze it).
     """
 
     if series_since is not None and data_end is None:
@@ -564,7 +567,7 @@ def generate_spec_v3(
                 Verdict.ERROR, "key limit_remaining is below the per-attempt cost cap; refusing to call the LLM"
             )
         feasibility = (
-            FeasibilityContext(end=data_end, series_since=series_since, choose_start=True)
+            FeasibilityContext(end=data_end, series_since=series_since, choose_start=True, warmup=warmup)
             if series_since is not None
             else None
         )
@@ -845,10 +848,13 @@ class _Rounds:
         window = result.window
         if window is not None and window.moved:
             # Frozen here, once: every later stage reads this window from the route (plan.effective_config).
-            from poseidon.pipeline.v3.config import daily_data_config
+            from poseidon.pipeline.v3.config import daily_data_config, warmup_record
 
+            warmup = self.feasibility.warmup
             report["window_start"] = window.as_config()
-            report["route"]["data"] = daily_data_config(as_of=self.feasibility.end, window=window)
+            report["route"]["data"] = daily_data_config(
+                as_of=self.feasibility.end, window=window, warmup=warmup_record(warmup.margin) if warmup else None
+            )
         self.entry.setdefault("outcome", "valid")
         return Verdict.PASS, None
 
@@ -893,6 +899,7 @@ def generate_routed(
     review: Review | None = None,
     jev_client_factory=None,
     series_since: Mapping[str, date] | None = None,
+    warmup: SessionWarmup | None = None,
     environ: Mapping[str, str] | None = None,
     client_factory: spec_llm.ClientFactory | None = None,
     clock: Callable[[], float] = time.monotonic,
@@ -924,7 +931,7 @@ def generate_routed(
         review_errors: list[str] = []
         review = _report_only(reviewer, review_errors)
     try:
-        outcome = _generate_routed(idea_text, config, pin, review, series_since, environ, client_factory, clock)
+        outcome = _generate_routed(idea_text, config, pin, review, series_since, warmup, environ, client_factory, clock)
     finally:
         if reviewer is not None:
             reviewer.close()
@@ -963,7 +970,7 @@ def _jev_report(reviewer, errors: list[str]) -> dict:
 
 
 def _generate_routed(
-    idea_text, config, pin, review, series_since, environ, client_factory, clock
+    idea_text, config, pin, review, series_since, warmup, environ, client_factory, clock
 ) -> SpecGenerationOutcome:
     by_class = config.get("by_class") or {}
     allowed = tuple(name for name in (*DAILY_CLASSES, INTRADAY_CLASS) if name in by_class)
@@ -979,6 +986,7 @@ def _generate_routed(
         unavailable=config.get("unavailable"),
         review=review,
         series_since=series_since if ends else None,
+        warmup=warmup,
         data_end=date.fromisoformat(ends.pop()) if ends else None,
         environ=environ,
         client_factory=client_factory,

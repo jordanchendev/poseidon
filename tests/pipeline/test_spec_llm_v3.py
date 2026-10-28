@@ -704,7 +704,7 @@ def test_stage_errors_before_any_llm_call_when_refdata_is_unreadable(monkeypatch
     result = stage.run(_ctx(routed()))
     assert result.verdict == Verdict.ERROR and result.reason.startswith("refdata is not readable")
     # a routed run that froze no daily class never reads refdata
-    assert stage.series_since(routed(classes=("intraday_fixed",))) is None
+    assert stage.daily_refdata(routed(classes=("intraday_fixed",))) == (None, None)
 
 
 def test_reply_contract_errors_are_repaired():
@@ -726,5 +726,8 @@ def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
     assert content_sha256(dsl) == "60648707b1bc20e8544c9ba3baa21cee5c264ab3e34bc91d90c4dc20bc218ae2"
     resolved = validate_spec_v3(tmf_dynamic_leverage_3x()).resolved
     daily = daily_run_config(resolved, as_of=AS_OF, brief_text="brief", refdata=REFDATA)
-    # db24f9f4 at REGISTRY_VERSION 2; registry_version is the only input that moved (3 adds rebalance.monthly)
+    # db24f9f4 at REGISTRY_VERSION 2; registry_version moved it (3 adds rebalance.monthly), then data.warmup (the
+    # session warm-up rule of configs frozen from 2026-10-28 on): without that one key it is the 681d469 config
+    assert content_sha256(daily) == "a6673bdd55d6de26a08daa56038bbf73e69f4a60e69595c9aa9c95d98769ba00"
+    del daily["data"]["warmup"]
     assert content_sha256(daily) == "b3ce5b0dadae872b4fb3908e1fb31ec5e2531e405e2492fca1c6faae951ea14c"

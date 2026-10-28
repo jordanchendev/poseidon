@@ -37,6 +37,7 @@ from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.refdata.taifex import official_last_trading_day
 from poseidon.pipeline.stages import StageResult, build_default_registry
 from poseidon.pipeline.state import Verdict
+from poseidon.pipeline.v3.validation import SESSION_CALENDAR
 from tests.pipeline.daily_paper_support import SCHEDULE, _by_month, market_calendar_frame, trading_days, write_futures
 
 FIRST_DAY = "1999-01-04"
@@ -165,7 +166,8 @@ def build_long_store(
 
 def series_store(root: Path, *, futures: dict[str, str], indices: dict[str, str]) -> RefdataStore:
     """Only what ``v3.config.series_first_days`` reads: two futures rows per product from its first day
-    (``futures``: product -> day) and one row per index dataset (``indices``: dataset -> day)."""
+    (``futures``: product -> day) and one row per index dataset (``indices``: dataset -> day), except the
+    session calendar of the ``data.warmup`` rule, which has a row on every weekday from its day to 2026-12-31."""
 
     from poseidon.pipeline.refdata.datasets import FUTURES
 
@@ -189,7 +191,8 @@ def series_store(root: Path, *, futures: dict[str, str], indices: dict[str, str]
     ]
     commit(FUTURES, pd.DataFrame(rows).sort_values(["trade_date", "product"]))
     for name, day in indices.items():
-        commit(name, pd.DataFrame({"trade_date": [pd.Timestamp(day)], "close": [1.0]}))
+        days = pd.bdate_range(day, "2026-12-31") if name == SESSION_CALENDAR else pd.DatetimeIndex([day])
+        commit(name, pd.DataFrame({"trade_date": days, "close": 1.0}))
     return store
 
 
