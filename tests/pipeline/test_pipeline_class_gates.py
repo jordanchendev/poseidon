@@ -115,7 +115,9 @@ def noise(n: int, mean: float, sd: float = 0.01, seed: int = 0) -> np.ndarray:
 
 def test_dsl_class_thresholds_equal_todays_values():
     assert DEFAULT_THRESHOLDS_BY_CLASS["intraday_fixed"] is DEFAULT_THRESHOLDS
-    assert DEFAULT_THRESHOLDS == TODAY_THRESHOLDS
+    # param_edge_at_bound_pass (new DSL configs, 2026-10-28) is the one key added since; the rest is today's
+    assert DEFAULT_THRESHOLDS["param_edge_at_bound_pass"] is True
+    assert {k: v for k, v in DEFAULT_THRESHOLDS.items() if k != "param_edge_at_bound_pass"} == TODAY_THRESHOLDS
     assert DEFAULT_GATES_BY_CLASS["intraday_fixed"] is DEFAULT_GATES
     settings = class_settings("intraday_fixed")
     config = default_config(stage_plan=None, as_of=date(2026, 10, 22))
@@ -128,7 +130,10 @@ def test_dsl_class_thresholds_equal_todays_values():
 def test_default_config_is_byte_identical_to_the_base():
     config = default_config(stage_plan=None, as_of=date(2026, 10, 22))
     assert config["version"] == CONFIG_VERSION == 5
-    # backtest.night_session (DSL configs frozen from 2026-10-28 on) is the one key added since fd2294d
+    # backtest.night_session and thresholds.param_edge_at_bound_pass (DSL configs frozen from 2026-10-28 on) are the
+    # only keys added since fd2294d
+    assert content_sha256(config) == "312a2601812e0861f5f190feda3472f27328f027c21225a25146c6f57871cb97"
+    del config["thresholds"]["param_edge_at_bound_pass"]
     assert content_sha256(config) == "179499b88cb0edf12b3630e7b7cfac2a95b280bfbb70bedc2797badb51467d8a"
     del config["backtest"]["night_session"]
     assert content_sha256(config) == DEFAULT_CONFIG_SHA_AT_BASE

@@ -80,8 +80,10 @@ def objective(monkeypatch):
     return Handle
 
 
-def run_optimize(tmp_path, spec, **optimize):
+def run_optimize(tmp_path, spec, *, frozen_without_edge_key=False, **optimize):
     config = default_config(stage_plan=None, as_of=AS_OF)
+    if frozen_without_edge_key:  # a run frozen before param_edge_at_bound_pass (run #6, run #3)
+        del config["thresholds"]["param_edge_at_bound_pass"]
     config["optimize"].update(optimize)
     source = SyntheticTxSource()
     chain = StageChain(tmp_path, spec, config, ledger=MemoryTrialLedger())
@@ -204,7 +206,7 @@ def test_inside_the_cap_the_neighbour_round_still_moves_the_best():
 
 def test_a_hard_bound_stops_the_extension_and_the_gate_rule_applies(tmp_path, objective):
     objective.set(lambda values: 1.0 - values["stop_pts"] / 100)  # best at the lowest stop
-    chain = run_optimize(tmp_path, stop_template(int_param(5, 25, 10, 15)))
+    chain = run_optimize(tmp_path, stop_template(int_param(5, 25, 10, 15)), frozen_without_edge_key=True)
     report = chain.outputs["optimize"].report
     assert report["best"]["params"] == {"stop_pts": 5}
     assert report["edge_extension"]["steps"] == []
@@ -222,6 +224,38 @@ def test_a_hard_bound_stops_the_extension_and_the_gate_rule_applies(tmp_path, ob
     assert stability.report["reason"] == "1 evaluated neighbours < 2"  # the run #3 failure, unchanged
     assert (gate_report["evaluated"], gate_report["excluded"], gate_report["min_neighbours"]) == (1, 1, 2)
     assert stability.report["inputs"]["excluded_neighbours"][0]["direction"] == -1
+    assert "excluded_kind" not in rows[-1] and "edge_at_bound" not in gate_report  # key absent: nothing tagged
+
+
+def test_a_dsl_config_with_the_key_passes_the_same_edge_at_bound_case_on_its_in_range_neighbours(tmp_path, objective):
+    objective.set(lambda values: 1.0 - values["stop_pts"] / 100)  # run #3's shape: best on the validator's lower bound
+    chain = run_optimize(tmp_path, stop_template(int_param(5, 25, 10, 15)))
+    report = chain.outputs["optimize"].report
+    rows = {row["direction"]: row for row in report["neighbours"]}
+    assert report["best"]["params"] == {"stop_pts": 5} and not rows[-1]["in_grid"]
+    assert rows[-1]["excluded_kind"] == opt.EXCLUDED_COMPONENT_BOUND and "excluded_kind" not in rows[1]
+    stability = gate(chain, "param_stability")
+    assert stability.verdict == Verdict.PASS
+    assert stability.report["gate_report"]["edge_at_bound"] == ["stop_pts"]
+    assert (stability.report["gate_report"]["evaluated"], stability.report["gate_report"]["excluded"]) == (1, 1)
+    assert "edge_at_bound: stop_pts" in stability.report["summary"]
+
+
+def test_a_dsl_in_range_neighbour_that_loses_money_still_fails_with_the_key(tmp_path, objective):
+    objective.set(lambda values: 1.0 if values["stop_pts"] == 5 else -1.0)  # the only in-range neighbour loses
+    chain = run_optimize(tmp_path, stop_template(int_param(5, 25, 10, 15)))
+    stability = gate(chain, "param_stability")
+    assert stability.verdict == Verdict.FAIL and stability.report["reason_code"] == "unstable_neighbourhood"
+    assert stability.report["gate_report"]["edge_at_bound"] == ["stop_pts"]
+
+
+def test_a_dsl_owner_set_range_edge_is_not_a_hard_bound_with_the_key(tmp_path, objective):
+    # best on the declared edge (60) well inside the validator's bounds: the extension evaluates past it, no tag
+    objective.set(peak(60))
+    chain = run_optimize(tmp_path, stop_template(int_param(20, 60, 10, 40)))
+    report = chain.outputs["optimize"].report
+    assert all("excluded_kind" not in row for row in report["neighbours"])
+    assert "edge_at_bound" not in gate(chain, "param_stability").report["gate_report"]
 
 
 def test_every_field_the_param_feeds_bounds_the_extension(tmp_path, objective):
