@@ -208,7 +208,7 @@ class AsOf:
     def read(self, dataset, start=None, end=None):
         frame = self.store.read(dataset, start=start, end=end)
         if dataset == FUTURES and len(frame):
-            later = frame.loc[(frame["session"] == "day") & (frame["trade_date"] > self.as_of), "trade_date"]
+            later = frame.loc[frame["trade_date"] > self.as_of, "trade_date"]  # a night row may be the only one
             following = later.min() if len(later) else None
             keep = frame["trade_date"] <= self.as_of
             if following is not None:
