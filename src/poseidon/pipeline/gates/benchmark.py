@@ -21,13 +21,21 @@ the holdout gate (``holdout_alpha_positive``).
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 
 import numpy as np
 
-from poseidon.pipeline.gates.base import GateResult, failed, finite_or_none, invalid, is_finite, passed
+from poseidon.pipeline.gates.base import (
+    INVALID_INPUT,
+    GateResult,
+    failed,
+    finite_or_none,
+    invalid,
+    is_finite,
+    passed,
+)
 from poseidon.pipeline.gates.daily import Basis, DailyResult, align
 
 GATE = "benchmark"
@@ -187,12 +195,25 @@ _NEUTRAL_KEYS = {
 
 
 @dataclass(frozen=True)
+class NotApplicable:
+    """The beta-matched comparator cannot be built or held (the risk route is then not applicable)."""
+
+    reason: str
+
+
+# leverage -> the train backtest of the 1x underlying held at that constant leverage, rebalanced daily, on the
+# strategy's own instrument, capital, execution and cost model over the same window; or why it cannot be held.
+MatchedRun = Callable[[float], "DailyResult | NotApplicable"]
+
+
+@dataclass(frozen=True)
 class BenchmarkDailyInputs:
     result: DailyResult  # the train backtest
     underlying: Mapping[date, float]  # 1x underlying simple daily return per trading day
     basis: Basis
     hac_lags: int
     annualisation_factor: float = 252.0
+    matched: MatchedRun | None = None  # read only under RULE_ALPHA_OR_RISK
 
 
 def regress_daily(
@@ -225,6 +246,25 @@ def phrase_daily(stats: Mapping) -> str:
 
 
 def evaluate_daily(inputs: BenchmarkDailyInputs, thresholds: Mapping) -> GateResult:
+    rule = thresholds.get(RULE_KEY)  # missing: the alpha route alone (every run frozen before 2026-10-28)
+    if rule is not None and rule != RULE_ALPHA_OR_RISK:
+        return invalid(GATE, f"unknown {RULE_KEY} {rule!r}")
+    alpha = _alpha_route(inputs, thresholds)
+    if rule is None or alpha.reason_code == INVALID_INPUT or thresholds.get("benchmark_alpha_t_min") is None:
+        return alpha
+    risk = risk_route(inputs, alpha.report, thresholds)
+    if risk["status"] == "invalid":
+        return invalid(GATE, f"risk route: {risk['reason']}", {**alpha.report, "rule": rule, "risk_route": risk})
+    routes = [name for name, ok in (("alpha", alpha.passed), ("risk", risk["status"] == "pass")) if ok]
+    report = {**alpha.report, "rule": rule, "alpha_route": "pass" if alpha.passed else "fail", "risk_route": risk}
+    report["passed_routes"] = routes
+    headline = f"{alpha.headline}; {phrase_risk(risk)}"
+    if routes:
+        return passed(GATE, headline, report, reason=f"passed by the {' and '.join(routes)} route")
+    return failed(GATE, alpha.reason_code, f"{alpha.reason}; risk route: {risk['reason']}", headline, report)
+
+
+def _alpha_route(inputs: BenchmarkDailyInputs, thresholds: Mapping) -> GateResult:
     t_min = thresholds.get("benchmark_alpha_t_min")  # missing -> report only
     if t_min is not None and not is_finite(t_min):
         return invalid(GATE, f"benchmark_alpha_t_min is not a finite number ({t_min!r})")
@@ -269,3 +309,174 @@ def evaluate_daily(inputs: BenchmarkDailyInputs, thresholds: Mapping) -> GateRes
     if t < float(t_min):
         return failed(GATE, "alpha_not_significant", f"{headline}: HAC t < {float(t_min):g}", headline, report)
     return passed(GATE, headline, report)
+
+
+# --- the beta-matched risk route (owner decision 2026-10-28; runs frozen with ``benchmark_rule``) -----------
+#
+# Leveraged-index timing (cut leverage below a moving average, a vol cap, a put) mostly buys a smaller drawdown,
+# which the regression cannot see: its beta is the average exposure and its alpha only the extra return. The
+# risk route compares the strategy with the beta-matched, no-timing version of itself -- the 1x underlying at a
+# constant leverage equal to the measured beta, rebalanced daily, same instrument, capital, execution and costs,
+# same train days -- on Calmar (CAGR / max drawdown). It passes iff the one-sided lower confidence bound of
+# Calmar(strategy) - Calmar(matched) is above 0 under a paired circular block bootstrap of the daily returns
+# (the same blocks of days for both). Block length, resamples and confidence are frozen in ``thresholds``; they
+# were set on null strategies (constant leverage, random regime switching on TX), not on real runs:
+# tests/pipeline/benchmark_risk_calibration.py.
+
+RULE_KEY = "benchmark_rule"
+RULE_ALPHA_OR_RISK = "alpha_or_beta_matched_risk"
+RISK_KEYS = (
+    "benchmark_risk_block_days",
+    "benchmark_risk_resamples",
+    "benchmark_risk_confidence",
+    "benchmark_risk_min_beta",
+)
+RISK_SEED = 0
+RISK_CHUNK = 256  # resamples per vectorised batch
+RISK_METHOD = (
+    "Calmar(strategy) - Calmar(1x underlying at constant leverage = beta rounded to 0.01, rebalanced daily, same "
+    "instrument / capital / execution / costs / days); one-sided lower bound of a paired circular block bootstrap"
+)
+
+
+def calmar_rows(returns: np.ndarray, annualisation: float = 252.0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """CAGR, max drawdown (a positive fraction, from the starting equity) and Calmar of each row of daily returns.
+
+    A path that loses everything has CAGR -1; a path without a drawdown has Calmar +inf (or nan at CAGR 0).
+    """
+
+    growth = np.cumprod(1.0 + returns, axis=-1)
+    peak = np.maximum.accumulate(np.maximum(growth, 1.0), axis=-1)
+    drawdown = np.max(1.0 - growth / peak, axis=-1)
+    final = growth[..., -1]
+    years = returns.shape[-1] / annualisation
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        cagr = np.where(final > 0, np.abs(final) ** (1.0 / years) - 1.0, -1.0)
+        calmar = cagr / drawdown
+    return cagr, drawdown, calmar
+
+
+def block_indices(rng: np.random.Generator, n: int, block: int, resamples: int) -> np.ndarray:
+    """``resamples`` circular block bootstrap index rows of length ``n``: blocks of ``block`` consecutive days
+    (wrapping past the last day) from uniform random starts."""
+
+    blocks = -(-n // block)
+    starts = rng.integers(0, n, size=(resamples, blocks))
+    return ((starts[:, :, None] + np.arange(block)) % n).reshape(resamples, -1)[:, :n]
+
+
+def calmar_draws(
+    strategy: np.ndarray,
+    matched: np.ndarray,
+    *,
+    block_days: int,
+    resamples: int,
+    seed: int = RISK_SEED,
+    annualisation: float = 252.0,
+) -> np.ndarray:
+    """Calmar(strategy) - Calmar(matched) on ``resamples`` paired circular block bootstrap paths (the same days
+    for both); an undefined difference counts as -inf, against the strategy."""
+
+    rng = np.random.default_rng(seed)
+    draws = []
+    for done in range(0, resamples, RISK_CHUNK):
+        rows = block_indices(rng, len(strategy), block_days, min(RISK_CHUNK, resamples - done))
+        draws.append(calmar_rows(strategy[rows], annualisation)[2] - calmar_rows(matched[rows], annualisation)[2])
+    return np.nan_to_num(np.concatenate(draws), nan=-np.inf, posinf=np.inf, neginf=-np.inf)
+
+
+def lower_bound(draws: np.ndarray, confidence: float) -> float:
+    """The one-sided lower bound: the order statistic below which at most ``1 - confidence`` of the draws lie."""
+
+    return float(np.quantile(draws, 1.0 - confidence, method="lower"))
+
+
+def calmar_difference(
+    strategy: np.ndarray, matched: np.ndarray, *, block_days: int, resamples: int, confidence: float
+) -> dict:
+    """Calmar of both paths, their difference and its one-sided lower bound at ``confidence``."""
+
+    s, m = np.asarray(strategy, dtype=float), np.asarray(matched, dtype=float)
+    (s_cagr, s_dd, s_calmar), (m_cagr, m_dd, m_calmar) = calmar_rows(s), calmar_rows(m)
+    draws = calmar_draws(s, m, block_days=block_days, resamples=resamples)
+    return {
+        "strategy": {
+            "cagr": finite_or_none(s_cagr),
+            "max_drawdown": finite_or_none(s_dd),
+            "calmar": finite_or_none(s_calmar),
+        },
+        "matched": {
+            "cagr": finite_or_none(m_cagr),
+            "max_drawdown": finite_or_none(m_dd),
+            "calmar": finite_or_none(m_calmar),
+        },
+        "calmar_diff": finite_or_none(s_calmar - m_calmar),
+        "calmar_diff_lower": finite_or_none(lower_bound(draws, confidence)),
+        "resamples_below_zero": float(np.mean(draws <= 0.0)),
+    }
+
+
+def risk_route(inputs: BenchmarkDailyInputs, alpha_report: Mapping, thresholds: Mapping) -> dict:
+    """The risk route's report: ``status`` pass | fail | not_applicable | invalid, ``reason`` and the numbers."""
+
+    missing = [key for key in RISK_KEYS if not is_finite(thresholds.get(key))]
+    if missing:
+        return {"status": "invalid", "reason": f"{RULE_KEY} is frozen without {', '.join(missing)}"}
+    block, resamples = int(thresholds["benchmark_risk_block_days"]), int(thresholds["benchmark_risk_resamples"])
+    confidence, min_beta = float(thresholds["benchmark_risk_confidence"]), float(thresholds["benchmark_risk_min_beta"])
+    out = {
+        "status": "not_applicable",
+        "reason": "",
+        "metric": "calmar",
+        "method": RISK_METHOD,
+        "block_days": block,
+        "resamples": resamples,
+        "confidence": confidence,
+        "min_beta": min_beta,
+        "matched_leverage": None,
+    }
+
+    def not_applicable(reason: str) -> dict:
+        return {**out, "reason": reason}
+
+    if inputs.basis != "return":
+        return not_applicable("defined for equity-sized (daily_equity) runs; this run is judged in TWD")
+    beta = alpha_report.get("beta")
+    if not beta >= min_beta:
+        return not_applicable(f"beta {beta:.2f} < {min_beta:g}: no long exposure to match")
+    leverage = round(float(beta), 2)
+    out["matched_leverage"] = leverage
+    if inputs.matched is None:
+        return {**out, "status": "invalid", "reason": "the stage supplied no beta-matched run"}
+    matched = inputs.matched(leverage)
+    if isinstance(matched, NotApplicable):
+        return not_applicable(matched.reason)
+    if matched.dates != inputs.result.dates:
+        return {**out, "status": "invalid", "reason": "the beta-matched run does not cover the strategy's train days"}
+    s, m = inputs.result.returns, matched.returns
+    if not (np.isfinite(s).all() and np.isfinite(m).all()) or len(s) < 2 * block:
+        return not_applicable(f"needs finite daily returns on at least {2 * block} days")
+    stats = calmar_difference(s, m, block_days=block, resamples=resamples, confidence=confidence)
+    out.update(
+        stats, matched_costs=matched.costs.as_report(), matched_margin_calls=len(matched.event_days(["margin_call"]))
+    )
+    lower = stats["calmar_diff_lower"]
+    level = f"{confidence:.0%}"
+    if lower is not None and lower > 0:
+        return {
+            **out,
+            "status": "pass",
+            "reason": f"Calmar beats the {leverage:g}x matched run ({level} lower bound > 0)",
+        }
+    return {**out, "status": "fail", "reason": f"Calmar not above the {leverage:g}x matched run at {level}"}
+
+
+def phrase_risk(risk: Mapping) -> str:
+    """``"Calmar 0.31 vs 0.12 at 1.11x (95% lower +0.04)"``, or why the route did not apply."""
+
+    if risk["status"] == "not_applicable":
+        return f"risk route n/a ({risk['reason']})"
+    s, m, lower = risk["strategy"]["calmar"], risk["matched"]["calmar"], risk["calmar_diff_lower"]
+    if not (is_finite(s) and is_finite(m) and is_finite(lower)):
+        return f"risk route at {risk['matched_leverage']:g}x: Calmar n/a"
+    return f"Calmar {s:.2f} vs {m:.2f} at {risk['matched_leverage']:g}x ({risk['confidence']:.0%} lower {lower:+.2f})"

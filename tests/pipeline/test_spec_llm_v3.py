@@ -733,7 +733,12 @@ def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
     daily = daily_run_config(resolved, as_of=AS_OF, brief_text="brief", refdata=REFDATA)
     # db24f9f4 at REGISTRY_VERSION 2; registry_version moved it (3 adds rebalance.monthly), then data.warmup (the
     # session warm-up rule of configs frozen from 2026-10-28 on), then thresholds.param_edge_at_bound_pass (run #18,
-    # 2026-10-28), then data.trading_calendar (2026-10-28): without those keys it is the 681d469 config
+    # 2026-10-28), then data.trading_calendar (2026-10-28), then thresholds.benchmark_rule with its
+    # benchmark_risk_* settings (2026-10-28): without those keys it is the 681d469 config
+    assert content_sha256(daily) == "a2ac17c53d0eb4df3ef554c2bcdcd854c30145d1c3d690c9b93fdf364fe9477b"
+    for key in ("benchmark_rule", "benchmark_risk_block_days", "benchmark_risk_resamples",
+                "benchmark_risk_confidence", "benchmark_risk_min_beta"):  # fmt: skip
+        del daily["thresholds"][key]
     assert content_sha256(daily) == "7ec6ce99749cb5f4bd5c5c84d887e63c9f965d07147a5453537811df35bd228a"
     del daily["data"]["trading_calendar"]
     assert content_sha256(daily) == "0e651e8e66df479e37ae99310c1148f04b95325f227a5a9a668c3c9975170034"
