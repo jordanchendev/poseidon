@@ -176,6 +176,26 @@ def trading_day(moment) -> date:
     return trading_days(pd.DatetimeIndex([stamp]))[0].date()
 
 
+def trading_day_labels(moments, bars_index: pd.DatetimeIndex, night_session: str | None = None) -> dict:
+    """``{moment: trading-day date}``. Under ``next_day_session`` a night bar belongs to the next day with a day
+    session in ``bars_index`` (the rule :func:`day_hashes` and the backtest use); otherwise the weekday label."""
+
+    from poseidon.pipeline.backtesting import NEXT_WEEKDAY, trading_days
+
+    if night_session in (None, NEXT_WEEKDAY):
+        return {moment: trading_day(moment) for moment in moments}
+    stamps = {}
+    for moment in moments:
+        stamp = pd.Timestamp(moment)
+        stamps[moment] = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
+    bars = pd.DatetimeIndex(bars_index)
+    bars = bars.tz_localize("UTC") if bars.tz is None else bars.tz_convert("UTC")
+    nanos = np.union1d(bars.asi8, [stamp.value for stamp in stamps.values()])
+    index = pd.DatetimeIndex(nanos.astype("datetime64[ns]")).tz_localize("UTC")
+    label_of = dict(zip(nanos.tolist(), trading_days(index, night_session), strict=True))
+    return {moment: label_of[stamp.value].date() for moment, stamp in stamps.items()}
+
+
 def last_complete_weekday(upper: datetime) -> date:
     """The trading day that ends at boundary ``upper`` (rolled back to Friday on weekends)."""
 
@@ -824,13 +844,20 @@ class ShadowPaperStage(_DataStage):
         )
         comparison = compare_trades(ledger["trades"], replay_trades, tick_twd)
         revised = {r["trading_day"] for r in ledger["revisions"]}
-        for row in comparison["rows"]:
-            if row["status"] != "match":
-                days_touched = {trading_day(row["entry_time"]).isoformat()}
-                for key in ("paper_exit_time", "replay_exit_time"):
-                    if row.get(key):
-                        days_touched.add(trading_day(row[key]).isoformat())
-                row["revised_days"] = sorted(days_touched & revised) + (["warmup"] if "warmup" in revised else [])
+        mismatched = [row for row in comparison["rows"] if row["status"] != "match"]
+        touched = {
+            row[key]
+            for row in mismatched
+            for key in ("entry_time", "paper_exit_time", "replay_exit_time")
+            if row.get(key)
+        }
+        day_of = trading_day_labels(touched, bars.index, night_session_rule(ctx.config["backtest"]))
+        for row in mismatched:
+            days_touched = {day_of[row["entry_time"]].isoformat()}
+            for key in ("paper_exit_time", "replay_exit_time"):
+                if row.get(key):
+                    days_touched.add(day_of[row[key]].isoformat())
+            row["revised_days"] = sorted(days_touched & revised) + (["warmup"] if "warmup" in revised else [])
         ledger["last_comparison"] = comparison
         ledger["last_replay"] = {
             "n_trades": len(replay_trades),
