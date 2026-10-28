@@ -37,7 +37,13 @@ from poseidon.pipeline.spec_llm_v3 import (
 )
 from poseidon.pipeline.stages import STAGE_REGISTRY, SpecGenerateStage, StageContext
 from poseidon.pipeline.state import Verdict
-from poseidon.pipeline.v3.config import REFDATA_DATASETS, idea_run_config, is_v3_run, trading_calendar_record
+from poseidon.pipeline.v3.config import (
+    REFDATA_DATASETS,
+    idea_run_config,
+    is_v3_run,
+    option_chain_record,
+    trading_calendar_record,
+)
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.registry import REGISTRY, component_fingerprints
 from poseidon.pipeline.v3.validation import validate_spec_v3
@@ -366,7 +372,11 @@ def test_with_the_refdata_first_days_a_late_series_moves_the_window_into_the_rou
     config = routed()
     seen = effective_config(config, outcome.report["route"])
     # the class entry's trading-calendar rule stays with the route's window
-    assert seen["data"] == {**data, "trading_calendar": trading_calendar_record()}
+    assert seen["data"] == {
+        **data,
+        "trading_calendar": trading_calendar_record(),
+        "option_chain": option_chain_record(),
+    }
     assert config["by_class"]["daily_equity"]["data"]["start"] == "2001-01-02"
     with pytest.raises(RouteError, match="keep the frozen window end"):
         effective_config(config, {**outcome.report["route"], "data": {**data, "end": "2026-10-25"}})
