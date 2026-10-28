@@ -51,8 +51,12 @@ up by the next one and a repeated one changes nothing:
 
 Thalassa unreachable -> the outage is recorded and the stage retries
 ``source_retry_minutes`` later (never an error, never a fail); more than
-``stale_after_weekdays`` weekdays without new bars is flagged in the snapshot
-(holidays such as Lunar New Year flag too: report only).
+``stale_after_weekdays`` TAIFEX trading days without new bars is flagged in the
+snapshot (report only). The trading days come from refdata's calendar
+(``refdata.engine_input.TaifexCalendar``: sessions held, the TWSE schedule, the
+unscheduled closures detected); a waiting summary names the closed days before
+the next session. Without readable refdata the gap counts weekdays and the
+summary names nothing; the ledger never depends on it.
 
 Reading bars after the frozen window is fine here: shadow_paper runs only after
 the locked holdout was evaluated (it ``requires`` every gate).
@@ -71,7 +75,7 @@ import hashlib
 import io
 import json
 from datetime import UTC, date, datetime, time, timedelta
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 import pandas as pd
@@ -83,6 +87,9 @@ from poseidon.pipeline.spec_validation import V2_REQUIRED
 from poseidon.pipeline.stages import BaseStage, StageResult, _DataStage
 from poseidon.pipeline.state import Verdict, utcnow
 from poseidon.pipeline.window import MARKET_TZ
+
+if TYPE_CHECKING:
+    from poseidon.pipeline.refdata.engine_input import TaifexCalendar
 
 PAPER_VERSION = 1  # part of the input hash and of every artifact; a resume needs the same version
 BOUNDARY_LOCAL = time(15, 0)  # a TX trading day starts with the night session at 15:00
@@ -184,6 +191,37 @@ def weekdays_after(after: date, through: date) -> int:
     if through <= after:
         return 0
     return int(np.busday_count(after + timedelta(days=1), through + timedelta(days=1)))
+
+
+def trading_days_after(after: date, through: date, calendar: TaifexCalendar | None) -> int:
+    """TAIFEX trading days ``d`` with ``after < d <= through``; weekdays without a calendar."""
+
+    if calendar is None:
+        return weekdays_after(after, through)
+    return len(calendar.open_days(pd.Timestamp(after), pd.Timestamp(through))) if through > after else 0
+
+
+def closure_report(calendar: TaifexCalendar, cutoff: datetime) -> dict:
+    """The next session after the trading day ending at ``cutoff`` and the closed weekdays before it."""
+
+    day = pd.Timestamp(cutoff.astimezone(MARKET_TZ).date())
+    next_session = calendar.after(day, 1)[0]
+    return {
+        "closed": [
+            {"date": closed.date().isoformat(), "reason": why}
+            for closed, why in calendar.closed_between(day, next_session)
+        ],
+        "next_session": next_session.date().isoformat(),
+    }
+
+
+def closure_text(report: dict) -> str:
+    """`` · 休市：10-23 臨時休市、10-26 補假 · 下一交易日 10-27``, or "" when no day was closed."""
+
+    if not report.get("closed"):
+        return ""
+    days = "、".join(f"{row['date'][5:]} {row['reason']}" for row in report["closed"])
+    return f" · 休市：{days} · 下一交易日 {report['next_session'][5:]}"
 
 
 # ----------------------------------------------------------------- data
@@ -415,8 +453,9 @@ class ShadowPaperStage(_DataStage):
 
     def __init__(self, data_source=None, strategy_factory=None, *, refdata=None, compile_strategy=None):
         super().__init__(data_source, strategy_factory)
-        # Daily target-position runs (CONFIG_VERSION >= 6, shadow_paper.mode "daily_target") only:
-        # ``refdata`` () -> refdata reader, ``compile_strategy`` (ctx) -> CompiledStrategy (step 4 seam).
+        # ``refdata`` () -> refdata reader (default ``RefdataStore()``): the daily paper's data, the DSL paper's
+        # TAIFEX calendar (report only). Daily target-position runs (CONFIG_VERSION >= 6, shadow_paper.mode
+        # "daily_target") only: ``compile_strategy`` (ctx) -> CompiledStrategy (step 4 seam).
         self.refdata = refdata
         self.compile_strategy = compile_strategy
 
@@ -466,6 +505,7 @@ class ShadowPaperStage(_DataStage):
         prev_cutoff = _ts(ledger["cutoff_utc"]) if ledger["cutoff_utc"] else paper_start
         upper = max(latest_boundary(now), paper_start)
         warm_start = paper_start - timedelta(days=int(ctx.config["gates"]["warmup_days"]))
+        calendar, calendar_error = self.market_calendar(warm_start)
         basis = protection_basis(ctx, optimize, settings)
         snapshot = {"kind": "evaluation", "evaluated_at_utc": now.isoformat(), "upper_utc": upper.isoformat()}
         evaluation = None
@@ -482,7 +522,9 @@ class ShadowPaperStage(_DataStage):
                 snapshot.update({"kind": "source_error", "error": str(error)[:500]})
             if frame is not None:
                 ctx.check_stop()
-                evaluation = self._evaluate(ctx, spec, frame, labels, ledger, paper_start, prev_cutoff, upper, now)
+                evaluation = self._evaluate(
+                    ctx, spec, frame, labels, ledger, paper_start, prev_cutoff, upper, now, calendar
+                )
                 snapshot.update(evaluation["snapshot"])
                 if evaluation["files"]:
                     carried = evaluation["files"]
@@ -507,8 +549,14 @@ class ShadowPaperStage(_DataStage):
         else:
             wake = None
         paper_pnl = float(sum(t["pnl_twd"] for t in ledger["trades"]))
+        closures = (
+            closure_report(calendar, _ts(ledger["cutoff_utc"]) if ledger["cutoff_utc"] else paper_start)
+            if calendar is not None
+            else {"unavailable": calendar_error}
+        )
         snapshot.update(
             {
+                "market_calendar": closures,
                 "cutoff_utc": ledger["cutoff_utc"],
                 "trading_days": days,
                 "n_trades": n_trades,
@@ -531,7 +579,7 @@ class ShadowPaperStage(_DataStage):
             summary = (
                 f"shadow_paper ⏳ day {days}/{thresholds['paper_min_trading_days']} · "
                 f"{n_trades}/{thresholds['paper_min_trades']} trades · replay match {_pct(ratio)} · "
-                f"paper PnL {paper_pnl:+,.0f} TWD"
+                f"paper PnL {paper_pnl:+,.0f} TWD{closure_text(closures)}"
             )
         report = {
             "summary": summary,
@@ -615,6 +663,23 @@ class ShadowPaperStage(_DataStage):
 
     # -------------------------------------------------------------- pieces
 
+    def market_calendar(self, since: datetime) -> tuple[TaifexCalendar | None, str | None]:
+        """refdata's TAIFEX calendar from a week before ``since``, or why it is unavailable (report only: an
+        unreadable refdata never stops the paper)."""
+
+        from poseidon.pipeline.refdata.engine_input import read_taifex_calendar
+
+        try:
+            if self.refdata is not None:
+                reader = self.refdata()
+            else:
+                from poseidon.pipeline.refdata.store import RefdataStore
+
+                reader = RefdataStore()
+            return read_taifex_calendar(reader, pd.Timestamp(since.date()) - pd.Timedelta(days=7)), None
+        except Exception as error:  # the report says why; the paper goes on without the calendar
+            return None, f"{type(error).__name__}: {error}"[:300]
+
     @staticmethod
     def _fail_text(reason_code, protection, days, n_trades, ratio, thresholds) -> str:
         if reason_code == "paper_protection_trip":
@@ -672,7 +737,7 @@ class ShadowPaperStage(_DataStage):
             out.append(snapshot)
         return out
 
-    def _evaluate(self, ctx, spec, frame, labels, ledger, paper_start, prev_cutoff, upper, now) -> dict:
+    def _evaluate(self, ctx, spec, frame, labels, ledger, paper_start, prev_cutoff, upper, now, calendar) -> dict:
         """Advance the ledger to the settled cutoff (mutates ``ledger``)."""
 
         from poseidon.backtest.cost_model import get_cost_model
@@ -682,13 +747,14 @@ class ShadowPaperStage(_DataStage):
         settled = settled_cutoff(last_bar, paper_start, upper)
         expected = last_complete_weekday(upper)
         last_day = trading_day(last_bar) if last_bar is not None else trading_day(paper_start) - timedelta(days=1)
-        gap = weekdays_after(last_day, expected)
+        gap = trading_days_after(last_day, expected, calendar)
         data = {
             "bars_fetched": len(frame),
             "first_bar_utc": _iso(frame.index[0]) if len(frame) else None,
             "last_bar_utc": _iso(last_bar),
             "bar_labels": labels,
-            "weekdays_without_new_bars": gap,
+            "trading_days_without_new_bars": gap,
+            "gap_counted_in": "weekdays (refdata calendar unavailable)" if calendar is None else "TAIFEX trading days",
             "stale": gap > int(ctx.config["shadow_paper"]["stale_after_weekdays"]),
         }
         if settled < prev_cutoff:
@@ -816,8 +882,8 @@ class AwaitingReleaseStage(BaseStage):
         return StageResult.held(AWAITING_RELEASE_REASON, report)
 
 
-def build_paper_stages(*, data_source=None, strategy_factory=None) -> dict:
+def build_paper_stages(*, data_source=None, strategy_factory=None, refdata=None) -> dict:
     return {
-        "shadow_paper": ShadowPaperStage(data_source, strategy_factory),
+        "shadow_paper": ShadowPaperStage(data_source, strategy_factory, refdata=refdata),
         "awaiting_release": AwaitingReleaseStage(),
     }
