@@ -250,6 +250,28 @@ INVALID = [
         "error",
     ),
     (
+        "put_front_expiry_roll_on_a_front_put",
+        m(
+            lambda d: _sleeve(d)["hedges"].append(
+                {"component": "hedge.protective_put", "params": {"tenor": "front", "roll_when": "front_expiry"}}
+            )
+        ),
+        "sleeves.0.hedges.0.params.roll_when",
+        "set tenor next",
+        "error",
+    ),
+    (
+        "put_take_profit_below_bound",
+        m(
+            lambda d: _sleeve(d)["hedges"].append(
+                {"component": "hedge.protective_put", "params": {"take_profit_multiple": 1.2}}
+            )
+        ),
+        "sleeves.0.hedges.0.params.take_profit_multiple",
+        "greater than or equal to 1.5",
+        "error",
+    ),
+    (
         "base_above_bound",
         m(lambda d: _lev(d, 0)["params"].update(value=6.0)),
         "sleeves.0.leverage.0.params.value",

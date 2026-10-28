@@ -199,5 +199,6 @@ def test_part_b_covers_can_cannot_instruments_and_the_signal_series_rule():
     assert "unsupported" in part_b and "`short_stock`" in part_b
     assert "NOT SMA(200) on 5m bars" in part_b
     # was 9000 before the two ladders and the VIX note (about 1.5 KB), 10_500 before the protective put,
-    # 11_000 before the 59 stock / ETF symbols and the four step-8 components (12_283 bytes at the merge)
-    assert len(text) < 13_000
+    # 11_000 before the 59 stock / ETF symbols and the four step-8 components (12_283 bytes at the merge), 13_000 before the put take-profit and
+    # roll text of hedge.protective_put@2 (13_059 bytes at the wave8 merge)
+    assert len(text) < 14_000

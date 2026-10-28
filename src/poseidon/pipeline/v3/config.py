@@ -12,6 +12,11 @@ The window starts at ``DAILY_DATA_START`` unless a series the spec reads starts 
 from the refdata manifests (``series_first_days``) when the config is frozen -- at creation for a spec
 run, in spec_generate's ``route`` for an idea-only run (``plan.effective_config``) -- and recorded as
 ``data.start_rule``. A window that did not move freezes exactly the bytes it did before.
+
+Configs frozen from 2026-10-28 on also freeze ``data.warmup`` (:func:`warmup_record`): the warm-up before any
+start is counted in TWSE sessions plus a margin (``validation.SessionWarmup``), for the window start chosen
+here and for every data load. Configs without it keep the calendar-day estimate, so their windows, loads and
+hashes do not move.
 """
 
 from __future__ import annotations
@@ -49,7 +54,7 @@ from poseidon.pipeline.v3.instruments import (
 )
 from poseidon.pipeline.v3.registry import REGISTRY_VERSION, component_fingerprints
 from poseidon.pipeline.v3.spec import SPEC_VERSION, component_slots, strategy_class
-from poseidon.pipeline.v3.validation import WindowStart
+from poseidon.pipeline.v3.validation import SESSION_CALENDAR, WARMUP_MARGIN_SESSIONS, SessionWarmup, WindowStart
 
 ENGINE = "target_v1"
 SPEC_VALIDATOR = "spec_v3"
@@ -95,13 +100,50 @@ def v3_config_fields(resolved: dict, *, brief_text: str) -> dict:
     }
 
 
+def warmup_record(margin: int = WARMUP_MARGIN_SESSIONS) -> dict:
+    """``config["data"]["warmup"]``: the frozen session warm-up rule (:func:`session_warmup` reads it back)."""
+
+    return {
+        "unit": "sessions",
+        "calendar": SESSION_CALENDAR,
+        "margin_sessions": margin,
+        "rule": "data loads from warm-up + margin sessions before a start; a start moved by a late series is its "
+        "first day + warm-up + margin sessions",
+    }
+
+
+def session_warmup(record: dict | None, store) -> SessionWarmup | None:
+    """The session calendar of a frozen ``data.warmup`` rule read from ``store``; None for a config without one."""
+
+    import pandas as pd
+
+    from poseidon.pipeline.refdata.store import RefdataError
+
+    if record is None:
+        return None
+    if record.get("unit") != "sessions":
+        raise ValueError(f"unknown data.warmup unit {record.get('unit')!r}")
+    calendar = record["calendar"]
+    column = store.manifest(calendar)["date_column"]
+    days = tuple(sorted({stamp.date() for stamp in pd.to_datetime(store.read(calendar)[column])}))
+    if not days:
+        raise RefdataError(f"{calendar} has no sessions")
+    return SessionWarmup(days, int(record["margin_sessions"]))
+
+
 def daily_data_config(
-    *, as_of: date, start: str = DAILY_DATA_START, fraction: float = HOLDOUT_FRACTION, window: WindowStart | None = None
+    *,
+    as_of: date,
+    start: str = DAILY_DATA_START,
+    fraction: float = HOLDOUT_FRACTION,
+    window: WindowStart | None = None,
+    warmup: dict | None = None,
 ) -> dict:
     """``[start, as_of)`` in trading days (Asia/Taipei dates); the last ``fraction`` is the locked holdout.
 
     ``window``: the spec's chosen start; when it moved, the window starts there (the holdout is the last
-    ``fraction`` of the shorter window) and ``start_rule`` records why.
+    ``fraction`` of the shorter window) and ``start_rule`` records why. ``warmup``: the frozen warm-up rule
+    (:func:`warmup_record`); None leaves it out, as configs frozen before it did.
     """
 
     from poseidon.pipeline.window import MARKET_TZ, holdout_split
@@ -122,6 +164,8 @@ def daily_data_config(
     }
     if moved:
         data["start_rule"] = window.as_config()
+    if warmup is not None:
+        data["warmup"] = warmup
     return data
 
 
@@ -220,7 +264,7 @@ def _daily_config(fields: dict, *, as_of: date, refdata: dict[str, str], stage_p
         "thresholds": settings["thresholds"],
         "gates": settings["gates"],
         "shadow_paper": settings["shadow_paper"],
-        "data": daily_data_config(as_of=as_of, window=window),
+        "data": daily_data_config(as_of=as_of, window=window, warmup=warmup_record()),
         "holdout": {"fraction": HOLDOUT_FRACTION, "locked": True},
         "refdata": {
             "datasets": dict(sorted(refdata.items())),

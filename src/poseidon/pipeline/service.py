@@ -374,7 +374,9 @@ class PipelineService:
             daily_run_config,
             refdata_datasets,
             series_first_days,
+            session_warmup,
             used_index_datasets,
+            warmup_record,
         )
         from poseidon.pipeline.v3.instruments import INSTRUMENTS
         from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
@@ -382,11 +384,13 @@ class PipelineService:
         try:
             store = self.refdata()
             series_since = series_first_days(store)
+            warmup = session_warmup(warmup_record(), store)  # daily_run_config freezes the same record
         except (RefdataError, OSError) as error:
             raise PipelineRequestInvalid(f"refdata is not available for spec v3 runs: {error}") from error
         # The window start is chosen here, once, and frozen (a series that starts late moves it; owner 2026-10-25).
         result = validate_spec_v3(
-            spec, feasibility=FeasibilityContext(end=as_of, series_since=series_since, choose_start=True)
+            spec,
+            feasibility=FeasibilityContext(end=as_of, series_since=series_since, choose_start=True, warmup=warmup),
         )
         if not result.ok:
             problems = [issue.text() for issue in (*result.errors, *result.unsupported)]

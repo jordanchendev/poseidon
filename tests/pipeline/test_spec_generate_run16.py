@@ -1,6 +1,9 @@
 """Run #16 replayed: a clause no registered component can do must not be reported as implemented.
 
-The draft says 「每月最後一個交易日收盤判斷」; no stock component decides monthly. The LLM's three recorded
+The draft says 「每月最後一個交易日收盤判斷」. When run #16 was recorded no registered component could decide
+monthly for stocks (``rebalance.monthly`` did not exist yet; ``rebalance.monthly_at_roll`` is futures only),
+so the recorded replies cite ``execution.next_open`` for that clause and the replay keeps those recorded
+replies as they were, not what a model would answer now. The LLM's three recorded
 replies and JEV's 104 recorded answers are replayed through the real ``generate_routed`` (spec checks,
 ``FaithfulnessReviewer``, repair loop); only the network is faked.
 """

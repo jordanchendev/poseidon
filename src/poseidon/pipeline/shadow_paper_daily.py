@@ -133,10 +133,13 @@ class CompiledStrategy:
     factory: Callable[[], TargetStrategy]  # a NEW strategy instance per call (strategies keep state)
     instruments: Mapping[str, PaperInstrument]
     engine: EngineConfig  # frozen run settings; ``start`` = train start (first decision day)
-    data_start: date  # first bar loaded (warm-up before ``engine.start``)
+    data_start: date | None  # first bar loaded (warm-up before ``engine.start``); None: ``warmup`` counts it
     train_end: date  # exclusive end of the train window (protection basis)
     fingerprint: str  # sha256 over spec + params + registry/components; checked on resume
     aux: Mapping[str, str] = field(default_factory=dict)  # aux name -> refdata dataset (rows by trade_date)
+    # A run frozen with ``data.warmup``: (that rule, warm-up bars). The loader counts them in the rule's session
+    # calendar back from ``engine.start``, as ``v3.compiler.compile_spec`` does for the backtest.
+    warmup: tuple[dict, int] | None = None
 
 
 class StrategyNotCompiled(Exception):
@@ -237,12 +240,17 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
     if other:
         raise ValueError(f"the daily paper has no refdata loader for instrument kind(s) {other}")
     products = sorted({inst.product for inst in futures_insts.values()})
-    quotes = reader.read(FUTURES, start=compiled.data_start) if products else pd.DataFrame()
+    data_start = compiled.data_start
+    if compiled.warmup is not None:
+        from poseidon.pipeline.v3.config import session_warmup
+
+        record, bars = compiled.warmup
+        data_start = session_warmup(record, reader).load_from(pd.Timestamp(compiled.engine.start).date(), bars)
+    quotes = reader.read(FUTURES, start=data_start) if products else pd.DataFrame()
     last = last_day_session(quotes, products) if products else {}
-    stock_rows = {k: read_bars(reader, i.spec.symbol, start=compiled.data_start) for k, i in stock_insts.items()}
+    stock_rows = {k: read_bars(reader, i.spec.symbol, start=data_start) for k, i in stock_insts.items()}
     aux_full = {
-        name: align_signal_frame(name, reader.read(dataset, start=compiled.data_start))
-        for name, dataset in compiled.aux.items()
+        name: align_signal_frame(name, reader.read(dataset, start=data_start)) for name, dataset in compiled.aux.items()
     }
     last_dates = {f"{FUTURES}:{p}": _iso(day) for p, day in last.items()}
     stock_last = {k: pd.Timestamp(rows["date"].max()) if len(rows) else None for k, rows in stock_rows.items()}

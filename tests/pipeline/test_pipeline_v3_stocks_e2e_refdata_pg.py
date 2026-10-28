@@ -28,11 +28,13 @@ from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
 from poseidon.pipeline.v3.examples import etf_rotation_00631l_0050
 from tests.pipeline.conftest import Clock, Harness
+from tests.pipeline.daily_paper_support import AsOf
 from tests.pipeline.v3_wiring_support import Observe, create_v3, trace, v3_registry
 
 ROOT = os.environ.get("PV2_PAPER_REFDATA")
 OUT = os.environ.get("POSEIDON_V3_STOCKS_OUT")
 NOW = datetime(2026, 10, 24, 13, 30, tzinfo=UTC)
+STORE_CUTOFF = "2026-10-22"  # the store as it was on the morning of NOW, whenever the copy was taken
 pytestmark = [
     pytest.mark.postgresql,
     pytest.mark.skipif(not ROOT or not RefdataStore(ROOT).exists(STOCKS), reason="PV2_PAPER_REFDATA lacks stock bars"),
@@ -66,7 +68,7 @@ def report(harness, run_id, stage) -> dict:
 
 @pytest.mark.usefixtures("pipeline_engine")
 def test_etf_rotation_end_to_end_on_real_refdata(pipeline_sessions, tmp_path):
-    store = RefdataStore(ROOT)
+    store = AsOf(RefdataStore(ROOT), STORE_CUTOFF)
     harness = Harness(pipeline_sessions, tmp_path / "artifacts", Clock(NOW), registry=v3_registry(store))
 
     natural = create_v3(harness, etf_rotation_00631l_0050(), store=store, idea="00631L / 0050 rotation (natural)")

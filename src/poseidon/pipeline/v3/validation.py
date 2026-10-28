@@ -27,6 +27,7 @@ import copy
 import dataclasses
 import itertools
 import math
+from bisect import bisect_left
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -85,6 +86,10 @@ TRADING_DAYS_PER_YEAR = 245
 # The execution_timing gate's signal_lag_1d scenario reads every signal series one row late, and the
 # compiler adds that lag to the warm-up; a window start chosen from a series' first day leaves room for it.
 SIGNAL_LAG_WARMUP_BARS = 1
+# Sessions loaded and required beyond a session-counted warm-up: an instrument can miss sessions TWSE held
+# (suspended for a split: 0050 5 sessions in 2025-06, 00631L 4 in 2026-03) and a US index (VIX) keeps its own days.
+WARMUP_MARGIN_SESSIONS = 10
+SESSION_CALENDAR = "twse_taiex_daily"  # TWSE sessions as held: typhoon closures included, the days of TX's day session
 GRID_ENUMERATION_LIMIT = 20_000  # beyond this, sizing feasibility checks the grid corners only
 DSL_SYMBOLS = tuple(DSL_MARKETS)
 
@@ -100,6 +105,39 @@ class SpecIssue:
 
     def as_dict(self) -> dict[str, str]:
         return {"path": self.path, "msg": self.msg, "type": self.type}
+
+
+@dataclass(frozen=True)
+class SessionWarmup:
+    """Warm-up counted in sessions of ``days`` (the run's frozen ``data.warmup`` rule, ``v3.config.session_warmup``).
+
+    Runs frozen without the rule keep the calendar-day estimate (:func:`warmup_calendar_days`), which falls short
+    where holidays cluster: 268 calendar days held 173 sessions before 2023-08-20 (Lunar New Year, a typhoon day).
+    """
+
+    days: tuple[date, ...]  # sorted, non-empty
+    margin: int
+
+    def load_from(self, start: date, bars: int) -> date:
+        """First day to load so ``bars`` plus ``margin`` sessions precede ``start`` (the first session when fewer do)."""
+
+        return self.days[max(bisect_left(self.days, start) - bars - self.margin, 0)]
+
+    def start_after(self, since: date, bars: int) -> date:
+        """First day with ``bars`` plus ``margin`` sessions in ``[since, day)``; weekdays past the last session."""
+
+        index = bisect_left(self.days, since) + bars + self.margin
+        if index < len(self.days):
+            return self.days[index]
+        day = max(self.days[-1], since - timedelta(days=1))
+        for _ in range(index - len(self.days) + 1):
+            day += timedelta(days=1 if day.weekday() < 4 else 7 - day.weekday())
+        return day
+
+    def count(self, since: date, start: date) -> int:
+        """Sessions in ``[since, start)``."""
+
+        return bisect_left(self.days, start) - bisect_left(self.days, since)
 
 
 @dataclass(frozen=True)
@@ -119,6 +157,8 @@ class FeasibilityContext:
     # Daily specs: the window start is not frozen yet. The validator chooses it (``V3Validation.window``)
     # as max(``start`` or the default start, the latest first day of a series the spec reads + warm-up).
     choose_start: bool = False
+    # A run frozen with ``data.warmup``: warm-up in sessions. None: the calendar-day estimate.
+    warmup: SessionWarmup | None = None
 
 
 @dataclass(frozen=True)
@@ -126,9 +166,9 @@ class WindowStart:
     """The daily window start chosen for a spec (owner decision 2026-10-25).
 
     A series that starts after the default window start moves the run's start to that series' first day
-    plus the warm-up (``warmup_calendar_days`` of the history at each ``$param``'s largest grid value plus
-    the signal-lag scenario), so the first tradable bar has full indicators. Chosen once, when the run's
-    config is frozen; later stages read the frozen start.
+    plus the warm-up (the history at each ``$param``'s largest grid value plus the signal-lag scenario, in
+    sessions plus a margin under :class:`SessionWarmup`, else ``warmup_calendar_days``), so the first tradable
+    bar has full indicators. Chosen once, when the run's config is frozen; later stages read the frozen start.
     """
 
     start: date
@@ -136,8 +176,14 @@ class WindowStart:
     series_since: Mapping[str, date]  # every daily series the spec reads -> its first day
     binding: str | None  # the series that moved the start; None: the default start stands
     warmup_bars: int
-    warmup_calendar_days: int
+    warmup_calendar_days: int | None  # None: counted in sessions (``margin_sessions``)
     no_warmup: tuple[str, ...] = ()  # series read from the start on only (a hedge's option chain): no warm-up added
+    margin_sessions: int | None = None
+
+    def warmup_text(self) -> str:
+        if self.margin_sessions is None:
+            return f"{self.warmup_bars} bars, {self.warmup_calendar_days} calendar days"
+        return f"{self.warmup_bars} bars + {self.margin_sessions} sessions"
 
     @property
     def moved(self) -> bool:
@@ -146,13 +192,20 @@ class WindowStart:
     def as_config(self) -> dict:
         """The frozen record (``config["data"]["start_rule"]``) of a start that moved."""
 
+        if self.margin_sessions is None:
+            rule, warmup = "+ warm-up", {"warmup_calendar_days": self.warmup_calendar_days}
+        else:
+            rule, warmup = (
+                f"+ warm-up + margin, in {SESSION_CALENDAR} sessions",
+                {"margin_sessions": self.margin_sessions},
+            )
         return {
-            "rule": "start = max(default_start, latest first day of a series the spec reads + warm-up)",
+            "rule": f"start = max(default_start, latest first day of a series the spec reads {rule})",
             "default_start": self.default_start.isoformat(),
             "series_since": {key: day.isoformat() for key, day in sorted(self.series_since.items())},
             "binding_series": self.binding,
             "warmup_bars": self.warmup_bars,
-            "warmup_calendar_days": self.warmup_calendar_days,
+            **warmup,
             "source": "refdata dataset manifests (coverage.start; futures: the product's first row)",
         } | ({"no_warmup_series": list(self.no_warmup)} if self.no_warmup else {})
 
@@ -604,6 +657,7 @@ def _check_data(
     daily = frequency not in INTRADAY_FREQUENCIES
     start = feasibility.start or (DAILY_WINDOW_START if daily else INTRADAY_WINDOW_START)
     bars = _history_bars(template, params)
+    sessions = feasibility.warmup if daily else None
     warmup = timedelta(days=warmup_calendar_days(bars, frequency))
     known = feasibility.series_since or {}
     series: list[tuple[tuple, str, str | None, date, str]] = []  # (path, label, key, first day, fix)
@@ -639,26 +693,39 @@ def _check_data(
 
     window = None
     if feasibility.choose_start and daily and series:
-        lagged = warmup_calendar_days(bars + SIGNAL_LAG_WARMUP_BARS, frequency)
-        latest, binding = max(
-            (since + timedelta(days=0 if key in no_warmup else lagged), key)
-            for _path, _label, key, since, _fix in series
-        )
+        lagged_bars = bars + SIGNAL_LAG_WARMUP_BARS
+        lagged = warmup_calendar_days(lagged_bars, frequency)
+
+        def ready(since: date, key: str | None) -> date:
+            if key in no_warmup:
+                return since
+            return sessions.start_after(since, lagged_bars) if sessions else since + timedelta(days=lagged)
+
+        latest, binding = max((ready(since, key), key) for _path, _label, key, since, _fix in series)
         window = WindowStart(
             start=max(start, latest),
             default_start=start,
             series_since={key: since for _path, _label, key, since, _fix in series if key is not None},
             binding=binding if latest > start else None,
-            warmup_bars=bars + SIGNAL_LAG_WARMUP_BARS,
-            warmup_calendar_days=lagged,
+            warmup_bars=lagged_bars,
+            warmup_calendar_days=None if sessions else lagged,
             no_warmup=tuple(sorted(no_warmup)),
+            margin_sessions=sessions.margin if sessions else None,
         )
         start = window.start
     need_from = start - warmup
     for path, label, key, since, fix in series:
         if start < since:
             issues.unsupported_(path, _window_uncovered(label, since, start))
-        elif need_from < since and key not in no_warmup:
+        elif key in no_warmup:
+            continue
+        elif sessions is not None and (held := sessions.count(since, start)) < bars:
+            issues.error(
+                path,
+                f"{label} data starts {since.isoformat()}; the warm-up needs {bars} sessions before the window start "
+                f"{start.isoformat()}, the data has {held}; {fix}",
+            )
+        elif sessions is None and need_from < since:
             issues.error(
                 path,
                 f"{label} data starts {since.isoformat()}; the window start {start.isoformat()} minus the warm-up "
@@ -673,9 +740,8 @@ def _check_data(
             path, label, _key, since, _fix = next(item for item in series if item[2] == window.binding)
             issues.unsupported_(
                 path,
-                f"{label} data starts {since.isoformat()}; with the warm-up ({window.warmup_bars} bars, "
-                f"{window.warmup_calendar_days} calendar days) the run's window would start {start.isoformat()}, "
-                f"not before the data end {feasibility.end.isoformat()}",
+                f"{label} data starts {since.isoformat()}; with the warm-up ({window.warmup_text()}) the run's "
+                f"window would start {start.isoformat()}, not before the data end {feasibility.end.isoformat()}",
             )
         else:
             issues.error(

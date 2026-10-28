@@ -172,12 +172,16 @@ class SpecGenerateStage(BaseStage):
         self._jev_client_factory = jev_client_factory
         self._refdata = refdata
 
-    def series_since(self, config):
-        """First day per daily series from the refdata manifests; None when the run froze no daily class."""
+    def daily_refdata(self, config):
+        """``(series_since, warmup)`` for choosing a daily window start; ``(None, None)`` when the run froze no
+        daily class. ``series_since``: first day per daily series from the refdata manifests; ``warmup``: the
+        session calendar of the daily classes' frozen ``data.warmup`` rule (None when they froze none)."""
 
-        if not any(name in V3_RUN_CLASSES for name in (config.get("by_class") or {})):
-            return None
-        from poseidon.pipeline.v3.config import series_first_days
+        by_class = config.get("by_class") or {}
+        daily = [variant for name, variant in by_class.items() if name in V3_RUN_CLASSES]
+        if not daily:
+            return None, None
+        from poseidon.pipeline.v3.config import series_first_days, session_warmup
 
         if self._refdata is not None:
             store = self._refdata()
@@ -185,7 +189,7 @@ class SpecGenerateStage(BaseStage):
             from poseidon.pipeline.refdata.store import RefdataStore
 
             store = RefdataStore()
-        return series_first_days(store)
+        return series_first_days(store), session_warmup(daily[0]["data"].get("warmup"), store)
 
     def input_payload(self, ctx):
         payload = {
@@ -220,7 +224,7 @@ class SpecGenerateStage(BaseStage):
             from poseidon.pipeline.spec_llm_v3 import generate_routed
 
             try:
-                series_since = self.series_since(ctx.config)
+                series_since, warmup = self.daily_refdata(ctx.config)
             except (RefdataError, OSError) as error:
                 reason = f"refdata is not readable for the daily window start: {error}"[:300]
                 return StageResult(Verdict.ERROR, reason, {"summary": f"spec_generate ⚠️ {reason}"[:300]})
@@ -231,6 +235,7 @@ class SpecGenerateStage(BaseStage):
                 review=self._review,
                 jev_client_factory=self._jev_client_factory,
                 series_since=series_since,
+                warmup=warmup,
                 client_factory=self._client_factory,
             )
         else:

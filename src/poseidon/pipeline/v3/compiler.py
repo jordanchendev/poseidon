@@ -95,7 +95,13 @@ from poseidon.pipeline.v3.runtime import (
     parse_bound,
 )
 from poseidon.pipeline.v3.spec import DEFAULT_INITIAL_CAPITAL_TWD, is_param_ref, substitute, walk
-from poseidon.pipeline.v3.validation import LEVERAGE_CAP, FeasibilityContext, validate_spec_v3, warmup_calendar_days
+from poseidon.pipeline.v3.validation import (
+    LEVERAGE_CAP,
+    FeasibilityContext,
+    SessionWarmup,
+    validate_spec_v3,
+    warmup_calendar_days,
+)
 
 AUX_DATASETS = {name: index.dataset for name, index in SIGNAL_INDICES.items()}
 ALWAYS_ATTACHED = tuple(name for name, index in SIGNAL_INDICES.items() if index.always_attached)
@@ -359,8 +365,13 @@ def compile_spec(
     end: Any = None,
     store: RefdataStore | None = None,
     conventions: Conventions = Conventions(),
+    sessions: SessionWarmup | None = None,
 ) -> CompiledSpec:
-    """Strategy, config and refdata inputs for a resolved daily spec over ``[start, end]``."""
+    """Strategy, config and refdata inputs for a resolved daily spec over ``[start, end]``.
+
+    ``sessions``: the run's frozen session warm-up rule; data loads from that many sessions before ``start``.
+    None (a run frozen without ``data.warmup``): from ``warmup_calendar_days`` calendar days before it.
+    """
 
     if resolved["frequency"] != "1d":
         raise NotCompilable("compile_spec reads daily refdata; intraday specs run on engine.intraday")
@@ -368,7 +379,10 @@ def compile_spec(
     store = store or RefdataStore()
     start = pd.Timestamp(start).normalize()
     warmup = spec_plan.warmup_bars + conventions.signal_lag
-    load_from = start - timedelta(days=warmup_calendar_days(warmup, "1d"))
+    if sessions is None:
+        load_from = start - timedelta(days=warmup_calendar_days(warmup, "1d"))
+    else:
+        load_from = pd.Timestamp(sessions.load_from(start.date(), warmup))
     upper = None if end is None else pd.Timestamp(end).normalize()
 
     by_kind = {kind: [a for a, i in spec_plan.instruments.items() if i.kind == kind] for kind in ("future", "stock")}
