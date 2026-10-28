@@ -2,8 +2,9 @@
 
 Runs only with ``PV2_PAPER_REFDATA`` = a refdata root holding ``twse_market_calendar`` (a read-only copy of
 the shared store after the daily job) and the throwaway PostgreSQL. The run is created at the real
-time (data window 2001-01-02 .. today, exclusive); the dispatcher clock is 2026-10-24 13:30Z, so the
-paper anchors on the first trading day after it, after the data.
+time (data window 2001-01-02 .. today, exclusive); the dispatcher clock is 2026-10-24 13:30Z and every
+store read is cut at 2026-10-22 (``AsOf``), so the paper anchors on the first trading day after it, after
+the data, however recent the refdata copy is.
 
 * ``natural`` -- the run as the runner would drive it: every stage until the first verdict that is not
   a pass. Whatever the gates decide is the result (reported, not asserted).
@@ -35,11 +36,13 @@ from poseidon.pipeline.refdata.datasets import MARKET_CALENDAR
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from tests.pipeline.conftest import Clock, Harness
+from tests.pipeline.daily_paper_support import AsOf
 from tests.pipeline.v3_wiring_support import Observe, trace, v3_registry
 
 ROOT = os.environ.get("PV2_PAPER_REFDATA")
 OUT = os.environ.get("POSEIDON_V3_E2E_OUT")
 NOW = datetime(2026, 10, 24, 13, 30, tzinfo=UTC)
+STORE_CUTOFF = "2026-10-22"  # the store as it was on the morning of NOW, whenever the copy was taken
 pytestmark = [
     pytest.mark.postgresql,
     pytest.mark.skipif(not ROOT or not RefdataStore(ROOT).exists(MARKET_CALENDAR), reason="PV2_PAPER_REFDATA not set"),
@@ -64,8 +67,13 @@ def api(pipeline_sessions, tmp_path, monkeypatch):
             }
         ),
     )
+
+    def store_at_cutoff():
+        return AsOf(RefdataStore(ROOT), STORE_CUTOFF)
+
+    monkeypatch.setattr("poseidon.pipeline.service._default_refdata", store_at_cutoff)
     clock = Clock(NOW)
-    harness = Harness(pipeline_sessions, tmp_path / "artifacts", clock, registry=v3_registry())
+    harness = Harness(pipeline_sessions, tmp_path / "artifacts", clock, registry=v3_registry(store_at_cutoff()))
     app = FastAPI()
     app.include_router(pipelines.router, prefix="/api/v1/pipelines")
 
