@@ -149,13 +149,22 @@ def trading_days(index: pd.DatetimeIndex, night_session: str = NEXT_WEEKDAY) -> 
     labels = days + pd.to_timedelta(roll, unit="D")
     if night_session == NEXT_WEEKDAY:
         return labels
-    clock = local - local.normalize()
-    sessions = pd.DatetimeIndex(np.unique(days[(clock >= DAY_SESSION_HOURS[0]) & (clock < DAY_SESSION_HOURS[1])]))
+    sessions = day_sessions(index)
     if not len(sessions):
         return labels
     position = sessions.searchsorted(days)
     inside = position < len(sessions)
     return pd.DatetimeIndex(np.where(inside, sessions.values[np.minimum(position, len(sessions) - 1)], labels.values))
+
+
+def day_sessions(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """Dates (midnight, naive) with a day-session bar in ``index`` (UTC bar timestamps)."""
+
+    local = index.tz_convert(MARKET_TZ).tz_localize(None)
+    clock = local - local.normalize()
+    return pd.DatetimeIndex(
+        np.unique(local.normalize()[(clock >= DAY_SESSION_HOURS[0]) & (clock < DAY_SESSION_HOURS[1])])
+    )
 
 
 def daily_pnl(equity_curve, initial_capital: float, night_session: str = NEXT_WEEKDAY) -> pd.DataFrame:
