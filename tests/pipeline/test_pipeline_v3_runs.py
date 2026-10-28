@@ -39,6 +39,7 @@ from poseidon.pipeline.v3.config import (
     daily_data_config,
     daily_run_config,
     is_v3_run,
+    option_chain_record,
     series_first_days,
     trading_calendar_record,
     warmup_record,
@@ -87,6 +88,7 @@ def test_daily_run_config_freezes_the_class_entry_and_the_window():
         "parts": "train = trading days in [start, holdout_start); holdout = [holdout_start, end)",
         "warmup": warmup_record(),
         "trading_calendar": trading_calendar_record(),
+        "option_chain": option_chain_record(),
     }
     split = date.fromisoformat(config["data"]["holdout_start"])
     assert date(2021, 8, 1) <= split <= date(2021, 9, 30)  # the last 20 % of 2001-01-02 .. 2026-10-22

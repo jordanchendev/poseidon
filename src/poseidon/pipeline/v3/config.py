@@ -17,7 +17,9 @@ Configs frozen from 2026-10-28 on also freeze ``data.warmup`` (:func:`warmup_rec
 start is counted in TWSE sessions plus a margin (``validation.SessionWarmup``), for the window start chosen
 here and for every data load. Configs without it keep the calendar-day estimate, so their windows, loads and
 hashes do not move. Likewise ``data.trading_calendar`` (:func:`trading_calendar_record`): the days the engine
-projects past a data end are TAIFEX trading days, not weekdays.
+projects past a data end are TAIFEX trading days, not weekdays. And ``data.option_chain``
+(:func:`option_chain_record`): the daily shadow paper runs a spec's hedges on the TXO chain and waits for it;
+a hedged run frozen without it keeps its unsupported paper.
 """
 
 from __future__ import annotations
@@ -126,6 +128,18 @@ def trading_calendar_record() -> dict:
     }
 
 
+def option_chain_record() -> dict:
+    """``config["data"]["option_chain"]``: how the daily shadow paper reads a hedge's option chain."""
+
+    return {
+        "quotes": "taifex_txo_daily: day session, monthly expiries, puts (compiler.option_quote_rows)",
+        "final_settlement": "taifex_txo_final_settlement",
+        "rule": "the paper runs a spec's hedges; its cutoff waits for the last TXO day session, a paper day "
+        "without TXO quotes and a monthly expiry without its final settlement price; without this record a "
+        "hedged run's paper is unsupported",
+    }
+
+
 def session_warmup(record: dict | None, store) -> SessionWarmup | None:
     """The session calendar of a frozen ``data.warmup`` rule read from ``store``; None for a config without one."""
 
@@ -153,13 +167,15 @@ def daily_data_config(
     window: WindowStart | None = None,
     warmup: dict | None = None,
     trading_calendar: dict | None = None,
+    option_chain: dict | None = None,
 ) -> dict:
     """``[start, as_of)`` in trading days (Asia/Taipei dates); the last ``fraction`` is the locked holdout.
 
     ``window``: the spec's chosen start; when it moved, the window starts there (the holdout is the last
     ``fraction`` of the shorter window) and ``start_rule`` records why. ``warmup``: the frozen warm-up rule
-    (:func:`warmup_record`) and ``trading_calendar`` the projection rule (:func:`trading_calendar_record`); None
-    leaves either out, as configs frozen before them did.
+    (:func:`warmup_record`), ``trading_calendar`` the projection rule (:func:`trading_calendar_record`) and
+    ``option_chain`` the paper's option rule (:func:`option_chain_record`); None leaves each out, as configs
+    frozen before them did.
     """
 
     from poseidon.pipeline.window import MARKET_TZ, holdout_split
@@ -184,6 +200,8 @@ def daily_data_config(
         data["warmup"] = warmup
     if trading_calendar is not None:
         data["trading_calendar"] = trading_calendar
+    if option_chain is not None:
+        data["option_chain"] = option_chain
     return data
 
 
@@ -283,7 +301,11 @@ def _daily_config(fields: dict, *, as_of: date, refdata: dict[str, str], stage_p
         "gates": settings["gates"],
         "shadow_paper": settings["shadow_paper"],
         "data": daily_data_config(
-            as_of=as_of, window=window, warmup=warmup_record(), trading_calendar=trading_calendar_record()
+            as_of=as_of,
+            window=window,
+            warmup=warmup_record(),
+            trading_calendar=trading_calendar_record(),
+            option_chain=option_chain_record(),
         ),
         "holdout": {"fraction": HOLDOUT_FRACTION, "locked": True},
         "refdata": {

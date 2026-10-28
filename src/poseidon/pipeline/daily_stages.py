@@ -1300,10 +1300,12 @@ def compile_strategy(ctx):
     the spec's signals read (``Plan.signal_indices``, e.g. ``index:taiex``), so the paper's cutoff
     waits for that day's index row and for nothing it does not use. The warm-up loads as the backtest's
     does (``compile_spec``): in sessions for a run frozen with ``data.warmup``, else in calendar days.
+    Hedges run only for a run frozen with ``data.option_chain`` (``v3.config.option_chain_record``); an
+    older hedged run stays unsupported, as it was frozen.
     """
 
     from poseidon.pipeline.shadow_paper_daily import CompiledStrategy, PaperInstrument, StrategyNotCompiled
-    from poseidon.pipeline.v3.compiler import AUX_DATASETS, engine_config, plan, strategy_factory
+    from poseidon.pipeline.v3.compiler import AUX_DATASETS, engine_config, hedge_policies, plan, strategy_factory
     from poseidon.pipeline.v3.validation import warmup_calendar_days
 
     try:
@@ -1318,10 +1320,10 @@ def compile_strategy(ctx):
         spec_plan = plan(best_spec)
     except NotCompilable as error:
         raise StrategyNotCompiled(str(error)) from error
-    if spec_plan.hedges:
+    if spec_plan.hedges and "option_chain" not in ctx.config.get("data", {}):
         raise StrategyNotCompiled(
-            "daily shadow paper does not run hedges yet: it needs a daily TXO refdata update and option rows in "
-            "the paper ledger (the backtest stages do run them)"
+            "daily shadow paper runs hedges only for runs frozen with data.option_chain; this run predates it "
+            "(create a new run)"
         )
     window = DailyWindow.from_config(ctx.config)
     conventions = Conventions()
@@ -1354,6 +1356,7 @@ def compile_strategy(ctx):
         aux={name: AUX_DATASETS[name] for name in spec_plan.signal_indices},
         warmup=(record, warmup) if record else None,
         calendar_rule=ctx.config["data"].get("trading_calendar"),
+        hedges=tuple(hedge_policies(spec_plan)),
     )
 
 

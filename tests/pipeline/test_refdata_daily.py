@@ -13,6 +13,7 @@ from poseidon.pipeline.refdata import daily, taifex, twse
 from poseidon.pipeline.refdata import datasets as D
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.refdata.taifex import MarketSchedule, official_last_trading_day
+from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
 from poseidon.pipeline.window import MARKET_TZ
 
 FIXTURES = Path(__file__).parent / "fixtures" / "refdata"
@@ -158,6 +159,38 @@ def test_daily_job_is_idempotent_and_reports_freshness(tmp_path, small_world):
     assert {name: (tmp_path / name / "manifest.json").read_bytes() for name in manifests} == manifests
     calls = small_world["taifex"].calls
     assert [c for c in calls if c.startswith("holidays_")] == ["holidays_2026", "holidays_2027"]  # current + next
+
+
+def test_freshness_checks_the_last_txo_day_session_when_the_store_has_it(tmp_path, small_world):
+    store = RefdataStore(tmp_path)
+    now = local(2026, 10, 24, 17, 0)  # 10-23 was closed (typhoon), so 10-22 is the latest trading day
+    assert (
+        OPTION_QUOTES
+        not in daily.run_daily(store, now=now, fetchers=small_world, code_version="t")["freshness"]["datasets"]
+    )
+
+    def txo_through(last: str) -> None:
+        days = [day for day in pd.to_datetime(["2026-10-20", "2026-10-21", "2026-10-22"]) if day <= pd.Timestamp(last)]
+        frame = pd.DataFrame(
+            {"trade_date": [*days, pd.Timestamp("2026-10-27")], "session": ["day"] * len(days) + ["night"]}
+        )
+        store.commit(
+            OPTION_QUOTES,
+            schema_version=1,
+            date_column="trade_date",
+            partitions={"2026-10": frame},
+            sources=[],
+            code_version="t",
+            full=True,
+        )
+
+    txo_through("2026-10-21")  # the 10-22 night session (dated 10-27) is not the 10-22 day session
+    late = daily.freshness(store, now)
+    assert late["datasets"][OPTION_QUOTES] == {"last": "2026-10-21", "lag_trading_days": 1, "fresh": False}
+    assert OPTION_QUOTES in late["stale"]
+    txo_through("2026-10-22")
+    current = daily.freshness(store, now)["datasets"][OPTION_QUOTES]
+    assert current == {"last": "2026-10-22", "lag_trading_days": 0, "fresh": True}
 
 
 def test_a_blocked_source_stops_the_job_without_raising(tmp_path, small_world):

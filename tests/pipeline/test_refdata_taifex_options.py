@@ -19,7 +19,7 @@ import pytest
 
 from poseidon.pipeline.refdata import taifex_options as txo
 from poseidon.pipeline.refdata.fetch import SourceBlockedError
-from poseidon.pipeline.refdata.store import RefdataStore, frame_sha256
+from poseidon.pipeline.refdata.store import DatasetMissingError, RefdataStore, frame_sha256
 
 FIXTURES = Path(__file__).parent / "fixtures" / "taifex_txo"
 RAW_2001 = (FIXTURES / "txo_200112_head.csv").read_bytes()
@@ -351,3 +351,52 @@ def test_settlement_dataset_is_partitioned_by_settlement_month_and_refetch_is_a_
     padded = RAW_FSP.replace(b"</body>", b"<!-- re-rendered --></body>")
     again = txo.update_fsp(store, FakeFetcher(fsp=padded), today=date(2026, 10, 24), code_version="abc")
     assert not again.changed and again.fetched == 0
+
+
+def test_the_daily_hook_appends_the_new_day_and_never_backfills(tmp_path, monkeypatch):
+    store = RefdataStore(tmp_path)
+    with pytest.raises(DatasetMissingError, match="one-time backfill"):
+        txo.daily_update(store, today=date(2026, 9, 1), code_version="t")
+    assert not store.exists(txo.DAILY_DATASET)  # nothing fetched: the history is an owner-run step
+
+    lines = RAW_2026.decode("cp950").splitlines()
+    first_day = _csv([lines[0], *(line for line in lines[1:] if line.startswith("2026/09/01"))])
+    txo.update(store, FakeFetcher({("2026/09/01", "2026/09/01"): first_day}), today=date(2026, 9, 1), code_version="t")
+    assert store.manifest(txo.DAILY_DATASET)["coverage"]["end"] == "2026-09-01"
+
+    fetcher = FakeFetcher({("2026/09/01", "2026/09/02"): RAW_2026})
+    monkeypatch.setattr(txo, "PoliteFetcher", lambda *_args, **_kwargs: fetcher)
+    daily, fsp = txo.daily_update(store, today=date(2026, 9, 2), code_version="t")
+    assert daily.changed and daily.written == ("2026-09",) and daily.coverage["end"] == "2026-09-02"
+    assert {r["queryStartDate"][:7] for r in fetcher.requests if "queryStartDate" in r} == {"2026/08", "2026/09"}
+    assert fsp.dataset == txo.FSP_DATASET
+
+    again, _fsp = txo.daily_update(store, today=date(2026, 9, 2), code_version="t")
+    assert not again.changed and again.fetched == 0
+
+
+def test_an_incremental_rebuild_writes_what_a_full_build_writes(tmp_path):
+    """An unchanged month whose expiry was provisional is rebuilt once the calendar reaches it; the result
+    equals a full build of the same raw files, and a re-run rewrites nothing."""
+
+    lines = RAW_2026.decode("cp950").splitlines()
+    august = _csv([lines[0], *(line.replace("2026/09/01", "2026/08/31", 1) for line in lines if "2026/09/01" in line)])
+    fetcher = FakeFetcher({("2026/08/01", "2026/08/31"): august, ("2026/09/01", "2026/09/02"): RAW_2026})
+    store = RefdataStore(tmp_path / "daily")
+    txo.update_daily(store, fetcher, today=date(2026, 8, 31), code_version="t", refresh_months=1)
+    weekly = row(store.read(txo.DAILY_DATASET), contract_month="202609W1", strike=45000.0, cp="C", session="day")
+    assert (weekly["expiry_date_source"], weekly["expiry_date"]) == ("taifex_provisional", pd.Timestamp("2026-09-02"))
+
+    report = txo.update_daily(store, fetcher, today=date(2026, 9, 2), code_version="t", refresh_months=1)
+    assert report.written == ("2026-08", "2026-09")  # 08 was not fetched again: its provisional expiry is now known
+    august_rows = store.read(txo.DAILY_DATASET, end="2026-08-31")
+    assert (
+        row(august_rows, contract_month="202609W1", strike=45000.0, cp="C", session="day")["expiry_date_source"]
+        == "taifex"
+    )
+
+    full = RefdataStore(tmp_path / "full")
+    txo.update_daily(full, fetcher, today=date(2026, 9, 2), code_version="t", refresh_months=1, full=True)
+    assert store.manifest(txo.DAILY_DATASET)["partitions"] == full.manifest(txo.DAILY_DATASET)["partitions"]
+    assert store.content_sha256(txo.DAILY_DATASET) == full.content_sha256(txo.DAILY_DATASET)
+    assert txo.update_daily(store, fetcher, today=date(2026, 9, 2), code_version="t", refresh_months=1).written == ()

@@ -19,6 +19,8 @@ from poseidon.pipeline.refdata import taifex, twse
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, MARKET_CALENDAR, TAIEX
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.refdata.taifex import MarketSchedule, official_last_trading_day
+from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
+from poseidon.pipeline.refdata.taifex_options import FSP_DATASET as OPTION_FINAL
 from poseidon.pipeline.shadow_paper import ShadowPaperStage
 from poseidon.pipeline.shadow_paper_daily import (
     DAILY_PAPER_THRESHOLDS,
@@ -194,19 +196,71 @@ def build_store(root: Path, *, seed: int = 11, crash: str | None = None, last="2
     return store
 
 
+def write_txo(store: RefdataStore, *, drop_days=(), unsettled=()) -> pd.DataFrame:
+    """TXO puts on every TX monthly contract of ``store``, listed 95 days before expiry with strikes every 100
+    points from 75 % to 110 % of the TAIEX close that day (as TAIFEX lists a wide fixed grid, a held strike
+    keeps its quotes); settlement = intrinsic + 40 (none on the expiry day, as TAIFEX reports the expiring
+    series), final settlement = the TAIEX close on the expiry day. Night-session and call rows exist for the
+    first strike only (the paper must filter them out). ``drop_days``: trading days without any TXO row;
+    ``unsettled``: contract months without a final settlement row. Returns the day-session put rows."""
+
+    taiex = store.read(TAIEX).set_index("trade_date")["close"]
+    calendar = store.read(CALENDAR)
+    calendar = calendar[calendar["product"] == "TX"]
+    expiries = dict(zip(calendar["contract_month"], calendar["last_trading_day"], strict=True))
+    skip = {pd.Timestamp(day) for day in drop_days}
+    rows, finals = [], []
+    for month, expiry in sorted(expiries.items()):
+        listed = taiex[(taiex.index <= expiry) & ((expiry - taiex.index).days <= 95)]
+        if listed.empty:
+            continue
+        strikes = np.arange(round(listed.iloc[0] * 0.75, -2), round(listed.iloc[0] * 1.10, -2), 100.0)
+        for t, level in listed.items():
+            if t in skip:
+                continue
+            for strike in strikes:
+                settle = np.nan if t == expiry else max(strike - level, 0.0) + 40.0
+                rows.append((t, "day", month, "monthly", expiry, strike, "P", settle))
+            rows.append((t, "night", month, "monthly", expiry, strikes[0], "P", 41.0))
+            rows.append((t, "day", month, "monthly", expiry, strikes[0], "C", 1.0))
+        if expiry <= taiex.index[-1] and month not in unsettled:
+            finals.append((expiry, month, "monthly", float(taiex[expiry])))
+    quotes = pd.DataFrame(
+        rows,
+        columns=["trade_date", "session", "contract_month", "expiry_kind", "expiry_date", "strike", "cp", "settlement"],
+    )
+    final = pd.DataFrame(
+        finals, columns=["final_settlement_date", "contract_month", "expiry_kind", "final_settlement_price"]
+    )
+    for name, frame, column in ((OPTION_QUOTES, quotes, "trade_date"), (OPTION_FINAL, final, "final_settlement_date")):
+        store.commit(
+            name,
+            schema_version=1,
+            date_column=column,
+            partitions=_by_month(frame, column),
+            sources=[],
+            code_version="t",
+            full=True,
+        )
+    puts = quotes[(quotes["session"] == "day") & (quotes["cp"] == "P")]
+    return puts.reset_index(drop=True)
+
+
 class AsOf:
     """``store`` as it looked on the morning after ``as_of``: futures through ``as_of`` plus the night
-    session TAIFEX books into the next trading day (it ended at 05:00), aux rows through ``as_of``.
-    Calendars are ex-ante reference data and stay whole."""
+    session TAIFEX books into the next trading day (it ended at 05:00), aux rows and TXO quotes and final
+    settlements through ``as_of``. Calendars are ex-ante reference data and stay whole."""
 
-    TRUNCATED = (FUTURES, TAIEX, "twse_taiex_total_return", "thalassa_tw_stock_daily")
+    TRUNCATED = (FUTURES, TAIEX, "twse_taiex_total_return", "thalassa_tw_stock_daily", OPTION_QUOTES)
 
     def __init__(self, store, as_of):
         self.store = store
         self.as_of = pd.Timestamp(as_of)
 
-    def read(self, dataset, start=None, end=None):
-        frame = self.store.read(dataset, start=start, end=end)
+    def read(self, dataset, start=None, end=None, rows=None):
+        frame = self.store.read(dataset, start=start, end=end, rows=rows)
+        if dataset == OPTION_FINAL and len(frame):
+            return frame[frame["final_settlement_date"] <= self.as_of].reset_index(drop=True)
         if dataset == FUTURES and len(frame):
             later = frame.loc[frame["trade_date"] > self.as_of, "trade_date"]  # a night row may be the only one
             following = later.min() if len(later) else None

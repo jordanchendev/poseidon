@@ -41,8 +41,12 @@ Storage: both datasets go through :class:`refdata.store.RefdataStore`
 ``TXO_<YYYYMM>_tail<n>.csv`` when the tail check (see
 :func:`fetch_daily_month`) found the first answer cut short; ``txo_fsp.html``.
 :func:`update` is idempotent: it fetches missing months and the last
-``refresh_months``, then rebuilds every partition (expiry resolution reads the
-whole trading calendar) and the store rewrites only what changed.
+``refresh_months``, then rebuilds the months a full build would change (expiry
+resolution reads the whole trading calendar; see :func:`update_daily`) and the
+store rewrites only what changed.
+:func:`daily_update` is the ``refdata.daily.EXTRA_UPDATERS`` hook: the same
+update, on a store that already holds the history (the one-time backfill is
+this module's CLI).
 
 Run as ``python -m poseidon.pipeline.refdata.taifex_options --code-version <sha>``.
 """
@@ -66,7 +70,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from poseidon.pipeline.refdata.fetch import TAIFEX_MIN_INTERVAL, PoliteFetcher
-from poseidon.pipeline.refdata.store import RefdataStore, SourceRecord
+from poseidon.pipeline.refdata.store import DatasetMissingError, RefdataStore, SourceRecord
 
 logger = logging.getLogger(__name__)
 
@@ -566,14 +570,27 @@ def update_daily(
     code_version: str,
     refresh_months: int = 2,
     seed_dir: Path | None = None,
+    full: bool = False,
 ) -> UpdateReport:
+    """Fetch missing months and the refresh window, then rebuild what a full build would change.
+
+    A full build (``full``, a new dataset, a schema change) normalises every month. Otherwise only the
+    months whose raw files changed, months without a partition, and months holding a
+    ``taifex_provisional`` expiry (a published date past the trading calendar, which a longer
+    calendar resolves) are rebuilt; the calendar of every other month is read back from its
+    partition. Every other partition is what a full build would write again, byte for byte.
+    """
+
     months = list(months_between(LISTING_DATE, today))
     window = set(months[-refresh_months:]) if refresh_months > 0 else set()
     records: list[SourceRecord] = []
     names_by_month: dict[str, list[str]] = {}
+    changed_months: set[str] = set()
     fetched = 0
     for year, month in months:
+        key = f"{year:04d}-{month:02d}"
         stored = _stored_month(store, year, month)
+        before = [(record.name, record.sha256_raw) for record in stored or []]
         if stored is None and (year, month) not in window and seed_dir is not None:
             stored = _seed_month(store, seed_dir, year, month)
         if stored is None or (year, month) in window:
@@ -593,17 +610,33 @@ def update_daily(
                     month,
                     len(answer.bodies) - 1,
                 )
+        if [(record.name, record.sha256_raw) for record in stored] != before:
+            changed_months.add(key)
         records.extend(stored)
-        names_by_month[f"{year:04d}-{month:02d}"] = [record.name for record in stored]
+        names_by_month[key] = [record.name for record in stored]
 
     def load(names: list[str]) -> list[bytes]:
         return [store.raw_bytes(DAILY_DATASET, name) for name in names]
 
-    calendar = sorted(set().union(*(trade_dates(body) for names in names_by_month.values() for body in load(names))))
+    full = full or not store.exists(DAILY_DATASET) or store.manifest(DAILY_DATASET)["schema_version"] != SCHEMA_VERSION
+    if full:
+        rebuild = set(names_by_month)
+        kept_days: set[date] = set()
+    else:
+        kept = store.read(DAILY_DATASET, rows=lambda rows: rows[["trade_date", "expiry_date_source"]].drop_duplicates())
+        keys = kept["trade_date"].dt.strftime("%Y-%m")
+        provisional = set(keys[kept["expiry_date_source"] == "taifex_provisional"])
+        built = {part["key"] for part in store.manifest(DAILY_DATASET)["partitions"]}
+        rebuild = {key for key in names_by_month if key in changed_months | provisional or key not in built}
+        kept_days = {stamp.date() for stamp in kept.loc[~keys.isin(rebuild), "trade_date"].unique()}
+    rebuilt_days = (trade_dates(body) for key in rebuild for body in load(names_by_month[key]))
+    calendar = sorted(kept_days.union(*rebuilt_days))
     partitions = {}
-    for key, names in names_by_month.items():
-        frame = normalise_daily(pd.concat([parse_daily_csv(body) for body in load(names)], ignore_index=True), calendar)
-        if len(frame):
+    for key in sorted(rebuild):
+        frame = normalise_daily(
+            pd.concat([parse_daily_csv(body) for body in load(names_by_month[key])], ignore_index=True), calendar
+        )
+        if len(frame) or not full:  # an empty month: no partition (incremental: the empty frame removes it)
             partitions[key] = frame
     result = store.commit(
         DAILY_DATASET,
@@ -612,7 +645,7 @@ def update_daily(
         partitions=partitions,
         sources=records,
         code_version=code_version,
-        full=True,
+        full=full,
     )
     return _report(DAILY_DATASET, result, fetched)
 
@@ -644,6 +677,7 @@ def update(
     code_version: str = "unknown",
     refresh_months: int = 2,
     seed_dir: Path | None = None,
+    full: bool = False,
 ) -> list[UpdateReport]:
     """Fetch what is new and rebuild what changed; safe to re-run at any time."""
 
@@ -651,10 +685,31 @@ def update(
     today = today or datetime.now(TAIPEI).date()
     return [
         update_daily(
-            store, fetcher, today=today, code_version=code_version, refresh_months=refresh_months, seed_dir=seed_dir
+            store,
+            fetcher,
+            today=today,
+            code_version=code_version,
+            refresh_months=refresh_months,
+            seed_dir=seed_dir,
+            full=full,
         ),
         update_fsp(store, fetcher, today=today, code_version=code_version),
     ]
+
+
+def daily_update(store: RefdataStore, *, today: date, code_version: str) -> list[UpdateReport]:
+    """The ``refdata.daily.EXTRA_UPDATERS`` hook (09:00Z): the refresh window, missing months and the settlement table.
+
+    Built from nothing it would fetch every month since 2001 (about 600 requests, 25 minutes) inside the
+    daily job, so a store without the dataset is an error naming the one-time backfill instead.
+    """
+
+    if not store.exists(DAILY_DATASET):
+        raise DatasetMissingError(
+            f"{DAILY_DATASET} is not built; run the one-time backfill "
+            "(python -m poseidon.pipeline.refdata.taifex_options --code-version <sha>)"
+        )
+    return update(store, today=today, code_version=code_version)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -667,6 +722,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         "--seed-dir", type=Path, default=None, help="pre-store raw cache to adopt instead of re-fetching"
     )
+    parser.add_argument("--full", action="store_true", help="normalise every month, not only the changed ones")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     reports = update(
@@ -674,6 +730,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         code_version=args.code_version,
         refresh_months=args.refresh_months,
         seed_dir=args.seed_dir,
+        full=args.full,
     )
     for report in reports:
         logger.info(

@@ -30,9 +30,11 @@ against the latest *final US date* (rows are US dates), tolerating ``VIX_LAG_DAY
 Taiwan decision reads it one calendar day late (``v3.instruments.align_signal_frame``), so the paper
 waits for the US close of the previous US day only when that row is missing.
 
-``EXTRA_UPDATERS`` is the hook for later datasets (TXO quotes, corporate actions): each entry
-``name -> fn(store, today=..., code_version=...) -> list[UpdateReport]`` runs after the futures
-and TWSE groups, and its failure is recorded without stopping the others.
+``EXTRA_UPDATERS`` is the hook for later datasets (TXO quotes, Thalassa stock bars, corporate
+actions; the runner task registers them): each entry ``name -> fn(store, today=..., code_version=...)
+-> list[UpdateReport]`` runs after the futures and TWSE groups, and its failure is recorded without
+stopping the others. When the store holds ``taifex_txo_daily`` its last day session is checked like a
+futures product's: a hedged run's paper waits for that day (``shadow_paper_daily.load_inputs``).
 """
 
 from __future__ import annotations
@@ -61,6 +63,7 @@ from poseidon.pipeline.refdata.engine_input import last_day_session, product_quo
 from poseidon.pipeline.refdata.fetch import CBOE_MIN_INTERVAL, PoliteFetcher, SourceBlockedError, SourceError
 from poseidon.pipeline.refdata.store import RefdataError, RefdataStore
 from poseidon.pipeline.refdata.taifex import MarketSchedule
+from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
 from poseidon.pipeline.window import MARKET_TZ
 
 logger = logging.getLogger(__name__)
@@ -119,6 +122,12 @@ def freshness(store: RefdataStore, now: datetime) -> dict:
         frame = store.read(name, start=since)
         last = pd.Timestamp(frame["trade_date"].max()) if len(frame) else None
         datasets[name] = _entry(last, expected, schedule, closed)
+    if store.exists(OPTION_QUOTES):
+        frame = store.read(
+            OPTION_QUOTES, start=since, rows=lambda rows: rows.loc[rows["session"] == "day", ["trade_date"]]
+        )
+        last = pd.Timestamp(frame["trade_date"].max()) if len(frame) else None
+        datasets[OPTION_QUOTES] = _entry(last, expected, schedule, closed)
     if store.exists(VIX):  # a US series: its last row is the latest final US date, not a Taiwan trading day
         frame = store.read(VIX, start=since)
         last = pd.Timestamp(frame["trade_date"].max()) if len(frame) else None

@@ -37,7 +37,13 @@ from poseidon.pipeline.spec_llm_v3 import (
 )
 from poseidon.pipeline.stages import STAGE_REGISTRY, SpecGenerateStage, StageContext
 from poseidon.pipeline.state import Verdict
-from poseidon.pipeline.v3.config import REFDATA_DATASETS, idea_run_config, is_v3_run, trading_calendar_record
+from poseidon.pipeline.v3.config import (
+    REFDATA_DATASETS,
+    idea_run_config,
+    is_v3_run,
+    option_chain_record,
+    trading_calendar_record,
+)
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.registry import REGISTRY, component_fingerprints
 from poseidon.pipeline.v3.validation import validate_spec_v3
@@ -366,7 +372,11 @@ def test_with_the_refdata_first_days_a_late_series_moves_the_window_into_the_rou
     config = routed()
     seen = effective_config(config, outcome.report["route"])
     # the class entry's trading-calendar rule stays with the route's window
-    assert seen["data"] == {**data, "trading_calendar": trading_calendar_record()}
+    assert seen["data"] == {
+        **data,
+        "trading_calendar": trading_calendar_record(),
+        "option_chain": option_chain_record(),
+    }
     assert config["by_class"]["daily_equity"]["data"]["start"] == "2001-01-02"
     with pytest.raises(RouteError, match="keep the frozen window end"):
         effective_config(config, {**outcome.report["route"], "data": {**data, "end": "2026-10-25"}})
@@ -737,7 +747,10 @@ def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
     # db24f9f4 at REGISTRY_VERSION 2; registry_version moved it (3 adds rebalance.monthly), then data.warmup (the
     # session warm-up rule of configs frozen from 2026-10-28 on), then thresholds.param_edge_at_bound_pass (run #18,
     # 2026-10-28), then data.trading_calendar (2026-10-28), then thresholds.benchmark_rule with its
-    # benchmark_risk_* settings (2026-10-28): without those keys it is the 681d469 config
+    # benchmark_risk_* settings (2026-10-28), then data.option_chain (the hedged paper's rule, 2026-10-28): without
+    # those keys it is the 681d469 config
+    assert content_sha256(daily) == "2a9c1e312f32065af30a455aadb15fb99ec855c6b4033204ce62149d8a305897"
+    del daily["data"]["option_chain"]
     assert content_sha256(daily) == "a2ac17c53d0eb4df3ef554c2bcdcd854c30145d1c3d690c9b93fdf364fe9477b"
     for key in ("benchmark_rule", "benchmark_risk_block_days", "benchmark_risk_resamples",
                 "benchmark_risk_confidence", "benchmark_risk_min_beta"):  # fmt: skip

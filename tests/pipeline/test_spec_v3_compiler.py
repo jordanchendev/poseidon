@@ -327,7 +327,7 @@ def test_the_window_store_clips_the_chain_and_hashes_it_only_for_hedged_runs(hed
     assert plain.data_sha256() == WindowStore(hedged_store, upper).data_sha256()
 
 
-def test_daily_shadow_paper_refuses_a_hedged_spec_instead_of_dropping_the_hedge():
+def test_daily_shadow_paper_refuses_a_hedged_spec_frozen_without_the_option_chain_rule():
     from types import SimpleNamespace
 
     from poseidon.pipeline.daily_stages import compile_strategy
@@ -336,5 +336,5 @@ def test_daily_shadow_paper_refuses_a_hedged_spec_instead_of_dropping_the_hedge(
     ctx = SimpleNamespace(
         config={"components": {}}, upstream={"optimize": SimpleNamespace(report={"best_spec": _hedged()})}
     )
-    with pytest.raises(StrategyNotCompiled, match="does not run hedges"):
+    with pytest.raises(StrategyNotCompiled, match=r"frozen with data\.option_chain"):
         compile_strategy(ctx)
