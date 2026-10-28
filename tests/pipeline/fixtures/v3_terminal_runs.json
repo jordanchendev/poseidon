@@ -1691,7 +1691,2324 @@
     }
    ],
    "status": "failed"
+  },
+  "17": {
+   "config_json": {
+    "by_class": {
+     "daily_equity": {
+      "backtest": {
+       "truncation_audit_cuts": 5
+      },
+      "capability_brief_sha256": "e6431e39cb60cfd5d68e3a4405a7d8acdd8e3ebcadcd773511c5854e3ffb9933",
+      "components": {
+       "allocation.fixed_weights@1": "35f5dc519362de72e52afd95b585e7d45e5c3559e420e50bc0b169af85686a50",
+       "allocation.inverse_vol@1": "a13d145f1044e04e6e1df25dde6fccd11be82d3a53206e9a78d554a708cc5bc0",
+       "allocation.regime_switch@1": "90056bcf1f812448f2749529146c060132de7219b9b6c19e9e06349144d286f5",
+       "allocation.single@1": "6b6caa2124b9b1b654728b9a4b91e81f481895fbd4e569243151bc3bf055a9d2",
+       "direction.constant@1": "94e458eb5aa40fb940c882d7d7a7f9c85a1d7fae5ada660099ca6b100366a2a9",
+       "direction.dsl_rules@1": "6ac5cd3b1b3aa9947e58e710a5aa500f7ed771a1c343d06b0f12db998c73bdbb",
+       "execution.next_open@1": "19df267b3d44c0f5aa32bfdde168fae264088dbda795ff9bd98e732a4aaa118b",
+       "execution.signal_close@1": "0b65f531e3916886ce07a9589e071135fb77745d113d4749771663b10df4897a",
+       "hedge.protective_put@1": "08a358fc1d55bddb7c28c29a80a6ba879ce16302b8488e46c3f2199b12e6cec9",
+       "leverage.base@1": "c15e6fcd24e64c0a2cfe2dcbb0c95230960edb452f9366c02c11bc054eb9cd16",
+       "leverage.drawdown_ladder@1": "2147e2a667034bd0d0f8ab701a999e57c9e0c877f79684d56b6276de49458224",
+       "leverage.level_ladder@1": "aa401d7d8ff44c4f7d47863970a40f6aaaada7c7411813257da70828c9c0a2ab",
+       "rebalance.daily@1": "d6182204b2f65e2294eb154e645ae1dabf32ffcc2ed9420ad695ec997c870696",
+       "rebalance.monthly_at_roll@1": "88c99293dd3031d212e0c3e52de320bd27dc6867429836a1b5d76fc41e0843c0",
+       "rebalance.on_signal_change@1": "761705bda3b62d990cd1c34887981d1e6d6c7f20fd4ad44cf6b56acc73128369",
+       "rebalance.threshold_band@1": "c93c39109c53a8b2b69c312850922e582688f49d041372b11dae2835186382f2",
+       "regime.ma_band@1": "f8a83761f5526f9a187e6d62583caf084f336a8d0da9b6c3357ed80b3b31f651",
+       "risk.vol_cap@1": "6a7ca2470b7f3103d4b7ded5a7849afe615e36309a3f624aaed4751418bfbd44",
+       "roll.at_settlement@1": "1d6f63d777631416710469c2bb904b278cd2cf9faaec24d7686e70b3ba3dc392",
+       "roll.before_settlement@1": "62355055d7924ac17fbd12a7116f2523029c43fafa8857e905774d387761dbd6",
+       "sizing.fixed_contracts@1": "57f7e14f3d47d3851de07bc2d174a2f57867616ba36b4fe2f5acbf2d82c4459e",
+       "sizing.fixed_notional@1": "f29aaeb220dc1201768a67ce5289e4c3638a2c8b32231c9e0ec4d0204681d316",
+       "sizing.target_leverage@1": "9dd0fba490bf5815bc8af649265d335196f7d95e5297645e97cbca5046f32334"
+      },
+      "data": {
+       "end": "2026-10-28",
+       "end_exclusive": true,
+       "frequency": "1d",
+       "holdout_start": "2021-08-28",
+       "parts": "train = trading days in [start, holdout_start); holdout = [holdout_start, end)",
+       "source": "refdata",
+       "start": "2001-01-02",
+       "timezone": "Asia/Taipei"
+      },
+      "engine": "target_v1",
+      "gates": {
+       "benchmark": {
+        "hac_lags": 5,
+        "underlying": {
+         "multi": "0050 total return",
+         "tw_futures": "TX back-adjusted continuous daily close (refdata TAIFEX daily, roll before settlement)",
+         "tw_stock": "0050 total return"
+        }
+       },
+       "cost_stress": {
+        "scope": "commission, tax and slippage of every fill (rebalance, roll, margin_call, forced_liquidation) x multiplier"
+       },
+       "execution_timing": {
+        "scenarios": {
+         "next_open": [
+          "signal_close",
+          "signal_lag_1d"
+         ],
+         "signal_close": [
+          "next_open",
+          "signal_lag_1d"
+         ]
+        },
+        "signal_lag_1d": "the spec's own execution, every signal series one row late"
+       },
+       "holdout": {
+        "family_reuse": "report_only"
+       },
+       "regime_split": {
+        "daily_bars": "the 1x underlying's daily bars (benchmark.underlying)",
+        "day_label": "state after the latest underlying bar dated strictly before the day"
+       },
+       "wfe": {
+        "budget_seconds": 3600,
+        "days": "calendar",
+        "layouts": [
+         {
+          "is_days": 1460,
+          "oos_days": 365,
+          "windows": 5
+         },
+         {
+          "is_days": 730,
+          "oos_days": 182,
+          "windows": 4
+         }
+        ],
+        "max_trials_per_window": 16,
+        "objective": "sharpe_daily"
+       }
+      },
+      "holdout": {
+       "fraction": 0.2,
+       "locked": true
+      },
+      "optimize": {
+       "budget_seconds": 3600,
+       "max_consecutive_duplicates": 100,
+       "max_trials": 45,
+       "neighbour_steps": 1,
+       "objective": "sharpe_daily",
+       "sampler": "tpe"
+      },
+      "refdata": {
+       "datasets": {
+        "taifex_futures_daily": "f865629950a3f305695e957238ee5cbfcd9e4f035ee3d1b4074e67e8ae23f721",
+        "taifex_settlement_calendar": "f7a783f2242b991fd1eb02ce96c6c7aecb09c53050eb52dc2d8d8acf987c1718",
+        "thalassa_tw_stock_daily": "9fe299c3d99b6041124ee4311f0d32eb20492c47d35a6a63ff9e7e2c9e5b71ca",
+        "tw_corporate_actions": "d8981eb7b45739e9d7baf7e38b0470efdd9eca0361c19f2cd08db19d4a850f4e",
+        "twse_market_calendar": "4d88106e045f56cb1314f3f519010296de69e3deaa4c312ee5f50fe837785791",
+        "twse_taiex_daily": "0d891327ca6a587d97b1ab96c799c8c32e1633bd6fca10c60a0c96ca6599599c",
+        "twse_taiex_total_return": "1f57435bb72d3bb9c2558bacd501e908ab3fa1d84c19147a95cc087310f888ca"
+       },
+       "note": "manifest content_sha256 at run creation (provenance); the daily job appends rows later, each stage records the hash of the window it actually read"
+      },
+      "registry_version": 2,
+      "seed": 0,
+      "shadow_paper": {
+       "calendar_horizon_days": 120,
+       "max_calendar_days": 90,
+       "mode": "daily_target",
+       "protection": {
+        "daily_loss_multiple": 3.0,
+        "daily_loss_quantile": 0.95,
+        "fail_on_forced_liquidation": true,
+        "max_drawdown_multiple": 1.5
+       },
+       "source_retry_minutes": 60,
+       "stale_after_trading_days": 3,
+       "wake_local_time": "09:30",
+       "wake_weekdays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+       ]
+      },
+      "spec_faithfulness": {
+       "blocking": false,
+       "endpoint": "/systemone",
+       "estimate_usd_per_call": 0.0002,
+       "max_calls_per_attempt": 120,
+       "max_clauses": 40,
+       "max_cost_usd_per_attempt": 0.05,
+       "model": "typesafe/jev-1.13",
+       "precheck": "strict",
+       "provider": "openrouter",
+       "qualification": {
+        "agreement_min": 0.95,
+        "contradicts_recall_min": 1.0,
+        "control_set": "local_dev/design/pv2-jev-control-set.jsonl (owner-labelled)",
+        "status": "not_qualified"
+       },
+       "request_timeout_seconds": 30
+      },
+      "spec_source": "spec_generate",
+      "spec_validator": "spec_v3",
+      "spec_version": 3,
+      "stage_plan": [
+       "spec_generate",
+       "spec_validate",
+       "spec_faithfulness",
+       "backtest",
+       "optimize",
+       "param_stability",
+       "dsr",
+       "cost_stress",
+       "regime_split",
+       "benchmark",
+       "execution_timing",
+       "wfe",
+       "holdout",
+       "shadow_paper",
+       "awaiting_release"
+      ],
+      "strategy_class": "daily_equity",
+      "thresholds": {
+       "benchmark_alpha_t_min": 1.65,
+       "cost_stress_multiplier": 2.0,
+       "cost_stress_pnl_positive": true,
+       "dsr_min": 0.95,
+       "dsr_min_obs": 250,
+       "execution_timing_pnl_positive": true,
+       "execution_timing_sharpe_ratio_min": 0.5,
+       "holdout_alpha_positive": true,
+       "holdout_min_days": 250,
+       "holdout_pnl_positive": true,
+       "holdout_se_z": 1.96,
+       "holdout_sharpe_decay_max": 0.5,
+       "liquidation_fails": true,
+       "paper_min_trading_days": 20,
+       "paper_pnl_tolerance_ticks": 1,
+       "paper_target_match_min": 0.95,
+       "param_min_neighbours": 2,
+       "param_neighbourhood_profitable_min": 0.6,
+       "regime_atr_days": 20,
+       "regime_min_days_per_segment": 60,
+       "regime_min_segments": 3,
+       "regime_profitable_segments_min": 3,
+       "regime_trend_sma_days": 60,
+       "regime_vol_median_days": 250,
+       "wfe_min": 0.5
+      },
+      "version": 6
+     },
+     "daily_fixed": {
+      "backtest": {
+       "truncation_audit_cuts": 5
+      },
+      "capability_brief_sha256": "e6431e39cb60cfd5d68e3a4405a7d8acdd8e3ebcadcd773511c5854e3ffb9933",
+      "components": {
+       "allocation.fixed_weights@1": "35f5dc519362de72e52afd95b585e7d45e5c3559e420e50bc0b169af85686a50",
+       "allocation.inverse_vol@1": "a13d145f1044e04e6e1df25dde6fccd11be82d3a53206e9a78d554a708cc5bc0",
+       "allocation.regime_switch@1": "90056bcf1f812448f2749529146c060132de7219b9b6c19e9e06349144d286f5",
+       "allocation.single@1": "6b6caa2124b9b1b654728b9a4b91e81f481895fbd4e569243151bc3bf055a9d2",
+       "direction.constant@1": "94e458eb5aa40fb940c882d7d7a7f9c85a1d7fae5ada660099ca6b100366a2a9",
+       "direction.dsl_rules@1": "6ac5cd3b1b3aa9947e58e710a5aa500f7ed771a1c343d06b0f12db998c73bdbb",
+       "execution.next_open@1": "19df267b3d44c0f5aa32bfdde168fae264088dbda795ff9bd98e732a4aaa118b",
+       "execution.signal_close@1": "0b65f531e3916886ce07a9589e071135fb77745d113d4749771663b10df4897a",
+       "hedge.protective_put@1": "08a358fc1d55bddb7c28c29a80a6ba879ce16302b8488e46c3f2199b12e6cec9",
+       "leverage.base@1": "c15e6fcd24e64c0a2cfe2dcbb0c95230960edb452f9366c02c11bc054eb9cd16",
+       "leverage.drawdown_ladder@1": "2147e2a667034bd0d0f8ab701a999e57c9e0c877f79684d56b6276de49458224",
+       "leverage.level_ladder@1": "aa401d7d8ff44c4f7d47863970a40f6aaaada7c7411813257da70828c9c0a2ab",
+       "rebalance.daily@1": "d6182204b2f65e2294eb154e645ae1dabf32ffcc2ed9420ad695ec997c870696",
+       "rebalance.monthly_at_roll@1": "88c99293dd3031d212e0c3e52de320bd27dc6867429836a1b5d76fc41e0843c0",
+       "rebalance.on_signal_change@1": "761705bda3b62d990cd1c34887981d1e6d6c7f20fd4ad44cf6b56acc73128369",
+       "rebalance.threshold_band@1": "c93c39109c53a8b2b69c312850922e582688f49d041372b11dae2835186382f2",
+       "regime.ma_band@1": "f8a83761f5526f9a187e6d62583caf084f336a8d0da9b6c3357ed80b3b31f651",
+       "risk.vol_cap@1": "6a7ca2470b7f3103d4b7ded5a7849afe615e36309a3f624aaed4751418bfbd44",
+       "roll.at_settlement@1": "1d6f63d777631416710469c2bb904b278cd2cf9faaec24d7686e70b3ba3dc392",
+       "roll.before_settlement@1": "62355055d7924ac17fbd12a7116f2523029c43fafa8857e905774d387761dbd6",
+       "sizing.fixed_contracts@1": "57f7e14f3d47d3851de07bc2d174a2f57867616ba36b4fe2f5acbf2d82c4459e",
+       "sizing.fixed_notional@1": "f29aaeb220dc1201768a67ce5289e4c3638a2c8b32231c9e0ec4d0204681d316",
+       "sizing.target_leverage@1": "9dd0fba490bf5815bc8af649265d335196f7d95e5297645e97cbca5046f32334"
+      },
+      "data": {
+       "end": "2026-10-28",
+       "end_exclusive": true,
+       "frequency": "1d",
+       "holdout_start": "2021-08-28",
+       "parts": "train = trading days in [start, holdout_start); holdout = [holdout_start, end)",
+       "source": "refdata",
+       "start": "2001-01-02",
+       "timezone": "Asia/Taipei"
+      },
+      "engine": "target_v1",
+      "gates": {
+       "benchmark": {
+        "hac_lags": 5,
+        "underlying": {
+         "multi": "0050 total return",
+         "tw_futures": "TX back-adjusted continuous daily close (refdata TAIFEX daily, roll before settlement)",
+         "tw_stock": "0050 total return"
+        }
+       },
+       "cost_stress": {
+        "scope": "commission, tax and slippage of every fill (rebalance, roll, margin_call, forced_liquidation) x multiplier"
+       },
+       "execution_timing": {
+        "scenarios": {
+         "next_open": [
+          "signal_close",
+          "signal_lag_1d"
+         ],
+         "signal_close": [
+          "next_open",
+          "signal_lag_1d"
+         ]
+        },
+        "signal_lag_1d": "the spec's own execution, every signal series one row late"
+       },
+       "holdout": {
+        "family_reuse": "report_only"
+       },
+       "regime_split": {
+        "daily_bars": "the 1x underlying's daily bars (benchmark.underlying)",
+        "day_label": "state after the latest underlying bar dated strictly before the day"
+       },
+       "wfe": {
+        "budget_seconds": 3600,
+        "days": "calendar",
+        "layouts": [
+         {
+          "is_days": 1460,
+          "oos_days": 365,
+          "windows": 5
+         },
+         {
+          "is_days": 730,
+          "oos_days": 182,
+          "windows": 4
+         }
+        ],
+        "max_trials_per_window": 16,
+        "objective": "sharpe_daily"
+       }
+      },
+      "holdout": {
+       "fraction": 0.2,
+       "locked": true
+      },
+      "optimize": {
+       "budget_seconds": 3600,
+       "max_consecutive_duplicates": 100,
+       "max_trials": 45,
+       "neighbour_steps": 1,
+       "objective": "sharpe_daily",
+       "sampler": "tpe"
+      },
+      "refdata": {
+       "datasets": {
+        "taifex_futures_daily": "f865629950a3f305695e957238ee5cbfcd9e4f035ee3d1b4074e67e8ae23f721",
+        "taifex_settlement_calendar": "f7a783f2242b991fd1eb02ce96c6c7aecb09c53050eb52dc2d8d8acf987c1718",
+        "thalassa_tw_stock_daily": "9fe299c3d99b6041124ee4311f0d32eb20492c47d35a6a63ff9e7e2c9e5b71ca",
+        "tw_corporate_actions": "d8981eb7b45739e9d7baf7e38b0470efdd9eca0361c19f2cd08db19d4a850f4e",
+        "twse_market_calendar": "4d88106e045f56cb1314f3f519010296de69e3deaa4c312ee5f50fe837785791",
+        "twse_taiex_daily": "0d891327ca6a587d97b1ab96c799c8c32e1633bd6fca10c60a0c96ca6599599c",
+        "twse_taiex_total_return": "1f57435bb72d3bb9c2558bacd501e908ab3fa1d84c19147a95cc087310f888ca"
+       },
+       "note": "manifest content_sha256 at run creation (provenance); the daily job appends rows later, each stage records the hash of the window it actually read"
+      },
+      "registry_version": 2,
+      "seed": 0,
+      "shadow_paper": {
+       "calendar_horizon_days": 120,
+       "max_calendar_days": 90,
+       "mode": "daily_target",
+       "protection": {
+        "daily_loss_multiple": 3.0,
+        "daily_loss_quantile": 0.95,
+        "fail_on_forced_liquidation": true,
+        "max_drawdown_multiple": 1.5
+       },
+       "source_retry_minutes": 60,
+       "stale_after_trading_days": 3,
+       "wake_local_time": "09:30",
+       "wake_weekdays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+       ]
+      },
+      "spec_faithfulness": {
+       "blocking": false,
+       "endpoint": "/systemone",
+       "estimate_usd_per_call": 0.0002,
+       "max_calls_per_attempt": 120,
+       "max_clauses": 40,
+       "max_cost_usd_per_attempt": 0.05,
+       "model": "typesafe/jev-1.13",
+       "precheck": "strict",
+       "provider": "openrouter",
+       "qualification": {
+        "agreement_min": 0.95,
+        "contradicts_recall_min": 1.0,
+        "control_set": "local_dev/design/pv2-jev-control-set.jsonl (owner-labelled)",
+        "status": "not_qualified"
+       },
+       "request_timeout_seconds": 30
+      },
+      "spec_source": "spec_generate",
+      "spec_validator": "spec_v3",
+      "spec_version": 3,
+      "stage_plan": [
+       "spec_generate",
+       "spec_validate",
+       "spec_faithfulness",
+       "backtest",
+       "optimize",
+       "param_stability",
+       "dsr",
+       "cost_stress",
+       "regime_split",
+       "benchmark",
+       "execution_timing",
+       "wfe",
+       "holdout",
+       "shadow_paper",
+       "awaiting_release"
+      ],
+      "strategy_class": "daily_fixed",
+      "thresholds": {
+       "benchmark_alpha_t_min": 1.65,
+       "cost_stress_multiplier": 2.0,
+       "cost_stress_pnl_positive": true,
+       "dsr_min": 0.95,
+       "dsr_min_obs": 250,
+       "execution_timing_pnl_positive": true,
+       "execution_timing_sharpe_ratio_min": 0.5,
+       "holdout_alpha_positive": true,
+       "holdout_min_days": 250,
+       "holdout_pnl_positive": true,
+       "holdout_se_z": 1.96,
+       "holdout_sharpe_decay_max": 0.5,
+       "liquidation_fails": true,
+       "paper_min_trading_days": 20,
+       "paper_pnl_tolerance_ticks": 1,
+       "paper_target_match_min": 0.95,
+       "param_min_neighbours": 2,
+       "param_neighbourhood_profitable_min": 0.6,
+       "regime_atr_days": 20,
+       "regime_min_days_per_segment": 60,
+       "regime_min_segments": 3,
+       "regime_profitable_segments_min": 3,
+       "regime_trend_sma_days": 60,
+       "regime_vol_median_days": 250,
+       "wfe_min": 0.5
+      },
+      "version": 6
+     },
+     "intraday_fixed": {
+      "backtest": {
+       "bar_label": "open",
+       "cost_model": "tw_futures_pipeline",
+       "gap_aware_stops": true,
+       "initial_capital_twd": 1000000.0,
+       "market": "tw_futures",
+       "sharpe": {
+        "annualisation_factor": 252,
+        "period": "trading_day"
+       },
+       "sizing": {
+        "contracts": 1,
+        "mode": "fixed_contracts"
+       },
+       "symbol": "TX"
+      },
+      "data": {
+       "end": "2026-10-28",
+       "end_exclusive": true,
+       "holdout_start": "2025-06-28T00:00:00+00:00",
+       "interval": "5m",
+       "source": "thalassa",
+       "start": "2020-03-02",
+       "timezone": "Asia/Taipei"
+      },
+      "gates": {
+       "benchmark": {
+        "hac_lags": 5
+       },
+       "cost_stress": {
+        "stop_slippage_ticks": 1.0
+       },
+       "holdout": {
+        "family_reuse": "report_only"
+       },
+       "regime_split": {
+        "daily_bars": "train-part 5m bars resampled per TX trading day (night session -> next day session)"
+       },
+       "warmup_days": 14,
+       "wfe": {
+        "budget_seconds": 3600,
+        "is_days": 730,
+        "max_trials_per_window": 16,
+        "objective": "sharpe_daily",
+        "oos_days": 182,
+        "windows": 4
+       }
+      },
+      "holdout": {
+       "fraction": 0.2,
+       "locked": true
+      },
+      "optimize": {
+       "budget_seconds": 3600,
+       "max_consecutive_duplicates": 100,
+       "max_trials": 45,
+       "neighbour_steps": 1,
+       "objective": "sharpe_daily",
+       "sampler": "tpe"
+      },
+      "seed": 0,
+      "shadow_paper": {
+       "max_trading_days": 60,
+       "protection": {
+        "daily_loss_multiple": 3.0,
+        "daily_loss_quantile": 0.95,
+        "max_drawdown_multiple": 1.5
+       },
+       "source_retry_minutes": 60,
+       "stale_after_weekdays": 3,
+       "wake_local_time": "09:30",
+       "wake_weekdays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+       ]
+      },
+      "spec_generate": {
+       "estimate_usd_per_mtok": {
+        "completion": 1.2,
+        "prompt": 0.3
+       },
+       "max_cost_usd_per_attempt": 0.05,
+       "max_idea_chars": 4000,
+       "max_repair_rounds": 2,
+       "max_tokens": 6000,
+       "model": "deepseek/deepseek-v4.1-flash-1017",
+       "provider": "openrouter",
+       "reasoning_enabled": false,
+       "request_timeout_seconds": 120,
+       "temperature": 0.0
+      },
+      "spec_validator": "dsl_v2",
+      "stage_plan": [
+       "spec_generate",
+       "spec_validate",
+       "backtest",
+       "optimize",
+       "param_stability",
+       "dsr",
+       "cost_stress",
+       "regime_split",
+       "benchmark",
+       "wfe",
+       "holdout",
+       "shadow_paper",
+       "awaiting_release"
+      ],
+      "thresholds": {
+       "benchmark_alpha_t_min": 1.0,
+       "cost_stress_multiplier": 2.0,
+       "cost_stress_pnl_positive": true,
+       "dsr_min": 0.95,
+       "dsr_min_obs": 30,
+       "holdout_alpha_positive": true,
+       "holdout_min_trades": 20,
+       "holdout_pnl_positive": true,
+       "holdout_se_z": 1.96,
+       "holdout_sharpe_decay_max": 0.5,
+       "paper_min_trades": 10,
+       "paper_min_trading_days": 20,
+       "paper_replay_match_min": 0.9,
+       "paper_replay_tolerance_ticks": 1,
+       "param_min_neighbours": 2,
+       "param_neighbourhood_profitable_min": 0.6,
+       "regime_atr_days": 20,
+       "regime_min_segments": 3,
+       "regime_min_trades_per_segment": 5,
+       "regime_profitable_segments_min": 3,
+       "regime_trend_sma_days": 60,
+       "regime_vol_median_days": 250,
+       "wfe_min": 0.5
+      },
+      "version": 5
+     }
+    },
+    "routing": {
+     "by": "spec_generate",
+     "classes": [
+      "daily_equity",
+      "daily_fixed",
+      "intraday_fixed"
+     ],
+     "note": "spec_generate's report names the class (route); later stages run on by_class[class]"
+    },
+    "spec_faithfulness": {
+     "blocking": false,
+     "endpoint": "/systemone",
+     "estimate_usd_per_call": 0.0002,
+     "max_calls_per_attempt": 120,
+     "max_clauses": 40,
+     "max_cost_usd_per_attempt": 0.05,
+     "model": "typesafe/jev-1.13",
+     "precheck": "strict",
+     "provider": "openrouter",
+     "qualification": {
+      "agreement_min": 0.95,
+      "contradicts_recall_min": 1.0,
+      "control_set": "local_dev/design/pv2-jev-control-set.jsonl (owner-labelled)",
+      "status": "not_qualified"
+     },
+     "request_timeout_seconds": 30
+    },
+    "spec_generate": {
+     "estimate_usd_per_mtok": {
+      "completion": 1.2,
+      "prompt": 0.3
+     },
+     "max_cost_usd_per_attempt": 0.1,
+     "max_idea_chars": 4000,
+     "max_repair_rounds": 2,
+     "max_tokens": 16000,
+     "model": "deepseek/deepseek-v4.1-flash-1017",
+     "prompt": "spec_v3",
+     "provider": "openrouter",
+     "reasoning_enabled": false,
+     "request_timeout_seconds": 240,
+     "temperature": 0.0
+    },
+    "stage_plan": [
+     "spec_generate",
+     "spec_validate",
+     "spec_faithfulness",
+     "backtest",
+     "optimize",
+     "param_stability",
+     "dsr",
+     "cost_stress",
+     "regime_split",
+     "benchmark",
+     "execution_timing",
+     "wfe",
+     "holdout",
+     "shadow_paper",
+     "awaiting_release"
+    ],
+    "version": 7
+   },
+   "config_sha256": "8f324b210d13dabbc06617b043515bd9e03acbe3f7903f6f85590f4991470fb4",
+   "route": {
+    "components": [
+     "allocation.single",
+     "direction.constant",
+     "execution.next_open",
+     "hedge.protective_put",
+     "leverage.base",
+     "rebalance.daily",
+     "regime.ma_band",
+     "risk.vol_cap",
+     "roll.before_settlement",
+     "sizing.target_leverage"
+    ],
+    "data": {
+     "end": "2026-10-28",
+     "end_exclusive": true,
+     "frequency": "1d",
+     "holdout_start": "2021-11-07",
+     "parts": "train = trading days in [start, holdout_start); holdout = [holdout_start, end)",
+     "source": "refdata",
+     "start": "2001-12-24",
+     "start_rule": {
+      "binding_series": "taifex_txo_daily",
+      "default_start": "2001-01-02",
+      "no_warmup_series": [
+       "taifex_txo_daily"
+      ],
+      "rule": "start = max(default_start, latest first day of a series the spec reads + warm-up)",
+      "series_since": {
+       "taifex_futures_daily/TX": "1998-07-21",
+       "taifex_txo_daily": "2001-12-24",
+       "twse_taiex_daily": "1999-01-05"
+      },
+      "source": "refdata dataset manifests (coverage.start; futures: the product's first row)",
+      "warmup_bars": 251,
+      "warmup_calendar_days": 381
+     },
+     "timezone": "Asia/Taipei"
+    },
+    "engine": "target_v1",
+    "strategy_class": "daily_equity"
+   },
+   "run_no": 17,
+   "spec_generate_spec": {
+    "allocation": {
+     "component": "allocation.single"
+    },
+    "capital": {
+     "initial_twd": 3000000
+    },
+    "execution": {
+     "component": "execution.next_open"
+    },
+    "frequency": "1d",
+    "instruments": {
+     "core": {
+      "roll": {
+       "component": "roll.before_settlement",
+       "params": {
+        "days_before": 1
+       }
+      },
+      "symbol": "TMF"
+     }
+    },
+    "name": "tmf_dynamic_leverage_3x_put",
+    "params": {
+     "ma_days": {
+      "default": 200,
+      "high": 250,
+      "low": 150,
+      "step": 25,
+      "type": "int"
+     },
+     "moneyness": {
+      "default": 0.05,
+      "high": 0.1,
+      "low": 0.025,
+      "step": 0.025,
+      "type": "float"
+     },
+     "vol_k": {
+      "default": 0.75,
+      "high": 1.0,
+      "low": 0.5,
+      "step": 0.125,
+      "type": "float"
+     }
+    },
+    "sleeves": [
+     {
+      "direction": {
+       "component": "direction.constant",
+       "params": {
+        "side": "long"
+       }
+      },
+      "exits": [],
+      "hedges": [
+       {
+        "component": "hedge.protective_put",
+        "params": {
+         "cover_ratio": 1.0,
+         "moneyness_pct": {
+          "$param": "moneyness"
+         },
+         "roll_days_before_expiry": 5,
+         "tenor": "front"
+        }
+       }
+      ],
+      "id": "main",
+      "instrument": "core",
+      "leverage": [
+       {
+        "component": "leverage.base",
+        "params": {
+         "value": 3.0
+        }
+       },
+       {
+        "component": "regime.ma_band",
+        "params": {
+         "band_pct": 0.02,
+         "ma_days": {
+          "$param": "ma_days"
+         },
+         "off_leverage": 0.5,
+         "signal": "index:taiex"
+        }
+       },
+       {
+        "component": "risk.vol_cap",
+        "params": {
+         "k": {
+          "$param": "vol_k"
+         },
+         "signal": "index:taiex",
+         "window_days": 20
+        }
+       }
+      ],
+      "rebalance": {
+       "component": "rebalance.daily",
+       "params": {
+        "min_change_units": 1
+       }
+      },
+      "sizing": {
+       "component": "sizing.target_leverage",
+       "params": {
+        "rounding": "floor"
+       }
+      }
+     }
+    ],
+    "spec_version": 3
+   },
+   "spec_validate_report": {
+    "errors": [],
+    "feasibility": {
+     "end": "2026-10-28",
+     "prices": {
+      "TX": [
+       5111.0,
+       18022.0
+      ]
+     },
+     "prices_source": "refdata taifex_futures_daily, nearest monthly contract's day close: (first train day, max over the train part); the holdout part is not read",
+     "series_since": {
+      "taifex_futures_daily/TX": "1998-07-21",
+      "taifex_txo_daily": "2001-12-24",
+      "twse_taiex_daily": "1999-01-05"
+     },
+     "start": "2001-12-24"
+    },
+    "grid_size": 100,
+    "notes": [
+     "TMF: priced with TX prices for the whole window (proxy); 2001-12-24 - 2024-07-29 is before the TMF listing (2024-07-29), simulated with TMF contract specs on TX prices"
+    ],
+    "params": {
+     "ma_days": {
+      "default": 200,
+      "grid": [
+       150,
+       175,
+       200,
+       225,
+       250
+      ],
+      "high": 250,
+      "low": 150,
+      "step": 25,
+      "type": "int"
+     },
+     "moneyness": {
+      "default": 0.05,
+      "grid": [
+       0.025,
+       0.05,
+       0.075,
+       0.1
+      ],
+      "high": 0.1,
+      "low": 0.025,
+      "step": 0.025,
+      "type": "float"
+     },
+     "vol_k": {
+      "default": 0.75,
+      "grid": [
+       0.5,
+       0.625,
+       0.75,
+       0.875,
+       1.0
+      ],
+      "high": 1.0,
+      "low": 0.5,
+      "step": 0.125,
+      "type": "float"
+     }
+    },
+    "resolved_spec_sha256": "4af9ab048a74aba72fe48c67993bd3c1ba5ec7363d4d7b8a83de1d697979387b",
+    "spec": {
+     "allocation": {
+      "component": "allocation.single"
+     },
+     "capital": {
+      "initial_twd": 3000000
+     },
+     "execution": {
+      "component": "execution.next_open"
+     },
+     "frequency": "1d",
+     "instruments": {
+      "core": {
+       "roll": {
+        "component": "roll.before_settlement",
+        "params": {
+         "days_before": 1
+        }
+       },
+       "symbol": "TMF"
+      }
+     },
+     "name": "tmf_dynamic_leverage_3x_put",
+     "params": {
+      "ma_days": {
+       "default": 200,
+       "high": 250,
+       "low": 150,
+       "step": 25,
+       "type": "int"
+      },
+      "moneyness": {
+       "default": 0.05,
+       "high": 0.1,
+       "low": 0.025,
+       "step": 0.025,
+       "type": "float"
+      },
+      "vol_k": {
+       "default": 0.75,
+       "high": 1.0,
+       "low": 0.5,
+       "step": 0.125,
+       "type": "float"
+      }
+     },
+     "sleeves": [
+      {
+       "direction": {
+        "component": "direction.constant",
+        "params": {
+         "side": "long"
+        }
+       },
+       "exits": [],
+       "hedges": [
+        {
+         "component": "hedge.protective_put",
+         "params": {
+          "cover_ratio": 1.0,
+          "moneyness_pct": 0.05,
+          "roll_days_before_expiry": 5,
+          "tenor": "front"
+         }
+        }
+       ],
+       "id": "main",
+       "instrument": "core",
+       "leverage": [
+        {
+         "component": "leverage.base",
+         "params": {
+          "value": 3.0
+         }
+        },
+        {
+         "component": "regime.ma_band",
+         "params": {
+          "band_pct": 0.02,
+          "ma_days": 200,
+          "off_leverage": 0.5,
+          "signal": "index:taiex"
+         }
+        },
+        {
+         "component": "risk.vol_cap",
+         "params": {
+          "k": 0.75,
+          "signal": "index:taiex",
+          "window_days": 20
+         }
+        }
+       ],
+       "rebalance": {
+        "component": "rebalance.daily",
+        "params": {
+         "min_change_units": 1
+        }
+       },
+       "sizing": {
+        "component": "sizing.target_leverage",
+        "params": {
+         "rounding": "floor"
+        }
+       }
+      }
+     ],
+     "spec_version": 3
+    },
+    "spec_sha256": "494e57012fe0ff30bf5fdb80c162c5bb0d85ad529af0ec37da2a5730479dba68",
+    "strategy_class": "daily_equity",
+    "summary": "spec_validate ✅ daily_equity, 3 $params (100 grid points), 1 note(s), window from 2001-12-24 (taifex_txo_daily data from 2001-12-24 + warm-up)",
+    "template": {
+     "allocation": {
+      "component": "allocation.single"
+     },
+     "capital": {
+      "initial_twd": 3000000
+     },
+     "execution": {
+      "component": "execution.next_open"
+     },
+     "frequency": "1d",
+     "instruments": {
+      "core": {
+       "roll": {
+        "component": "roll.before_settlement",
+        "params": {
+         "days_before": 1
+        }
+       },
+       "symbol": "TMF"
+      }
+     },
+     "name": "tmf_dynamic_leverage_3x_put",
+     "params": {
+      "ma_days": {
+       "default": 200,
+       "high": 250,
+       "low": 150,
+       "step": 25,
+       "type": "int"
+      },
+      "moneyness": {
+       "default": 0.05,
+       "high": 0.1,
+       "low": 0.025,
+       "step": 0.025,
+       "type": "float"
+      },
+      "vol_k": {
+       "default": 0.75,
+       "high": 1.0,
+       "low": 0.5,
+       "step": 0.125,
+       "type": "float"
+      }
+     },
+     "sleeves": [
+      {
+       "direction": {
+        "component": "direction.constant",
+        "params": {
+         "side": "long"
+        }
+       },
+       "exits": [],
+       "hedges": [
+        {
+         "component": "hedge.protective_put",
+         "params": {
+          "cover_ratio": 1.0,
+          "moneyness_pct": {
+           "$param": "moneyness"
+          },
+          "roll_days_before_expiry": 5,
+          "tenor": "front"
+         }
+        }
+       ],
+       "id": "main",
+       "instrument": "core",
+       "leverage": [
+        {
+         "component": "leverage.base",
+         "params": {
+          "value": 3.0
+         }
+        },
+        {
+         "component": "regime.ma_band",
+         "params": {
+          "band_pct": 0.02,
+          "ma_days": {
+           "$param": "ma_days"
+          },
+          "off_leverage": 0.5,
+          "signal": "index:taiex"
+         }
+        },
+        {
+         "component": "risk.vol_cap",
+         "params": {
+          "k": {
+           "$param": "vol_k"
+          },
+          "signal": "index:taiex",
+          "window_days": 20
+         }
+        }
+       ],
+       "rebalance": {
+        "component": "rebalance.daily",
+        "params": {
+         "min_change_units": 1
+        }
+       },
+       "sizing": {
+        "component": "sizing.target_leverage",
+        "params": {
+         "rounding": "floor"
+        }
+       }
+      }
+     ],
+     "spec_version": 3
+    },
+    "unsupported": [],
+    "validator": "spec_v3"
+   },
+   "stages": [
+    {
+     "artifact_sha256": "70d496e570b8600bba548ae09ef22e9e0903ce3aad88e07a98feae05bb6376d0",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "12fbe17d8434f983c532f1a48afbb0e62d1ec42219ecbeed7c6c2a69ca2f4863",
+     "stage": "spec_generate",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "3e8cead2688a9b3e30217212b8c03590a1657ac166b36ca75a7a70935a8e99de",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "9ce7dee1e47af814b960ebeb755f2d200cf5e1f9bdee65d2c0a0c5cb5fd971db",
+     "stage": "spec_validate",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "6bffc8f68ae63026ce2a36618508b01e4d8ce0ec46456bcc7a5f8e3e616f1c8a",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "015cd6436fe7d1c4f04997db8eaa633b9712782b9aac38dd14fe03e6c28e587c",
+     "stage": "spec_faithfulness",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "2c3f0a6a10fe89a20a14abd98be816b4e85d3806190c71a0f23a16b2cdc0fcbd",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "4ca3701837c0add22d9b7cafe1f95c75c39304e8f6f69ae715fae98291c740d4",
+     "stage": "backtest",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "081a4f7cf425efeef860eabe0fdf77f03c8b9808f995a86336cfc86cf3da11aa",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "cee728a8df95858979d54e8304c50ccb5bf568c6a9dbb65a0d0059cdeb2ab0fd",
+     "stage": "optimize",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "ee57adf02c24e3aebee810f98bd163504c6b7379346d80644e0d6c76aaeb3d7d",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "e003b1e23c81f27acf40b125de32a08c1e29f1017dbbfccb1bcd9abb9edc1444",
+     "stage": "param_stability",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "a66cb9c625f693920e5ab19211a49996011546b08dba64352bbffbda8d4d1d08",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "215a16a539ada2f387ffb8f81fbdc49012d9d0f328e784bee90d1df392370d83",
+     "stage": "dsr",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "da86ea6539220f536c4e736d8d99b5fde6dc674b83566d25766dc127b18c0e6d",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "4e85743c932db8ec236c0c72077ef861259c8ce9a31730aca100c8fab8a7d15d",
+     "stage": "cost_stress",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "301e0949be88b0c864d7359c930aa27c04762d52522c3e8e968e8e2f2904d7da",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "a32c4d1da20391fb006142d648c3fba5a9bb403d47f97b5ac41717b61feb469f",
+     "stage": "regime_split",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "7dc19054920c43078cba104b5c5fbaaa4f06f91f5d98088b252d445d1eb5b560",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "2396900c4e800cc241a4952b1db3f846eeee726db898e35ea382d58f61a2fb18",
+     "stage": "benchmark",
+     "status": "completed",
+     "verdict": "fail"
+    }
+   ],
+   "status": "failed"
+  },
+  "18": {
+   "config_json": {
+    "backtest": {
+     "truncation_audit_cuts": 5
+    },
+    "capability_brief_sha256": "e6431e39cb60cfd5d68e3a4405a7d8acdd8e3ebcadcd773511c5854e3ffb9933",
+    "components": {
+     "allocation.single@1": "6b6caa2124b9b1b654728b9a4b91e81f481895fbd4e569243151bc3bf055a9d2",
+     "direction.constant@1": "94e458eb5aa40fb940c882d7d7a7f9c85a1d7fae5ada660099ca6b100366a2a9",
+     "execution.next_open@1": "19df267b3d44c0f5aa32bfdde168fae264088dbda795ff9bd98e732a4aaa118b",
+     "leverage.base@1": "c15e6fcd24e64c0a2cfe2dcbb0c95230960edb452f9366c02c11bc054eb9cd16",
+     "leverage.drawdown_ladder@1": "2147e2a667034bd0d0f8ab701a999e57c9e0c877f79684d56b6276de49458224",
+     "rebalance.daily@1": "d6182204b2f65e2294eb154e645ae1dabf32ffcc2ed9420ad695ec997c870696",
+     "roll.before_settlement@1": "62355055d7924ac17fbd12a7116f2523029c43fafa8857e905774d387761dbd6",
+     "sizing.target_leverage@1": "9dd0fba490bf5815bc8af649265d335196f7d95e5297645e97cbca5046f32334"
+    },
+    "data": {
+     "end": "2026-10-28",
+     "end_exclusive": true,
+     "frequency": "1d",
+     "holdout_start": "2021-09-02",
+     "parts": "train = trading days in [start, holdout_start); holdout = [holdout_start, end)",
+     "source": "refdata",
+     "start": "2001-01-28",
+     "start_rule": {
+      "binding_series": "twse_taiex_daily",
+      "default_start": "2001-01-02",
+      "rule": "start = max(default_start, latest first day of a series the spec reads + warm-up)",
+      "series_since": {
+       "taifex_futures_daily/TX": "1998-07-21",
+       "twse_taiex_daily": "1999-01-05"
+      },
+      "source": "refdata dataset manifests (coverage.start; futures: the product's first row)",
+      "warmup_bars": 501,
+      "warmup_calendar_days": 754
+     },
+     "timezone": "Asia/Taipei"
+    },
+    "engine": "target_v1",
+    "gates": {
+     "benchmark": {
+      "hac_lags": 5,
+      "underlying": {
+       "multi": "0050 total return",
+       "tw_futures": "TX back-adjusted continuous daily close (refdata TAIFEX daily, roll before settlement)",
+       "tw_stock": "0050 total return"
+      }
+     },
+     "cost_stress": {
+      "scope": "commission, tax and slippage of every fill (rebalance, roll, margin_call, forced_liquidation) x multiplier"
+     },
+     "execution_timing": {
+      "scenarios": {
+       "next_open": [
+        "signal_close",
+        "signal_lag_1d"
+       ],
+       "signal_close": [
+        "next_open",
+        "signal_lag_1d"
+       ]
+      },
+      "signal_lag_1d": "the spec's own execution, every signal series one row late"
+     },
+     "holdout": {
+      "family_reuse": "report_only"
+     },
+     "regime_split": {
+      "daily_bars": "the 1x underlying's daily bars (benchmark.underlying)",
+      "day_label": "state after the latest underlying bar dated strictly before the day"
+     },
+     "wfe": {
+      "budget_seconds": 3600,
+      "days": "calendar",
+      "layouts": [
+       {
+        "is_days": 1460,
+        "oos_days": 365,
+        "windows": 5
+       },
+       {
+        "is_days": 730,
+        "oos_days": 182,
+        "windows": 4
+       }
+      ],
+      "max_trials_per_window": 16,
+      "objective": "sharpe_daily"
+     }
+    },
+    "holdout": {
+     "fraction": 0.2,
+     "locked": true
+    },
+    "optimize": {
+     "budget_seconds": 3600,
+     "max_consecutive_duplicates": 100,
+     "max_trials": 45,
+     "neighbour_steps": 1,
+     "objective": "sharpe_daily",
+     "sampler": "tpe"
+    },
+    "refdata": {
+     "datasets": {
+      "taifex_futures_daily": "f865629950a3f305695e957238ee5cbfcd9e4f035ee3d1b4074e67e8ae23f721",
+      "taifex_settlement_calendar": "f7a783f2242b991fd1eb02ce96c6c7aecb09c53050eb52dc2d8d8acf987c1718",
+      "twse_market_calendar": "4d88106e045f56cb1314f3f519010296de69e3deaa4c312ee5f50fe837785791",
+      "twse_taiex_daily": "0d891327ca6a587d97b1ab96c799c8c32e1633bd6fca10c60a0c96ca6599599c",
+      "twse_taiex_total_return": "1f57435bb72d3bb9c2558bacd501e908ab3fa1d84c19147a95cc087310f888ca"
+     },
+     "note": "manifest content_sha256 at run creation (provenance); the daily job appends rows later, each stage records the hash of the window it actually read"
+    },
+    "registry_version": 2,
+    "seed": 0,
+    "shadow_paper": {
+     "calendar_horizon_days": 120,
+     "max_calendar_days": 90,
+     "mode": "daily_target",
+     "protection": {
+      "daily_loss_multiple": 3.0,
+      "daily_loss_quantile": 0.95,
+      "fail_on_forced_liquidation": true,
+      "max_drawdown_multiple": 1.5
+     },
+     "source_retry_minutes": 60,
+     "stale_after_trading_days": 3,
+     "wake_local_time": "09:30",
+     "wake_weekdays": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+     ]
+    },
+    "spec_faithfulness": {
+     "blocking": false,
+     "endpoint": "/systemone",
+     "estimate_usd_per_call": 0.0002,
+     "max_calls_per_attempt": 120,
+     "max_clauses": 40,
+     "max_cost_usd_per_attempt": 0.05,
+     "model": "typesafe/jev-1.13",
+     "precheck": "strict",
+     "provider": "openrouter",
+     "qualification": {
+      "agreement_min": 0.95,
+      "contradicts_recall_min": 1.0,
+      "control_set": "local_dev/design/pv2-jev-control-set.jsonl (owner-labelled)",
+      "status": "not_qualified"
+     },
+     "request_timeout_seconds": 30
+    },
+    "spec_validator": "spec_v3",
+    "spec_version": 3,
+    "stage_plan": [
+     "spec_validate",
+     "spec_faithfulness",
+     "backtest",
+     "optimize",
+     "param_stability",
+     "dsr",
+     "cost_stress",
+     "regime_split",
+     "benchmark",
+     "execution_timing",
+     "wfe",
+     "holdout",
+     "shadow_paper",
+     "awaiting_release"
+    ],
+    "strategy_class": "daily_equity",
+    "thresholds": {
+     "benchmark_alpha_t_min": 1.65,
+     "cost_stress_multiplier": 2.0,
+     "cost_stress_pnl_positive": true,
+     "dsr_min": 0.95,
+     "dsr_min_obs": 250,
+     "execution_timing_pnl_positive": true,
+     "execution_timing_sharpe_ratio_min": 0.5,
+     "holdout_alpha_positive": true,
+     "holdout_min_days": 250,
+     "holdout_pnl_positive": true,
+     "holdout_se_z": 1.96,
+     "holdout_sharpe_decay_max": 0.5,
+     "liquidation_fails": true,
+     "paper_min_trading_days": 20,
+     "paper_pnl_tolerance_ticks": 1,
+     "paper_target_match_min": 0.95,
+     "param_min_neighbours": 2,
+     "param_neighbourhood_profitable_min": 0.6,
+     "regime_atr_days": 20,
+     "regime_min_days_per_segment": 60,
+     "regime_min_segments": 3,
+     "regime_profitable_segments_min": 3,
+     "regime_trend_sma_days": 60,
+     "regime_vol_median_days": 250,
+     "wfe_min": 0.5
+    },
+    "version": 6
+   },
+   "config_sha256": "1d08d9e6693a3776ee916289a25a27d28a0f39b9fdd40544ffabe96f5cd1868e",
+   "input_spec_json": {
+    "allocation": {
+     "component": "allocation.single"
+    },
+    "capital": {
+     "initial_twd": 3000000
+    },
+    "execution": {
+     "component": "execution.next_open"
+    },
+    "frequency": "1d",
+    "instruments": {
+     "core": {
+      "roll": {
+       "component": "roll.before_settlement",
+       "params": {
+        "days_before": 1
+       }
+      },
+      "symbol": "TMF"
+     }
+    },
+    "name": "tmf_dip_leverage_ladder",
+    "params": {
+     "lookback_days": {
+      "default": 250,
+      "high": 500,
+      "low": 125,
+      "step": 125,
+      "type": "int"
+     }
+    },
+    "sleeves": [
+     {
+      "direction": {
+       "component": "direction.constant",
+       "params": {
+        "side": "long"
+       }
+      },
+      "exits": [],
+      "hedges": [],
+      "id": "main",
+      "instrument": "core",
+      "leverage": [
+       {
+        "component": "leverage.base",
+        "params": {
+         "value": 1.0
+        }
+       },
+       {
+        "component": "leverage.drawdown_ladder",
+        "params": {
+         "hold": true,
+         "lookback_days": {
+          "$param": "lookback_days"
+         },
+         "release_drawdown_pct": 0.02,
+         "signal": "index:taiex",
+         "steps": [
+          {
+           "drawdown_pct": 0.1,
+           "leverage": 2.0
+          }
+         ]
+        }
+       }
+      ],
+      "rebalance": {
+       "component": "rebalance.daily",
+       "params": {
+        "min_change_units": 1
+       }
+      },
+      "sizing": {
+       "component": "sizing.target_leverage",
+       "params": {
+        "rounding": "floor"
+       }
+      }
+     }
+    ],
+    "spec_version": 3
+   },
+   "route": null,
+   "run_no": 18,
+   "spec_validate_report": {
+    "errors": [],
+    "feasibility": {
+     "end": "2026-10-28",
+     "prices": {
+      "TX": [
+       5658.0,
+       18022.0
+      ]
+     },
+     "prices_source": "refdata taifex_futures_daily, nearest monthly contract's day close: (first train day, max over the train part); the holdout part is not read",
+     "series_since": {
+      "taifex_futures_daily/TX": "1998-07-21",
+      "twse_taiex_daily": "1999-01-05"
+     },
+     "start": "2001-01-28"
+    },
+    "grid_size": 4,
+    "notes": [
+     "TMF: priced with TX prices for the whole window (proxy); 2001-01-28 - 2024-07-29 is before the TMF listing (2024-07-29), simulated with TMF contract specs on TX prices"
+    ],
+    "params": {
+     "lookback_days": {
+      "default": 250,
+      "grid": [
+       125,
+       250,
+       375,
+       500
+      ],
+      "high": 500,
+      "low": 125,
+      "step": 125,
+      "type": "int"
+     }
+    },
+    "resolved_spec_sha256": "31ea75a3a42bec17dcd540ff253a3b6a9f4b5b0e3199eaea4d8259303625fa1e",
+    "spec": {
+     "allocation": {
+      "component": "allocation.single"
+     },
+     "capital": {
+      "initial_twd": 3000000
+     },
+     "execution": {
+      "component": "execution.next_open"
+     },
+     "frequency": "1d",
+     "instruments": {
+      "core": {
+       "roll": {
+        "component": "roll.before_settlement",
+        "params": {
+         "days_before": 1
+        }
+       },
+       "symbol": "TMF"
+      }
+     },
+     "name": "tmf_dip_leverage_ladder",
+     "params": {
+      "lookback_days": {
+       "default": 250,
+       "high": 500,
+       "low": 125,
+       "step": 125,
+       "type": "int"
+      }
+     },
+     "sleeves": [
+      {
+       "direction": {
+        "component": "direction.constant",
+        "params": {
+         "side": "long"
+        }
+       },
+       "exits": [],
+       "hedges": [],
+       "id": "main",
+       "instrument": "core",
+       "leverage": [
+        {
+         "component": "leverage.base",
+         "params": {
+          "value": 1.0
+         }
+        },
+        {
+         "component": "leverage.drawdown_ladder",
+         "params": {
+          "hold": true,
+          "lookback_days": 250,
+          "release_drawdown_pct": 0.02,
+          "signal": "index:taiex",
+          "steps": [
+           {
+            "drawdown_pct": 0.1,
+            "leverage": 2.0
+           }
+          ]
+         }
+        }
+       ],
+       "rebalance": {
+        "component": "rebalance.daily",
+        "params": {
+         "min_change_units": 1
+        }
+       },
+       "sizing": {
+        "component": "sizing.target_leverage",
+        "params": {
+         "rounding": "floor"
+        }
+       }
+      }
+     ],
+     "spec_version": 3
+    },
+    "spec_sha256": "141e0cc780890ed9c5517a93a69f8c73afbbf743e83caeaa7d1af0c81413cc37",
+    "strategy_class": "daily_equity",
+    "summary": "spec_validate ✅ daily_equity, 1 $params (4 grid points), 1 note(s), window from 2001-01-28 (twse_taiex_daily data from 1999-01-05 + warm-up)",
+    "template": {
+     "allocation": {
+      "component": "allocation.single"
+     },
+     "capital": {
+      "initial_twd": 3000000
+     },
+     "execution": {
+      "component": "execution.next_open"
+     },
+     "frequency": "1d",
+     "instruments": {
+      "core": {
+       "roll": {
+        "component": "roll.before_settlement",
+        "params": {
+         "days_before": 1
+        }
+       },
+       "symbol": "TMF"
+      }
+     },
+     "name": "tmf_dip_leverage_ladder",
+     "params": {
+      "lookback_days": {
+       "default": 250,
+       "high": 500,
+       "low": 125,
+       "step": 125,
+       "type": "int"
+      }
+     },
+     "sleeves": [
+      {
+       "direction": {
+        "component": "direction.constant",
+        "params": {
+         "side": "long"
+        }
+       },
+       "exits": [],
+       "hedges": [],
+       "id": "main",
+       "instrument": "core",
+       "leverage": [
+        {
+         "component": "leverage.base",
+         "params": {
+          "value": 1.0
+         }
+        },
+        {
+         "component": "leverage.drawdown_ladder",
+         "params": {
+          "hold": true,
+          "lookback_days": {
+           "$param": "lookback_days"
+          },
+          "release_drawdown_pct": 0.02,
+          "signal": "index:taiex",
+          "steps": [
+           {
+            "drawdown_pct": 0.1,
+            "leverage": 2.0
+           }
+          ]
+         }
+        }
+       ],
+       "rebalance": {
+        "component": "rebalance.daily",
+        "params": {
+         "min_change_units": 1
+        }
+       },
+       "sizing": {
+        "component": "sizing.target_leverage",
+        "params": {
+         "rounding": "floor"
+        }
+       }
+      }
+     ],
+     "spec_version": 3
+    },
+    "unsupported": [],
+    "validator": "spec_v3"
+   },
+   "stages": [
+    {
+     "artifact_sha256": "4610558780215960a3f904e1a833ff5305bd80b6933f7c35d05f05d22c2d1e37",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "a78845f5b2b854ea8b801a802bff2666eb157a38745824f8b702ce589ebb7c48",
+     "stage": "spec_validate",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "e2697f38a926825082b44b79d94952d8d69c33014daac5e8c27bfde1f46ac65a",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "f49a84ff4a91124f5ff34f687e22ff506506d7d5a3c3b1842a0c64a24047d4e4",
+     "stage": "spec_faithfulness",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "d44a397f5e283d4efc95043b364066a51e2ade1421bb9e6af0bd9528214016ac",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "ea8f826d54b4839ea925118eacf358577206f5ae8bcb14ed0002c17f1ae5978a",
+     "stage": "backtest",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "7999c1ee0c4c11fb1e5a061f572878733fbe5a8a01bbce77bff261179edfe39d",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "d0dc8e828ab81471a223e1e133db8caf1b9dcd0122201da1fe7492304f767433",
+     "stage": "optimize",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "384fc79a88f0b1856d5476d45a7ccf76f541fa0ce564839159c6d65049bae952",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "a936ef08b5462c1e268aea839c498ab7d4286807024a45713441ae110727d96e",
+     "stage": "param_stability",
+     "status": "completed",
+     "verdict": "fail"
+    }
+   ],
+   "status": "failed"
+  },
+  "19": {
+   "config_json": {
+    "backtest": {
+     "truncation_audit_cuts": 5
+    },
+    "capability_brief_sha256": "e6431e39cb60cfd5d68e3a4405a7d8acdd8e3ebcadcd773511c5854e3ffb9933",
+    "components": {
+     "allocation.single@1": "6b6caa2124b9b1b654728b9a4b91e81f481895fbd4e569243151bc3bf055a9d2",
+     "direction.constant@1": "94e458eb5aa40fb940c882d7d7a7f9c85a1d7fae5ada660099ca6b100366a2a9",
+     "execution.next_open@1": "19df267b3d44c0f5aa32bfdde168fae264088dbda795ff9bd98e732a4aaa118b",
+     "leverage.base@1": "c15e6fcd24e64c0a2cfe2dcbb0c95230960edb452f9366c02c11bc054eb9cd16",
+     "rebalance.daily@1": "d6182204b2f65e2294eb154e645ae1dabf32ffcc2ed9420ad695ec997c870696",
+     "regime.ma_band@1": "f8a83761f5526f9a187e6d62583caf084f336a8d0da9b6c3357ed80b3b31f651",
+     "roll.before_settlement@1": "62355055d7924ac17fbd12a7116f2523029c43fafa8857e905774d387761dbd6",
+     "sizing.target_leverage@1": "9dd0fba490bf5815bc8af649265d335196f7d95e5297645e97cbca5046f32334"
+    },
+    "data": {
+     "end": "2026-10-28",
+     "end_exclusive": true,
+     "frequency": "1d",
+     "holdout_start": "2021-08-28",
+     "parts": "train = trading days in [start, holdout_start); holdout = [holdout_start, end)",
+     "source": "refdata",
+     "start": "2001-01-02",
+     "timezone": "Asia/Taipei"
+    },
+    "engine": "target_v1",
+    "gates": {
+     "benchmark": {
+      "hac_lags": 5,
+      "underlying": {
+       "multi": "0050 total return",
+       "tw_futures": "TX back-adjusted continuous daily close (refdata TAIFEX daily, roll before settlement)",
+       "tw_stock": "0050 total return"
+      }
+     },
+     "cost_stress": {
+      "scope": "commission, tax and slippage of every fill (rebalance, roll, margin_call, forced_liquidation) x multiplier"
+     },
+     "execution_timing": {
+      "scenarios": {
+       "next_open": [
+        "signal_close",
+        "signal_lag_1d"
+       ],
+       "signal_close": [
+        "next_open",
+        "signal_lag_1d"
+       ]
+      },
+      "signal_lag_1d": "the spec's own execution, every signal series one row late"
+     },
+     "holdout": {
+      "family_reuse": "report_only"
+     },
+     "regime_split": {
+      "daily_bars": "the 1x underlying's daily bars (benchmark.underlying)",
+      "day_label": "state after the latest underlying bar dated strictly before the day"
+     },
+     "wfe": {
+      "budget_seconds": 3600,
+      "days": "calendar",
+      "layouts": [
+       {
+        "is_days": 1460,
+        "oos_days": 365,
+        "windows": 5
+       },
+       {
+        "is_days": 730,
+        "oos_days": 182,
+        "windows": 4
+       }
+      ],
+      "max_trials_per_window": 16,
+      "objective": "sharpe_daily"
+     }
+    },
+    "holdout": {
+     "fraction": 0.2,
+     "locked": true
+    },
+    "optimize": {
+     "budget_seconds": 3600,
+     "max_consecutive_duplicates": 100,
+     "max_trials": 45,
+     "neighbour_steps": 1,
+     "objective": "sharpe_daily",
+     "sampler": "tpe"
+    },
+    "refdata": {
+     "datasets": {
+      "taifex_futures_daily": "f865629950a3f305695e957238ee5cbfcd9e4f035ee3d1b4074e67e8ae23f721",
+      "taifex_settlement_calendar": "f7a783f2242b991fd1eb02ce96c6c7aecb09c53050eb52dc2d8d8acf987c1718",
+      "twse_market_calendar": "4d88106e045f56cb1314f3f519010296de69e3deaa4c312ee5f50fe837785791",
+      "twse_taiex_daily": "0d891327ca6a587d97b1ab96c799c8c32e1633bd6fca10c60a0c96ca6599599c",
+      "twse_taiex_total_return": "1f57435bb72d3bb9c2558bacd501e908ab3fa1d84c19147a95cc087310f888ca"
+     },
+     "note": "manifest content_sha256 at run creation (provenance); the daily job appends rows later, each stage records the hash of the window it actually read"
+    },
+    "registry_version": 2,
+    "seed": 0,
+    "shadow_paper": {
+     "calendar_horizon_days": 120,
+     "max_calendar_days": 90,
+     "mode": "daily_target",
+     "protection": {
+      "daily_loss_multiple": 3.0,
+      "daily_loss_quantile": 0.95,
+      "fail_on_forced_liquidation": true,
+      "max_drawdown_multiple": 1.5
+     },
+     "source_retry_minutes": 60,
+     "stale_after_trading_days": 3,
+     "wake_local_time": "09:30",
+     "wake_weekdays": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+     ]
+    },
+    "spec_faithfulness": {
+     "blocking": false,
+     "endpoint": "/systemone",
+     "estimate_usd_per_call": 0.0002,
+     "max_calls_per_attempt": 120,
+     "max_clauses": 40,
+     "max_cost_usd_per_attempt": 0.05,
+     "model": "typesafe/jev-1.13",
+     "precheck": "strict",
+     "provider": "openrouter",
+     "qualification": {
+      "agreement_min": 0.95,
+      "contradicts_recall_min": 1.0,
+      "control_set": "local_dev/design/pv2-jev-control-set.jsonl (owner-labelled)",
+      "status": "not_qualified"
+     },
+     "request_timeout_seconds": 30
+    },
+    "spec_validator": "spec_v3",
+    "spec_version": 3,
+    "stage_plan": [
+     "spec_validate",
+     "spec_faithfulness",
+     "backtest",
+     "optimize",
+     "param_stability",
+     "dsr",
+     "cost_stress",
+     "regime_split",
+     "benchmark",
+     "execution_timing",
+     "wfe",
+     "holdout",
+     "shadow_paper",
+     "awaiting_release"
+    ],
+    "strategy_class": "daily_equity",
+    "thresholds": {
+     "benchmark_alpha_t_min": 1.65,
+     "cost_stress_multiplier": 2.0,
+     "cost_stress_pnl_positive": true,
+     "dsr_min": 0.95,
+     "dsr_min_obs": 250,
+     "execution_timing_pnl_positive": true,
+     "execution_timing_sharpe_ratio_min": 0.5,
+     "holdout_alpha_positive": true,
+     "holdout_min_days": 250,
+     "holdout_pnl_positive": true,
+     "holdout_se_z": 1.96,
+     "holdout_sharpe_decay_max": 0.5,
+     "liquidation_fails": true,
+     "paper_min_trading_days": 20,
+     "paper_pnl_tolerance_ticks": 1,
+     "paper_target_match_min": 0.95,
+     "param_min_neighbours": 2,
+     "param_neighbourhood_profitable_min": 0.6,
+     "regime_atr_days": 20,
+     "regime_min_days_per_segment": 60,
+     "regime_min_segments": 3,
+     "regime_profitable_segments_min": 3,
+     "regime_trend_sma_days": 60,
+     "regime_vol_median_days": 250,
+     "wfe_min": 0.5
+    },
+    "version": 6
+   },
+   "config_sha256": "51b1b1f3a882f36f3c607adfef8a93d72cdab6b6bfb4de6e6e1b458bdd339e87",
+   "input_spec_json": {
+    "allocation": {
+     "component": "allocation.single"
+    },
+    "capital": {
+     "initial_twd": 1000000
+    },
+    "execution": {
+     "component": "execution.next_open"
+    },
+    "frequency": "1d",
+    "instruments": {
+     "core": {
+      "roll": {
+       "component": "roll.before_settlement",
+       "params": {
+        "days_before": 1
+       }
+      },
+      "symbol": "TMF"
+     }
+    },
+    "name": "tmf_dynamic_leverage_2x_ma",
+    "params": {
+     "band": {
+      "default": 0.02,
+      "high": 0.03,
+      "low": 0.01,
+      "step": 0.005,
+      "type": "float"
+     },
+     "ma_days": {
+      "default": 200,
+      "high": 250,
+      "low": 150,
+      "step": 25,
+      "type": "int"
+     }
+    },
+    "sleeves": [
+     {
+      "direction": {
+       "component": "direction.constant",
+       "params": {
+        "side": "long"
+       }
+      },
+      "exits": [],
+      "hedges": [],
+      "id": "main",
+      "instrument": "core",
+      "leverage": [
+       {
+        "component": "leverage.base",
+        "params": {
+         "value": 2.0
+        }
+       },
+       {
+        "component": "regime.ma_band",
+        "params": {
+         "band_pct": {
+          "$param": "band"
+         },
+         "ma_days": {
+          "$param": "ma_days"
+         },
+         "off_leverage": 0.5,
+         "signal": "index:taiex"
+        }
+       }
+      ],
+      "rebalance": {
+       "component": "rebalance.daily",
+       "params": {
+        "min_change_units": 1
+       }
+      },
+      "sizing": {
+       "component": "sizing.target_leverage",
+       "params": {
+        "rounding": "floor"
+       }
+      }
+     }
+    ],
+    "spec_version": 3
+   },
+   "route": null,
+   "run_no": 19,
+   "spec_validate_report": {
+    "errors": [],
+    "feasibility": {
+     "end": "2026-10-28",
+     "prices": {
+      "TX": [
+       4892.0,
+       18022.0
+      ]
+     },
+     "prices_source": "refdata taifex_futures_daily, nearest monthly contract's day close: (first train day, max over the train part); the holdout part is not read",
+     "start": "2001-01-02"
+    },
+    "grid_size": 25,
+    "notes": [
+     "TMF: priced with TX prices for the whole window (proxy); 2001-01-02 - 2024-07-29 is before the TMF listing (2024-07-29), simulated with TMF contract specs on TX prices"
+    ],
+    "params": {
+     "band": {
+      "default": 0.02,
+      "grid": [
+       0.01,
+       0.015,
+       0.02,
+       0.025,
+       0.03
+      ],
+      "high": 0.03,
+      "low": 0.01,
+      "step": 0.005,
+      "type": "float"
+     },
+     "ma_days": {
+      "default": 200,
+      "grid": [
+       150,
+       175,
+       200,
+       225,
+       250
+      ],
+      "high": 250,
+      "low": 150,
+      "step": 25,
+      "type": "int"
+     }
+    },
+    "resolved_spec_sha256": "c6cf5efb660ce7ecf8015bce9d8d31a0bb04df8314b61a2d2e7762ebe599df86",
+    "spec": {
+     "allocation": {
+      "component": "allocation.single"
+     },
+     "capital": {
+      "initial_twd": 1000000
+     },
+     "execution": {
+      "component": "execution.next_open"
+     },
+     "frequency": "1d",
+     "instruments": {
+      "core": {
+       "roll": {
+        "component": "roll.before_settlement",
+        "params": {
+         "days_before": 1
+        }
+       },
+       "symbol": "TMF"
+      }
+     },
+     "name": "tmf_dynamic_leverage_2x_ma",
+     "params": {
+      "band": {
+       "default": 0.02,
+       "high": 0.03,
+       "low": 0.01,
+       "step": 0.005,
+       "type": "float"
+      },
+      "ma_days": {
+       "default": 200,
+       "high": 250,
+       "low": 150,
+       "step": 25,
+       "type": "int"
+      }
+     },
+     "sleeves": [
+      {
+       "direction": {
+        "component": "direction.constant",
+        "params": {
+         "side": "long"
+        }
+       },
+       "exits": [],
+       "hedges": [],
+       "id": "main",
+       "instrument": "core",
+       "leverage": [
+        {
+         "component": "leverage.base",
+         "params": {
+          "value": 2.0
+         }
+        },
+        {
+         "component": "regime.ma_band",
+         "params": {
+          "band_pct": 0.02,
+          "ma_days": 200,
+          "off_leverage": 0.5,
+          "signal": "index:taiex"
+         }
+        }
+       ],
+       "rebalance": {
+        "component": "rebalance.daily",
+        "params": {
+         "min_change_units": 1
+        }
+       },
+       "sizing": {
+        "component": "sizing.target_leverage",
+        "params": {
+         "rounding": "floor"
+        }
+       }
+      }
+     ],
+     "spec_version": 3
+    },
+    "spec_sha256": "421c7ae796d7b49c9e826905a26a37db29c8428f4c23fcd469acb4443ea68683",
+    "strategy_class": "daily_equity",
+    "summary": "spec_validate ✅ daily_equity, 2 $params (25 grid points), 1 note(s)",
+    "template": {
+     "allocation": {
+      "component": "allocation.single"
+     },
+     "capital": {
+      "initial_twd": 1000000
+     },
+     "execution": {
+      "component": "execution.next_open"
+     },
+     "frequency": "1d",
+     "instruments": {
+      "core": {
+       "roll": {
+        "component": "roll.before_settlement",
+        "params": {
+         "days_before": 1
+        }
+       },
+       "symbol": "TMF"
+      }
+     },
+     "name": "tmf_dynamic_leverage_2x_ma",
+     "params": {
+      "band": {
+       "default": 0.02,
+       "high": 0.03,
+       "low": 0.01,
+       "step": 0.005,
+       "type": "float"
+      },
+      "ma_days": {
+       "default": 200,
+       "high": 250,
+       "low": 150,
+       "step": 25,
+       "type": "int"
+      }
+     },
+     "sleeves": [
+      {
+       "direction": {
+        "component": "direction.constant",
+        "params": {
+         "side": "long"
+        }
+       },
+       "exits": [],
+       "hedges": [],
+       "id": "main",
+       "instrument": "core",
+       "leverage": [
+        {
+         "component": "leverage.base",
+         "params": {
+          "value": 2.0
+         }
+        },
+        {
+         "component": "regime.ma_band",
+         "params": {
+          "band_pct": {
+           "$param": "band"
+          },
+          "ma_days": {
+           "$param": "ma_days"
+          },
+          "off_leverage": 0.5,
+          "signal": "index:taiex"
+         }
+        }
+       ],
+       "rebalance": {
+        "component": "rebalance.daily",
+        "params": {
+         "min_change_units": 1
+        }
+       },
+       "sizing": {
+        "component": "sizing.target_leverage",
+        "params": {
+         "rounding": "floor"
+        }
+       }
+      }
+     ],
+     "spec_version": 3
+    },
+    "unsupported": [],
+    "validator": "spec_v3"
+   },
+   "stages": [
+    {
+     "artifact_sha256": "8343f02e1969866659edfa195a15087f2b8e557256e80ec8a0c7002721010238",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "7039b411e7c9a33b427658fee9d18d609ed9bd191dea07957cd5713ee29d6de5",
+     "stage": "spec_validate",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "5abb3a2253b66afc8471bb75588a07bb6cda8663f160953c60749343f37badb8",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "a239c16d4a0d0ea1f51daa5ba44267d3eac7a97bc7cf3300ef515959e283fdf1",
+     "stage": "spec_faithfulness",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "520f5d3f251a907479b06dc478de0fe9026a0d4d7e29840ac383eecc74cdfd3e",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "87e5287d13df8f9b855c1ce6082aef9d4db06b4a2d11297198d4f8f9e93c815e",
+     "stage": "backtest",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "e91ab086fdc0542812784101787e9191b1179fc398643fd516f4a6709f93d64d",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "456adb2bbcb429ff73b89700f4cb2df21d14ca09e65fce3a5acfba5aca439f5c",
+     "stage": "optimize",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "f1e09aa9bc87cfdd3f4400520c231d70d45a1c288e5212154f9d90408cbe717c",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "4b9d7e4e0a04b74ab25919a1ded95b8907b4401af7ca15dff7041389afbdbafa",
+     "stage": "param_stability",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "21c469cdb585c390fc3f8ae2a81fe96bfdb915cf8ec1eb137ac6337af522caa7",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "2615e35818f70528f4dfe2afb87c06b482403d454f360b0c8e396fea5ff7bb35",
+     "stage": "dsr",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "0bb474c738476104dd84637bf5606592a0ff92f4de1de05601535f4464c49572",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "65af99e62cdedbf961b93c89d64fda095f941e1b25e0c65a1dd452654beeaa17",
+     "stage": "cost_stress",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "e5560dd343c290d66c5e47475df66118f0d376944e33786267dddadc233440b9",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "e9fda648bb06751ad267f09c964a54317df95fb0c4b48475da1bc4af57bf8863",
+     "stage": "regime_split",
+     "status": "completed",
+     "verdict": "pass"
+    },
+    {
+     "artifact_sha256": "b8d87fc32790bd1fe617b2fdabaf5e3b35a71a72e5b6ceede342fe7e97034757",
+     "attempt": 1,
+     "code_version": "764f41bc3",
+     "input_sha256": "e8fdcab6054e276c86ef8ed49223ea4042c4ebe380720087bf75eba480e0b0df",
+     "stage": "benchmark",
+     "status": "completed",
+     "verdict": "fail"
+    }
+   ],
+   "status": "failed"
   }
  },
- "source": "live poseidon_pipeline (read-only), 2026-10-28: pipeline_runs.config_json / config_sha256, every stage attempt's input_sha256 / artifact_sha256, spec_generate's route and spec_validate's report of terminal v3 runs #10 (CONFIG_VERSION 6) and #16 (7, routed); run #10's input_spec_json and run #16's spec_generate report.spec"
+ "source": "live poseidon_pipeline (read-only), 2026-10-28: pipeline_runs.config_json / config_sha256, every stage attempt's input_sha256 / artifact_sha256, spec_generate's route and spec_validate's report of terminal v3 runs #10 (CONFIG_VERSION 6), #16 (7, routed), #17 (7, routed), #18 (6) and #19 (6); run #10's, #18's and #19's input_spec_json; run #16's and #17's spec_generate report.spec"
 }
