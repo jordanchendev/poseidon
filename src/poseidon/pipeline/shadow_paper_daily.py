@@ -16,7 +16,8 @@ Each wake-up (09:30 Asia/Taipei by default, one short task) recomputes from scra
    date that every instrument has a day session for (and every aux series has a row for): a
    night-only trade date is not a trading day yet. The trading calendar after the cutoff is the
    official TWSE schedule, so a roll placed "the day before the last trading day" lands on the same
-   close in the paper as in any later replay.
+   close in the paper as in any later replay. A hedged run (frozen with ``data.option_chain``) also
+   reads ``taifex_txo_daily`` / ``taifex_txo_final_settlement`` and its cutoff waits for the chain.
 3. **Paper** -- the engine over ``[train start, cutoff]`` on the frozen strategy. Every decision day
    in ``(previous cutoff, cutoff]`` on or after the paper start is *appended* to the ledger: the
    strategy's target units, the order the engine let through, the held units, the day's fills (at
@@ -51,14 +52,24 @@ import json
 import math
 from collections import defaultdict
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 
 import numpy as np
 import pandas as pd
 
 from poseidon.decision_loop.manifest import canonical_json
-from poseidon.pipeline.engine import ContractSpec, EngineConfig, EngineResult, FuturesInput, TargetStrategy, run
+from poseidon.pipeline.engine import (
+    ContractSpec,
+    EngineConfig,
+    EngineResult,
+    FuturesInput,
+    HedgePolicy,
+    OptionInput,
+    TargetStrategy,
+    hedge_coverage,
+    run,
+)
 from poseidon.pipeline.engine.data import stock_input
 from poseidon.pipeline.plan import DAILY_SHADOW_PAPER, DAILY_THRESHOLDS, SPEC_V3_CONFIG_VERSION, config_version
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, MARKET_CALENDAR
@@ -75,6 +86,8 @@ from poseidon.pipeline.refdata.engine_input import (
 )
 from poseidon.pipeline.refdata.store import RefdataError
 from poseidon.pipeline.refdata.taifex import MarketSchedule
+from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
+from poseidon.pipeline.refdata.taifex_options import FSP_DATASET as OPTION_FINAL
 from poseidon.pipeline.refdata.tw_corporate_actions import COMPLETE_THROUGH, actions_complete_through, load_actions
 from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
@@ -143,6 +156,9 @@ class CompiledStrategy:
     # A run frozen with ``data.trading_calendar``: the schedule appended after the cutoff skips the unscheduled
     # closures already detected, as ``v3.compiler.compile_spec`` projects for the backtest.
     calendar_rule: Mapping | None = None
+    # Bought-option overlays (a run frozen with ``data.option_chain``): each chain is read from refdata
+    # (``taifex_txo_daily`` day-session monthly puts) and the cutoff waits for it (``load_inputs``).
+    hedges: tuple[HedgePolicy, ...] = ()
 
 
 class StrategyNotCompiled(Exception):
@@ -190,6 +206,7 @@ class PaperInputs:
     sources: dict[str, str]
     last_dates: dict[str, str | None]
     closures: pd.DatetimeIndex
+    options: dict[str, OptionInput] = field(default_factory=dict)
 
 
 def _iso(value) -> str | None:
@@ -201,8 +218,17 @@ def _iso(value) -> str | None:
 HASHED_BAR_COLUMNS = ("open", "high", "low", "close", "settle", "traded", "factor", "unit_ratio", "cash_per_share")
 
 
-def input_hashes(futures: Mapping[str, FuturesInput], aux: Mapping[str, pd.DataFrame], paper_start: date):
-    """(sha256 per trading day >= paper start, one sha256 of everything before it)."""
+def input_hashes(
+    futures: Mapping[str, FuturesInput],
+    aux: Mapping[str, pd.DataFrame],
+    paper_start: date,
+    options: Mapping[str, OptionInput] | None = None,
+):
+    """(sha256 per trading day >= paper start, one sha256 of everything before it).
+
+    An option chain adds its quote rows by date and each final settlement on its day; a run without
+    hedges hashes exactly what it did before.
+    """
 
     digests: dict[str, hashlib._Hash] = defaultdict(hashlib.sha256)
     history = hashlib.sha256()
@@ -220,6 +246,15 @@ def input_hashes(futures: Mapping[str, FuturesInput], aux: Mapping[str, pd.DataF
         frame = aux[name]
         for stamp, *values in frame.itertuples(name=None):
             feed(pd.Timestamp(stamp), f"aux:{name}|{'|'.join(repr(float(v)) for v in values)}\n")
+    for name in sorted(options or {}):
+        chain = options[name]
+        quotes = chain.quotes.sort_values(["date", "contract_month", "cp", "strike"], kind="mergesort")
+        columns = ["date", "contract_month", "cp", "strike", "settlement"]
+        for day, month, cp, strike, settlement in quotes[columns].itertuples(index=False, name=None):
+            expiry = pd.Timestamp(chain.expiries[month]).date().isoformat()
+            feed(pd.Timestamp(day), f"opt:{name}|{month}|{expiry}|{cp}|{float(strike)!r}|{float(settlement)!r}\n")
+        for month, (day, price) in sorted(chain.final_settlement.items()):
+            feed(pd.Timestamp(day), f"fsp:{name}|{month}|{float(price)!r}\n")
     return {day: digest.hexdigest() for day, digest in sorted(digests.items())}, history.hexdigest()
 
 
@@ -234,6 +269,10 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
     without a bar on a calendar day is carried forward (``align_stock_bars``), and its corporate
     actions are booked from ``tw_corporate_actions`` when the store has that dataset, exactly as
     ``v3.compiler.compile_spec`` does for the backtest.
+
+    A run with hedges also waits for its option chain (``_option_bound``): the last TXO day session,
+    a paper day without TXO quotes, a monthly expiry on a paper day without its final settlement
+    price. A put leg is never booked on a day the chain cannot price.
     """
 
     schedule = MarketSchedule.from_frame(reader.read(MARKET_CALENDAR))
@@ -267,6 +306,15 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
         actions_end = pd.Timestamp(actions_complete_through(reader))
         ends.append(actions_end)
         last_dates[f"{ACTIONS}:{COMPLETE_THROUGH}"] = _iso(actions_end)
+    chains = sorted({hedge.chain for hedge in compiled.hedges})
+    if chains:
+        from poseidon.pipeline.v3.compiler import option_quote_rows
+
+        option_quotes = reader.read(OPTION_QUOTES, start=data_start, rows=option_quote_rows)
+        option_final = reader.read(OPTION_FINAL)
+        option_last = pd.Timestamp(option_quotes["trade_date"].max()) if len(option_quotes) else None
+        last_dates[OPTION_QUOTES] = _iso(option_last)
+        ends.append(option_last)
     if any(day is None for day in ends):
         raise RefdataError(f"no data for {sorted(k for k, v in last_dates.items() if v is None)}")
     cutoff = pd.Timestamp(min(ends)).normalize()
@@ -276,6 +324,9 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
         common = dates if common is None else common.intersection(dates)
     if common is None:
         common = pd.DatetimeIndex(sorted({pd.Timestamp(d) for rows in stock_rows.values() for d in rows["date"]}))
+    if chains:
+        cutoff = _option_bound(option_quotes, option_final, common, cutoff, paper_start)
+        last_dates[f"{OPTION_QUOTES}:{COMPLETE_THROUGH}"] = _iso(cutoff)
     closures = unscheduled_closures(product_quotes(quotes, products[0]), schedule) if products else pd.DatetimeIndex([])
     calendar = trading_calendar(common, schedule, cutoff, int(settings["calendar_horizon_days"]))
     if compiled.calendar_rule is not None:
@@ -308,12 +359,41 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
             except ValueError as error:
                 raise RefdataError(f"{name}: {error}") from error
     aux = {name: frame[frame.index <= cutoff] for name, frame in aux_full.items()}
-    hashes, history = input_hashes(futures, aux, paper_start)
+    options = {}
+    if chains:
+        from poseidon.pipeline.v3.compiler import option_chain
+
+        rows = option_quotes[option_quotes["trade_date"] <= cutoff]
+        final = option_final[option_final["final_settlement_date"] <= cutoff]
+        options = {symbol: option_chain(symbol, rows, final) for symbol in chains}
+    hashes, history = input_hashes(futures, aux, paper_start, options)
     datasets = [*((FUTURES, CALENDAR) if products else ()), MARKET_CALENDAR, *sorted(set(compiled.aux.values()))]
     if stock_insts:
         datasets += [STOCKS, *((ACTIONS,) if reader.exists(ACTIONS) else ())]
+    if chains:
+        datasets += [OPTION_QUOTES, OPTION_FINAL]
     sources = {name: reader.content_sha256(name) for name in datasets}
-    return PaperInputs(futures, aux, calendar, cutoff, schedule, hashes, history, sources, last_dates, closures)
+    return PaperInputs(
+        futures, aux, calendar, cutoff, schedule, hashes, history, sources, last_dates, closures, options
+    )
+
+
+def _option_bound(quotes: pd.DataFrame, final: pd.DataFrame, days, cutoff: pd.Timestamp, paper_start: date):
+    """``cutoff``, or the trading day before the first paper day the chain cannot price: a day of ``days`` with
+    no quote row, or a monthly expiry without its final settlement price (a held put would stay marked at its
+    last settlement instead of being cash-settled)."""
+
+    span = days[(days >= pd.Timestamp(paper_start)) & (days <= cutoff)]
+    gaps = span[~span.isin(pd.DatetimeIndex(quotes["trade_date"].unique()))]
+    settled = set(final.loc[final["expiry_kind"] == "monthly", "contract_month"])
+    expiries = quotes.drop_duplicates("contract_month").set_index("contract_month")["expiry_date"]
+    unsettled = expiries[~expiries.index.isin(settled) & expiries.isin(span)]
+    blocked = [*gaps[:1], *unsettled.sort_values()[:1]]
+    if not blocked:
+        return cutoff
+    first = min(blocked)
+    before = days[days < first]
+    return before[-1] if len(before) else first - pd.Timedelta(days=1)
 
 
 # ----------------------------------------------------------------- engine rows
@@ -688,8 +768,11 @@ class DailyShadowPaper:
             "last_dates": inputs.last_dates,
             "sources": inputs.sources,
         }
-        if lag and inputs.last_dates.get(f"{ACTIONS}:{COMPLETE_THROUGH}") == cutoff:
-            data["waiting_on"] = [ACTIONS]
+        waiting_on = [
+            name for name in (ACTIONS, OPTION_QUOTES) if inputs.last_dates.get(f"{name}:{COMPLETE_THROUGH}") == cutoff
+        ]
+        if lag and waiting_on:
+            data["waiting_on"] = waiting_on
         if ledger["cutoff"] is not None and cutoff < ledger["cutoff"]:
             return {
                 "snapshot": {
@@ -702,9 +785,10 @@ class DailyShadowPaper:
         if pd.Timestamp(compiled.engine.start) > pd.Timestamp(start):
             raise ValueError("compiled engine start is after the paper start")
         config = replace(compiled.engine, end=inputs.cutoff)
-        paper = run(compiled.factory(), inputs.futures, config, aux=inputs.aux, calendar=inputs.calendar)
+        hedging = {"options": inputs.options, "hedges": compiled.hedges} if compiled.hedges else {}
+        paper = run(compiled.factory(), inputs.futures, config, aux=inputs.aux, calendar=inputs.calendar, **hedging)
         ctx.check_stop()
-        replay = run(compiled.factory(), inputs.futures, config, aux=inputs.aux, calendar=inputs.calendar)
+        replay = run(compiled.factory(), inputs.futures, config, aux=inputs.aux, calendar=inputs.calendar, **hedging)
         paper_days = day_rows(paper, start)
         replay_days = day_rows(replay, start)
         revisions = _detect_revisions(ledger, inputs.day_hashes, inputs.history_sha256, now.isoformat())
@@ -741,6 +825,13 @@ class DailyShadowPaper:
             "replay_days": len(replay_list),
             "unfilled_orders": {k: int(v) for k, v in paper.unfilled.items()},
         }
+        if compiled.hedges:
+            first = pd.Timestamp(start)
+            snapshot["hedge_coverage"] = hedge_coverage(
+                paper.positions_daily[paper.positions_daily["date"] >= first],
+                paper.events[paper.events["date"] >= first],
+                [hedge.name for hedge in compiled.hedges],
+            )
         return {"snapshot": snapshot, "files": files, "comparison": comparison}
 
     @staticmethod
@@ -867,6 +958,7 @@ class DailyShadowPaper:
                     k: {"product": i.product, "symbol": i.spec.symbol, "roll_days_before": i.roll_days_before}
                     for k, i in compiled.instruments.items()
                 },
+                **({"hedges": [asdict(hedge) for hedge in compiled.hedges]} if compiled.hedges else {}),
             },
             "files": {
                 "ledger": LEDGER_FILE,

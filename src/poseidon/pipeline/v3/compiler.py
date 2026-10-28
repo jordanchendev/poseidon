@@ -555,26 +555,36 @@ def compile_spec(
 def option_inputs(spec_plan: Plan, store, load_from: pd.Timestamp, upper) -> tuple[dict, list[HedgePolicy]]:
     """The option chains and hedge policies of a hedged plan, from refdata over ``[load_from, upper]``."""
 
+    hedges = hedge_policies(spec_plan)
     options: dict[str, OptionInput] = {}
+    for symbol in sorted({hedge.chain for hedge in hedges}):
+        quotes = store.read(OPTION_QUOTES, start=load_from, end=upper, rows=ROW_FILTERS[OPTION_QUOTES])
+        if quotes.empty:
+            raise NotCompilable(f"no {symbol} quotes in refdata between {load_from.date()} and {upper}")
+        options[symbol] = option_chain(symbol, quotes, store.read(OPTION_FINAL))
+    return options, hedges
+
+
+def hedge_policies(spec_plan: Plan) -> list[HedgePolicy]:
+    """One ``HedgePolicy`` per ``hedges`` entry, named ``<alias>.<component suffix>``."""
+
     hedges = []
     for alias, bound_hedge in spec_plan.hedges:
         component = bound_hedge.component
-        symbol = component.option_symbol
-        if symbol not in options:
-            quotes = store.read(OPTION_QUOTES, start=load_from, end=upper, rows=ROW_FILTERS[OPTION_QUOTES])
-            if quotes.empty:
-                raise NotCompilable(f"no {symbol} quotes in refdata between {load_from.date()} and {upper}")
-            final = store.read(OPTION_FINAL)
-            final = final[final["expiry_kind"] == "monthly"]
-            options[symbol] = OptionInput(
-                spec=OptionSpec.from_instrument(INSTRUMENTS[symbol]),
-                quotes=quotes.rename(columns={"trade_date": "date"}),
-                expiries=dict(quotes.groupby("contract_month")["expiry_date"].first()),
-                final_settlement={
-                    row.contract_month: (row.final_settlement_date, row.final_settlement_price)
-                    for row in final.itertuples()
-                },
-            )
         name = f"{alias}.{component.name.split('.', 1)[1]}"
-        hedges.append(component.policy(bound_hedge.params, name=name, underlying=alias, chain=symbol))
-    return options, hedges
+        hedges.append(component.policy(bound_hedge.params, name=name, underlying=alias, chain=component.option_symbol))
+    return hedges
+
+
+def option_chain(symbol: str, quotes: pd.DataFrame, final: pd.DataFrame) -> OptionInput:
+    """The chain of ``symbol`` from its ``option_quote_rows`` and the ``taifex_txo_final_settlement`` rows."""
+
+    final = final[final["expiry_kind"] == "monthly"]
+    return OptionInput(
+        spec=OptionSpec.from_instrument(INSTRUMENTS[symbol]),
+        quotes=quotes.rename(columns={"trade_date": "date"}),
+        expiries=dict(quotes.groupby("contract_month")["expiry_date"].first()),
+        final_settlement={
+            row.contract_month: (row.final_settlement_date, row.final_settlement_price) for row in final.itertuples()
+        },
+    )

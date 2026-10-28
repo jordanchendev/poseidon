@@ -600,8 +600,9 @@ def effective_config(config: dict, route: dict | None) -> dict:
     if data is not None:
         if not isinstance(data, dict) or data.get("end") != (variant.get("data") or {}).get("end"):
             raise RouteError("spec_generate route data must keep the frozen window end")
-        rule = (variant.get("data") or {}).get("trading_calendar")
+        frozen = variant.get("data") or {}
         variant["data"] = copy.deepcopy(data)
-        if rule is not None:
-            variant["data"]["trading_calendar"] = rule
+        for key in ("trading_calendar", "option_chain"):  # frozen rules spec_generate's window does not carry
+            if key in frozen:
+                variant["data"][key] = frozen[key]
     return variant
