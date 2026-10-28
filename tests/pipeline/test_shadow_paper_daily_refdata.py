@@ -113,8 +113,13 @@ def test_ten_recorded_days_ledger_equals_the_backtest(store, recorded_days, tmp_
 
 
 def test_first_real_wake_reports(store, tmp_path):
-    """What the stage reports on its first real wake-ups (2026-10-24 09:30 Taipei, store as it is now)."""
+    """What the stage reports on its first real wake-ups (2026-10-24 09:30 Taipei).
 
+    The store is cut at 2026-10-22, what it held on that morning, so the result does not depend on when the
+    refdata copy was taken.
+    """
+
+    store = AsOf(store, "2026-10-22")
     strategy = _strategy()
     fresh = DailyDriver(tmp_path / "a", store, strategy=strategy, started_at=local(2026, 10, 24, 9, 0))
     started_now = fresh.wake(local(2026, 10, 24, 9, 30))
