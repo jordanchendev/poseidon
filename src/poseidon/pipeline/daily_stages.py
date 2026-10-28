@@ -54,6 +54,7 @@ from poseidon.pipeline.gates.daily import (
     moments,
     underlying_returns,
 )
+from poseidon.pipeline.gates.param_stability import EDGE_AT_BOUND_KEY
 from poseidon.pipeline.plan import V3_GATE_STAGES
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, TAIEX, TAIEX_TR, VIX
 from poseidon.pipeline.refdata.engine_input import StockDataGap, align_stock_bars
@@ -296,7 +297,8 @@ class SpecRunner:
         if result.ok:
             return None
         first = (result.errors or result.unsupported)[0]
-        return first.text()[:300]
+        text = first.text()[:300]
+        return opt.BoundReason(text) if first in result.errors and first.type in opt.BOUND_ERROR_TYPES else text
 
     def compile(self, values: Mapping, *, conventions: Conventions = Conventions(), cost_multiplier: float = 1.0):
         compiled = compile_spec(
@@ -632,6 +634,8 @@ class DailySpecValidateStage(DailyStage):
             "notes": list(result.notes),
             "feasibility": feasibility,
         }
+        if EDGE_AT_BOUND_KEY in ctx.config["thresholds"] and result.warnings:
+            report["warnings"] = list(result.warnings)  # runs frozen without the key keep today's report
         if result.errors:
             report["summary"] = f"spec_validate ❌ {len(result.errors)} error(s): {result.errors[0].text()[:160]}"
             return StageResult.failed(f"spec invalid: {len(result.errors)} error(s)", report)
@@ -656,6 +660,7 @@ class DailySpecValidateStage(DailyStage):
                 "summary": f"spec_validate ✅ {result.strategy_class}, {len(grid.names)} $params "
                 f"({grid.size() if grid.names else 1} grid points)"
                 + (f", {len(result.notes)} note(s)" if result.notes else "")
+                + (f", {len(report['warnings'])} warning(s)" if report.get("warnings") else "")
                 + (moved_start_text(ctx.config) or ""),
             }
         )
@@ -790,6 +795,7 @@ class DailyOptimizeStage(DailyStage):
                 budget_seconds=settings.get("budget_seconds"),
                 started=started,
                 reserve_trials=2 * len(grid.names) * steps,
+                tag_kind=EDGE_AT_BOUND_KEY in ctx.config["thresholds"],
             )
             neighbours, settled = opt.complete_neighbourhood(trials, grid, steps, extension)
         results = trials.results

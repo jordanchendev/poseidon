@@ -389,7 +389,11 @@ class ParamStabilityStage(GateStage):
         neighbours, failed_counted = [], []
         for row in optimize.get("neighbours") or []:
             if not row.get("in_grid"):
-                neighbours.append(param_stability.NeighbourResult(row["param"], int(row["direction"]), {}, None))
+                neighbours.append(
+                    param_stability.NeighbourResult(
+                        row["param"], int(row["direction"]), {}, None, row.get("excluded_kind")
+                    )
+                )
                 continue
             pnl = row.get("total_pnl_twd")
             if row.get("state") == TRIAL_FAIL or pnl is None:

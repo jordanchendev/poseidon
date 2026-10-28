@@ -319,6 +319,10 @@ DAILY_THRESHOLDS: dict = {
     "dsr_min_obs": 250,  # daily returns
     "param_neighbourhood_profitable_min": 0.6,  # profitable = final equity > initial
     "param_min_neighbours": 2,
+    # Owner decision 2026-10-28 (run #18): a neighbour cut off by a component's own hard bound (not the spec's
+    # declared range) no longer sinks param_stability on insufficient_neighbours when every in-range neighbour
+    # is profitable (gates/param_stability.py). A run frozen without this key keeps the old rule.
+    "param_edge_at_bound_pass": True,
     "regime_profitable_segments_min": 3,
     "regime_min_segments": 3,
     "regime_min_days_per_segment": 60,

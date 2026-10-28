@@ -216,6 +216,7 @@ class V3Validation:
     errors: tuple[SpecIssue, ...] = ()
     unsupported: tuple[SpecIssue, ...] = ()
     notes: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()  # never fail the spec: a $param's declared range touches a component hard bound
     template: dict | None = None  # the raw document as given
     resolved: dict | None = None  # every $param at its default
     params: dict = field(default_factory=dict)  # name -> ParamSpec
@@ -477,6 +478,40 @@ def _sweep_grid(template: dict, params: dict, users: dict, values: dict, issues:
             if failure:
                 issues.error(("params", name), failure, "param_range")
                 break
+
+
+def _bound_warnings(template: dict, params: dict, users: dict) -> tuple[str, ...]:
+    """One warning per ($param, component field) whose declared range touches the field's own ge/le bound.
+
+    The pipeline cannot step past that bound, so param_stability loses that neighbour of the best point.
+    Widening the other side of the range keeps the best off the edge.
+    """
+
+    out: list[str] = []
+    for name in sorted(params):
+        spec = params[name]
+        low, high = spec.cast(spec.low), spec.cast(spec.high)
+        for path, component in users.get(name, []):
+            if component.name == "direction.dsl_rules":
+                continue
+            raw = _at(template, path).get("params") or {}
+            for field_name, node in raw.items():
+                if not (is_param_ref(node) and node[PARAM_REF_KEY] == name):
+                    continue
+                for meta in component.Params.model_fields[field_name].metadata:
+                    if hasattr(meta, "ge") and low <= meta.ge:
+                        side, bound = "low", meta.ge
+                    elif hasattr(meta, "le") and high >= meta.le:
+                        side, bound = "high", meta.le
+                    else:
+                        continue
+                    out.append(
+                        f"params.{name}: the declared {side} {(low if side == 'low' else high):g} touches "
+                        f"{component.name}.{field_name}'s hard bound {bound:g}; when the best lands on that edge "
+                        f"param_stability cannot judge the neighbour beyond it. Widen the other side of the range "
+                        f"to keep the best off the edge"
+                    )
+    return tuple(dict.fromkeys(out))
 
 
 # --------------------------------------------------------------------------- stage 4: cross rules
@@ -971,6 +1006,7 @@ def validate_spec_v3(doc: Any, *, feasibility: FeasibilityContext | None = None)
     return _result(
         issues,
         notes=tuple(dict.fromkeys(notes)),
+        warnings=_bound_warnings(template, params, users),
         template=template,
         resolved=resolved,
         params=params,
