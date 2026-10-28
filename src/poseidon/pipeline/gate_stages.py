@@ -144,16 +144,17 @@ def parse_trades(data: bytes) -> list[Trade]:
     ]
 
 
-def daily_bars(frame: pd.DataFrame) -> pd.DataFrame:
+def daily_bars(frame: pd.DataFrame, night_session: str | None = None) -> pd.DataFrame:
     """TX daily OHLCV per trading day (night session -> the next day session), indexed by that date.
 
-    Resampled from the same label-normalised cached 5m bars the backtests use,
-    so both come from one source; a day's bar completes at its day-session close.
+    Resampled from the same label-normalised cached 5m bars the backtests use, labelled under the
+    run's ``backtest.night_session`` rule, so both come from one source; a day's bar completes at
+    its day-session close.
     """
 
-    from poseidon.pipeline.backtesting import trading_days
+    from poseidon.pipeline.backtesting import NEXT_WEEKDAY, trading_days
 
-    grouped = frame.groupby(trading_days(frame.index))
+    grouped = frame.groupby(trading_days(frame.index, night_session or NEXT_WEEKDAY))
     daily = pd.DataFrame(
         {
             "open": grouped["open"].first(),
@@ -176,10 +177,12 @@ BUY_AND_HOLD = (
 )
 
 
-def buy_and_hold_daily(frame: pd.DataFrame, *, point_value: float, contracts: float) -> pd.Series:
+def buy_and_hold_daily(
+    frame: pd.DataFrame, *, point_value: float, contracts: float, night_session: str | None = None
+) -> pd.Series:
     """TX buy-and-hold PnL (TWD) per trading day of ``frame``, indexed by that date (see ``BUY_AND_HOLD``)."""
 
-    daily = daily_bars(frame)
+    daily = daily_bars(frame, night_session)
     close = daily["close"].astype(float)
     pnl = close.diff()
     if len(pnl):
@@ -238,19 +241,21 @@ def benchmark_series(ctx, frame: pd.DataFrame, daily: pd.DataFrame, trades: list
     """
 
     from poseidon.backtest.cost_model import get_cost_model
+    from poseidon.pipeline.backtesting import night_session_rule
 
     backtest = ctx.config["backtest"]
     point_value = float(get_cost_model(backtest["cost_model"]).point_value)
     contracts = float(backtest["sizing"]["contracts"])
     lags = int(((ctx.config.get("gates") or {}).get("benchmark") or {}).get("hac_lags", DEFAULT_HAC_LAGS))
     annualisation = float(backtest["sharpe"]["annualisation_factor"])
-    bh = buy_and_hold_daily(frame, point_value=point_value, contracts=contracts)
+    night_session = night_session_rule(backtest)
+    bh = buy_and_hold_daily(frame, point_value=point_value, contracts=contracts, night_session=night_session)
     strategy = daily_series(daily)
     evaluated = frame.index
     if from_day is not None:
         bh = bh[[day >= from_day for day in bh.index]]
         strategy = strategy[[day >= from_day for day in strategy.index]]
-        evaluated = frame.index[trading_day_dates(frame.index) >= from_day]
+        evaluated = frame.index[trading_day_dates(frame.index, night_session) >= from_day]
     y, x, alignment = align_daily(strategy, bh)
     return {
         "strategy": y,
@@ -283,10 +288,10 @@ def benchmark_stats(ctx, frame, daily, trades, *, from_day=None) -> tuple[dict, 
     return stats, provenance
 
 
-def trading_day_dates(index: pd.DatetimeIndex) -> np.ndarray:
-    from poseidon.pipeline.backtesting import trading_days
+def trading_day_dates(index: pd.DatetimeIndex, night_session: str | None = None) -> np.ndarray:
+    from poseidon.pipeline.backtesting import NEXT_WEEKDAY, trading_days
 
-    return np.array([stamp.date() for stamp in trading_days(index)])
+    return np.array([stamp.date() for stamp in trading_days(index, night_session or NEXT_WEEKDAY)])
 
 
 def annualised_return(metrics: dict, capital: float) -> float | None:
@@ -506,7 +511,7 @@ class RegimeSplitStage(GateStage):
     name = "regime_split"
 
     def evaluate(self, ctx, optimize):
-        from poseidon.pipeline.backtesting import trades_csv
+        from poseidon.pipeline.backtesting import night_session_rule, trades_csv
 
         thresholds = ctx.config["thresholds"]
         bars = self.bars(ctx, "train")
@@ -516,7 +521,7 @@ class RegimeSplitStage(GateStage):
             data = trades_csv(self.backtest_spec(ctx, optimize["best_spec"], bars.frame).trades)
             source = "re-run of best_spec on the train part"
         trades = parse_trades(data)
-        daily = daily_bars(bars.frame)
+        daily = daily_bars(bars.frame, night_session_rule(ctx.config["backtest"]))
         states = regime_split.regime_states(daily, **regime_split.threshold_windows(thresholds))
         result = regime_split.evaluate(regime_split.RegimeInputs(trades, states.to_dict()), thresholds)
         labelled = states.dropna()

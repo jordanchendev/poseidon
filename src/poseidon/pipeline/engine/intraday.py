@@ -64,22 +64,23 @@ ROUND_TRIP_COLUMNS = (
 )
 
 
-def r1_contracts(index: pd.DatetimeIndex, expiries: Mapping[str, Any]) -> np.ndarray:
+def r1_contracts(index: pd.DatetimeIndex, expiries: Mapping[str, Any], night_session: str | None = None) -> np.ndarray:
     """Contract month of every R1 bar: the nearest expiry not yet passed at the bar's open.
 
     ``expiries`` maps contract month -> last trading day (``taifex_settlement_calendar``). A bar
-    of trading day D (TAIFEX: the night session belongs to the next trading day) belongs to the
-    first contract whose last trading day is after D, or is D itself when the bar opens before
+    of trading day D (TAIFEX: the night session belongs to the next trading day, labelled by
+    ``backtesting.trading_days`` under the run's ``night_session`` rule) belongs to the first
+    contract whose last trading day is after D, or is D itself when the bar opens before
     :data:`SETTLEMENT_SWITCH`.
     """
 
-    from poseidon.pipeline.backtesting import trading_days
+    from poseidon.pipeline.backtesting import NEXT_WEEKDAY, trading_days
 
     if not len(index):
         return np.array([], dtype=object)
     names = sorted(expiries, key=lambda c: (pd.Timestamp(expiries[c]), c))
     last_days = pd.DatetimeIndex([pd.Timestamp(expiries[c]).normalize() for c in names])
-    days = trading_days(index)
+    days = trading_days(index, night_session or NEXT_WEEKDAY)
     local = index.tz_convert(MARKET_TZ).tz_localize(None)
     switch = pd.Timedelta(hours=SETTLEMENT_SWITCH.hour, minutes=SETTLEMENT_SWITCH.minute)
     # Night bars of trading day D open before D's midnight, so "opens before the switch on D" is

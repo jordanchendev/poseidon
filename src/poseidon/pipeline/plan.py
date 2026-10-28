@@ -207,6 +207,9 @@ DEFAULT_BACKTEST: dict = {
     "initial_capital_twd": 1_000_000.0,
     "bar_label": "open",
     "sharpe": {"period": "trading_day", "annualisation_factor": 252},
+    # Configs frozen from 2026-10-28 on: a night session belongs to the next day session in the bars, as TAIFEX
+    # books it. Runs frozen without the key (run #6) roll it to the next weekday (backtesting.trading_days).
+    "night_session": "next_day_session",
 }
 
 DEFAULT_OPTIMIZE: dict = {

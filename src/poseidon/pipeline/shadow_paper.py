@@ -209,16 +209,16 @@ def frame_sha256(frame: pd.DataFrame) -> str:
     return digest.hexdigest()
 
 
-def day_hashes(frame: pd.DataFrame) -> dict[str, str]:
-    """sha256 of each trading day's bars (night session -> next trading day)."""
+def day_hashes(frame: pd.DataFrame, night_session: str | None = None) -> dict[str, str]:
+    """sha256 of each trading day's bars (night session -> next trading day, under ``night_session``)."""
 
-    from poseidon.pipeline.backtesting import trading_days
+    from poseidon.pipeline.backtesting import NEXT_WEEKDAY, trading_days
 
     if not len(frame):
         return {}
     return {
         pd.Timestamp(day).date().isoformat(): frame_sha256(group)
-        for day, group in frame.groupby(trading_days(frame.index))
+        for day, group in frame.groupby(trading_days(frame.index, night_session or NEXT_WEEKDAY))
     }
 
 
@@ -676,7 +676,7 @@ class ShadowPaperStage(_DataStage):
         """Advance the ledger to the settled cutoff (mutates ``ledger``)."""
 
         from poseidon.backtest.cost_model import get_cost_model
-        from poseidon.pipeline.backtesting import daily_csv, run_backtest, trades_csv
+        from poseidon.pipeline.backtesting import daily_csv, night_session_rule, run_backtest, trades_csv
 
         last_bar = frame.index[-1].to_pydatetime() if len(frame) else None
         settled = settled_cutoff(last_bar, paper_start, upper)
@@ -706,7 +706,7 @@ class ShadowPaperStage(_DataStage):
         cutoff = settled
         bars = frame[frame.index < cutoff]
         warm, live = bars[bars.index < paper_start], bars[bars.index >= paper_start]
-        hashes, warm_sha = day_hashes(live), frame_sha256(warm)
+        hashes, warm_sha = day_hashes(live, night_session_rule(ctx.config["backtest"])), frame_sha256(warm)
         revisions = detect_revisions(ledger, hashes, warm_sha, prev_cutoff, now.isoformat())
 
         replay_trades: list[dict] = []

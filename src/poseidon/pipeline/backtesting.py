@@ -8,9 +8,8 @@ historically wrong for futures, see Step 0):
 * ``total_pnl_twd`` -- sum of closed round trips, net of commission and tax
   (slippage is inside the fill prices); ``gross_pnl_twd`` adds the fees back.
 * Sharpe -- daily mark-to-market PnL per **trading day** (TAIFEX convention:
-  the night session belongs to the next trading day; computed as Asia/Taipei
-  time + 9 h, Saturday/Sunday rolled to Monday). Every trading day with bars
-  counts, flat days included. ``sharpe_daily`` = mean / std (ddof=1) and is
+  the night session belongs to the next trading day, :func:`trading_days`).
+  Every trading day with bars counts, flat days included. ``sharpe_daily`` = mean / std (ddof=1) and is
   the per-period figure the trial ledger and DSR use;
   ``sharpe_annualised`` = ``sharpe_daily * sqrt(252)``.
 * ``skew`` and ``kurtosis`` are population moments of the same daily series;
@@ -54,11 +53,18 @@ from poseidon.strategies.dsl.v2.evaluator import DEFAULT_BAR_LABEL
 
 MARKET_TZ = "Asia/Taipei"
 TRADING_DAY_SHIFT = pd.Timedelta(hours=9)
+DAY_SESSION_HOURS = (pd.Timedelta(hours=8), pd.Timedelta(hours=15))  # local open labels of day-session bars
+NEXT_WEEKDAY = "next_weekday"
+NEXT_DAY_SESSION = "next_day_session"
+NIGHT_SESSION_DAY = {
+    NEXT_WEEKDAY: "night session -> next trading day; Asia/Taipei + 9h, weekend rolled to Monday",
+    NEXT_DAY_SESSION: "night session -> the next day with a day session in the bars, the day TAIFEX books it to",
+}
 EXIT_REASONS = {"close_sl": "stop_loss", "close_tp": "take_profit"}
 SHARPE_CONVENTION = (
-    "daily mark-to-market PnL per trading day (night session -> next trading day; Asia/Taipei + 9h, "
-    "weekend rolled to Monday), all trading days with bars incl. flat days; sharpe_daily = mean/std(ddof=1), "
-    "sharpe_annualised = sharpe_daily*sqrt(252); skew/kurtosis are population moments, kurtosis non-excess"
+    "daily mark-to-market PnL per trading day ({night}), all trading days with bars incl. flat days; "
+    "sharpe_daily = mean/std(ddof=1), sharpe_annualised = sharpe_daily*sqrt(252); skew/kurtosis are population "
+    "moments, kurtosis non-excess"
 )
 
 
@@ -117,17 +123,42 @@ def build_runner(
     )
 
 
-def trading_days(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
-    """Trading-day label (midnight, naive) of each UTC bar timestamp."""
+def night_session_rule(backtest_config: Mapping) -> str:
+    """The run's frozen ``backtest.night_session``; :data:`NEXT_WEEKDAY` for a run frozen without it."""
 
-    local = index.tz_convert(MARKET_TZ).tz_localize(None) + TRADING_DAY_SHIFT
-    days = local.normalize()
+    rule = backtest_config.get("night_session", NEXT_WEEKDAY)
+    if rule not in NIGHT_SESSION_DAY:
+        raise ValueError(f"unknown backtest.night_session {rule!r}")
+    return rule
+
+
+def trading_days(index: pd.DatetimeIndex, night_session: str = NEXT_WEEKDAY) -> pd.DatetimeIndex:
+    """Trading-day label (midnight, naive) of each UTC bar timestamp.
+
+    A day-session bar belongs to its own date. A night-session bar (15:00-05:00 Asia/Taipei) belongs to the
+    next trading day: ``next_weekday`` takes the next weekday, so the night before a weekday closure is a
+    night-only day of its own; ``next_day_session`` takes the next day with a day session in ``index``, as
+    TAIFEX does (Thu 2026-10-22's night -> Tue 10-27 after the 10-23 typhoon closure and the 10-26 holiday).
+    A night after the last day session in ``index`` keeps the next weekday.
+    """
+
+    local = index.tz_convert(MARKET_TZ).tz_localize(None)
+    days = (local + TRADING_DAY_SHIFT).normalize()
     weekday = days.weekday
     roll = np.where(weekday == 5, 2, np.where(weekday == 6, 1, 0))
-    return days + pd.to_timedelta(roll, unit="D")
+    labels = days + pd.to_timedelta(roll, unit="D")
+    if night_session == NEXT_WEEKDAY:
+        return labels
+    clock = local - local.normalize()
+    sessions = pd.DatetimeIndex(np.unique(days[(clock >= DAY_SESSION_HOURS[0]) & (clock < DAY_SESSION_HOURS[1])]))
+    if not len(sessions):
+        return labels
+    position = sessions.searchsorted(days)
+    inside = position < len(sessions)
+    return pd.DatetimeIndex(np.where(inside, sessions.values[np.minimum(position, len(sessions) - 1)], labels.values))
 
 
-def daily_pnl(equity_curve, initial_capital: float) -> pd.DataFrame:
+def daily_pnl(equity_curve, initial_capital: float, night_session: str = NEXT_WEEKDAY) -> pd.DataFrame:
     """``trading_day, pnl_twd, equity_twd`` from the runner's per-bar equity curve."""
 
     if not equity_curve:
@@ -135,7 +166,7 @@ def daily_pnl(equity_curve, initial_capital: float) -> pd.DataFrame:
     times = pd.DatetimeIndex([t for t, _, _ in equity_curve])
     times = times.tz_localize("UTC") if times.tz is None else times.tz_convert("UTC")
     equity = pd.Series([float(e) for _, e, _ in equity_curve], index=times)
-    end_of_day = equity.groupby(trading_days(times)).last()
+    end_of_day = equity.groupby(trading_days(times, night_session)).last()
     pnl = end_of_day.diff()
     pnl.iloc[0] = end_of_day.iloc[0] - initial_capital
     frame = pd.DataFrame({"pnl_twd": pnl, "equity_twd": end_of_day})
@@ -408,7 +439,11 @@ def run_target_engine(
     data = IntradayInput(
         spec=target_contract_spec(strategy.symbol, cost_model),
         bars=bars,
-        contracts=r1_contracts(bars.index, expiries if expiries is not None else settlement_expiries(strategy.symbol)),
+        contracts=r1_contracts(
+            bars.index,
+            expiries if expiries is not None else settlement_expiries(strategy.symbol),
+            night_session_rule(backtest_config),
+        ),
     )
     config = IntradayConfig(
         initial_capital=float(backtest_config["initial_capital_twd"]),
@@ -510,7 +545,8 @@ def summarise(
     else:
         max_dd = 0.0
 
-    daily = daily_pnl(equity_curve, capital)
+    night_session = night_session_rule(backtest_config)
+    daily = daily_pnl(equity_curve, capital, night_session)
     if trade_from is not None and len(daily):
         stamp = pd.Timestamp(trade_from)
         stamp = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
@@ -545,7 +581,7 @@ def summarise(
         "exit_reasons": dict(sorted(Counter(t["exit_reason"] for t in trips).items())),
         "open_position_at_end": open_at_end > 0,
         **stats,
-        "sharpe_convention": SHARPE_CONVENTION,
+        "sharpe_convention": SHARPE_CONVENTION.format(night=NIGHT_SESSION_DAY[night_session]),
         "kurtosis_convention": "non_excess",
     }
     return BacktestOutcome(metrics=metrics, trades=trips, daily=daily, bars=bars)
