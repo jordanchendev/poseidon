@@ -260,7 +260,8 @@ def hard_bound_check(template: dict, grid: ParamGrid) -> Callable[[dict], str | 
             validate_v2(effective_template(template, grid, values), param_values=dict(values))
         except DslV2Error as error:
             first = error.errors[0]
-            return f"{first['path'] or '<root>'}: {first['msg']}"[:300]
+            text = f"{first['path'] or '<root>'}: {first['msg']}"[:300]
+            return BoundReason(text) if first.get("type") in BOUND_ERROR_TYPES else text
         return None
 
     return check
