@@ -123,12 +123,20 @@ def paper_upstream(root: Path, *, spec=None, train_max_dd=500_000.0, train_daily
 class PaperDriver:
     """Calls ShadowPaperStage the way the dispatcher does: one wake-up at a time, resuming its own artifact."""
 
-    def __init__(self, root: Path, source, *, config=None, upstream=None, factory=None, started_at=STAGE_START):
+    def __init__(
+        self, root: Path, source, *, config=None, upstream=None, factory=None, started_at=STAGE_START, refdata=None
+    ):
+        """``refdata`` (() -> reader): the store the stage reads the TAIFEX calendar from; by default an empty
+        one, so the calendar is unavailable and the report counts weekdays."""
+
+        from poseidon.pipeline.refdata.store import RefdataStore
+
         self.root = Path(root)
         self.source = source
         self.config = config if config is not None else paper_config()
         self.upstream = upstream if upstream is not None else paper_upstream(self.root)
-        self.stage = ShadowPaperStage(source, factory)
+        empty = self.root / "no-refdata"
+        self.stage = ShadowPaperStage(source, factory, refdata=refdata or (lambda: RefdataStore(empty)))
         self.started_at = started_at
         self.resume: UpstreamResult | None = None
         self.results = []
