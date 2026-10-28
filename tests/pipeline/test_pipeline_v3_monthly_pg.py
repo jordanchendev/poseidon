@@ -120,11 +120,8 @@ def test_monthly_rotation_on_the_real_refdata(pipeline_sessions, tmp_path):
     harness = Harness(pipeline_sessions, tmp_path / "artifacts", Clock(REAL_NOW), registry=v3_registry(store))
     run_id, rows = drive(harness, store, "00631L / 0050 rotation, checked monthly (real refdata)")
     run = harness.run(run_id)
-    # Known, not monthly-specific (the daily-switch spec stops the same way): a WFE window whose TPE picks
-    # ma_days 175 loads 268 calendar days of warm-up, which held 173 sessions before 2023-08-20.
-    warmup_gap = rows[-1]["stage"] == "wfe" and "the components need 175 for warm-up" in rows[-1]["summary"]
-    assert (run.status, run.current_stage) == ("waiting", "shadow_paper") or warmup_gap, rows[-1]["summary"]
-    assert [row["stage"] for row in rows] == list(V3_DAILY_STAGE_PLAN[: len(rows)])
-    assert all(row["summary"] and row["verdict"] != "error" for row in rows[:-1]), rows
+    assert (run.status, run.current_stage) == ("waiting", "shadow_paper"), rows[-1]["summary"]
+    assert [row["stage"] for row in rows] == list(V3_DAILY_STAGE_PLAN[:-1])
+    assert all(row["summary"] and row["verdict"] != "error" for row in rows), rows
     assert run.config_json["data"]["start"] >= "2014-10-31"
     assert_backtest_is_monthly(harness, run_id)

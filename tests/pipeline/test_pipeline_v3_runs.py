@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import copy
 import uuid
-from datetime import date, timedelta
+from datetime import date
 
+import pandas as pd
 import pytest
 from sqlalchemy import text
 
@@ -28,6 +29,7 @@ from poseidon.pipeline.plan import (
     default_config,
     validate_stage_plan,
 )
+from poseidon.pipeline.refdata.datasets import TAIEX
 from poseidon.pipeline.service import PipelineRequestInvalid
 from poseidon.pipeline.shadow_paper_daily import DAILY_PAPER_THRESHOLDS, DEFAULT_DAILY_SHADOW_PAPER
 from poseidon.pipeline.stages import STAGE_REGISTRY, EngineRouted
@@ -38,9 +40,10 @@ from poseidon.pipeline.v3.config import (
     daily_run_config,
     is_v3_run,
     series_first_days,
+    warmup_record,
 )
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
-from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3, warmup_calendar_days
+from poseidon.pipeline.v3.validation import WARMUP_MARGIN_SESSIONS, FeasibilityContext, validate_spec_v3
 from tests.pipeline.conftest import Clock, Harness, tx_spec
 from tests.pipeline.v3_wiring_support import (
     CLOCK_START,
@@ -81,6 +84,7 @@ def test_daily_run_config_freezes_the_class_entry_and_the_window():
         "end_exclusive": True,
         "holdout_start": daily_data_config(as_of=AS_OF)["holdout_start"],
         "parts": "train = trading days in [start, holdout_start); holdout = [holdout_start, end)",
+        "warmup": warmup_record(),
     }
     split = date.fromisoformat(config["data"]["holdout_start"])
     assert date(2021, 8, 1) <= split <= date(2021, 9, 30)  # the last 20 % of 2001-01-02 .. 2026-10-22
@@ -306,9 +310,15 @@ def test_a_spec_on_a_late_series_runs_from_a_later_frozen_start(pipeline_session
     rule = data["start_rule"]
     assert rule["binding_series"] == "twse_taiex_total_return"
     assert rule["series_since"]["twse_taiex_total_return"] == "2003-01-02"  # from the store's manifest
-    assert rule["warmup_calendar_days"] == warmup_calendar_days(rule["warmup_bars"], "1d")
-    start = date.fromisoformat(data["start"])
-    assert start == date(2003, 1, 2) + timedelta(days=rule["warmup_calendar_days"])
+    # the warm-up in sessions of the store's TAIEX days: the start is the first day after warm-up + margin of them
+    assert data["warmup"] == warmup_record() and rule["margin_sessions"] == WARMUP_MARGIN_SESSIONS
+    assert "warmup_calendar_days" not in rule
+    start = pd.Timestamp(data["start"])
+    sessions = pd.DatetimeIndex(pd.to_datetime(tr_store.read(TAIEX)["trade_date"]))
+    assert start in sessions
+    assert ((sessions >= pd.Timestamp("2003-01-02")) & (sessions < start)).sum() == rule[
+        "warmup_bars"
+    ] + WARMUP_MARGIN_SESSIONS
     assert run.config_sha256 == content_sha256(run.config_json)
 
     harness.drain()
