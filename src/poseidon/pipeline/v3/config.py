@@ -16,7 +16,8 @@ run, in spec_generate's ``route`` for an idea-only run (``plan.effective_config`
 Configs frozen from 2026-10-28 on also freeze ``data.warmup`` (:func:`warmup_record`): the warm-up before any
 start is counted in TWSE sessions plus a margin (``validation.SessionWarmup``), for the window start chosen
 here and for every data load. Configs without it keep the calendar-day estimate, so their windows, loads and
-hashes do not move.
+hashes do not move. Likewise ``data.trading_calendar`` (:func:`trading_calendar_record`): the days the engine
+projects past a data end are TAIFEX trading days, not weekdays.
 """
 
 from __future__ import annotations
@@ -112,6 +113,19 @@ def warmup_record(margin: int = WARMUP_MARGIN_SESSIONS) -> dict:
     }
 
 
+def trading_calendar_record() -> dict:
+    """``config["data"]["trading_calendar"]``: what ``compiler.projection_calendar`` projects a data end with."""
+
+    return {
+        "sessions": SESSION_CALENDAR,
+        "schedule": "twse_market_calendar",
+        "closures": "taifex_futures_daily: scheduled days skipped before the first night session after the last day "
+        "session",
+        "rule": "the trading days after a data end are the sessions held, then the official schedule minus the "
+        "detected closures; without this record they are weekdays",
+    }
+
+
 def session_warmup(record: dict | None, store) -> SessionWarmup | None:
     """The session calendar of a frozen ``data.warmup`` rule read from ``store``; None for a config without one."""
 
@@ -138,12 +152,14 @@ def daily_data_config(
     fraction: float = HOLDOUT_FRACTION,
     window: WindowStart | None = None,
     warmup: dict | None = None,
+    trading_calendar: dict | None = None,
 ) -> dict:
     """``[start, as_of)`` in trading days (Asia/Taipei dates); the last ``fraction`` is the locked holdout.
 
     ``window``: the spec's chosen start; when it moved, the window starts there (the holdout is the last
     ``fraction`` of the shorter window) and ``start_rule`` records why. ``warmup``: the frozen warm-up rule
-    (:func:`warmup_record`); None leaves it out, as configs frozen before it did.
+    (:func:`warmup_record`) and ``trading_calendar`` the projection rule (:func:`trading_calendar_record`); None
+    leaves either out, as configs frozen before them did.
     """
 
     from poseidon.pipeline.window import MARKET_TZ, holdout_split
@@ -166,6 +182,8 @@ def daily_data_config(
         data["start_rule"] = window.as_config()
     if warmup is not None:
         data["warmup"] = warmup
+    if trading_calendar is not None:
+        data["trading_calendar"] = trading_calendar
     return data
 
 
@@ -264,7 +282,9 @@ def _daily_config(fields: dict, *, as_of: date, refdata: dict[str, str], stage_p
         "thresholds": settings["thresholds"],
         "gates": settings["gates"],
         "shadow_paper": settings["shadow_paper"],
-        "data": daily_data_config(as_of=as_of, window=window, warmup=warmup_record()),
+        "data": daily_data_config(
+            as_of=as_of, window=window, warmup=warmup_record(), trading_calendar=trading_calendar_record()
+        ),
         "holdout": {"fraction": HOLDOUT_FRACTION, "locked": True},
         "refdata": {
             "datasets": dict(sorted(refdata.items())),

@@ -140,6 +140,9 @@ class CompiledStrategy:
     # A run frozen with ``data.warmup``: (that rule, warm-up bars). The loader counts them in the rule's session
     # calendar back from ``engine.start``, as ``v3.compiler.compile_spec`` does for the backtest.
     warmup: tuple[dict, int] | None = None
+    # A run frozen with ``data.trading_calendar``: the schedule appended after the cutoff skips the unscheduled
+    # closures already detected, as ``v3.compiler.compile_spec`` projects for the backtest.
+    calendar_rule: Mapping | None = None
 
 
 class StrategyNotCompiled(Exception):
@@ -273,7 +276,10 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
         common = dates if common is None else common.intersection(dates)
     if common is None:
         common = pd.DatetimeIndex(sorted({pd.Timestamp(d) for rows in stock_rows.values() for d in rows["date"]}))
+    closures = unscheduled_closures(product_quotes(quotes, products[0]), schedule) if products else pd.DatetimeIndex([])
     calendar = trading_calendar(common, schedule, cutoff, int(settings["calendar_horizon_days"]))
+    if compiled.calendar_rule is not None:
+        calendar = calendar[~calendar.isin(closures)]
     futures = {
         name: futures_input(
             quotes,
@@ -307,7 +313,6 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
     if stock_insts:
         datasets += [STOCKS, *((ACTIONS,) if reader.exists(ACTIONS) else ())]
     sources = {name: reader.content_sha256(name) for name in datasets}
-    closures = unscheduled_closures(product_quotes(quotes, products[0]), schedule) if products else pd.DatetimeIndex([])
     return PaperInputs(futures, aux, calendar, cutoff, schedule, hashes, history, sources, last_dates, closures)
 
 

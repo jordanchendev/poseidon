@@ -67,8 +67,8 @@ from poseidon.pipeline.engine import (
 )
 from poseidon.pipeline.engine.data import stock_input
 from poseidon.pipeline.engine.options import MAX_UNAVAILABLE_SHARE
-from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES
-from poseidon.pipeline.refdata.engine_input import StockDataGap, align_stock_bars
+from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, MARKET_CALENDAR, TAIEX
+from poseidon.pipeline.refdata.engine_input import StockDataGap, TaifexCalendar, align_stock_bars, read_taifex_calendar
 from poseidon.pipeline.refdata.store import DatasetMissingError, RefdataStore
 from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
 from poseidon.pipeline.refdata.taifex_options import FSP_DATASET as OPTION_FINAL
@@ -295,10 +295,29 @@ def futures_bars(quotes: pd.DataFrame, product: str) -> pd.DataFrame:
     return frame[["date", "contract", "open", "high", "low", "close", "settle"]].reset_index(drop=True)
 
 
-def trading_calendar(bars: pd.DataFrame, projected_days: int = PROJECTED_CALENDAR_DAYS) -> pd.DatetimeIndex:
+def trading_calendar(
+    bars: pd.DataFrame, projected_days: int = PROJECTED_CALENDAR_DAYS, market: TaifexCalendar | None = None
+) -> pd.DatetimeIndex:
+    """The bars' dates, then ``projected_days`` more: ``market``'s trading days, or weekdays without it."""
+
     days = pd.DatetimeIndex(sorted(pd.to_datetime(bars["date"]).unique()))
-    projected = pd.bdate_range(days[-1] + pd.offsets.BDay(1), periods=projected_days)
+    if market is None:
+        projected = pd.bdate_range(days[-1] + pd.offsets.BDay(1), periods=projected_days)
+    else:
+        projected = market.after(days[-1], projected_days)
     return days.append(projected)
+
+
+def projection_calendar(rule: Mapping | None, store, since: pd.Timestamp) -> TaifexCalendar | None:
+    """The trading days a run frozen with ``data.trading_calendar`` (``v3.config.trading_calendar_record``)
+    projects past its data end, read from ``store`` (a stage's ``WindowStore``: sessions up to the window's
+    upper bound, the official schedule after it). None for a run frozen without the rule: weekdays."""
+
+    if rule is None:
+        return None
+    if (rule.get("sessions"), rule.get("schedule")) != (TAIEX, MARKET_CALENDAR):
+        raise ValueError(f"unknown data.trading_calendar {dict(rule)!r}")
+    return read_taifex_calendar(store, since)
 
 
 @dataclass(frozen=True)
@@ -366,11 +385,14 @@ def compile_spec(
     store: RefdataStore | None = None,
     conventions: Conventions = Conventions(),
     sessions: SessionWarmup | None = None,
+    calendar_rule: Mapping | None = None,
 ) -> CompiledSpec:
     """Strategy, config and refdata inputs for a resolved daily spec over ``[start, end]``.
 
     ``sessions``: the run's frozen session warm-up rule; data loads from that many sessions before ``start``.
     None (a run frozen without ``data.warmup``): from ``warmup_calendar_days`` calendar days before it.
+    ``calendar_rule``: the run's frozen ``data.trading_calendar``; the days projected past the data end are then
+    TAIFEX trading days (:func:`projection_calendar`). None: weekdays, holidays unknown.
     """
 
     if resolved["frequency"] != "1d":
@@ -392,6 +414,7 @@ def compile_spec(
     sources = {
         alias: instrument.price_proxy or instrument.symbol for alias, instrument in spec_plan.instruments.items()
     }
+    market = projection_calendar(calendar_rule, store, load_from)
     notes: list[str] = []
     futures, calendars = {}, []
     for alias in by_kind["future"]:
@@ -417,7 +440,7 @@ def compile_spec(
             expiries={c: calendar_rows.at[c, "last_trading_day"] for c in contracts},
             roll_days_before=spec_plan.rolls[alias],
         )
-        calendars.append(trading_calendar(bars))
+        calendars.append(trading_calendar(bars, market=market))
         note = instrument.proxy_note(start.date())
         if note:
             notes.append(note)
@@ -440,7 +463,7 @@ def compile_spec(
             raise NotCompilable("all futures instruments must share one trading calendar")
     else:
         union = pd.concat([rows[["date"]] for rows in stock_rows.values()], ignore_index=True)
-        calendar = trading_calendar(union)
+        calendar = trading_calendar(union, market=market)
     data_days = calendar[: len(calendar) - PROJECTED_CALENDAR_DAYS]
     for alias, rows in stock_rows.items():
         instrument = spec_plan.instruments[alias]
@@ -467,10 +490,18 @@ def compile_spec(
         )
     if start > data_days[-1]:
         raise NotCompilable(f"start {start.date()} is after the last bar {data_days[-1].date()}")
-    notes.append(
-        f"trading calendar: {PROJECTED_CALENDAR_DAYS} weekdays after {data_days[-1].date()} are projected "
-        "(holidays unknown) so a roll due on the last day is seen"
-    )
+    if market is None:
+        notes.append(
+            f"trading calendar: {PROJECTED_CALENDAR_DAYS} weekdays after {data_days[-1].date()} are projected "
+            "(holidays unknown) so a roll due on the last day is seen"
+        )
+    else:
+        projected = calendar[len(data_days) :]
+        notes.append(
+            f"trading calendar: the {PROJECTED_CALENDAR_DAYS} trading days after {data_days[-1].date()} "
+            f"({projected[0].date()} .. {projected[-1].date()}) are {TAIEX} sessions, then the {MARKET_CALENDAR} "
+            "schedule, so a roll due on the last day is seen"
+        )
     aux = {}
     attached = sorted({*ALWAYS_ATTACHED, *spec_plan.signal_indices})
     for name in attached:
@@ -496,6 +527,8 @@ def compile_spec(
     if by_kind["stock"]:
         datasets += [STOCKS, *((ACTIONS,) if store.exists(ACTIONS) else ())]
     inputs = {dataset: store.content_sha256(dataset) for dataset in datasets}
+    if market is not None:
+        inputs.update(market.sources)
     options, hedges = {}, []
     if spec_plan.hedges:
         options, hedges = option_inputs(spec_plan, store, load_from, upper)

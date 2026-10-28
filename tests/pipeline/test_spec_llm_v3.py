@@ -37,7 +37,7 @@ from poseidon.pipeline.spec_llm_v3 import (
 )
 from poseidon.pipeline.stages import STAGE_REGISTRY, SpecGenerateStage, StageContext
 from poseidon.pipeline.state import Verdict
-from poseidon.pipeline.v3.config import REFDATA_DATASETS, idea_run_config, is_v3_run
+from poseidon.pipeline.v3.config import REFDATA_DATASETS, idea_run_config, is_v3_run, trading_calendar_record
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.registry import REGISTRY, component_fingerprints
 from poseidon.pipeline.v3.validation import validate_spec_v3
@@ -365,7 +365,9 @@ def test_with_the_refdata_first_days_a_late_series_moves_the_window_into_the_rou
     # later stages see that window: the routed class's frozen config with the route's data
     config = routed()
     seen = effective_config(config, outcome.report["route"])
-    assert seen["data"] == data and config["by_class"]["daily_equity"]["data"]["start"] == "2001-01-02"
+    # the class entry's trading-calendar rule stays with the route's window
+    assert seen["data"] == {**data, "trading_calendar": trading_calendar_record()}
+    assert config["by_class"]["daily_equity"]["data"]["start"] == "2001-01-02"
     with pytest.raises(RouteError, match="keep the frozen window end"):
         effective_config(config, {**outcome.report["route"], "data": {**data, "end": "2026-10-25"}})
     with pytest.raises(ValueError, match="needs data_end"):
@@ -723,11 +725,17 @@ def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
     from poseidon.pipeline.v3.config import daily_run_config
 
     dsl = default_config(stage_plan=None, as_of=AS_OF)
+    # backtest.night_session (configs frozen from 2026-10-28 on): without that one key it is the 230cb82 config
+    assert content_sha256(dsl) == "6087aa7057526c8d6c264d166fd88df1b4377a63e68e4f40933d64b0057571a6"
+    del dsl["backtest"]["night_session"]
     assert content_sha256(dsl) == "60648707b1bc20e8544c9ba3baa21cee5c264ab3e34bc91d90c4dc20bc218ae2"
     resolved = validate_spec_v3(tmf_dynamic_leverage_3x()).resolved
     daily = daily_run_config(resolved, as_of=AS_OF, brief_text="brief", refdata=REFDATA)
     # db24f9f4 at REGISTRY_VERSION 2; registry_version moved it (3 adds rebalance.monthly), then data.warmup (the
-    # session warm-up rule of configs frozen from 2026-10-28 on): without that one key it is the 681d469 config
+    # session warm-up rule of configs frozen from 2026-10-28 on): without that one key it is the 681d469 config;
+    # data.trading_calendar (from 2026-10-28 too): without it, the ee1f91d config
+    assert content_sha256(daily) == "17565e928cba16c92a97d3919ce27dc6c0456deeb5fd239f36c9114ec60377fa"
+    del daily["data"]["trading_calendar"]
     assert content_sha256(daily) == "a6673bdd55d6de26a08daa56038bbf73e69f4a60e69595c9aa9c95d98769ba00"
     del daily["data"]["warmup"]
     assert content_sha256(daily) == "b3ce5b0dadae872b4fb3908e1fb31ec5e2531e405e2492fca1c6faae951ea14c"

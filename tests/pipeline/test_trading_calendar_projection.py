@@ -11,6 +11,7 @@ The store is the synthetic one of the daily paper tests: the real 2026 TWSE sche
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import date
 from pathlib import Path
@@ -20,9 +21,10 @@ import pytest
 
 from poseidon.pipeline.plan import effective_config
 from poseidon.pipeline.refdata.datasets import TAIEX, TAIEX_TR
+from poseidon.pipeline.shadow_paper_daily import DEFAULT_DAILY_SHADOW_PAPER, load_inputs
 from poseidon.pipeline.v3.compiler import compile_spec
 from poseidon.pipeline.v3.config import daily_run_config, trading_calendar_record
-from tests.pipeline.daily_paper_support import AsOf, build_store
+from tests.pipeline.daily_paper_support import AsOf, build_store, compiled
 from tests.pipeline.spec_support import resolved_spec
 
 SPEC = resolved_spec(ma_days=50, days_before=1)
@@ -65,6 +67,20 @@ def test_the_projection_skips_an_unscheduled_closure_once_taifex_dates_the_night
         pd.Timestamp("2026-10-27"),
         pd.Timestamp("2026-10-28"),
     ]
+
+
+def test_a_new_runs_daily_paper_appends_the_schedule_without_the_detected_closure(store):
+    morning_after_typhoon = AsOf(store, "2026-10-23")
+    strategy = compiled()
+
+    def first_after_cutoff(strategy):
+        inputs = load_inputs(morning_after_typhoon, strategy, DEFAULT_DAILY_SHADOW_PAPER, date(2026, 6, 1))
+        assert inputs.cutoff == pd.Timestamp("2026-10-22")
+        return inputs.calendar[inputs.calendar > inputs.cutoff][0]
+
+    assert first_after_cutoff(strategy) == pd.Timestamp("2026-10-23")  # frozen without the rule: as before
+    new = dataclasses.replace(strategy, calendar_rule=trading_calendar_record())
+    assert first_after_cutoff(new) == pd.Timestamp("2026-10-27")
 
 
 def test_new_configs_freeze_the_projection_rule_and_terminal_runs_do_not():

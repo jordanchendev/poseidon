@@ -282,6 +282,7 @@ class SpecRunner:
     end: date
     basis: Basis
     feasibility: FeasibilityContext = field(default_factory=FeasibilityContext)
+    calendar_rule: Mapping | None = None  # the run's frozen data.trading_calendar (compile_spec)
 
     def bind(self, values: Mapping) -> dict:
         snapped = {name: self.grid.specs[name].cast(values[name]) for name in self.grid.names}
@@ -305,6 +306,7 @@ class SpecRunner:
             store=self.store,
             conventions=conventions,
             sessions=self.feasibility.warmup,
+            calendar_rule=self.calendar_rule,
         )
         if cost_multiplier != 1.0:
             futures = {
@@ -498,6 +500,7 @@ class DailyStage(BaseStage):
             end=end,
             basis=self.basis(ctx),
             feasibility=feasibility,
+            calendar_rule=ctx.config["data"].get("trading_calendar"),
         )
 
     @staticmethod
@@ -1265,6 +1268,7 @@ def compile_strategy(ctx):
         fingerprint=fingerprint,
         aux={name: AUX_DATASETS[name] for name in spec_plan.signal_indices},
         warmup=(record, warmup) if record else None,
+        calendar_rule=ctx.config["data"].get("trading_calendar"),
     )
 
 
