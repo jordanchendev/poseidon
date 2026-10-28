@@ -102,6 +102,7 @@ def test_a_drawdown_cutting_strategy_passes_by_the_risk_route_alone():
     assert matched.calls == [risk["matched_leverage"]] == [round(report["beta"], 2)]
     assert risk["status"] == "pass" and risk["calmar_diff_lower"] > 0
     assert risk["strategy"]["max_drawdown"] < risk["matched"]["max_drawdown"]
+    assert all(risk[side][key] is not None for side in ("strategy", "matched") for key in ("cagr", "calmar"))
     assert "Calmar" in result.headline and result.reason == "passed by the risk route"
     canonical_json(report)
     again = benchmark.evaluate_daily(inputs(strategy, dates, x, matched=Matched(dates, x)), strict_alpha)

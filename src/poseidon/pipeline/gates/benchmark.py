@@ -397,7 +397,7 @@ def calmar_difference(
     """Calmar of both paths, their difference and its one-sided lower bound at ``confidence``."""
 
     s, m = np.asarray(strategy, dtype=float), np.asarray(matched, dtype=float)
-    (s_cagr, s_dd, s_calmar), (m_cagr, m_dd, m_calmar) = calmar_rows(s), calmar_rows(m)
+    (s_cagr, s_dd, s_calmar), (m_cagr, m_dd, m_calmar) = (map(float, calmar_rows(path)) for path in (s, m))
     draws = calmar_draws(s, m, block_days=block_days, resamples=resamples)
     return {
         "strategy": {
