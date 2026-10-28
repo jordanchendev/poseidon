@@ -135,6 +135,10 @@ DEFAULT_THRESHOLDS: dict = {
     "dsr_min_obs": 30,
     "param_neighbourhood_profitable_min": 0.6,
     "param_min_neighbours": 2,
+    # Owner decision 2026-10-28 (run #18's rule, applied to the DSL path): a neighbour cut off by a validator hard
+    # bound (not the spec's declared range) no longer sinks param_stability on insufficient_neighbours when every
+    # in-range neighbour is profitable (gates/param_stability.py). Runs frozen without the key (run #6) keep the old rule.
+    "param_edge_at_bound_pass": True,
     "regime_profitable_segments_min": 3,
     "regime_min_segments": 3,
     "regime_min_trades_per_segment": 5,

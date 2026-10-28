@@ -725,7 +725,10 @@ def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
     from poseidon.pipeline.v3.config import daily_run_config
 
     dsl = default_config(stage_plan=None, as_of=AS_OF)
-    # backtest.night_session (configs frozen from 2026-10-28 on): without that one key it is the 230cb82 config
+    # backtest.night_session and thresholds.param_edge_at_bound_pass (configs frozen from 2026-10-28 on): without
+    # those two keys it is the 230cb82 config
+    assert content_sha256(dsl) == "d057831a7e81ab8dac3da160edaa7b236257f33307a77e51639a247061febad8"
+    del dsl["thresholds"]["param_edge_at_bound_pass"]
     assert content_sha256(dsl) == "6087aa7057526c8d6c264d166fd88df1b4377a63e68e4f40933d64b0057571a6"
     del dsl["backtest"]["night_session"]
     assert content_sha256(dsl) == "60648707b1bc20e8544c9ba3baa21cee5c264ab3e34bc91d90c4dc20bc218ae2"

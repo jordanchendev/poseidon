@@ -10,6 +10,7 @@ import itertools
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from poseidon.pipeline import shadow_paper as sp
@@ -400,3 +401,43 @@ def test_wake_up_cost_stays_small(tmp_path):
 
 def test_wake_times_helper_is_taipei_local():
     assert wake_times("2026-10-23", "2026-10-23") == [datetime(2026, 10, 23, 1, 30, tzinfo=UTC)]
+
+
+# ----------------------------------------------------------------- revised_days labelling
+
+
+def _closure_bars() -> pd.DatetimeIndex:
+    """Thu 10-22 day + night, then 10-23 (typhoon) and 10-26 (holiday) closed, Tue 10-27 day session."""
+
+    return pd.DatetimeIndex(
+        [local(2026, 10, 22, 9, 0), local(2026, 10, 22, 20, 0), local(2026, 10, 27, 9, 0)], tz="UTC"
+    )
+
+
+def test_revised_day_labels_follow_the_night_session_rule_of_the_config():
+    night = local(2026, 10, 22, 20, 0).isoformat()
+    day = local(2026, 10, 27, 9, 0).isoformat()
+    moments = {night, day}
+    weekday = sp.trading_day_labels(moments, _closure_bars(), None)
+    assert weekday == {night: sp.trading_day(night), day: sp.trading_day(day)}  # absent key: the old label
+    assert weekday == sp.trading_day_labels(moments, _closure_bars(), "next_weekday")
+    assert weekday[night].isoformat() == "2026-10-23"  # the pseudo day of a closed Friday
+    booked = sp.trading_day_labels(moments, _closure_bars(), "next_day_session")
+    assert booked[night].isoformat() == "2026-10-27" and booked[day].isoformat() == "2026-10-27"
+
+
+def test_a_run_frozen_without_night_session_reports_revised_days_exactly_as_before(tmp_path):
+    def mismatches(config, root):
+        source = PaperSource()
+        driver = PaperDriver(root, source, config=config)
+        driver.wake(local(2026, 10, 31, 9, 30))
+        revised = next(t for t in driver.ledger()["trades"] if t["entry_time"] >= local(2026, 10, 27).isoformat())
+        source.revise(sp.trading_day(revised["entry_time"]).isoformat())
+        return driver.wake(local(2026, 11, 1, 9, 30)).report["consistency"]["mismatches"]
+
+    legacy = paper_config()
+    del legacy["backtest"]["night_session"]  # run #6's shape
+    old_rows = mismatches(legacy, tmp_path / "legacy")
+    new_rows = mismatches(paper_config(), tmp_path / "new")
+    assert old_rows and all(row["revised_days"] for row in old_rows)
+    assert old_rows == new_rows  # no closure in this window: both labellings agree

@@ -396,6 +396,7 @@ class OptimizeStage(_DataStage):
     def run(self, ctx):
         from poseidon.pipeline import optimization as opt
         from poseidon.pipeline.backtesting import backtest_settings
+        from poseidon.pipeline.gates.param_stability import EDGE_AT_BOUND_KEY
         from poseidon.pipeline.trials import TRIAL_COMPLETE, MemoryTrialLedger
         from poseidon.strategies.dsl.v2 import validate_v2
 
@@ -470,6 +471,7 @@ class OptimizeStage(_DataStage):
                 budget_seconds=settings.get("budget_seconds"),
                 started=started,
                 reserve_trials=2 * len(grid.names) * int(settings["neighbour_steps"]),
+                tag_kind=EDGE_AT_BOUND_KEY in ctx.config["thresholds"],
             )
             neighbours, settled = opt.complete_neighbourhood(runner, grid, int(settings["neighbour_steps"]), extension)
             report.update(
