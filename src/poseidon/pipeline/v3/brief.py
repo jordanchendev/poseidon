@@ -275,6 +275,14 @@ def _param_rows(component: Component) -> list[dict]:
 
 
 def _prop_text(prop: dict, required: bool) -> str:
+    optional = [option for option in prop.get("anyOf", []) if option.get("type") != "null"]
+    text = f"{_type_text(optional[0])} or null" if len(optional) == 1 else _type_text(prop)
+    if required:
+        return text + ", required"
+    return f"{text}, default {json.dumps(prop.get('default'), ensure_ascii=False)}"
+
+
+def _type_text(prop: dict) -> str:
     if "enum" in prop:
         text = " | ".join(str(value) for value in prop["enum"])
     elif "const" in prop:
@@ -293,9 +301,7 @@ def _prop_text(prop: dict, required: bool) -> str:
             text += ' "<alias|self>:<open|high|low|close|adjusted>" | "index:<' + "|".join(SIGNAL_INDICES) + '>"'
         elif prop.get("pattern") == SLEEVE_ID_PATTERN:
             text += " (a sleeve id)"
-    if required:
-        return text + ", required"
-    return f"{text}, default {json.dumps(prop.get('default'), ensure_ascii=False)}"
+    return text
 
 
 def catalog() -> dict:

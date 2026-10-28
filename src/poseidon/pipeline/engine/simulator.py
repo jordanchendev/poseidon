@@ -57,6 +57,7 @@ from poseidon.pipeline.engine.data import (
 from poseidon.pipeline.engine.options import (
     HEDGE_UNAVAILABLE,
     HedgeBook,
+    HedgeOrder,
     HedgePolicy,
     OptionChain,
     OptionInput,
@@ -483,8 +484,12 @@ class _Run:
         fill = spec.fill_price(units, settle)
         tax, commission = spec.leg_fees(units, fill)
         self.cash -= units * fill * spec.point_value + tax + commission
+        if units > 0:
+            book.cost = fill if not book.units else (book.cost * book.units + fill * units) / (book.units + units)
         book.units += units
         book.series, book.mark = (series, settle) if book.units else (None, math.nan)
+        if not book.units:
+            book.cost = math.nan
         record = Fill(
             date=t,
             session="close",
@@ -511,7 +516,7 @@ class _Run:
         value = units * intrinsic * chain.spec.point_value
         tax, commission = chain.spec.leg_fees(units, intrinsic) if intrinsic > 0 else (0.0, 0.0)
         self.cash += value - tax - commission
-        book.series, book.units, book.mark = None, 0, math.nan
+        book.series, book.units, book.mark, book.cost = None, 0, math.nan, math.nan
         record = Fill(
             t, "close", book.policy.name, series.key, -units, intrinsic, intrinsic, tax, commission, 0.0, "expiry"
         )
@@ -527,9 +532,12 @@ class _Run:
 
     def fill_hedge(self, t: pd.Timestamp, book: HedgeBook) -> None:
         chain = self.chains[book.policy.chain]
-        series, target = book.pending
+        series, target, take_profit = book.pending
         book.pending = None
-        reason = "rebalance" if series is None or book.series in (None, series) else "roll"
+        if series is None or book.series in (None, series):
+            reason = "rebalance"
+        else:
+            reason = "take_profit" if take_profit else "roll"
         if book.series is not None and series != book.series:
             settle = chain.settlement(t, book.series)
             if not math.isfinite(settle):
@@ -565,16 +573,17 @@ class _Run:
         )
         book.target_units = target
         held = book.series
+        take_profit = book.take_profit_hit
         if not target:
-            book.pending = (None, 0) if held is not None else None
-        elif held is not None and chain.days_left(t, held.expiry) > policy.roll_days:
-            book.pending = (held, target) if target != book.units else None
+            book.pending = HedgeOrder(None, 0) if held is not None else None
+        elif held is not None and not take_profit and not chain.roll_due(t, policy, held):
+            book.pending = HedgeOrder(held, target) if target != book.units else None
         else:
             series, why = chain.select(t, policy, prices[policy.underlying])
             if series is None:
                 self.event(t, HEDGE_UNAVAILABLE, policy.name, threshold=policy.max_strike_gap, note=why)
-            book.pending = None if series is None else (series, target)
-        order = book.units if book.pending is None else book.pending[1]
+            book.pending = None if series is None else HedgeOrder(series, target, take_profit)
+        order = book.units if book.pending is None else book.pending.units
         self.decisions.append({"date": t, "instrument": policy.name, "requested": target, "final": order})
 
     def decide(self, i: int, t: pd.Timestamp) -> dict[str, int]:
@@ -741,7 +750,7 @@ class _Run:
                 or (spec.listed_since is not None and t < pd.Timestamp(spec.listed_since)),
             )
         for name, book in self.hedges.items():
-            order = book.units if book.pending is None else book.pending[1]
+            order = book.units if book.pending is None else book.pending.units
             self.positions_daily.append(
                 {
                     "date": t,
@@ -796,7 +805,7 @@ class _Run:
                 self.record(i, t, deciding=True)
         unfilled = dict(self.pending or {}) if self.ruined is None else {}
         if self.ruined is None:
-            unfilled.update({k: b.pending[1] for k, b in self.hedges.items() if b.pending is not None})
+            unfilled.update({k: b.pending.units for k, b in self.hedges.items() if b.pending is not None})
         return EngineResult.build(
             config=cfg,
             fills=self.fills,

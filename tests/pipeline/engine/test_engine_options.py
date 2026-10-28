@@ -218,3 +218,135 @@ def test_hedge_names_and_references_are_checked():
         hedged_run([], policy=dataclasses.replace(PUT, underlying="TX"))
     with pytest.raises(ValueError, match="differ from instrument names"):
         hedged_run([], policy=dataclasses.replace(PUT, name="TMF"))
+
+
+# --------------------------------------------------------------------------- take-profit and roll timing
+
+TP = dataclasses.replace(PUT, take_profit=3.0)
+
+
+def drop_run(rows, *, closes, policy=TP, expiries=None, final=None):
+    return run(
+        Scripted({0: 10}),
+        tmf(flat_bars(closes)),
+        EngineConfig(),
+        options=chain(rows, final, expiries),
+        hedges=[policy],
+    )
+
+
+def tp_rows(path: dict[int, float], *, n=8, months=("M1",)) -> list[tuple]:
+    """P19000 settles at ``path`` (by day, carried forward), P18000 at 50, for each month in ``months``."""
+
+    rows, price = [], 100.0
+    for i in range(n):
+        price = path.get(i, price)
+        for m in months:
+            rows += [(i, m, 19000.0, price), (i, m, 18000.0, 50.0)]
+    return rows
+
+
+def test_take_profit_sells_at_the_first_settlement_of_three_times_the_fill_and_buys_by_the_rule():
+    # bought at day 1 for 105 (settlement 100 + 5 %): day 2's 300 is 3x the settlement but not the fill
+    rows = tp_rows({2: 300.0, 3: 315.0, 4: 400.0})
+    closes = [20000.0] * 3 + [19000.0] * 5  # day 3: target strike 19000 x 0.95 = 18050 -> 18000
+    res = drop_run(rows, closes=closes, expiries={"M1": day(12), "M2": day(30)})
+    fills = option_fills(res)
+    assert list(zip(fills["date"], fills["contract"], fills["units"], fills["reason"], strict=True)) == [
+        (day(1), "M1P19000", 2, "rebalance"),
+        (day(4), "M1P19000", -2, "take_profit"),
+        (day(4), "M1P18000", 2, "take_profit"),
+    ]
+    sale, buy = fills.iloc[1], fills.iloc[2]
+    assert (sale["price"], buy["price"]) == (380.0, 52.5)  # day 4's settlements -/+ 5 % slippage
+    assert hedge_rows(res).loc[day(4) :, "contract"].eq("M1P18000").all()
+
+
+def test_take_profit_does_not_fire_below_the_multiple_or_when_off():
+    rows = tp_rows({2: 300.0, 3: 314.9})
+    closes = [20000.0] * 3 + [19000.0] * 5
+    for policy in (TP, PUT):
+        fills = option_fills(drop_run(rows, closes=closes, policy=policy, expiries={"M1": day(12), "M2": day(30)}))
+        assert list(fills["reason"]) == ["rebalance"]
+    off = option_fills(drop_run(tp_rows({3: 400.0}), closes=closes, policy=PUT, expiries={"M1": day(12)}))
+    assert list(off["reason"]) == ["rebalance"]
+
+
+def test_take_profit_on_a_roll_day_sells_as_take_profit_into_the_next_month():
+    # day 4: M1 (expiry day 6) has 2 <= roll_days left and its put is at 3x: one replacement, reason take_profit
+    rows = tp_rows({4: 400.0}, n=12, months=("M1", "M2"))
+    res = drop_run(rows, closes=[20000.0] * 12)
+    fills = option_fills(res)
+    assert list(zip(fills["date"], fills["contract"], fills["units"], fills["reason"], strict=True)) == [
+        (day(1), "M1P19000", 2, "rebalance"),
+        (day(5), "M1P19000", -2, "take_profit"),
+        (day(5), "M2P19000", 2, "take_profit"),
+    ]
+
+
+def test_expiry_settles_before_a_take_profit_order_due_the_same_day():
+    # held to expiry (roll_days 0). Day 5 decides a take-profit into M1P18000; day 6 is M1's final settlement:
+    # the held put is cash-settled first, M1 has no quote that day so the new put is not bought, and the day-6
+    # decision buys the next month instead.
+    hold = dataclasses.replace(TP, roll_days=0)
+    rows = [r for r in tp_rows({5: 400.0}, n=12, months=("M1", "M2")) if not (r[1] == "M1" and r[0] >= 6)]
+    closes = [20000.0] * 5 + [19000.0] * 7
+    res = drop_run(rows, closes=closes, policy=hold, final={"M1": (day(6), 18900.0)})
+    fills = option_fills(res)
+    assert list(zip(fills["date"], fills["contract"], fills["units"], fills["reason"], strict=True)) == [
+        (day(1), "M1P19000", 2, "rebalance"),
+        (day(6), "M1P19000", -2, "expiry"),
+        (day(7), "M2P18000", 2, "rebalance"),
+    ]
+    assert fills.iloc[1]["price"] == 100.0  # intrinsic 19000 - 18900
+    missing = res.events.query("kind == 'hedge_fill_missing'")
+    assert list(missing["date"]) == [day(6)] and "M1P18000" in missing["note"].iloc[0]
+
+
+def test_a_next_month_put_rolls_at_its_own_expiry_or_when_the_front_expires():
+    expiries = {"M1": day(6), "M2": day(26), "M3": day(46)}
+    rows = ladder({"M1": (0, 6, 100.0), "M2": (0, 11, 300.0), "M3": (0, 11, 500.0)})
+    own = dataclasses.replace(PUT, tenor=1, roll_days=5)
+    fills = option_fills(hedged_run(rows, policy=own, expiries=expiries))
+    assert list(zip(fills["date"], fills["contract"], fills["reason"], strict=True)) == [
+        (day(1), "M2P19000", "rebalance")  # M2 has 20 days left at the end: no roll in the window
+    ]
+    front = dataclasses.replace(PUT, tenor=1, roll_days=0, roll_with_tenor=True)
+    res = hedged_run(rows, policy=front, expiries=expiries)
+    fills = option_fills(res)
+    # day 6 is M1's expiry: M2 becomes the front, so the day-6 decision rolls into M3
+    assert list(zip(fills["date"], fills["contract"], fills["units"], fills["reason"], strict=True)) == [
+        (day(1), "M2P19000", 2, "rebalance"),
+        (day(7), "M2P19000", -2, "roll"),
+        (day(7), "M3P19000", 2, "roll"),
+    ]
+    held = hedge_rows(res)["contract"]
+    assert held.loc[: day(6)].iloc[1:].eq("M2P19000").all() and held.loc[day(7) :].eq("M3P19000").all()
+
+
+def test_truncation_audit_covers_take_profit_and_the_front_expiry_roll():
+    rows = [
+        (i, m, k, (100.0 * 1.3**i if m == "M2" else 100.0 + i) + (k - 18500) / 100)
+        for m, last in (("M1", 6), ("M2", 25), ("M3", 25))
+        for i in range(last + 1)
+        for k in (18000.0, 18500.0, 19000.0, 19500.0)
+    ]
+    closes = [20000.0 - 60 * i for i in range(24)]  # the target strike drifts down: a take-profit buys a new one
+    for policy in (TP, dataclasses.replace(TP, tenor=1, roll_days=0, roll_with_tenor=True)):
+        report = truncation_audit(
+            lambda: Scripted({0: 10, 5: 15, 9: 0, 12: 12}),
+            tmf(flat_bars(closes)),
+            EngineConfig(),
+            n_cuts=10,
+            options=chain(rows, {"M1": (day(6), 18900.0)}, {"M1": day(6), "M2": day(26), "M3": day(46)}),
+            hedges=[policy],
+        )
+        assert report.ok, report.mismatches
+    res = run(
+        Scripted({0: 10, 5: 15, 9: 0, 12: 12}),
+        tmf(flat_bars(closes)),
+        EngineConfig(),
+        options=chain(rows, {"M1": (day(6), 18900.0)}, {"M1": day(6), "M2": day(26), "M3": day(46)}),
+        hedges=[TP],
+    )
+    assert (option_fills(res)["reason"] == "take_profit").any()  # the audit covers a run that takes profit

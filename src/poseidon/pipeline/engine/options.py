@@ -13,8 +13,8 @@ Prices
     ``next_open`` -> the next trading day's settlement, ``signal_close`` -> the decision day's.
 
 Selection (protective put)
-    Expiry: the monthly expiries with more than ``roll_days`` trading days left after the
-    decision day, sorted; ``tenor`` 0 takes the first, 1 the second. Strike: target =
+    Expiry: the eligible monthly expiries, those with more than ``roll_days`` trading days left
+    after the decision day, sorted; ``tenor`` 0 takes the first, 1 the second. Strike: target =
     underlying close x (1 - moneyness) (calls: x (1 + moneyness)); the listed strike of that
     expiry and side with a settlement that day nearest to it, the lower one on a tie. A strike
     more than ``max_strike_gap`` (relative) from the target, or no series at all, is
@@ -23,9 +23,22 @@ Selection (protective put)
 Holding
     One series per hedge. It is kept while it has more than ``roll_days`` trading days left and
     re-sized on it when the target units change; at ``roll_days`` or fewer it is sold and the
-    newly selected series bought (a roll). Units = floor(cover_ratio x long underlying units x
+    newly selected series bought (a roll). With ``roll_with_tenor`` it is kept only while it is
+    still the ``tenor``-th eligible expiry instead: a ``next`` put rolls once the front month has
+    ``roll_days`` or fewer days left (0: on the front's expiry day), so it is always the second
+    expiry. Units = floor(cover_ratio x long underlying units x
     underlying point value / option point value): one TXO put (50 TWD/pt) covers five TMF
     (10 TWD/pt). A flat or short underlying holds no hedge.
+
+Take-profit
+    With ``take_profit`` set, a held series whose settlement on the decision day is at least
+    ``take_profit`` x its cost (the average fill price of the units held, slippage included) is
+    sold and the newly selected series bought, on the same fill as a roll (fill reason
+    ``take_profit``). It is checked on the daily settlement, the only price the chain has. It
+    takes precedence over a roll due the same day (same replacement, reason ``take_profit``); a
+    series cash-settled at today's close is gone before the decision, so expiry wins over a
+    trigger on the same day. If the selection returns the held series, or none, the held series
+    is kept.
 
 Expiry
     A series still held on its final settlement day (the expiry day from 2008-12, the next
@@ -39,7 +52,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -157,10 +170,14 @@ class HedgePolicy:
     tenor: int = 0  # 0 = front eligible expiry, 1 = the one after
     cp: CallPut = "P"
     max_strike_gap: float = MAX_STRIKE_GAP
+    take_profit: float | None = None  # sell at this multiple of the cost (see the module docstring)
+    roll_with_tenor: bool = False  # roll once the held series is no longer the tenor-th eligible expiry
 
     def __post_init__(self) -> None:
         if not 0 <= self.moneyness < 1 or self.roll_days < 0 or self.cover_ratio <= 0 or self.tenor < 0:
             raise ValueError(f"hedge {self.name}: invalid policy {self}")
+        if self.take_profit is not None and not self.take_profit > 1:
+            raise ValueError(f"hedge {self.name}: take_profit must be above 1, got {self.take_profit}")
 
     def units(self, underlying_units: int, underlying_point_value: float, option_point_value: float) -> int:
         if underlying_units <= 0:
@@ -212,10 +229,21 @@ class OptionChain:
 
         return int(self.calendar.searchsorted(expiry) - self.calendar.searchsorted(day))
 
+    def eligible(self, day: pd.Timestamp, policy: HedgePolicy) -> list[str]:
+        """Contract months with more than ``policy.roll_days`` trading days left after ``day``, by expiry."""
+
+        return [m for m in self.months if self.days_left(day, self.expiries[m]) > policy.roll_days]
+
+    def roll_due(self, day: pd.Timestamp, policy: HedgePolicy, held: OptionSeries) -> bool:
+        if policy.roll_with_tenor:
+            eligible = self.eligible(day, policy)
+            return len(eligible) <= policy.tenor or eligible[policy.tenor] != held.contract_month
+        return self.days_left(day, held.expiry) <= policy.roll_days
+
     def select(self, day: pd.Timestamp, policy: HedgePolicy, underlying: float) -> tuple[OptionSeries | None, str]:
         """The series ``policy`` buys on ``day``, or (None, why)."""
 
-        eligible = [m for m in self.months if self.days_left(day, self.expiries[m]) > policy.roll_days]
+        eligible = self.eligible(day, policy)
         if len(eligible) <= policy.tenor:
             return None, f"no expiry with more than {policy.roll_days} trading days left"
         month = eligible[policy.tenor]
@@ -233,6 +261,12 @@ class OptionChain:
         return OptionSeries(month, strike, policy.cp, self.expiries[month]), ""
 
 
+class HedgeOrder(NamedTuple):
+    series: OptionSeries | None  # None: sell what is held
+    units: int
+    take_profit: bool = False
+
+
 @dataclass
 class HedgeBook:
     """What one hedge holds, and the order waiting for its fill day."""
@@ -241,12 +275,18 @@ class HedgeBook:
     series: OptionSeries | None = None
     units: int = 0
     mark: float = math.nan
+    cost: float = math.nan  # average fill price of the units held
     target_units: int | None = None  # today's decision, for positions_daily
-    pending: tuple[OptionSeries | None, int] | None = None
+    pending: HedgeOrder | None = None
 
     @property
     def value_points(self) -> float:
         return self.units * self.mark if self.units else 0.0
+
+    @property
+    def take_profit_hit(self) -> bool:
+        multiple = self.policy.take_profit
+        return multiple is not None and self.units > 0 and self.mark >= multiple * self.cost
 
 
 def hedge_coverage(positions_daily: pd.DataFrame, events: pd.DataFrame, names: list[str]) -> dict[str, dict]:

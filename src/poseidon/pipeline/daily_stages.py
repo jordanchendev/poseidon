@@ -377,9 +377,8 @@ def check_components(config: dict) -> dict:
     from poseidon.pipeline.v3.registry import component_fingerprints
 
     frozen = config.get("components") or {}
-    names = sorted({key.split("@", 1)[0] for key in frozen})
     try:
-        live = component_fingerprints(names)
+        live = component_fingerprints(sorted(frozen))
     except KeyError as error:
         raise ComponentDrift(f"component {error} frozen into this run is no longer registered") from error
     if live != frozen:

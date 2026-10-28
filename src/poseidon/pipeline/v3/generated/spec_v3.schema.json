@@ -331,7 +331,7 @@
     },
     "HedgeProtectivePut": {
       "additionalProperties": false,
-      "description": "Buy TXO monthly puts against the long futures position: strike nearest close x (1 - moneyness), roll before expiry, cover_ratio 1 = 1 put per 5 TMF; valued at daily settlement prices.",
+      "description": "Buy TXO monthly puts against the long futures position: strike nearest close x (1 - moneyness), front or next month, roll before its own expiry or when the front month expires, optional take-profit (sell at take_profit_multiple x the fill price, buy a new one); cover_ratio 1 = 1 put per 5 TMF; daily settlement prices.",
       "properties": {
         "component": {
           "const": "hedge.protective_put",
@@ -383,7 +383,7 @@
           "anyOf": [
             {
               "maximum": 15,
-              "minimum": 1,
+              "minimum": 0,
               "type": "integer"
             },
             {
@@ -392,6 +392,29 @@
           ],
           "default": 5,
           "title": "Roll Days Before Expiry"
+        },
+        "roll_when": {
+          "default": "own_expiry",
+          "enum": [
+            "own_expiry",
+            "front_expiry"
+          ],
+          "title": "Roll When",
+          "type": "string"
+        },
+        "take_profit_multiple": {
+          "anyOf": [
+            {
+              "maximum": 20.0,
+              "minimum": 1.5,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Take Profit Multiple"
         },
         "tenor": {
           "default": "front",
