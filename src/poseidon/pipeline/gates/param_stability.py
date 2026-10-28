@@ -8,6 +8,13 @@ dropped. The share is taken over the evaluated neighbours only -- the best
 point is reported but not counted, so it cannot pad its own neighbourhood.
 Pass iff evaluated >= ``param_min_neighbours`` and the share with
 ``total_pnl_twd`` > 0 is >= ``param_neighbourhood_profitable_min``.
+
+Edge at a component bound (``param_edge_at_bound_pass``, runs frozen with it only): a neighbour is
+excluded as ``component_bound`` when the component's own hard range, not the spec's declared one, cuts
+it off. When such exclusions are the only reason fewer than ``param_min_neighbours`` were evaluated
+(evaluated + excluded-by-bound >= min, at least one evaluated), the gate judges the in-range neighbours
+alone and passes only if all of them are profitable. ``edge_at_bound`` lists those params in the report.
+Any other shortfall stays ``insufficient_neighbours``.
 """
 
 from __future__ import annotations
@@ -20,6 +27,8 @@ from poseidon.pipeline.gates.base import GateResult, failed, finite_or_none, inv
 from poseidon.pipeline.gates.daily import DailyResult
 
 GATE = "param_stability"
+EDGE_AT_BOUND_KEY = "param_edge_at_bound_pass"
+COMPONENT_BOUND = "component_bound"
 
 
 @dataclass(frozen=True)
@@ -28,6 +37,7 @@ class NeighbourResult:
     step: int  # -1 or +1 grid step from the best value
     params: Mapping[str, Any]
     total_pnl_twd: float | None  # None: out of bounds / not evaluated
+    excluded_kind: str | None = None  # COMPONENT_BOUND when a component's hard bound cut it off
 
 
 @dataclass(frozen=True)
@@ -99,6 +109,31 @@ def evaluate(inputs: ParamStabilityInputs, thresholds: Mapping) -> GateResult:
         "profitable_share_min": share_min,
         "min_neighbours": min_neighbours,
     }
+    at_bound = (
+        sorted({n.param for n in inputs.neighbours if n.excluded_kind == COMPONENT_BOUND and n.total_pnl_twd is None})
+        if thresholds.get(EDGE_AT_BOUND_KEY)
+        else []
+    )
+    if at_bound:
+        report["edge_at_bound"] = at_bound
+        bound_excluded = sum(1 for n in inputs.neighbours if n.excluded_kind == COMPONENT_BOUND)
+        if evaluated and len(evaluated) < min_neighbours <= len(evaluated) + bound_excluded:
+            edge = f"{len(profitable)}/{len(evaluated)} in-range neighbours profitable, edge_at_bound: {', '.join(at_bound)}"
+            if len(profitable) < len(evaluated):
+                return failed(
+                    GATE,
+                    "unstable_neighbourhood",
+                    f"{len(evaluated) - len(profitable)} of {len(evaluated)} in-range neighbours lose money "
+                    f"(edge_at_bound: {', '.join(at_bound)})",
+                    edge,
+                    report,
+                )
+            return passed(
+                GATE,
+                edge,
+                report,
+                reason=f"all in-range neighbours profitable; {', '.join(at_bound)} at a component bound",
+            )
     if len(evaluated) < min_neighbours:
         return failed(
             GATE,
