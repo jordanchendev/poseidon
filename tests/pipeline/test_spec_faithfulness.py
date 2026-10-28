@@ -558,3 +558,92 @@ def test_the_direction_question_enters_the_input_hash_only_with_an_original(monk
         patch.setattr(faithfulness, "DIRECTION_MIN_P", 0.8)
         assert content_sha256(stage.input_payload(undrafted)) == before["undrafted"]
         assert content_sha256(stage.input_payload(drafted)) != before["drafted"]
+
+
+# ----------------------------------------------------------------------------- precheck: ladder rungs, percent units
+
+RUN18_CLAUSE = "加權指數從 N 日高點回檔 10% 以上時加到 2 倍，回到高點 2% 以內再降回 1 倍（跌了加槓桿、回前高退場，對照台股版的 NVDA→NVDL 手法）"
+
+
+def run18_spec() -> dict:
+    with open("tests/pipeline/fixtures/run18_ladder_spec.json", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def test_run18_ladder_clause_is_matched_by_the_rungs_not_contradicted():
+    checked = precheck(RUN18_CLAUSE, run18_spec())
+    assert checked["version"] == 3
+    assert checked["decides"] is False and checked["decided_label"] is None
+    assert checked["unmatched"] == []
+    paths = {item["raw"]: [hit["path"] for hit in item["spec"]] for item in checked["matched"]}
+    assert paths["10%"] == ["sleeves.0.leverage.1.params.steps.0.drawdown_pct"]
+    assert paths["2 倍"] == ["sleeves.0.leverage.1.params.steps.0.leverage"]
+    assert "sleeves.0.leverage.1.params.release_drawdown_pct" in paths["2%"]
+    assert paths["1 倍"] == ["sleeves.0.leverage.0.params.value"]
+
+
+def test_a_leverage_the_ladder_does_not_have_still_contradicts():
+    assert precheck(RUN18_CLAUSE.replace("加到 2 倍", "加到 3 倍"), run18_spec())["deciding_kinds"] == ["multiple"]
+
+
+def _one_component(slot: str, component: str, params: dict) -> dict:
+    doc = {
+        "instruments": {},
+        "sleeves": [
+            {
+                "direction": {"component": "direction.constant", "params": {"side": "long"}},
+                "leverage": [{"component": "leverage.base", "params": {"value": 1.0}}],
+                "sizing": {"component": "sizing.target_leverage", "params": {}},
+                "rebalance": {"component": "rebalance.daily", "params": {}},
+                "exits": [],
+                "hedges": [],
+            }
+        ],
+        "allocation": {"component": "allocation.single"},
+        "execution": {"component": "execution.next_open"},
+    }
+    ref = {"component": component, "params": params}
+    if slot == "leverage":
+        doc["sleeves"][0]["leverage"].append(ref)
+    elif slot == "hedge":
+        doc["sleeves"][0]["hedges"] = [ref]
+    else:
+        doc["sleeves"][0][slot] = ref
+    return doc
+
+
+PERCENT_FRACTION_PAIRS = [
+    ("leverage", "regime.ma_band", {"ma_days": 200, "band_pct": 0.02, "off_leverage": 0.5}, "跌破 200 日均線 2%", "2%"),
+    ("rebalance", "rebalance.threshold_band", {"band_pct": 0.1}, "偏離目標超過 10% 才調整", "10%"),
+    ("hedge", "hedge.protective_put", {"moneyness_pct": 0.05}, "買價外 5% 的 put", "5%"),
+    (
+        "leverage",
+        "leverage.drawdown_ladder",
+        {"steps": [{"drawdown_pct": 0.15, "leverage": 2.0}], "release_drawdown_pct": 0.03},
+        "回檔 15% 時加碼",
+        "15%",
+    ),
+    (
+        "leverage",
+        "leverage.drawdown_ladder",
+        {"steps": [{"drawdown_pct": 0.15, "leverage": 2.0}], "hold": True, "release_drawdown_pct": 0.03},
+        "回到高點 3% 以內放開",
+        "3%",
+    ),
+    ("hedge", "hedge.protective_put", {"take_profit_multiple": 3.0}, "漲到買價 3 倍就賣掉", "3 倍"),
+]
+
+
+@pytest.mark.parametrize(("slot", "component", "params", "clause", "raw"), PERCENT_FRACTION_PAIRS)
+def test_percent_text_matches_the_fraction_the_registry_stores(slot, component, params, clause, raw):
+    template = _one_component(slot, component, params)
+    checked = precheck(clause, template)
+    assert raw in {item["raw"] for item in checked["matched"]}, checked
+    assert not checked["decides"] and checked["unmatched"] == []
+
+
+def test_a_precheck_version_bump_changes_the_spec_faithfulness_input_hash(monkeypatch):
+    stage = STAGE_REGISTRY["spec_faithfulness"]
+    before = content_sha256(stage.input_payload(ctx()))
+    monkeypatch.setattr(faithfulness, "PRECHECK_VERSION", faithfulness.PRECHECK_VERSION + 1)
+    assert content_sha256(stage.input_payload(ctx())) != before

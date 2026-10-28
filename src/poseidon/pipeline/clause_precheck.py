@@ -8,7 +8,8 @@ parameter and every ``$param`` range ``[low, high]``. Percentages also match a f
 Only two kinds of miss decide the clause as ``contradicts`` (strict mode):
 
 - ``multiple``: the clause names a leverage multiple, the spec has leverage values, and none of them
-  (nor the 5x policy cap, nor a ``$param`` range on a leverage link) equals it;
+  (nor the 5x policy cap, nor a ``$param`` range on a leverage link, nor a ``*_multiple`` parameter such as
+  ``take_profit_multiple``) equals it; ladder rungs (``steps``) count as spec values;
 - ``sign``: the clause says short and every sleeve is constantly long, or the other way round.
 
 Any other miss (days, percentages, plain numbers, a multiple when the spec has no leverage at all) is
@@ -25,7 +26,7 @@ from typing import Any
 from poseidon.pipeline.v3.spec import PARAM_REF_KEY, component_slots
 from poseidon.pipeline.v3.validation import LEVERAGE_CAP
 
-PRECHECK_VERSION = 2  # 2: 做空間 (space planning) is not 做空
+PRECHECK_VERSION = 3  # 2: 做空間 (space planning) is not 做空; 3: ladder rungs and take_profit_multiple are spec values
 DECIDING_KINDS: dict[str, frozenset[str]] = {
     "strict": frozenset({"multiple", "sign"}),
     "any": frozenset({"multiple", "sign", "percent", "days", "number"}),
@@ -136,20 +137,34 @@ class SpecValue:
 
 
 def spec_values(template: dict) -> list[SpecValue]:
-    """Every numeric component parameter of ``template`` (a ``$param`` reference as its declared range)."""
+    """Every numeric component parameter of ``template`` (a ``$param`` reference as its declared range).
+
+    A parameter may be a list of rung objects (``leverage.drawdown_ladder`` ``steps``): each number in a
+    rung is a value under its own key (``steps.0.leverage``), so a ladder's rungs are not lost.
+    """
 
     declared = template.get("params") or {}
     out: list[SpecValue] = []
+
+    def visit(path: tuple, slot: str, key: str, raw: Any) -> None:
+        where = ".".join(str(part) for part in path)
+        if isinstance(raw, dict) and PARAM_REF_KEY in raw:
+            spec = declared.get(raw[PARAM_REF_KEY])
+            if isinstance(spec, dict) and _is_number(spec.get("low")) and _is_number(spec.get("high")):
+                name = raw[PARAM_REF_KEY]
+                out.append(SpecValue(where, slot, key, float(spec["low"]), float(spec["high"]), f"$param:{name}"))
+        elif isinstance(raw, dict):
+            for child_key, child in raw.items():
+                visit((*path, child_key), slot, child_key, child)
+        elif isinstance(raw, list):
+            for index, child in enumerate(raw):
+                visit((*path, index), slot, key, child)
+        elif _is_number(raw):
+            out.append(SpecValue(where, slot, key, float(raw), float(raw), "value"))
+
     for path, slot, ref in component_slots(template):
         for key, raw in (ref.get("params") or {}).items():
-            where = ".".join(str(part) for part in (*path, "params", key))
-            if isinstance(raw, dict) and PARAM_REF_KEY in raw:
-                spec = declared.get(raw[PARAM_REF_KEY])
-                if isinstance(spec, dict) and _is_number(spec.get("low")) and _is_number(spec.get("high")):
-                    name = raw[PARAM_REF_KEY]
-                    out.append(SpecValue(where, slot, key, float(spec["low"]), float(spec["high"]), f"$param:{name}"))
-            elif _is_number(raw):
-                out.append(SpecValue(where, slot, key, float(raw), float(raw), "value"))
+            visit((*path, "params", key), slot, key, raw)
     return out
 
 
@@ -191,12 +206,13 @@ def precheck(clause: str, template: dict, *, mode: str = "strict") -> dict:
         leverage.append(
             SpecValue("policy.leverage_cap", "leverage", "leverage_cap", LEVERAGE_CAP, LEVERAGE_CAP, "policy")
         )
+    multiples = [*leverage, *(value for value in values if value.key.endswith("_multiple"))]
     matched, unmatched = [], []
     for quantity in quantities:
         magnitude = abs(quantity.value)
         if quantity.kind == "multiple":
-            pool, kind = leverage, "multiple" if leverage else "multiple_no_leverage"
-            hits = [value for value in pool if value.matches(magnitude)]
+            kind = "multiple" if leverage else "multiple_no_leverage"
+            hits = [value for value in multiples if value.matches(magnitude)]
         elif quantity.kind == "percent":
             kind = "percent"
             hits = [value for value in values if value.matches(magnitude / 100) or value.matches(magnitude)]
