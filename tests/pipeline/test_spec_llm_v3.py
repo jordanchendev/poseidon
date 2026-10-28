@@ -746,10 +746,15 @@ def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
     daily = daily_run_config(resolved, as_of=AS_OF, brief_text="brief", refdata=REFDATA)
     # db24f9f4 at REGISTRY_VERSION 2; registry_version moved it (3 adds rebalance.monthly), then data.warmup (the
     # session warm-up rule of configs frozen from 2026-10-28 on), then thresholds.param_edge_at_bound_pass (run #18,
-    # 2026-10-28), then data.trading_calendar (2026-10-28), then data.option_chain (the hedged paper's rule,
-    # 2026-10-28): without those keys it is the 681d469 config
-    assert content_sha256(daily) == "0173c3cdbcb09c4f9430e33887835f5bac767058dcf3a22f904c4969df5aa70d"
+    # 2026-10-28), then data.trading_calendar (2026-10-28), then thresholds.benchmark_rule with its
+    # benchmark_risk_* settings (2026-10-28), then data.option_chain (the hedged paper's rule, 2026-10-28): without
+    # those keys it is the 681d469 config
+    assert content_sha256(daily) == "2a9c1e312f32065af30a455aadb15fb99ec855c6b4033204ce62149d8a305897"
     del daily["data"]["option_chain"]
+    assert content_sha256(daily) == "a2ac17c53d0eb4df3ef554c2bcdcd854c30145d1c3d690c9b93fdf364fe9477b"
+    for key in ("benchmark_rule", "benchmark_risk_block_days", "benchmark_risk_resamples",
+                "benchmark_risk_confidence", "benchmark_risk_min_beta"):  # fmt: skip
+        del daily["thresholds"][key]
     assert content_sha256(daily) == "7ec6ce99749cb5f4bd5c5c84d887e63c9f965d07147a5453537811df35bd228a"
     del daily["data"]["trading_calendar"]
     assert content_sha256(daily) == "0e651e8e66df479e37ae99310c1148f04b95325f227a5a9a668c3c9975170034"

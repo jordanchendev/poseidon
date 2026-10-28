@@ -45,6 +45,7 @@ from poseidon.pipeline.gates import benchmark, cost_stress, execution_timing, ho
 from poseidon.pipeline.gates import wfe as wfe_gate
 from poseidon.pipeline.gates.base import failed, finite_or_none, invalid
 from poseidon.pipeline.gates.daily import (
+    LIQUIDATION_EVENTS,
     Basis,
     DailyResult,
     RerunRequest,
@@ -1014,6 +1015,78 @@ class DailyRegimeSplitStage(DailyGateStage):
         return to_stage_result(result, inputs)
 
 
+def beta_matched_spec(template: dict, symbol: str, leverage: float) -> dict | benchmark.NotApplicable:
+    """The no-timing version of ``template`` for the risk route: its 1x underlying ``symbol`` at a constant
+    ``leverage``, rebalanced daily, with the template's capital and execution.
+
+    TX family: the futures contract the first sleeve trades, with its roll (TX, MTX or TMF on TX prices). Stock /
+    ETF family: 0050 as the template declares it (or by board lot). Not applicable when the leverage cannot be
+    held: above 1x on a stock (paid in full), above the policy cap or the initial-margin limit on a future.
+    """
+
+    from poseidon.pipeline.v3.instruments import INSTRUMENTS, MAX_MARGIN_UTILISATION
+    from poseidon.pipeline.v3.validation import LEVERAGE_CAP
+
+    declared = template["instruments"]
+    if symbol == STOCK_UNDERLYING:
+        alias = next((name for name, decl in declared.items() if decl["symbol"] == symbol), "underlying")
+        decl = declared.get(alias, {"symbol": symbol})
+        if leverage > 1.0:
+            return benchmark.NotApplicable(f"{symbol} is paid in full: {leverage:g}x cannot be held")
+    else:
+        alias = template["sleeves"][0]["instrument"]
+        decl = declared[alias]
+        instrument = INSTRUMENTS[decl["symbol"]]
+        margin = leverage * instrument.initial_margin_ratio
+        if leverage > LEVERAGE_CAP or margin > MAX_MARGIN_UTILISATION:
+            return benchmark.NotApplicable(
+                f"{leverage:g}x {instrument.symbol} cannot be held (cap {LEVERAGE_CAP:g}x, initial margin "
+                f"{margin:.0%} of equity > {MAX_MARGIN_UTILISATION:.0%})"
+            )
+    return {
+        "spec_version": template["spec_version"],
+        "name": f"{template['name']}_beta_matched",
+        "frequency": "1d",
+        "capital": template.get("capital") or {},
+        "instruments": {alias: decl},
+        "sleeves": [
+            {
+                "id": "matched",
+                "instrument": alias,
+                "direction": {"component": "direction.constant", "params": {"side": "long"}},
+                "leverage": [{"component": "leverage.base", "params": {"value": leverage}}],
+                "sizing": {"component": "sizing.target_leverage", "params": {"rounding": "nearest"}},
+                "rebalance": {"component": "rebalance.daily", "params": {"min_change_units": 1}},
+                "exits": [],
+                "hedges": [],
+            }
+        ],
+        "allocation": {"component": "allocation.single"},
+        "execution": template["execution"],
+    }
+
+
+def beta_matched_run(runner: SpecRunner, symbol: str, leverage: float) -> DailyResult | benchmark.NotApplicable:
+    """``benchmark.MatchedRun``: the beta-matched spec over the runner's window and refdata."""
+
+    spec = beta_matched_spec(runner.template, symbol, leverage)
+    if isinstance(spec, benchmark.NotApplicable):
+        return spec
+    compiled = compile_spec(
+        spec,
+        start=runner.start,
+        end=runner.end,
+        store=runner.store,
+        sessions=runner.feasibility.warmup,
+        calendar_rule=runner.calendar_rule,
+    )
+    result = from_engine(compiled.run())
+    lost = result.event_days(LIQUIDATION_EVENTS)
+    if lost:
+        return benchmark.NotApplicable(f"the {leverage:g}x matched run hit {lost[0]['kind']} on {lost[0]['date']}")
+    return result
+
+
 class DailyBenchmarkStage(DailyGateStage):
     name = "benchmark"
     lease_seconds = 600
@@ -1025,7 +1098,13 @@ class DailyBenchmarkStage(DailyGateStage):
         daily = underlying_daily(runner.store, symbol, through=runner.end)
         underlying = underlying_returns(daily["close"])
         result = benchmark.evaluate_daily(
-            benchmark.BenchmarkDailyInputs(base, underlying, runner.basis, int(settings["hac_lags"])),
+            benchmark.BenchmarkDailyInputs(
+                base,
+                underlying,
+                runner.basis,
+                int(settings["hac_lags"]),
+                matched=lambda leverage: beta_matched_run(runner, symbol, leverage),
+            ),
             ctx.config["thresholds"],
         )
         inputs = {

@@ -317,6 +317,17 @@ DAILY_THRESHOLDS: dict = {
     # over the 1x underlying > 0 and HAC t >= 1.65 (one-sided 5 %). Static 2-4x leverage of the underlying
     # (synthetic control, seeds 1-20) reached t >= 1.0 in 3/20 seeds, t >= 1.65 in none. Intraday keeps 1.0.
     "benchmark_alpha_t_min": 1.65,
+    # Owner decision 2026-10-28: a second pass route for leveraged-index timing whose value is a smaller drawdown:
+    # Calmar of the strategy vs the 1x underlying at constant leverage = its beta (gates/benchmark.py). Checked on
+    # nulls before any real run was judged (tests/pipeline/benchmark_risk_calibration.py, TMF on TX 2001-2021):
+    # constant leverage 0.5-3x 0/8; 200-day-MA-like random switching (2x/0.5x, 2x/0x, 3x/0.5x Markov, and the
+    # real filter path shifted), 200 each: risk route alone <= 3.0 %, alpha or risk <= 4.5 %. A run frozen
+    # without benchmark_rule judges alpha alone.
+    "benchmark_rule": "alpha_or_beta_matched_risk",
+    "benchmark_risk_block_days": 252,
+    "benchmark_risk_resamples": 2000,
+    "benchmark_risk_confidence": 0.95,
+    "benchmark_risk_min_beta": 0.25,
     "cost_stress_multiplier": 2.0,
     "cost_stress_pnl_positive": True,  # final equity > initial with every cost x2
     "dsr_min": 0.95,

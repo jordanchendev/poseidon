@@ -324,6 +324,11 @@ def test_regime_daily_labels_a_day_with_the_previous_close_state():
 # ----------------------------------------------------------------------------- benchmark
 
 
+# The alpha route alone: the rule of every daily run frozen before benchmark_rule (the risk route:
+# test_pipeline_benchmark_risk.py).
+ALPHA_RULE = {k: v for k, v in D.items() if k != benchmark.RULE_KEY and not k.startswith("benchmark_risk_")}
+
+
 def underlying(n=600, seed=9):
     dates = days(n)
     values = np.random.default_rng(seed).normal(0.0004, 0.012, n)
@@ -336,7 +341,7 @@ def test_benchmark_daily_static_leverage_has_no_alpha():
     jitter = noise(len(dates), 0.0, 1e-5, seed=3)
     static = daily([3.0 * x[d] - cost + e for d, e in zip(dates, jitter, strict=True)], dates=dates)
     result = check(
-        benchmark.evaluate_daily(benchmark.BenchmarkDailyInputs(static, x, "return", 5), D),
+        benchmark.evaluate_daily(benchmark.BenchmarkDailyInputs(static, x, "return", 5), ALPHA_RULE),
         "fail",
         "alpha_not_positive",
     )
@@ -348,16 +353,18 @@ def test_benchmark_daily_static_leverage_has_no_alpha():
 def test_benchmark_daily_timing_alpha_passes_and_missing_days_are_invalid():
     dates, x = underlying()
     timed = daily([x[d] + 0.002 + 0.002 * np.sin(i) for i, d in enumerate(dates)], dates=dates)
-    result = check(benchmark.evaluate_daily(benchmark.BenchmarkDailyInputs(timed, x, "return", 5), D), "pass", "pass")
+    result = check(
+        benchmark.evaluate_daily(benchmark.BenchmarkDailyInputs(timed, x, "return", 5), ALPHA_RULE), "pass", "pass"
+    )
     assert result.report["alpha_t_hac"] >= 1.0
     partial = {d: v for d, v in x.items() if d != dates[10]}
     bad = check(
-        benchmark.evaluate_daily(benchmark.BenchmarkDailyInputs(timed, partial, "return", 5), D),
+        benchmark.evaluate_daily(benchmark.BenchmarkDailyInputs(timed, partial, "return", 5), ALPHA_RULE),
         "fail",
         "invalid_input",
     )
     assert bad.report["first_missing_underlying_day"] == dates[10].isoformat()
-    report_only = {k: v for k, v in D.items() if k != "benchmark_alpha_t_min"}
+    report_only = {k: v for k, v in ALPHA_RULE.items() if k != "benchmark_alpha_t_min"}
     jitter = noise(len(dates), 0.0, 1e-5, seed=4)
     static = daily([2.0 * x[d] - 0.0001 + e for d, e in zip(dates, jitter, strict=True)], dates=dates)
     passed = check(
