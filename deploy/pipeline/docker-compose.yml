@@ -27,7 +27,11 @@ x-pipeline-service: &pipeline-service
     dockerfile: Dockerfile
   env_file:
     - ${PIPELINE_ENV_FILE:-${HOME}/strategy-pipeline/pipeline.env}
+  # Run as the host owner of the bind mounts so files under refdata/ and artifacts/ stay owned by jordan.
+  user: "1000:1000"
   environment:
+    # The image has no passwd entry for 1000, so HOME would be /.
+    HOME: /tmp
     TZ: Asia/Taipei
     POSEIDON_REDIS_URL: redis://host.docker.internal:6379/5
     POSEIDON_REDIS_CELERY_URL: redis://host.docker.internal:6379/4
