@@ -308,14 +308,19 @@ def test_the_update_skips_without_a_thalassa_address(updater, monkeypatch):
     assert not store.exists(ca.DATASET)
 
 
-def test_the_runner_task_registers_both_updaters(monkeypatch):
+def test_the_runner_task_registers_the_extra_updaters(monkeypatch):
     monkeypatch.setenv("POSEIDON_PIPELINE_EXPECTED_DATABASE", "poseidon_pipeline")
     from poseidon.pipeline import tasks
+    from poseidon.pipeline.refdata import taifex_options
 
     monkeypatch.setattr(daily, "EXTRA_UPDATERS", {})
     monkeypatch.setattr(daily, "run_daily", lambda **_kw: {})
     tasks.update_refdata_daily()
-    assert {STOCKS: tw_stocks.update, ca.DATASET: ca.update} == daily.EXTRA_UPDATERS
+    assert {
+        STOCKS: tw_stocks.update,
+        ca.DATASET: ca.update,
+        taifex_options.DAILY_DATASET: taifex_options.daily_update,
+    } == daily.EXTRA_UPDATERS
 
 
 def test_one_failing_updater_is_reported_and_does_not_stop_the_other(updater, monkeypatch):

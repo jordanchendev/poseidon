@@ -33,11 +33,12 @@ def update_refdata_daily() -> dict:
     (``celery_app.beat_schedule["update-refdata-daily"]``)."""
 
     from poseidon.core.config import settings
-    from poseidon.pipeline.refdata import tw_corporate_actions, tw_stocks
+    from poseidon.pipeline.refdata import taifex_options, tw_corporate_actions, tw_stocks
     from poseidon.pipeline.refdata.daily import EXTRA_UPDATERS, run_daily
 
-    # Thalassa stock bars and TWSE corporate actions, when the runner has Thalassa's address; each one
-    # fails alone (run_daily records the error and goes on).
+    # Thalassa stock bars and TWSE corporate actions (when the runner has Thalassa's address), then the TXO
+    # quotes hedged runs read; each one fails alone (run_daily records the error and goes on).
     EXTRA_UPDATERS.setdefault(tw_stocks.DATASET, tw_stocks.update)
     EXTRA_UPDATERS.setdefault(tw_corporate_actions.DATASET, tw_corporate_actions.update)
+    EXTRA_UPDATERS.setdefault(taifex_options.DAILY_DATASET, taifex_options.daily_update)
     return run_daily(code_version=settings.pipeline_code_version or "unknown")
