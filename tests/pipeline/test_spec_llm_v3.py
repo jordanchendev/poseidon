@@ -727,7 +727,10 @@ def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
     resolved = validate_spec_v3(tmf_dynamic_leverage_3x()).resolved
     daily = daily_run_config(resolved, as_of=AS_OF, brief_text="brief", refdata=REFDATA)
     # db24f9f4 at REGISTRY_VERSION 2; registry_version moved it (3 adds rebalance.monthly), then data.warmup (the
-    # session warm-up rule of configs frozen from 2026-10-28 on): without that one key it is the 681d469 config
+    # session warm-up rule of configs frozen from 2026-10-28 on), then thresholds.param_edge_at_bound_pass (run #18,
+    # 2026-10-28): without those keys it is the 681d469 config
+    assert content_sha256(daily) == "0e651e8e66df479e37ae99310c1148f04b95325f227a5a9a668c3c9975170034"
+    del daily["thresholds"]["param_edge_at_bound_pass"]
     assert content_sha256(daily) == "a6673bdd55d6de26a08daa56038bbf73e69f4a60e69595c9aa9c95d98769ba00"
     del daily["data"]["warmup"]
     assert content_sha256(daily) == "b3ce5b0dadae872b4fb3908e1fb31ec5e2531e405e2492fca1c6faae951ea14c"

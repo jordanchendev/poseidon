@@ -31,6 +31,9 @@
   ``param_stability`` always has the full neighbourhood. A neighbour outside
   the declared grid is evaluated too unless it violates a validator hard
   bound; only then is it excluded (``in_grid`` false, ``excluded_because``).
+  With ``tag_kind`` (runs frozen with ``param_edge_at_bound_pass``) an excluded row also
+  carries ``excluded_kind``: ``"component_bound"`` when the admissibility check named a
+  component field bound (a :class:`BoundReason`), ``"declared_grid"`` or ``"other"`` otherwise.
 """
 
 from __future__ import annotations
@@ -88,6 +91,17 @@ class TrialResult:
     def summary(self) -> dict:
         metrics = self.metrics or {}
         return {key: metrics.get(key) for key in SEARCH_SUMMARY_KEYS}
+
+
+class BoundReason(str):
+    """An ``admissible`` refusal caused by a component field's own hard bound (not the spec's range)."""
+
+
+# pydantic error types of a value outside a component field's ge/le/gt/lt bound
+BOUND_ERROR_TYPES = frozenset({"greater_than_equal", "less_than_equal", "greater_than", "less_than"})
+EXCLUDED_COMPONENT_BOUND = "component_bound"
+EXCLUDED_DECLARED_GRID = "declared_grid"
+EXCLUDED_OTHER = "other"
 
 
 class ParamGrid:
@@ -427,6 +441,7 @@ class EdgeExtension:
     max_steps: int = MAX_EDGE_EXTENSION_STEPS
     steps: list = field(default_factory=list)
     stops: list = field(default_factory=list)
+    tag_kind: bool = False  # excluded neighbour rows carry ``excluded_kind`` (param_edge_at_bound_pass runs)
     better_beyond_cap: list = field(default_factory=list)
 
     def over_budget(self, n_done: int) -> str | None:
@@ -538,7 +553,9 @@ def complete_neighbourhood(
         if extension is not None:
             extend_edges(runner, grid, extension, round_no)
         before = runner.best.trial_no if runner.best is not None else None
-        rows = evaluate_neighbours(runner, grid, steps, admissible)
+        rows = evaluate_neighbours(
+            runner, grid, steps, admissible, tag_kind=extension is not None and extension.tag_kind
+        )
         if extension is not None:
             extension.note_beyond_cap(runner)
             for row in rows:
@@ -550,7 +567,12 @@ def complete_neighbourhood(
 
 
 def evaluate_neighbours(
-    runner: TrialRunner, grid: ParamGrid, steps: int, admissible: Callable[[dict], str | None] | None = None
+    runner: TrialRunner,
+    grid: ParamGrid,
+    steps: int,
+    admissible: Callable[[dict], str | None] | None = None,
+    *,
+    tag_kind: bool = False,
 ) -> list[dict]:
     """Backtest every missing one-step neighbour of the best point; return the neighbourhood.
 
@@ -581,8 +603,16 @@ def evaluate_neighbours(
             excluded_because = "outside the declared grid"
         evaluable = result is not None
         metrics = (result.metrics if result is not None else None) or {}
+        row_kind = {}
+        if tag_kind and not evaluable:
+            if not neighbour["in_grid"] and admissible is None:
+                kind = EXCLUDED_DECLARED_GRID
+            else:
+                kind = EXCLUDED_COMPONENT_BOUND if isinstance(excluded_because, BoundReason) else EXCLUDED_OTHER
+            row_kind = {"excluded_kind": kind}
         rows.append(
             {
+                **row_kind,
                 "param": neighbour["param"],
                 "direction": neighbour["direction"],
                 # in_grid: inside the effective (declared + extended) range, i.e. counted by param_stability
