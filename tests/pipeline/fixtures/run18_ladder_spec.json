@@ -1,0 +1,85 @@
+{
+ "name": "tmf_dip_leverage_ladder",
+ "params": {
+  "lookback_days": {
+   "low": 125,
+   "high": 500,
+   "step": 125,
+   "type": "int",
+   "default": 250
+  }
+ },
+ "capital": {
+  "initial_twd": 3000000
+ },
+ "sleeves": [
+  {
+   "id": "main",
+   "exits": [],
+   "hedges": [],
+   "sizing": {
+    "params": {
+     "rounding": "floor"
+    },
+    "component": "sizing.target_leverage"
+   },
+   "leverage": [
+    {
+     "params": {
+      "value": 1.0
+     },
+     "component": "leverage.base"
+    },
+    {
+     "params": {
+      "hold": true,
+      "steps": [
+       {
+        "leverage": 2.0,
+        "drawdown_pct": 0.1
+       }
+      ],
+      "signal": "index:taiex",
+      "lookback_days": {
+       "$param": "lookback_days"
+      },
+      "release_drawdown_pct": 0.02
+     },
+     "component": "leverage.drawdown_ladder"
+    }
+   ],
+   "direction": {
+    "params": {
+     "side": "long"
+    },
+    "component": "direction.constant"
+   },
+   "rebalance": {
+    "params": {
+     "min_change_units": 1
+    },
+    "component": "rebalance.daily"
+   },
+   "instrument": "core"
+  }
+ ],
+ "execution": {
+  "component": "execution.next_open"
+ },
+ "frequency": "1d",
+ "allocation": {
+  "component": "allocation.single"
+ },
+ "instruments": {
+  "core": {
+   "roll": {
+    "params": {
+     "days_before": 1
+    },
+    "component": "roll.before_settlement"
+   },
+   "symbol": "TMF"
+  }
+ },
+ "spec_version": 3
+}
