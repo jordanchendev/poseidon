@@ -36,7 +36,10 @@ from poseidon.pipeline.stages import StageContext, UpstreamResult
 from poseidon.pipeline.v3.config import option_chain_record
 from tests.pipeline.daily_paper_support import DailyDriver, local, morning_after
 
-RUN17 = json.loads(Path("tests/pipeline/fixtures/run17_hedged.json").read_text())
+RUN17 = {
+    **json.loads(Path("tests/pipeline/fixtures/v3_terminal_runs.json").read_text())["runs"]["17"],
+    **json.loads(Path("tests/pipeline/fixtures/run17_hedged.json").read_text()),
+}
 PUT = "core.protective_put"
 
 

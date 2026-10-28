@@ -37,7 +37,11 @@ from tests.pipeline.daily_paper_support import (
     write_txo,
 )
 
-RUN17 = json.loads((Path(__file__).parent / "fixtures" / "run17_hedged.json").read_text())
+FIXTURES = Path(__file__).parent / "fixtures"
+RUN17 = {
+    **json.loads((FIXTURES / "v3_terminal_runs.json").read_text())["runs"]["17"],
+    **json.loads((FIXTURES / "run17_hedged.json").read_text()),
+}
 PUT = HedgePolicy(
     name="core.protective_put", underlying="core", chain="TXO", moneyness=0.05, roll_days=5, cover_ratio=1.0
 )

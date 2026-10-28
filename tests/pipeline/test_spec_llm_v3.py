@@ -736,7 +736,10 @@ def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
     daily = daily_run_config(resolved, as_of=AS_OF, brief_text="brief", refdata=REFDATA)
     # db24f9f4 at REGISTRY_VERSION 2; registry_version moved it (3 adds rebalance.monthly), then data.warmup (the
     # session warm-up rule of configs frozen from 2026-10-28 on), then thresholds.param_edge_at_bound_pass (run #18,
-    # 2026-10-28), then data.trading_calendar (2026-10-28): without those keys it is the 681d469 config
+    # 2026-10-28), then data.trading_calendar (2026-10-28), then data.option_chain (the hedged paper's rule,
+    # 2026-10-28): without those keys it is the 681d469 config
+    assert content_sha256(daily) == "0173c3cdbcb09c4f9430e33887835f5bac767058dcf3a22f904c4969df5aa70d"
+    del daily["data"]["option_chain"]
     assert content_sha256(daily) == "7ec6ce99749cb5f4bd5c5c84d887e63c9f965d07147a5453537811df35bd228a"
     del daily["data"]["trading_calendar"]
     assert content_sha256(daily) == "0e651e8e66df479e37ae99310c1148f04b95325f227a5a9a668c3c9975170034"
