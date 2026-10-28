@@ -293,7 +293,8 @@ class AllocationComponent(Component):
 
 # --------------------------------------------------------------------------- registration
 
-REGISTRY: dict[str, Component] = {}
+REGISTRY: dict[str, Component] = {}  # name -> its latest version
+SUPERSEDED: dict[str, Component] = {}  # "name@version" -> an older version that frozen runs still reference
 
 # Phase 1 components that are designed but not registered yet: using one is
 # "unsupported" (not a malformed spec) and names the step that brings it.
@@ -341,7 +342,8 @@ def register(cls: type[Component]) -> type[Component]:
     name = cls.name
     if not COMPONENT_NAME_PATTERN.match(name):
         raise ValueError(f"component name {name!r} must look like 'family.name'")
-    if name in REGISTRY or name in PLANNED_COMPONENTS:
+    previous = REGISTRY.get(name)
+    if name in PLANNED_COMPONENTS or (previous is not None and cls.version != previous.version + 1):
         raise ValueError(f"component {name!r} is already registered or planned")
     if cls.slot not in SLOTS:
         raise ValueError(f"{name}: unknown slot {cls.slot!r}")
@@ -358,6 +360,8 @@ def register(cls: type[Component]) -> type[Component]:
             raise ValueError(f"{name}: tunable param {field_name!r} must be int or float")
     if not cls.summary:
         raise ValueError(f"{name}: summary is required")
+    if previous is not None:
+        SUPERSEDED[previous.key] = previous
     REGISTRY[name] = cls()
     return cls
 
@@ -371,11 +375,15 @@ def components_for(slot: str) -> list[Component]:
 
 
 def component_fingerprints(names: Iterable[str] | None = None) -> dict[str, str]:
-    """``{"name@version": sha256 of the component's source}`` for freezing into a run (§3.6)."""
+    """``{"name@version": sha256 of the component's source}`` for freezing into a run (§3.6).
 
-    selected = REGISTRY if names is None else {name: REGISTRY[name] for name in names}
+    ``names``: component names (their latest version) or ``name@version`` keys, superseded ones included;
+    an unknown one raises ``KeyError``."""
+
+    by_key = {component.key: component for component in REGISTRY.values()} | SUPERSEDED
+    selected = REGISTRY.values() if names is None else [by_key[n] if "@" in n else REGISTRY[n] for n in names]
     out = {}
-    for component in selected.values():
+    for component in selected:
         source = inspect.getsource(type(component))
         out[component.key] = hashlib.sha256(source.encode("utf-8")).hexdigest()
     return dict(sorted(out.items()))

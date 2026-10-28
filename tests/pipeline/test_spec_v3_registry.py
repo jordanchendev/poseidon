@@ -80,6 +80,7 @@ M1_COMPONENTS = {
 }
 M4_COMPONENTS = {"hedge.protective_put"}
 V3_COMPONENTS = {"rebalance.monthly"}
+V3_VERSIONS = {"rebalance.monthly@1", "hedge.protective_put@2"}  # what REGISTRY_VERSION 3 adds, as keys
 COMPONENTS = M1_COMPONENTS | M4_COMPONENTS | V3_COMPONENTS
 
 
@@ -118,7 +119,7 @@ def test_every_component_declares_and_describes_its_example(name):
 
 def test_fingerprints_are_name_at_version_and_sha256():
     prints = component_fingerprints()
-    assert set(prints) == {f"{name}@1" for name in COMPONENTS}
+    assert set(prints) == {f"{name}@1" for name in COMPONENTS} - {"hedge.protective_put@1"} | V3_VERSIONS
     assert all(re.fullmatch(r"[0-9a-f]{64}", sha) for sha in prints.values())
     assert component_fingerprints(["leverage.base"]) == {"leverage.base@1": prints["leverage.base@1"]}
 
@@ -200,6 +201,34 @@ def test_rounding_keeps_the_sign_and_floors_the_magnitude():
 
 def test_components_frozen_into_earlier_runs_have_not_drifted():
     frozen = {**BASE_FINGERPRINTS, **V2_FINGERPRINTS}
-    names = sorted(key.split("@", 1)[0] for key in frozen)
-    assert component_fingerprints(names) == frozen
-    assert set(frozen) | {f"{name}@1" for name in V3_COMPONENTS} == set(component_fingerprints())
+    assert component_fingerprints(sorted(frozen)) == frozen
+    assert set(frozen) - {"hedge.protective_put@1"} | V3_VERSIONS == set(component_fingerprints())
+
+
+def test_a_new_version_supersedes_the_old_one_which_stays_checkable():
+    from poseidon.pipeline.daily_stages import ComponentDrift, check_components
+    from poseidon.pipeline.v3.registry import SUPERSEDED, register
+
+    put = REGISTRY["hedge.protective_put"]
+    assert put.version == 2 and set(SUPERSEDED) == {"hedge.protective_put@1"}
+    run_17 = {"components": {"hedge.protective_put@1": V2_FINGERPRINTS["hedge.protective_put@1"]}}
+    assert check_components(run_17) == run_17["components"]
+    with pytest.raises(ComponentDrift, match="no longer registered"):
+        check_components({"components": {"hedge.protective_put@3": "0" * 64}})
+    with pytest.raises(ValueError, match="already registered"):
+        register(type(put))  # the same version again
+
+
+def test_protective_put_v2_with_v1_params_builds_the_v1_policy_and_describes_the_author_put():
+    from poseidon.pipeline.v3.registry import SUPERSEDED
+
+    v1, v2 = SUPERSEDED["hedge.protective_put@1"], REGISTRY["hedge.protective_put"]
+    for params in ({}, v1.example, {"moneyness_pct": 0.1, "tenor": "next", "roll_days_before_expiry": 3}):
+        kwargs = {"name": "core.protective_put", "underlying": "core", "chain": "TXO"}
+        assert v2.policy(v2.parse(params), **kwargs) == v1.policy(v1.parse(params), **kwargs)
+    author = v2.parse(v2.example)
+    policy = v2.policy(author, name="p", underlying="core", chain="TXO")
+    assert (policy.tenor, policy.roll_days, policy.roll_with_tenor, policy.take_profit) == (1, 0, True, 3.0)
+    text = v2.describe(author, DescribeContext("1d", INSTRUMENTS["TMF"], None, "core"))
+    assert "次近月" in text and "近月到期日當天換成新的次近月" in text and "成交均價的 3 倍時賣出" in text
+    assert v2.parse({}).take_profit_multiple is None

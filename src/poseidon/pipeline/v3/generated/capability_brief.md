@@ -188,11 +188,13 @@ An idea that only says "台指", "TAIEX" or "大盤" does not say which of these
 
 ### hedges (per sleeve)
 
-- `hedge.protective_put` (1d): Buy TXO monthly puts against the long futures position: strike nearest close x (1 - moneyness), roll before expiry, cover_ratio 1 = 1 put per 5 TMF; valued at daily settlement prices.
+- `hedge.protective_put` (1d): Buy TXO monthly puts against the long futures position: strike nearest close x (1 - moneyness), front or next month, roll before its own expiry or when the front month expires, optional take-profit (sell at take_profit_multiple x the fill price, buy a new one); cover_ratio 1 = 1 put per 5 TMF; daily settlement prices.
   - `moneyness_pct`: number [0.0, 0.2], default 0.05; tunable ($param)
   - `tenor`: front | next, default "front"
-  - `roll_days_before_expiry`: integer [1, 15], default 5; tunable ($param)
+  - `roll_days_before_expiry`: integer [0, 15], default 5; tunable ($param)
+  - `roll_when`: own_expiry | front_expiry, default "own_expiry"
   - `cover_ratio`: number [0.25, 1.5], default 1.0; tunable ($param)
+  - `take_profit_multiple`: number [1.5, 20.0] or null, default null
 
 ### allocation (weights across sleeves)
 
