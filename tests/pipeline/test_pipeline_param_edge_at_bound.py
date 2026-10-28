@@ -20,7 +20,7 @@ from poseidon.pipeline import optimization as opt
 from poseidon.pipeline.daily_stages import DailySpecValidateStage, SpecRunner
 from poseidon.pipeline.gate_stages import ParamStabilityStage
 from poseidon.pipeline.gates import param_stability as gate
-from poseidon.pipeline.plan import DAILY_THRESHOLDS, class_settings
+from poseidon.pipeline.plan import DAILY_THRESHOLDS, class_settings, effective_config
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.stages import StageContext
 from poseidon.pipeline.state import Verdict
@@ -35,6 +35,8 @@ NEW = {**OLD, gate.EDGE_AT_BOUND_KEY: True}
 
 def ladder_spec(low=125, high=500, step=125, default=250) -> dict:
     spec = copy.deepcopy(LADDER)
+    spec["sleeves"][0]["leverage"].pop()  # the VIX level ladder
+    spec["sleeves"][0]["leverage"][1]["params"]["signal"] = "core:adjusted"
     spec["params"]["lookback"] = {"type": "int", "low": low, "high": high, "step": step, "default": default}
     return spec
 
@@ -104,15 +106,30 @@ def test_an_in_range_neighbour_that_loses_money_still_fails():
     assert result.report["gate_report"]["edge_at_bound"] == ["lookback"]
 
 
-def test_a_spec_declared_edge_is_unchanged():
+def test_a_spec_declared_edge_inside_the_component_range_is_judged_exactly_as_before():
+    spec = ladder_spec(high=375, default=250)  # the component would allow 500: the edge is the spec's own
+    peak = lambda lookback: 1e5 * (1000 - abs(lookback - 375))  # noqa: E731
+    old, new = optimized(peak, OLD, spec=spec), optimized(peak, NEW, spec=spec)
+    assert new["best"]["params"] == {"lookback": 375}  # best on the declared edge; 500 is a trial the extension ran
+    assert all(row["in_grid"] and "excluded_kind" not in row for row in new["neighbours"])
+    before, after = judge(old, OLD), judge(new, NEW)
+    assert after.verdict == before.verdict
+    assert "edge_at_bound" not in after.report["gate_report"]
+    assert after.report["gate_report"] == before.report["gate_report"]
+
+
+def test_a_neighbour_outside_the_declared_grid_without_an_extension_is_tagged_declared_grid_and_not_relaxed():
     spec = ladder_spec(high=375, default=250)
-    optimize = optimized(RISING, NEW, spec=spec, extend=False)  # no extension: the declared edge excludes 500
-    assert optimize["best"]["params"] == {"lookback": 375}
-    high = next(row for row in optimize["neighbours"] if row["direction"] == 1)
-    assert high["excluded_kind"] == opt.EXCLUDED_DECLARED_GRID
-    result = judge(optimize, NEW)
+    grid = opt.ParamGrid(validate_spec_v3(spec).params)
+    trials = StubTrials(RISING)
+    for value in (125, 250, 375):
+        trials.evaluate({"lookback": value}, "search")
+    rows = opt.evaluate_neighbours(trials, grid, 1, tag_kind=True)
+    high = next(row for row in rows if row["direction"] == 1)
+    assert high["excluded_because"] == "outside the declared grid" and high["excluded_kind"] == "declared_grid"
+    best = {"params": trials.best.params, "metrics": trials.best.metrics}
+    result = judge({"best": best, "neighbours": rows}, NEW)
     assert result.verdict == Verdict.FAIL and result.report["reason_code"] == "insufficient_neighbours"
-    assert "edge_at_bound" not in result.report["gate_report"]
 
 
 def test_a_hard_bound_exclusion_without_the_key_is_not_tagged_and_judged_as_before():
@@ -140,9 +157,9 @@ def test_the_relaxation_needs_a_component_bound_to_explain_the_shortfall():
     three = [nb("a", -1, 5.0), nb("b", -1, 5.0), nb("b", 1, -1.0), nb("a", 1, None, bound)]
     assert evaluate(three).passed and evaluate(three, OLD).passed
     bad = [nb("a", -1, 5.0), nb("b", -1, -5.0), nb("b", 1, -1.0), nb("a", 1, None, bound)]
-    assert evaluate(bad).report["reason_code"] == "unstable_neighbourhood"
+    assert evaluate(bad).reason_code == "unstable_neighbourhood"
     # key absent: the old rule, even with a tagged row
-    assert evaluate([nb("a", -1, 5.0), nb("a", 1, None, bound)], OLD).report["reason_code"] == "insufficient_neighbours"
+    assert evaluate([nb("a", -1, 5.0), nb("a", 1, None, bound)], OLD).reason_code == "insufficient_neighbours"
 
 
 # ----------------------------------------------------------------------------- validator
@@ -179,6 +196,7 @@ def test_spec_validate_surfaces_the_warning_only_for_runs_frozen_with_the_key(tm
 
     real = daily_stages.validate_spec_v3
     monkeypatch.setattr(daily_stages, "validate_spec_v3", lambda spec, **kw: real(spec))  # no refdata here
+    monkeypatch.setattr(daily_stages, "price_points", lambda *args: None)
     spec = ladder_spec()
     base = {"strategy_class": "daily_equity", "data": {"start": "2015-01-01", "end": "2020-01-01"}}
     base["data"].update({"holdout_start": "2019-01-01"})
@@ -199,19 +217,21 @@ def test_new_daily_configs_freeze_the_key_and_the_gate_key_matches_the_table():
     assert class_settings("daily_equity")["thresholds"][gate.EDGE_AT_BOUND_KEY] is True
 
 
-def test_terminal_runs_never_froze_the_key():
+def _terminal_configs():
     runs = json.loads((FIXTURES / "v3_terminal_runs.json").read_text())["runs"]
-    for run in runs.values():
-        assert gate.EDGE_AT_BOUND_KEY not in run["config_json"]["thresholds"]
-    frozen = json.loads((FIXTURES / "run6_frozen_v4.json").read_text())
-    assert gate.EDGE_AT_BOUND_KEY not in json.dumps(frozen)
+    return {no: effective_config(run["config_json"], run["route"]) for no, run in runs.items()}
+
+
+def test_terminal_runs_never_froze_the_key():
+    for no, config in _terminal_configs().items():
+        assert gate.EDGE_AT_BOUND_KEY not in config["thresholds"], no
+    run6 = (FIXTURES / "run6_frozen_v4.json").read_text()
+    assert gate.EDGE_AT_BOUND_KEY not in run6
 
 
 @pytest.mark.parametrize("run_no", ["10", "16"])
-def test_a_terminal_runs_param_stability_report_is_judged_identically_without_the_key(run_no):
-    # The terminal runs' frozen thresholds lack the key, so the gate takes the old path whatever the rows hold.
-    run = json.loads((FIXTURES / "v3_terminal_runs.json").read_text())["runs"][run_no]
-    thresholds = run["config_json"]["thresholds"]
+def test_a_terminal_run_judges_param_stability_by_the_old_rule_even_on_a_tagged_row(run_no):
+    thresholds = _terminal_configs()[run_no]["thresholds"]
     neighbours = [nb("a", -1, 5.0), nb("a", 1, None, gate.COMPONENT_BOUND)]
     result = gate.evaluate(gate.ParamStabilityInputs({"a": 1}, 1.0, neighbours), thresholds)
-    assert result.reason_code == "insufficient_neighbours"
+    assert result.reason_code == "insufficient_neighbours" and "edge_at_bound" not in result.report
