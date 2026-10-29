@@ -30,6 +30,8 @@ through the same narrative-pending feed and release the intake records held for 
 Any failure -> the revision stays prepared, bridge `needs-review <agenda_id>` with a short reason on stdin.
 No escalation to another model.
 
+After every invocation but a dry run, narrative_export.json (narrative_ledger.export as of now, written tmp + rename)
+is refreshed next to the ledger for the MacBook's nexus_pull.py (design §3.4); a failure there is logged only.
 State (all under --state-dir): ledger.sqlite (research_theme tables + runner_runs), runs/<agenda_id>/{config.json,
 narrative.json, revision.json, run.json, bars.csv, sources/}, runs/material-<id>/{sources/material.txt,
 intake.draft<n>.json, intake.json, run.json}, runner.log, runner.lock.
@@ -77,6 +79,7 @@ DECISION_ID = narrative_check.DECISION_ID
 NOTICE_CAP = 1000  # narrative-ack message; the bridge keeps 1000 characters
 REVISION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 REASON_CAP = 580
+NARRATIVE_EXPORT = "narrative_export.json"
 SUMMARY_CAP = 300
 DEFAULT_BRIDGE = "ssh research-bridge"
 EXIT_KEY, EXIT_BRIDGE_REPORT, EXIT_BRIDGE_PENDING = 3, 4, 5
@@ -896,10 +899,25 @@ def run_once(args, keys, *, transport=None, assemble_kw=None, as_of=None):
     base.mkdir(parents=True, exist_ok=True)
     bridge = OutboxBridge(args.bridge, args.outbox) if args.outbox else Bridge(args.bridge)
     side_rc = 0 if args.dry_run else run_owner_inputs(args, bridge, base, keys, transport=transport, as_of=as_of)
-    return (
-        run_agenda(args, keys, bridge, state, base, transport=transport, assemble_kw=assemble_kw, as_of=as_of)
-        or side_rc
-    )
+    rc = run_agenda(args, keys, bridge, state, base, transport=transport, assemble_kw=assemble_kw, as_of=as_of)
+    if not args.dry_run:
+        refresh_export(state)
+    return rc or side_rc
+
+
+def refresh_export(state):
+    """narrative_export.json for the vault projection (design §3.4), as of now: the ledger as this invocation leaves
+    it (rows carry their wall-clock write times). It never changes the run's exit code."""
+    if not (state / "ledger.sqlite").is_file():
+        return
+    try:
+        db = nl.connect(state / "ledger.sqlite")
+        try:
+            nl.write_export(db, nl.now(), state / NARRATIVE_EXPORT)
+        finally:
+            db.close()
+    except Exception:
+        log.exception("narrative export failed")
 
 
 def run_agenda(args, keys, bridge, state, base, *, transport, assemble_kw, as_of):

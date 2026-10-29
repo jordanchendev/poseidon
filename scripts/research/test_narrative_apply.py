@@ -364,6 +364,20 @@ def test_tagged_claims_are_linked_once_with_narrative_apply_off(env):
     )
 
 
+def test_every_invocation_refreshes_the_narrative_export(env):
+    """Design §3.4: the runner leaves narrative_export.json next to the ledger for nexus_pull.py, with each linked
+    claim's text and the revision's scope (research_revisions as research_theme.py stores it)."""
+    path, _, _, rev = run_tagged(env)
+    doc = json.loads((path.parent / runner.NARRATIVE_EXPORT).read_text())
+    assert doc["algorithm"] == "narrative-export-v2" and doc["as_of"] >= max(x["created_at"] for x in links(path))
+    claims, scope = rev["research"]["claims"], json.loads((env["run_dir"] / "config.json").read_text())["scope_key"]
+    assert [(x["claim_index"], x["scope_key"], x["claim_text"]) for x in doc["claim_theme_links"]] == [
+        (0, scope, claims[0]["text"]),
+        (2, scope, claims[2]["text"]),
+    ]
+    assert not list(path.parent.glob(".narrative_export.json.tmp"))
+
+
 def test_rerun_writes_no_link_twice(env):
     path, _, _, rev = run_tagged(env)
     before = links(path)

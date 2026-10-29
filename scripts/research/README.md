@@ -378,7 +378,17 @@ written|held|unfit, waits, reason}] is rendered as 「新增敘事」 in the don
   only `unverified` records past `review_by` to `stale`.
 - `record-add` refuses a quote that is not verbatim in `--source-file`, a non-atomic claim (`lint_atomic`) and a claim
   number missing from the quote (`check_numbers`), and needs subjects that are approved members.
-- `export --as-of T` is a point-in-time view (events with `at <= T`), sorted, quotes clipped to 120 characters (D7).
+- `export --as-of T` is a point-in-time view (events with `at <= T`), sorted, quotes clipped to 120 characters (D7),
+  written tmp + rename with `--out`. `narrative-export-v2` (§9 step 10) adds, per `claim_theme_links` row, the
+  revision's `scope_key`, `claim_text` and `claim_quote` (clipped; from the completed `research_revisions` row in the
+  same ledger, null when absent), `signal_window_days` (180, D11) and `cross_company_signals` [{theme_id, level
+  official|relayed, since, companies [{symbol, first_at, last_at, n}]}], computed in SQL (`SIGNAL_SQL`, design §5.2):
+  official = fact claims linked to the theme on `primary filing` / `company release` evidence whose `about_symbols`
+  cover two or more companies with evidence event_time in (as_of - 180 d, as_of]; relayed = sell-side / media / kol
+  records of the theme not refuted at as_of whose `subject_symbols` cover two or more companies with `first_seen_at`
+  in the window, listed only when the theme is not an official signal.
+- The runner rewrites `<state-dir>/narrative_export.json` (export as of now) after every invocation but a dry run;
+  `nexus_pull.py` on the MacBook pulls it (no host wrapper change). A failure is logged and never changes the exit code.
 - `themes.seed.json` is the §7.1 seed for the owner to review, with each member's official source. Members under
   `candidate` are not approved (D5); nothing loads the seed into a ledger except the test's tmp ledger.
 

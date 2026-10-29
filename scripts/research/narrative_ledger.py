@@ -20,7 +20,7 @@ max(evidence available_at, last event at).
               --theme ID [...] --first-seen-at T
   set-status  --ledger L --id NR --to STATUS --note TEXT [--at T]      owner override
   sweep-stale --ledger L --as-of T          unverified records past review_by -> stale
-  export      --ledger L --as-of T [--out F]  deterministic narrative_export.json
+  export      --ledger L --as-of T [--out F]  deterministic narrative_export.json (written tmp + rename)
 
 Symbols: Taiwan-listed bare ('2408'), everything else '<EXCHANGE>:<TICKER>' ('NASDAQ:MU', 'TSE:3110').
 Approval rows (themes, members, edges) need a non-empty approval_ref; agents never pick theme ids.
@@ -41,7 +41,7 @@ from claim_precheck import check_numbers, lint_atomic
 
 from poseidon.decision_loop.manifest import content_sha256
 
-EXPORT_ALGO = "narrative-export-v1"
+EXPORT_ALGO = "narrative-export-v2"
 THEME_KINDS = ("bottleneck", "tech_transition", "demand_driver", "policy")
 MEMBER_ROLES = ("constrained", "supplier", "beneficiary", "customer", "competitor")
 EDGE_RELATIONS = ("related", "part_of")
@@ -80,6 +80,9 @@ STATE_REVIEW_DAYS = 180  # D6
 FORECAST_REVIEW_DAYS = 90
 FORECAST_DEFAULT_RESOLVE_DAYS = 365
 EXPORT_QUOTE_CHARS = 120  # D7: the export leaves stormtrooper for the vault
+SIGNAL_WINDOW_DAYS = 180  # D11: the cross-company signal window (§5.2)
+OFFICIAL_EVIDENCE_TIERS = ("primary filing", "company release")  # claim_precheck.OFFICIAL_TIERS
+RELAYED_TIERS = ("sell-side", "media", "kol")
 
 THEME_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MAX_KEYWORD_CHARS = 40
@@ -1110,8 +1113,74 @@ def _clip(text, n=EXPORT_QUOTE_CHARS):
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+# §5.2, computed here and nowhere else: per theme, the companies with hits in the window (since, as_of]. A theme is a
+# signal when its hits cover at least two companies.
+#   official: fact claims linked to the theme whose evidence is official, by about_symbols and evidence event_time.
+#   relayed:  narrative records of a relayed tier (sell-side / media / kol) not refuted at as_of, by subject_symbols and
+#             first_seen_at; a theme that is an official signal is not listed again as relayed.
+SIGNAL_SQL = {
+    "official": """
+WITH hits AS (
+  SELECT l.theme_id, s.value AS symbol, l.event_time AS at
+  FROM claim_theme_links l, json_each(l.about_symbols_json) s
+  WHERE l.claim_kind = 'fact' AND l.evidence_tier IN (SELECT value FROM json_each(:official))
+    AND l.created_at <= :as_of AND l.event_time > :since AND l.event_time <= :as_of)
+SELECT theme_id, symbol, MIN(at) AS first_at, MAX(at) AS last_at, COUNT(*) AS n FROM hits
+WHERE theme_id IN (SELECT theme_id FROM hits GROUP BY theme_id HAVING COUNT(DISTINCT symbol) >= 2)
+GROUP BY theme_id, symbol ORDER BY theme_id, symbol""",
+    "relayed": """
+WITH status AS (
+  SELECT e.narrative_id, e.to_status FROM narrative_events e
+  WHERE e.seq = (SELECT MAX(x.seq) FROM narrative_events x WHERE x.narrative_id = e.narrative_id
+                 AND x.kind IN ('created', 'status', 'override') AND x.at <= :as_of)),
+hits AS (
+  SELECT t.value AS theme_id, s.value AS symbol, r.first_seen_at AS at
+  FROM narrative_records r JOIN status USING (narrative_id), json_each(r.theme_ids_json) t,
+       json_each(r.subject_symbols_json) s
+  WHERE r.source_tier IN (SELECT value FROM json_each(:relayed)) AND status.to_status <> 'refuted'
+    AND r.first_seen_at > :since AND r.first_seen_at <= :as_of)
+SELECT theme_id, symbol, MIN(at) AS first_at, MAX(at) AS last_at, COUNT(*) AS n FROM hits
+WHERE theme_id IN (SELECT theme_id FROM hits GROUP BY theme_id HAVING COUNT(DISTINCT symbol) >= 2)
+GROUP BY theme_id, symbol ORDER BY theme_id, symbol""",
+}
+
+
+def cross_company_signals(db, as_of):
+    """[{theme_id, level official|relayed, since, companies [{symbol, first_at, last_at, n}]}] at as_of (§5.2)."""
+    since = iso(
+        datetime.datetime.fromisoformat(as_of.replace("Z", "+00:00")) - datetime.timedelta(days=SIGNAL_WINDOW_DAYS)
+    )
+    args = {
+        "as_of": as_of,
+        "since": since,
+        "official": json.dumps(OFFICIAL_EVIDENCE_TIERS),
+        "relayed": json.dumps(RELAYED_TIERS),
+    }
+    out = {}
+    for level, sql in SIGNAL_SQL.items():
+        for r in db.execute(sql, args):
+            if level == "relayed" and (r["theme_id"], "official") in out:
+                continue
+            sig = out.setdefault((r["theme_id"], level), {"theme_id": r["theme_id"], "level": level, "since": since})
+            sig.setdefault("companies", []).append({k: r[k] for k in ("symbol", "first_at", "last_at", "n")})
+    return [out[k] for k in sorted(out)]
+
+
+def revision_claims(db):
+    """{revision id without dashes: (scope_key, claims)} of the completed revisions research_theme.py wrote into this
+    ledger; {} for a ledger without research_revisions."""
+    if not _one(db, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'research_revisions'"):
+        return {}
+    return {
+        str(r["id"]).replace("-", "").lower(): (r["scope_key"], json.loads(r["research_json"]).get("claims") or [])
+        for r in db.execute("SELECT id, scope_key, research_json FROM research_revisions WHERE status = 'completed'")
+    }
+
+
 def export(db, as_of):
-    """Point-in-time view at as_of, sorted, without full source texts. Same ledger + same as_of -> same bytes."""
+    """Point-in-time view at as_of, sorted, without full source texts. Same ledger + same as_of -> same bytes.
+    Each claim_theme_links row carries its revision's scope_key, claim text and quote (clipped) when the revision is
+    in this ledger; cross_company_signals is §5.2 over a SIGNAL_WINDOW_DAYS window ending at as_of."""
     as_of = iso(as_of)
 
     def rows(sql, *args):
@@ -1146,6 +1215,13 @@ def export(db, as_of):
     links = rows(
         "SELECT * FROM claim_theme_links WHERE created_at <= ? ORDER BY revision_id, claim_index, theme_id", as_of
     )
+    revisions = revision_claims(db)
+    for link in links:
+        scope_key, claims = revisions.get(link["revision_id"].replace("-", "").lower(), (None, []))
+        claim = claims[link["claim_index"]] if link["claim_index"] < len(claims) else {}
+        link["scope_key"] = scope_key
+        link["claim_text"] = _clip(claim["text"]) if claim.get("text") else None
+        link["claim_quote"] = _clip(claim["quote"]) if claim.get("quote") else None
     doc = {
         "algorithm": EXPORT_ALGO,
         "as_of": as_of,
@@ -1154,8 +1230,19 @@ def export(db, as_of):
         "records": records,
         "narrative_checks": checks,
         "claim_theme_links": links,
+        "cross_company_signals": cross_company_signals(db, as_of),
+        "signal_window_days": SIGNAL_WINDOW_DAYS,
     }
     return json.dumps(doc, ensure_ascii=False, sort_keys=True, indent=1) + "\n"
+
+
+def write_export(db, as_of, path):
+    """export() to path through a temp file and rename, so a reader never sees half a file."""
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(export(db, as_of), encoding="utf-8")
+    tmp.replace(path)
+    return path
 
 
 # ---------------------------------------------------------------- CLI
@@ -1197,11 +1284,9 @@ def _cmd(a, db):
     if a.cmd == "sweep-stale":
         moved = sweep_stale(db, a.as_of)
         return "\n".join([f"stale {n}" for n in moved] + [f"swept {len(moved)}"])
-    text = export(db, a.as_of)
     if not a.out:
-        return text.rstrip("\n")
-    Path(a.out).write_text(text, encoding="utf-8")
-    return f"wrote {a.out}"
+        return export(db, a.as_of).rstrip("\n")
+    return f"wrote {write_export(db, a.as_of, a.out)}"
 
 
 def main(argv=None):
