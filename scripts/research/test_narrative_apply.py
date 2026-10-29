@@ -400,3 +400,134 @@ def test_no_snapshot_writes_no_links(env):
     jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
     assert narrative_check.apply(path, rev, payload, cfg, jev, mode="on") is None
     assert links(path) == []
+
+
+# ------------------------------------------------------------------------------------------------ narrative_proposals
+PROPOSALS = [
+    {
+        "claim_index": 0,
+        "claim_type": "state",
+        "resolves_on": None,
+        "record_claim": "聯電第三季營收為 NT$68.73 billion",
+        "theme_ids": ["foundry-utilization"],
+        "subject_symbols": ["2303"],
+    },
+    {
+        "claim_index": 2,
+        "claim_type": "forecast",
+        "resolves_on": None,
+        "record_claim": "聯電股價反應將待事件後確認",
+        "theme_ids": ["foundry-utilization"],
+        "subject_symbols": ["2303", "NYSE:UMC"],
+    },
+]
+
+
+def records(path):
+    db = sqlite3.connect(path)
+    db.row_factory = sqlite3.Row
+    rows = {r["narrative_id"]: dict(r) for r in db.execute("SELECT * FROM narrative_records")}
+    events = [dict(r) for r in db.execute("SELECT * FROM narrative_events ORDER BY narrative_id, seq")]
+    held = [dict(r) for r in db.execute("SELECT * FROM held_records ORDER BY narrative_id")]
+    db.close()
+    return rows, events, held
+
+
+def test_revision_narrative_proposals_become_records_in_every_mode(env):
+    path, db = snap_t.ledger(env["tmp"])
+    db.close()
+    n = tagged_narrative()
+    n["narrative_proposals"] = PROPOSALS
+    assert env["run"](FakeJev([n])) == 0  # narrative_apply off
+    rev = json.loads((env["run_dir"] / "revision.json").read_text())
+    assert rev["identity"]["status"] == "completed"
+    out = rev["narrative_results"]["narrative_proposals"]
+    assert [x["status"] for x in out] == ["written", "written"], out
+    rows, events, held = records(path)
+    rev_id = rev["identity"]["revision_id"]
+    by_id = {e["id"]: e for e in rev["manifest_payload"]["evidence"]}
+    official, ours = rows[out[0]["narrative_id"]], rows[out[1]["narrative_id"]]
+    assert (official["source_tier"], official["origin_kind"], official["origin_ref"]) == (
+        "official",
+        "revision",
+        f"revision:{rev_id}#claims[0]",
+    )
+    assert official["attributed_to"] == (by_id[tr.DOC_ID]["payload"].get("publisher") or tr.DOC_ID)
+    assert official["origin_evidence_id"] == tr.DOC_ID and official["quote"] == n["claims"][0]["quote"]
+    assert (ours["source_tier"], ours["attributed_to"], ours["origin_evidence_id"]) == (
+        "our-inference",
+        "本系統推論",
+        "price_facts:2303",
+    )
+    assert ours["resolves_on_default"] == 1 and json.loads(ours["subject_symbols_json"]) == ["2303", "NYSE:UMC"]
+    assert official["first_seen_at"] == ours["first_seen_at"] == rev["manifest_payload"]["as_of"]
+    assert [(e["seq"], e["kind"], e["to_status"]) for e in events] == [(0, "created", "unverified")] * 2
+    assert held == []
+    md = subprocess.run(
+        [sys.executable, str(HERE / "render_theme.py"), str(env["run_dir"] / "revision.json")],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    section = md[md.index("## 新增敘事") : md.index("## 可重放身分")]
+    assert f"`{official['narrative_id']}`" in section and section.count("已寫入") == 2
+    # a rerun of the same revision writes nothing twice
+    cfg = json.loads((env["run_dir"] / "config.json").read_text())
+    jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
+    again = narrative_check.apply(path, rev, rev["manifest_payload"], cfg, jev, mode="on")
+    assert again["narrative_proposals"] == out and records(path) == (rows, events, held)
+
+
+def test_a_fact_on_non_official_evidence_is_no_record_and_a_pending_member_holds_one(env):
+    """§6.1: only official evidence makes an official record. A subject that only an open theme proposal names waits in
+    held_records and is written once the owner accepts the theme and the member."""
+    path, db = snap_t.ledger(env["tmp"])
+    db.close()
+    n = tagged_narrative()
+    assert env["run"](FakeJev([n])) == 0
+    rev = json.loads((env["run_dir"] / "revision.json").read_text())
+    rev["research"]["claims"][2]["kind"] = "fact"  # a fact on price data: exchange feed / derived, not official
+    rev["research"]["narrative_proposals"] = [
+        {**PROPOSALS[1], "record_claim": "聯電股價反應將待事件後確認"},
+        {**PROPOSALS[0], "subject_symbols": ["NASDAQ:INTC"]},
+    ]
+    rev["research"]["theme_proposals"] = [
+        {
+            "suggested_id": "foundry-pricing",
+            "title": "晶圓代工報價",
+            "kind": "demand_driver",
+            "why": "測試",
+            "claim_indices": [0],
+            "proposed_members": [{"symbol": "NASDAQ:INTC", "role": "competitor"}],
+        }
+    ]
+    cfg = json.loads((env["run_dir"] / "config.json").read_text())
+    res = narrative_check.apply(
+        path, rev, rev["manifest_payload"], cfg, runner.Jev(JEV_KEY, transport=FakeJev([])), mode="off"
+    )
+    unfit, waiting = res["narrative_proposals"]
+    assert unfit["status"] == "unfit" and "不全是官方文件" in unfit["reason"]
+    pid = res["theme_proposals"][0]["id"]
+    assert waiting["status"] == "held" and waiting["waits"] == [pid]
+    rows, _, held = records(path)
+    assert unfit["narrative_id"] not in rows and waiting["narrative_id"] not in rows
+    assert [h["narrative_id"] for h in held] == [waiting["narrative_id"]]
+    decide = lambda n, action, target, **kw: narrative_check.apply_decision(  # noqa: E731
+        path,
+        {
+            "decision_id": f"20261020-d{n}",
+            "action": action,
+            "target": target,
+            "owner_text": "好",
+            "decided_at": "2026-10-20T00:00:00Z",
+            **kw,
+        },
+    )
+    assert decide(1, "theme-accept", pid, theme_id="foundry-pricing")[0] == "applied"
+    db = sqlite3.connect(path)
+    (member,) = db.execute("SELECT proposal_id FROM member_proposals WHERE symbol = 'NASDAQ:INTC'").fetchone()
+    db.close()
+    result, message = decide(2, "member-accept", member)
+    assert result == "applied" and f"敘事 {waiting['narrative_id']} 已寫入" in message
+    rows, _, _ = records(path)
+    assert rows[waiting["narrative_id"]]["source_tier"] == "official"

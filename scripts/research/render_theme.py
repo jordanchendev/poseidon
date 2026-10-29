@@ -340,6 +340,14 @@ if snap and snap["records"]:
     if owner:
         L += ["\n### 待 owner 判斷\n", *owner]
     L.append("")
+proposed = (d.get("narrative_results") or {}).get("narrative_proposals") or []
+if proposed:
+    STATUS_WORD = {"written": "已寫入", "held": "等待核准", "unfit": "未收"}
+    L += ["## 新增敘事（本篇的 narrative_proposals）\n", "| narrative_id | claim | 結果 |", "|---|---|---|"]
+    for x in proposed:
+        why = f"：{cell(x['reason'])}" if x.get("reason") else (f"（等 {'、'.join(x['waits'])}）" if x["waits"] else "")
+        L.append(f"| `{x['narrative_id']}` | {cell(x['claim'])} | {STATUS_WORD[x['status']]}{why} |")
+    L.append("")
 L += [
     "## 可重放身分\n",
     "| 欄位 | 值 |\n|---|---|",

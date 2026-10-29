@@ -29,6 +29,9 @@ apply(ledger_path, revision, payload, cfg, jev, mode) -> narrative_results, run 
   Before the records, one claim_theme_links row per (claim, theme_id) the drafter tagged, enabled or not: a link is
   not a status change (D2). An existing key is kept, so a rerun writes no link twice. The revision's theme_proposals
   are filed in every mode too (file_theme_proposals) and listed in the done notice for the owner (§3.3, §9 step 9).
+  Its narrative_proposals become records in every mode as well (write_narrative_proposals, §3.2): an official record
+  from a fact claim whose evidence is all official, our inference from an inference claim; held like an intake record
+  while a subject waits for an open proposal.
 apply_decision(ledger_path, decision) -> (applied | refused, message): one owner decision from the bridge's
   narrative-pending (confirm / reject a suggestion, set = the §4.6 override, theme-accept / theme-reject a theme
   proposal under the id the owner typed, member-accept / member-reject a member proposal), idempotent per decision
@@ -465,6 +468,75 @@ def file_theme_proposals(db, revision, by_id, cfg, at):
     return out
 
 
+def proposal_record(p, claims, by_id, rev_id, as_of):
+    """A narrative proposal of the revision -> (add_record arguments, the evidence text its quote is in, reason).
+    reason is None when the record may be written. §6.1: a fact claim makes an official record only when every
+    evidence it cites is official (secondary never is); an inference claim makes our inference. The record's quote is
+    the claim's quote; it is first seen at the revision's as_of."""
+    import draft as draft_mod
+
+    i = p["claim_index"]
+    src = claims[i]
+    cited = [by_id[e] for e in src["evidence_ids"] if e in by_id]
+    quote = src.get("quote") or ""
+    item, text = next(
+        ((e, t) for e in cited for t in draft_mod.evidence_texts(e) if quote and quote in t), (None, None)
+    )
+    tiers = [evidence_tier(e) for e in cited]
+    reason = None
+    if src["kind"] == "fact" and not (tiers and all(t in OFFICIAL_TIERS for t in tiers)):
+        reason = f"claims[{i}] 是事實，但引用的證據不全是官方文件（{'、'.join(tiers) or '無'}）"
+    elif item is None:
+        reason = f"claims[{i}] 的 quote 不在它引用的證據原文裡"
+    inference = src["kind"] == "inference"
+    record = {
+        "claim": p["record_claim"].strip(),
+        "claim_type": p["claim_type"],
+        "attributed_to": "本系統推論" if inference else item and (item["payload"].get("publisher") or item["id"]),
+        "source_tier": "our-inference" if inference else "official",
+        "origin_kind": "revision",
+        "origin_ref": f"revision:{rev_id}#claims[{i}]",
+        "origin_evidence_id": item and item["id"],
+        "quote": quote,
+        "subject_symbols": sorted(set(p["subject_symbols"])),
+        "theme_ids": sorted(set(p["theme_ids"])),
+        "first_seen_at": as_of,
+        "resolves_on": p.get("resolves_on"),
+        "decided_by": "rule",
+    }
+    return record, text, reason
+
+
+def write_narrative_proposals(db, revision, by_id, at):
+    """The revision's narrative_proposals (§3.2) through intake's path: written when its themes and subjects are
+    approved, held (held_records) when a subject waits for an open proposal, unfit with the reason otherwise.
+    -> [{index, narrative_id, claim, status written|held|unfit, waits, reason}]. A rerun writes nothing twice."""
+    rev_id = revision["identity"]["revision_id"]
+    claims = revision["research"]["claims"]
+    out = []
+    for k, p in enumerate(revision["research"].get("narrative_proposals") or []):
+        record, text, reason = proposal_record(p, claims, by_id, rev_id, at)
+        nid = nl.narrative_id(record["origin_ref"], record["quote"], record["claim"])
+        row = {"index": k, "narrative_id": nid, "claim": record["claim"], "waits": [], "reason": reason}
+        if reason is None:
+            themes, waits, missing = nl.record_waits(db, record["theme_ids"], record["subject_symbols"])
+            if missing:
+                reason = "；".join(missing)
+            elif waits:
+                nl.hold_record(db, record, text, waits, at)
+                row.update(status="held", waits=waits)
+            else:
+                try:
+                    nl.add_record(db, **{**record, "theme_ids": themes}, source_text=text)
+                    row["status"] = "written"
+                except nl.LedgerError as e:
+                    reason = f"寫入被拒：{e}"
+        if reason is not None:
+            row.update(status="unfit", reason=reason)
+        out.append(row)
+    return out
+
+
 APPLY_MODES = ("off", "on", "confirm")
 STATUS_WORDS = {
     "unverified": "未證實",
@@ -521,6 +593,7 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
     try:
         write_theme_links(db, revision, by_id)
         proposals = file_theme_proposals(db, revision, by_id, cfg, payload["as_of"])
+        new_records = write_narrative_proposals(db, revision, by_id, payload["as_of"])
         for shown in snap["payload"]["records"]:
             nid = shown["narrative_id"]
             done = db.execute(
@@ -635,6 +708,7 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
         "jev_model": jev.model,
         "records": out,
         **({"theme_proposals": proposals} if proposals else {}),
+        **({"narrative_proposals": new_records} if new_records else {}),
     }
 
 

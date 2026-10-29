@@ -349,7 +349,14 @@ Before the records it writes one `claim_theme_links` row per (claim index, theme
 (`source` drafter, `about_symbols`, the claim kind, and the tier and event_time of the claim's highest-tier cited
 evidence), whatever `--narrative-apply` says: a link is not a status change (D2). A key already written is kept, so a
 rerun writes nothing new and a rerun after a crash fills in what is missing. A revision's `theme_proposals` are filed
-in every mode too (below, "Theme and member approvals"); its `narrative_proposals` still stay in revision.json only.
+in every mode too (below, "Theme and member approvals"). So are its `narrative_proposals` (design §3.2,
+`write_narrative_proposals`): each becomes a record through intake's path, origin `revision:<uuid>#claims[i]`, the
+cited claim's quote verbatim in the evidence text it comes from, `first_seen_at` = the revision's as_of. A fact claim
+makes an `official` record (attributed to the document's publisher) only when every evidence it cites is official
+(§6.1: secondary material never makes fact evidence); an inference claim makes `our-inference` (本系統推論). A subject
+that only an open theme or member proposal names is held (`held_records`) until the owner decides it; anything else
+the ledger refuses is listed as unfit. `narrative_results.narrative_proposals` [{index, narrative_id, claim, status
+written|held|unfit, waits, reason}] is rendered as 「新增敘事」 in the done report.
 
 - Themes, members and edges are written only with a non-empty `--approval-ref`; re-running the same approval is a
   no-op, the same key with different content is refused. Symbols: Taiwan-listed bare (`2408`), others
