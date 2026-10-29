@@ -250,8 +250,9 @@ pending row ─ assemble.py ─ research_theme.py (freeze + prepare) ─ draft.p
 python scripts/research/runner.py --state-dir ~/research-runner/state \
   --draft-env ~/research-runner/secrets/research-draft-openrouter.env \
   --jev-env ~/research-runner/secrets/jev-openrouter.env \
-  [--bridge "ssh research-bridge"] [--agenda-json FILE] [--outbox DIR] [--agenda-id ID] [--dry-run] \
-  [--draft-model ID] [--no-reasoning] [--max-tokens N] [--jev-model ID]
+  [--bridge "ssh research-bridge"] [--agenda-json FILE] [--materials-json FILE] [--decisions-json FILE] \
+  [--outbox DIR] [--agenda-id ID] [--dry-run] [--draft-model ID] [--no-reasoning] [--max-tokens N] [--jev-model ID] \
+  [--narrative-apply off|on|confirm]
 ```
 
 - Env files (600, checked; group/other-readable files are refused): `RESEARCH_DRAFT_OPENROUTER_KEY=...` and
@@ -261,7 +262,7 @@ python scripts/research/runner.py --state-dir ~/research-runner/state \
 - `--dry-run`: assemble + freeze/prepare + prompt only, under `<state>/dry-run/` (own ledger), no keys, no model / JEV /
   bridge writes; writes `prompt.json`.
 - Exit codes: 0 handled / nothing to do / lock busy, 3 key file, 4 a bridge report failed (retried next run),
-  5 bridge `pending` failed.
+  5 a bridge list call (`pending`, `material-pending`, `narrative-pending`) failed; the other stages still run.
 
 Outputs under `--state-dir`: `ledger.sqlite` (research_theme tables + `runner_runs`), `runner.log`, `runner.lock`,
 `runs/<agenda_id>/` with `config.json`, `bars.csv`, `sources/` (raw + text + `twse-t187ap05_L.json`), `narrative.json`
@@ -298,8 +299,9 @@ OpenRouter, JEV, Thalassa and TWSE are faked; the source is served from a file:/
 ## Theme and narrative ledger (2026-10-29; design `local_dev/design/2026-10-29-research-theme-and-narrative-ledger.md`)
 
 `narrative_ledger.py` keeps nine tables in the runner's ledger file (themes, theme_members, theme_edges,
-theme_proposals, materials, narrative_records, narrative_events, narrative_checks, claim_theme_links). Every row carries
-`content_sha256` of its other columns.
+theme_proposals, materials, narrative_records, narrative_events, narrative_checks, claim_theme_links), plus
+`narrative_suggestions` for `--narrative-apply confirm`. Every row carries `content_sha256` of its other columns; a row
+with a lifecycle (materials, theme_proposals, narrative_suggestions) is rehashed when its status moves.
 
 What the runner reads from it (design §9 step 4, `assemble.py`; the ledger is opened read-only, a dry run included):
 
@@ -344,8 +346,8 @@ exist is skipped without JEV; an event that already names the revision is reused
 Before the records it writes one `claim_theme_links` row per (claim index, theme_id) the drafter tagged
 (`source` drafter, `about_symbols`, the claim kind, and the tier and event_time of the claim's highest-tier cited
 evidence), whatever `--narrative-apply` says: a link is not a status change (D2). A key already written is kept, so a
-rerun writes nothing new and a rerun after a crash fills in what is missing. `narrative_proposals` and
-`theme_proposals` stay in revision.json; §9 steps 8 and 9 write them to the ledger.
+rerun writes nothing new and a rerun after a crash fills in what is missing. A revision's `narrative_proposals` and
+`theme_proposals` stay in revision.json; §9 step 9 writes them to the ledger (intake already files its own, below).
 
 - Themes, members and edges are written only with a non-empty `--approval-ref`; re-running the same approval is a
   no-op, the same key with different content is refused. Symbols: Taiwan-listed bare (`2408`), others
@@ -363,3 +365,77 @@ rerun writes nothing new and a rerun after a crash fills in what is missing. `na
   `candidate` are not approved (D5); nothing loads the seed into a ledger except the test's tmp ledger.
 
 Tests: `PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/test_narrative_ledger.py`.
+
+### Material intake (§9 step 8, `intake.py`)
+
+The owner pastes a KOL post, media article or sell-side note in Telegram; Sisyphus runs
+`research-agenda.sh submit-material --tier sell-side|media|kol --author A [--url U]` with the text on STDIN, and
+macminim4 keeps it (`~/.openclaw/research/materials.jsonl` + `materials/<id>.txt`, id `YYYYMMDD-kN`, the same text
+ignoring whitespace within 24 h is not taken twice). Each runner invocation takes in at most one material from the
+bridge's `material-pending` (`--materials-json` in host mode):
+
+- The row's text must hash to `text_sha256` (the bridge already refuses to hand over a text that does not; it sends
+  `text_error` instead, and the runner reports needs-review).
+- Freeze: `runs/material-<id>/sources/material.txt`, one excerpt per non-empty line, evidence
+  `secondary:material-<id>` (kind `secondary`, the material's tier), plus a `narrative_snapshot` with every active theme
+  (records `[]`) when there is one; `ManifestService.freeze` writes `data_manifests` only (market `tw_stock`, interval
+  `material`, required `secondary` within 30 days). Never a `research_revisions` row.
+- Draft (same key and model as the research draft, D9): `records[]` {claim, claim_type, resolves_on, attributed_to,
+  quote, subject_symbols, theme_ids}, `theme_proposals[]` {suggested_id, title, kind, why, quote, proposed_members},
+  `verify_with[]`.
+- Gates, one repair round: quote verbatim in the material; `lint_atomic`, and no causal or driver connector
+  (`claim_precheck._CAUSAL`: 帶動, 由於, driven by …), because a record is checked later one statement at a time;
+  `check_numbers` of the record against its quote; a forecast's `resolves_on` names a year of the record (else null:
+  the ledger default); theme ids from the closed list; subjects that are approved members, or members of a theme
+  proposal filed in the same output (a proposal that repeats an active theme or an open proposal files no member of
+  its own); at most 10 records, 3 theme proposals, 5 `verify_with`. Refused twice -> `material-needs-review`.
+- Faithful-paraphrase check: `narrative_check.judge_record` (period precheck, then the 3-vote JEV majority) of each
+  record against the line(s) its quote sits in; anything but `supports` drops the record and lists it in the notice.
+- Writes: `narrative_records` with `source_tier` = the material's tier, `first_seen_at` = `received_at`, origin
+  `material:<id>`, and the seq-0 `created` event; `theme_proposals` (`T<YYYYMMDD>-n`, source_ref
+  `material:<id>#p<line>`; a title or keyword that repeats an active theme, or an open proposal's id or title, is listed
+  and not filed); `materials` row `intaken` with the manifest sha. `intake.json` keeps the checked plan, so a rerun
+  after a crash writes the same rows without a model call; a material the bridge still lists after it was reported is
+  reported again from `run.json`.
+- `material-done <id>` stdin JSON `{records, dropped, theme_proposals, verify_with, text}`; `text` is the Telegram
+  notice (new records, dropped records with the JEV label, theme proposals, duplicates, documents to verify with; a
+  material with nothing to track says 「無對應主題」).
+
+### Owner confirm mode (`--narrative-apply confirm`, owner decision 2026-10-29)
+
+For the first 4 weeks the rule table's changes are suggestions: JEV still calls two contradicts cases of the control
+set supports at >= 0.95. `off` and `on` behave as before.
+
+- Each event the rule would write (status change or corroboration) becomes a `narrative_suggestions` row
+  (`ns-` + 8 hex of the revision and record ids). The check row is written as in `off`. The result carries
+  `suggestion` {id, status, line}; `done` stdin JSON adds `suggestions` [{id, narrative_id, line}], and the bridge
+  appends each line (「建議 ns-… … 由 未證實 改為 部分證實（R3），依據 claims[i]「…」；回覆「確認敘事 ns-…」或「駁回敘事 ns-…」」)
+  to the notice. render_theme.py lists them under 「待 owner 確認」.
+- The owner replies; Sisyphus runs `research-agenda.sh narrative-confirm|narrative-reject <ns-id>` (or
+  `narrative-set <nr-id> <status>`, the §4.6 override) with the owner's sentence on STDIN; macminim4 checks the id
+  against the suggestions it was sent and appends a pending decision (`YYYYMMDD-dN`) to `narrative_decisions.jsonl`.
+- Next invocation: `narrative-pending` (`--decisions-json` in host mode) -> `narrative_check.apply_decision`:
+  confirm writes the held event with `decided_by` owner, the suggesting rule, `note` = the owner's sentence and
+  `basis.approval_ref` = `telegram:<decision id>`, at max(decision time, the record's last event); reject marks the
+  suggestion, and the same change to that record is not suggested again (the result shows `suppressed_by`); set is
+  `set_status` with the same approval_ref. Each decision is acked with `narrative-ack <id> applied|refused` and a
+  zh-TW message the bridge sends to Telegram. A decision delivered again is a no-op (`（先前已套用，未重複寫入）`).
+
+### Host wrapper (proposed; the live `~/research-runner/run.sh` is the owner's)
+
+```bash
+ssh research-bridge pending > $S/pending.json.tmp && mv $S/pending.json.tmp $S/pending.json
+ssh research-bridge material-pending > $S/materials.json.tmp && mv $S/materials.json.tmp $S/materials.json
+ssh research-bridge narrative-pending > $S/decisions.json.tmp && mv $S/decisions.json.tmp $S/decisions.json
+# skip the container only when all three lists are empty
+docker run ... scripts/research/runner.py --state-dir /state --agenda-json /state/pending.json \
+  --materials-json /state/materials.json --decisions-json /state/decisions.json --outbox /state/outbox ...
+python3 scripts/research/deliver_outbox.py --outbox $S/outbox --bridge "ssh research-bridge"
+```
+
+In host mode (`--agenda-json`) a list the host did not pass is empty: the container never calls ssh. `deliver_outbox.py`
+delivers `done`, `needs-review`, `material-done`, `material-needs-review` and `narrative-ack` entries.
+
+Tests: `test_intake.py` (the §7 posts in `fixtures/gooaye_posts.json`, a test fixture only, never vault content) and
+`test_narrative_confirm.py`; the macminim4 side is `local_dev/scripts/strategy-bridge/macminim4/test_research_intake.py`
+in the aquarium workspace.
