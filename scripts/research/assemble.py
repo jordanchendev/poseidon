@@ -26,9 +26,10 @@ Symbols (design 2026-10-29 §2.1): a bare code ('2303') is Taiwan-listed and get
 ticker of a non-Taiwan theme member ('3110' while the ledger knows 'TSE:3110') is refused, not sent to Thalassa.
 Theme scope (§3.3): a row with theme_id researches tw_stock:theme:<id>; its OHLCV basket is the theme's Taiwan-listed
 members (approved by as_of) plus 0050, never the row's own picks.
-Narrative snapshot (§2.6, §4.1): when the runner ledger has open narrative records for this run's symbols or themes,
-cfg narrative_snapshot carries them, folded at as_of, for research_theme.py to freeze. No open record, no key, so the
-manifest hash is what it was before the ledger existed.
+Narrative snapshot (§2.6, §4.1): when the run is a theme scope, one of its symbols is an approved member of an active
+theme as of as_of, or the ledger has open narrative records for its symbols or themes, cfg narrative_snapshot carries
+the themes to tag and those records (possibly none), folded at as_of, for research_theme.py to freeze. A run that meets
+no theme and no open record gets no key, so its manifest hash is what it was before the ledger existed.
 
 Any failure that leaves no usable evidence raises AssembleError(reason); the runner turns it into needs_review.
 Usage (manual): assemble.py --row row.json --run-dir DIR [--as-of 2026-10-21T04:20:00Z]
@@ -107,24 +108,25 @@ def open_ledger(path):
 
 
 def themes_at(db, as_of):
-    """Active themes approved by as_of -> {theme_id: {theme_id, title, kind, members [{symbol, role, tw_listed}]}}."""
+    """Active themes approved by as_of -> {theme_id: {theme_id, title, kind, approved_at, members [{symbol, role,
+    tw_listed, approved_at}]}}."""
     if db is None:
         return {}
     themes = {
-        r["theme_id"]: {"theme_id": r["theme_id"], "title": r["title"], "kind": r["kind"], "members": []}
+        r["theme_id"]: {**dict(r), "members": []}
         for r in db.execute(
-            "SELECT theme_id, title, kind FROM themes WHERE status = 'active' AND approved_at <= ? ORDER BY theme_id",
+            "SELECT theme_id, title, kind, approved_at FROM themes WHERE status = 'active' AND approved_at <= ? "
+            "ORDER BY theme_id",
             (as_of,),
         )
     }
     for m in db.execute(
-        "SELECT theme_id, symbol, role, tw_listed FROM theme_members WHERE approved_at <= ? ORDER BY theme_id, symbol",
+        "SELECT theme_id, symbol, role, tw_listed, approved_at FROM theme_members WHERE approved_at <= ? "
+        "ORDER BY theme_id, symbol",
         (as_of,),
     ):
         if m["theme_id"] in themes:
-            themes[m["theme_id"]]["members"].append(
-                {"symbol": m["symbol"], "role": m["role"], "tw_listed": m["tw_listed"]}
-            )
+            themes[m["theme_id"]]["members"].append({k: m[k] for k in ("symbol", "role", "tw_listed", "approved_at")})
     return themes
 
 
@@ -182,7 +184,7 @@ def split_symbols(row, themes, as_of):
 
 def narrative_snapshot(db, as_of, themes, run_symbols, theme_id=None):
     """The §4.1 selection, folded at as_of, as a narrative_snapshot evidence item (no recorded_at / hash; research_theme
-    adds them), or None when no open record is selected."""
+    adds them), or None when the run meets no theme (T_run is empty) and no open record is selected."""
     import narrative_ledger as nl
 
     if db is None:
@@ -199,7 +201,7 @@ def narrative_snapshot(db, as_of, themes, run_symbols, theme_id=None):
         hit = bool(s_run & set(subjects))
         if status in OPEN_STATUSES and (hit or t_run & set(theme_ids)):
             picked.append((hit, r, status, theme_ids, subjects, events[-1]["at"]))
-    if not picked:
+    if not picked and not t_run:
         return None
     picked.sort(key=lambda p: p[1]["first_seen_at"], reverse=True)  # stable: ties stay in narrative_id order
     picked.sort(key=lambda p: not p[0])
@@ -221,7 +223,11 @@ def narrative_snapshot(db, as_of, themes, run_symbols, theme_id=None):
         for _, r, status, theme_ids, subjects, last_at in shown
     ]
     listed = sorted((t_run | {t for rec in records for t in rec["theme_ids"]}) & set(themes))
-    seen = max(max(rec["first_seen_at"], rec["last_event_at"]) for rec in records)
+    # the latest ledger fact shown: a record's first sighting or last event, a listed theme's or member's approval
+    shown_at = [t for rec in records for t in (rec["first_seen_at"], rec["last_event_at"])]
+    shown_at += [themes[t]["approved_at"] for t in listed]
+    shown_at += [m["approved_at"] for t in listed for m in themes[t]["members"]]
+    seen = max(shown_at)
     return {
         "id": "narrative_snapshot",
         "kind": "narrative_snapshot",

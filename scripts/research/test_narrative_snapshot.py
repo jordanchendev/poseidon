@@ -22,6 +22,7 @@ from test_runner import AGENDA_ID, AS_OF, ROW, FakeOpenRouter  # noqa: E402
 from test_runner import env as runner_env  # noqa: E402,F401  (pytest finds it by this name)
 
 APPROVED = "2026-10-01T00:00:00Z"
+AFTER_AS_OF = "2026-10-25T00:00:00Z"
 SOURCE = "UMC 成熟製程產能利用率偏高。ASML 出貨受客戶無塵室限制。Nittobo T glass 產能擴充。記憶體供給吃緊。"
 # manifest_sha256 / prompt_sha256 of the test_runner fixture row (2303, dry run), taken at c81d35b before step 4.
 RUNNER_MANIFEST_SHA256 = "5eaa71cea89f0625c7a4332940fa76f64912136c888d507bd1c08ed8c51815c3"
@@ -35,9 +36,10 @@ def env(runner_env):  # noqa: F811
     return runner_env
 
 
-def seed_themes(db):
+def seed_themes(db, fixture_at=APPROVED):
+    """Four themes. The fixture row's symbol 2303 joins foundry-utilization at fixture_at (None: never)."""
     for tid, title, members in (
-        ("foundry-utilization", "晶圓代工產能利用率", [("2303", "supplier"), ("NYSE:UMC", "supplier")]),
+        ("foundry-utilization", "晶圓代工產能利用率", [("NYSE:UMC", "supplier")]),
         ("cleanroom-capacity", "無塵室產能", [("NASDAQ:ASML", "constrained"), ("2404", "beneficiary")]),
         ("t-glass-supply", "T-glass 供給", [("TSE:3110", "supplier"), ("1303", "supplier")]),
         (
@@ -49,7 +51,9 @@ def seed_themes(db):
         nl.add_theme(db, tid, title, "bottleneck", [], "test:owner", at=APPROVED)
         for sym, role in members:
             nl.add_member(db, tid, sym, role, "test:owner", at=APPROVED)
-    nl.add_member(db, "memory-supply-tightness", "2337", "supplier", "test:owner", at="2026-10-25T00:00:00Z")
+    nl.add_member(db, "memory-supply-tightness", "2337", "supplier", "test:owner", at=AFTER_AS_OF)
+    if fixture_at:
+        nl.add_member(db, "foundry-utilization", "2303", "supplier", "test:owner", at=fixture_at)
 
 
 def add(db, n, claim, quote, subjects, themes, first_seen, claim_type="state"):
@@ -74,11 +78,11 @@ def utilization(db, n, first_seen, subjects=("2303",), themes=("foundry-utilizat
     return add(db, n, "聯電成熟製程產能利用率偏高", "產能利用率偏高", list(subjects), list(themes), first_seen)
 
 
-def ledger(tmp_path):
+def ledger(tmp_path, fixture_at=APPROVED):
     path = tmp_path / "state" / "ledger.sqlite"
     path.parent.mkdir(parents=True, exist_ok=True)
     db = nl.connect(path)
-    seed_themes(db)
+    seed_themes(db, fixture_at)
     return path, db
 
 
@@ -101,10 +105,11 @@ def dry_run(env):
 
 # ------------------------------------------------------------------------------------------------ hash stability
 @pytest.mark.parametrize("ledger_state", ["none", "themes", "closed", "future"])
-def test_no_open_narrative_keeps_manifest_and_prompt(env, ledger_state):
-    """A run with no open record for its symbols freezes the manifest and builds the prompt it did at c81d35b."""
+def test_no_theme_member_keeps_manifest_and_prompt(env, ledger_state):
+    """A run whose symbol is no theme member as of as_of, with no open record for it, freezes the manifest and builds
+    the prompt it did at c81d35b. 2303 joins a theme only after as_of (a record needs a member subject) or never."""
     if ledger_state != "none":
-        _, db = ledger(env["tmp"])
+        _, db = ledger(env["tmp"], None if ledger_state == "themes" else AFTER_AS_OF)
         if ledger_state == "closed":
             nid = utilization(db, 1, "2026-10-02T00:00:00Z")
             nl.set_status(db, nid, "refuted", "owner checked", at="2026-10-03T00:00:00Z")
@@ -126,6 +131,41 @@ def test_dry_run_reads_the_ledger_without_writing_it(env):
     run = dry_run(env)
     assert run["manifest_sha256"] != RUNNER_MANIFEST_SHA256
     assert path.read_bytes() == before
+
+
+# ------------------------------------------------------------------------------------------------ snapshot trigger
+def test_theme_member_without_open_records_gets_the_theme_list(env):
+    """The theme list travels only in the snapshot, so a member run with no open record still gets one to tag."""
+    _, db = ledger(env["tmp"])
+    db.close()
+    run = dry_run(env)
+    cfg = json.loads((env["state"] / "dry-run" / "runs" / AGENDA_ID / "config.json").read_text())
+    snap = cfg["narrative_snapshot"]
+    assert snap["payload"]["records"] == [] and snap["payload"]["not_shown"] == []
+    assert snap["payload"]["themes"] == [
+        {
+            "theme_id": "foundry-utilization",
+            "title": "晶圓代工產能利用率",
+            "kind": "bottleneck",
+            "members": [{"symbol": "2303", "role": "supplier"}, {"symbol": "NYSE:UMC", "role": "supplier"}],
+        }
+    ]
+    assert snap["event_time"] == snap["available_at"] == APPROVED
+    assert run["manifest_sha256"] != RUNNER_MANIFEST_SHA256
+    prompt = json.loads((env["state"] / "dry-run" / "runs" / AGENDA_ID / "prompt.json").read_text())
+    text = json.dumps(prompt, ensure_ascii=False)
+    assert "foundry-utilization | 晶圓代工產能利用率" in text and "none open for this run" in text
+    assert "11. Themes:" in text and "narrative_checks" in text
+
+
+@pytest.mark.parametrize("case", ["non_member", "member_after_as_of", "retired_theme"])
+def test_no_snapshot_without_a_theme_as_of(env, case):
+    path, db = ledger(env["tmp"], {"non_member": None, "member_after_as_of": AFTER_AS_OF}.get(case, APPROVED))
+    if case == "retired_theme":
+        db.execute("UPDATE themes SET status = 'retired' WHERE theme_id = 'foundry-utilization'")
+        db.commit()
+    db.close()
+    assert "narrative_snapshot" not in assemble_row(env, path)
 
 
 # ------------------------------------------------------------------------------------------------ snapshot
@@ -211,8 +251,8 @@ def test_theme_hit_without_subject_hit_is_shown_after_subject_hits(env):
     assert [t["theme_id"] for t in snap["themes"]] == ["cleanroom-capacity", "foundry-utilization"]
 
 
-def test_no_open_narrative_keeps_completed_revision(env):
-    _, db = ledger(env["tmp"])
+def test_no_theme_member_keeps_completed_revision(env):
+    _, db = ledger(env["tmp"], None)
     db.close()
     assert env["run"](FakeOpenRouter([tr.good_narrative()])) == 0
     rev = json.loads((env["run_dir"] / "revision.json").read_text())
@@ -281,6 +321,9 @@ def test_theme_scope_prices_only_taiwan_members_and_0050(env):
     ]  # 2337 approved after as_of
     assert cfg["subject_symbols"] == ["NASDAQ:MU"]
     assert cfg["theme"] == {"theme_id": "memory-supply-tightness", "title": "記憶體供給吃緊", "kind": "bottleneck"}
+    snap = cfg["narrative_snapshot"]["payload"]
+    assert snap["records"] == [] and [t["theme_id"] for t in snap["themes"]] == ["memory-supply-tightness"]
+    assert [m["symbol"] for m in snap["themes"][0]["members"]] == ["2344", "2408", "NASDAQ:MU"]
 
 
 @pytest.mark.parametrize(

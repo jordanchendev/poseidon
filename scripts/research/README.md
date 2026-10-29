@@ -307,11 +307,13 @@ What the runner reads from it (design §9 step 4, `assemble.py`; the ledger is o
   OHLCV. A bare code that the ledger knows only as a non-Taiwan member's ticker (`3110` vs `TSE:3110`) is refused.
 - A row with `theme_id` researches `tw_stock:theme:<id>`: OHLCV is the theme's Taiwan-listed members approved by as_of
   plus 0050. A Taiwan code in the row must be one of them; a theme with no Taiwan-listed member is refused (D4).
-- `cfg.narrative_snapshot` (§4.1): open records (`unverified`, `partially_verified`, `stale`, folded at as_of,
-  `first_seen_at <= as_of`) whose subjects meet the run's symbols or whose themes meet the run's themes; subject hits
-  first, newest first, at most 15, the rest in `not_shown`. `research_theme.py` freezes it last as evidence
-  `narrative_snapshot`. No open record, no snapshot: the manifest and prompt are byte-identical to before (pinned in
-  `test_narrative_snapshot.py`).
+- `cfg.narrative_snapshot` (§4.1): the run's themes (a theme scope's own theme, and every active theme with one of the
+  run's symbols as a member approved by as_of) and open records (`unverified`, `partially_verified`, `stale`, folded
+  at as_of, `first_seen_at <= as_of`) whose subjects meet the run's symbols or whose themes meet the run's themes;
+  subject hits first, newest first, at most 15, the rest in `not_shown`. A member run with no open record still gets
+  one, with `records: []`, because the theme list for tagging travels only in it. `research_theme.py` freezes it last
+  as evidence `narrative_snapshot`. A run that meets no theme and no open record gets no snapshot: the manifest and
+  prompt are byte-identical to before (pinned in `test_narrative_snapshot.py`).
 - `documents[]` of kind `secondary` need `source_tier` sell-side, media or kol. `claim_precheck.evidence_tier` is the
   one tier mapping, for the rendered disclosure and the narrative gates.
 
@@ -327,7 +329,7 @@ block, `NARRATIVE_LEDGER_SCHEMA` (claim `theme_ids` / `about_symbols`, `narrativ
 - `[proposal]` at most 3 narrative proposals: atomic, numbers in the source claim's quote, a forecast's `resolves_on`
   year in a period the record names, an inference source with a stated basis; theme proposals well-formed.
 
-`render_theme.py` adds 「敘事變化」 after 變更摘要 when the manifest has a snapshot, from `narrative_results` in
+`render_theme.py` adds 「敘事變化」 after 變更摘要 when the manifest's snapshot shows a record, from `narrative_results` in
 revision.json (drafter verdicts only when there are none) and lists `disputed` / `missed` under 「待 owner 判斷」.
 
 After the revision completes (§9 step 6), `narrative_check.apply` runs on every snapshot record: JEV judges the record

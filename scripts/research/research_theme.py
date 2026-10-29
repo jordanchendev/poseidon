@@ -358,8 +358,10 @@ def snapshot_evidence(snap, as_of):
             "narrative_snapshot must be {%s} with id and kind narrative_snapshot" % ", ".join(SNAPSHOT_KEYS)
         )
     p = snap["payload"]
-    if sorted(p) != ["algorithm", "not_shown", "records", "themes"] or not p["records"]:
-        raise SystemExit("narrative_snapshot payload needs algorithm, themes, records (non-empty) and not_shown")
+    if sorted(p) != ["algorithm", "not_shown", "records", "themes"] or not (p["records"] or p["themes"]):
+        raise SystemExit(
+            "narrative_snapshot payload needs algorithm, themes, records and not_shown, and a theme or record"
+        )
     return {**snap, "recorded_at": as_of, "content_sha256": content_sha256(p)}
 
 

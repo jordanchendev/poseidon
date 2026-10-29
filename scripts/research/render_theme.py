@@ -278,7 +278,7 @@ def cell(text, n=None):
 
 
 snap = next((e["payload"] for e in ev if e.get("kind") == "narrative_snapshot"), None)
-if snap:
+if snap and snap["records"]:
     nres = d.get("narrative_results") or {}
     res = {x["narrative_id"]: x for x in nres.get("records", [])}
     drafted = {x.get("narrative_id"): x for x in r.get("narrative_checks") or [] if isinstance(x, dict)}
