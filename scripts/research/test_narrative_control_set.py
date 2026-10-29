@@ -37,6 +37,12 @@ def test_excerpts_are_verbatim_in_sources_with_recorded_sha256():
     assert {c["source"]["document_id"] for c in CS["cases"]} == set(docs)
 
 
+def test_scored_label_is_the_owner_label_and_meta_counts_match():
+    cases = CS["cases"]
+    assert all(c["expected_label"] == c["owner_label"] and c["label_source"].startswith("owner-") for c in cases)
+    assert CS["meta"]["counts"] == {lab: sum(c["expected_label"] == lab for c in cases) for lab in LABELS}
+
+
 def test_every_case_builds_a_jev_request_without_its_label():
     assert 20 <= len(CS["cases"]) <= 30
     assert len({c["id"] for c in CS["cases"]}) == len(CS["cases"])

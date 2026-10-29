@@ -14,8 +14,8 @@
     "symbol_rule": "symbol = the run symbol narrative_apply would pass for the theme-scope revision (cfg symbols joined by ',')",
     "counts": {
       "supports": 7,
-      "contradicts": 7,
-      "says_nothing": 15
+      "contradicts": 6,
+      "says_nothing": 16
     },
     "source_documents": {
       "fundamental:micron-fq4fy26-prepared-remarks": {
@@ -514,11 +514,11 @@
         "text": "預計至 2027 年，\n日東紡供應市場的特殊玻纖布中，將有 20%由本公司協助織造。",
         "text_sha256": "178f3d22e63365369de5b4c1bd120855570463953277df83bc9d8564293fe8a6"
       },
-      "expected_label": "contradicts",
+      "expected_label": "says_nothing",
       "label_source": "owner-2026-10-29",
-      "owner_label": "contradicts",
+      "owner_label": "says_nothing",
       "case_kind": "period",
-      "note": "期間衝突：原文是「預計至 2027 年」",
+      "note": "期間不同：原文是「預計至 2027 年」，claim 是到 2026 年；owner 2026-10-29 依 label_policy v2 改標 says_nothing（原標 contradicts）",
       "symbol": "1303,1802,1815",
       "language": "zh-TW",
       "source_language": "zh-TW"
