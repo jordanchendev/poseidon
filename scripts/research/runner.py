@@ -8,7 +8,8 @@ Pipeline for the chosen row (design: aquarium local_dev/design/2026-10-21-resear
   -> event_status (pre_event | post_event, decided by assemble from dates, never by the model) is written into the
      narrative with event_date
   -> gates (schema incl. Poseidon validate_research, narrative extras, quote-in-cited-evidence, claim_precheck strict
-     numbers, lint_atomic (inference: multi-quantity allowed), GAAP basis, inference basis marker, pre_event catalysts);
+     numbers, lint_atomic (inference: multi-quantity allowed), GAAP basis, inference basis marker, pre_event catalysts,
+     narrative_check.gates: [evidence] [theme] [check] [proposal]);
      refused -> ONE repair round with the refusal reasons -> gates again
   -> JEV jev-1.13 on every FACT claim (JEV_RESEARCH_OPENROUTER_KEY); every label must be `supports`.
      Inference claims are not sent to JEV (UMC 3de55971 precedent: a source never states an inference, so JEV would
@@ -47,6 +48,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import assemble as assemble_mod  # noqa: E402
 import draft as draft_mod  # noqa: E402
+import narrative_check  # noqa: E402
 from claim_precheck import has_inference_basis  # noqa: E402
 
 JEV_KEY_VAR = "JEV_RESEARCH_OPENROUTER_KEY"
@@ -306,6 +308,8 @@ def run_gates(narrative, payload, cfg):
                 f"[quote] claims[{n}] quote is missing or not a verbatim substring of the cited evidence {ids}"
             )
     report["quote_ok"] = sum(quotes)
+    # narrative ledger (design 2026-10-29 §4.4): [evidence] [theme] [check] [proposal]
+    reasons += narrative_check.gates(narrative, payload, cfg)
     # inference claims must state their basis (owner decision 2026-10-21)
     for n, c in enumerate(claims):
         if c.get("kind") == "inference" and not has_inference_basis(c.get("text", "")):

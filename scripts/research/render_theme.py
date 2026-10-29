@@ -255,6 +255,76 @@ L += [
         else []
     ),
     "**下次檢視：** " + r["next_review_at"] + "\n",
+]
+
+# ---- 敘事變化 (design 2026-10-29 §4.5 step 5): from narrative_apply's results, never from model prose
+STATUS_LABEL = {"partially_verified": "部分證實", "verified": "已證實", "refuted": "已否證", "stale": "過期未證實"}
+TIER_LABEL = {"sell-side": "賣方", "media": "媒體", "kol": "KOL"}
+
+
+def status_label(status, tier, claim_type):
+    if status != "unverified":
+        return STATUS_LABEL.get(status, status or "—")
+    if tier in TIER_LABEL:
+        return f"傳聞（{TIER_LABEL[tier]}）"
+    if tier == "official":
+        return "官方預期，未到驗證日" if claim_type == "forecast" else "官方說法，未證實"
+    return "本系統推論，未證實" if tier == "our-inference" else "未證實"
+
+
+def cell(text, n=None):
+    text = " ".join(str(text).split()).replace("|", "／")
+    return text if n is None or len(text) <= n else text[: n - 1] + "…"
+
+
+snap = next((e["payload"] for e in ev if e.get("kind") == "narrative_snapshot"), None)
+if snap:
+    nres = d.get("narrative_results") or {}
+    res = {x["narrative_id"]: x for x in nres.get("records", [])}
+    drafted = {x.get("narrative_id"): x for x in r.get("narrative_checks") or [] if isinstance(x, dict)}
+    L += [
+        "## 敘事變化\n",
+        (
+            f"narrative_apply `{nres.get('narrative_apply')}`；JEV `{nres.get('jev_model')}`；"
+            f"展示 {len(snap['records'])} 條，未展示 {len(snap['not_shown'])} 條\n"
+            if nres
+            else "narrative_apply 未執行：下表只有 drafter 的判定，狀態未變。\n"
+        ),
+        "| narrative_id | claim | 來源 | 前狀態 | 判定 | 新狀態 | 依據（claim 編號與 quote） |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    owner = []
+    for rec in snap["records"]:
+        nid, x = rec["narrative_id"], res.get(rec["narrative_id"]) or {}
+        src, ct = rec["source_tier"], rec["claim_type"]
+        before = x.get("status_before", rec["status"])
+        verdict = x.get("drafter_verdict") or drafted.get(nid, {}).get("verdict") or "—"
+        judged = verdict + "".join(f"／{k} {x[f'{k}_label']}" for k in ("jev", "sweep") if x.get(f"{k}_label"))
+        outcome, written = x.get("outcome"), x.get("event_seq") is not None
+        if not x:
+            new = "未判定"
+        elif outcome == "status_change":
+            new = status_label(x["target_status"], src, ct) + ("" if written else "（narrative_apply off，未寫入）")
+        elif outcome == "corroborated":
+            new = status_label(before, src, ct) + "，官方背書" + ("" if written else "（narrative_apply off，未寫入）")
+        else:
+            new = status_label(before, src, ct) + (f"（{outcome}）" if outcome in ("disputed", "missed") else "")
+        idx = x.get("claim_indices", drafted.get(nid, {}).get("claim_indices")) or []
+        basis = "；".join(
+            f"claims[{i}]「{cell(r['claims'][i].get('quote', ''), 60)}」" for i in idx if 0 <= i < len(r["claims"])
+        )
+        L.append(
+            f"| `{nid}` | {cell(rec['claim'])} | {cell(rec['attributed_to'])}（{src}） | "
+            f"{status_label(before, src, ct)} | {judged} | {new} | {basis or '—'} |"
+        )
+        if outcome in ("disputed", "missed"):
+            owner.append(
+                f"- `{nid}` {outcome}（{x.get('rule')}）：{cell(rec['claim'])}；{x.get('why') or ''}".rstrip("；")
+            )
+    if owner:
+        L += ["\n### 待 owner 判斷\n", *owner]
+    L.append("")
+L += [
     "## 可重放身分\n",
     "| 欄位 | 值 |\n|---|---|",
 ]

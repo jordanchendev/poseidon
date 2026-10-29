@@ -315,6 +315,21 @@ What the runner reads from it (design §9 step 4, `assemble.py`; the ledger is o
 - `documents[]` of kind `secondary` need `source_tier` sell-side, media or kol. `claim_precheck.evidence_tier` is the
   one tier mapping, for the rendered disclosure and the narrative gates.
 
+Drafting against a snapshot (§9 step 5): `draft.py` adds the closed theme list and the open records to the evidence
+block, `NARRATIVE_LEDGER_SCHEMA` (claim `theme_ids` / `about_symbols`, `narrative_checks`, `narrative_proposals`,
+`theme_proposals`) and rules 11 to 14, only when the manifest has a snapshot. `narrative_check.gates` runs inside
+`run_gates` (one repair round, as the other gates):
+
+- `[evidence]` a fact claim never cites `narrative_snapshot` or `secondary` evidence.
+- `[theme]` `theme_ids` from the snapshot's list, with `about_symbols` from the run's symbols, subjects or theme members.
+- `[check]` exactly one check per shown record; a verdict other than `untouched` cites fact claims whose evidence is all
+  `primary filing` or `company release`; `partially_verifies` states `open_part`.
+- `[proposal]` at most 3 narrative proposals: atomic, numbers in the source claim's quote, a forecast's `resolves_on`
+  year in a period the record names, an inference source with a stated basis; theme proposals well-formed.
+
+`render_theme.py` adds 「敘事變化」 after 變更摘要 when the manifest has a snapshot, from `narrative_results` in
+revision.json (drafter verdicts only when there are none) and lists `disputed` / `missed` under 「待 owner 判斷」.
+
 - Themes, members and edges are written only with a non-empty `--approval-ref`; re-running the same approval is a
   no-op, the same key with different content is refused. Symbols: Taiwan-listed bare (`2408`), others
   `<EXCHANGE>:<TICKER>` (`NASDAQ:MU`, `TSE:3110`); `tw_listed` follows from that shape.
