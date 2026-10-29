@@ -20,10 +20,13 @@ Pipeline for the chosen row (design: aquarium local_dev/design/2026-10-21-resear
      narrative_checks rows always, status events only with --narrative-apply on. A failure here is recorded in
      run.json and never undoes the completed revision.
      With --narrative-apply confirm the rule's events become suggestions the done notice lists for the owner.
+     In every mode the revision's theme_proposals are filed and the done notice lists them for the owner.
   -> bridge `done <agenda_id> <revision_id>` with the tl_dr on stdin.
 Before the agenda topic, each invocation (not a dry run) applies the owner's narrative decisions (`narrative-pending`,
 acked with `narrative-ack`) and takes in at most one material (`material-pending`, intake.py; reported with
-`material-done` / `material-needs-review`). Intake writes narrative records and theme proposals, never a revision.
+`material-done` / `material-needs-review`). Intake writes narrative records and theme / member proposals, never a
+revision. The owner's theme and member decisions (theme-accept / theme-reject / member-accept / member-reject) come
+through the same narrative-pending feed and release the intake records held for them.
 Any failure -> the revision stays prepared, bridge `needs-review <agenda_id>` with a short reason on stdin.
 No escalation to another model.
 
@@ -71,7 +74,7 @@ REPORT_CAP = 400_000  # chars of rendered Markdown attached to the done report
 AGENDA_ID = re.compile(r"^\d{8}-m?\d{1,3}$")
 MATERIAL_ID = intake_mod.MATERIAL_ID
 DECISION_ID = narrative_check.DECISION_ID
-NOTICE_CAP = 600
+NOTICE_CAP = 1000  # narrative-ack message; the bridge keeps 1000 characters
 REVISION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 REASON_CAP = 580
 SUMMARY_CAP = 300
@@ -128,10 +131,11 @@ class Bridge:
     def narrative_pending(self):
         return self._list("narrative-pending")
 
-    def done(self, agenda_id, revision_id, summary, report_md=None, suggestions=()):
-        """stdin is the one-line summary, or JSON {summary, report_md, suggestions} when a rendered report is attached
-        or narrative_apply confirm has suggestions (the bridge saves the report, sends it to Telegram as a document and
-        appends one line per suggestion {id, narrative_id, line} to the notice)."""
+    def done(self, agenda_id, revision_id, summary, report_md=None, suggestions=(), theme_proposals=()):
+        """stdin is the one-line summary, or JSON {summary, report_md, suggestions, theme_proposals} when a rendered
+        report is attached, narrative_apply confirm has suggestions or the revision proposed themes (the bridge saves the
+        report, sends it to Telegram as a document and appends one line per suggestion {id, narrative_id, line} and per
+        theme proposal {id, line} to the notice)."""
         if not AGENDA_ID.match(agenda_id) or not REVISION_ID.match(revision_id):
             raise BridgeError(f"refusing to report malformed ids {agenda_id!r} / {revision_id!r}")
         line = one_line(summary, SUMMARY_CAP)
@@ -140,12 +144,13 @@ class Bridge:
                 "report for %s is %d chars (> %d); sent without attachment", agenda_id, len(report_md), REPORT_CAP
             )
             report_md = None
-        if report_md or suggestions:
+        if report_md or suggestions or theme_proposals:
             stdin = json.dumps(
                 {
                     "summary": line,
                     **({"report_md": report_md} if report_md else {}),
                     **({"suggestions": list(suggestions)} if suggestions else {}),
+                    **({"theme_proposals": list(theme_proposals)} if theme_proposals else {}),
                 },
                 ensure_ascii=False,
             )
@@ -699,17 +704,25 @@ def render_report(run_dir):
     return p.stdout
 
 
-def suggestions_of(run_dir):
-    """narrative_apply confirm suggestions still open in <run_dir>/revision.json, as the done payload lists them."""
+def narrative_results_of(run_dir):
     rev = Path(run_dir or "") / "revision.json"
     if not run_dir or not rev.is_file():
-        return []
-    records = (json.loads(rev.read_text(encoding="utf-8")).get("narrative_results") or {}).get("records") or []
+        return {}
+    return json.loads(rev.read_text(encoding="utf-8")).get("narrative_results") or {}
+
+
+def suggestions_of(results):
+    """narrative_apply confirm suggestions still open in narrative_results, as the done payload lists them."""
     return [
         {"id": x["suggestion"]["id"], "narrative_id": x["narrative_id"], "line": x["suggestion"]["line"]}
-        for x in records
+        for x in results.get("records") or []
         if (x.get("suggestion") or {}).get("status") == "suggested"
     ]
+
+
+def theme_proposals_of(results):
+    """The theme proposals the revision filed or repeated, as the done payload lists them."""
+    return [{"id": p["id"], "line": p["line"]} for p in results.get("theme_proposals") or [] if p["id"]]
 
 
 def report(bridge, ledger, agenda_id, rec):
@@ -717,8 +730,14 @@ def report(bridge, ledger, agenda_id, rec):
     try:
         if rec["status"] == "completed":
             run_dir = rec.get("run_dir")
+            results = narrative_results_of(run_dir)
             bridge.done(
-                agenda_id, rec["revision_id"], rec.get("summary") or "", render_report(run_dir), suggestions_of(run_dir)
+                agenda_id,
+                rec["revision_id"],
+                rec.get("summary") or "",
+                render_report(run_dir),
+                suggestions_of(results),
+                theme_proposals_of(results),
             )
         else:
             bridge.needs_review(agenda_id, rec.get("reason") or "needs review")

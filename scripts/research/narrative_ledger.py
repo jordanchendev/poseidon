@@ -344,11 +344,10 @@ def add_record(
     first_seen_at,
     resolves_on=None,
     decided_by="rule",
-    proposed_subjects=(),
 ):
     """Writes the record and its seq-0 'created' event. The quote must be verbatim in source_text, the claim must be
     atomic and its numbers must match the quote (the record is a transcription, so strict). A subject is an approved
-    member of an active theme, or one of proposed_subjects (members of the theme proposals filed with the record)."""
+    member of an active theme; a record that needs a pending proposal waits in held_records (hold_record)."""
     if claim_type not in CLAIM_TYPES:
         raise LedgerError(f"claim_type must be one of {'|'.join(CLAIM_TYPES)}")
     if source_tier not in SOURCE_TIERS:
@@ -381,8 +380,8 @@ def add_record(
     }
     for s in subject_symbols:
         symbol_is_tw(s)
-        if s not in members and s not in proposed_subjects:
-            raise LedgerError(f"subject {s} is not an approved member of an active theme or a proposed member")
+        if s not in members:
+            raise LedgerError(f"subject {s} is not an approved member of an active theme")
     first_seen_at = iso(first_seen_at)
     resolves_on, resolves_default, review_by = review_dates(claim_type, first_seen_at, resolves_on)
     nid = narrative_id(origin_ref, quote, claim)
