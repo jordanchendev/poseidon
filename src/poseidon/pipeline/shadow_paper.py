@@ -133,11 +133,16 @@ def latest_boundary(now: datetime) -> datetime:
     return candidate
 
 
-def settled_cutoff(last_bar: datetime | None, paper_start: datetime, upper: datetime) -> datetime:
+def settled_cutoff(
+    last_bar: datetime | None, paper_start: datetime, upper: datetime, session_days: set[date] | None = None
+) -> datetime:
     """Latest boundary in ``(paper_start, upper]`` whose day session's closing bar has arrived.
 
     Bars arrive in time order, so every trading day before that boundary is
-    complete. ``paper_start`` when none is.
+    complete. ``paper_start`` when none is. With ``session_days`` (runs frozen
+    with ``next_day_session``) only a day with a day session ends a trading
+    day: the night before a closure belongs to the next session, so a boundary
+    on the closed day would book that night before its trading day is complete.
     """
 
     if last_bar is None:
@@ -146,7 +151,7 @@ def settled_cutoff(last_bar: datetime | None, paper_start: datetime, upper: date
     while boundary > paper_start:
         local_day = boundary.astimezone(MARKET_TZ).date()
         close_bar = datetime.combine(local_day, DAY_CLOSE_BAR_LOCAL, tzinfo=MARKET_TZ).astimezone(UTC)
-        if last_bar >= close_bar:
+        if last_bar >= close_bar and (session_days is None or local_day in session_days):
             return boundary
         boundary = _boundary_on(local_day - timedelta(days=1))
     return paper_start
@@ -761,10 +766,19 @@ class ShadowPaperStage(_DataStage):
         """Advance the ledger to the settled cutoff (mutates ``ledger``)."""
 
         from poseidon.backtest.cost_model import get_cost_model
-        from poseidon.pipeline.backtesting import daily_csv, night_session_rule, run_backtest, trades_csv
+        from poseidon.pipeline.backtesting import (
+            NEXT_WEEKDAY,
+            daily_csv,
+            day_sessions,
+            night_session_rule,
+            run_backtest,
+            trades_csv,
+        )
 
+        rule = night_session_rule(ctx.config["backtest"])
+        sessions = None if rule == NEXT_WEEKDAY else {day.date() for day in day_sessions(frame.index)}
         last_bar = frame.index[-1].to_pydatetime() if len(frame) else None
-        settled = settled_cutoff(last_bar, paper_start, upper)
+        settled = settled_cutoff(last_bar, paper_start, upper, sessions)
         expected = last_complete_weekday(upper)
         last_day = trading_day(last_bar) if last_bar is not None else trading_day(paper_start) - timedelta(days=1)
         gap = trading_days_after(last_day, expected, calendar)
@@ -792,7 +806,7 @@ class ShadowPaperStage(_DataStage):
         cutoff = settled
         bars = frame[frame.index < cutoff]
         warm, live = bars[bars.index < paper_start], bars[bars.index >= paper_start]
-        hashes, warm_sha = day_hashes(live, night_session_rule(ctx.config["backtest"])), frame_sha256(warm)
+        hashes, warm_sha = day_hashes(live, rule), frame_sha256(warm)
         revisions = detect_revisions(ledger, hashes, warm_sha, prev_cutoff, now.isoformat())
 
         replay_trades: list[dict] = []
@@ -851,7 +865,7 @@ class ShadowPaperStage(_DataStage):
             for key in ("entry_time", "paper_exit_time", "replay_exit_time")
             if row.get(key)
         }
-        day_of = trading_day_labels(touched, bars.index, night_session_rule(ctx.config["backtest"]))
+        day_of = trading_day_labels(touched, bars.index, rule)
         for row in mismatched:
             days_touched = {day_of[row["entry_time"]].isoformat()}
             for key in ("paper_exit_time", "replay_exit_time"):
