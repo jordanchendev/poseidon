@@ -298,3 +298,103 @@ def test_run_without_a_snapshot_has_no_narrative_step(env):
     assert env["run"](t) == 0
     rev = json.loads((env["run_dir"] / "revision.json").read_text())
     assert "narrative_results" not in rev and len(t.jev_calls) == 2
+
+
+# ------------------------------------------------------------------------------------------------ claim_theme_links
+def tagged_narrative():
+    n = tr.good_narrative()
+    n["claims"][0].update(theme_ids=["foundry-utilization"], about_symbols=["NYSE:UMC", "2303"])
+    n["claims"][2].update(theme_ids=["foundry-utilization"], about_symbols=["2303"])
+    n["narrative_checks"] = []
+    return n
+
+
+def links(path):
+    db = sqlite3.connect(path)
+    db.row_factory = sqlite3.Row
+    rows = [dict(r) for r in db.execute("SELECT * FROM claim_theme_links ORDER BY claim_index, theme_id")]
+    db.close()
+    return rows
+
+
+def run_tagged(env):
+    """A theme member with no open record: the snapshot carries the theme list only, the drafter tags two claims."""
+    path, db = snap_t.ledger(env["tmp"])
+    db.close()
+    t = FakeJev([tagged_narrative()])
+    assert env["run"](t) == 0
+    run_json = json.loads((env["run_dir"] / "run.json").read_text())
+    assert run_json["status"] == "completed", run_json["reasons"]
+    return path, t, run_json, json.loads((env["run_dir"] / "revision.json").read_text())
+
+
+def expected_links(rev):
+    by_id = {e["id"]: e for e in rev["manifest_payload"]["evidence"]}
+    rev_id = rev["identity"]["revision_id"]
+    return [
+        (rev_id, 0, "foundry-utilization", '["2303", "NYSE:UMC"]', "fact", "company release", DOC_TIME, "drafter"),
+        (
+            rev_id,
+            2,
+            "foundry-utilization",
+            '["2303"]',
+            "inference",
+            "exchange feed（經 Thalassa）",
+            nl.iso(by_id["ohlcv:2303"]["event_time"]),
+            "drafter",
+        ),
+    ]
+
+
+def link_keys(rows):
+    cols = ("revision_id", "claim_index", "theme_id", "about_symbols_json", "claim_kind", "evidence_tier", "event_time")
+    return [(*(r[c] for c in cols), r["source"]) for r in rows]
+
+
+def test_tagged_claims_are_linked_once_with_narrative_apply_off(env):
+    path, t, run_json, rev = run_tagged(env)
+    assert rev["narrative_results"] == {"narrative_apply": "off", "jev_model": runner.JEV_MODEL, "records": []}
+    assert "narrative_error" not in run_json and len(t.jev_calls) == 2  # the fact claims only: no record to judge
+    rows = links(path)
+    assert link_keys(rows) == expected_links(rev)
+    assert all(
+        r["content_sha256"] == nl.content_sha256({k: v for k, v in r.items() if k != "content_sha256"}) for r in rows
+    )
+
+
+def test_rerun_writes_no_link_twice(env):
+    path, _, _, rev = run_tagged(env)
+    before = links(path)
+    cfg = json.loads((env["run_dir"] / "config.json").read_text())
+    t = FakeJev([])
+    narrative_check.apply(path, rev, rev["manifest_payload"], cfg, runner.Jev(JEV_KEY, transport=t), enabled=True)
+    assert links(path) == before and t.jev_calls == []
+
+
+def test_links_lost_to_a_crash_are_written_by_the_next_apply(env, monkeypatch):
+    def crash(*a, **k):
+        raise RuntimeError("killed before the links")
+
+    monkeypatch.setattr(nl, "add_link", crash)
+    path, _, run_json, rev = run_tagged(env)
+    assert run_json["narrative_error"].startswith("RuntimeError") and links(path) == []
+    assert rev["identity"]["status"] == "completed"
+    monkeypatch.undo()
+    cfg = json.loads((env["run_dir"] / "config.json").read_text())
+    jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
+    narrative_check.apply(path, rev, rev["manifest_payload"], cfg, jev, enabled=False)
+    assert link_keys(links(path)) == expected_links(rev)
+
+
+def test_no_snapshot_writes_no_links(env):
+    path, _, _, rev = run_tagged(env)
+    db = sqlite3.connect(path)
+    db.execute("DELETE FROM claim_theme_links")
+    db.commit()
+    db.close()
+    payload = dict(rev["manifest_payload"])
+    payload["evidence"] = [e for e in payload["evidence"] if e["kind"] != "narrative_snapshot"]
+    cfg = json.loads((env["run_dir"] / "config.json").read_text())
+    jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
+    assert narrative_check.apply(path, rev, payload, cfg, jev, enabled=True) is None
+    assert links(path) == []

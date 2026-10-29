@@ -446,6 +446,17 @@ def add_check(db, row):
         return _insert(db, "narrative_checks", row)
 
 
+def add_link(db, row):
+    """One claim_theme_links row per (revision_id, claim_index, theme_id). A key already written is kept as it is, so a
+    rerun writes nothing."""
+    key = (row["revision_id"], row["claim_index"], row["theme_id"])
+    old = _one(db, "SELECT * FROM claim_theme_links WHERE revision_id = ? AND claim_index = ? AND theme_id = ?", *key)
+    if old:
+        return old
+    with db:
+        return _insert(db, "claim_theme_links", row)
+
+
 def set_status(db, nid, to_status, note, at=None):
     return append_event(
         db,

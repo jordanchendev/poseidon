@@ -21,6 +21,8 @@ apply(ledger_path, revision, payload, cfg, jev, enabled) -> narrative_results, r
   4. one narrative_checks row per shown record always; a status or corroborated event only when enabled, at
      max(evidence available_at, the record's last event at). A revision whose check row exists is skipped without JEV,
      and an event that already names the revision is reused, so a rerun after a crash writes nothing twice.
+  Before the records, one claim_theme_links row per (claim, theme_id) the drafter tagged, enabled or not: a link is
+  not a status change (D2). An existing key is kept, so a rerun writes no link twice.
 """
 
 import itertools
@@ -208,6 +210,8 @@ def gates(narrative, payload, cfg):
 ANY = "*"
 LABELS = ("supports", "contradicts", "says_nothing")
 SETTLED = ("verified", "partially_verified")
+# claim_theme_links.evidence_tier is the highest tier a claim cites (design §2.5), ranked in this order
+TIER_ORDER = (*OFFICIAL_TIERS, "exchange feed", "derived", "sell-side", "media", "kol")
 # Design §4.5 rule table. Key: (claim_type, drafter verdict, label, basis_ok, before_resolution, settled).
 #   label: the judgement JEV label, or the sweep label for an untouched record.
 #   basis_ok: every cited evidence is official and every cited fact claim has JEV supports (R3's condition).
@@ -299,6 +303,36 @@ def _result(row, rule, to_status, reason):
     }
 
 
+def _tier_rank(tier):
+    return next((n for n, t in enumerate(TIER_ORDER) if tier.startswith(t)), len(TIER_ORDER))
+
+
+def write_theme_links(db, revision, by_id):
+    """claim_theme_links for every (claim, theme_id) the drafter tagged; a completed revision's tags all passed [theme].
+    evidence_tier and event_time come from the claim's highest-tier cited evidence (the latest of equals)."""
+    rev_id = revision["identity"]["revision_id"]
+    for n, c in enumerate(revision["research"]["claims"]):
+        if not c.get("theme_ids"):
+            continue
+        cited = [by_id[e] for e in c["evidence_ids"] if e in by_id]
+        best = max(cited, key=lambda e: (-_tier_rank(evidence_tier(e)), e["event_time"]))
+        for theme_id in c["theme_ids"]:
+            nl.add_link(
+                db,
+                {
+                    "revision_id": rev_id,
+                    "claim_index": n,
+                    "theme_id": theme_id,
+                    "about_symbols_json": json.dumps(sorted(set(c["about_symbols"]))),
+                    "claim_kind": c["kind"],
+                    "evidence_tier": evidence_tier(best),
+                    "event_time": nl.iso(best["event_time"]),
+                    "source": "drafter",
+                    "created_at": nl.now(),
+                },
+            )
+
+
 def apply(ledger_path, revision, payload, cfg, jev, *, enabled):
     """narrative_results for revision.json ({narrative_apply, jev_model, records}), or None without a snapshot."""
     snap = snapshot_of(payload)
@@ -314,6 +348,7 @@ def apply(ledger_path, revision, payload, cfg, jev, *, enabled):
     db = nl.connect(ledger_path)
     out = []
     try:
+        write_theme_links(db, revision, by_id)
         for shown in snap["payload"]["records"]:
             nid = shown["narrative_id"]
             done = db.execute(

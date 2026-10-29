@@ -341,6 +341,11 @@ record always; a `status` or `corroborated` event only with `runner.py --narrati
 §9 step 7 control set passes), at max(evidence available_at, the record's last event at). A revision whose check rows
 exist is skipped without JEV; an event that already names the revision is reused. The results go to
 `revision.json.narrative_results`; a failure is `run.json.narrative_error` and the revision stays completed.
+Before the records it writes one `claim_theme_links` row per (claim index, theme_id) the drafter tagged
+(`source` drafter, `about_symbols`, the claim kind, and the tier and event_time of the claim's highest-tier cited
+evidence), whatever `--narrative-apply` says: a link is not a status change (D2). A key already written is kept, so a
+rerun writes nothing new and a rerun after a crash fills in what is missing. `narrative_proposals` and
+`theme_proposals` stay in revision.json; §9 steps 8 and 9 write them to the ledger.
 
 - Themes, members and edges are written only with a non-empty `--approval-ref`; re-running the same approval is a
   no-op, the same key with different content is refused. Symbols: Taiwan-listed bare (`2408`), others
