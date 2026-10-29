@@ -33,7 +33,8 @@ Guidance (gap B2): documents[].guidance[] {metric, period, low+high|value, unit,
 KPI series (gap B3): --kpi-json <file> (offline) or cfg["kpi_series"]: true (live TWSE OpenAPI t187ap05_L) adds
   kpi_series:<symbol> (unit NTD thousand; last 12 months visible at as_of by 出表日期; trailing_3m_yoy_pct when the
   last three months are consecutive). Claims citing it are numerically prechecked against its points.
-Read-across: cfg["read_across"] [{symbol, relation, why}] is shape-checked and passed to the renderer (identity).
+Read-across: cfg["read_across"] is refused (design 2026-10-29 §2.7); a claim names the companies it is about. Old
+  revisions keep identity.read_across and render_theme.py still renders it.
 Consensus (gap B1): --consensus-json <file> (repeatable; raw_path must hash to raw_sha256) and/or --consensus-live /
   cfg["consensus_live"] (best-effort Yahoo Finance via cfg["adr_ticker"]; any failure is recorded in
   identity.consensus_status and never fails the run) add consensus:<symbol> (kind consensus, tier "third-party
@@ -336,7 +337,7 @@ def check_basis(claim, excerpts):
 
 
 # ------------------------------------------------------------------------------------------------ guidance (gap B2)
-SOURCE_TIERS = ("primary filing", "company release", "exchange feed", "derived", "secondary")
+SOURCE_TIERS = ("primary filing", "company release", "exchange feed", "derived", "sell-side", "media", "kol")
 GUIDANCE_BASES = ("GAAP", "non-GAAP", "IFRS", "n/a")
 _UNIT_RE = re.compile(r"^(USD|US\$|NTD|TWD|NT\$|JPY)(?:\s+(thousand|million|billion|trillion))?$", re.I)
 _CUR_PREFIX = {"usd": "US$", "us$": "US$", "ntd": "NT$", "twd": "NT$", "nt$": "NT$", "jpy": "¥"}
@@ -693,20 +694,6 @@ def kpi_text(payload):
             "Trailing three-month revenue %s %s%% year-over-year." % ("up" if t3 >= 0 else "down", _num_text(abs(t3)))
         )
     return "\n".join(out)
-
-
-# ------------------------------------------------------------------------------------------------ read-across (gap B5 in the brief)
-def validate_read_across(items):
-    if items is None:
-        return []
-    if not isinstance(items, list):
-        raise SystemExit("read_across must be a list")
-    for n, x in enumerate(items):
-        if not isinstance(x, dict) or any(
-            not isinstance(x.get(k), str) or not x[k].strip() for k in ("symbol", "relation", "why")
-        ):
-            raise SystemExit("read_across[%d] must be {symbol, relation, why} non-empty strings" % n)
-    return items
 
 
 # ------------------------------------------------------------------------------------------------ consensus + surprise (gap B1)
@@ -1388,7 +1375,11 @@ def main():
     cfg = json.load(open(a.config))
     as_of = cfg["as_of"]
     bars = load_bars(a.csv)
-    read_across = validate_read_across(cfg.get("read_across"))
+    if "read_across" in cfg:
+        raise SystemExit(
+            "config read_across is no longer accepted; name the companies a claim is about in that claim's "
+            "about_symbols instead (design 2026-10-29 §2.7)"
+        )
     ohlcv_items = [ohlcv_evidence(s, bars[s], as_of, cfg["thalassa_base_url"]) for s in cfg["symbols"]]
     bench_sym = cfg.get("benchmark", "0050")
     bench_item = next((i for i in ohlcv_items if i["payload"]["symbol"] == bench_sym), None)
@@ -1548,7 +1539,6 @@ def main():
             "excerpts_verified": n_ex,
             "excerpts_total": n_ex,
         }  # freeze refuses on any unverified excerpt
-        info["read_across"] = read_across
         if cons_status:
             info["consensus_status"] = cons_status
         current_guidance, actuals = _items_from(evidence, "guidance"), _items_from(evidence, "actuals")

@@ -102,12 +102,14 @@ config without them freezes to the same manifest hash as before.
   `trailing_3m_yoy_pct` = sum(last 3 months) / sum(their 去年當月營收) - 1 when the 3 months are consecutive.
   The live feed holds only the latest month per company, so history needs accumulated snapshots.
   Claims citing it are prechecked against the points rendered as text.
-- **Read-across** — `read_across[]: {symbol, relation, why}`; T+1/T+5 relative returns come from price_facts when the
-  symbol is in `symbols`, else n/a.
+- **Read-across** — config `read_across[]` is refused (design 2026-10-29 §2.7): a claim names the companies it is
+  about in its `about_symbols`. Revisions made before 2026-10-29 keep `identity.read_across: {symbol, relation, why}`
+  and still render it (T+1/T+5 relative returns from price_facts when the symbol is in `symbols`, else n/a).
 - **Precheck split** — fact claims: any numeric mismatch refuses. Inference claims: only scale/sign refuse; other
   mismatches are recorded as `numbers: mismatch-recorded`.
 - **Disclosure** — last rendered section: origin, provider/model/policy, each evidence with its tier
-  (`documents[].source_tier` overrides; otherwise sec.gov/MOPS -> primary filing, other documents -> company release,
+  (`documents[].source_tier` overrides, one of primary filing | company release | exchange feed | derived | sell-side |
+  media | kol; otherwise sec.gov/MOPS -> primary filing, other documents -> company release,
   ohlcv/kpi_series -> exchange feed, price_facts -> derived), excerpts verified n/n, precheck counts, JEV from a
   `jev_results` block in the revision JSON (top level or research), and the not-investment-advice line.
 - The price-table labels are derived from the price_facts `event_time` and the last bar; the unknowns header is "未知".
@@ -163,8 +165,8 @@ All optional; a run without them freezes to the same manifest hash as before.
   `peers` (lists), `timeline`, plus `next_review_at` / `summary` / `catalysts` for `research_links.py`, and a trailing
   `## 知識連結` section with the same links. Concepts come only from the YAML blocks in `_kb/wiki/_taxonomy.md` (keyword
   match on thesis + claims + risks + invalidation_conditions; ASCII keywords case-insensitive on word boundaries).
-  Sector scopes link every ohlcv symbol except `--benchmark` (default `0050`); `--config` adds its `read_across[]` to
-  `peers`; `--company-slug SYMBOL=SLUG` names a company with no page yet. Missing targets get a stub page
+  Sector scopes link every ohlcv symbol except `--benchmark` (default `0050`); `peers` come from an old revision's
+  `identity.read_across`; `--company-slug SYMBOL=SLUG` names a company with no page yet. Missing targets get a stub page
   (`status: stub`, `origin: agent`); existing pages are never overwritten.
 - `--replace` re-links an existing note only if `revision_id`, `content_sha256` and `origin: agent` match; every existing
   frontmatter line and the body stay byte-identical (the body is not re-rendered), only the edge fields and
@@ -232,8 +234,8 @@ pending row ─ assemble.py ─ research_theme.py (freeze + prepare) ─ draft.p
   may, might, could, expect, estimate, if, assuming, derived, computed, calculated), pre_event catalysts. Inference
   claims render with a `【推論】` prefix (facts unprefixed) in render_theme.py. Refusal ->
   one repair round (the model gets its previous JSON and the refusal list) -> gates again. JEV `typesafe/jev-1.13`
-  (`/v1/systemone`, falls back to `/alpha/decisions` on 404) judges **every** claim, fact and inference, against the claim
-  quote + the cited evidence texts (capped at 12k chars); every label must be `supports`. Completion runs
+  (`/v1/systemone`, falls back to `/alpha/decisions` on 404) judges **fact** claims only (inference claims are
+  never sent) against the claim quote + the cited evidence texts (capped at 12k chars); every label must be `supports`. Completion runs
   research_theme.py with `--narrative`, which re-runs its own prechecks, completes, and checks replay + immutability.
 - **Outcome**: completed -> bridge `done <agenda_id> <revision_id>` with the tl_dr on stdin. Anything else (assemble,
   freeze, draft, gates after repair, JEV, completion, internal error) -> revision stays `prepared`, bridge

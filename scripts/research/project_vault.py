@@ -12,7 +12,7 @@ repeated as bullets in a trailing `## 知識連結` section:
   sector    the company pages' `sector` (+ `sectors/<id>` for a sector scope listed in the taxonomy). String/list as above.
   concepts  list; taxonomy concept keywords matched against thesis + claims + risks + invalidation_conditions.
             Only ids from _kb/wiki/_taxonomy.md (YAML blocks) are ever emitted.
-  peers     list; read_across symbols from the revision identity and from --config.
+  peers     list; read_across symbols from the revision identity (revisions made before 2026-10-29 only).
   (timeline edges and _kb/wiki/timelines/ pages were retired 2026-10-21; catalysts live in the company block.
    `timeline` stays in EDGE_KEYS only so --replace strips it from older notes.)
 plus the machine fields research_links.py reads: next_review_at (leading ISO timestamp of the narrative's
@@ -193,11 +193,8 @@ def compute_edges(vault, i, r, scope_key, a):
             sectors.append(m.group(1).strip())
     if len(parts) == 3 and parts[1] == "sector" and parts[2] in sectors_tax and "sectors/" + parts[2] not in sectors:
         sectors.append("sectors/" + parts[2])
-    ra = list(i.get("read_across") or [])
-    if a.config:
-        ra += json.load(open(a.config)).get("read_across") or []
     peers = []
-    for x in ra:
+    for x in i.get("read_across") or []:
         t = resolve(str(x["symbol"]))
         if t not in companies and t not in peers:
             peers.append(t)
@@ -344,7 +341,6 @@ def main():
     ap.add_argument("--poseidon-commit", default="483c363bda5ec399dc22b02499f60cb3cd192057")
     ap.add_argument("--related", action="append", default=[])
     ap.add_argument("--out-dir", default=None, help="override vault dir (for tests)")
-    ap.add_argument("--config", default=None, help="research config JSON; its read_across[] symbols become peers")
     ap.add_argument("--benchmark", default="0050", help="excluded from sector-scope company links")
     ap.add_argument(
         "--company-slug", action="append", default=[], metavar="SYMBOL=SLUG", help="slug for a company with no page yet"

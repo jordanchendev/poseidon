@@ -1,5 +1,5 @@
 """Offline tests for research_theme.py / render_theme.py (price-facts-v2, catalysts, tl_dr layering, guidance bridge,
-kpi_series, read-across, disclosure).
+kpi_series, old-revision read-across, source tiers, disclosure).
 
 SQLite ledger, synthetic bars, no network. Run from the Poseidon repo root:
   PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/test_offline_tooling.py
@@ -847,32 +847,69 @@ def test_kpi_gap_gives_null_trailing_and_no_rows_refused(env):
 
 
 # ------------------------------------------------------------------------------------------------ read-across + disclosure
-def test_read_across_section(env):
+def test_config_read_across_refused_toward_about_symbols(env):
     cfg = copy.deepcopy(env["cfg"])
-    cfg["symbols"] = ["AAA", "BBB", "CCC"]
-    cfg["read_across"] = [
-        {"symbol": "CCC", "relation": "supplier", "why": "sells parts to AAA"},
+    cfg["read_across"] = [{"symbol": "CCC", "relation": "supplier", "why": "sells parts to AAA"}]
+    p, _ = go(env, "rabad", cfg, narrative=env["narrative"])
+    assert p.returncode != 0 and "about_symbols" in p.stderr
+    p, d = go(env, "ranone", narrative=env["narrative"])
+    assert p.returncode == 0, p.stderr
+    assert "read_across" not in json.loads((d / "rev.json").read_text())["identity"]
+
+
+def test_old_revision_identity_read_across_still_renders(env):
+    p, d = go(env, "ra", narrative=env["narrative"])
+    assert p.returncode == 0, p.stderr
+    rev = json.loads((d / "rev.json").read_text())
+    rev["identity"]["read_across"] = [
+        {"symbol": "AAA", "relation": "self", "why": "frozen symbol"},
         {"symbol": "DDD", "relation": "customer", "why": "not in symbols"},
     ]
-    p, d = go(env, "ra", cfg, narrative=env["narrative"])
-    assert p.returncode == 0, p.stderr
-    md = render(d / "rev.json").stdout
+    (d / "old.json").write_text(json.dumps(rev))
+    md = render(d / "old.json").stdout
     b = EVENT_IDX
-    t1 = pct(ccc(b + 1) / ccc(b) - 1 - (bbb(b + 1) / bbb(b) - 1))
-    t5 = pct(ccc(b + 5) / ccc(b) - 1 - (bbb(b + 5) / bbb(b) - 1))
+    t1 = pct(aaa(b + 1) / aaa(b) - 1 - (bbb(b + 1) / bbb(b) - 1))
+    t5 = pct(aaa(b + 5) / aaa(b) - 1 - (bbb(b + 5) / bbb(b) - 1))
     assert "## Read-across（推論；相對 BBB 的事件後報酬）" in md
-    assert f"| CCC | supplier | sells parts to AAA | {t1:+.2f}% | {t5:+.2f}% |" in md
+    assert f"| AAA | self | frozen symbol | {t1:+.2f}% | {t5:+.2f}% |" in md
     assert "| DDD | customer | not in symbols | n/a（未凍結價格） | n/a（未凍結價格） |" in md
 
 
-@pytest.mark.parametrize(
-    "ra", [{"symbol": "CCC"}, [{"symbol": "CCC", "relation": "", "why": "x"}], [{"symbol": "CCC", "relation": "peer"}]]
-)
-def test_read_across_shape_refused(env, ra):
+# sha256 of render_theme.py's stdout for the UMC v2 revision (3de55971, the one old revision with identity.read_across),
+# taken at 6620350 before config read_across was removed.
+UMC_V2_RENDER_SHA256 = "91cc26960273986d39e6f50e5f9c9d8a4547c14179d9fc536b3a40172e569490"
+
+
+def test_umc_v2_revision_renders_byte_identical():
+    src = SESSIONS / "2026-10-21-research-umc-2303" / "revision_umc_v2.json"
+    if not src.exists():
+        pytest.skip("UMC v2 reference revision not present")
+    out = subprocess.run([sys.executable, str(HERE / "render_theme.py"), str(src)], capture_output=True)
+    assert out.returncode == 0, out.stderr
+    assert "## Read-across" in out.stdout.decode()
+    assert hashlib.sha256(out.stdout).hexdigest() == UMC_V2_RENDER_SHA256
+
+
+# manifest_sha256 of the env fixture config (no documents[].source_tier), taken at 6620350 before SOURCE_TIERS changed.
+ENV_MANIFEST_SHA256 = "e1d137d7199a143ee645cb33e3b7e6ca7800ad46662ec9c1ce1fdc554871f706"
+
+
+def test_config_without_tier_keeps_manifest_hash(env):
+    p, _ = go(env, "notier")
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout)["manifest_sha256"] == ENV_MANIFEST_SHA256
+
+
+@pytest.mark.parametrize("tier", ["sell-side", "media", "kol"])
+def test_secondary_tiers_split(env, tier):
     cfg = copy.deepcopy(env["cfg"])
-    cfg["read_across"] = ra
-    p, _ = go(env, "rabad", cfg)
-    assert p.returncode != 0 and "read_across" in p.stderr
+    cfg["documents"][0]["source_tier"] = tier
+    p, d = go(env, "tier", cfg, narrative=env["narrative"])
+    assert p.returncode == 0, p.stderr
+    assert f"`fundamental:doc1`：{tier}" in render(d / "rev.json").stdout
+    cfg["documents"][0]["source_tier"] = "secondary"
+    p, _ = go(env, "tierold", cfg)
+    assert p.returncode != 0 and "source_tier must be one of" in p.stderr
 
 
 def test_disclosure_block(env):
@@ -1462,11 +1499,10 @@ def kvault(env):
         "human concept page\n"
     )  # must never be overwritten
     (v / "_kb" / "ops" / "compile" / "research_links.py").write_bytes(RESEARCH_LINKS.read_bytes())
-    cfg = env["tmp"] / "kg" / "cfg_ra.json"
-    cfg.write_text(json.dumps({"read_across": [{"symbol": "CCC", "relation": "peer", "why": "test"}]}))
-    return dict(
-        v=v, rev=d / "rev.json", cfg=cfg, rid=json.loads((d / "rev.json").read_text())["identity"]["revision_id"]
-    )
+    rev = json.loads((d / "rev.json").read_text())
+    rev["identity"]["read_across"] = [{"symbol": "CCC", "relation": "peer", "why": "test"}]  # pre-2026-10-29 revision
+    (d / "rev.json").write_text(json.dumps(rev))
+    return dict(v=v, rev=d / "rev.json", rid=rev["identity"]["revision_id"])
 
 
 def project(k, *extra):
@@ -1480,8 +1516,6 @@ def project(k, *extra):
             "ev",
             "--out-dir",
             str(k["v"]),
-            "--config",
-            str(k["cfg"]),
             "--company-slug",
             "CCC=gamma",
             "--benchmark",
