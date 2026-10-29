@@ -343,6 +343,14 @@ DAILY_THRESHOLDS: dict = {
     "holdout_benchmark_rule": "alpha_or_beta_matched_risk",
     "holdout_risk_block_days": 21,
     "holdout_risk_confidence": 0.99,
+    # 2026-10-29: the floor above holds while one contract is a small part of the matched run's exposure (TMF at
+    # 1M, MTX at 5M, TX at 20M TWD: constant nulls 0 %). With one contract (MTX at 1-2.5M, TX at 1-5M TWD over
+    # much of 2001-2026) rounding alone moves the matched run's exposure by half or all of it (tracking up to 1.9):
+    # constant nulls passed up to 5 % (train) and 18 % of the spec_validate-feasible ones (holdout). A futures
+    # matched run holding fewer contracts at the window's first or highest close is not applicable
+    # (daily_stages.beta_matched_run): constant nulls <= 2.0 % on MTX / TX at 1-20M, switching nulls not higher,
+    # TMF verdicts unchanged (tests/pipeline/holdout_risk_calibration.py). Missing: no such rule.
+    "benchmark_risk_min_contracts": 2,
     "cost_stress_multiplier": 2.0,
     "cost_stress_pnl_positive": True,  # final equity > initial with every cost x2
     "dsr_min": 0.95,

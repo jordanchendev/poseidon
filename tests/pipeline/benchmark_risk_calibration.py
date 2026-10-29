@@ -58,10 +58,13 @@ _runner: SpecRunner | None = None
 _underlying: dict | None = None
 
 
-def filter_spec() -> dict:
-    """2x TMF, 0.5x below the 200-day MA band of the TAIEX: run #19's spec at its defaults."""
+def filter_spec(symbol: str = "TMF", capital: int = 1_000_000) -> dict:
+    """2x ``symbol``, 0.5x below the 200-day MA band of the TAIEX, on ``capital`` TWD: run #19's spec at its
+    defaults (TMF, 1M TWD)."""
 
     spec = tmf_dynamic_leverage_3x()
+    spec["capital"] = {"initial_twd": capital}
+    spec["instruments"]["core"]["symbol"] = symbol
     spec["sleeves"][0]["leverage"] = [
         {"component": "leverage.base", "params": {"value": 2.0}},
         {
@@ -96,11 +99,11 @@ def runner() -> SpecRunner:
 
 
 class PathLeverage:
-    """Long TMF at ``path[day]`` x equity (floor), every day or only on a month's first trading day."""
+    """Long ``symbol`` at ``path[day]`` x equity (floor), every day or only on a month's first trading day."""
 
-    def __init__(self, path: dict[date, float], *, monthly: bool = False):
+    def __init__(self, path: dict[date, float], *, monthly: bool = False, symbol: str = "TMF"):
         self.path, self.monthly, self.month = path, monthly, None
-        self.instrument = INSTRUMENTS["TMF"]
+        self.instrument = INSTRUMENTS[symbol]
 
     def on_bar(self, view, book) -> Decision:
         day = view.date.date()
@@ -287,7 +290,9 @@ def replay(args) -> int:
         stages = {name: SimpleNamespace(report=s["artifact"]["report"]) for name, s in dump["stages"].items()}
         route = stages["spec_generate"].report.get("route") if "spec_generate" in stages else None
         config = copy.deepcopy(effective_config(dump["config"], route))
-        config["thresholds"].update({k: DAILY_THRESHOLDS[k] for k in (benchmark.RULE_KEY, *benchmark.RISK_KEYS)})
+        config["thresholds"].update(
+            {k: DAILY_THRESHOLDS[k] for k in (benchmark.RULE_KEY, *benchmark.RISK_KEYS, benchmark.MIN_CONTRACTS_KEY)}
+        )
         ctx = SimpleNamespace(config=config, upstream=stages)
         result = DailyBenchmarkStage().evaluate(ctx)
         report = result.report

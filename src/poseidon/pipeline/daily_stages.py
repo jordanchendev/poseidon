@@ -1066,12 +1066,34 @@ def beta_matched_spec(template: dict, symbol: str, leverage: float) -> dict | be
     }
 
 
-def beta_matched_run(runner: SpecRunner, symbol: str, leverage: float) -> DailyResult | benchmark.NotApplicable:
-    """``benchmark.MatchedRun``: the beta-matched spec over the runner's window and refdata."""
+def beta_matched_run(
+    runner: SpecRunner, symbol: str, leverage: float, min_contracts: int | None = None
+) -> DailyResult | benchmark.NotApplicable:
+    """``benchmark.MatchedRun``: the beta-matched spec over the runner's window and refdata.
+
+    Not applicable when a futures matched run holds fewer than ``min_contracts`` (frozen
+    ``benchmark_risk_min_contracts``; None: no such rule) on its initial capital at the window's first or highest
+    close (``price_points``, as spec_validate sizes): one contract is then half or more of its exposure, so
+    whole-contract rounding, not timing, decides the comparison.
+    """
+
+    from poseidon.pipeline.v3.components import round_units
+    from poseidon.pipeline.v3.instruments import INSTRUMENTS
+    from poseidon.pipeline.v3.spec import DEFAULT_INITIAL_CAPITAL_TWD
 
     spec = beta_matched_spec(runner.template, symbol, leverage)
     if isinstance(spec, benchmark.NotApplicable):
         return spec
+    instrument = INSTRUMENTS[spec["instruments"][spec["sleeves"][0]["instrument"]]["symbol"]]
+    if min_contracts is not None and instrument.kind == "future":
+        capital = float(spec["capital"].get("initial_twd", DEFAULT_INITIAL_CAPITAL_TWD))
+        points = price_points(runner.store, instrument, runner.start, runner.end)  # the window has quotes: it ran
+        units, price = min((round_units(capital * leverage / instrument.notional_twd(p), "nearest"), p) for p in points)
+        if units < min_contracts:
+            return benchmark.NotApplicable(
+                f"the {leverage:g}x matched run holds {units} {instrument.symbol} at {price:,.0f}, fewer than "
+                f"{min_contracts}: contract rounding, not timing, would decide the comparison"
+            )
     compiled = compile_spec(
         spec,
         start=runner.start,
@@ -1093,6 +1115,7 @@ class DailyBenchmarkStage(DailyGateStage):
 
     def evaluate(self, ctx):
         settings = ctx.config["gates"]["benchmark"]
+        min_contracts = ctx.config["thresholds"].get(benchmark.MIN_CONTRACTS_KEY)
         runner, base = self.train_best(ctx)
         symbol = underlying_product(ctx)
         daily = underlying_daily(runner.store, symbol, through=runner.end)
@@ -1103,7 +1126,7 @@ class DailyBenchmarkStage(DailyGateStage):
                 underlying,
                 runner.basis,
                 int(settings["hac_lags"]),
-                matched=lambda leverage: beta_matched_run(runner, symbol, leverage),
+                matched=lambda leverage: beta_matched_run(runner, symbol, leverage, min_contracts),
             ),
             ctx.config["thresholds"],
         )
@@ -1276,7 +1299,9 @@ class DailyHoldoutStage(DailyGateStage):
                 held,
                 runner.basis,
                 stats,
-                matched=lambda leverage: beta_matched_run(runner, symbol, leverage),
+                matched=lambda leverage: beta_matched_run(
+                    runner, symbol, leverage, ctx.config["thresholds"].get(benchmark.MIN_CONTRACTS_KEY)
+                ),
             ),
             ctx.config["thresholds"],
         )

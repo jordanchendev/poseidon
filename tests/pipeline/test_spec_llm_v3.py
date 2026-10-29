@@ -749,7 +749,10 @@ def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
     # 2026-10-28), then data.trading_calendar (2026-10-28), then thresholds.benchmark_rule with its
     # benchmark_risk_* settings (2026-10-28), then data.option_chain (the hedged paper's rule, 2026-10-28), then
     # thresholds.benchmark_risk_min_tracking (2026-10-29), then thresholds.holdout_benchmark_rule with its
-    # holdout_risk_* settings (2026-10-29): without those keys it is the 681d469 config
+    # holdout_risk_* settings (2026-10-29), then thresholds.benchmark_risk_min_contracts (2026-10-29): without those
+    # keys it is the 681d469 config
+    assert content_sha256(daily) == "4daa4f1068c3257ca8962e49206c7942e5881e93deb16f77156623d98fa0d707"
+    del daily["thresholds"]["benchmark_risk_min_contracts"]
     assert content_sha256(daily) == "96256505327530607a141e4d61e252a74af32510ba2fc21d446d40bba0d4074e"
     for key in ("holdout_benchmark_rule", "holdout_risk_block_days", "holdout_risk_confidence"):
         del daily["thresholds"][key]

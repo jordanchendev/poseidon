@@ -198,10 +198,10 @@ def plain(tmp_path_factory):
     return build_long_store(tmp_path_factory.mktemp("plain"), kind="drift", seed=5)
 
 
-def judge(store, spec: dict, params: dict):
+def judge(store, spec: dict, params: dict, thresholds: dict = RISK):
     config = {
         "strategy_class": "daily_equity",
-        "thresholds": copy.deepcopy(RISK),
+        "thresholds": copy.deepcopy(thresholds),
         "gates": copy.deepcopy(DAILY_GATES),
         "data": daily_data_config(as_of=AS_OF),
     }
@@ -226,6 +226,21 @@ def test_the_stage_matches_the_measured_beta_on_the_strategys_own_contract(plant
     held = benchmark.regress_daily(matched, underlying, basis="return", lags=5)
     assert held["beta"] == pytest.approx(risk["matched_leverage"], abs=0.05)  # it holds the measured beta
     assert matched.costs.total_twd > 0 and not matched.event_days(["forced_liquidation", "ruin"])
+
+
+def test_a_matched_run_of_too_few_contracts_is_not_judged_by_the_risk_route(planted):
+    coarse = planted_edge_spec()
+    coarse["instruments"]["core"]["symbol"] = "TX"  # 20 TMF each: 1M TWD holds one or two near the measured beta
+    params = {"ma_days": 200, "band": 0.02}
+    _stage, _ctx, result = judge(planted, coarse, params)
+    risk = result.report["gate_report"]["risk_route"]
+    assert risk["status"] == "not_applicable" and risk["tracking"] is None
+    assert f"fewer than {RISK[benchmark.MIN_CONTRACTS_KEY]}: contract rounding" in risk["reason"]
+    before = {k: v for k, v in RISK.items() if k != benchmark.MIN_CONTRACTS_KEY}  # a config frozen before the key
+    _stage, _ctx, judged = judge(planted, coarse, params, before)
+    assert judged.report["gate_report"]["risk_route"]["status"] in ("pass", "fail")
+    _stage, _ctx, fine = judge(planted, planted_edge_spec(), params)  # TMF: tens of contracts, judged as before
+    assert fine.report["gate_report"]["risk_route"]["status"] in ("pass", "fail")
 
 
 def test_the_stage_passes_the_planted_regime_and_fails_static_leverage(planted, plain):
