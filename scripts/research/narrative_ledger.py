@@ -440,6 +440,12 @@ def append_event(
         )
 
 
+def add_check(db, row):
+    """One narrative_checks row per (revision_id, narrative_id); a second write of the same key is refused by the key."""
+    with db:
+        return _insert(db, "narrative_checks", row)
+
+
 def set_status(db, nid, to_status, note, at=None):
     return append_event(
         db,

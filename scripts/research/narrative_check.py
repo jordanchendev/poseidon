@@ -11,8 +11,20 @@ gates(narrative, payload, cfg) -> refusal reasons, run inside runner.run_gates (
              forecast's resolves_on names a period of the record, an inference source claim states its basis;
              theme_proposals are well-formed.
 Without a snapshot there is nothing to check, tag or propose, and a narrative that tries is refused.
+
+apply(ledger_path, revision, payload, cfg, jev, enabled) -> narrative_results, run after the revision completes (§4.5):
+  1. judgement: for a verdict other than untouched, JEV judges the record's claim against the cited fact claims'
+     quotes and evidence texts (runner.Jev.source_text, capped).
+  2. sweep: JEV judges every shown record against all official excerpts in document order, capped; a cut source sets
+     sweep_truncated = 1.
+  3. RULES (R1-R9 below) decide the outcome from (claim_type, verdict, label, basis_ok, before_resolution, settled).
+  4. one narrative_checks row per shown record always; a status or corroborated event only when enabled, at
+     max(evidence available_at, the record's last event at). A revision whose check row exists is skipped without JEV,
+     and an event that already names the revision is reused, so a rerun after a crash writes nothing twice.
 """
 
+import itertools
+import json
 import re
 import sys
 from pathlib import Path
@@ -190,3 +202,207 @@ def gates(narrative, payload, cfg):
             if not ok:
                 reasons.append(f"{where} proposed member {m} needs a valid symbol and role")
     return reasons
+
+
+# ------------------------------------------------------------------------------------------------ narrative_apply
+ANY = "*"
+LABELS = ("supports", "contradicts", "says_nothing")
+SETTLED = ("verified", "partially_verified")
+# Design §4.5 rule table. Key: (claim_type, drafter verdict, label, basis_ok, before_resolution, settled).
+#   label: the judgement JEV label, or the sweep label for an untouched record.
+#   basis_ok: every cited evidence is official and every cited fact claim has JEV supports (R3's condition).
+#   before_resolution: a forecast's cited evidence event_time is before resolves_on (None for a state claim).
+#   settled: the record is verified or partially_verified now (R2 against R7).
+# A key no row covers is no_change. Two rows covering one key is an import error.
+# fmt: off
+RULE_ROWS = (
+    # rule, claim_type, verdict, label, basis_ok, before_resolution, settled, outcome, to_status
+    ("R1", "state", "verifies", "supports", True, None, ANY, "status_change", "verified"),
+    ("R2", "state", "refutes", "contradicts", True, None, False, "status_change", "refuted"),
+    ("R3", "state", "partially_verifies", ("supports", "says_nothing"), True, None, ANY, "status_change", "partially_verified"),
+    ("R4", "forecast", ("verifies", "partially_verifies"), "supports", True, True, ANY, "corroborated", None),
+    ("R5", "forecast", "verifies", "supports", True, False, ANY, "status_change", "verified"),
+    ("R5", "forecast", "refutes", "contradicts", True, False, False, "status_change", "refuted"),
+    ("R6", ANY, "verifies", ("contradicts", "says_nothing"), ANY, ANY, ANY, "disputed", None),
+    ("R6", ANY, "refutes", ("supports", "says_nothing"), ANY, ANY, ANY, "disputed", None),
+    ("R6", ANY, "partially_verifies", "contradicts", ANY, ANY, ANY, "disputed", None),
+    ("R7", ANY, "refutes", "contradicts", True, ANY, True, "disputed", None),
+    ("R8", ANY, "untouched", "says_nothing", ANY, ANY, ANY, "no_change", None),
+    ("R9", ANY, "untouched", ("supports", "contradicts"), ANY, ANY, ANY, "missed", None),
+)
+# fmt: on
+RULE_DIMENSIONS = (nl.CLAIM_TYPES, VERDICTS, LABELS, (True, False), (None, True, False), (True, False))
+
+
+def _expand(rows):
+    table = {}
+    for rule, *keys, outcome, to_status in rows:
+        values = [
+            dim if k == ANY else k if isinstance(k, tuple) else (k,)
+            for k, dim in zip(keys, RULE_DIMENSIONS, strict=True)
+        ]
+        for key in itertools.product(*values):
+            if key in table:
+                raise AssertionError(f"rule table overlap at {key}: {table[key][0]} and {rule}")
+            table[key] = (rule, outcome, to_status)
+    return table
+
+
+RULES = _expand(RULE_ROWS)
+
+
+def decide(claim_type, verdict, label, basis_ok, before_resolution, status):
+    """(rule, outcome, to_status). A status change the record already has is no_change; one TRANSITIONS does not let
+    the rule make (the record moved since the snapshot) is disputed."""
+    key = (claim_type, verdict, label, basis_ok, before_resolution, status in SETTLED)
+    rule, outcome, to_status = RULES.get(key, (None, "no_change", None))
+    if outcome == "status_change" and to_status == status:
+        return rule, "no_change", None
+    if outcome == "status_change" and "rule" not in nl.TRANSITIONS.get((status, to_status), ()):
+        return rule, "disputed", to_status
+    return rule, outcome, to_status
+
+
+def why(rule, outcome, verdict, label, sweep, status, to_status):
+    if outcome == "missed":
+        return f"drafter marked it untouched but the sweep says {sweep}"
+    if rule == "R6":
+        return f"drafter {verdict} but JEV {label}"
+    if rule == "R7":
+        return f"official evidence contradicts a {status} record; the rule does not overturn it"
+    if outcome == "disputed":
+        return f"the rule may not move a {status} record to {to_status}"
+    return ""
+
+
+def sweep_source(payload, cap):
+    """All official excerpts in document order -> (text, truncated 0|1)."""
+    docs = [e for e in payload["evidence"] if e["payload"].get("excerpts") and evidence_tier(e) in OFFICIAL_TIERS]
+    text = "\n\n".join("[{}]\n{}".format(e["id"], "\n".join(x["text"] for x in e["payload"]["excerpts"])) for e in docs)
+    return text[:cap], int(len(text) > cap)
+
+
+def _result(row, rule, to_status, reason):
+    return {
+        "narrative_id": row["narrative_id"],
+        "status_before": row["status_before"],
+        "drafter_verdict": row["drafter_verdict"],
+        "claim_indices": json.loads(row["claim_indices_json"]),
+        "jev_label": row["jev_label"],
+        "sweep_label": row["sweep_label"],
+        "sweep_truncated": row["sweep_truncated"],
+        "rule": rule,
+        "outcome": row["outcome"],
+        "target_status": to_status,
+        "event_seq": row["event_seq"],
+        "why": reason,
+    }
+
+
+def apply(ledger_path, revision, payload, cfg, jev, *, enabled):
+    """narrative_results for revision.json ({narrative_apply, jev_model, records}), or None without a snapshot."""
+    snap = snapshot_of(payload)
+    if snap is None:
+        return None
+    research, rev_id = revision["research"], revision["identity"]["revision_id"]
+    claims = research["claims"]
+    checks = {x["narrative_id"]: x for x in research.get("narrative_checks") or []}
+    fact_jev = {p["claim_index"]: p["label"] for p in revision["jev_results"]["per_claim"]}
+    by_id = {e["id"]: e for e in payload["evidence"]}
+    sweep_text, truncated = sweep_source(payload, jev.SOURCE_CAP)
+    symbol = cfg.get("symbol") or ",".join(cfg["symbols"])
+    db = nl.connect(ledger_path)
+    out = []
+    try:
+        for shown in snap["payload"]["records"]:
+            nid = shown["narrative_id"]
+            done = db.execute(
+                "SELECT * FROM narrative_checks WHERE revision_id = ? AND narrative_id = ?", (rev_id, nid)
+            ).fetchone()
+            if done:
+                ev = [e for e in nl.events_of(db, nid) if e["seq"] == done["event_seq"]]
+                out.append(_result(dict(done), ev[0]["rule"] if ev else None, ev[0]["to_status"] if ev else None, ""))
+                continue
+            chk = checks[nid]
+            verdict, idx = chk["verdict"], chk.get("claim_indices") or []
+            rec = dict(db.execute("SELECT * FROM narrative_records WHERE narrative_id = ?", (nid,)).fetchone())
+            events = nl.events_of(db, nid)
+            # an event that already names this revision is a rerun after a crash: judge from the status before it
+            mine = [e for e in events if json.loads(e["basis_json"]).get("revision_id") == rev_id]
+            status = nl.fold_status(events[: mine[0]["seq"]] if mine else events)
+            cited = list({e: by_id[e] for i in idx for e in claims[i]["evidence_ids"] if e in by_id}.values())
+            label = jev_ans = None
+            if verdict != "untouched":
+                source = "\n\n".join(
+                    jev.source_text(claims[i], [by_id[e] for e in claims[i]["evidence_ids"] if e in by_id]) for i in idx
+                )[: jev.SOURCE_CAP]
+                locator = ", ".join(f"claims[{i}]" for i in idx)
+                jev_ans = jev.judge(rec["claim"], source, locator, symbol, payload["as_of"])
+                label = jev_ans["label"]
+            sweep = jev.judge(rec["claim"], sweep_text, "all official excerpts", symbol, payload["as_of"])["label"]
+            tiers = [evidence_tier(e) for e in cited]
+            basis_ok = (
+                bool(cited)
+                and all(t in OFFICIAL_TIERS for t in tiers)
+                and all(fact_jev.get(i) == "supports" for i in idx)
+            )
+            before_resolution = None
+            if rec["claim_type"] == "forecast" and cited:
+                before_resolution = max(e["event_time"] for e in cited)[:10] < rec["resolves_on"]
+            rule, outcome, to_status = decide(
+                rec["claim_type"],
+                verdict,
+                label if verdict != "untouched" else sweep,
+                basis_ok,
+                before_resolution,
+                status,
+            )
+            seq = None
+            if enabled and outcome in ("status_change", "corroborated"):
+                if mine:
+                    seq = mine[-1]["seq"]
+                else:
+                    avail = nl.iso(max(e["available_at"] for e in cited))
+                    seq = nl.append_event(
+                        db,
+                        nid,
+                        kind="status" if outcome == "status_change" else "corroborated",
+                        to_status=to_status or status,
+                        decided_by="rule",
+                        at=max(avail, events[-1]["at"]),
+                        basis={
+                            "revision_id": rev_id,
+                            "claim_indices": idx,
+                            "evidence_ids": [e["id"] for e in cited],
+                            "quotes": [claims[i].get("quote") for i in idx],
+                            "tiers": tiers,
+                        },
+                        rule=rule,
+                        jev={
+                            "model": jev.model,
+                            "endpoint": jev.path,
+                            "label": label,
+                            "confidence": jev_ans["confidence"],
+                        },
+                        drafter_verdict=verdict,
+                    )["seq"]
+            row = nl.add_check(
+                db,
+                {
+                    "revision_id": rev_id,
+                    "narrative_id": nid,
+                    "status_before": status,
+                    "drafter_verdict": verdict,
+                    "claim_indices_json": json.dumps(idx),
+                    "jev_label": label,
+                    "sweep_label": sweep,
+                    "sweep_truncated": truncated,
+                    "outcome": outcome,
+                    "event_seq": seq,
+                    "checked_at": nl.now(),
+                },
+            )
+            out.append(_result(row, rule, to_status, why(rule, outcome, verdict, label, sweep, status, to_status)))
+    finally:
+        db.close()
+    return {"narrative_apply": "on" if enabled else "off", "jev_model": jev.model, "records": out}

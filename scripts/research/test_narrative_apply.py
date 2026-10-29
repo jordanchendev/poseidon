@@ -1,0 +1,300 @@
+"""Design 2026-10-29 §9 step 6: narrative_apply (judgement JEV, sweep, rule table R1-R9, writes; off by default).
+
+One runner run over nine seeded records, one per rule, with a fake JEV that answers by (record claim, judgement or
+sweep). research_theme.py and the ledger are real. No network.
+  PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/test_narrative_apply.py
+"""
+
+import json
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+import narrative_check  # noqa: E402
+import narrative_ledger as nl  # noqa: E402
+import runner  # noqa: E402
+import test_narrative_snapshot as snap_t  # noqa: E402
+import test_runner as tr  # noqa: E402
+from test_runner import JEV_KEY  # noqa: E402
+from test_runner import env as runner_env  # noqa: E402,F401  (pytest finds it by this name)
+
+DOC_TIME = "2026-10-06T00:00:00Z"  # available_at of the agenda document (event_date 2026-10-06)
+# rule -> (claim, claim_type, resolves_on, verdict, claim_indices, judgement label, sweep label)
+CASES = {
+    "R1": ("聯電甲案說法成立", "state", None, "verifies", [0], "supports", "supports"),
+    "R2": ("聯電乙案說法成立", "state", None, "refutes", [0], "contradicts", "contradicts"),
+    "R3": ("聯電丙案說法成立", "state", None, "partially_verifies", [1], "says_nothing", "says_nothing"),
+    "R4": ("聯電丁案預期將成立", "forecast", "2027-06-30", "verifies", [0], "supports", "supports"),
+    "R5": ("聯電戊案預期將成立", "forecast", "2026-09-30", "verifies", [0], "supports", "supports"),
+    "R6": ("聯電己案說法成立", "state", None, "verifies", [0], "says_nothing", "says_nothing"),
+    "R7": ("聯電庚案說法成立", "state", None, "refutes", [0], "contradicts", "contradicts"),
+    "R8": ("聯電辛案說法成立", "state", None, "untouched", [], None, "says_nothing"),
+    "R9": ("聯電壬案說法成立", "state", None, "untouched", [], None, "supports"),
+}
+SOURCE = "。".join(c[0] for c in CASES.values()) + "。"
+EXPECTED = {  # rule -> (outcome, status after the run with narrative_apply on, event kind written)
+    "R1": ("status_change", "verified", "status"),
+    "R2": ("status_change", "refuted", "status"),
+    "R3": ("status_change", "partially_verified", "status"),
+    "R4": ("corroborated", "unverified", "corroborated"),
+    "R5": ("status_change", "verified", "status"),
+    "R6": ("disputed", "unverified", None),
+    "R7": ("disputed", "partially_verified", None),
+    "R8": ("no_change", "unverified", None),
+    "R9": ("missed", "unverified", None),
+}
+
+
+@pytest.fixture()
+def env(runner_env):  # noqa: F811
+    return runner_env
+
+
+class FakeJev(tr.FakeOpenRouter):
+    """Drafts as FakeOpenRouter; JEV answers a record claim by locator (judgement vs sweep), any other claim supports."""
+
+    def __init__(self, drafts):
+        super().__init__(drafts)
+        self.by_claim = {c[0]: (c[5], c[6]) for c in CASES.values()}
+
+    def __call__(self, url, headers, body, timeout):
+        if url.endswith("/chat/completions"):
+            return super().__call__(url, headers, body, timeout)
+        req = json.loads(body)
+        self.jev_calls.append(req)
+        st = req["state"]
+        judged, swept = self.by_claim.get(st["claim"], ("supports", "supports"))
+        label = swept if st["source_context"]["locator"] == "all official excerpts" else judged
+        return 200, json.dumps(
+            {"answers": {"citation_relation": {"choice": label, "confidence": 0.9}}, "usage": {"cost": 0.00002}}
+        ).encode()
+
+
+def seed(env):
+    path, db = snap_t.ledger(env["tmp"])
+    ids = {}
+    for n, (rule, (claim, ctype, resolves_on, *_)) in enumerate(CASES.items()):
+        ids[rule] = nl.add_record(
+            db,
+            claim=claim,
+            claim_type=ctype,
+            resolves_on=resolves_on,
+            attributed_to="股癌",
+            source_tier="kol",
+            origin_kind="material",
+            origin_ref=f"material:20261002-k{n}",
+            origin_evidence_id="secondary:material",
+            quote=claim,
+            source_text=SOURCE,
+            subject_symbols=["2303"],
+            theme_ids=["foundry-utilization"],
+            first_seen_at=f"2026-10-{n + 1:02d}T00:00:00Z",
+        )["narrative_id"]
+    nl.append_event(
+        db,
+        ids["R7"],
+        kind="status",
+        to_status="partially_verified",
+        decided_by="rule",
+        at="2026-10-12T00:00:00Z",
+        basis={},
+    )
+    nl.append_event(
+        db,
+        ids["R5"],
+        kind="corroborated",
+        to_status="unverified",
+        decided_by="rule",
+        at="2026-10-15T00:00:00Z",
+        basis={},
+    )
+    db.close()
+    return path, ids
+
+
+def narrative(ids):
+    n = tr.good_narrative()
+    n["narrative_checks"] = [
+        {
+            "narrative_id": ids[rule],
+            "verdict": c[3],
+            "claim_indices": c[4],
+            "why": "測試",
+            **({"open_part": "未說明主動性。"} if c[3] == "partially_verifies" else {}),
+        }
+        for rule, c in CASES.items()
+    ]
+    return n
+
+
+def run(env, mode=None):
+    path, ids = seed(env)
+    t = FakeJev([narrative(ids)])
+    assert env["run"](t, *(["--narrative-apply", mode] if mode else [])) == 0
+    run_json = json.loads((env["run_dir"] / "run.json").read_text())
+    assert run_json["status"] == "completed", run_json["reasons"]
+    rev = json.loads((env["run_dir"] / "revision.json").read_text())
+    return path, ids, t, run_json, rev
+
+
+def ledger_rows(path, rev_id):
+    db = sqlite3.connect(path)
+    db.row_factory = sqlite3.Row
+    checks = {
+        r["narrative_id"]: dict(r)
+        for r in db.execute("SELECT * FROM narrative_checks WHERE revision_id = ?", (rev_id,))
+    }
+    events = {}
+    for r in db.execute("SELECT * FROM narrative_events ORDER BY narrative_id, seq"):
+        events.setdefault(r["narrative_id"], []).append(dict(r))
+    db.close()
+    return checks, events
+
+
+# ------------------------------------------------------------------------------------------------ the rule table
+def test_rule_table_rows():
+    d = narrative_check.decide
+    assert d("state", "verifies", "supports", True, None, "unverified") == ("R1", "status_change", "verified")
+    assert d("state", "verifies", "supports", True, None, "stale") == ("R1", "status_change", "verified")
+    assert d("state", "verifies", "supports", True, None, "partially_verified") == ("R1", "status_change", "verified")
+    assert d("state", "refutes", "contradicts", True, None, "unverified") == ("R2", "status_change", "refuted")
+    assert d("state", "partially_verifies", "supports", True, None, "unverified")[1:] == (
+        "status_change",
+        "partially_verified",
+    )
+    assert d("state", "partially_verifies", "says_nothing", False, None, "unverified") == (None, "no_change", None)
+    assert d("forecast", "partially_verifies", "supports", True, True, "unverified") == ("R4", "corroborated", None)
+    assert d("forecast", "verifies", "supports", True, True, "unverified") == ("R4", "corroborated", None)
+    assert d("forecast", "refutes", "contradicts", True, False, "unverified") == ("R5", "status_change", "refuted")
+    assert d("forecast", "refutes", "contradicts", True, True, "unverified") == (None, "no_change", None)
+    assert d("forecast", "refutes", "contradicts", True, False, "partially_verified") == ("R7", "disputed", None)
+    assert d("state", "partially_verifies", "contradicts", True, None, "unverified") == ("R6", "disputed", None)
+    assert d("state", "refutes", "says_nothing", True, None, "unverified") == ("R6", "disputed", None)
+    assert d("forecast", "untouched", "contradicts", False, None, "stale") == ("R9", "missed", None)
+    # already there, or a move only the owner may make
+    assert d("state", "partially_verifies", "supports", True, None, "partially_verified") == ("R3", "no_change", None)
+    assert d("state", "verifies", "supports", True, None, "refuted") == ("R1", "disputed", "verified")
+    assert {r[0] for r in narrative_check.RULE_ROWS} == {f"R{n}" for n in range(1, 10)}
+
+
+def test_overlapping_rows_are_refused():
+    with pytest.raises(AssertionError, match="overlap"):
+        narrative_check._expand(
+            (*narrative_check.RULE_ROWS, ("RX", "*", "untouched", "says_nothing", "*", "*", "*", "missed", None))
+        )
+
+
+# ------------------------------------------------------------------------------------------------ runner
+def test_on_writes_one_event_per_rule_row(env):
+    path, ids, t, run_json, rev = run(env, "on")
+    res = {x["narrative_id"]: x for x in rev["narrative_results"]["records"]}
+    checks, events = ledger_rows(path, rev["identity"]["revision_id"])
+    assert rev["narrative_results"]["narrative_apply"] == "on" and run_json["narrative_apply"] == "on"
+    for rule, nid in ids.items():
+        outcome, status, kind = EXPECTED[rule]
+        assert res[nid]["rule"] == rule and res[nid]["outcome"] == checks[nid]["outcome"] == outcome, rule
+        assert nl.fold_status(events[nid]) == status, rule
+        written = [e for e in events[nid] if e["rule"] == rule]
+        assert [e["kind"] for e in written] == ([kind] if kind else []), rule
+        assert checks[nid]["event_seq"] == (written[0]["seq"] if kind else None), rule
+        assert checks[nid]["jev_label"] == CASES[rule][5] and checks[nid]["sweep_label"] == CASES[rule][6], rule
+    assert checks[ids["R7"]]["status_before"] == "partially_verified"
+    r1 = next(e for e in events[ids["R1"]] if e["rule"] == "R1")
+    basis, jev = json.loads(r1["basis_json"]), json.loads(r1["jev_json"])
+    assert r1["at"] == DOC_TIME and r1["decided_by"] == "rule" and r1["drafter_verdict"] == "verifies"
+    assert basis == {
+        "revision_id": rev["identity"]["revision_id"],
+        "claim_indices": [0],
+        "evidence_ids": [tr.DOC_ID],
+        "quotes": ["Revenue was NT$68.73 billion for the quarter"],
+        "tiers": ["company release"],
+    }
+    assert jev["label"] == "supports" and jev["model"] == runner.JEV_MODEL
+    r5 = next(e for e in events[ids["R5"]] if e["rule"] == "R5")
+    assert r5["at"] == "2026-10-15T00:00:00Z"  # max(evidence available_at, the record's last event at)
+    assert len(t.jev_calls) == 2 + 7 + 9  # fact claims, judgements (R1-R7), sweeps (every shown record)
+    assert run_json["costs"]["jev_narrative_usd"] == pytest.approx(16 * 0.00002)
+
+
+def test_off_by_default_writes_checks_but_no_events(env):
+    path, ids, _, _run_json, rev = run(env)
+    assert rev["narrative_results"]["narrative_apply"] == "off"
+    checks, events = ledger_rows(path, rev["identity"]["revision_id"])
+    assert {checks[ids[r]]["outcome"] for r in ("R1", "R2", "R3", "R5")} == {"status_change"}
+    assert checks[ids["R4"]]["outcome"] == "corroborated" and checks[ids["R9"]]["outcome"] == "missed"
+    assert all(c["event_seq"] is None for c in checks.values())
+    seeded_events = {ids["R7"]: 2, ids["R5"]: 2}
+    assert all(len(events[nid]) == seeded_events.get(nid, 1) for nid in ids.values())
+    md = subprocess.run(
+        [sys.executable, str(HERE / "render_theme.py"), str(env["run_dir"] / "revision.json")],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    table = md[md.index("## 敘事變化") : md.index("## 可重放身分")]
+    assert "narrative_apply `off`" in table and "已證實（narrative_apply off，未寫入）" in table
+    owner = table[table.index("### 待 owner 判斷") :]
+    for rule in ("R6", "R7", "R9"):
+        assert f"`{ids[rule]}`" in owner and f"（{rule}）" in owner
+    done = json.loads(tr.bridge_calls(env, "done")[0]["stdin"])
+    assert "## 敘事變化" in done["report_md"]
+
+
+def test_rerun_of_the_same_revision_calls_no_jev_and_writes_nothing(env):
+    path, _ids, _, _, rev = run(env, "on")
+    payload = rev["manifest_payload"]
+    cfg = json.loads((env["run_dir"] / "config.json").read_text())
+    before = ledger_rows(path, rev["identity"]["revision_id"])
+    t = FakeJev([])
+    jev = runner.Jev(JEV_KEY, transport=t)
+    again = narrative_check.apply(path, rev, payload, cfg, jev, enabled=True)
+    assert t.jev_calls == [] and ledger_rows(path, rev["identity"]["revision_id"]) == before
+    assert [x["outcome"] for x in again["records"]] == [x["outcome"] for x in rev["narrative_results"]["records"]]
+    # a crash after the events but before the check rows: the rerun judges again and reuses the events
+    db = sqlite3.connect(path)
+    db.execute("DELETE FROM narrative_checks")
+    db.commit()
+    db.close()
+    redo = narrative_check.apply(path, rev, payload, cfg, jev, enabled=True)
+    checks, events = ledger_rows(path, rev["identity"]["revision_id"])
+    assert len(t.jev_calls) == 16 and events == before[1]
+    assert {nid: c["event_seq"] for nid, c in checks.items()} == {nid: c["event_seq"] for nid, c in before[0].items()}
+    assert [x["outcome"] for x in redo["records"]] == [x["outcome"] for x in again["records"]]
+
+
+def test_truncated_sweep_is_recorded(env, monkeypatch):
+    monkeypatch.setattr(runner.Jev, "SOURCE_CAP", 80)
+    path, _, t, _, rev = run(env)
+    checks, _ = ledger_rows(path, rev["identity"]["revision_id"])
+    assert {c["sweep_truncated"] for c in checks.values()} == {1}
+    sweeps = [c for c in t.jev_calls if c["state"]["source_context"]["locator"] == "all official excerpts"]
+    assert {len(c["state"]["source_context"]["text"]) for c in sweeps} == {80}
+
+
+def test_sweep_source_keeps_official_excerpts_in_order():
+    def doc(i, tier=None, n=10):
+        p = {"excerpts": [{"text": i * n}], **({"source_tier": tier} if tier else {})}
+        return {
+            "id": i,
+            "kind": "secondary" if tier == "kol" else "fundamental",
+            "source_uri": "https://x",
+            "payload": p,
+        }
+
+    text, cut = narrative_check.sweep_source({"evidence": [doc("a"), doc("k", "kol"), doc("b")]}, 100)
+    assert text == "[a]\naaaaaaaaaa\n\n[b]\nbbbbbbbbbb" and cut == 0
+    text, cut = narrative_check.sweep_source({"evidence": [doc("a", n=200)]}, 100)
+    assert len(text) == 100 and cut == 1
+
+
+def test_run_without_a_snapshot_has_no_narrative_step(env):
+    t = tr.FakeOpenRouter([tr.good_narrative()])
+    assert env["run"](t) == 0
+    rev = json.loads((env["run_dir"] / "revision.json").read_text())
+    assert "narrative_results" not in rev and len(t.jev_calls) == 2

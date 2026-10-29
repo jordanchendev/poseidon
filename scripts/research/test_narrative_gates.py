@@ -290,8 +290,8 @@ def test_refused_checks_are_repaired_then_rendered(seeded):
     table = md[md.index("## 敘事變化") : md.index("## 可重放身分")]
     assert md.index("## 變更摘要") < md.index("## 敘事變化")
     assert (
-        f"| `{seeded['ids'][1]}` | 聯電成熟製程產能利用率偏高 | 股癌（kol） | 傳聞（KOL） | partially_verifies |"
-        in table
+        f"| `{seeded['ids'][1]}` | 聯電成熟製程產能利用率偏高 | 股癌（kol） | 傳聞（KOL） | "
+        "partially_verifies／jev supports／sweep supports | 部分證實（narrative_apply off，未寫入） |" in table
     )
     assert "claims[1]「Gross margin was 32.5% for the quarter」" in table
 

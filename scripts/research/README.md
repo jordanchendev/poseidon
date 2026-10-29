@@ -330,6 +330,16 @@ block, `NARRATIVE_LEDGER_SCHEMA` (claim `theme_ids` / `about_symbols`, `narrativ
 `render_theme.py` adds 「敘事變化」 after 變更摘要 when the manifest has a snapshot, from `narrative_results` in
 revision.json (drafter verdicts only when there are none) and lists `disputed` / `missed` under 「待 owner 判斷」.
 
+After the revision completes (§9 step 6), `narrative_check.apply` runs on every snapshot record: JEV judges the record
+against the cited fact claims (quote and evidence texts) when the verdict is not `untouched`, and sweeps it against all
+official excerpts in document order (12,000 characters, a cut source sets `sweep_truncated`). `RULE_ROWS` is the §4.5
+table R1 to R9 keyed by (claim_type, verdict, label, basis_ok, before_resolution, settled); a key no row covers is
+`no_change`, and a status the rule may not reach under `TRANSITIONS` is `disputed`. One `narrative_checks` row per
+record always; a `status` or `corroborated` event only with `runner.py --narrative-apply on` (default `off` until the
+§9 step 7 control set passes), at max(evidence available_at, the record's last event at). A revision whose check rows
+exist is skipped without JEV; an event that already names the revision is reused. The results go to
+`revision.json.narrative_results`; a failure is `run.json.narrative_error` and the revision stays completed.
+
 - Themes, members and edges are written only with a non-empty `--approval-ref`; re-running the same approval is a
   no-op, the same key with different content is refused. Symbols: Taiwan-listed bare (`2408`), others
   `<EXCHANGE>:<TICKER>` (`NASDAQ:MU`, `TSE:3110`); `tw_listed` follows from that shape.

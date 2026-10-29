@@ -15,6 +15,10 @@ Pipeline for the chosen row (design: aquarium local_dev/design/2026-10-21-resear
      Inference claims are not sent to JEV (UMC 3de55971 precedent: a source never states an inference, so JEV would
      answer says_nothing); they stay gated by claim_precheck (scale/sign) and the verbatim-quote check.
   -> complete (research_theme.py --narrative: re-runs its own prechecks, completes, replay + immutability check)
+  -> narrative_apply (narrative_check.apply, only with a narrative_snapshot): JEV judges each checked record against
+     the cited fact claims and sweeps every shown record against all official excerpts; the rule table R1-R9 decides;
+     narrative_checks rows always, status events only with --narrative-apply on. A failure here is recorded in
+     run.json and never undoes the completed revision.
   -> bridge `done <agenda_id> <revision_id>` with the tl_dr on stdin.
 Any failure -> the revision stays prepared, bridge `needs-review <agenda_id>` with a short reason on stdin.
 No escalation to another model.
@@ -339,70 +343,85 @@ def run_gates(narrative, payload, cfg):
 
 
 # ------------------------------------------------------------------------------------------------ JEV
-def jev_source_text(claim, cited):
-    parts = []
-    if isinstance(claim.get("quote"), str) and claim["quote"].strip():
-        parts.append("Quoted: " + claim["quote"].strip())
-    for item in cited:
-        parts.append("[{}]\n{}".format(item["id"], "\n".join(draft_mod.evidence_texts(item))))
-    return cap("\n\n".join(parts), JEV_SOURCE_CAP)
+class Jev:
+    """JEV calls on one endpoint: the primary path, switched once to the alpha path when this client's first call gets a
+    404. Sums usage over its calls. Used for the fact claims and for narrative_apply (design 2026-10-29 §4.5)."""
+
+    SOURCE_CAP = JEV_SOURCE_CAP
+
+    def __init__(self, key, model=JEV_MODEL, transport=None, path=JEV_PRIMARY):
+        self.key, self.model, self.transport, self.path = key, model, transport, path
+        self.calls, self.usage_total = 0, {}
+
+    @staticmethod
+    def source_text(claim, cited):
+        """The claim's quote, then the full texts of its cited evidence, capped at SOURCE_CAP."""
+        parts = []
+        if isinstance(claim.get("quote"), str) and claim["quote"].strip():
+            parts.append("Quoted: " + claim["quote"].strip())
+        for item in cited:
+            parts.append("[{}]\n{}".format(item["id"], "\n".join(draft_mod.evidence_texts(item))))
+        return cap("\n\n".join(parts), JEV_SOURCE_CAP)
+
+    def judge(self, claim, source_text, locator, symbol, as_of):
+        """One citation_relation judgement -> {label, confidence, latency_ms}. Raises draft.PostError."""
+        from jev_eval_control_set import build_request
+
+        case = {"symbol": symbol, "claim": claim, "source": {"text": source_text, "locator": locator}}
+        req = build_request(case, self.model, as_of)
+        kw = {"transport": self.transport} if self.transport else {}
+        t0 = time.monotonic()
+        try:
+            resp = draft_mod.post_json(JEV_BASE + self.path, self.key, req, timeout=60, **kw)
+        except draft_mod.PostError as e:
+            if self.calls or e.status != 404 or self.path != JEV_PRIMARY:
+                raise
+            self.path = JEV_FALLBACK
+            resp = draft_mod.post_json(JEV_BASE + self.path, self.key, req, timeout=60, **kw)
+        self.calls += 1
+        ans = (resp.get("answers") or {}).get("citation_relation") or {}
+        for k, v in (resp.get("usage") or {}).items():
+            if isinstance(v, (int, float)):
+                self.usage_total[k] = self.usage_total.get(k, 0) + v
+        return {
+            "label": ans.get("choice"),
+            "confidence": ans.get("confidence"),
+            "latency_ms": round((time.monotonic() - t0) * 1000),
+        }
 
 
-def jev_check(narrative, payload, cfg, key, *, model=JEV_MODEL, transport=None):
+def run_symbol(cfg):
+    return cfg.get("symbol") or ",".join(cfg["symbols"])
+
+
+def jev_check(narrative, payload, cfg, jev):
     """Judge every fact claim with JEV; returns jev_results (UMC revision shape). Raises StageError on a call failure."""
-    from jev_eval_control_set import build_request
-
     by_id = {e["id"]: e for e in payload["evidence"]}
-    path, per, usage_total = JEV_PRIMARY, [], {}
+    per = []
     for n, c in enumerate(narrative["claims"]):
         if c.get("kind") != "fact":
             continue
         cited = [by_id[i] for i in c["evidence_ids"] if i in by_id]
-        case = {
-            "symbol": cfg.get("symbol") or ",".join(cfg["symbols"]),
-            "claim": c["text"],
-            "source": {"text": jev_source_text(c, cited), "locator": ", ".join(c["evidence_ids"])},
-        }
-        req = build_request(case, model, payload["as_of"])
-        kw = {"transport": transport} if transport else {}
-        t0 = time.monotonic()
         try:
-            try:
-                resp = draft_mod.post_json(JEV_BASE + path, key, req, timeout=60, **kw)
-            except draft_mod.PostError as e:
-                if n == 0 and e.status == 404 and path == JEV_PRIMARY:
-                    path = JEV_FALLBACK
-                    resp = draft_mod.post_json(JEV_BASE + path, key, req, timeout=60, **kw)
-                else:
-                    raise
+            ans = jev.judge(
+                c["text"], jev.source_text(c, cited), ", ".join(c["evidence_ids"]), run_symbol(cfg), payload["as_of"]
+            )
         except draft_mod.PostError as e:
             raise StageError("jev", f"JEV call failed on claims[{n}]: {e}") from None
-        ans = (resp.get("answers") or {}).get("citation_relation") or {}
-        for k, v in (resp.get("usage") or {}).items():
-            if isinstance(v, (int, float)):
-                usage_total[k] = usage_total.get(k, 0) + v
         per.append(
-            {
-                "claim_index": n,
-                "claim": c["text"],
-                "kind": c.get("kind"),
-                "evidence_ids": c["evidence_ids"],
-                "label": ans.get("choice"),
-                "confidence": ans.get("confidence"),
-                "latency_ms": round((time.monotonic() - t0) * 1000),
-            }
+            {"claim_index": n, "claim": c["text"], "kind": c.get("kind"), "evidence_ids": c["evidence_ids"], **ans}
         )
     labels = [p["label"] for p in per]
     return {
-        "model": model,
-        "endpoint": path,
+        "model": jev.model,
+        "endpoint": jev.path,
         "n": len(per),
         "supports": labels.count("supports"),
         "contradicts": labels.count("contradicts"),
         "says_nothing": labels.count("says_nothing"),
         "run_at": now_iso(),
         "scope": "fact claims only (inference claims gated by precheck + quote check); source = claim quote + cited evidence texts",
-        "usage_total": usage_total,
+        "usage_total": dict(jev.usage_total),
         "per_claim": per,
     }
 
@@ -533,10 +552,9 @@ def process_row(row, *, state_dir, ledger, keys, opts):
             raise StageError("gates", "validator refused after one repair round", reasons)
         narrative = attempt.narrative
         # JEV
+        jev_client = Jev(keys["jev"], opts.get("jev_model", JEV_MODEL), transport)
         with run.stage("jev"):
-            jev = jev_check(
-                narrative, payload, cfg, keys["jev"], model=opts.get("jev_model", JEV_MODEL), transport=transport
-            )
+            jev = jev_check(narrative, payload, cfg, jev_client)
         revision["jev_results"] = jev
         run.data["models"]["jev"] = jev["model"]
         run.data["usage"]["jev"] = jev["usage_total"]
@@ -558,6 +576,23 @@ def process_row(row, *, state_dir, ledger, keys, opts):
         revision = json.loads((run_dir / "revision.json").read_text(encoding="utf-8"))
         revision["jev_results"] = jev
         run.data["status"] = "completed"
+        # narrative_apply (design 2026-10-29 §4.5): a check that fails is recorded; the revision stays completed
+        with run.stage("narrative"):
+            narr_jev = Jev(keys["jev"], jev_client.model, transport, path=jev_client.path)
+            mode = opts.get("narrative_apply", "off")
+            try:
+                results = narrative_check.apply(ledger_path, revision, payload, cfg, narr_jev, enabled=mode == "on")
+            except Exception as e:
+                log.exception("narrative_apply failed for %s", row.get("id"))
+                run.data["narrative_error"] = f"{type(e).__name__}: {cap(str(e), 300)}"
+                results = None
+            if narr_jev.calls:
+                run.data["usage"]["jev_narrative"] = narr_jev.usage_total
+                if isinstance(narr_jev.usage_total.get("cost"), (int, float)):
+                    run.data["costs"]["jev_narrative_usd"] = round(narr_jev.usage_total["cost"], 6)
+        if results is not None:
+            revision["narrative_results"] = results
+            run.data["narrative_apply"] = mode
         run.data["content_sha256"] = revision["identity"].get("content_sha256")
         run.data["summary"] = one_line(narrative.get("tl_dr") or narrative.get("thesis"), SUMMARY_CAP)
         return run
@@ -678,6 +713,7 @@ def run_once(args, keys, *, transport=None, assemble_kw=None, as_of=None):
             "draft": {"model": args.draft_model, "reasoning": not args.no_reasoning, "max_tokens": args.max_tokens},
             "assemble_kw": assemble_kw or {},
             "narrative_ledger": state / "ledger.sqlite",  # read for the snapshot, also by a dry run
+            "narrative_apply": args.narrative_apply,
         }
         run = process_row(chosen, state_dir=base, ledger=ledger, keys=keys, opts=opts)
         status = run.data["status"]
@@ -725,6 +761,13 @@ def parse_args(argv=None):
     ap.add_argument("--no-reasoning", action="store_true", help="send reasoning.enabled=false to the draft model")
     ap.add_argument("--max-tokens", type=int, default=draft_mod.DEFAULT_MAX_TOKENS)
     ap.add_argument("--jev-model", default=JEV_MODEL)
+    ap.add_argument(
+        "--narrative-apply",
+        choices=("off", "on"),
+        default="off",
+        help="write narrative status events from the rule table (default off until the JEV control set passes, §9 "
+        "step 7); off still writes one narrative_checks row per shown record",
+    )
     return ap.parse_args(argv)
 
 
