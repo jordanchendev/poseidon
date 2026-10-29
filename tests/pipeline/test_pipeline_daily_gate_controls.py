@@ -65,6 +65,8 @@ def evidence(name: str, judged: dict) -> dict:
             for gate, result in judged["results"].items()
         },
         "benchmark_alpha_t": judged["results"]["benchmark"].report.get("alpha_t_hac"),
+        "holdout_routes": judged["results"]["holdout"].report.get("passed_routes"),
+        "holdout_risk_route": (judged["results"]["holdout"].report.get("risk_route") or {}).get("status"),
         "execution_timing": judged["results"]["execution_timing"].report,
     }
     if OUT:
@@ -103,6 +105,8 @@ def test_planted_daily_edge_passes_every_gate(seed):
     judged = planted_edge(seed)
     record = evidence(f"planted_edge_seed{seed}", judged)
     assert record["failed"] == [], record
+    held = judged["results"]["holdout"].report  # judged under the holdout rule frozen since 2026-10-29
+    assert held["rule"] == "alpha_or_beta_matched_risk" and held["passed_routes"], record
     assert judged["wfe_layout"] == {"windows": 5, "is_days": 1460, "oos_days": 365}  # the long-history layout
     assert record["holdout_days"] >= class_settings("daily_equity")["thresholds"]["holdout_min_days"]
     assert set(record["execution_timing"]["scenarios"]) == {"signal_close", "signal_lag_1d"}
