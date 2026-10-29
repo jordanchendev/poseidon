@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Theme ledger and narrative ledger (design local_dev/design/2026-10-29-research-theme-and-narrative-ledger.md §2-§4).
 
-Nine tables in the runner's SQLite ledger (the file research_theme.py and settle_theme.py use). Every row carries
-content_sha256 = Poseidon content_sha256 of its other columns. A narrative's status is the fold of its append-only
-events; TRANSITIONS says who may move a record from one status to another. Event `at` never goes back in time: a
-caller whose evidence predates the record's last event passes max(evidence available_at, last event at).
+Nine tables in the runner's SQLite ledger (the file research_theme.py and settle_theme.py use), plus
+narrative_suggestions for narrative_apply confirm mode. Every row carries content_sha256 = Poseidon content_sha256 of its
+other columns; the rows with a lifecycle (materials, theme_proposals, narrative_suggestions) are rehashed when it moves.
+A narrative's status is the fold of its append-only events; TRANSITIONS says who may move a record from one status to
+another. Event `at` never goes back in time: a caller whose evidence predates the record's last event passes
+max(evidence available_at, last event at).
 
   theme-add   --ledger L --id ID --title T --kind K [--keyword W ...] --approval-ref REF [--proposal-id P] [--at T]
   member-add  --ledger L --theme ID --symbol S --role R --approval-ref REF [--at T]
@@ -43,11 +45,13 @@ SOURCE_TIERS = ("official", "sell-side", "media", "kol", "our-inference")
 CLAIM_TYPES = ("state", "forecast")
 STATUSES = ("unverified", "partially_verified", "verified", "refuted", "stale")
 # Event kind -> who may write it. 'corroborated' never changes the status.
+# A rule-table change the owner confirmed in Telegram (narrative_apply confirm) is a status or corroborated event
+# decided_by owner, with the rule that suggested it and basis.approval_ref naming the decision.
 EVENT_KINDS = {
     "created": {"rule", "owner"},
-    "status": {"rule", "sweep"},
+    "status": {"rule", "sweep", "owner"},
     "override": {"owner"},
-    "corroborated": {"rule"},
+    "corroborated": {"rule", "owner"},
 }
 STATUS_EVENT_KINDS = ("created", "status", "override")
 # (from, to) -> who may make that change (design §2.4). A pair that is absent is refused for everyone.
@@ -132,6 +136,14 @@ CREATE TABLE IF NOT EXISTS claim_theme_links (
   about_symbols_json TEXT NOT NULL, claim_kind TEXT NOT NULL CHECK (claim_kind IN ('fact','inference')),
   evidence_tier TEXT NOT NULL, event_time TEXT NOT NULL, source TEXT NOT NULL CHECK (source IN ('drafter','owner')),
   created_at TEXT NOT NULL, content_sha256 TEXT NOT NULL, PRIMARY KEY (revision_id, claim_index, theme_id));
+CREATE TABLE IF NOT EXISTS narrative_suggestions (
+  suggestion_id TEXT PRIMARY KEY, revision_id TEXT NOT NULL,
+  narrative_id TEXT NOT NULL REFERENCES narrative_records,
+  kind TEXT NOT NULL CHECK (kind IN ('status','corroborated')), from_status TEXT NOT NULL, to_status TEXT NOT NULL,
+  rule TEXT NOT NULL, at TEXT NOT NULL, basis_json TEXT NOT NULL, jev_json TEXT NOT NULL, drafter_verdict TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('suggested','confirmed','rejected')), created_at TEXT NOT NULL,
+  decided_at TEXT, decision_ref TEXT, event_seq INTEGER, content_sha256 TEXT NOT NULL,
+  UNIQUE (revision_id, narrative_id));
 """
 
 
@@ -165,6 +177,22 @@ def connect(path):
 def _insert(db, table, row):
     row = dict(row, content_sha256=content_sha256(row))
     db.execute(f"INSERT INTO {table} ({','.join(row)}) VALUES ({','.join('?' * len(row))})", list(row.values()))
+    return row
+
+
+def _update(db, table, key, changes):
+    """Set `changes` on the row whose columns match `key` and rehash it; returns the new row."""
+    where = " AND ".join(f"{k} = ?" for k in key)
+    row = _one(db, f"SELECT * FROM {table} WHERE {where}", *key.values())
+    if row is None:
+        raise LedgerError(f"no {table} row {key}")
+    row = {k: v for k, v in row.items() if k != "content_sha256"} | changes
+    row["content_sha256"] = content_sha256(row)
+    with db:
+        db.execute(
+            f"UPDATE {table} SET {', '.join(f'{k} = ?' for k in row)} WHERE {where}",
+            [*row.values(), *key.values()],
+        )
     return row
 
 
@@ -298,9 +326,11 @@ def add_record(
     first_seen_at,
     resolves_on=None,
     decided_by="rule",
+    proposed_subjects=(),
 ):
     """Writes the record and its seq-0 'created' event. The quote must be verbatim in source_text, the claim must be
-    atomic and its numbers must match the quote (the record is a transcription, so strict)."""
+    atomic and its numbers must match the quote (the record is a transcription, so strict). A subject is an approved
+    member of an active theme, or one of proposed_subjects (members of the theme proposals filed with the record)."""
     if claim_type not in CLAIM_TYPES:
         raise LedgerError(f"claim_type must be one of {'|'.join(CLAIM_TYPES)}")
     if source_tier not in SOURCE_TIERS:
@@ -333,8 +363,8 @@ def add_record(
     }
     for s in subject_symbols:
         symbol_is_tw(s)
-        if s not in members:
-            raise LedgerError(f"subject {s} is not an approved member of an active theme")
+        if s not in members and s not in proposed_subjects:
+            raise LedgerError(f"subject {s} is not an approved member of an active theme or a proposed member")
     first_seen_at = iso(first_seen_at)
     resolves_on, resolves_default, review_by = review_dates(claim_type, first_seen_at, resolves_on)
     nid = narrative_id(origin_ref, quote, claim)
@@ -457,7 +487,8 @@ def add_link(db, row):
         return _insert(db, "claim_theme_links", row)
 
 
-def set_status(db, nid, to_status, note, at=None):
+def set_status(db, nid, to_status, note, at=None, approval_ref=None):
+    """Owner override. approval_ref names the Telegram decision when the override came through narrative-set."""
     return append_event(
         db,
         nid,
@@ -465,7 +496,7 @@ def set_status(db, nid, to_status, note, at=None):
         to_status=to_status,
         decided_by="owner",
         at=at or now(),
-        basis={"override": True},
+        basis={"override": True, **({"approval_ref": approval_ref} if approval_ref else {})},
         note=note,
     )
 
@@ -494,6 +525,193 @@ def sweep_stale(db, as_of):
             )
             moved.append(r["narrative_id"])
     return moved
+
+
+# ---------------------------------------------------------------- materials (design §2.2, §6.2)
+MATERIAL_TIERS = ("sell-side", "media", "kol")
+
+
+def add_material(db, *, material_id, received_at, source_tier, author, url, text_sha256, raw_path):
+    """The material as received (status received). The same id with the same content is a no-op, so a rerun after a
+    crash finds the row it wrote; a different text under the same id is refused."""
+    if source_tier not in MATERIAL_TIERS:
+        raise LedgerError(f"material tier must be one of {'|'.join(MATERIAL_TIERS)}")
+    wanted = {
+        "material_id": material_id,
+        "received_at": iso(received_at),
+        "source_tier": source_tier,
+        "author": author,
+        "url": url,
+        "text_sha256": text_sha256,
+        "raw_path": raw_path,
+    }
+    old = _one(db, "SELECT * FROM materials WHERE material_id = ?", material_id)
+    if old:
+        return _same_or_refuse(old, wanted, f"material {material_id}")
+    with db:
+        return _insert(db, "materials", {**wanted, "manifest_sha256": None, "status": "received", "note": None})
+
+
+def set_material_status(db, material_id, status, *, note=None, manifest_sha256=None):
+    changes = {"status": status, "note": note}
+    if manifest_sha256:
+        changes["manifest_sha256"] = manifest_sha256
+    return _update(db, "materials", {"material_id": material_id}, changes)
+
+
+# ---------------------------------------------------------------- theme proposals (design §3.3 steps 1-2)
+def _norm_title(text):
+    return re.sub(r"[\s\W_]+", "", str(text)).casefold()
+
+
+def theme_duplicate(db, suggested_id, title):
+    """'theme:<id>' when an active theme has this id or normalised title or one of its keywords is in the title,
+    'proposal:<id>' when a proposal still open has this suggested id or title, else None."""
+    norm = _norm_title(title)
+    for t in db.execute("SELECT theme_id, title, keywords_json FROM themes WHERE status = 'active' ORDER BY theme_id"):
+        words = [_norm_title(k) for k in json.loads(t["keywords_json"])]
+        if suggested_id == t["theme_id"] or norm == _norm_title(t["title"]) or any(w and w in norm for w in words):
+            return "theme:" + t["theme_id"]
+    for p in db.execute(
+        "SELECT proposal_id, suggested_id, title FROM theme_proposals WHERE status = 'proposed' ORDER BY proposal_id"
+    ):
+        if suggested_id == p["suggested_id"] or norm == _norm_title(p["title"]):
+            return "proposal:" + p["proposal_id"]
+    return None
+
+
+def add_theme_proposal(db, *, suggested_id, title, kind, why, source_ref, proposed_members, at):
+    """A theme proposal ('T' + YYYYMMDD + '-' + n, the day of `at`). The same source_ref and suggested_id again returns
+    the row already written, so a rerun files nothing twice. The caller has ruled out duplicates (theme_duplicate)."""
+    if kind not in THEME_KINDS:
+        raise LedgerError(f"kind must be one of {'|'.join(THEME_KINDS)}")
+    old = _one(db, "SELECT * FROM theme_proposals WHERE source_ref = ? AND suggested_id = ?", source_ref, suggested_id)
+    if old:
+        return old
+    at = iso(at)
+    prefix = "T" + at[:10].replace("-", "") + "-"
+    taken = [
+        r[0] for r in db.execute("SELECT proposal_id FROM theme_proposals WHERE proposal_id LIKE ?", (prefix + "%",))
+    ]
+    n = 1 + max([int(p[len(prefix) :]) for p in taken] or [0])
+    with db:
+        return _insert(
+            db,
+            "theme_proposals",
+            {
+                "proposal_id": f"{prefix}{n}",
+                "suggested_id": suggested_id,
+                "title": title,
+                "kind": kind,
+                "why": why,
+                "source_ref": source_ref,
+                "proposed_members_json": json.dumps(proposed_members, ensure_ascii=False, sort_keys=True),
+                "status": "proposed",
+                "decided_at": None,
+                "decided_ref": None,
+                "created_at": at,
+            },
+        )
+
+
+# ---------------------------------------------------------------- narrative_apply confirm mode
+def suggestion_id(revision_id, nid):
+    return "ns-" + content_sha256([revision_id, nid])[:8]
+
+
+def add_suggestion(db, *, revision_id, nid, kind, from_status, to_status, rule, at, basis, jev, drafter_verdict):
+    """The event a rule would have written, held for the owner. The same (revision, record) again returns the row."""
+    sid = suggestion_id(revision_id, nid)
+    old = _one(db, "SELECT * FROM narrative_suggestions WHERE suggestion_id = ?", sid)
+    if old:
+        return old
+    with db:
+        return _insert(
+            db,
+            "narrative_suggestions",
+            {
+                "suggestion_id": sid,
+                "revision_id": revision_id,
+                "narrative_id": nid,
+                "kind": kind,
+                "from_status": from_status,
+                "to_status": to_status,
+                "rule": rule,
+                "at": iso(at),
+                "basis_json": json.dumps(basis, ensure_ascii=False, sort_keys=True),
+                "jev_json": json.dumps(jev, sort_keys=True),
+                "drafter_verdict": drafter_verdict,
+                "status": "suggested",
+                "created_at": now(),
+                "decided_at": None,
+                "decision_ref": None,
+                "event_seq": None,
+            },
+        )
+
+
+def rejected_suggestion(db, nid, kind, to_status):
+    """The owner's earlier rejection of the same change to this record (it is not suggested again), or None."""
+    return _one(
+        db,
+        "SELECT * FROM narrative_suggestions WHERE narrative_id = ? AND kind = ? AND to_status = ? "
+        "AND status = 'rejected' ORDER BY decided_at LIMIT 1",
+        nid,
+        kind,
+        to_status,
+    )
+
+
+def confirm_suggestion(db, sid, *, decision_ref, decided_at, note):
+    """Write the suggested event decided_by owner (basis.approval_ref = decision_ref, note = the owner's sentence) at
+    max(decided_at, the record's last event at). -> (row, already): a suggestion confirmed before is a no-op.
+    Raises LedgerError for an unknown or rejected suggestion, or a move TRANSITIONS no longer allows."""
+    s = _one(db, "SELECT * FROM narrative_suggestions WHERE suggestion_id = ?", sid)
+    if s is None:
+        raise LedgerError(f"no suggestion {sid}")
+    if s["status"] == "confirmed":
+        return s, True
+    if s["status"] == "rejected":
+        raise LedgerError(f"suggestion {sid} was rejected ({s['decision_ref']})")
+    last = events_of(db, s["narrative_id"])[-1]["at"]
+    ev = append_event(
+        db,
+        s["narrative_id"],
+        kind=s["kind"],
+        to_status=s["to_status"],
+        decided_by="owner",
+        at=max(iso(decided_at), last),
+        basis={**json.loads(s["basis_json"]), "suggestion_id": sid, "approval_ref": decision_ref},
+        rule=s["rule"],
+        jev=json.loads(s["jev_json"]),
+        drafter_verdict=s["drafter_verdict"],
+        note=note,
+    )
+    row = _update(
+        db,
+        "narrative_suggestions",
+        {"suggestion_id": sid},
+        {"status": "confirmed", "decided_at": iso(decided_at), "decision_ref": decision_ref, "event_seq": ev["seq"]},
+    )
+    return row, False
+
+
+def reject_suggestion(db, sid, *, decision_ref, decided_at):
+    """-> (row, already). Raises LedgerError for an unknown suggestion or one already confirmed (use set-status)."""
+    s = _one(db, "SELECT * FROM narrative_suggestions WHERE suggestion_id = ?", sid)
+    if s is None:
+        raise LedgerError(f"no suggestion {sid}")
+    if s["status"] == "rejected":
+        return s, True
+    if s["status"] == "confirmed":
+        raise LedgerError(f"suggestion {sid} was already confirmed ({s['decision_ref']}); an owner override changes it")
+    row = _update(
+        db,
+        "narrative_suggestions",
+        {"suggestion_id": sid},
+        {"status": "rejected", "decided_at": iso(decided_at), "decision_ref": decision_ref},
+    )
+    return row, False
 
 
 # ---------------------------------------------------------------- export
