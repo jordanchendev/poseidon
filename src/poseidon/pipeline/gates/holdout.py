@@ -33,6 +33,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from poseidon.pipeline.gates import benchmark
 from poseidon.pipeline.gates.base import (
     GateResult,
     ResultSummary,
@@ -200,6 +201,19 @@ def evaluate(inputs: HoldoutInputs, thresholds: Mapping) -> GateResult:
 # holdout days >= ``holdout_min_days`` (missing: off), decay or SE criterion, holdout total > 0
 # (``holdout_pnl_positive``: final equity > the equity at the holdout start), holdout alpha over
 # the 1x underlying > 0 (``holdout_alpha_positive``; ``benchmark.regress_daily`` on the holdout).
+#
+# Owner decision 2026-10-29: a run frozen with ``holdout_benchmark_rule`` (only next to the benchmark gate's
+# ``benchmark_rule``) meets that last condition on alpha > 0 OR the benchmark gate's beta-matched risk route
+# evaluated on the holdout: the holdout run against the 1x underlying at a constant leverage = its holdout beta,
+# over the holdout days with fresh capital. The holdout is a fifth of the window (250 days and up), so its block
+# length and confidence are its own keys; resamples and min beta are the benchmark gate's. When the risk route
+# does not apply, alpha alone decides. A run frozen without the key judges alpha alone. Nulls at holdout length:
+# tests/pipeline/holdout_risk_calibration.py.
+
+RULE_KEY = "holdout_benchmark_rule"
+BLOCK_KEY = "holdout_risk_block_days"
+CONFIDENCE_KEY = "holdout_risk_confidence"
+RISK_KEYS = benchmark.RiskKeys(rule=RULE_KEY, block_days=BLOCK_KEY, confidence=CONFIDENCE_KEY)
 
 
 @dataclass(frozen=True)
@@ -208,6 +222,7 @@ class HoldoutDailyInputs:
     holdout: DailyResult
     basis: Basis
     benchmark: Mapping | None = None  # benchmark.regress_daily on the holdout days (None: not computed)
+    matched: benchmark.MatchedRun | None = None  # the holdout's beta-matched run; read only under RULE_KEY
 
 
 def evaluate_daily(inputs: HoldoutDailyInputs, thresholds: Mapping) -> GateResult:
@@ -216,6 +231,13 @@ def evaluate_daily(inputs: HoldoutDailyInputs, thresholds: Mapping) -> GateResul
     min_days = thresholds.get("holdout_min_days")  # missing -> off
     z = thresholds.get("holdout_se_z")  # missing -> criterion (b) off
     require_alpha = bool(thresholds.get("holdout_alpha_positive", False))
+    rule = thresholds.get(RULE_KEY)  # missing: holdout alpha alone (every run frozen before 2026-10-29)
+    if rule is not None and (rule, thresholds.get(benchmark.RULE_KEY)) != (benchmark.RULE_ALPHA_OR_RISK,) * 2:
+        return invalid(
+            GATE,
+            f"{RULE_KEY} {rule!r}: defined only as {benchmark.RULE_ALPHA_OR_RISK!r}, next to {benchmark.RULE_KEY} "
+            f"= {benchmark.RULE_ALPHA_OR_RISK!r} (frozen {benchmark.RULE_KEY}: {thresholds.get(benchmark.RULE_KEY)!r})",
+        )
     stats = dict(inputs.benchmark) if inputs.benchmark is not None else None
     alpha = (stats or {}).get("alpha_per_day")
     train_sharpe, holdout_sharpe = sharpe(inputs.train, inputs.basis), sharpe(inputs.holdout, inputs.basis)
@@ -322,6 +344,8 @@ def evaluate_daily(inputs: HoldoutDailyInputs, thresholds: Mapping) -> GateResul
             report,
         )
     alpha_phrase = f", {phrase_daily(stats)}" if stats is not None else ""
+    if require_alpha and rule is not None:
+        return _alpha_or_risk(inputs, stats, rule, thresholds, report, decay_ok=decay_ok, decay=decay, se=se_phrase)
     if require_alpha and not alpha > 0:
         return failed(
             GATE,
@@ -337,4 +361,51 @@ def evaluate_daily(inputs: HoldoutDailyInputs, thresholds: Mapping) -> GateResul
         f"decay {pct(decay)} but within {se_phrase}, {n_days} days{alpha_phrase}",
         report,
         reason=f"Sharpe decay {decay:.1%} > {decay_max:.0%}, but holdout Sharpe is within {se_phrase} of train",
+    )
+
+
+def _alpha_or_risk(
+    inputs: HoldoutDailyInputs,
+    stats: dict,
+    rule: str,
+    thresholds: Mapping,
+    report: dict,
+    *,
+    decay_ok: bool,
+    decay: float,
+    se: str,
+) -> GateResult:
+    """The last check under ``holdout_benchmark_rule``: holdout alpha > 0 or the risk route on the holdout."""
+
+    alpha = stats["alpha_per_day"]
+    risk = benchmark.risk_route(inputs.holdout, inputs.basis, stats["beta"], inputs.matched, thresholds, RISK_KEYS)
+    if risk["status"] == "invalid":
+        return invalid(GATE, f"risk route: {risk['reason']}", {**report, "rule": rule, "risk_route": risk})
+    routes = [name for name, ok in (("alpha", alpha > 0), ("risk", risk["status"] == "pass")) if ok]
+    report = {
+        **report,
+        "rule": rule,
+        "alpha_route": "pass" if alpha > 0 else "fail",
+        "risk_route": risk,
+        "passed_routes": routes,
+    }
+    risk_phrase = benchmark.phrase_risk(risk)
+    if not routes:
+        return failed(
+            GATE,
+            "holdout_alpha_not_positive",
+            f"holdout {phrase_daily(stats)}: alpha <= 0 over the 1x underlying; risk route: {risk['reason']}",
+            f"holdout {phrase_daily(stats)}; {risk_phrase}",
+            report,
+        )
+    days = inputs.holdout.n_days
+    by = f"benchmark condition passed by the {' and '.join(routes)} route"
+    if decay_ok:
+        return passed(GATE, f"Sharpe decay {pct(decay)}, {days} days, {phrase_daily(stats)}; {risk_phrase}", report, by)
+    return passed(
+        GATE,
+        f"decay {pct(decay)} but within {se}, {days} days, {phrase_daily(stats)}; {risk_phrase}",
+        report,
+        reason=f"Sharpe decay {decay:.1%} > {float(thresholds['holdout_sharpe_decay_max']):.0%}, but holdout Sharpe "
+        f"is within {se} of train; {by}",
     )

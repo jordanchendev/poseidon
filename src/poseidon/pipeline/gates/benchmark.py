@@ -252,7 +252,7 @@ def evaluate_daily(inputs: BenchmarkDailyInputs, thresholds: Mapping) -> GateRes
     alpha = _alpha_route(inputs, thresholds)
     if rule is None or alpha.reason_code == INVALID_INPUT or thresholds.get("benchmark_alpha_t_min") is None:
         return alpha
-    risk = risk_route(inputs, alpha.report, thresholds)
+    risk = risk_route(inputs.result, inputs.basis, alpha.report["beta"], inputs.matched, thresholds)
     if risk["status"] == "invalid":
         return invalid(GATE, f"risk route: {risk['reason']}", {**alpha.report, "rule": rule, "risk_route": risk})
     routes = [name for name, ok in (("alpha", alpha.passed), ("risk", risk["status"] == "pass")) if ok]
@@ -333,6 +333,19 @@ RISK_KEYS = (
 )
 RISK_SEED = 0
 RISK_CHUNK = 256  # resamples per vectorised batch
+
+
+@dataclass(frozen=True)
+class RiskKeys:
+    """The ``thresholds`` keys one risk route reads (the train route's by default)."""
+
+    rule: str = RULE_KEY
+    block_days: str = RISK_KEYS[0]
+    resamples: str = RISK_KEYS[1]
+    confidence: str = RISK_KEYS[2]
+    min_beta: str = RISK_KEYS[3]
+
+
 RISK_METHOD = (
     "Calmar(strategy) - Calmar(1x underlying at constant leverage = beta rounded to 0.01, rebalanced daily, same "
     "instrument / capital / execution / costs / days); one-sided lower bound of a paired circular block bootstrap"
@@ -416,14 +429,24 @@ def calmar_difference(
     }
 
 
-def risk_route(inputs: BenchmarkDailyInputs, alpha_report: Mapping, thresholds: Mapping) -> dict:
-    """The risk route's report: ``status`` pass | fail | not_applicable | invalid, ``reason`` and the numbers."""
+def risk_route(
+    result: DailyResult,
+    basis: Basis,
+    beta: float,
+    matched: MatchedRun | None,
+    thresholds: Mapping,
+    keys: RiskKeys = RiskKeys(),
+) -> dict:
+    """The risk route's report on ``result`` (the train run; the holdout run reads its own ``keys``):
+    ``status`` pass | fail | not_applicable | invalid, ``reason`` and the numbers. ``beta``: the regression's
+    beta on the same days."""
 
-    missing = [key for key in RISK_KEYS if not is_finite(thresholds.get(key))]
+    names = (keys.block_days, keys.resamples, keys.confidence, keys.min_beta)
+    missing = [key for key in names if not is_finite(thresholds.get(key))]
     if missing:
-        return {"status": "invalid", "reason": f"{RULE_KEY} is frozen without {', '.join(missing)}"}
-    block, resamples = int(thresholds["benchmark_risk_block_days"]), int(thresholds["benchmark_risk_resamples"])
-    confidence, min_beta = float(thresholds["benchmark_risk_confidence"]), float(thresholds["benchmark_risk_min_beta"])
+        return {"status": "invalid", "reason": f"{keys.rule} is frozen without {', '.join(missing)}"}
+    block, resamples = int(thresholds[keys.block_days]), int(thresholds[keys.resamples])
+    confidence, min_beta = float(thresholds[keys.confidence]), float(thresholds[keys.min_beta])
     out = {
         "status": "not_applicable",
         "reason": "",
@@ -439,29 +462,26 @@ def risk_route(inputs: BenchmarkDailyInputs, alpha_report: Mapping, thresholds: 
     def not_applicable(reason: str) -> dict:
         return {**out, "reason": reason}
 
-    if inputs.basis != "return":
+    if basis != "return":
         return not_applicable("defined for equity-sized (daily_equity) runs; this run is judged in TWD")
-    beta = alpha_report.get("beta")
     if not beta >= min_beta:
         return not_applicable(f"beta {beta:.2f} < {min_beta:g}: no long exposure to match")
     leverage = round(float(beta), 2)
     out["matched_leverage"] = leverage
-    if inputs.matched is None:
+    if matched is None:
         return {**out, "status": "invalid", "reason": "the stage supplied no beta-matched run"}
-    matched = inputs.matched(leverage)
-    if isinstance(matched, NotApplicable):
-        return not_applicable(matched.reason)
-    if matched.dates != inputs.result.dates:
-        return {**out, "status": "invalid", "reason": "the beta-matched run does not cover the strategy's train days"}
-    s, m = inputs.result.returns, matched.returns
+    run = matched(leverage)
+    if isinstance(run, NotApplicable):
+        return not_applicable(run.reason)
+    if run.dates != result.dates:
+        return {**out, "status": "invalid", "reason": "the beta-matched run does not cover the strategy's days"}
+    s, m = result.returns, run.returns
     if not (np.isfinite(s).all() and np.isfinite(m).all()) or len(s) < 2 * block:
         return not_applicable(f"needs finite daily returns on at least {2 * block} days")
     stats = calmar_difference(s, m, block_days=block, resamples=resamples, confidence=confidence)
-    out.update(
-        stats, matched_costs=matched.costs.as_report(), matched_margin_calls=len(matched.event_days(["margin_call"]))
-    )
+    out.update(stats, matched_costs=run.costs.as_report(), matched_margin_calls=len(run.event_days(["margin_call"])))
     lower = stats["calmar_diff_lower"]
-    level = f"{confidence:.0%}"
+    level = f"{confidence * 100:g}%"  # 95%, 97.5%
     if lower is not None and lower > 0:
         return {
             **out,
@@ -479,4 +499,6 @@ def phrase_risk(risk: Mapping) -> str:
     s, m, lower = risk["strategy"]["calmar"], risk["matched"]["calmar"], risk["calmar_diff_lower"]
     if not (is_finite(s) and is_finite(m) and is_finite(lower)):
         return f"risk route at {risk['matched_leverage']:g}x: Calmar n/a"
-    return f"Calmar {s:.2f} vs {m:.2f} at {risk['matched_leverage']:g}x ({risk['confidence']:.0%} lower {lower:+.2f})"
+    return (
+        f"Calmar {s:.2f} vs {m:.2f} at {risk['matched_leverage']:g}x ({risk['confidence'] * 100:g}% lower {lower:+.2f})"
+    )
