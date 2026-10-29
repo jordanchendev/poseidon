@@ -1,0 +1,659 @@
+{
+  "meta": {
+    "name": "narrative-jev-control-set-v0",
+    "created": "2026-10-29",
+    "purpose": "Design 2026-10-29 §9 step 7 / D10: narrative claims (zh-TW KOL paraphrases) against verbatim official excerpts. narrative_apply stays off until every case the owner labels says_nothing gets no supports and no contradicts from JEV. Labels are evaluation metadata and are never sent to the model.",
+    "label_set": [
+      "supports",
+      "contradicts",
+      "says_nothing"
+    ],
+    "label_policy": "v1 (gold set 2026-10-21): period or entity conflict = contradicts; mixed clauses = says_nothing, tagged mixed; unit scaling = supports",
+    "labeler": "expected_label holds the agent's proposal (label_source agent-proposed) until the owner fills owner_label; jev_eval_control_set.py scores against expected_label, so copy owner_label into it before the run",
+    "excerpt_rule": "source.text is a raw verbatim substring of the source file (no whitespace canonicalisation); locator = 1-based line range; text_sha256 = sha256 of source.text",
+    "symbol_rule": "symbol = the run symbol narrative_apply would pass for the theme-scope revision (cfg symbols joined by ',')",
+    "counts": {
+      "supports": 7,
+      "contradicts": 9,
+      "says_nothing": 13
+    },
+    "source_documents": {
+      "fundamental:micron-fq4fy26-prepared-remarks": {
+        "title": "Micron FQ4 FY26 earnings call prepared remarks, 2026-09-30 (pdftotext -layout)",
+        "source_uri": "https://s25.q4cdn.com/621799436/files/doc_financials/2026/q4/Q4-FY26-Prepared-Remarks.pdf",
+        "path": "narrative_control_sources/micron-fq4fy26-prepared-remarks.txt",
+        "origin_path": "/Users/jordanchen/Workspace/Projects/aquarium/local_dev/sessions/2026-10-20-research-micron-tw-memory/sources/prepared-remarks.txt",
+        "file_sha256": "53543db7fbfde9511bd15c10ee57757e1534dcc7e98f9e8c391069e42593f869",
+        "frozen_config_sha256_match": true,
+        "language": "en"
+      },
+      "fundamental:micron-fq4fy26-press-release": {
+        "title": "Micron FQ4 FY26 results press release, 8-K EX-99.1, 2026-09-30 (html-to-text)",
+        "source_uri": "https://www.sec.gov/Archives/edgar/data/723125/000072312526000018/a2026q4ex991-pressrelease.htm",
+        "path": "narrative_control_sources/micron-fq4fy26-press-release.txt",
+        "origin_path": "/Users/jordanchen/Workspace/Projects/aquarium/local_dev/sessions/2026-10-20-research-micron-tw-memory/sources/pressrelease.txt",
+        "file_sha256": "75d944a00c915d1ed62e697be5c80385bcd988eb86f521bce83f29acb0c62b79",
+        "frozen_config_sha256_match": true,
+        "language": "en"
+      },
+      "fundamental:tsmc-3q26-6k": {
+        "title": "TSMC 3Q26 results, 6-K EX-99.1, 2026-10-15 (html-to-text)",
+        "source_uri": "https://www.sec.gov/Archives/edgar/data/1046179/000104617926000726/a3q26e_withguidancexfinal.htm",
+        "path": "narrative_control_sources/tsmc-3q26-6k.txt",
+        "origin_path": "/Users/jordanchen/Workspace/Projects/aquarium/local_dev/sessions/2026-10-20-research-tsmc-3q26-2330/sources/sec-6k.txt",
+        "file_sha256": "a069e4bafc85d1e88946e41ee638603d391dbf3e602bf857a98a2420e1a7852f",
+        "frozen_config_sha256_match": true,
+        "language": "en"
+      },
+      "fundamental:umc-2q26-results-release": {
+        "title": "UMC 2Q26 results and Singapore/Tainan expansion, 6-K EX-99, 2026-07-29 (html-to-text)",
+        "source_uri": "https://www.sec.gov/Archives/edgar/data/1033767/000119312526322027/umc-ex99.htm",
+        "path": "narrative_control_sources/umc-2q26-results-release.txt",
+        "origin_path": "/Users/jordanchen/Workspace/Projects/aquarium/local_dev/sessions/2026-10-21-research-umc-2303/sources/umc-2q26-results-release/umc-ex99.htm.txt",
+        "file_sha256": "010f744f80e2130e4e457fbb90224b2ec4395019d732228a55d7e0ef26dfdd0d",
+        "frozen_config_sha256_match": true,
+        "language": "en"
+      },
+      "fundamental:umc-3q26-conference-notice": {
+        "title": "UMC news clarification and Q3 conference notice, 6-K EX-99, 2026-10-13 (html-to-text)",
+        "source_uri": "https://www.sec.gov/Archives/edgar/data/1033767/000119312526419602/umc-ex99.htm",
+        "path": "narrative_control_sources/umc-3q26-conference-notice.txt",
+        "origin_path": "/Users/jordanchen/Workspace/Projects/aquarium/local_dev/sessions/2026-10-21-research-umc-2303/sources/umc-3q26-conference-notice/umc-ex99.htm.txt",
+        "file_sha256": "0b4e4ac71ddd10b187c10953fc9c4a0754700182667de97a5350da4b2aa3e984",
+        "frozen_config_sha256_match": true,
+        "language": "en"
+      },
+      "fundamental:nittobo-nanya-collaboration-2025-11-28": {
+        "title": "Nittobo, Notice Regarding Collaboration with Nan Ya Plastics Corporation, 2025-11-28 (pdftotext)",
+        "source_uri": "https://ssl4.eir-parts.net/doc/3110/ir_material3/265577/00.pdf",
+        "path": "narrative_control_sources/nittobo-nanya-collaboration-2025-11-28.txt",
+        "origin_path": "/private/tmp/claude-501/-Users-jordanchen-Workspace-Projects-aquarium/1676b837-d56a-4915-bd84-ac70b626bbbf/scratchpad/pdf/nittobo_265577.txt",
+        "file_sha256": "2352dfd67f3af33155115f33863d203e696e57cdc008c6637b431963d18a578b",
+        "frozen_config_sha256_match": false,
+        "language": "en"
+      },
+      "fundamental:nanya-plastics-nittobo-release-2025-11-28": {
+        "title": "南亞塑膠新聞稿：南亞公司攜手日東紡進行特殊玻纖布策略合作，2025-11-28 (pdftotext)",
+        "source_uri": "https://www.npc.com.tw/npcfile/public/news/pic/F20251128153002595.PDF",
+        "path": "narrative_control_sources/nanya-plastics-nittobo-release-2025-11-28.txt",
+        "origin_path": "/private/tmp/claude-501/-Users-jordanchen-Workspace-Projects-aquarium/1676b837-d56a-4915-bd84-ac70b626bbbf/scratchpad/pdf/npc_20251128.txt",
+        "file_sha256": "124f8b4c9b7d02510d13876b60345925ac3e2a1d2b498559da268b13504b9a81",
+        "frozen_config_sha256_match": false,
+        "language": "zh-TW"
+      },
+      "fundamental:nanya-tech-2408-annual-report-2025": {
+        "title": "南亞科 2025 股東會年報 (pdftotext)",
+        "source_uri": "MOPS 股東會年報 2025_2408_20260521F04.pdf",
+        "path": "narrative_control_sources/nanya-tech-2408-annual-report-2025.txt",
+        "origin_path": "/private/tmp/claude-501/-Users-jordanchen-Workspace-Projects-aquarium/1676b837-d56a-4915-bd84-ac70b626bbbf/scratchpad/ar/2408.txt",
+        "file_sha256": "dbff0a5fe2a4cd80b193d6ee4c7a10bfb2906bc3f819f24d00dd281581e7726e",
+        "frozen_config_sha256_match": false,
+        "language": "zh-TW"
+      },
+      "fundamental:luxnet-4979-annual-report-2025": {
+        "title": "華星光 2025 股東會年報 (pdftotext)",
+        "source_uri": "MOPS 股東會年報 2025_4979_20260527F04.pdf",
+        "path": "narrative_control_sources/luxnet-4979-annual-report-2025.txt",
+        "origin_path": "/private/tmp/claude-501/-Users-jordanchen-Workspace-Projects-aquarium/1676b837-d56a-4915-bd84-ac70b626bbbf/scratchpad/ar/4979.txt",
+        "file_sha256": "7ab9d6513b7e9ef1a91d150687197dd67c2fcc402f57408b685d8dc8e9316861",
+        "frozen_config_sha256_match": false,
+        "language": "zh-TW"
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "nctl-01",
+      "narrative_ref": "N15",
+      "claim": "客戶為保出貨量主動壓低每台伺服器的記憶體用量",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 140-144",
+        "text": "We expect server unit growth in the high-teens percentage range in both calendar 2026 and 2027. This\nstrong server unit growth is supported by a modestly lower rate of content growth than prior\nexpectations, amid tight memory supply. Growing model parameter size, longer context lengths and\nhigher concurrency continue to increase the memory and storage content required to execute AI\nworkloads efficiently.",
+        "text_sha256": "547fc71b26cf0cb9969a96645f9654b100282f8a9ffbdce08a043eda7468be46"
+      },
+      "expected_label": "says_nothing",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "loose_paraphrase",
+      "note": "原文只說內容成長率略低於預期、背景是供給吃緊；沒有說客戶主動壓低，也沒說是為了保出貨（§7.3 預期）",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-02",
+      "narrative_ref": "N15-fact",
+      "claim": "Micron 預期伺服器記憶體內容成長率略低於先前預期，背景是記憶體供給吃緊",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 140-144",
+        "text": "We expect server unit growth in the high-teens percentage range in both calendar 2026 and 2027. This\nstrong server unit growth is supported by a modestly lower rate of content growth than prior\nexpectations, amid tight memory supply. Growing model parameter size, longer context lengths and\nhigher concurrency continue to increase the memory and storage content required to execute AI\nworkloads efficiently.",
+        "text_sha256": "547fc71b26cf0cb9969a96645f9654b100282f8a9ffbdce08a043eda7468be46"
+      },
+      "expected_label": "supports",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "loose_paraphrase",
+      "note": "modestly lower rate of content growth than prior expectations, amid tight memory supply（§7.3 被引用的 fact claim）",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-03",
+      "narrative_ref": "N16",
+      "claim": "記憶體供給吃緊會延續到至少 2028 年",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 222-226",
+        "text": "In DRAM, for calendar 2026, we expect industry bit shipments to grow in the mid-20s percentage range.\nWe expect Micron DRAM supply to grow approximately in line with industry supply growth. For calendar\n2027 and 2028, we expect industry DRAM bit shipments to grow approximately in the low-20s percentage\nrange and the industry to remain supply constrained in both years. We expect industry HBM bit shipments\nto grow faster than conventional DRAM through calendar 2028.",
+        "text_sha256": "c22ab419ba423d5dcd370e92e7da7848ba4ca2226348a740205bfb0611077626"
+      },
+      "expected_label": "supports",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "clear",
+      "note": "the industry to remain supply constrained in both years（2027、2028）；HBM 成長快於 DRAM through 2028（§7.3 預期）",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-04",
+      "narrative_ref": "N18",
+      "claim": "L4 以上自駕車需要 200GB 以上的記憶體",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 191-192",
+        "text": "Memory content in Level 4 and higher autonomous vehicles typically exceeds 200GB, while storage\ncontent reaches multiple terabytes",
+        "text_sha256": "11873321c09948f37268ee161641c9b2bc35e00195286adb2a0916e63100c807"
+      },
+      "expected_label": "supports",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "clear",
+      "note": "Memory content in Level 4 and higher autonomous vehicles typically exceeds 200GB（§7.3 預期）",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-05",
+      "narrative_ref": "N17",
+      "claim": "agentic AI 工作負載帶動伺服器 CPU 的新需求",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 140-144",
+        "text": "We expect server unit growth in the high-teens percentage range in both calendar 2026 and 2027. This\nstrong server unit growth is supported by a modestly lower rate of content growth than prior\nexpectations, amid tight memory supply. Growing model parameter size, longer context lengths and\nhigher concurrency continue to increase the memory and storage content required to execute AI\nworkloads efficiently.",
+        "text_sha256": "547fc71b26cf0cb9969a96645f9654b100282f8a9ffbdce08a043eda7468be46"
+      },
+      "expected_label": "says_nothing",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "same_topic",
+      "note": "同為伺服器需求段落，但沒有 agentic 也沒有 CPU（§7.3：prepared remarks 全文沒有 agentic）",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-06",
+      "narrative_ref": "post8",
+      "claim": "Micron 預期 2027 年伺服器出貨量成長落在百分之十幾的高段，主要由 agentic AI 工作負載帶動",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 140-144",
+        "text": "We expect server unit growth in the high-teens percentage range in both calendar 2026 and 2027. This\nstrong server unit growth is supported by a modestly lower rate of content growth than prior\nexpectations, amid tight memory supply. Growing model parameter size, longer context lengths and\nhigher concurrency continue to increase the memory and storage content required to execute AI\nworkloads efficiently.",
+        "text_sha256": "547fc71b26cf0cb9969a96645f9654b100282f8a9ffbdce08a043eda7468be46"
+      },
+      "expected_label": "says_nothing",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "mixed",
+      "note": "混合子句：前半 high-teens 有支持，後半「agentic 帶動」原文沒有；label_policy v1 混合子句 = says_nothing",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en",
+      "mixed": true
+    },
+    {
+      "id": "nctl-07",
+      "narrative_ref": "post8",
+      "claim": "Micron 預期 2026 年產業 DRAM 位元出貨成長約在百分之二十出頭",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 222-226",
+        "text": "In DRAM, for calendar 2026, we expect industry bit shipments to grow in the mid-20s percentage range.\nWe expect Micron DRAM supply to grow approximately in line with industry supply growth. For calendar\n2027 and 2028, we expect industry DRAM bit shipments to grow approximately in the low-20s percentage\nrange and the industry to remain supply constrained in both years. We expect industry HBM bit shipments\nto grow faster than conventional DRAM through calendar 2028.",
+        "text_sha256": "c22ab419ba423d5dcd370e92e7da7848ba4ca2226348a740205bfb0611077626"
+      },
+      "expected_label": "contradicts",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "period",
+      "note": "期間衝突：2026 年是 mid-20s；low-20s 是 2027、2028 年的預期",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-08",
+      "narrative_ref": "post8",
+      "claim": "Micron 預期 2027 與 2028 年產業 NAND 位元出貨成長約在百分之二十出頭",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 216-226",
+        "text": "In NAND, for calendar 2026, we expect industry bit shipments to grow in the low-20s percentage range,\nslightly above our prior expectations. We expect Micron NAND supply to grow less than industry supply\ngrowth in calendar 2026. For calendar 2027 and 2028, we expect industry NAND bit shipments to grow\napproximately in the mid-20s percentage range and the industry to remain supply constrained in both\nyears.\n\nIn DRAM, for calendar 2026, we expect industry bit shipments to grow in the mid-20s percentage range.\nWe expect Micron DRAM supply to grow approximately in line with industry supply growth. For calendar\n2027 and 2028, we expect industry DRAM bit shipments to grow approximately in the low-20s percentage\nrange and the industry to remain supply constrained in both years. We expect industry HBM bit shipments\nto grow faster than conventional DRAM through calendar 2028.",
+        "text_sha256": "acbb97cf84ef8c33a6823d86610fbf8d9a4efe9b8e2aaf4d4774f0a756a5572f"
+      },
+      "expected_label": "contradicts",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "entity",
+      "note": "實體衝突：low-20s 是 DRAM；同段 NAND 2027、2028 是 mid-20s",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-09",
+      "narrative_ref": "post8",
+      "claim": "Micron 預期到 2028 年產業 HBM 位元出貨成長都會慢於一般 DRAM",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 222-226",
+        "text": "In DRAM, for calendar 2026, we expect industry bit shipments to grow in the mid-20s percentage range.\nWe expect Micron DRAM supply to grow approximately in line with industry supply growth. For calendar\n2027 and 2028, we expect industry DRAM bit shipments to grow approximately in the low-20s percentage\nrange and the industry to remain supply constrained in both years. We expect industry HBM bit shipments\nto grow faster than conventional DRAM through calendar 2028.",
+        "text_sha256": "c22ab419ba423d5dcd370e92e7da7848ba4ca2226348a740205bfb0611077626"
+      },
+      "expected_label": "contradicts",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "clear",
+      "note": "方向相反：原文是 HBM bit shipments to grow faster than conventional DRAM through calendar 2028",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-10",
+      "narrative_ref": "post8",
+      "claim": "2028 年記憶體漲價幅度會放緩",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 432-433",
+        "text": "We expect higher gross margins beyond fiscal Q1 for\nthe remainder of fiscal 2027, with a more moderate rate of price increases.",
+        "text_sha256": "3fc8b9b0ec9691a398835cdf2294151baba5ac23fefae841d2437ff95e90abd1"
+      },
+      "expected_label": "contradicts",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "period",
+      "note": "期間衝突：原文的 more moderate rate of price increases 指 FY2027 Q1 之後，不是 2028；邊界案例，也可讀成 says_nothing",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-11",
+      "narrative_ref": "post8",
+      "claim": "Micron 預期 FY2027 第一季是 FY2027 全年毛利率的低點",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 427-427",
+        "text": "We anticipate fiscal Q1 to be the floor for gross margins in fiscal 2027.",
+        "text_sha256": "351d586010115bfa2fa2b03918445d6ee9639c51aef637892cf5c2a1cb0d97b0"
+      },
+      "expected_label": "supports",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "clear",
+      "note": "We anticipate fiscal Q1 to be the floor for gross margins in fiscal 2027",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-12",
+      "narrative_ref": "post8",
+      "claim": "Micron 預期 FY2027 第一季是 FY2027 全年毛利率的高點",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 427-427",
+        "text": "We anticipate fiscal Q1 to be the floor for gross margins in fiscal 2027.",
+        "text_sha256": "351d586010115bfa2fa2b03918445d6ee9639c51aef637892cf5c2a1cb0d97b0"
+      },
+      "expected_label": "contradicts",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "clear",
+      "note": "原文是 floor（低點），方向相反",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-13",
+      "narrative_ref": "post8",
+      "claim": "無塵室不足是整個半導體產業的共同供給限制",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 228-232",
+        "text": "The structural gap between DRAM supply and demand growth rates is resulting in ongoing supply\ntightness, and cleanroom additions are required to augment node-transition supply growth and help\nnarrow the gap. Even with additional industry DRAM cleanroom space plans, with robust demand trends\nincluding new upside requests from customers, we do not have line of sight to when supply and demand\nwill return to balance.",
+        "text_sha256": "799edaa941c18733d4f53ffaa02fbe70a55b181b8c473c8740a8194fff090136"
+      },
+      "expected_label": "says_nothing",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "same_topic",
+      "note": "原文只講 DRAM 需要新增無塵室；推不到整個半導體產業",
+      "symbol": "2404,6196,6139",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-14",
+      "narrative_ref": "post8",
+      "claim": "無塵室不足是整個半導體產業的共同供給限制",
+      "source": {
+        "document_id": "fundamental:umc-2q26-results-release",
+        "locator": "lines 56-56",
+        "text": "In Singapore, we will invest in the cleanroom installation of the Phase 4 (P4) facility and tool purchases to expand our silicon photonics capacity. With the building shell already built, we can expand cleanroom capacity efficiently as customer demand ramps.",
+        "text_sha256": "918d95b24fd80e65f4af242f739e2c4d981d493b5534587ed4040641de46a7fe"
+      },
+      "expected_label": "says_nothing",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "same_topic",
+      "note": "聯電只說新加坡 P4 投資無塵室、可隨需求擴充；沒有說無塵室不足是產業限制",
+      "symbol": "2404,6196,6139",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-15",
+      "narrative_ref": "post8",
+      "claim": "Micron 的 FY2027 出貨已有 75% 以上被客戶鎖定",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 157-158",
+        "text": "We have completed agreements for the vast\nmajority of our calendar 2027 HBM bit supply with significant price increases year over year",
+        "text_sha256": "e4597098e90f1bc847ce20b02be2e36bdbd7602df291cf1ca54bbd126bbd78c9"
+      },
+      "expected_label": "says_nothing",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "same_topic",
+      "note": "原文只講 calendar 2027 HBM bit supply 的 vast majority 已談定；總出貨比例沒有提到",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-16",
+      "narrative_ref": "post8",
+      "claim": "Micron 2026 會計年度第四季資料中心 SSD 營收接近 100 億美元",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-prepared-remarks",
+        "locator": "lines 165-166",
+        "text": "Data center SSD revenue in fiscal Q4 was nearly $10 billion,\nmore than 10 times the year-ago quarter",
+        "text_sha256": "fae46d4ebd8201397ebe8df2f31df667d7794f444b6775b69c7b4004d3a6d6cc"
+      },
+      "expected_label": "supports",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "unit_scaling",
+      "note": "nearly $10 billion = 接近 100 億美元；label_policy v1 單位換算 = supports",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-17",
+      "narrative_ref": "post8",
+      "claim": "Micron 伺服器 LPDDR SOCAMM 產品營收在 2026 會計年度第三季較前一季成長超過一倍",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-press-release",
+        "locator": "lines 125-125",
+        "text": "•Our industry leading server LPDDR SOCAMM portfolio revenue more than doubled sequentially in the fourth quarter of 2026.",
+        "text_sha256": "1800e81c84abc6fbc108f3f967113c8936d913cd00c0e0baa19ecb790f0a7298"
+      },
+      "expected_label": "contradicts",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "period",
+      "note": "期間衝突：原文是 fourth quarter of 2026",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-18",
+      "narrative_ref": "post8",
+      "claim": "Micron 已開始向實體 AI 客戶量產出貨 LPDDR6",
+      "source": {
+        "document_id": "fundamental:micron-fq4fy26-press-release",
+        "locator": "lines 131-131",
+        "text": "•We began sampling 1-gamma based LPDDR6 products to multiple physical AI markets.",
+        "text_sha256": "e8a6b7767a5c69fdf57423cdfe3c4fffe4e5def16b43ec5efb0498f84ecabff3"
+      },
+      "expected_label": "says_nothing",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "stage",
+      "note": "原文是 began sampling（送樣），沒有說已量產，也沒有明說未量產；階段差異不在 v1 的 contradicts 清單，請 owner 定",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-19",
+      "narrative_ref": "post1",
+      "claim": "日東紡把特殊玻纖布的部分織布工程交由南亞塑膠協作",
+      "source": {
+        "document_id": "fundamental:nittobo-nanya-collaboration-2025-11-28",
+        "locator": "lines 32-33",
+        "text": "In addition, we have now decided to outsource a part of the weaving process for our special\nglass cloth to Nan Ya Plastics.",
+        "text_sha256": "db603f9cac72c9b791e87a863172226a3e69f145029b78c9adb86a33710cb385"
+      },
+      "expected_label": "supports",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "loose_paraphrase",
+      "note": "outsource a part of the weaving process for our special glass cloth to Nan Ya Plastics；「協作」是寬鬆轉述",
+      "symbol": "1303,1802,1815",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-20",
+      "narrative_ref": "N4",
+      "claim": "日東紡的 T glass 產能目標為 2025 年度的 3 倍",
+      "source": {
+        "document_id": "fundamental:nanya-plastics-nittobo-release-2025-11-28",
+        "locator": "lines 15-16",
+        "text": "預計至 2027 年，\n日東紡供應市場的特殊玻纖布中，將有 20%由本公司協助織造。",
+        "text_sha256": "178f3d22e63365369de5b4c1bd120855570463953277df83bc9d8564293fe8a6"
+      },
+      "expected_label": "says_nothing",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "same_topic",
+      "note": "同為日東紡擴產，但原文的數字是委外織造比例 20%，不是產能倍數",
+      "symbol": "1303,1802,1815",
+      "language": "zh-TW",
+      "source_language": "zh-TW"
+    },
+    {
+      "id": "nctl-21",
+      "narrative_ref": "post1",
+      "claim": "預計至 2027 年，南亞塑膠供應市場的特殊玻纖布中約 20% 將由日東紡織造",
+      "source": {
+        "document_id": "fundamental:nittobo-nanya-collaboration-2025-11-28",
+        "locator": "lines 46-48",
+        "text": "It is\nexpected that approximately 20% of the total glass cloth supplied by the Nittobo Group will\nbe woven by Nan Ya Plastics by 2027.",
+        "text_sha256": "14f5cfe853903431fd0297727c243ce8ddee9d3fad8d6af94e762da2cc3e2193"
+      },
+      "expected_label": "contradicts",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "entity",
+      "note": "實體對調：原文是日東紡供應的玻纖布約 20% 由南亞塑膠織造",
+      "symbol": "1303,1802,1815",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-22",
+      "narrative_ref": "post1",
+      "claim": "到 2026 年，日東紡供應市場的特殊玻纖布約有 20% 將由南亞塑膠協助織造",
+      "source": {
+        "document_id": "fundamental:nanya-plastics-nittobo-release-2025-11-28",
+        "locator": "lines 15-16",
+        "text": "預計至 2027 年，\n日東紡供應市場的特殊玻纖布中，將有 20%由本公司協助織造。",
+        "text_sha256": "178f3d22e63365369de5b4c1bd120855570463953277df83bc9d8564293fe8a6"
+      },
+      "expected_label": "contradicts",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "period",
+      "note": "期間衝突：原文是「預計至 2027 年」",
+      "symbol": "1303,1802,1815",
+      "language": "zh-TW",
+      "source_language": "zh-TW"
+    },
+    {
+      "id": "nctl-23",
+      "narrative_ref": "post1",
+      "claim": "日東紡目前已是電子材料領域的全球利基第一",
+      "source": {
+        "document_id": "fundamental:nittobo-nanya-collaboration-2025-11-28",
+        "locator": "lines 57-59",
+        "text": "We remain committed to expanding our business by meeting the robust demand for special\nglass and will work together as one to establish our position as the \"Global Niche No. 1\" in the\nelectronic materials field.",
+        "text_sha256": "57ade1a47b8c4e07db8d6a68c8155efb45c8af7caa87c26085d06e29bcac85fa"
+      },
+      "expected_label": "says_nothing",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "stage",
+      "note": "原文是目標（to establish our position as Global Niche No. 1），不是現況；也沒有說不是",
+      "symbol": "1303,1802,1815",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-24",
+      "narrative_ref": "post1",
+      "claim": "日東紡將直接供應 NER 原紗給南亞塑膠的 CCL 事業，且 NER 已進入量產",
+      "source": {
+        "document_id": "fundamental:nittobo-nanya-collaboration-2025-11-28",
+        "locator": "lines 51-54",
+        "text": "Regarding our Next-Generation Low-Dielectric Glass (NER), we have traditionally supplied\nglass cloth to various CCL companies through integrated production from yarn to cloth. This\ntime, we plan to supply NER yarn directly to Nan Ya Plastics, focusing specifically on their\nCCL business.",
+        "text_sha256": "b185b4b98159363770ca36efb128349737cd5d869fa756bbf71f9be22b1c4460"
+      },
+      "expected_label": "says_nothing",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "mixed",
+      "note": "混合子句：供應 NER 原紗有支持；NER 已量產原文沒有；label_policy v1 混合子句 = says_nothing",
+      "symbol": "1303,1802,1815",
+      "language": "zh-TW",
+      "source_language": "en",
+      "mixed": true
+    },
+    {
+      "id": "nctl-25",
+      "narrative_ref": "N16",
+      "claim": "記憶體供給吃緊會延續到至少 2028 年",
+      "source": {
+        "document_id": "fundamental:nanya-tech-2408-annual-report-2025",
+        "locator": "lines 175-177",
+        "text": "AI 廣 泛 的 應 用 驅 動 DRAM 需 求 快 速 成 長 ， 主 要 供 應 商 減 少\nDDR4/LPDDR4 產出，產能陸續轉至 HBM 及 DDR5/LPDDR5，DRAM 資本支出主要在先進\n製程與高端產品，整體 DRAM 供應相對吃緊，預期將延續至 116 年。",
+        "text_sha256": "3266e68aea454c927a25bf639dc2404997cd4ac35d80f07e6fdf9e54c845c11a"
+      },
+      "expected_label": "contradicts",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "period",
+      "note": "期間衝突：南亞科說 DRAM 吃緊預期延續至 116 年（2027），不到 2028；邊界案例，「延續至 2027」也可讀成沒談 2028（says_nothing）",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "zh-TW"
+    },
+    {
+      "id": "nctl-26",
+      "narrative_ref": "N16-var",
+      "claim": "南亞科預期整體 DRAM 供應吃緊將延續至 2027 年",
+      "source": {
+        "document_id": "fundamental:nanya-tech-2408-annual-report-2025",
+        "locator": "lines 175-177",
+        "text": "AI 廣 泛 的 應 用 驅 動 DRAM 需 求 快 速 成 長 ， 主 要 供 應 商 減 少\nDDR4/LPDDR4 產出，產能陸續轉至 HBM 及 DDR5/LPDDR5，DRAM 資本支出主要在先進\n製程與高端產品，整體 DRAM 供應相對吃緊，預期將延續至 116 年。",
+        "text_sha256": "3266e68aea454c927a25bf639dc2404997cd4ac35d80f07e6fdf9e54c845c11a"
+      },
+      "expected_label": "supports",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "unit_scaling",
+      "note": "民國 116 年 = 2027 年；比照單位換算 = supports",
+      "symbol": "2408,2344",
+      "language": "zh-TW",
+      "source_language": "zh-TW"
+    },
+    {
+      "id": "nctl-27",
+      "narrative_ref": "post4",
+      "claim": "400G/lane PAM4 的傳輸距離上限約為 500m 到 1km",
+      "source": {
+        "document_id": "fundamental:luxnet-4979-annual-report-2025",
+        "locator": "lines 167-167",
+        "text": "本司開發之產品主要應用於 AI 數據中心，傳輸距離主要介於 500m-80km。",
+        "text_sha256": "6c4c56eeea17db3ae9f9ff784449db4534828f7b5de0075ffe6a4144651625f2"
+      },
+      "expected_label": "says_nothing",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "same_topic",
+      "note": "數字干擾：華星光說自家產品傳輸距離 500m-80km；不是 400G/lane PAM4 的物理上限",
+      "symbol": "3363",
+      "language": "zh-TW",
+      "source_language": "zh-TW"
+    },
+    {
+      "id": "nctl-28",
+      "narrative_ref": "post2",
+      "claim": "台積電預計 2030 年將 High-NA EUV 導入量產",
+      "source": {
+        "document_id": "fundamental:tsmc-3q26-6k",
+        "locator": "lines 14-14",
+        "text": "In the third quarter, shipments of 2-nanometer accounted for 8% of total wafer revenue; 3-nanometer accounted for 33%; 5-nanometer accounted for 28%; and 7-nanometer accounted for 10%. Advanced technologies, defined as 7-nanometer and more advanced technologies, accounted for 79% of total wafer revenue.",
+        "text_sha256": "ef28a2538e9c049a8590ab1dca0e80161c4bb42f33bf05ce59dce43def8db613"
+      },
+      "expected_label": "says_nothing",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "same_topic",
+      "note": "同一家公司的製程營收占比，沒有提到 High-NA EUV",
+      "symbol": "2330",
+      "language": "zh-TW",
+      "source_language": "en"
+    },
+    {
+      "id": "nctl-29",
+      "narrative_ref": "rumor",
+      "claim": "聯電 2026 年營收預估年增近 21%",
+      "source": {
+        "document_id": "fundamental:umc-3q26-conference-notice",
+        "locator": "lines 23-26",
+        "text": "6. Content of the report:\n「...UMC’s 2026 revenue is estimated to grow by nearly 21% year on year, with profit expected to increase by approximately 133%...」\n7. Cause of occurrence:\nThe Company does not comment on speculative reports or market rumors. Regarding the Company’s financial and operating results, please refer to the public notice on MOPS.",
+        "text_sha256": "6f7a28fb483d7833d758336c9d90468a85c942cc056f896d72cb9bbe4c42b12f"
+      },
+      "expected_label": "says_nothing",
+      "label_source": "agent-proposed",
+      "owner_label": null,
+      "case_kind": "attributed_rumor",
+      "note": "原文引述中時報導的 21%，但公司聲明不評論傳聞；引述媒體 ≠ 公司證實",
+      "symbol": "2303",
+      "language": "zh-TW",
+      "source_language": "en"
+    }
+  ]
+}
