@@ -1,5 +1,6 @@
-"""Owner decision 2026-10-29 (design 2026-10-29 §4.5, step 7 recalibration): the deterministic period and media checks
-that run before JEV on a narrative claim. No network.
+"""Owner decision 2026-10-29 (design 2026-10-29 §4.5, step 7 recalibration): the narrative judgement runs deterministic
+gates before JEV and takes a JEV majority vote. narrative_check.judge_record is the one path for the judgement, the
+sweep and the control-set evaluation. No network.
   PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/test_narrative_precheck.py
 """
 
@@ -11,6 +12,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import narrative_check  # noqa: E402
 from claim_precheck import check_periods, extract_periods, quoted_media  # noqa: E402
 
 NANYA = "整體 DRAM 供應相對吃緊，預期將延續至 116 年。"
@@ -112,3 +114,69 @@ def test_spaced_chinese_notice_is_restated():
 )
 def test_not_restated(claim, excerpt):
     assert not quoted_media(claim, excerpt)["restated"]
+
+
+# ------------------------------------------------------------------------------------------------ judge_record
+class Votes:
+    """A JEV stand-in that answers each call with the next (label, probability of that label)."""
+
+    def __init__(self, *answers):
+        self.answers, self.calls = list(answers), 0
+
+    def judge(self, claim, source, locator, symbol, as_of):
+        label, p = self.answers[self.calls]
+        self.calls += 1
+        rest = round((1 - p) / 2, 4)
+        probs = {k: p if k == label else rest for k in narrative_check.LABELS}
+        return {"label": label, "confidence": p, "probabilities": probs, "latency_ms": 1}
+
+
+def judge(jev, claim="Micron 預期伺服器記憶體內容成長率略低於先前預期", source="content growth was lower"):
+    return narrative_check.judge_record(jev, claim, source, "claims[0]", "2303", "2026-10-29T00:00:00Z")
+
+
+def test_period_gate_decides_without_jev():
+    jev = Votes()
+    r = judge(jev, "記憶體供給吃緊會延續到至少 2028 年", NANYA)
+    assert (r["label"], r["precheck"], r["votes"], jev.calls) == ("says_nothing", "period", [], 0)
+
+
+def test_media_gate_decides_without_jev():
+    jev = Votes()
+    r = judge(jev, "聯電 2026 年營收預估年增近 21%", UMC_NOTICE)
+    assert (r["label"], r["precheck"], r["votes"], jev.calls) == ("says_nothing", "media", [], 0)
+
+
+def test_majority_label_stands():
+    jev = Votes(("supports", 0.9), ("says_nothing", 0.6), ("supports", 0.9))
+    r = judge(jev)
+    assert (r["label"], r["precheck"], r["votes"], jev.calls) == (
+        "supports",
+        "none",
+        ["supports", "says_nothing", "supports"],
+        narrative_check.JEV_VOTES,
+    )
+    assert r["p_label"] == pytest.approx((0.9 + 0.2 + 0.9) / 3, abs=1e-4)
+
+
+def test_majority_below_half_probability_is_says_nothing():  # nctl-06: supports at 0.47 to 0.49
+    r = judge(Votes(("supports", 0.49), ("supports", 0.47), ("says_nothing", 0.48)))
+    assert r["label"] == "says_nothing" and r["votes"] == ["supports", "supports", "says_nothing"]
+
+
+def test_no_majority_is_says_nothing():
+    r = judge(Votes(("supports", 0.9), ("contradicts", 0.9), ("says_nothing", 0.9)))
+    assert r["label"] == "says_nothing"
+
+
+def test_contradicts_majority_stands():
+    assert judge(Votes(*[("contradicts", 0.8)] * 3))["label"] == "contradicts"
+
+
+def test_answer_without_probabilities_is_refused():
+    class NoProbabilities(Votes):
+        def judge(self, *a):
+            return {**super().judge(*a), "probabilities": None}
+
+    with pytest.raises(ValueError, match="probabilities"):
+        judge(NoProbabilities(*[("supports", 0.9)] * 3))

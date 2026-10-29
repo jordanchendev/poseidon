@@ -71,9 +71,7 @@ class FakeJev(tr.FakeOpenRouter):
         st = req["state"]
         judged, swept = self.by_claim.get(st["claim"], ("supports", "supports"))
         label = swept if st["source_context"]["locator"] == "all official excerpts" else judged
-        return 200, json.dumps(
-            {"answers": {"citation_relation": {"choice": label, "confidence": 0.9}}, "usage": {"cost": 0.00002}}
-        ).encode()
+        return 200, json.dumps(tr.jev_answer(label, 0.9, 0.00002)).encode()
 
 
 def seed(env):
@@ -204,6 +202,8 @@ def test_on_writes_one_event_per_rule_row(env):
         assert [e["kind"] for e in written] == ([kind] if kind else []), rule
         assert checks[nid]["event_seq"] == (written[0]["seq"] if kind else None), rule
         assert checks[nid]["jev_label"] == CASES[rule][5] and checks[nid]["sweep_label"] == CASES[rule][6], rule
+        sweep = res[nid]["judged"]["sweep"]
+        assert sweep["precheck"] == "none" and sweep["votes"] == [CASES[rule][6]] * narrative_check.JEV_VOTES, rule
     assert checks[ids["R7"]]["status_before"] == "partially_verified"
     r1 = next(e for e in events[ids["R1"]] if e["rule"] == "R1")
     basis, jev = json.loads(r1["basis_json"]), json.loads(r1["jev_json"])
@@ -218,8 +218,9 @@ def test_on_writes_one_event_per_rule_row(env):
     assert jev["label"] == "supports" and jev["model"] == runner.JEV_MODEL
     r5 = next(e for e in events[ids["R5"]] if e["rule"] == "R5")
     assert r5["at"] == "2026-10-15T00:00:00Z"  # max(evidence available_at, the record's last event at)
-    assert len(t.jev_calls) == 2 + 7 + 9  # fact claims, judgements (R1-R7), sweeps (every shown record)
-    assert run_json["costs"]["jev_narrative_usd"] == pytest.approx(16 * 0.00002)
+    votes = narrative_check.JEV_VOTES
+    assert len(t.jev_calls) == 2 + votes * (7 + 9)  # fact claims, then judgements (R1-R7) and sweeps (every record)
+    assert run_json["costs"]["jev_narrative_usd"] == pytest.approx(votes * 16 * 0.00002)
 
 
 def test_off_by_default_writes_checks_but_no_events(env):
@@ -256,6 +257,7 @@ def test_rerun_of_the_same_revision_calls_no_jev_and_writes_nothing(env):
     again = narrative_check.apply(path, rev, payload, cfg, jev, enabled=True)
     assert t.jev_calls == [] and ledger_rows(path, rev["identity"]["revision_id"]) == before
     assert [x["outcome"] for x in again["records"]] == [x["outcome"] for x in rev["narrative_results"]["records"]]
+    assert all(x["judged"] is None for x in again["records"])
     # a crash after the events but before the check rows: the rerun judges again and reuses the events
     db = sqlite3.connect(path)
     db.execute("DELETE FROM narrative_checks")
@@ -263,7 +265,7 @@ def test_rerun_of_the_same_revision_calls_no_jev_and_writes_nothing(env):
     db.close()
     redo = narrative_check.apply(path, rev, payload, cfg, jev, enabled=True)
     checks, events = ledger_rows(path, rev["identity"]["revision_id"])
-    assert len(t.jev_calls) == 16 and events == before[1]
+    assert len(t.jev_calls) == narrative_check.JEV_VOTES * 16 and events == before[1]
     assert {nid: c["event_seq"] for nid, c in checks.items()} == {nid: c["event_seq"] for nid, c in before[0].items()}
     assert [x["outcome"] for x in redo["records"]] == [x["outcome"] for x in again["records"]]
 

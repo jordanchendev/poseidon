@@ -364,7 +364,7 @@ class Jev:
         return cap("\n\n".join(parts), JEV_SOURCE_CAP)
 
     def judge(self, claim, source_text, locator, symbol, as_of):
-        """One citation_relation judgement -> {label, confidence, latency_ms}. Raises draft.PostError."""
+        """One citation_relation judgement -> {label, confidence, probabilities, latency_ms}. Raises draft.PostError."""
         from jev_eval_control_set import build_request
 
         case = {"symbol": symbol, "claim": claim, "source": {"text": source_text, "locator": locator}}
@@ -386,6 +386,7 @@ class Jev:
         return {
             "label": ans.get("choice"),
             "confidence": ans.get("confidence"),
+            "probabilities": ans.get("probabilities"),
             "latency_ms": round((time.monotonic() - t0) * 1000),
         }
 
