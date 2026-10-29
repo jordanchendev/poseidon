@@ -36,7 +36,8 @@ Three pieces:
        month-name dates (Oct. 15), fractions (1/2) and footnote markers such as ``net(2)``.
      * tables: after a ``(Unit: NT$ million ...)`` / ``(單位：新台幣百萬元)`` header, a bare number is flagged
        ``table=True`` and may match any unit class by its raw value or as money in the declared unit.
-   ``extract_periods(text)`` lists period mentions (Q3, FQ4, 3Q26, 1H, FY2026, 2026 年, 第三季, ...) separately.
+   ``extract_periods(text)`` lists period mentions (Q3, FQ4, 3Q26, 1H, FY2026, 2026 年, 第三季, 民國 116 年, a bare
+   2027, ...) separately, each with the AD ``years`` it names and ``at_least`` for a lower bound (至少到 2028 年).
 
 2. ``check_numbers(claim, excerpt)`` -- every claim quantity needs an excerpt counterpart with the same unit class
    (and compatible currency) within 0.5 % after scale normalisation (``direct``), or a ``derived`` one:
@@ -53,6 +54,12 @@ Three pieces:
    has no quantity. ``period_mismatch`` lists matched growth-like claim quantities (percent/pp/multiple or signed)
    whose period token (yoy/qoq/mom) differs from every counterpart's token while some counterpart has one. It is
    reported only; deciding the label for it is policy.
+
+   Narrative gates (owner decision 2026-10-29), run before JEV on a narrative claim:
+     * ``check_periods(claim, excerpt)`` -- ``not_covered`` when the excerpt names years but not every year the claim
+       names (a lower bound needs the excerpt to reach it);
+     * ``quoted_media(claim, excerpt)`` -- ``restated`` when the excerpt has clarification-notice wording
+       (MEDIA_MARKERS) and every number of the claim.
 
 3. ``lint_atomic(claim)`` -- heuristic, NOT a parser. The claim is split on sentence delimiters (。；;!?. ),
    commas (，,), 、, conjunctions (且/並且/同時/以及/而且/但是/然而, and/while/but/whereas/although/however) and
@@ -250,10 +257,20 @@ TABLE_UNIT_RE = re.compile(
 )
 NUM_RE = re.compile(r"(?<![A-Za-z0-9.])(?P<sign>[+\-−])?(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)")
 PERIOD_RE = re.compile(
+    r"(?P<roc>(?:民國\s*)?(?<![\d.])1[0-3]\d\s*年)|"
+    r"(?P<span>(?<![\d.])20\d{2}\s*(?:[-–~～至到]|to|through)\s*20\d{2}(?![\d%]|\.\d))|"
     r"\b(?:F?Q[1-4](?:[-'’]?\d{2,4})?|[1-4]Q\d{2}|[12]H(?:\d{2})?|H[12]|FY\s?\d{2,4}|CY\s?\d{2,4})\b|"
     r"(?:fiscal|calendar)\s+(?:Q[1-4]\s+)?(?:19|20)\d{2}|(?:first|second|third|fourth)[- ]quarter|"
-    r"(?:first|second)[- ]half|(?:19|20)\d{2}\s*年|第[一二三四1-4]季|[上下]半年|會計年度"
+    r"(?:first|second)[- ]half|(?:19|20)\d{2}\s*年|第[一二三四1-4]季|[上下]半年|會計年度|"
+    r"(?<![\d.,$/A-Za-z])20\d{2}(?![\d%]|[.,]\d)"
 )
+FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+ROC_EPOCH = 1911  # 民國 116 年 = 2027
+AT_LEAST_BEFORE = re.compile(
+    r"(?:至少|最少)\s*(?:延續|持續)?\s*(?:到|至)?\s*$|at least\s+(?:through|until|to|into|in)?\s*$|through at least\s*$",
+    re.I,
+)
+AT_LEAST_AFTER = re.compile(r"^\s*(?:以後|之後|或更久|or later|and beyond)", re.I)
 
 
 @dataclass
@@ -651,9 +668,38 @@ def extract_quantities(text: str) -> list[Quantity]:
     return _annotate(text, _merge(text, _raw_tokens(text) + _word_tokens(text)))
 
 
+def _period_years(m) -> list[int]:
+    """AD years a PERIOD_RE match names: 民國 years + 1911, a 2026-2028 span in full, 4-digit years, the 2-digit year
+    of FY27 / CY27 / 3Q28 / 2H26 / Q4'26 as 20xx; [] for a period without a year (Q3, 第三季, first half)."""
+    if m.group("roc"):
+        return [int(re.search(r"1[0-3]\d", m.group("roc")).group(0)) + ROC_EPOCH]
+    full = [int(y) for y in re.findall(r"(?<!\d)(?:19|20)\d{2}(?!\d)", m.group(0))]
+    if m.group("span"):
+        return list(range(full[0], full[1] + 1))
+    if full:
+        return full
+    short = re.search(r"(?:FY|CY|Q[1-4][-'’]?|[1-4]Q|[12]H)\s?(\d{2})$", m.group(0))
+    return [2000 + int(short.group(1))] if short else []
+
+
 def extract_periods(text: str) -> list[dict]:
-    """Period mentions (not quantities) plus growth tokens, for display/audit."""
-    out = [{"text": m.group(0), "span": m.span(), "kind": "period"} for m in PERIOD_RE.finditer(text)]
+    """Period mentions (not quantities) plus growth tokens, for display/audit and the narrative period gate.
+    A period carries `years` (AD, see _period_years; full-width digits read as ASCII) and `at_least`, true for a lower
+    bound such as 「至少到 2028 年」, "at least through 2028" or "2028 or later"."""
+    text = text.translate(FULLWIDTH_DIGITS)
+    out = [
+        {
+            "text": m.group(0),
+            "span": m.span(),
+            "kind": "period",
+            "years": _period_years(m),
+            "at_least": bool(
+                AT_LEAST_BEFORE.search(text[max(0, m.start() - 24) : m.start()])
+                or AT_LEAST_AFTER.match(text[m.end() : m.end() + 12])
+            ),
+        }
+        for m in PERIOD_RE.finditer(text)
+    ]
     out += [
         {"text": m.group(0), "span": m.span(), "kind": next(k for k, v in m.groupdict().items() if v)}
         for m in GROWTH_RE.finditer(text)
@@ -870,6 +916,57 @@ def check_numbers(claim: str, excerpt: str, allow_sum: bool = False) -> dict:
         "matched": matched,
         "period_mismatch": period_mm,
     }
+
+
+# --------------------------------------------------------------------------------------------- narrative gates
+def check_periods(claim: str, excerpt: str) -> dict:
+    """Does the excerpt cover every year the claim names? A claim year is covered when the excerpt names it; a lower
+    bound (「至少到 2028 年」) is covered when the excerpt's latest year reaches it. An excerpt that names no year proves
+    nothing either way (no_excerpt_years). A year inside an excerpt "through 2028" span is covered only when named."""
+    claim_p = [p for p in extract_periods(claim) if p["kind"] == "period" and p["years"]]
+    have = sorted({y for p in extract_periods(excerpt) if p["kind"] == "period" for y in p["years"]})
+    missing = sorted(
+        {y for p in claim_p for y in p["years"] if have and (max(have) < y if p["at_least"] else y not in have)}
+    )
+    status = "not_covered" if missing else "covered"
+    if not have:
+        status = "no_excerpt_years"
+    if not claim_p:
+        status = "no_claim_years"
+    return {
+        "status": status,
+        "claim_years": sorted({y for p in claim_p for y in p["years"]}),
+        "at_least": sorted({y for p in claim_p if p["at_least"] for y in p["years"]}),
+        "excerpt_years": have,
+        "missing": missing,
+    }
+
+
+# TWSE/MOPS clarification-notice wording: the company restates a media report it neither confirms nor denies.
+# Matched case-insensitively with all whitespace removed (PDF text spaces CJK characters apart).
+MEDIA_MARKERS = (
+    ("報導內容", "quote"),
+    ("媒體報導", "quote"),
+    ("報載", "quote"),
+    ("content of the report", "quote"),
+    ("media report", "quote"),
+    ("press report", "quote"),
+    ("news report", "quote"),
+    ("不予評論", "no_comment"),
+    ("不評論", "no_comment"),
+    ("does not comment", "no_comment"),
+    ("市場傳聞", "rumor"),
+    ("market rumor", "rumor"),
+    ("speculative report", "rumor"),
+)
+
+
+def quoted_media(claim: str, excerpt: str) -> dict:
+    """restated: the excerpt carries a MEDIA_MARKERS marker and every number of the claim (check_numbers ok)."""
+    flat = re.sub(r"\s+", "", excerpt).lower()
+    hits = [{"marker": m, "kind": k} for m, k in MEDIA_MARKERS if re.sub(r"\s+", "", m) in flat]
+    numbers = check_numbers(claim, excerpt)["status"]
+    return {"restated": bool(hits) and numbers == "ok", "markers": hits, "numbers": numbers}
 
 
 # --------------------------------------------------------------------------------------------- atomic lint

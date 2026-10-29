@@ -13,10 +13,13 @@ gates(narrative, payload, cfg) -> refusal reasons, run inside runner.run_gates (
 Without a snapshot there is nothing to check, tag or propose, and a narrative that tries is refused.
 
 apply(ledger_path, revision, payload, cfg, jev, enabled) -> narrative_results, run after the revision completes (§4.5):
-  1. judgement: for a verdict other than untouched, JEV judges the record's claim against the cited fact claims'
-     quotes and evidence texts (runner.Jev.source_text, capped).
-  2. sweep: JEV judges every shown record against all official excerpts in document order, capped; a cut source sets
-     sweep_truncated = 1.
+  1. judgement: for a verdict other than untouched, judge_record judges the record's claim against the cited fact
+     claims' quotes and evidence texts (runner.Jev.source_text, capped).
+  2. sweep: judge_record judges every shown record against all official excerpts in document order, capped; a cut
+     source sets sweep_truncated = 1.
+     judge_record (owner decision 2026-10-29): PRECHECKS (period, media) make it says_nothing without JEV; otherwise
+     the JEV_VOTES-vote majority at mean probability >= MIN_WIN_PROBABILITY, else says_nothing. Each result keeps both
+     answers under `judged` (precheck, votes, p_label, why).
   3. RULES (R1-R9 below) decide the outcome from (claim_type, verdict, label, basis_ok, before_resolution, settled).
   4. one narrative_checks row per shown record always; a status or corroborated event only when enabled, at
      max(evidence available_at, the record's last event at). A revision whose check row exists is skipped without JEV,
@@ -28,7 +31,9 @@ apply(ledger_path, revision, payload, cfg, jev, enabled) -> narrative_results, r
 import itertools
 import json
 import re
+import statistics
 import sys
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -36,10 +41,12 @@ import narrative_ledger as nl
 from claim_precheck import (
     OFFICIAL_TIERS,
     check_numbers,
+    check_periods,
     evidence_tier,
     extract_periods,
     has_inference_basis,
     lint_atomic,
+    quoted_media,
 )
 
 VERDICTS = ("verifies", "refutes", "partially_verifies", "untouched")
@@ -61,13 +68,9 @@ def _index(v, claims):
 
 
 def period_matches(resolves_on, record_claim):
-    """resolves_on names a period of the record: its year (2028 / FY28 / 3Q28) is in a period the record mentions."""
-    year = DATE.match(resolves_on).group(1)
-    return any(
-        year in p["text"] or p["text"].endswith(year[2:])
-        for p in extract_periods(record_claim)
-        if p["kind"] == "period"
-    )
+    """resolves_on names a period of the record: its year (2028 / FY28 / 3Q28 / 民國 117 年) is a year the record names."""
+    year = int(DATE.match(resolves_on).group(1))
+    return any(year in p["years"] for p in extract_periods(record_claim) if p["kind"] == "period")
 
 
 def gates(narrative, payload, cfg):
@@ -279,6 +282,53 @@ def why(rule, outcome, verdict, label, sweep, status, to_status):
     return ""
 
 
+def _period_gate(claim, source):
+    r = check_periods(claim, source)
+    if r["status"] == "not_covered":
+        return f"claim years {r['missing']} not covered by the source's {r['excerpt_years']}"
+    return None
+
+
+def _media_gate(claim, source):
+    r = quoted_media(claim, source)
+    if r["restated"]:
+        return "a company notice restating a media report, with the claim's numbers: " + ", ".join(
+            m["marker"] for m in r["markers"]
+        )
+    return None
+
+
+# Deterministic checks before JEV (owner decision 2026-10-29): the first that fires makes the label says_nothing.
+PRECHECKS = (("period", _period_gate), ("media", _media_gate))
+JEV_VOTES = 3
+MIN_WIN_PROBABILITY = 0.5
+
+
+def judge_record(jev, claim, source, locator, symbol, as_of):
+    """A record claim against a source, for the judgement and the sweep alike -> {label, precheck, votes, p_label, why}.
+    precheck names the PRECHECKS gate that decided (no JEV call), or none: then JEV answers JEV_VOTES times, and the
+    majority label stands when its mean probability over the votes is at least MIN_WIN_PROBABILITY; no majority or a
+    lower mean is says_nothing. Raises ValueError on a JEV answer without probabilities."""
+    for name, gate in PRECHECKS:
+        reason = gate(claim, source)
+        if reason:
+            return {"label": "says_nothing", "precheck": name, "votes": [], "p_label": None, "why": reason}
+    answers = [jev.judge(claim, source, locator, symbol, as_of) for _ in range(JEV_VOTES)]
+    if not all(isinstance(a.get("probabilities"), dict) for a in answers):
+        raise ValueError("a JEV answer has no probabilities")
+    votes = [a["label"] for a in answers]
+    top, n = Counter(votes).most_common(1)[0]
+    p = round(statistics.fmean(a["probabilities"].get(top, 0.0) for a in answers), 4)
+    stands = n * 2 > JEV_VOTES and p >= MIN_WIN_PROBABILITY
+    return {
+        "label": top if stands else "says_nothing",
+        "precheck": "none",
+        "votes": votes,
+        "p_label": p,
+        "why": "" if stands else f"JEV {top} {n}/{JEV_VOTES} at mean probability {p}",
+    }
+
+
 def sweep_source(payload, cap):
     """All official excerpts in document order -> (text, truncated 0|1)."""
     docs = [e for e in payload["evidence"] if e["payload"].get("excerpts") and evidence_tier(e) in OFFICIAL_TIERS]
@@ -286,7 +336,8 @@ def sweep_source(payload, cap):
     return text[:cap], int(len(text) > cap)
 
 
-def _result(row, rule, to_status, reason):
+def _result(row, rule, to_status, reason, judged=None):
+    """judged: {judgement, sweep} judge_record answers; None for a check row a rerun found already written."""
     return {
         "narrative_id": row["narrative_id"],
         "status_before": row["status_before"],
@@ -300,6 +351,7 @@ def _result(row, rule, to_status, reason):
         "target_status": to_status,
         "event_seq": row["event_seq"],
         "why": reason,
+        "judged": judged,
     }
 
 
@@ -372,9 +424,10 @@ def apply(ledger_path, revision, payload, cfg, jev, *, enabled):
                     jev.source_text(claims[i], [by_id[e] for e in claims[i]["evidence_ids"] if e in by_id]) for i in idx
                 )[: jev.SOURCE_CAP]
                 locator = ", ".join(f"claims[{i}]" for i in idx)
-                jev_ans = jev.judge(rec["claim"], source, locator, symbol, payload["as_of"])
+                jev_ans = judge_record(jev, rec["claim"], source, locator, symbol, payload["as_of"])
                 label = jev_ans["label"]
-            sweep = jev.judge(rec["claim"], sweep_text, "all official excerpts", symbol, payload["as_of"])["label"]
+            sweep_ans = judge_record(jev, rec["claim"], sweep_text, "all official excerpts", symbol, payload["as_of"])
+            sweep = sweep_ans["label"]
             tiers = [evidence_tier(e) for e in cited]
             basis_ok = (
                 bool(cited)
@@ -417,7 +470,9 @@ def apply(ledger_path, revision, payload, cfg, jev, *, enabled):
                             "model": jev.model,
                             "endpoint": jev.path,
                             "label": label,
-                            "confidence": jev_ans["confidence"],
+                            "precheck": jev_ans["precheck"],
+                            "votes": jev_ans["votes"],
+                            "p_label": jev_ans["p_label"],
                         },
                         drafter_verdict=verdict,
                     )["seq"]
@@ -437,7 +492,8 @@ def apply(ledger_path, revision, payload, cfg, jev, *, enabled):
                     "checked_at": nl.now(),
                 },
             )
-            out.append(_result(row, rule, to_status, why(rule, outcome, verdict, label, sweep, status, to_status)))
+            reason = why(rule, outcome, verdict, label, sweep, status, to_status)
+            out.append(_result(row, rule, to_status, reason, {"judgement": jev_ans, "sweep": sweep_ans}))
     finally:
         db.close()
     return {"narrative_apply": "on" if enabled else "off", "jev_model": jev.model, "records": out}

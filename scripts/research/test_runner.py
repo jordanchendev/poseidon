@@ -147,9 +147,16 @@ class FakeOpenRouter:
             return 200, json.dumps(chat_response(json.dumps(item, ensure_ascii=False))).encode()
         self.jev_calls.append(req)
         label = self.jev_label(req["state"]["claim"])
-        return 200, json.dumps(
-            {"answers": {"citation_relation": {"choice": label, "confidence": 0.97}}, "usage": {"cost": 0.0001}}
-        ).encode()
+        return 200, json.dumps(jev_answer(label, 0.97, 0.0001)).encode()
+
+
+def jev_answer(label, p, cost):
+    """A JEV response body: `label` at probability p, the rest split over the other two labels."""
+    probs = {k: p if k == label else round((1 - p) / 2, 4) for k in ("supports", "contradicts", "says_nothing")}
+    return {
+        "answers": {"citation_relation": {"choice": label, "confidence": p, "probabilities": probs}},
+        "usage": {"cost": cost},
+    }
 
 
 def chat_response(content, finish="stop"):
