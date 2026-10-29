@@ -13,6 +13,9 @@ repeated as bullets in a trailing `## 知識連結` section:
   concepts  list; taxonomy concept keywords matched against thesis + claims + risks + invalidation_conditions.
             Only ids from _kb/wiki/_taxonomy.md (YAML blocks) are ever emitted.
   peers     list; read_across symbols from the revision identity (revisions made before 2026-10-29 only).
+  themes    list, only when a claim carries theme_ids (design 2026-10-29 §3.4): "[[themes/<theme_id>]]" in claim
+            order. The ids passed the runner's closed-list gate; _kb/wiki/themes/ is theme_pages.py's, never stubbed
+            here, and lint's theme-id rule checks them against _kb/wiki/themes/_registry.md.
   (timeline edges and _kb/wiki/timelines/ pages were retired 2026-10-21; catalysts live in the company block.
    `timeline` stays in EDGE_KEYS only so --replace strips it from older notes.)
 plus the machine fields research_links.py reads: next_review_at (leading ISO timestamp of the narrative's
@@ -48,6 +51,7 @@ EDGE_KEYS = (
     "sector",
     "concepts",
     "peers",
+    "themes",
     "timeline",
     "next_review_at",
     "summary",
@@ -199,6 +203,7 @@ def compute_edges(vault, i, r, scope_key, a):
         if t not in companies and t not in peers:
             peers.append(t)
     concepts = ["concepts/" + c for c in match_concepts(concepts_tax, r)]
+    themes = ["themes/" + t for t in dict.fromkeys(t for c in r.get("claims") or [] for t in c.get("theme_ids") or [])]
     nr = re.match(r"\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?Z?)?", str(r.get("next_review_at") or ""))
     return dict(
         symbols=symbols,
@@ -206,6 +211,7 @@ def compute_edges(vault, i, r, scope_key, a):
         sectors=sectors,
         concepts=concepts,
         peers=peers,
+        themes=themes,
         next_review_at=nr.group(0) if nr else None,
         summary=r.get("tl_dr") or first_sentence(r.get("thesis")),
         catalysts=[{k: c.get(k) for k in ("date", "type", "expected_signal")} for c in r.get("catalysts") or []],
@@ -223,6 +229,8 @@ def edge_lines(e):
         out.append("sector: " + one_or_list(e["sectors"]))
     out.append("concepts: [%s]" % ", ".join(json.dumps(link(c), ensure_ascii=False) for c in e["concepts"]))
     out.append("peers: [%s]" % ", ".join(json.dumps(link(c), ensure_ascii=False) for c in e["peers"]))
+    if e["themes"]:
+        out.append("themes: [%s]" % ", ".join(json.dumps(link(t), ensure_ascii=False) for t in e["themes"]))
     if e["next_review_at"]:
         out.append("next_review_at: %s" % e["next_review_at"])
     if e["summary"]:
@@ -240,6 +248,7 @@ def links_section(e):
         ("板塊", e["sectors"]),
         ("概念", e["concepts"]),
         ("同業 / read-across", e["peers"]),
+        ("主題", e["themes"]),
     ]
     bullets = ["- %s：%s" % (label, link(t)) for label, ts in rows for t in ts]
     return "\n%s\n\n%s\n" % (LINKS_HEAD, "\n".join(bullets) or "- （無）")

@@ -168,6 +168,10 @@ All optional; a run without them freezes to the same manifest hash as before.
   Sector scopes link every ohlcv symbol except `--benchmark` (default `0050`); `peers` come from an old revision's
   `identity.read_across`; `--company-slug SYMBOL=SLUG` names a company with no page yet. Missing targets get a stub page
   (`status: stub`, `origin: agent`); existing pages are never overwritten.
+- `themes` (2026-10-29 design §3.4): when claims carry `theme_ids`, `themes: ["[[themes/<id>]]", ...]` in claim order
+  and one `- 主題：[[themes/<id>]]` bullet each under `## 知識連結`; an untagged revision has no `themes` key. Theme pages
+  are never stubbed here: `_kb/wiki/themes/` belongs to the vault's `theme_pages.py`, and lint's `theme-id` rule checks
+  every `themes/` link against `_kb/wiki/themes/_registry.md`.
 - `--replace` re-links an existing note only if `revision_id`, `content_sha256` and `origin: agent` match; every existing
   frontmatter line and the body stay byte-identical (the body is not re-rendered), only the edge fields and
   `## 知識連結` are regenerated.

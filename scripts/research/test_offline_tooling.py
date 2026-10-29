@@ -1610,6 +1610,26 @@ def test_projection_edges_links_section_and_stubs(kvault):
     )
 
 
+def test_projection_theme_edges_come_from_claim_theme_ids(kvault):
+    """Design 2026-10-29 §3.4: `themes` frontmatter and a 主題 line from the claims' theme_ids; no theme stubs."""
+    k = kvault
+    rev = json.loads(k["rev"].read_text())
+    assert project(k).returncode == 0
+    fm, _ = split_note(note_path(k).read_text())
+    assert "themes" not in fm  # an untagged revision keeps its old shape
+    note_path(k).unlink()
+    rev["research"]["claims"][0]["theme_ids"] = ["cleanroom-capacity"]
+    rev["research"]["claims"][1]["theme_ids"] = ["memory-supply-tightness", "cleanroom-capacity"]
+    k["rev"].write_text(json.dumps(rev))
+    p = project(k)
+    assert p.returncode == 0, p.stderr + p.stdout
+    fm, body = split_note(note_path(k).read_text())
+    assert fm["themes"] == ["[[themes/cleanroom-capacity]]", "[[themes/memory-supply-tightness]]"]
+    sec = body[body.rindex("## 知識連結") :]
+    assert "- 主題：[[themes/cleanroom-capacity]]\n- 主題：[[themes/memory-supply-tightness]]" in sec
+    assert not (k["v"] / "_kb" / "wiki" / "themes").exists()
+
+
 def test_projection_never_overwrites_without_replace(kvault):
     k = kvault
     assert project(k).returncode == 0
