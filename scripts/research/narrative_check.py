@@ -59,13 +59,9 @@ def _index(v, claims):
 
 
 def period_matches(resolves_on, record_claim):
-    """resolves_on names a period of the record: its year (2028 / FY28 / 3Q28) is in a period the record mentions."""
-    year = DATE.match(resolves_on).group(1)
-    return any(
-        year in p["text"] or p["text"].endswith(year[2:])
-        for p in extract_periods(record_claim)
-        if p["kind"] == "period"
-    )
+    """resolves_on names a period of the record: its year (2028 / FY28 / 3Q28 / 民國 117 年) is a year the record names."""
+    year = int(DATE.match(resolves_on).group(1))
+    return any(year in p["years"] for p in extract_periods(record_claim) if p["kind"] == "period")
 
 
 def gates(narrative, payload, cfg):
