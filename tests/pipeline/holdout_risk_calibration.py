@@ -153,10 +153,11 @@ def judge(job: dict) -> dict:
         "frozen_train": None,
     }
     runs: dict[float, object] = {}
+    min_contracts = {**DAILY_THRESHOLDS, **thresholds}.get(benchmark.MIN_CONTRACTS_KEY)
 
     def matched(leverage: float):
         if leverage not in runs:
-            runs[leverage] = beta_matched_run(r, "TX", leverage)
+            runs[leverage] = beta_matched_run(r, "TX", leverage, min_contracts)
         return runs[leverage]
 
     fields = ("status", "reason", "calmar_diff_lower", "tracking", "matched_leverage")
@@ -336,7 +337,12 @@ def replay(args) -> int:
         variants = [("frozen", frozen)]
         for confidence in args.confidences:
             added = copy.deepcopy(frozen)
-            added["thresholds"].update({k: DAILY_THRESHOLDS[k] for k in (benchmark.RULE_KEY, *benchmark.RISK_KEYS)})
+            added["thresholds"].update(
+                {
+                    k: DAILY_THRESHOLDS[k]
+                    for k in (benchmark.RULE_KEY, *benchmark.RISK_KEYS, benchmark.MIN_CONTRACTS_KEY)
+                }
+            )
             added["thresholds"].update(
                 {
                     holdout.RULE_KEY: benchmark.RULE_ALPHA_OR_RISK,

@@ -290,7 +290,9 @@ def replay(args) -> int:
         stages = {name: SimpleNamespace(report=s["artifact"]["report"]) for name, s in dump["stages"].items()}
         route = stages["spec_generate"].report.get("route") if "spec_generate" in stages else None
         config = copy.deepcopy(effective_config(dump["config"], route))
-        config["thresholds"].update({k: DAILY_THRESHOLDS[k] for k in (benchmark.RULE_KEY, *benchmark.RISK_KEYS)})
+        config["thresholds"].update(
+            {k: DAILY_THRESHOLDS[k] for k in (benchmark.RULE_KEY, *benchmark.RISK_KEYS, benchmark.MIN_CONTRACTS_KEY)}
+        )
         ctx = SimpleNamespace(config=config, upstream=stages)
         result = DailyBenchmarkStage().evaluate(ctx)
         report = result.report

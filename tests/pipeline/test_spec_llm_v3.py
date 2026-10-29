@@ -748,7 +748,10 @@ def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
     # session warm-up rule of configs frozen from 2026-10-28 on), then thresholds.param_edge_at_bound_pass (run #18,
     # 2026-10-28), then data.trading_calendar (2026-10-28), then thresholds.benchmark_rule with its
     # benchmark_risk_* settings (2026-10-28), then data.option_chain (the hedged paper's rule, 2026-10-28), then
-    # thresholds.benchmark_risk_min_tracking (2026-10-29): without those keys it is the 681d469 config
+    # thresholds.benchmark_risk_min_tracking (2026-10-29), then thresholds.benchmark_risk_min_contracts (2026-10-29):
+    # without those keys it is the 681d469 config
+    assert content_sha256(daily) == "7114a045004573dbf97b7c1bfa5c92c4829b0723479a3f80459c6f3977ec0e0f"
+    del daily["thresholds"]["benchmark_risk_min_contracts"]
     assert content_sha256(daily) == "c69a784b55a69606d89ff1f220c47d96fef02c3080083ca9cdb756eb114edeaa"
     del daily["thresholds"]["benchmark_risk_min_tracking"]
     assert content_sha256(daily) == "2a9c1e312f32065af30a455aadb15fb99ec855c6b4033204ce62149d8a305897"
