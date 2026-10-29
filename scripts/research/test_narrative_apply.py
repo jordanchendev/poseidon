@@ -531,3 +531,26 @@ def test_a_fact_on_non_official_evidence_is_no_record_and_a_pending_member_holds
     assert result == "applied" and f"敘事 {waiting['narrative_id']} 已寫入" in message
     rows, _, _ = records(path)
     assert rows[waiting["narrative_id"]]["source_tier"] == "official"
+
+
+def test_keyword_hits_on_untagged_claims_are_listed_never_linked(env):
+    """§5.3: a theme keyword in a claim the drafter did not tag with that theme is an untagged_hit for the owner."""
+    path, db = snap_t.ledger(env["tmp"])
+    nl.add_theme_keywords(db, "foundry-utilization", ["營收", "毛利率"], "cli:owner", at=snap_t.APPROVED)
+    db.close()
+    assert env["run"](FakeJev([tagged_narrative()])) == 0  # claims 0 and 2 tagged, claim 1 (毛利率) not
+    rev = json.loads((env["run_dir"] / "revision.json").read_text())
+    assert rev["narrative_results"]["untagged_hits"] == [
+        {"claim_index": 1, "theme_id": "foundry-utilization", "keyword": "毛利率"}
+    ]
+    assert [r["claim_index"] for r in links(path)] == [0, 2]
+    md = subprocess.run(
+        [sys.executable, str(HERE / "render_theme.py"), str(env["run_dir"] / "revision.json")],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert (
+        "## 主題召回" in md
+        and "claims[1]「聯電第三季毛利率為 32.5%。」命中 `foundry-utilization` 的關鍵字「毛利率」" in md
+    )

@@ -348,6 +348,15 @@ if proposed:
         why = f"：{cell(x['reason'])}" if x.get("reason") else (f"（等 {'、'.join(x['waits'])}）" if x["waits"] else "")
         L.append(f"| `{x['narrative_id']}` | {cell(x['claim'])} | {STATUS_WORD[x['status']]}{why} |")
     L.append("")
+hits = (d.get("narrative_results") or {}).get("untagged_hits") or []
+if hits:
+    L += ["## 主題召回（關鍵字命中但未標主題，待 owner 判斷）\n"]
+    L += [
+        f"- claims[{h['claim_index']}]「{cell(r['claims'][h['claim_index']].get('text', ''), 60)}」命中 "
+        f"`{h['theme_id']}` 的關鍵字「{h['keyword']}」"
+        for h in hits
+    ]
+    L.append("")
 L += [
     "## 可重放身分\n",
     "| 欄位 | 值 |\n|---|---|",

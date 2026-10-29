@@ -29,6 +29,7 @@ apply(ledger_path, revision, payload, cfg, jev, mode) -> narrative_results, run 
   Before the records, one claim_theme_links row per (claim, theme_id) the drafter tagged, enabled or not: a link is
   not a status change (D2). An existing key is kept, so a rerun writes no link twice. The revision's theme_proposals
   are filed in every mode too (file_theme_proposals) and listed in the done notice for the owner (§3.3, §9 step 9).
+  Claims that hit a shown theme's keywords without its tag are listed as untagged_hits (§5.3), never linked.
   Its narrative_proposals become records in every mode as well (write_narrative_proposals, §3.2): an official record
   from a fact claim whose evidence is all official, our inference from an inference claim; held like an intake record
   while a subject waits for an open proposal.
@@ -389,6 +390,27 @@ def _best_evidence(c, by_id):
     return max(cited, key=lambda e: (-_tier_rank(evidence_tier(e)), e["event_time"]))
 
 
+def untagged_hits(db, revision, snap_payload):
+    """§5.3 recall: a claim whose text hits a keyword of a theme in the snapshot's closed list that the drafter did not
+    tag -> [{claim_index, theme_id, keyword}] for the owner. A keyword never makes a link (project_vault.keyword_hit,
+    the vault's concept rule)."""
+    from project_vault import keyword_hit
+
+    shown = {t["theme_id"] for t in snap_payload["themes"]}
+    keywords = [
+        (r["theme_id"], json.loads(r["keywords_json"]))
+        for r in db.execute("SELECT theme_id, keywords_json FROM themes WHERE status = 'active' ORDER BY theme_id")
+        if r["theme_id"] in shown
+    ]
+    hits = []
+    for n, c in enumerate(revision["research"]["claims"]):
+        for theme_id, words in keywords:
+            hit = next((w for w in words if keyword_hit(w, c.get("text", ""))), None)
+            if hit and theme_id not in (c.get("theme_ids") or []):
+                hits.append({"claim_index": n, "theme_id": theme_id, "keyword": hit})
+    return hits
+
+
 def write_theme_links(db, revision, by_id):
     """claim_theme_links for every (claim, theme_id) the drafter tagged; a completed revision's tags all passed [theme]."""
     rev_id = revision["identity"]["revision_id"]
@@ -609,6 +631,7 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
         write_theme_links(db, revision, by_id)
         proposals = file_theme_proposals(db, revision, by_id, cfg, payload["as_of"])
         new_records = write_narrative_proposals(db, revision, by_id, payload["as_of"])
+        hits = untagged_hits(db, revision, snap["payload"])
         for shown in snap["payload"]["records"]:
             nid = shown["narrative_id"]
             done = db.execute(
@@ -724,6 +747,7 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
         "records": out,
         **({"theme_proposals": proposals} if proposals else {}),
         **({"narrative_proposals": new_records} if new_records else {}),
+        **({"untagged_hits": hits} if hits else {}),
     }
 
 

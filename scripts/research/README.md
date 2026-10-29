@@ -363,7 +363,10 @@ written|held|unfit, waits, reason}] is rendered as 「新增敘事」 in the don
   `narrative_ledger.py theme-keywords --ledger L --id <theme> --add <kw> [...] --approval-ref <ref> [--at T]`:
   `approval_ref` is required, each new keyword gets a `theme_keyword_approvals` row (theme, keyword, approval), the
   theme's `keywords_json` is appended and its row hash recomputed, and a keyword the theme has is a no-op. A ledger
-  made before this gets the `keywords_json` column on first connect, its proposal rows rehashed.
+  made before this gets the `keywords_json` column on first connect, its proposal rows rehashed. After each
+  completed revision with a snapshot, a claim whose text hits a keyword of a shown theme it is not tagged with
+  (`project_vault.keyword_hit`, the vault's concept rule) is listed in `narrative_results.untagged_hits`
+  [{claim_index, theme_id, keyword}] and rendered as 「主題召回」 in the done report. A keyword never makes a link.
 - Themes, members and edges are written only with a non-empty `--approval-ref`; re-running the same approval is a
   no-op, the same key with different content is refused. Symbols: Taiwan-listed bare (`2408`), others
   `<EXCHANGE>:<TICKER>` (`NASDAQ:MU`, `TSE:3110`); `tw_listed` follows from that shape.
