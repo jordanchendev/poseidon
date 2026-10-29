@@ -300,8 +300,10 @@ OpenRouter, JEV, Thalassa and TWSE are faked; the source is served from a file:/
 
 `narrative_ledger.py` keeps nine tables in the runner's ledger file (themes, theme_members, theme_edges,
 theme_proposals, materials, narrative_records, narrative_events, narrative_checks, claim_theme_links), plus
-`narrative_suggestions` for `--narrative-apply confirm`. Every row carries `content_sha256` of its other columns; a row
-with a lifecycle (materials, theme_proposals, narrative_suggestions) is rehashed when its status moves.
+`narrative_suggestions` for `--narrative-apply confirm` and `member_proposals`, `theme_proposal_claims` and
+`held_records` for the owner's approvals (§9 step 9). Every row carries `content_sha256` of its other columns; a row
+with a lifecycle (materials, theme_proposals, member_proposals, narrative_suggestions, held_records) is rehashed when
+its status moves.
 
 What the runner reads from it (design §9 step 4, `assemble.py`; the ledger is opened read-only, a dry run included):
 
@@ -346,8 +348,8 @@ exist is skipped without JEV; an event that already names the revision is reused
 Before the records it writes one `claim_theme_links` row per (claim index, theme_id) the drafter tagged
 (`source` drafter, `about_symbols`, the claim kind, and the tier and event_time of the claim's highest-tier cited
 evidence), whatever `--narrative-apply` says: a link is not a status change (D2). A key already written is kept, so a
-rerun writes nothing new and a rerun after a crash fills in what is missing. A revision's `narrative_proposals` and
-`theme_proposals` stay in revision.json; §9 step 9 writes them to the ledger (intake already files its own, below).
+rerun writes nothing new and a rerun after a crash fills in what is missing. A revision's `theme_proposals` are filed
+in every mode too (below, "Theme and member approvals"); its `narrative_proposals` still stay in revision.json only.
 
 - Themes, members and edges are written only with a non-empty `--approval-ref`; re-running the same approval is a
   no-op, the same key with different content is refused. Symbols: Taiwan-listed bare (`2408`), others
@@ -382,24 +384,30 @@ bridge's `material-pending` (`--materials-json` in host mode):
   `material`, required `secondary` within 30 days). Never a `research_revisions` row.
 - Draft (same key and model as the research draft, D9): `records[]` {claim, claim_type, resolves_on, attributed_to,
   quote, subject_symbols, theme_ids}, `theme_proposals[]` {suggested_id, title, kind, why, quote, proposed_members},
-  `verify_with[]`.
+  `member_proposals[]` {theme_id, symbol, role, why, quote} (§9 step 9), `verify_with[]`.
 - Gates, one repair round: quote verbatim in the material; `lint_atomic`, and no causal or driver connector
   (`claim_precheck._CAUSAL`: 帶動, 由於, driven by …), because a record is checked later one statement at a time;
   `check_numbers` of the record against its quote; a forecast's `resolves_on` names a year of the record (else null:
-  the ledger default); theme ids from the closed list; subjects that are approved members, or members of a theme
-  proposal filed in the same output (a proposal that repeats an active theme or an open proposal files no member of
-  its own); at most 10 records, 3 theme proposals, 5 `verify_with`. Refused twice -> `material-needs-review`.
+  the ledger default); theme ids from the closed list, or the `suggested_id` of a theme proposal filed in the same
+  output; subjects that are approved members, or members a theme or member proposal filed in the same output names (a
+  proposal that repeats an active theme files no member of its own; one that repeats an open proposal admits that
+  proposal's members; one the owner rejected admits nothing); member proposals name a listed theme; at most 10
+  records, 3 theme proposals, 3 member proposals, 5 `verify_with`. Refused twice -> `material-needs-review`.
 - Faithful-paraphrase check: `narrative_check.judge_record` (period precheck, then the 3-vote JEV majority) of each
-  record against the line(s) its quote sits in; anything but `supports` drops the record and lists it in the notice.
-- Writes: `narrative_records` with `source_tier` = the material's tier, `first_seen_at` = `received_at`, origin
-  `material:<id>`, and the seq-0 `created` event; `theme_proposals` (`T<YYYYMMDD>-n`, source_ref
-  `material:<id>#p<line>`; a title or keyword that repeats an active theme, or an open proposal's id or title, is listed
-  and not filed); `materials` row `intaken` with the manifest sha. `intake.json` keeps the checked plan, so a rerun
+  record against the material's heading line (its first non-empty line) and the line(s) its quote sits in: a post's
+  lines often do not name the company its heading names. Anything but `supports` drops the record and lists it.
+- Writes: `theme_proposals` (`T<YYYYMMDD>-n`, source_ref `material:<id>#p<line>`; a title or keyword that repeats an
+  active theme, or the id or title of an open, accepted or rejected proposal, is listed and not filed) and
+  `member_proposals` (`M<YYYYMMDD>-n`; an approved member or an open or rejected proposal of the same member is listed
+  and not filed); then `narrative_records` with `source_tier` = the material's tier, `first_seen_at` = `received_at`,
+  origin `material:<id>`, and the seq-0 `created` event. A record that needs a proposal still pending is held
+  (`held_records`, below) instead; `materials` row `intaken` with the manifest sha. `intake.json` keeps the checked plan, so a rerun
   after a crash writes the same rows without a model call; a material the bridge still lists after it was reported is
   reported again from `run.json`.
-- `material-done <id>` stdin JSON `{records, dropped, theme_proposals, verify_with, text}`; `text` is the Telegram
-  notice (new records, dropped records with the JEV label, theme proposals, duplicates, documents to verify with; a
-  material with nothing to track says 「無對應主題」).
+- `material-done <id>` stdin JSON `{records, held, dropped, theme_proposals, member_proposals, verify_with, text}`;
+  `text` is the Telegram notice (new records, held records with what they wait for, dropped records with the JEV label
+  or the rejected proposal, theme and member proposals with their ids and how to answer, duplicates, documents to
+  verify with; a material with nothing to track says 「無對應主題」).
 
 ### Owner confirm mode (`--narrative-apply confirm`, owner decision 2026-10-29)
 
@@ -436,6 +444,40 @@ python3 scripts/research/deliver_outbox.py --outbox $S/outbox --bridge "ssh rese
 In host mode (`--agenda-json`) a list the host did not pass is empty: the container never calls ssh. `deliver_outbox.py`
 delivers `done`, `needs-review`, `material-done`, `material-needs-review` and `narrative-ack` entries.
 
-Tests: `test_intake.py` (the §7 posts in `fixtures/gooaye_posts.json`, a test fixture only, never vault content) and
-`test_narrative_confirm.py`; the macminim4 side is `local_dev/scripts/strategy-bridge/macminim4/test_research_intake.py`
-in the aquarium workspace.
+### Theme and member approvals (§9 step 9; design §3.3)
+
+Agents propose; only the owner's decision writes `themes` or `theme_members`, and the id of a new theme is the string
+the owner typed.
+
+- Proposals. A completed revision files each of its `theme_proposals` (`narrative_check.file_theme_proposals`, every
+  `--narrative-apply` mode, source_ref `revision:<uuid>#claims[i,...]`) and stores the claims it cites in
+  `theme_proposal_claims` (about_symbols = the claim's, else the revision's subjects; evidence_tier and event_time of
+  the claim's highest-tier evidence). A proposal that repeats an open one adds its claims to it; one that repeats an
+  approved theme or a rejected proposal is only recorded in `narrative_results.theme_proposals`. The `done` stdin JSON
+  adds `theme_proposals` [{id, line}] and the bridge appends each line to the notice:
+  「主題提案 T…：<title>（<kind>），依據 claims[i]；建議 id <suggested>；提案成員 …；回覆「接受主題 T… <id>」或「略過主題 T…」」.
+  Intake files theme and member proposals as above and lists them in the material-done notice.
+- Held records. An intake record tagged with a theme proposal, or whose subject is not yet an approved member, is
+  kept in `held_records` (the `add_record` arguments, the quote's line(s), and the open proposal ids it waits for),
+  never in `narrative_records`. A subject is covered by an open member proposal of the symbol or an open theme proposal
+  that names it.
+- Decisions. Sisyphus runs `research-agenda.sh theme-accept <T-id> <theme-id>`, `theme-reject <T-id>`,
+  `member-accept <M-id>` or `member-reject <M-id>` with the owner's sentence on STDIN; macminim4 appends a pending
+  decision to the same `narrative_decisions.jsonl`, and the runner reads it from the step 8 feed `narrative-pending`
+  (`--decisions-json` in host mode). One feed instead of the design's `theme-pending`: the host wrapper, the outbox and
+  the ack verb already exist for it, and decisions keep one order.
+  - theme-accept: the id must match `^[a-z0-9]+(?:-[a-z0-9]+)*$` (else refused and acked refused); `themes` row with
+    title and kind of the proposal, `approval_ref` `telegram:<T-id>`, `proposal_id`; `claim_theme_links` with
+    `source` owner for every claim in `theme_proposal_claims`; a member proposal for each proposed member (accepting a
+    theme approves no member). Accepting again under the same id is a no-op; under another id, or after a reject, is
+    refused.
+  - member-accept: `member-add` with `approval_ref` `telegram:<M-id>`.
+  - theme-reject / member-reject: the proposal is `rejected` and never filed again (`theme_duplicate` /
+    `member_duplicate` report `rejected:<id>`).
+  - After each of these the runner re-gates every held record (`nl.release_held`): written with its original tier and
+    `first_seen_at` when nothing it needs is pending, dropped with the reason when something it needs was rejected,
+    otherwise kept with refreshed waits. The `narrative-ack` message says which records moved.
+
+Tests: `test_intake.py` (the §7 posts in `fixtures/gooaye_posts.json`, a test fixture only, never vault content),
+`test_narrative_confirm.py` and `test_theme_decisions.py`; the macminim4 side is
+`local_dev/scripts/strategy-bridge/macminim4/test_research_intake.py` in the aquarium workspace.
