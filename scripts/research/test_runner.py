@@ -179,6 +179,8 @@ if st.get("refuse", {}).get(args[0]):
     sys.exit(2)
 if args[0] == "pending":
     print(json.dumps(st["rows"], ensure_ascii=False))
+if args[0] in ("material-pending", "narrative-pending"):
+    print(json.dumps(st.get(args[0], []), ensure_ascii=False))
 """
 
 

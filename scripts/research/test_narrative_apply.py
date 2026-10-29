@@ -254,7 +254,7 @@ def test_rerun_of_the_same_revision_calls_no_jev_and_writes_nothing(env):
     before = ledger_rows(path, rev["identity"]["revision_id"])
     t = FakeJev([])
     jev = runner.Jev(JEV_KEY, transport=t)
-    again = narrative_check.apply(path, rev, payload, cfg, jev, enabled=True)
+    again = narrative_check.apply(path, rev, payload, cfg, jev, mode="on")
     assert t.jev_calls == [] and ledger_rows(path, rev["identity"]["revision_id"]) == before
     assert [x["outcome"] for x in again["records"]] == [x["outcome"] for x in rev["narrative_results"]["records"]]
     assert all(x["judged"] is None for x in again["records"])
@@ -263,7 +263,7 @@ def test_rerun_of_the_same_revision_calls_no_jev_and_writes_nothing(env):
     db.execute("DELETE FROM narrative_checks")
     db.commit()
     db.close()
-    redo = narrative_check.apply(path, rev, payload, cfg, jev, enabled=True)
+    redo = narrative_check.apply(path, rev, payload, cfg, jev, mode="on")
     checks, events = ledger_rows(path, rev["identity"]["revision_id"])
     assert len(t.jev_calls) == narrative_check.JEV_VOTES * 16 and events == before[1]
     assert {nid: c["event_seq"] for nid, c in checks.items()} == {nid: c["event_seq"] for nid, c in before[0].items()}
@@ -369,7 +369,7 @@ def test_rerun_writes_no_link_twice(env):
     before = links(path)
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
     t = FakeJev([])
-    narrative_check.apply(path, rev, rev["manifest_payload"], cfg, runner.Jev(JEV_KEY, transport=t), enabled=True)
+    narrative_check.apply(path, rev, rev["manifest_payload"], cfg, runner.Jev(JEV_KEY, transport=t), mode="on")
     assert links(path) == before and t.jev_calls == []
 
 
@@ -384,7 +384,7 @@ def test_links_lost_to_a_crash_are_written_by_the_next_apply(env, monkeypatch):
     monkeypatch.undo()
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
     jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
-    narrative_check.apply(path, rev, rev["manifest_payload"], cfg, jev, enabled=False)
+    narrative_check.apply(path, rev, rev["manifest_payload"], cfg, jev, mode="off")
     assert link_keys(links(path)) == expected_links(rev)
 
 
@@ -398,5 +398,5 @@ def test_no_snapshot_writes_no_links(env):
     payload["evidence"] = [e for e in payload["evidence"] if e["kind"] != "narrative_snapshot"]
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
     jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
-    assert narrative_check.apply(path, rev, payload, cfg, jev, enabled=True) is None
+    assert narrative_check.apply(path, rev, payload, cfg, jev, mode="on") is None
     assert links(path) == []

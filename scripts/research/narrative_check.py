@@ -12,7 +12,7 @@ gates(narrative, payload, cfg) -> refusal reasons, run inside runner.run_gates (
              theme_proposals are well-formed.
 Without a snapshot there is nothing to check, tag or propose, and a narrative that tries is refused.
 
-apply(ledger_path, revision, payload, cfg, jev, enabled) -> narrative_results, run after the revision completes (§4.5):
+apply(ledger_path, revision, payload, cfg, jev, mode) -> narrative_results, run after the revision completes (§4.5):
   1. judgement: for a verdict other than untouched, judge_record judges the record's claim against the cited fact
      claims' quotes and evidence texts (runner.Jev.source_text, capped).
   2. sweep: judge_record judges every shown record against all official excerpts in document order, capped; a cut
@@ -21,9 +21,13 @@ apply(ledger_path, revision, payload, cfg, jev, enabled) -> narrative_results, r
      the JEV_VOTES-vote majority at mean probability >= MIN_WIN_PROBABILITY, else says_nothing. Each result keeps both
      answers under `judged` (precheck, votes, p_label, why).
   3. RULES (R1-R9 below) decide the outcome from (claim_type, verdict, label, basis_ok, before_resolution, settled).
-  4. one narrative_checks row per shown record always; a status or corroborated event only when enabled, at
+  4. one narrative_checks row per shown record always; a status or corroborated event only with mode on, at
      max(evidence available_at, the record's last event at). A revision whose check row exists is skipped without JEV,
      and an event that already names the revision is reused, so a rerun after a crash writes nothing twice.
+     mode confirm (owner decision 2026-10-29): the event is held as a narrative_suggestions row instead and the result
+     carries `suggestion` {id, status, line}; the owner confirms or rejects it in Telegram.
+apply_decision(ledger_path, decision) -> (applied | refused, message): one owner decision from the bridge's
+  narrative-pending (confirm / reject a suggestion, or set = the §4.6 override), idempotent per decision id.
   Before the records, one claim_theme_links row per (claim, theme_id) the drafter tagged, enabled or not: a link is
   not a status change (D2). An existing key is kept, so a rerun writes no link twice.
 """
@@ -304,12 +308,12 @@ JEV_VOTES = 3
 MIN_WIN_PROBABILITY = 0.5
 
 
-def judge_record(jev, claim, source, locator, symbol, as_of):
+def judge_record(jev, claim, source, locator, symbol, as_of, prechecks=PRECHECKS):
     """A record claim against a source, for the judgement and the sweep alike -> {label, precheck, votes, p_label, why}.
-    precheck names the PRECHECKS gate that decided (no JEV call), or none: then JEV answers JEV_VOTES times, and the
+    precheck names the `prechecks` gate that decided (no JEV call), or none: then JEV answers JEV_VOTES times, and the
     majority label stands when its mean probability over the votes is at least MIN_WIN_PROBABILITY; no majority or a
     lower mean is says_nothing. Raises ValueError on a JEV answer without probabilities."""
-    for name, gate in PRECHECKS:
+    for name, gate in prechecks:
         reason = gate(claim, source)
         if reason:
             return {"label": "says_nothing", "precheck": name, "votes": [], "p_label": None, "why": reason}
@@ -385,8 +389,47 @@ def write_theme_links(db, revision, by_id):
             )
 
 
-def apply(ledger_path, revision, payload, cfg, jev, *, enabled):
-    """narrative_results for revision.json ({narrative_apply, jev_model, records}), or None without a snapshot."""
+APPLY_MODES = ("off", "on", "confirm")
+STATUS_WORDS = {
+    "unverified": "未證實",
+    "partially_verified": "部分證實",
+    "verified": "已證實",
+    "refuted": "已否證",
+    "stale": "過期未證實",
+}
+
+
+def suggestion_line(sid, rec, kind, from_status, to_status, rule, idx, claims):
+    """The done notice's line for one suggestion (owner decision 2026-10-29: confirm in Telegram)."""
+
+    def short(text, n=40):
+        text = " ".join(str(text or "").split())
+        return text if len(text) <= n else text[: n - 1] + "…"
+
+    basis = "；".join(f"claims[{i}]「{short(claims[i].get('quote'))}」" for i in idx if 0 <= i < len(claims))
+    head = f"建議 {sid}：{rec['narrative_id']}「{short(rec['claim'])}」"
+    if kind == "status":
+        change = f"由 {STATUS_WORDS[from_status]} 改為 {STATUS_WORDS[to_status]}（{rule}）"
+    else:
+        change = f"記一筆官方背書（{rule}，狀態維持 {STATUS_WORDS[from_status]}）"
+    return f"{head}{change}，依據 {basis or '—'}；回覆「確認敘事 {sid}」或「駁回敘事 {sid}」"
+
+
+def _suggestion(db, sid, rec, claims):
+    """The confirm-mode `suggestion` entry of a result, from the stored row."""
+    s = nl._one(db, "SELECT * FROM narrative_suggestions WHERE suggestion_id = ?", sid)
+    idx = json.loads(s["basis_json"]).get("claim_indices", [])
+    line = suggestion_line(sid, rec, s["kind"], s["from_status"], s["to_status"], s["rule"], idx, claims)
+    return {"id": sid, "status": s["status"], "line": line}
+
+
+def apply(ledger_path, revision, payload, cfg, jev, *, mode):
+    """narrative_results for revision.json ({narrative_apply, jev_model, records}), or None without a snapshot.
+    mode off: check rows only. on: the rule writes its events. confirm (owner decision 2026-10-29, the first 4 weeks):
+    each event the rule would write becomes a narrative_suggestions row the owner confirms or rejects in Telegram; a
+    change the owner rejected for this record before is not suggested again (the result names that rejection)."""
+    if mode not in APPLY_MODES:
+        raise ValueError(f"narrative_apply mode must be one of {'|'.join(APPLY_MODES)}")
     snap = snapshot_of(payload)
     if snap is None:
         return None
@@ -408,7 +451,15 @@ def apply(ledger_path, revision, payload, cfg, jev, *, enabled):
             ).fetchone()
             if done:
                 ev = [e for e in nl.events_of(db, nid) if e["seq"] == done["event_seq"]]
-                out.append(_result(dict(done), ev[0]["rule"] if ev else None, ev[0]["to_status"] if ev else None, ""))
+                res = _result(dict(done), ev[0]["rule"] if ev else None, ev[0]["to_status"] if ev else None, "")
+                sid = nl.suggestion_id(rev_id, nid)
+                s = nl._one(db, "SELECT * FROM narrative_suggestions WHERE suggestion_id = ?", sid)
+                if mode == "confirm" and s:
+                    rec = nl._one(db, "SELECT * FROM narrative_records WHERE narrative_id = ?", nid)
+                    res.update(
+                        rule=s["rule"], target_status=s["to_status"], suggestion=_suggestion(db, sid, rec, claims)
+                    )
+                out.append(res)
                 continue
             chk = checks[nid]
             verdict, idx = chk["verdict"], chk.get("claim_indices") or []
@@ -445,37 +496,41 @@ def apply(ledger_path, revision, payload, cfg, jev, *, enabled):
                 before_resolution,
                 status,
             )
-            seq = None
-            if enabled and outcome in ("status_change", "corroborated"):
-                if mine:
-                    seq = mine[-1]["seq"]
+            seq = suggestion = None
+            if mode != "off" and outcome in ("status_change", "corroborated"):
+                event = {
+                    "kind": "status" if outcome == "status_change" else "corroborated",
+                    "to_status": to_status or status,
+                    "at": max(nl.iso(max(e["available_at"] for e in cited)), events[-1]["at"]),
+                    "basis": {
+                        "revision_id": rev_id,
+                        "claim_indices": idx,
+                        "evidence_ids": [e["id"] for e in cited],
+                        "quotes": [claims[i].get("quote") for i in idx],
+                        "tiers": tiers,
+                    },
+                    "rule": rule,
+                    "jev": {
+                        "model": jev.model,
+                        "endpoint": jev.path,
+                        "label": label,
+                        "precheck": jev_ans["precheck"],
+                        "votes": jev_ans["votes"],
+                        "p_label": jev_ans["p_label"],
+                    },
+                    "drafter_verdict": verdict,
+                }
+                if mode == "on":
+                    seq = mine[-1]["seq"] if mine else nl.append_event(db, nid, decided_by="rule", **event)["seq"]
                 else:
-                    avail = nl.iso(max(e["available_at"] for e in cited))
-                    seq = nl.append_event(
-                        db,
-                        nid,
-                        kind="status" if outcome == "status_change" else "corroborated",
-                        to_status=to_status or status,
-                        decided_by="rule",
-                        at=max(avail, events[-1]["at"]),
-                        basis={
-                            "revision_id": rev_id,
-                            "claim_indices": idx,
-                            "evidence_ids": [e["id"] for e in cited],
-                            "quotes": [claims[i].get("quote") for i in idx],
-                            "tiers": tiers,
-                        },
-                        rule=rule,
-                        jev={
-                            "model": jev.model,
-                            "endpoint": jev.path,
-                            "label": label,
-                            "precheck": jev_ans["precheck"],
-                            "votes": jev_ans["votes"],
-                            "p_label": jev_ans["p_label"],
-                        },
-                        drafter_verdict=verdict,
-                    )["seq"]
+                    gone = nl.rejected_suggestion(db, nid, event["kind"], event["to_status"])
+                    if gone:
+                        suggestion = {"id": None, "status": "suppressed", "suppressed_by": gone["suggestion_id"]}
+                    else:
+                        sid = nl.add_suggestion(db, revision_id=rev_id, nid=nid, from_status=status, **event)[
+                            "suggestion_id"
+                        ]
+                        suggestion = _suggestion(db, sid, rec, claims)
             row = nl.add_check(
                 db,
                 {
@@ -494,6 +549,70 @@ def apply(ledger_path, revision, payload, cfg, jev, *, enabled):
             )
             reason = why(rule, outcome, verdict, label, sweep, status, to_status)
             out.append(_result(row, rule, to_status, reason, {"judgement": jev_ans, "sweep": sweep_ans}))
+            if suggestion:
+                out[-1]["suggestion"] = suggestion
     finally:
         db.close()
-    return {"narrative_apply": "on" if enabled else "off", "jev_model": jev.model, "records": out}
+    return {"narrative_apply": mode, "jev_model": jev.model, "records": out}
+
+
+# ------------------------------------------------------------------------------------------------ owner decisions
+DECISION_ID = re.compile(r"^\d{8}-d\d{1,4}$")
+SUGGESTION_ID = re.compile(r"^ns-[0-9a-f]{8}$")
+NARRATIVE_ID = re.compile(r"^nr-[0-9a-f]{10}$")
+OWNER_TEXT_CAP = 2000
+
+
+def parse_decision(d):
+    """A narrative-pending row -> (decision_id, action, target, to_status, owner_text, decided_at), or ValueError."""
+    did = str(d.get("decision_id", ""))
+    if not DECISION_ID.match(did):
+        raise ValueError(f"malformed decision id {did!r}")
+    action, target, text = d.get("action"), str(d.get("target", "")), d.get("owner_text")
+    if action in ("confirm", "reject"):
+        if not SUGGESTION_ID.match(target):
+            raise ValueError(f"{action} needs a suggestion id ns-xxxxxxxx, not {target!r}")
+    elif action == "set":
+        if not NARRATIVE_ID.match(target) or d.get("to_status") not in nl.STATUSES:
+            raise ValueError("set needs a narrative id nr-xxxxxxxxxx and a status " + "|".join(nl.STATUSES))
+    else:
+        raise ValueError(f"unknown action {action!r}")
+    if not isinstance(text, str) or not text.strip() or len(text) > OWNER_TEXT_CAP:
+        raise ValueError(f"owner_text must be the owner's sentence (1-{OWNER_TEXT_CAP} characters)")
+    return did, action, target, d.get("to_status"), text.strip(), nl.iso(d.get("decided_at"))
+
+
+def apply_decision(ledger_path, d):
+    """One owner decision from Telegram -> ("applied" | "refused", zh-TW message for the owner). A decision applied
+    before is applied again as a no-op, so a delivery repeated after a lost ack writes nothing twice."""
+    try:
+        did, action, target, to_status, text, decided_at = parse_decision(d)
+    except (ValueError, nl.LedgerError) as e:
+        return "refused", f"敘事決定 {d.get('decision_id')} 格式不對，未套用：{e}"
+    ref = f"telegram:{did}"
+    db = nl.connect(ledger_path)
+    try:
+        if action == "confirm":
+            row, again = nl.confirm_suggestion(db, target, decision_ref=ref, decided_at=decided_at, note=text)
+            change = (
+                f"改為 {STATUS_WORDS[row['to_status']]}"
+                if row["kind"] == "status"
+                else f"記一筆官方背書（狀態維持 {STATUS_WORDS[row['to_status']]}）"
+            )
+            done = f"敘事建議 {target} 已確認：{row['narrative_id']} {change}"
+        elif action == "reject":
+            row, again = nl.reject_suggestion(db, target, decision_ref=ref, decided_at=decided_at)
+            done = f"敘事建議 {target} 已駁回：{row['narrative_id']} 狀態不變，同一個變化之後不再建議"
+        else:
+            events = nl.events_of(db, target)
+            if not events:
+                raise nl.LedgerError(f"no narrative record {target}")
+            again = any(json.loads(e["basis_json"]).get("approval_ref") == ref for e in events)
+            if not again:
+                nl.set_status(db, target, to_status, text, at=max(decided_at, events[-1]["at"]), approval_ref=ref)
+            done = f"敘事 {target} 已由 owner 設為 {STATUS_WORDS[to_status]}"
+        return "applied", done + ("（先前已套用，未重複寫入）" if again else "")
+    except nl.LedgerError as e:
+        return "refused", f"敘事決定 {did}（{action} {target}）未套用：{e}"
+    finally:
+        db.close()

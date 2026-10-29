@@ -19,15 +19,20 @@ Pipeline for the chosen row (design: aquarium local_dev/design/2026-10-21-resear
      the cited fact claims and sweeps every shown record against all official excerpts; the rule table R1-R9 decides;
      narrative_checks rows always, status events only with --narrative-apply on. A failure here is recorded in
      run.json and never undoes the completed revision.
+     With --narrative-apply confirm the rule's events become suggestions the done notice lists for the owner.
   -> bridge `done <agenda_id> <revision_id>` with the tl_dr on stdin.
+Before the agenda topic, each invocation (not a dry run) applies the owner's narrative decisions (`narrative-pending`,
+acked with `narrative-ack`) and takes in at most one material (`material-pending`, intake.py; reported with
+`material-done` / `material-needs-review`). Intake writes narrative records and theme proposals, never a revision.
 Any failure -> the revision stays prepared, bridge `needs-review <agenda_id>` with a short reason on stdin.
 No escalation to another model.
 
 State (all under --state-dir): ledger.sqlite (research_theme tables + runner_runs), runs/<agenda_id>/{config.json,
-narrative.json, revision.json, run.json, bars.csv, sources/}, runner.log, runner.lock.
+narrative.json, revision.json, run.json, bars.csv, sources/}, runs/material-<id>/{sources/material.txt,
+intake.draft<n>.json, intake.json, run.json}, runner.log, runner.lock.
 
 Exit codes: 0 done / needs_review handled / nothing to do / lock busy; 3 key file error; 4 a bridge report failed
-(recorded, retried on the next run); 5 the bridge `pending` call failed.
+(recorded, retried on the next run); 5 a bridge list call (`pending`, `material-pending`, `narrative-pending`) failed.
 """
 
 from __future__ import annotations
@@ -52,7 +57,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import assemble as assemble_mod  # noqa: E402
 import draft as draft_mod  # noqa: E402
+import intake as intake_mod  # noqa: E402
 import narrative_check  # noqa: E402
+import narrative_ledger as nl  # noqa: E402
 from claim_precheck import has_inference_basis  # noqa: E402
 
 JEV_KEY_VAR = "JEV_RESEARCH_OPENROUTER_KEY"
@@ -62,6 +69,9 @@ JEV_PRIMARY, JEV_FALLBACK = "/v1/systemone", "/alpha/decisions"
 JEV_SOURCE_CAP = 12000
 REPORT_CAP = 400_000  # chars of rendered Markdown attached to the done report
 AGENDA_ID = re.compile(r"^\d{8}-m?\d{1,3}$")
+MATERIAL_ID = intake_mod.MATERIAL_ID
+DECISION_ID = narrative_check.DECISION_ID
+NOTICE_CAP = 600
 REVISION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 REASON_CAP = 580
 SUMMARY_CAP = 300
@@ -78,7 +88,9 @@ class BridgeError(Exception):
 
 class Bridge:
     """Forced-command agenda bridge: `<cmd> pending`, `<cmd> done <id> <rev>` (tl_dr on stdin),
-    `<cmd> needs-review <id>` (reason on stdin). Exit code 2 = refused (stderr has the reason)."""
+    `<cmd> needs-review <id>` (reason on stdin); materials: `material-pending`, `material-done <id>` (JSON on stdin),
+    `material-needs-review <id>` (reason on stdin); owner decisions: `narrative-pending`,
+    `narrative-ack <decision_id> applied|refused` (message on stdin). Exit code 2 = refused (stderr has the reason)."""
 
     def __init__(self, cmd, timeout=60):
         self.argv = shlex.split(cmd)
@@ -97,31 +109,64 @@ class Bridge:
             raise BridgeError(f"bridge {args[0]} exit {p.returncode}: {p.stderr.strip()[:300]}")
         return p.stdout
 
-    def pending(self):
-        out = self._run(["pending"])
+    def _list(self, verb):
+        out = self._run([verb])
         try:
             rows = json.loads(out)
         except ValueError:
-            raise BridgeError("bridge pending returned non-JSON output") from None
+            raise BridgeError(f"bridge {verb} returned non-JSON output") from None
         if not isinstance(rows, list):
-            raise BridgeError(f"bridge pending returned {type(rows).__name__}, not a list")
+            raise BridgeError(f"bridge {verb} returned {type(rows).__name__}, not a list")
         return rows
 
-    def done(self, agenda_id, revision_id, summary, report_md=None):
-        """stdin is the one-line summary, or JSON {summary, report_md} when a rendered report is attached
-        (the bridge saves it and sends it to Telegram as a document)."""
+    def pending(self):
+        return self._list("pending")
+
+    def material_pending(self):
+        return self._list("material-pending")
+
+    def narrative_pending(self):
+        return self._list("narrative-pending")
+
+    def done(self, agenda_id, revision_id, summary, report_md=None, suggestions=()):
+        """stdin is the one-line summary, or JSON {summary, report_md, suggestions} when a rendered report is attached
+        or narrative_apply confirm has suggestions (the bridge saves the report, sends it to Telegram as a document and
+        appends one line per suggestion {id, narrative_id, line} to the notice)."""
         if not AGENDA_ID.match(agenda_id) or not REVISION_ID.match(revision_id):
             raise BridgeError(f"refusing to report malformed ids {agenda_id!r} / {revision_id!r}")
         line = one_line(summary, SUMMARY_CAP)
-        if report_md and len(report_md) <= REPORT_CAP:
-            stdin = json.dumps({"summary": line, "report_md": report_md}, ensure_ascii=False)
+        if report_md and len(report_md) > REPORT_CAP:
+            log.warning(
+                "report for %s is %d chars (> %d); sent without attachment", agenda_id, len(report_md), REPORT_CAP
+            )
+            report_md = None
+        if report_md or suggestions:
+            stdin = json.dumps(
+                {
+                    "summary": line,
+                    **({"report_md": report_md} if report_md else {}),
+                    **({"suggestions": list(suggestions)} if suggestions else {}),
+                },
+                ensure_ascii=False,
+            )
         else:
-            if report_md:
-                log.warning(
-                    "report for %s is %d chars (> %d); sent without attachment", agenda_id, len(report_md), REPORT_CAP
-                )
             stdin = line + "\n"
         self._run(["done", agenda_id, revision_id], stdin)
+
+    def material_done(self, material_id, payload):
+        if not MATERIAL_ID.match(material_id):
+            raise BridgeError(f"refusing to report malformed material id {material_id!r}")
+        self._run(["material-done", material_id], json.dumps(payload, ensure_ascii=False))
+
+    def material_needs_review(self, material_id, reason):
+        if not MATERIAL_ID.match(material_id):
+            raise BridgeError(f"refusing to report malformed material id {material_id!r}")
+        self._run(["material-needs-review", material_id], cap(reason, REASON_CAP) + "\n")
+
+    def narrative_ack(self, decision_id, result, message):
+        if not DECISION_ID.match(decision_id) or result not in ("applied", "refused"):
+            raise BridgeError(f"refusing to ack malformed decision {decision_id!r} {result!r}")
+        self._run(["narrative-ack", decision_id, result], cap(message, NOTICE_CAP) + "\n")
 
     def needs_review(self, agenda_id, reason):
         if not AGENDA_ID.match(agenda_id):
@@ -130,16 +175,19 @@ class Bridge:
 
 
 class OutboxBridge(Bridge):
-    """For containers without an ssh client: done / needs-review are queued as <outbox>/<agenda_id>.json
-    ({verb, args, stdin}) and delivered by deliver_outbox.py on the host. `pending` still runs the bridge command
-    (or the runner reads --agenda-json). One file per agenda id, so a re-report replaces the queued one."""
+    """For containers without an ssh client: every report verb is queued as <outbox>/<id>.json ({verb, args, stdin}) and
+    delivered by deliver_outbox.py on the host. The list verbs still run the bridge command (or the runner reads the
+    host's --agenda-json / --materials-json / --decisions-json). One file per agenda, material or decision id, so a
+    re-report replaces the queued one."""
+
+    LIST_VERBS = ("pending", "material-pending", "narrative-pending")
 
     def __init__(self, cmd, outbox):
         super().__init__(cmd)
         self.outbox = Path(outbox)
 
     def _run(self, args, stdin=""):
-        if args[0] == "pending":
+        if args[0] in self.LIST_VERBS:
             return super()._run(args, stdin)
         try:
             self.outbox.mkdir(parents=True, exist_ok=True)
@@ -582,7 +630,7 @@ def process_row(row, *, state_dir, ledger, keys, opts):
             narr_jev = Jev(keys["jev"], jev_client.model, transport, path=jev_client.path)
             mode = opts.get("narrative_apply", "off")
             try:
-                results = narrative_check.apply(ledger_path, revision, payload, cfg, narr_jev, enabled=mode == "on")
+                results = narrative_check.apply(ledger_path, revision, payload, cfg, narr_jev, mode=mode)
             except Exception as e:
                 log.exception("narrative_apply failed for %s", row.get("id"))
                 run.data["narrative_error"] = f"{type(e).__name__}: {cap(str(e), 300)}"
@@ -651,11 +699,27 @@ def render_report(run_dir):
     return p.stdout
 
 
+def suggestions_of(run_dir):
+    """narrative_apply confirm suggestions still open in <run_dir>/revision.json, as the done payload lists them."""
+    rev = Path(run_dir or "") / "revision.json"
+    if not run_dir or not rev.is_file():
+        return []
+    records = (json.loads(rev.read_text(encoding="utf-8")).get("narrative_results") or {}).get("records") or []
+    return [
+        {"id": x["suggestion"]["id"], "narrative_id": x["narrative_id"], "line": x["suggestion"]["line"]}
+        for x in records
+        if (x.get("suggestion") or {}).get("status") == "suggested"
+    ]
+
+
 def report(bridge, ledger, agenda_id, rec):
     """Tell the bridge the ledger outcome; records the ack. Returns False on a bridge failure."""
     try:
         if rec["status"] == "completed":
-            bridge.done(agenda_id, rec["revision_id"], rec.get("summary") or "", render_report(rec.get("run_dir")))
+            run_dir = rec.get("run_dir")
+            bridge.done(
+                agenda_id, rec["revision_id"], rec.get("summary") or "", render_report(run_dir), suggestions_of(run_dir)
+            )
         else:
             bridge.needs_review(agenda_id, rec.get("reason") or "needs review")
     except BridgeError as e:
@@ -666,11 +730,160 @@ def report(bridge, ledger, agenda_id, rec):
     return True
 
 
+# ------------------------------------------------------------------------------------------------ owner inputs
+def owner_rows(args, bridge, verb):
+    """(rows, rc) for material-pending / narrative-pending. In host mode (--agenda-json) the host passes each list it
+    read as a file; a list it did not pass is empty, so a container without ssh never calls the bridge."""
+    path, fetch = {
+        "material-pending": (args.materials_json, bridge.material_pending),
+        "narrative-pending": (args.decisions_json, bridge.narrative_pending),
+    }[verb]
+    if path:
+        rows = json.loads(Path(path).read_text(encoding="utf-8"))
+        return (rows if isinstance(rows, list) else []), 0
+    if args.agenda_json:
+        return [], 0
+    try:
+        return fetch(), 0
+    except BridgeError as e:
+        log.error("%s", e)
+        return [], EXIT_BRIDGE_PENDING
+
+
+def run_decisions(bridge, rows, ledger_path):
+    """Apply each owner decision (confirm / reject a suggestion, narrative-set) and ack it with the owner's message."""
+    rc = 0
+    for d in rows:
+        did = str(d.get("decision_id", "")) if isinstance(d, dict) else ""
+        if not DECISION_ID.match(did):
+            log.error("skipping decision row with malformed id %r", did)
+            continue
+        result, message = narrative_check.apply_decision(ledger_path, d)
+        log.info("decision %s %s: %s", did, result, message)
+        try:
+            bridge.narrative_ack(did, result, message)
+        except BridgeError as e:
+            log.error("bridge narrative-ack for %s failed: %s", did, e)
+            rc = EXIT_BRIDGE_REPORT
+    return rc
+
+
+def material_report(bridge, material_id, data):
+    """Tell the bridge a processed material's outcome (from its run.json). Returns False on a bridge failure."""
+    try:
+        if data["status"] == "intaken":
+            bridge.material_done(material_id, data["report"])
+        else:
+            reason = "{}: {}".format(data.get("failed_stage", "intake"), "; ".join(data["reasons"]))
+            bridge.material_needs_review(material_id, reason)
+    except BridgeError as e:
+        log.error("bridge report for material %s failed: %s", material_id, e)
+        return False
+    log.info("reported material %s %s to the bridge", material_id, data["status"])
+    return True
+
+
+def process_material_row(row, run_dir, ledger_path, keys, opts):
+    """Intake of one bridge row; run.json is written whatever happens. -> run.json data (status intaken|needs_review)."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    data = {
+        "material_id": row["id"],
+        "status": "running",
+        "reasons": [],
+        "started_at": now_iso(),
+        "models": {"draft_configured": opts["draft"]["model"]},
+        "draft_calls": [],
+        "gates": [],
+        "usage": {},
+        "costs": {},
+    }
+    try:
+        m = intake_mod.parse_row(row)
+        data["report"] = intake_mod.process_material(
+            m, run_dir=run_dir, ledger_path=ledger_path, keys=keys, opts=opts, data=data
+        )
+        data["status"] = "intaken"
+    except intake_mod.IntakeError as e:
+        data.update(status="needs_review", failed_stage=e.stage, reasons=[e.reason, *e.details])
+    except Exception as e:  # a bug must not leave the material silently half-done
+        log.exception("internal error while taking in material %s", row.get("id"))
+        data.update(status="needs_review", failed_stage="internal", reasons=[f"{type(e).__name__}: {e}"])
+    finally:
+        calls = data["draft_calls"]
+        data["models"]["draft_returned"] = [c.get("returned_model") for c in calls]
+        data["usage"]["draft"] = [c.get("usage") for c in calls]
+        costs = [c.get("cost") for c in calls if isinstance(c.get("cost"), (int, float))]
+        if costs:
+            data["costs"]["draft_usd"] = round(sum(costs), 6)
+        if data["status"] != "intaken":
+            db = nl.connect(ledger_path)
+            try:
+                if nl._one(db, "SELECT 1 FROM materials WHERE material_id = ?", row["id"]):
+                    nl.set_material_status(
+                        db, row["id"], "needs_review", note=cap("; ".join(data["reasons"]), REASON_CAP)
+                    )
+            finally:
+                db.close()
+        data["finished_at"] = now_iso()
+        write_json(run_dir / "run.json", data)
+    return data
+
+
+def run_materials(bridge, rows, base, keys, opts):
+    """At most one new material per invocation. A material the bridge still lists after it was taken in (or sent to
+    needs_review) is reported again from its run.json, without a new model call."""
+    rc, chosen = 0, None
+    for row in rows:
+        mid = str(row.get("id", "")) if isinstance(row, dict) else ""
+        if not MATERIAL_ID.match(mid):
+            log.error("skipping material row with malformed id %r", mid)
+            continue
+        run_json = base / "runs" / f"material-{mid}" / "run.json"
+        prior = json.loads(run_json.read_text(encoding="utf-8")) if run_json.is_file() else None
+        if prior and prior.get("status") in ("intaken", "needs_review"):
+            if not material_report(bridge, mid, prior):
+                rc = EXIT_BRIDGE_REPORT
+            continue
+        if chosen is None:
+            chosen = row
+    if chosen is not None:
+        mid = chosen["id"]
+        log.info("taking in material %s (%s %s)", mid, chosen.get("tier"), chosen.get("author"))
+        data = process_material_row(chosen, base / "runs" / f"material-{mid}", base / "ledger.sqlite", keys, opts)
+        log.info("material %s -> %s %s", mid, data["status"], "; ".join(data["reasons"])[:300])
+        if not material_report(bridge, mid, data):
+            rc = EXIT_BRIDGE_REPORT
+    return rc
+
+
+def run_owner_inputs(args, bridge, base, keys, *, transport, as_of):
+    """Owner decisions first (they may settle a suggestion the agenda run would otherwise show again), then one material."""
+    decisions, rc1 = owner_rows(args, bridge, "narrative-pending")
+    rc2 = run_decisions(bridge, decisions, base / "ledger.sqlite") if decisions else 0
+    materials, rc3 = owner_rows(args, bridge, "material-pending")
+    opts = {
+        "as_of": as_of or datetime.datetime.now(datetime.UTC).replace(second=0, microsecond=0),
+        "transport": transport,
+        "draft": {"model": args.draft_model, "reasoning": not args.no_reasoning, "max_tokens": args.max_tokens},
+        "jev_factory": lambda: Jev(keys["jev"], args.jev_model, transport),
+    }
+    rc4 = run_materials(bridge, materials, base, keys, opts) if materials else 0
+    return rc1 or rc2 or rc3 or rc4
+
+
 def run_once(args, keys, *, transport=None, assemble_kw=None, as_of=None):
     state = Path(args.state_dir).expanduser()
     base = state / "dry-run" if args.dry_run else state
     base.mkdir(parents=True, exist_ok=True)
     bridge = OutboxBridge(args.bridge, args.outbox) if args.outbox else Bridge(args.bridge)
+    side_rc = 0 if args.dry_run else run_owner_inputs(args, bridge, base, keys, transport=transport, as_of=as_of)
+    return (
+        run_agenda(args, keys, bridge, state, base, transport=transport, assemble_kw=assemble_kw, as_of=as_of)
+        or side_rc
+    )
+
+
+def run_agenda(args, keys, bridge, state, base, *, transport, assemble_kw, as_of):
     if args.agenda_json:
         rows = json.loads(Path(args.agenda_json).read_text(encoding="utf-8"))
     else:
@@ -752,6 +965,14 @@ def parse_args(argv=None):
     ap.add_argument(
         "--outbox", help="queue done / needs-review here for deliver_outbox.py instead of calling the bridge"
     )
+    ap.add_argument(
+        "--materials-json",
+        help="read material-pending rows from this file (host mode: with --agenda-json, no file = none)",
+    )
+    ap.add_argument(
+        "--decisions-json",
+        help="read narrative-pending rows from this file (host mode: with --agenda-json, no file = none)",
+    )
     ap.add_argument("--agenda-id", help="only consider this agenda id")
     ap.add_argument(
         "--dry-run",
@@ -764,10 +985,11 @@ def parse_args(argv=None):
     ap.add_argument("--jev-model", default=JEV_MODEL)
     ap.add_argument(
         "--narrative-apply",
-        choices=("off", "on"),
+        choices=narrative_check.APPLY_MODES,
         default="off",
         help="write narrative status events from the rule table (default off until the JEV control set passes, §9 "
-        "step 7); off still writes one narrative_checks row per shown record",
+        "step 7); off still writes one narrative_checks row per shown record; confirm (owner decision 2026-10-29) "
+        "lists each change the rule would write in the done notice for the owner to confirm or reject in Telegram",
     )
     return ap.parse_args(argv)
 

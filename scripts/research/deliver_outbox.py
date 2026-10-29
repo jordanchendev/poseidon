@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Deliver runner.py --outbox reports to the agenda bridge (host side; stdlib only, Python 3.8+).
 
-For each <outbox>/<agenda_id>.json ({verb: done|needs-review, args: [...], stdin}) run `<bridge> <verb> <args...>`
-with stdin. Exit 0 -> file removed; exit 2 (refused) -> moved to <outbox>/refused/ with the reason logged; anything
+For each <outbox>/<id>.json ({verb, args: [...], stdin}) run `<bridge> <verb> <args...>`, verb one of done |
+needs-review (agenda id), material-done | material-needs-review (material id), narrative-ack (decision id, applied |
+refused), with stdin. Exit 0 -> file removed; exit 2 (refused) -> moved to <outbox>/refused/ with the reason logged; anything
 else -> kept for the next run. Ids are re-validated here; nothing else is passed to the bridge.
 
 Usage: deliver_outbox.py --outbox ~/research-runner/state/outbox [--bridge "ssh research-bridge"]
@@ -19,6 +20,8 @@ from pathlib import Path
 
 AGENDA_ID = re.compile(r"^\d{8}-m?\d{1,3}$")
 REVISION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+MATERIAL_ID = re.compile(r"^\d{8}-k\d{1,4}$")
+DECISION_ID = re.compile(r"^\d{8}-d\d{1,4}$")
 
 
 def valid(entry):
@@ -27,6 +30,10 @@ def valid(entry):
         return len(args) == 2 and AGENDA_ID.match(args[0]) and REVISION_ID.match(args[1])
     if verb == "needs-review":
         return len(args) == 1 and AGENDA_ID.match(args[0])
+    if verb in ("material-done", "material-needs-review"):
+        return len(args) == 1 and MATERIAL_ID.match(args[0])
+    if verb == "narrative-ack":
+        return len(args) == 2 and DECISION_ID.match(args[0]) and args[1] in ("applied", "refused")
     return False
 
 

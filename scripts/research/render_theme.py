@@ -272,6 +272,18 @@ def status_label(status, tier, claim_type):
     return "本系統推論，未證實" if tier == "our-inference" else "未證實"
 
 
+def unwritten(x):
+    """Why a rule outcome has no event: narrative_apply off, or a confirm-mode suggestion and where it stands."""
+    sug = x.get("suggestion") or {}
+    if sug.get("status") == "suppressed":
+        return f"（同一變化曾被駁回 {sug['suppressed_by']}，不再建議）"
+    if sug.get("status") == "suggested":
+        return f"（建議 {sug['id']}，待 owner 確認）"
+    if sug.get("status") in ("confirmed", "rejected"):
+        return f"（建議 {sug['id']} 已{'確認' if sug['status'] == 'confirmed' else '駁回'}）"
+    return "（narrative_apply off，未寫入）"
+
+
 def cell(text, n=None):
     text = " ".join(str(text).split()).replace("|", "／")
     return text if n is None or len(text) <= n else text[: n - 1] + "…"
@@ -293,7 +305,7 @@ if snap and snap["records"]:
         "| narrative_id | claim | 來源 | 前狀態 | 判定 | 新狀態 | 依據（claim 編號與 quote） |",
         "|---|---|---|---|---|---|---|",
     ]
-    owner = []
+    owner, confirm = [], []
     for rec in snap["records"]:
         nid, x = rec["narrative_id"], res.get(rec["narrative_id"]) or {}
         src, ct = rec["source_tier"], rec["claim_type"]
@@ -304,9 +316,9 @@ if snap and snap["records"]:
         if not x:
             new = "未判定"
         elif outcome == "status_change":
-            new = status_label(x["target_status"], src, ct) + ("" if written else "（narrative_apply off，未寫入）")
+            new = status_label(x["target_status"], src, ct) + ("" if written else unwritten(x))
         elif outcome == "corroborated":
-            new = status_label(before, src, ct) + "，官方背書" + ("" if written else "（narrative_apply off，未寫入）")
+            new = status_label(before, src, ct) + "，官方背書" + ("" if written else unwritten(x))
         else:
             new = status_label(before, src, ct) + (f"（{outcome}）" if outcome in ("disputed", "missed") else "")
         idx = x.get("claim_indices", drafted.get(nid, {}).get("claim_indices")) or []
@@ -317,10 +329,14 @@ if snap and snap["records"]:
             f"| `{nid}` | {cell(rec['claim'])} | {cell(rec['attributed_to'])}（{src}） | "
             f"{status_label(before, src, ct)} | {judged} | {new} | {basis or '—'} |"
         )
+        if (x.get("suggestion") or {}).get("status") == "suggested":
+            confirm.append("- " + x["suggestion"]["line"])
         if outcome in ("disputed", "missed"):
             owner.append(
                 f"- `{nid}` {outcome}（{x.get('rule')}）：{cell(rec['claim'])}；{x.get('why') or ''}".rstrip("；")
             )
+    if confirm:
+        L += ["\n### 待 owner 確認（narrative_apply confirm）\n", *confirm]
     if owner:
         L += ["\n### 待 owner 判斷\n", *owner]
     L.append("")
