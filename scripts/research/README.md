@@ -512,3 +512,28 @@ the owner typed.
 Tests: `test_intake.py` (the §7 posts in `fixtures/gooaye_posts.json`, a test fixture only, never vault content),
 `test_narrative_confirm.py` and `test_theme_decisions.py`; the macminim4 side is
 `local_dev/scripts/strategy-bridge/macminim4/test_research_intake.py` in the aquarium workspace.
+
+### Vault projection of themes (§9 step 10; design §3.4, §5.1-§5.2)
+
+The ledger stays the only source; the vault gets a one-way projection on the MacBook. The vault-side scripts are not
+in this repo: proposed copies live in the aquarium workspace under `local_dev/scripts/research/nexus/`, laid out like
+the vault (`_kb/ops/compile/theme_pages.py` new; `research_links.py`, `_kb/ops/lint/lint.py` and `bin/nexus_pull.py`
+changed, each changed line marked `# [themes]`), for the owner to install.
+
+- `nexus_pull.py` pulls `~/research-runner/state/narrative_export.json` when its sha256 changed (sensitive patterns
+  quarantine it like any other pull), runs `theme_pages.py --export <cache> --apply`, then `research_links.py --apply`,
+  `compile.py --apply`, `lint.py --write`.
+- `theme_pages.py` writes `_kb/wiki/themes/_registry.md` whole (table, theme edges, and a YAML block `themes:` with
+  title, kind, status, approval, keywords, members and `linked_symbols`) and, per theme, creates
+  `_kb/wiki/themes/<id>.md` once as a stub; afterwards only the block between `<!-- theme-timeline:start ... -->` and
+  `<!-- theme-timeline:end -->` is regenerated: 跨公司訊號 (the export's signals, official and relayed apart), 時間線
+  (官方事實 / 官方預期 / 本系統推論 / 傳聞（層級）/ 狀態變化, oldest first, Research notes linked by scope) and 敘事追蹤.
+  Quotes are at most 120 characters and no material text is in the export (D7). The same export gives no write.
+- `lint.py` rule `theme-id` (ERROR): a `[[themes/<id>]]` link, or a `themes` frontmatter value, whose id is not in the
+  registry's YAML block, or any `themes/` link when the registry is missing. `research_links.py` starts a company block
+  with one `相關主題：` line when the page's symbol (+ market for non-Taiwan codes) is a member or a linked symbol.
+
+Tests: `test_theme_pages.py` runs the vault scripts from `$NEXUS_VAULT_SCRIPTS` against a fixture vault through
+`NEXUS_VAULT` (they skip when the scripts are absent; its export tests always run); with `NEXUS_VAULT` and
+`NEXUS_VAULT_SCRIPTS` pointing at the nexus copies, `test_vault_lint_graph.py` and the research_links tests in
+`test_offline_tooling.py` run against them too.
