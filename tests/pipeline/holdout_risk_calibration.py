@@ -1,4 +1,4 @@
-"""Null calibration of the holdout gate's beta-matched risk route at holdout length, and its replay on frozen runs.
+"""Null calibration of the beta-matched risk route over random windows (holdout and train lengths), and its replay.
 
     python -m tests.pipeline.holdout_risk_calibration nulls --lengths 252,330,520,1260 --sims 200 --jobs 6 \\
         --out /out/holdout_nulls.json
@@ -11,8 +11,14 @@ circularly shifted. Each one runs with fresh capital over a random window of ``l
 [2001-01-02, 2026-10-27] (refdata at ``POSEIDON_PIPELINE_REFDATA_ROOT``), as a holdout does, and is judged by the
 holdout's benchmark condition: holdout alpha > 0 (``benchmark.regress_daily`` on the window) and the risk route
 (``benchmark.calmar_draws`` against ``daily_stages.beta_matched_run`` on the window) for every block length in
-``--blocks`` and confidence in ``--confidences``. ``frozen`` is ``benchmark.risk_route`` under the holdout keys of
-``plan.DAILY_THRESHOLDS`` once they are registered there.
+``--blocks`` and confidence in ``--confidences`` (``pass``: lower bound > 0 and tracking >= the frozen
+``benchmark_risk_min_tracking``; ``lower`` and ``tracking`` are kept raw). ``frozen`` is ``benchmark.risk_route``
+under the holdout keys of ``plan.DAILY_THRESHOLDS`` once they are registered there; ``frozen_train`` is the train
+route as frozen (``benchmark.risk_route`` under the train keys, judged with alpha > 0 and HAC t >=
+``benchmark_alpha_t_min``), for train lengths:
+
+    python -m tests.pipeline.holdout_risk_calibration nulls --lengths 1260,2137,3840,5000 --sims 200 \\
+        --constant-sims 100 --jobs 6 --blocks 252 --confidences 0.95 --out /out/train_nulls.json
 
 ``replay`` judges the dumped runs (``{"config", "stages": {name: {"artifact": {"report"}}}}``, one file per run) through
 ``DailyHoldoutStage``: with the frozen config, then with ``holdout_benchmark_rule`` (plus the benchmark rule keys of
@@ -111,6 +117,7 @@ def judge(job: dict) -> dict:
         "alpha_pass": bool(alpha is not None and alpha > 0),
         "risk": {},
         "frozen": None,
+        "frozen_train": None,
     }
     runs: dict[float, object] = {}
 
@@ -126,6 +133,8 @@ def judge(job: dict) -> dict:
             "reason": risk["reason"],
             "calmar_diff_lower": risk.get("calmar_diff_lower"),
         }
+    train = benchmark.risk_route(result, "return", beta, matched, DAILY_THRESHOLDS)
+    row["frozen_train"] = {k: train.get(k) for k in ("status", "reason", "calmar_diff_lower", "tracking")}
     if not beta >= DAILY_THRESHOLDS["benchmark_risk_min_beta"]:
         row["not_applicable"] = f"beta {beta:.2f}"
         return row
@@ -134,13 +143,17 @@ def judge(job: dict) -> dict:
         row["not_applicable"] = run.reason
         return row
     s, m = result.returns, run.returns
-    row.update(calmar=float(benchmark.calmar_rows(s)[2]), matched_calmar=float(benchmark.calmar_rows(m)[2]))
+    tracking = float(np.std(s - m) / np.std(m))
+    applies = tracking >= DAILY_THRESHOLDS["benchmark_risk_min_tracking"]
+    row.update(
+        calmar=float(benchmark.calmar_rows(s)[2]), matched_calmar=float(benchmark.calmar_rows(m)[2]), tracking=tracking
+    )
     for block in job["blocks"]:
         if len(s) < 2 * block:
             continue
         draws = benchmark.calmar_draws(s, m, block_days=block, resamples=job["resamples"])
         lower = {str(c): benchmark.lower_bound(draws, c) for c in job["confidences"]}
-        row["risk"][str(block)] = {"lower": lower, "pass": {c: bound > 0 for c, bound in lower.items()}}
+        row["risk"][str(block)] = {"lower": lower, "pass": {c: applies and bound > 0 for c, bound in lower.items()}}
     return row
 
 
@@ -203,7 +216,7 @@ def table(rows: list[dict], args) -> list[str]:
                 lines.append(f"length {length}, block {block}, confidence {c}:")
                 groups = [(name, [row for row in at if row["null"] == name]) for name in names]
                 groups.append(("switching (pooled)", [row for row in at if row["null"] in switching]))
-                for name, group in groups:
+                for name, group in filter(lambda g: g[1], groups):  # --sims 0: constant nulls only
                     q = rates(group, block, c)
                     lines.append(
                         f"  {name:<20} n={q['n']:>4} applicable {q['applicable']:>4}  risk {q['risk']:6.1%}  "
@@ -212,12 +225,37 @@ def table(rows: list[dict], args) -> list[str]:
     return lines
 
 
+def train_table(rows: list[dict], lengths: list[int]) -> list[str]:
+    """``frozen_train`` per length and null: the train route as frozen, next to the train alpha route."""
+
+    t_min = DAILY_THRESHOLDS["benchmark_alpha_t_min"]
+    lines = [f"train route as frozen (alpha: alpha > 0 and HAC t >= {t_min:g}):"]
+    names = sorted({row["null"] for row in rows})
+    switching = [name for name in names if not name.startswith("constant")]
+    for length in lengths:
+        at = [row for row in rows if row["length"] == length]
+        groups = [(name, [row for row in at if row["null"] == name]) for name in names]
+        groups.append(("switching (pooled)", [row for row in at if row["null"] in switching]))
+        for name, group in filter(lambda g: g[1], groups):
+            alpha = [bool(row["alpha_pass"] and (row["alpha_t"] or 0.0) >= t_min) for row in group]
+            status = [row["frozen_train"]["status"] for row in group]
+            risk = [s == "pass" for s in status]
+            n = len(group)
+            lines.append(
+                f"  {length:>5} {name:<20} n={n:>4} n/a {status.count('not_applicable') / n:6.1%}  "
+                f"risk {sum(risk) / n:6.1%}  alpha {sum(alpha) / n:6.1%}  "
+                f"either {sum(a or b for a, b in zip(alpha, risk, strict=True)) / n:6.1%}  "
+                f"risk&!alpha {sum(b and not a for a, b in zip(alpha, risk, strict=True)) / n:6.1%}"
+            )
+    return lines
+
+
 def nulls(args) -> int:
     jobs, stats = null_jobs(args)
     print("filter path:", json.dumps(stats), "jobs:", len(jobs), flush=True)
     with ProcessPoolExecutor(args.jobs) as pool:
         rows = list(pool.map(judge, jobs, chunksize=4))
-    lines = table(rows, args)
+    lines = table(rows, args) + train_table(rows, args.lengths)
     print("\n".join(lines))
     frozen = [row for row in rows if row["frozen"] is not None]
     if frozen:

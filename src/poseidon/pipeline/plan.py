@@ -328,6 +328,21 @@ DAILY_THRESHOLDS: dict = {
     "benchmark_risk_resamples": 2000,
     "benchmark_risk_confidence": 0.95,
     "benchmark_risk_min_beta": 0.25,
+    # 2026-10-29, before any run froze the rule: at train lengths (1260-5000 days, random windows 2001-2026) the
+    # route passed 0-23 % of constant-leverage nulls on contract rounding alone (tracking <= 0.10 in every such
+    # pass; constant nulls <= 0.17, switching nulls >= 0.09, p1 >= 0.15). Below this tracking the route does not
+    # apply: constant nulls 0 %, switching nulls unchanged (tests/pipeline/holdout_risk_calibration.py). A config
+    # frozen with benchmark_rule but without this key keeps the route without the floor.
+    "benchmark_risk_min_tracking": 0.2,
+    # Owner decision 2026-10-29: the holdout's alpha > 0 condition also passes on the risk route evaluated on the
+    # holdout (gates/holdout.py), for runs frozen from today on. Nulls at holdout lengths 252-1260 days
+    # (tests/pipeline/holdout_risk_calibration.py): with 21-day blocks at 99% and the tracking floor above, the risk
+    # route alone passed <= 1.5% and never passed a null whose alpha failed. The 4.5% alpha-or-risk bar does not
+    # apply here: holdout alpha > 0 alone passes 33-44% of the switching nulls. daily_fixed is judged in TWD, where
+    # the route does not apply and alpha alone decides.
+    "holdout_benchmark_rule": "alpha_or_beta_matched_risk",
+    "holdout_risk_block_days": 21,
+    "holdout_risk_confidence": 0.99,
     "cost_stress_multiplier": 2.0,
     "cost_stress_pnl_positive": True,  # final equity > initial with every cost x2
     "dsr_min": 0.95,

@@ -28,16 +28,11 @@ from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.v3.config import daily_data_config
 from tests.pipeline.v3_wiring_support import build_long_store, planted_edge_spec, static_leverage_spec
 
-# No config freezes the holdout rule (2026-10-29: alpha > 0 alone passes ~38% of the nulls at holdout length, so
-# alpha or risk cannot stay within 4.5%; tests/pipeline/holdout_risk_calibration.py). RULE: the daily thresholds plus
-# the one setting whose risk route alone stayed within 3.0% on every null and length (21-day blocks, 99%).
-ALPHA_ONLY = dict(DAILY_THRESHOLDS)
-RULE = {
-    **ALPHA_ONLY,
-    holdout.RULE_KEY: benchmark.RULE_ALPHA_OR_RISK,
-    holdout.BLOCK_KEY: 21,
-    holdout.CONFIDENCE_KEY: 0.99,
-}
+# RULE: the daily thresholds as frozen since 2026-10-29 (21-day blocks, 99%); ALPHA_ONLY: the same without the
+# holdout rule, as every run frozen before then.
+RULE = dict(DAILY_THRESHOLDS)
+HOLDOUT_KEYS = (holdout.RULE_KEY, holdout.BLOCK_KEY, holdout.CONFIDENCE_KEY)
+ALPHA_ONLY = {k: v for k, v in RULE.items() if k not in HOLDOUT_KEYS}
 TERMINAL = json.loads((Path(__file__).parent / "fixtures" / "v3_terminal_runs.json").read_text())["runs"]
 
 
@@ -100,11 +95,26 @@ def timed(n: int = 1050, seed: int = 4):
     return np.where(bear, 0.5, 2.0) * x, x
 
 
-def test_no_config_freezes_the_holdout_rule():
-    for strategy_class in ("daily_equity", "daily_fixed", "intraday_fixed"):
-        assert holdout.RULE_KEY not in class_settings(strategy_class)["thresholds"]
+def test_new_daily_configs_freeze_the_holdout_rule_and_judged_runs_keep_alpha_alone():
+    frozen = {holdout.RULE_KEY: benchmark.RULE_ALPHA_OR_RISK, holdout.BLOCK_KEY: 21, holdout.CONFIDENCE_KEY: 0.99}
+    for strategy_class in ("daily_equity", "daily_fixed"):
+        thresholds = class_settings(strategy_class)["thresholds"]
+        assert {k: thresholds[k] for k in HOLDOUT_KEYS} == frozen
+        assert thresholds[benchmark.RULE_KEY] == benchmark.RULE_ALPHA_OR_RISK
+    assert not set(HOLDOUT_KEYS) & set(class_settings("intraday_fixed")["thresholds"])
     for run in TERMINAL.values():  # every judged run keeps holdout alpha alone
         assert holdout.RULE_KEY not in json.dumps(run["config_json"])
+
+
+def test_daily_fixed_is_judged_on_holdout_alpha_alone():
+    thresholds = class_settings("daily_fixed")["thresholds"]
+    strategy, x = timed()  # the series whose risk route passes when judged on equity
+    lost = holdout.evaluate_daily(inputs(strategy, x, matched=never, basis="twd", alpha=-1e-6), thresholds)
+    check(lost, "fail", "holdout_alpha_not_positive")
+    assert lost.report["risk_route"]["status"] == "not_applicable" and lost.report["passed_routes"] == []
+    won = holdout.evaluate_daily(inputs(strategy, x, matched=never, basis="twd", alpha=1e-6), thresholds)
+    check(won, "pass", "pass")
+    assert won.report["passed_routes"] == ["alpha"]
 
 
 def test_without_the_rule_the_holdout_judges_alpha_alone():
@@ -133,15 +143,15 @@ def test_a_drawdown_cutting_holdout_passes_by_the_risk_route_with_the_holdout_bl
     assert again == result  # seeded bootstrap: the same verdict and numbers on a re-run
 
 
-def test_static_leverage_on_the_holdout_fails_both_routes():
+def test_static_leverage_on_the_holdout_fails_on_alpha_and_the_risk_route_does_not_apply():
     x = np.random.default_rng(4).normal(0.0008, 0.01, 1050)
     jitter = np.random.default_rng(1).normal(0.0, 1e-5, len(x))
     matched = Matched(days(len(x), "2024-01-01"), x, cost=0.00002)
     result = holdout.evaluate_daily(inputs(2.0 * x - 0.00002 + jitter, x, matched=matched), RULE)
     check(result, "fail", "holdout_alpha_not_positive")
     risk = result.report["risk_route"]
-    assert risk["status"] == "fail" and risk["matched_leverage"] == 2.0 and risk["calmar_diff_lower"] <= 0
-    assert result.report["passed_routes"] == [] and "risk route: Calmar not above" in result.reason
+    assert risk["status"] == "not_applicable" and risk["matched_leverage"] == 2.0
+    assert result.report["passed_routes"] == [] and "risk route: tracking" in result.reason
 
 
 def test_when_the_risk_route_does_not_apply_alpha_alone_decides_and_the_report_says_why():
@@ -172,10 +182,6 @@ def test_when_the_risk_route_does_not_apply_alpha_alone_decides_and_the_report_s
     assert (
         few.report["risk_route"]["status"] == "not_applicable" and "on at least" in few.report["risk_route"]["reason"]
     )
-
-    x, _bear = market(1050, 4)
-    twd = check(holdout.evaluate_daily(inputs(0.1 * x + 0.0002, x, matched=never, basis="twd"), RULE), "pass", "pass")
-    assert twd.report["risk_route"]["status"] == "not_applicable"  # daily_fixed: judged in TWD
 
 
 def test_the_rule_needs_the_benchmark_rule_its_block_and_a_known_value():
@@ -250,7 +256,7 @@ def test_the_stage_matches_the_holdout_beta_over_the_holdout_days(planted):
 def test_the_stage_without_the_rule_reports_as_before(plain):
     with_rule, _ = judge(plain, static_leverage_spec(), {"lev": 2.5})
     gate = with_rule.report["gate_report"]
-    assert gate["risk_route"]["status"] == "fail" and gate["risk_route"]["matched_leverage"] == pytest.approx(
+    assert gate["risk_route"]["status"] == "not_applicable" and gate["risk_route"]["matched_leverage"] == pytest.approx(
         2.5, abs=0.1
     )
     without, _ = judge(plain, static_leverage_spec(), {"lev": 2.5}, ALPHA_ONLY)

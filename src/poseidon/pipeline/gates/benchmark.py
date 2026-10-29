@@ -322,6 +322,12 @@ def _alpha_route(inputs: BenchmarkDailyInputs, thresholds: Mapping) -> GateResul
 # (the same blocks of days for both). Block length, resamples and confidence are frozen in ``thresholds``; they
 # were set on null strategies (constant leverage, random regime switching on TX), not on real runs:
 # tests/pipeline/benchmark_risk_calibration.py.
+#
+# The route does not apply when the strategy is its matched run up to contract rounding: tracking = std(strategy
+# - matched) / std(matched), daily returns, below ``benchmark_risk_min_tracking``. A constant-leverage strategy and
+# its matched run then differ only by whole-contract sizing, a fixed exposure gap whose Calmar edge has the same
+# sign in every resample, so the lower bound lands just above 0 on rounding alone (TMF, 1M TWD: up to 23 % of
+# constant-leverage windows at train length; tests/pipeline/holdout_risk_calibration.py, ``frozen_train``).
 
 RULE_KEY = "benchmark_rule"
 RULE_ALPHA_OR_RISK = "alpha_or_beta_matched_risk"
@@ -330,6 +336,7 @@ RISK_KEYS = (
     "benchmark_risk_resamples",
     "benchmark_risk_confidence",
     "benchmark_risk_min_beta",
+    "benchmark_risk_min_tracking",  # missing: no tracking floor (a config frozen before 2026-10-29)
 )
 RISK_SEED = 0
 RISK_CHUNK = 256  # resamples per vectorised batch
@@ -344,6 +351,7 @@ class RiskKeys:
     resamples: str = RISK_KEYS[1]
     confidence: str = RISK_KEYS[2]
     min_beta: str = RISK_KEYS[3]
+    min_tracking: str = RISK_KEYS[4]
 
 
 RISK_METHOD = (
@@ -445,6 +453,9 @@ def risk_route(
     missing = [key for key in names if not is_finite(thresholds.get(key))]
     if missing:
         return {"status": "invalid", "reason": f"{keys.rule} is frozen without {', '.join(missing)}"}
+    min_tracking = thresholds.get(keys.min_tracking)
+    if min_tracking is not None and not is_finite(min_tracking):
+        return {"status": "invalid", "reason": f"{keys.min_tracking} is not a finite number ({min_tracking!r})"}
     block, resamples = int(thresholds[keys.block_days]), int(thresholds[keys.resamples])
     confidence, min_beta = float(thresholds[keys.confidence]), float(thresholds[keys.min_beta])
     out = {
@@ -456,7 +467,9 @@ def risk_route(
         "resamples": resamples,
         "confidence": confidence,
         "min_beta": min_beta,
+        "min_tracking": min_tracking,
         "matched_leverage": None,
+        "tracking": None,
     }
 
     def not_applicable(reason: str) -> dict:
@@ -478,6 +491,13 @@ def risk_route(
     s, m = result.returns, run.returns
     if not (np.isfinite(s).all() and np.isfinite(m).all()) or len(s) < 2 * block:
         return not_applicable(f"needs finite daily returns on at least {2 * block} days")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        tracking = float(np.std(s - m) / np.std(m))
+    out["tracking"] = finite_or_none(tracking)
+    if min_tracking is not None and not tracking >= min_tracking:
+        return not_applicable(
+            f"tracking {tracking:.3f} < {min_tracking:g}: the {leverage:g}x matched run up to contract rounding"
+        )
     stats = calmar_difference(s, m, block_days=block, resamples=resamples, confidence=confidence)
     out.update(stats, matched_costs=run.costs.as_report(), matched_margin_calls=len(run.event_days(["margin_call"])))
     lower = stats["calmar_diff_lower"]
