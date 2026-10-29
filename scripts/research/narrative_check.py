@@ -396,12 +396,18 @@ def write_theme_links(db, revision, by_id):
             )
 
 
+def _clip(text, n):
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
 def proposal_line(pid, t, idx, repeated=False):
-    """The done notice's line for one theme proposal (design §3.3 step 2); the owner types the id."""
-    members = "、".join(f"{m['symbol']}({m['role']})" for m in t.get("proposed_members") or [])
+    """The done notice's line for one theme proposal (design §3.3 step 2); the owner types the id. Title, suggested id
+    and members are clipped so the line stays under the bridge's 400 characters with the reply at its end."""
+    members = "、".join(f"{m['symbol']}({m['role']})" for m in (t.get("proposed_members") or [])[:6])
     return (
-        f"主題提案 {pid}{'（本篇再次提出）' if repeated else ''}：{t['title'].strip()}（{t['kind']}），"
-        f"依據 {'、'.join(f'claims[{i}]' for i in idx)}；建議 id {t['suggested_id'].strip()}"
+        f"主題提案 {pid}{'（本篇再次提出）' if repeated else ''}：{_clip(t['title'], 40)}（{t['kind']}），"
+        f"依據 {'、'.join(f'claims[{i}]' for i in idx[:6])}；建議 id {_clip(t['suggested_id'], 40)}"
         + (f"；提案成員 {members}" if members else "")
         + f"；回覆「接受主題 {pid} <id>」或「略過主題 {pid}」"
     )

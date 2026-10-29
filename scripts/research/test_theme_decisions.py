@@ -436,3 +436,14 @@ def test_decision_rows_for_proposals_are_parsed_at_the_boundary(tmp_path):
     ]:
         result, message = narrative_check.apply_decision(path, bad)
         assert result == "refused" and needle in message, (needle, message)
+
+
+def test_a_long_proposal_line_keeps_the_reply_within_the_bridge_cap():
+    t = dict(
+        FOUNDRY_PRICING,
+        title="很長的標題" * 40,
+        suggested_id="x" * 200,
+        proposed_members=[{"symbol": f"NASDAQ:ABC{n}", "role": "supplier"} for n in range(20)],
+    )
+    line = narrative_check.proposal_line("T20261021-12", t, list(range(30)))
+    assert len(line) <= 400 and line.endswith("回覆「接受主題 T20261021-12 <id>」或「略過主題 T20261021-12」")
