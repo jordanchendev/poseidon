@@ -313,5 +313,7 @@ theme_proposals, materials, narrative_records, narrative_events, narrative_check
 - `record-add` refuses a quote that is not verbatim in `--source-file`, a non-atomic claim (`lint_atomic`) and a claim
   number missing from the quote (`check_numbers`), and needs subjects that are approved members.
 - `export --as-of T` is a point-in-time view (events with `at <= T`), sorted, quotes clipped to 120 characters (D7).
+- `themes.seed.json` is the §7.1 seed for the owner to review, with each member's official source. Members under
+  `candidate` are not approved (D5); nothing loads the seed into a ledger except the test's tmp ledger.
 
 Tests: `PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/test_narrative_ledger.py`.

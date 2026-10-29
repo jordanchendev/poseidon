@@ -1,0 +1,302 @@
+{
+ "seed": "themes-seed-v1",
+ "design": "local_dev/design/2026-10-29-research-theme-and-narrative-ledger.md §7.1, D5",
+ "status": "For owner review. Nothing here is approved or written to any ledger. Members under `candidate` are not to be added until the owner confirms them (D5).",
+ "checked_at": "2026-10-29",
+ "evidence_rule": "verified = an official source (MOPS company profile or 股東會年報, TSE/SZSE/SEC filing, company IR document or press release) supports the member's role; news, sell-side notes and KOL posts are leads only.",
+ "mops_note": "MOPS profile = POST https://mopsov.twse.com.tw/mops/web/ajax_t05st03 with co_id. 股東會年報 = POST https://doc.twse.com.tw/server-java/t57sb01 with co_id, year=115, mtype=F, dtype=F04; the server answers with a temporary download link for the file named below.",
+ "themes": [
+  {
+   "theme_id": "cleanroom-capacity",
+   "title": "無塵室產能",
+   "kind": "bottleneck",
+   "keywords": ["無塵室", "cleanroom", "clean room"],
+   "members": {
+    "verified": [
+     {
+      "symbol": "NASDAQ:MU",
+      "name": "Micron",
+      "role": "constrained",
+      "source": "https://s25.q4cdn.com/621799436/files/doc_financials/2026/q4/Q4-FY26-Prepared-Remarks.pdf",
+      "document": "Micron FQ4 FY26 earnings call prepared remarks, 2026-09-30 (frozen in revision 04f5d757 as fundamental:micron-fq4fy26-prepared-remarks)",
+      "quote": "The structural gap between DRAM supply and demand growth rates is resulting in ongoing supply tightness, and cleanroom additions are required to augment node-transition supply growth"
+     },
+     {
+      "symbol": "2404",
+      "name": "漢唐 United Integrated Services",
+      "role": "beneficiary",
+      "source": "MOPS ajax_t05st03 co_id=2404; 股東會年報 2025_2404_20260529F04.pdf",
+      "document": "MOPS 公司基本資料 主要經營業務; 2025 股東會年報 七、重要契約 (PDF p.82)",
+      "quote": "半導體、光電等高科技廠房整廠、無塵室、控制、機電、特殊製程 系統建造、規劃工作及維護運轉服務。",
+      "counterparty": "年報重要契約 lists 台灣美光記憶體股份有限公司 114/6/1-116/6/1 美光-Falcon 200K, and 美光-MAKO PROJECT, 美光-A3 Module2b 工程, 美光-TCP2 MAIN CONTRACT"
+     },
+     {
+      "symbol": "6196",
+      "name": "帆宣 Marketech International",
+      "role": "beneficiary",
+      "source": "MOPS ajax_t05st03 co_id=6196; 股東會年報 2025_6196_20260529F04.pdf",
+      "document": "2025 股東會年報 (PDF p.89)",
+      "quote": "積極拓展各類型業務，包含土建、鋼構、內裝、機電、無塵室、氣、化、水系統、製藥特殊需求等廠務系統",
+      "counterparty": "none official: the annual report names its main customers only as 甲客戶/乙客戶"
+     },
+     {
+      "symbol": "6139",
+      "name": "亞翔 L&K Engineering",
+      "role": "beneficiary",
+      "source": "MOPS ajax_t05st03 co_id=6139; 股東會年報 2025_6139_20260522F04.pdf",
+      "document": "MOPS 公司基本資料 主要經營業務; 2025 股東會年報 重要契約 (PDF p.129-130)",
+      "quote": "工業機電系統整合工程 生化無菌室、電子業無塵室及相關機電製程管線之設計及建造",
+      "counterparty": "contracts with TSMC, UMC Singapore, VSMC, 華邦, 旺宏 and PSMC P5 無塵室; no Micron row"
+     }
+    ],
+    "candidate": [
+     {
+      "symbol": "NASDAQ:ASML",
+      "name": "ASML",
+      "role": "constrained",
+      "why_unconfirmed": "The official Q3 2026 release says ASML's own supply will not fully meet 2027 and 2028 demand (\"we now expect that our supply as currently planned for both 2027 and 2028 will not fully meet the demand of our customers\", SEC 6-K Ex.99.1, 2026-10-14). No official sentence says customer cleanroom paces ASML shipments; that link is the KOL's inference (N6). Either drop ASML from this theme or keep it only after the Q3 call transcript shows the cleanroom wording.",
+      "checked": [
+       "https://www.sec.gov/Archives/edgar/data/937966/000162828026065813/pressreleasefinancialresul.htm",
+       "https://www.sec.gov/Archives/edgar/data/937966/000162828026048235/pressreleasefinancialresul.htm"
+      ],
+      "leads": ["https://www.marketbeat.com/instant-alerts/transcript-what-asml-asml-said-on-its-q3-earnings-call-2026-10-14/"]
+     }
+    ]
+   }
+  },
+  {
+   "theme_id": "memory-supply-tightness",
+   "title": "記憶體供給吃緊",
+   "kind": "bottleneck",
+   "keywords": ["記憶體供給", "供給吃緊", "supply constrained", "supply tightness", "tight memory supply"],
+   "members": {
+    "verified": [
+     {
+      "symbol": "NASDAQ:MU",
+      "name": "Micron",
+      "role": "supplier",
+      "source": "https://s25.q4cdn.com/621799436/files/doc_financials/2026/q4/Q4-FY26-Prepared-Remarks.pdf",
+      "document": "Micron FQ4 FY26 earnings call prepared remarks, 2026-09-30 (frozen, lines 213-241)",
+      "quote": "For calendar 2027 and 2028, we expect industry DRAM bit shipments to grow approximately in the low-20s percentage range and the industry to remain supply constrained in both years."
+     },
+     {
+      "symbol": "2408",
+      "name": "南亞科 Nanya Technology",
+      "role": "supplier",
+      "source": "股東會年報 2025_2408_20260521F04.pdf",
+      "document": "2025 股東會年報 營運概況 (PDF p.103)",
+      "quote": "本公司主要的產品為動態隨機存取記憶體(DRAM)，主要用途為存放運算資料"
+     },
+     {
+      "symbol": "2344",
+      "name": "華邦電 Winbond",
+      "role": "supplier",
+      "source": "MOPS ajax_t05st03 co_id=2344; 股東會年報 2025_2344_20260529F04.pdf",
+      "document": "2025 股東會年報 (PDF p.72)",
+      "quote": "利基產動態隨機存取記憶體（Specialty Memory）：持續以 DRAM 20nm 製程開發中、低容量產品，主要應用於 3C、車用及工業電子等"
+     }
+    ],
+    "candidate": []
+   }
+  },
+  {
+   "theme_id": "t-glass-supply",
+   "title": "T-glass／低 CTE 玻纖布供給",
+   "kind": "bottleneck",
+   "keywords": ["T glass", "T-glass", "Tガラス", "低熱膨脹", "低 CTE", "low CTE", "玻纖布", "glass cloth"],
+   "members": {
+    "verified": [
+     {
+      "symbol": "TSE:3110",
+      "name": "日東紡 Nitto Boseki",
+      "role": "supplier",
+      "source": "https://ssl4.eir-parts.net/doc/3110/ir_material_for_fiscal_ym1/209977/00.pdf",
+      "document": "Nittobo Q1 FY3/2027 results Q&A, 2026-08-06; capex raise in FY3/2026 results Q&A, 2026-05-13 (https://ssl4.eir-parts.net/doc/3110/ir_material_for_fiscal_ym1/203156/00.pdf)",
+      "quote": "現在、2028 年までの能力増強計画を着実に実行しており、今後も需要が続く限り、T ガラスには優先度高くリソースを振り向ける。",
+      "note": "The 120 billion yen is a four-year FY2024-2027 capex total raised from 80 billion. No official source found for 'T-glass capacity 3x FY2025' (N4); that figure comes from news on the 2025-08-29 Fukushima plan."
+     },
+     {
+      "symbol": "1303",
+      "name": "南亞 Nan Ya Plastics",
+      "role": "supplier",
+      "source": "https://ssl4.eir-parts.net/doc/3110/ir_material3/265577/00.pdf",
+      "document": "Nittobo 'Notice Regarding Collaboration with Nan Ya Plastics Corporation', 2025-11-28; Nan Ya press release 2025-11-28 (https://www.npc.com.tw/npcfile/public/news/pic/F20251128153002595.PDF)",
+      "quote": "we have now decided to outsource a part of the weaving process for our special glass cloth to Nan Ya Plastics.",
+      "counterparty": "Nan Ya: 預計至 2027 年，日東紡供應市場的特殊玻纖布中，將有 20%由本公司協助織造。 Neither document says 'T-glass'; both say special glass cloth (特殊玻纖布)."
+     },
+     {
+      "symbol": "1802",
+      "name": "台玻 Taiwan Glass",
+      "role": "competitor",
+      "source": "MOPS ajax_t05st03 co_id=1802; 股東會年報 2025_1802_20260612F04.pdf",
+      "document": "2025 股東會年報 (PDF p.58, printed p.54; scanned PDF, quote transcribed from the page image)",
+      "quote": "已成功開發低介電(LDK)一代、二代玻布量產，以及低熱膨脹係數(Low CTE)玻布量產，供應市場5G高頻高速材料的需求。"
+     },
+     {
+      "symbol": "1815",
+      "name": "富喬 Fulltech Fiber Glass",
+      "role": "competitor",
+      "source": "股東會年報 2025_1815_20260623F04.pdf",
+      "document": "2025 股東會年報 (PDF p.81 and p.86)",
+      "quote": "低熱膨脹係數玻璃纖維紗(Low CTE)：E225",
+      "note": "Low-CTE yarn is listed as a product; the low-CTE cloth (FLE) is still in customer evaluation."
+     }
+    ],
+    "candidate": []
+   }
+  },
+  {
+   "theme_id": "scale-up-optics",
+   "title": "scale-up 互連由銅轉光",
+   "kind": "tech_transition",
+   "keywords": ["scale-up", "scale up", "CPO", "co-packaged optics", "共同封裝光學", "銅轉光", "UALink"],
+   "members": {
+    "verified": [
+     {
+      "symbol": "NASDAQ:MRVL",
+      "name": "Marvell",
+      "role": "supplier",
+      "source": "https://www.sec.gov/Archives/edgar/data/1835632/000183563226000025/mrvl-20260801.htm",
+      "document": "Marvell 10-Q for FQ2 FY27, filed 2026-08-28",
+      "quote": "On February 2, 2026, we completed the acquisition of Celestial AI, Inc., a provider of a Photonic Fabric TM technology platform purpose-built for next-generation scale-up interconnect.",
+      "note": "The CEO's copper-to-optics wording (N8, N9) was not found on an official page (marvell.com returned 403)."
+     },
+     {
+      "symbol": "NASDAQ:ALAB",
+      "name": "Astera Labs",
+      "role": "supplier",
+      "source": "https://www.asteralabs.com/news/astera-labs-to-acquire-aixscale-photonics/",
+      "document": "Astera Labs press release 'Astera Labs to Acquire aiXscale Photonics', 2025-10-22; Q2 2026 results, 8-K Ex.99.1, 2026-08-04 (https://www.sec.gov/Archives/edgar/data/1736297/000173629726000033/q226exhibit991.htm)",
+      "quote": "optical connectivity is critical to supporting the massive bandwidth needs of scale-up systems",
+      "note": "The '144 GPUs and above' copper limit (N10) was not found in an official source."
+     },
+     {
+      "symbol": "3363",
+      "name": "上詮 Foci Fiber Optic Communications",
+      "role": "supplier",
+      "source": "MOPS ajax_t05st03 co_id=3363; 股東會年報 2025_3363_20260528F04.pdf",
+      "document": "2025 股東會年報 (PDF p.68-69)",
+      "quote": "本公司長期目標係成為 CPO 光纖陣列元件之主要及重要供應商"
+     }
+    ],
+    "candidate": [
+     {
+      "symbol": "4979",
+      "name": "華星光 Luxnet",
+      "role": "supplier",
+      "why_unconfirmed": "The annual report puts its products in AI datacenters at 500m-80km reach (\"本司開發之產品主要應用於 AI 數據中心，傳輸距離主要介於 500m-80km。\", 股東會年報 2025_4979_20260527F04.pdf p.6), which is scale-out or DCI, not in-rack scale-up. It also develops CW lasers and CPO components for 800G/1.6T, but no official source ties them to scale-up. Fits a scale-out optics theme better.",
+      "leads": []
+     }
+    ]
+   }
+  },
+  {
+   "theme_id": "optics-export-policy",
+   "title": "光模組對中政策（3.2T、65% BOM）",
+   "kind": "policy",
+   "keywords": ["3.2T", "1.6T", "出口管制", "export control", "BOM", "InP"],
+   "members": {
+    "verified": [
+     {
+      "symbol": "SZSE:300308",
+      "name": "中際旭創 Zhongji Innolight",
+      "role": "constrained",
+      "source": "https://static.cninfo.com.cn/finalpage/2026-08-22/1225491753.PDF",
+      "document": "2026年半年度报告, 2026-08-22",
+      "quote": "公司产品主要面向北美、欧洲等国家或地区，部分关键原材料亦源自海外采购，若汇率或贸易政策发生重大变化可能会导致光模块产品需求减少",
+      "note": "Generic trade-policy risk only; nothing on 1.6T/3.2T rules or a 65% US BOM threshold. Reports a Thailand production base."
+     },
+     {
+      "symbol": "SZSE:300502",
+      "name": "新易盛 Eoptolink",
+      "role": "constrained",
+      "source": "https://static.cninfo.com.cn/finalpage/2026-08-25/1225499406.PDF",
+      "document": "2026年半年度报告, 2026-08-25",
+      "quote": "国际贸易摩擦及贸易政策变化及其他不确定因素可能影响公司进口及出口销售业务",
+      "note": "Same caveat as 300308."
+     },
+     {
+      "symbol": "NASDAQ:AAOI",
+      "name": "Applied Optoelectronics",
+      "role": "competitor",
+      "source": "https://www.sec.gov/Archives/edgar/data/1158114/000143774926005875/aaoi20251231_10k.htm",
+      "document": "AAOI 10-K FY2025, filed 2026-02-26",
+      "quote": "Our major competitors in one or more of our markets include Coherent Corporation, Eoptolink Technology Inc., Ltd., Foxconn Interconnect Technology Ltd., InnoLight Technology (Suzhou) Ltd.",
+      "note": "AAOI also manufactures in Ningbo, China and Taipei, so it is not purely US-based."
+     },
+     {
+      "symbol": "NASDAQ:LITE",
+      "name": "Lumentum",
+      "role": "supplier",
+      "source": "https://www.sec.gov/Archives/edgar/data/1633978/000162828026057358/lite-20260627.htm",
+      "document": "Lumentum 10-K FY2026, filed 2026-08-17",
+      "quote": "Lumentum is a leading provider of high-speed optical transceivers and optical components underpinning modern AI and cloud computing applications.",
+      "note": "Role per N13 (lasers sold to China module makers). It also sells transceivers and is named as a competitor in AAOI's 10-K; the owner may prefer competitor."
+     },
+     {
+      "symbol": "NYSE:COHR",
+      "name": "Coherent",
+      "role": "supplier",
+      "source": "https://www.sec.gov/Archives/edgar/data/820318/000082031826000020/iivi-20260630.htm",
+      "document": "Coherent 10-K FY2026, filed 2026-08-14",
+      "quote": "Coherent is a leading supplier of optical transceivers for AI datacenter and networking applications",
+      "note": "Same role question as LITE."
+     },
+     {
+      "symbol": "NASDAQ:MRVL",
+      "name": "Marvell",
+      "role": "supplier",
+      "source": "https://www.sec.gov/Archives/edgar/data/1835632/000183563226000011/mrvl-20260131.htm",
+      "document": "Marvell 10-K FY2026, filed 2026-03-11",
+      "quote": "In combination with our drivers, TIAs and silicon photonics, our suite of optical DSPs products perform a wide range of functions"
+     }
+    ],
+    "candidate": []
+   }
+  },
+  {
+   "theme_id": "physical-ai-demand",
+   "title": "實體 AI 需求時程",
+   "kind": "demand_driver",
+   "keywords": ["實體 AI", "physical AI", "機器人", "robotics", "自駕", "autonomous"],
+   "members": {
+    "verified": [
+     {
+      "symbol": "NYSE:JBL",
+      "name": "Jabil",
+      "role": "beneficiary",
+      "source": "https://www.sec.gov/Archives/edgar/data/898293/000162828026067038/jbl-20260831.htm",
+      "document": "Jabil 10-K FY2026, filed 2026-10-23",
+      "quote": "Beginning September 1, 2026, our Connected Living and Digital Commerce segment was renamed to Intelligent Devices and Robotics to better reflect the evolution of the business",
+      "note": "Membership only. The 'two years or more' timing (N19) was not found in an official source (call transcript behind Cloudflare)."
+     },
+     {
+      "symbol": "NASDAQ:MU",
+      "name": "Micron",
+      "role": "supplier",
+      "source": "https://s25.q4cdn.com/621799436/files/doc_financials/2026/q4/Q4-FY26-Prepared-Remarks.pdf",
+      "document": "Micron FQ4 FY26 earnings call prepared remarks, 2026-09-30 (frozen, lines 188-206)",
+      "quote": "Memory content in Level 4 and higher autonomous vehicles typically exceeds 200GB, while storage content reaches multiple terabytes"
+     },
+     {
+      "symbol": "NASDAQ:SYM",
+      "name": "Symbotic",
+      "role": "beneficiary",
+      "source": "https://www.sec.gov/Archives/edgar/data/1837240/000183724026000043/sym-20260627.htm",
+      "document": "Symbotic 10-Q, quarter ended 2026-06-27, filed 2026-08-05",
+      "quote": "Symbotic is an automation technology company established to develop technologies to improve operating efficiencies in modern warehouses."
+     }
+    ],
+    "candidate": []
+   }
+  }
+ ],
+ "edges": [
+  {
+   "from": "cleanroom-capacity",
+   "to": "memory-supply-tightness",
+   "relation": "related",
+   "why": "Not part_of: the cleanroom limit also hits logic fabs and equipment makers (design §7.1)."
+  }
+ ]
+}

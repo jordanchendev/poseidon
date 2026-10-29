@@ -393,3 +393,22 @@ def test_export_clips_quotes_to_120_chars(db):
     )
     quote = json.loads(nl.export(db, "2026-11-01T00:00:00Z"))["records"][0]["quote"]
     assert len(quote) == 120 and quote.endswith("…")
+
+
+def test_seed_file_loads_into_a_trial_ledger(tmp_path):
+    seed = json.loads((HERE / "themes.seed.json").read_text())
+    db = nl.connect(tmp_path / "trial.sqlite")
+    for t in seed["themes"]:
+        nl.add_theme(db, t["theme_id"], t["title"], t["kind"], t["keywords"], "cli:seed-test")
+        for m in t["members"]["verified"]:
+            nl.add_member(db, t["theme_id"], m["symbol"], m["role"], "cli:seed-test")
+        for m in t["members"]["candidate"]:
+            nl.symbol_is_tw(m["symbol"])
+            assert m["role"] in nl.MEMBER_ROLES and m["why_unconfirmed"]
+    for e in seed["edges"]:
+        nl.add_edge(db, e["from"], e["to"], e["relation"], "cli:seed-test")
+    doc = json.loads(nl.export(db, "2100-01-01T00:00:00Z"))
+    assert len(doc["themes"]) == 6
+    exported = {(t["theme_id"], m["symbol"]) for t in doc["themes"] for m in t["members"]}
+    candidates = {(t["theme_id"], m["symbol"]) for t in seed["themes"] for m in t["members"]["candidate"]}
+    assert candidates and not exported & candidates
