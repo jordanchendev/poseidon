@@ -8,14 +8,14 @@
       "contradicts",
       "says_nothing"
     ],
-    "label_policy": "v1 (gold set 2026-10-21): period or entity conflict = contradicts; mixed clauses = says_nothing, tagged mixed; unit scaling = supports",
-    "labeler": "expected_label holds the agent's proposal (label_source agent-proposed) until the owner fills owner_label; jev_eval_control_set.py scores against expected_label, so copy owner_label into it before the run",
+    "label_policy": "v2",
+    "labeler": "owner labels recorded 2026-10-29 (label_source owner-2026-10-29); expected_label equals owner_label, which jev_eval_control_set.py scores against",
     "excerpt_rule": "source.text is a raw verbatim substring of the source file (no whitespace canonicalisation); locator = 1-based line range; text_sha256 = sha256 of source.text",
     "symbol_rule": "symbol = the run symbol narrative_apply would pass for the theme-scope revision (cfg symbols joined by ',')",
     "counts": {
       "supports": 7,
-      "contradicts": 9,
-      "says_nothing": 13
+      "contradicts": 7,
+      "says_nothing": 15
     },
     "source_documents": {
       "fundamental:micron-fq4fy26-prepared-remarks": {
@@ -99,7 +99,9 @@
         "frozen_config_sha256_match": false,
         "language": "zh-TW"
       }
-    }
+    },
+    "label_policy_v1": "v1 (gold set 2026-10-21): period or entity conflict = contradicts; mixed clauses = says_nothing, tagged mixed; unit scaling = supports",
+    "label_policy_rule": "v1 still holds, except for narrative checks: when the official statement covers a shorter or different period than the narrative claim, the label is says_nothing; contradicts only when the official text explicitly states the opposite for the same period. Stage mismatches (sampling vs volume production, a goal vs the current state) are says_nothing."
   },
   "cases": [
     {
@@ -113,8 +115,8 @@
         "text_sha256": "547fc71b26cf0cb9969a96645f9654b100282f8a9ffbdce08a043eda7468be46"
       },
       "expected_label": "says_nothing",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "loose_paraphrase",
       "note": "原文只說內容成長率略低於預期、背景是供給吃緊；沒有說客戶主動壓低，也沒說是為了保出貨（§7.3 預期）",
       "symbol": "2408,2344",
@@ -132,8 +134,8 @@
         "text_sha256": "547fc71b26cf0cb9969a96645f9654b100282f8a9ffbdce08a043eda7468be46"
       },
       "expected_label": "supports",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "supports",
       "case_kind": "loose_paraphrase",
       "note": "modestly lower rate of content growth than prior expectations, amid tight memory supply（§7.3 被引用的 fact claim）",
       "symbol": "2408,2344",
@@ -151,8 +153,8 @@
         "text_sha256": "c22ab419ba423d5dcd370e92e7da7848ba4ca2226348a740205bfb0611077626"
       },
       "expected_label": "supports",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "supports",
       "case_kind": "clear",
       "note": "the industry to remain supply constrained in both years（2027、2028）；HBM 成長快於 DRAM through 2028（§7.3 預期）",
       "symbol": "2408,2344",
@@ -170,8 +172,8 @@
         "text_sha256": "11873321c09948f37268ee161641c9b2bc35e00195286adb2a0916e63100c807"
       },
       "expected_label": "supports",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "supports",
       "case_kind": "clear",
       "note": "Memory content in Level 4 and higher autonomous vehicles typically exceeds 200GB（§7.3 預期）",
       "symbol": "2408,2344",
@@ -189,8 +191,8 @@
         "text_sha256": "547fc71b26cf0cb9969a96645f9654b100282f8a9ffbdce08a043eda7468be46"
       },
       "expected_label": "says_nothing",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "same_topic",
       "note": "同為伺服器需求段落，但沒有 agentic 也沒有 CPU（§7.3：prepared remarks 全文沒有 agentic）",
       "symbol": "2408,2344",
@@ -208,8 +210,8 @@
         "text_sha256": "547fc71b26cf0cb9969a96645f9654b100282f8a9ffbdce08a043eda7468be46"
       },
       "expected_label": "says_nothing",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "mixed",
       "note": "混合子句：前半 high-teens 有支持，後半「agentic 帶動」原文沒有；label_policy v1 混合子句 = says_nothing",
       "symbol": "2408,2344",
@@ -228,8 +230,8 @@
         "text_sha256": "c22ab419ba423d5dcd370e92e7da7848ba4ca2226348a740205bfb0611077626"
       },
       "expected_label": "contradicts",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "contradicts",
       "case_kind": "period",
       "note": "期間衝突：2026 年是 mid-20s；low-20s 是 2027、2028 年的預期",
       "symbol": "2408,2344",
@@ -247,8 +249,8 @@
         "text_sha256": "acbb97cf84ef8c33a6823d86610fbf8d9a4efe9b8e2aaf4d4774f0a756a5572f"
       },
       "expected_label": "contradicts",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "contradicts",
       "case_kind": "entity",
       "note": "實體衝突：low-20s 是 DRAM；同段 NAND 2027、2028 是 mid-20s",
       "symbol": "2408,2344",
@@ -266,8 +268,8 @@
         "text_sha256": "c22ab419ba423d5dcd370e92e7da7848ba4ca2226348a740205bfb0611077626"
       },
       "expected_label": "contradicts",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "contradicts",
       "case_kind": "clear",
       "note": "方向相反：原文是 HBM bit shipments to grow faster than conventional DRAM through calendar 2028",
       "symbol": "2408,2344",
@@ -284,9 +286,9 @@
         "text": "We expect higher gross margins beyond fiscal Q1 for\nthe remainder of fiscal 2027, with a more moderate rate of price increases.",
         "text_sha256": "3fc8b9b0ec9691a398835cdf2294151baba5ac23fefae841d2437ff95e90abd1"
       },
-      "expected_label": "contradicts",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "expected_label": "says_nothing",
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "period",
       "note": "期間衝突：原文的 more moderate rate of price increases 指 FY2027 Q1 之後，不是 2028；邊界案例，也可讀成 says_nothing",
       "symbol": "2408,2344",
@@ -304,8 +306,8 @@
         "text_sha256": "351d586010115bfa2fa2b03918445d6ee9639c51aef637892cf5c2a1cb0d97b0"
       },
       "expected_label": "supports",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "supports",
       "case_kind": "clear",
       "note": "We anticipate fiscal Q1 to be the floor for gross margins in fiscal 2027",
       "symbol": "2408,2344",
@@ -323,8 +325,8 @@
         "text_sha256": "351d586010115bfa2fa2b03918445d6ee9639c51aef637892cf5c2a1cb0d97b0"
       },
       "expected_label": "contradicts",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "contradicts",
       "case_kind": "clear",
       "note": "原文是 floor（低點），方向相反",
       "symbol": "2408,2344",
@@ -342,8 +344,8 @@
         "text_sha256": "799edaa941c18733d4f53ffaa02fbe70a55b181b8c473c8740a8194fff090136"
       },
       "expected_label": "says_nothing",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "same_topic",
       "note": "原文只講 DRAM 需要新增無塵室；推不到整個半導體產業",
       "symbol": "2404,6196,6139",
@@ -361,8 +363,8 @@
         "text_sha256": "918d95b24fd80e65f4af242f739e2c4d981d493b5534587ed4040641de46a7fe"
       },
       "expected_label": "says_nothing",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "same_topic",
       "note": "聯電只說新加坡 P4 投資無塵室、可隨需求擴充；沒有說無塵室不足是產業限制",
       "symbol": "2404,6196,6139",
@@ -380,8 +382,8 @@
         "text_sha256": "e4597098e90f1bc847ce20b02be2e36bdbd7602df291cf1ca54bbd126bbd78c9"
       },
       "expected_label": "says_nothing",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "same_topic",
       "note": "原文只講 calendar 2027 HBM bit supply 的 vast majority 已談定；總出貨比例沒有提到",
       "symbol": "2408,2344",
@@ -399,8 +401,8 @@
         "text_sha256": "fae46d4ebd8201397ebe8df2f31df667d7794f444b6775b69c7b4004d3a6d6cc"
       },
       "expected_label": "supports",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "supports",
       "case_kind": "unit_scaling",
       "note": "nearly $10 billion = 接近 100 億美元；label_policy v1 單位換算 = supports",
       "symbol": "2408,2344",
@@ -418,8 +420,8 @@
         "text_sha256": "1800e81c84abc6fbc108f3f967113c8936d913cd00c0e0baa19ecb790f0a7298"
       },
       "expected_label": "contradicts",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "contradicts",
       "case_kind": "period",
       "note": "期間衝突：原文是 fourth quarter of 2026",
       "symbol": "2408,2344",
@@ -437,8 +439,8 @@
         "text_sha256": "e8a6b7767a5c69fdf57423cdfe3c4fffe4e5def16b43ec5efb0498f84ecabff3"
       },
       "expected_label": "says_nothing",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "stage",
       "note": "原文是 began sampling（送樣），沒有說已量產，也沒有明說未量產；階段差異不在 v1 的 contradicts 清單，請 owner 定",
       "symbol": "2408,2344",
@@ -456,8 +458,8 @@
         "text_sha256": "db603f9cac72c9b791e87a863172226a3e69f145029b78c9adb86a33710cb385"
       },
       "expected_label": "supports",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "supports",
       "case_kind": "loose_paraphrase",
       "note": "outsource a part of the weaving process for our special glass cloth to Nan Ya Plastics；「協作」是寬鬆轉述",
       "symbol": "1303,1802,1815",
@@ -475,8 +477,8 @@
         "text_sha256": "178f3d22e63365369de5b4c1bd120855570463953277df83bc9d8564293fe8a6"
       },
       "expected_label": "says_nothing",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "same_topic",
       "note": "同為日東紡擴產，但原文的數字是委外織造比例 20%，不是產能倍數",
       "symbol": "1303,1802,1815",
@@ -494,8 +496,8 @@
         "text_sha256": "14f5cfe853903431fd0297727c243ce8ddee9d3fad8d6af94e762da2cc3e2193"
       },
       "expected_label": "contradicts",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "contradicts",
       "case_kind": "entity",
       "note": "實體對調：原文是日東紡供應的玻纖布約 20% 由南亞塑膠織造",
       "symbol": "1303,1802,1815",
@@ -513,8 +515,8 @@
         "text_sha256": "178f3d22e63365369de5b4c1bd120855570463953277df83bc9d8564293fe8a6"
       },
       "expected_label": "contradicts",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "contradicts",
       "case_kind": "period",
       "note": "期間衝突：原文是「預計至 2027 年」",
       "symbol": "1303,1802,1815",
@@ -532,8 +534,8 @@
         "text_sha256": "57ade1a47b8c4e07db8d6a68c8155efb45c8af7caa87c26085d06e29bcac85fa"
       },
       "expected_label": "says_nothing",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "stage",
       "note": "原文是目標（to establish our position as Global Niche No. 1），不是現況；也沒有說不是",
       "symbol": "1303,1802,1815",
@@ -551,8 +553,8 @@
         "text_sha256": "b185b4b98159363770ca36efb128349737cd5d869fa756bbf71f9be22b1c4460"
       },
       "expected_label": "says_nothing",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "mixed",
       "note": "混合子句：供應 NER 原紗有支持；NER 已量產原文沒有；label_policy v1 混合子句 = says_nothing",
       "symbol": "1303,1802,1815",
@@ -570,9 +572,9 @@
         "text": "AI 廣 泛 的 應 用 驅 動 DRAM 需 求 快 速 成 長 ， 主 要 供 應 商 減 少\nDDR4/LPDDR4 產出，產能陸續轉至 HBM 及 DDR5/LPDDR5，DRAM 資本支出主要在先進\n製程與高端產品，整體 DRAM 供應相對吃緊，預期將延續至 116 年。",
         "text_sha256": "3266e68aea454c927a25bf639dc2404997cd4ac35d80f07e6fdf9e54c845c11a"
       },
-      "expected_label": "contradicts",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "expected_label": "says_nothing",
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "period",
       "note": "期間衝突：南亞科說 DRAM 吃緊預期延續至 116 年（2027），不到 2028；邊界案例，「延續至 2027」也可讀成沒談 2028（says_nothing）",
       "symbol": "2408,2344",
@@ -590,8 +592,8 @@
         "text_sha256": "3266e68aea454c927a25bf639dc2404997cd4ac35d80f07e6fdf9e54c845c11a"
       },
       "expected_label": "supports",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "supports",
       "case_kind": "unit_scaling",
       "note": "民國 116 年 = 2027 年；比照單位換算 = supports",
       "symbol": "2408,2344",
@@ -609,8 +611,8 @@
         "text_sha256": "6c4c56eeea17db3ae9f9ff784449db4534828f7b5de0075ffe6a4144651625f2"
       },
       "expected_label": "says_nothing",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "same_topic",
       "note": "數字干擾：華星光說自家產品傳輸距離 500m-80km；不是 400G/lane PAM4 的物理上限",
       "symbol": "3363",
@@ -628,8 +630,8 @@
         "text_sha256": "ef28a2538e9c049a8590ab1dca0e80161c4bb42f33bf05ce59dce43def8db613"
       },
       "expected_label": "says_nothing",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "same_topic",
       "note": "同一家公司的製程營收占比，沒有提到 High-NA EUV",
       "symbol": "2330",
@@ -647,8 +649,8 @@
         "text_sha256": "6f7a28fb483d7833d758336c9d90468a85c942cc056f896d72cb9bbe4c42b12f"
       },
       "expected_label": "says_nothing",
-      "label_source": "agent-proposed",
-      "owner_label": null,
+      "label_source": "owner-2026-10-29",
+      "owner_label": "says_nothing",
       "case_kind": "attributed_rumor",
       "note": "原文引述中時報導的 21%，但公司聲明不評論傳聞；引述媒體 ≠ 公司證實",
       "symbol": "2303",
