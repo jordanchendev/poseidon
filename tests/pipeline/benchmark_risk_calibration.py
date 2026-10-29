@@ -122,10 +122,10 @@ def compiled():
     )
 
 
-def filter_path() -> tuple[list[date], np.ndarray]:
-    """The 200-day MA band filter's state (1 on, 0 off) per train day."""
+def filter_path(over: SpecRunner | None = None) -> tuple[list[date], np.ndarray]:
+    """The 200-day MA band filter's state (1 on, 0 off) per day of ``over`` (default: the train window)."""
 
-    spec = runner().compile({})
+    spec = (over or runner()).compile({})
     strategy = spec.strategy()
     spec.run(strategy)
     trace = pd.DataFrame(strategy.trace)
