@@ -164,9 +164,9 @@ def test_majority_below_half_probability_is_says_nothing():  # nctl-06: supports
     assert r["label"] == "says_nothing" and r["votes"] == ["supports", "supports", "says_nothing"]
 
 
-def test_no_majority_is_says_nothing():
-    r = judge(Votes(("supports", 0.9), ("contradicts", 0.9), ("says_nothing", 0.9)))
-    assert r["label"] == "says_nothing"
+def test_no_majority_is_says_nothing():  # supports still averages 0.52, so only the missing majority decides
+    r = judge(Votes(("supports", 0.9), ("contradicts", 0.34), ("says_nothing", 0.34)))
+    assert r["p_label"] >= narrative_check.MIN_WIN_PROBABILITY and r["label"] == "says_nothing"
 
 
 def test_contradicts_majority_stands():
