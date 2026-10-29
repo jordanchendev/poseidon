@@ -328,6 +328,12 @@ DAILY_THRESHOLDS: dict = {
     "benchmark_risk_resamples": 2000,
     "benchmark_risk_confidence": 0.95,
     "benchmark_risk_min_beta": 0.25,
+    # 2026-10-29, before any run froze the rule: at train lengths (1260-5000 days, random windows 2001-2026) the
+    # route passed 0-23 % of constant-leverage nulls on contract rounding alone (tracking <= 0.10 in every such
+    # pass; constant nulls <= 0.17, switching nulls >= 0.09, p1 >= 0.15). Below this tracking the route does not
+    # apply: constant nulls 0 %, switching nulls unchanged (tests/pipeline/holdout_risk_calibration.py). A config
+    # frozen with benchmark_rule but without this key keeps the route without the floor.
+    "benchmark_risk_min_tracking": 0.2,
     "cost_stress_multiplier": 2.0,
     "cost_stress_pnl_positive": True,  # final equity > initial with every cost x2
     "dsr_min": 0.95,

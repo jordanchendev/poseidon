@@ -133,15 +133,15 @@ def test_a_drawdown_cutting_holdout_passes_by_the_risk_route_with_the_holdout_bl
     assert again == result  # seeded bootstrap: the same verdict and numbers on a re-run
 
 
-def test_static_leverage_on_the_holdout_fails_both_routes():
+def test_static_leverage_on_the_holdout_fails_on_alpha_and_the_risk_route_does_not_apply():
     x = np.random.default_rng(4).normal(0.0008, 0.01, 1050)
     jitter = np.random.default_rng(1).normal(0.0, 1e-5, len(x))
     matched = Matched(days(len(x), "2024-01-01"), x, cost=0.00002)
     result = holdout.evaluate_daily(inputs(2.0 * x - 0.00002 + jitter, x, matched=matched), RULE)
     check(result, "fail", "holdout_alpha_not_positive")
     risk = result.report["risk_route"]
-    assert risk["status"] == "fail" and risk["matched_leverage"] == 2.0 and risk["calmar_diff_lower"] <= 0
-    assert result.report["passed_routes"] == [] and "risk route: Calmar not above" in result.reason
+    assert risk["status"] == "not_applicable" and risk["matched_leverage"] == 2.0
+    assert result.report["passed_routes"] == [] and "risk route: tracking" in result.reason
 
 
 def test_when_the_risk_route_does_not_apply_alpha_alone_decides_and_the_report_says_why():
@@ -250,7 +250,7 @@ def test_the_stage_matches_the_holdout_beta_over_the_holdout_days(planted):
 def test_the_stage_without_the_rule_reports_as_before(plain):
     with_rule, _ = judge(plain, static_leverage_spec(), {"lev": 2.5})
     gate = with_rule.report["gate_report"]
-    assert gate["risk_route"]["status"] == "fail" and gate["risk_route"]["matched_leverage"] == pytest.approx(
+    assert gate["risk_route"]["status"] == "not_applicable" and gate["risk_route"]["matched_leverage"] == pytest.approx(
         2.5, abs=0.1
     )
     without, _ = judge(plain, static_leverage_spec(), {"lev": 2.5}, ALPHA_ONLY)

@@ -747,8 +747,10 @@ def test_configs_of_runs_with_a_spec_are_unchanged_by_spec_generate_v3():
     # db24f9f4 at REGISTRY_VERSION 2; registry_version moved it (3 adds rebalance.monthly), then data.warmup (the
     # session warm-up rule of configs frozen from 2026-10-28 on), then thresholds.param_edge_at_bound_pass (run #18,
     # 2026-10-28), then data.trading_calendar (2026-10-28), then thresholds.benchmark_rule with its
-    # benchmark_risk_* settings (2026-10-28), then data.option_chain (the hedged paper's rule, 2026-10-28): without
-    # those keys it is the 681d469 config
+    # benchmark_risk_* settings (2026-10-28), then data.option_chain (the hedged paper's rule, 2026-10-28), then
+    # thresholds.benchmark_risk_min_tracking (2026-10-29): without those keys it is the 681d469 config
+    assert content_sha256(daily) == "c69a784b55a69606d89ff1f220c47d96fef02c3080083ca9cdb756eb114edeaa"
+    del daily["thresholds"]["benchmark_risk_min_tracking"]
     assert content_sha256(daily) == "2a9c1e312f32065af30a455aadb15fb99ec855c6b4033204ce62149d8a305897"
     del daily["data"]["option_chain"]
     assert content_sha256(daily) == "a2ac17c53d0eb4df3ef554c2bcdcd854c30145d1c3d690c9b93fdf364fe9477b"

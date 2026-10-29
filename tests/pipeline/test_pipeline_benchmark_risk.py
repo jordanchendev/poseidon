@@ -109,7 +109,7 @@ def test_a_drawdown_cutting_strategy_passes_by_the_risk_route_alone():
     assert again == result  # seeded bootstrap: the same verdict and numbers on a re-run
 
 
-def test_static_leverage_fails_both_routes():
+def test_static_leverage_fails_on_alpha_and_the_risk_route_does_not_apply():
     dates, x, _bear = market()
     jitter = np.random.default_rng(1).normal(0.0, 1e-5, len(x))
     result = benchmark.evaluate_daily(
@@ -117,8 +117,24 @@ def test_static_leverage_fails_both_routes():
     )
     assert (result.verdict, result.reason_code) == (Verdict.FAIL, "alpha_not_positive")
     risk = result.report["risk_route"]
-    assert risk["status"] == "fail" and risk["matched_leverage"] == 2.0 and risk["calmar_diff_lower"] <= 0
-    assert result.report["passed_routes"] == [] and "risk route" in result.reason
+    assert risk["status"] == "not_applicable" and risk["matched_leverage"] == 2.0
+    assert result.report["passed_routes"] == [] and "risk route: tracking" in result.reason
+
+
+def test_a_strategy_within_rounding_of_its_matched_run_is_not_judged_by_the_risk_route():
+    dates, x, bear = market()
+    near = np.where(bear, 0.95, 0.97) * x  # a 0.02x gap: what one more TMF contract on 1M TWD does on some days
+    strict_alpha = {**RISK, "benchmark_alpha_t_min": 99.0}
+    frozen_before = {k: v for k, v in strict_alpha.items() if k != "benchmark_risk_min_tracking"}  # no floor
+    unfloored = benchmark.evaluate_daily(inputs(near, dates, x, matched=Matched(dates, x)), frozen_before)
+    assert unfloored.report["risk_route"]["status"] == "pass"  # the same-sign edge clears a lower bound > 0
+    result = benchmark.evaluate_daily(inputs(near, dates, x, matched=Matched(dates, x)), strict_alpha)
+    risk = result.report["risk_route"]
+    assert result.verdict == Verdict.FAIL and result.report["passed_routes"] == []
+    assert risk["status"] == "not_applicable" and risk["tracking"] < RISK["benchmark_risk_min_tracking"]
+    assert "matched run up to contract rounding" in risk["reason"] and "calmar_diff_lower" not in risk
+    timed = benchmark.evaluate_daily(inputs(np.where(bear, 0.5, 2.0) * x, dates, x, matched=Matched(dates, x)), RISK)
+    assert timed.report["risk_route"]["tracking"] > 0.5 and timed.report["risk_route"]["status"] == "pass"
 
 
 def test_the_risk_route_does_not_apply_without_long_exposure_a_holdable_match_or_an_equity_basis():
@@ -218,6 +234,6 @@ def test_the_stage_passes_the_planted_regime_and_fails_static_leverage(planted, 
     _stage, _ctx, static = judge(plain, static_leverage_spec(), {"lev": 2.5})
     gate = static.report["gate_report"]
     assert static.verdict == Verdict.FAIL and gate["passed_routes"] == []
-    assert gate["risk_route"]["status"] == "fail" and gate["risk_route"]["matched_leverage"] == pytest.approx(
-        2.5, abs=0.1
-    )
+    risk = gate["risk_route"]
+    assert risk["status"] == "not_applicable" and risk["matched_leverage"] == pytest.approx(2.5, abs=0.1)
+    assert risk["tracking"] < RISK["benchmark_risk_min_tracking"]
