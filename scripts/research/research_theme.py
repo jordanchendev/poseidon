@@ -42,6 +42,11 @@ Consensus (gap B1): --consensus-json <file> (repeatable; raw_path must hash to r
   surprise_rows) from the consensus + document actuals + narrative claim actuals; replay_surprise() recomputes it from
   the manifest. A consensus observed after the actual was published gives status "post-event", never a surprise number.
 Variant perception (B5): narrative variant_perception[] validated by validate_variant_perception before completion.
+Secondary documents (design 2026-10-29 §6.1): documents[] of kind "secondary" need source_tier sell-side|media|kol and
+  declare the secondary capability; claim gates keep fact claims off them.
+Narrative snapshot (design 2026-10-29 §2.6): cfg["narrative_snapshot"] (built by assemble.py from the runner ledger) is
+  frozen as evidence narrative_snapshot (kind narrative_snapshot, capability narrative_snapshot), after every other item.
+  A config without it freezes to the same manifest as before.
 Disclosure: cfg["pilot_position"] (long|short|none|undisclosed or {position, size_note}) -> research_json.disclosure.
 Supersede: narrative supersedes_revision_id (or supersedes) must be a completed revision in the same ledger.
 Claim precheck (claim_precheck.py, run before complete_human_research on every narrative claim):
@@ -172,6 +177,10 @@ def document_evidence(item, as_of):
         if item["source_tier"] not in SOURCE_TIERS:
             raise SystemExit("document %s source_tier must be one of %s" % (item["id"], "|".join(SOURCE_TIERS)))
         payload["source_tier"] = item["source_tier"]
+    if item["kind"] == "secondary" and payload.get("source_tier") not in SECONDARY_TIERS:
+        raise SystemExit("secondary document %s needs source_tier %s" % (item["id"], "|".join(SECONDARY_TIERS)))
+    if item["kind"] not in ("fundamental", "secondary"):
+        raise SystemExit("document %s kind must be fundamental or secondary" % item["id"])
     return {
         "id": item["id"],
         "kind": item["kind"],
@@ -338,6 +347,22 @@ def check_basis(claim, excerpts):
 
 # ------------------------------------------------------------------------------------------------ guidance (gap B2)
 SOURCE_TIERS = ("primary filing", "company release", "exchange feed", "derived", "sell-side", "media", "kol")
+SECONDARY_TIERS = ("sell-side", "media", "kol")
+SNAPSHOT_KEYS = ("id", "kind", "source_uri", "event_time", "available_at", "payload")
+
+
+def snapshot_evidence(snap, as_of):
+    """cfg narrative_snapshot -> frozen evidence item. The selection and fold are assemble.py's; this checks the shape."""
+    if sorted(snap) != sorted(SNAPSHOT_KEYS) or snap["id"] != "narrative_snapshot" or snap["kind"] != snap["id"]:
+        raise SystemExit(
+            "narrative_snapshot must be {%s} with id and kind narrative_snapshot" % ", ".join(SNAPSHOT_KEYS)
+        )
+    p = snap["payload"]
+    if sorted(p) != ["algorithm", "not_shown", "records", "themes"] or not p["records"]:
+        raise SystemExit("narrative_snapshot payload needs algorithm, themes, records (non-empty) and not_shown")
+    return {**snap, "recorded_at": as_of, "content_sha256": content_sha256(p)}
+
+
 GUIDANCE_BASES = ("GAAP", "non-GAAP", "IFRS", "n/a")
 _UNIT_RE = re.compile(r"^(USD|US\$|NTD|TWD|NT\$|JPY)(?:\s+(thousand|million|billion|trillion))?$", re.I)
 _CUR_PREFIX = {"usd": "US$", "us$": "US$", "ntd": "NT$", "twd": "NT$", "nt$": "NT$", "jpy": "¥"}
@@ -1452,8 +1477,13 @@ def main():
             s_item = surprise_evidence(c, actual_inputs, as_of)
             if s_item:
                 surprise_items.append(s_item)
-    evidence = doc_items + ohlcv_items + derived + kpi_items + cons_items + surprise_items
+    snap_items = [snapshot_evidence(cfg["narrative_snapshot"], as_of)] if cfg.get("narrative_snapshot") else []
+    evidence = doc_items + ohlcv_items + derived + kpi_items + cons_items + surprise_items + snap_items
     capability = {"fundamental": True, "ohlcv": True}
+    for kind in sorted({d["kind"] for d in doc_items} - {"fundamental"}):
+        capability[kind] = True
+    if snap_items:
+        capability["narrative_snapshot"] = True
     if derived:
         capability["price_facts"] = True
     if kpi_items:
@@ -1513,7 +1543,16 @@ def main():
                         if e["kind"] == "consensus"
                         else {}
                     ),
-                    **({"algorithm": e["payload"]["algorithm"]} if e["kind"] in ("price_facts", "surprise") else {}),
+                    **(
+                        {"algorithm": e["payload"]["algorithm"]}
+                        if e["kind"] in ("price_facts", "surprise", "narrative_snapshot")
+                        else {}
+                    ),
+                    **(
+                        {"records": len(e["payload"]["records"]), "not_shown": len(e["payload"]["not_shown"])}
+                        if e["kind"] == "narrative_snapshot"
+                        else {}
+                    ),
                 }
                 for e in evidence
             ],

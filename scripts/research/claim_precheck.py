@@ -971,6 +971,28 @@ def lint_atomic(claim: str, kind: str | None = None) -> dict:
     return {"ok": True, "clauses": [c["text"] for c in clauses] or [claim.strip()], "reason": "single clause"}
 
 
+# --------------------------------------------------------------------------------------------- evidence tier
+OFFICIAL_TIERS = ("primary filing", "company release")
+
+
+def evidence_tier(e: dict) -> str:
+    """Source tier of a frozen evidence item, as render_theme.py discloses it and the narrative [check] gate reads it.
+    A declared payload source_tier wins; a secondary item never falls through to a document default."""
+    p = e.get("payload") or {}
+    if p.get("source_tier"):
+        return p["source_tier"]
+    k, uri = e.get("kind"), e.get("source_uri", "")
+    if k == "secondary":
+        return "secondary (no tier)"
+    if k in ("price_facts", "narrative_snapshot") or uri.startswith("derived://"):
+        return "derived"
+    if k in ("ohlcv", "kpi_series"):
+        return "exchange feed" + ("（經 Thalassa）" if k == "ohlcv" else "")
+    if any(h in uri for h in ("sec.gov", "mops.twse.com.tw", "mopsov.twse.com.tw")):
+        return "primary filing"
+    return "company release"
+
+
 def precheck(claim: str, excerpt: str | None) -> dict:
     """Both checks; `excerpt=None` skips the numeric check."""
     num = check_numbers(claim, excerpt) if excerpt is not None else {"status": "skipped"}

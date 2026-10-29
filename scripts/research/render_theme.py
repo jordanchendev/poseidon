@@ -6,6 +6,8 @@ event_status pre_event opens with a warning banner (事前推論)."""
 import json
 import sys
 
+from claim_precheck import evidence_tier as tier
+
 d = json.load(open(sys.argv[1]))
 i = d["identity"]
 r = d["research"]
@@ -74,6 +76,14 @@ L.append("\n## 文件證據\n")
 for e in i["evidence"]:
     if e["kind"] == "fundamental":
         L.append(f"- `{e['id']}`：{e['excerpts']} 段逐字節錄，event_time {e['event_time']}，sha `{e['sha256'][:12]}…`")
+    elif e["kind"] == "secondary":
+        L.append(
+            f"- `{e['id']}`：二手素材 {e['excerpts']} 段逐字節錄（不作事實證據），event_time {e['event_time']}，sha `{e['sha256'][:12]}…`"
+        )
+    elif e["kind"] == "narrative_snapshot":
+        L.append(
+            f"- `{e['id']}`：敘事帳快照 {e.get('records')} 條（未展示 {e.get('not_shown')} 條），event_time {e['event_time']}，sha `{e['sha256'][:12]}…`"
+        )
     elif e["kind"] == "price_facts":
         L.append(
             f"- `{e['id']}`：由凍結的 ohlcv 證據衍生（{e.get('algorithm')}），sha `{e['sha256'][:12]}…`；上表數字可由 manifest 重放"
@@ -278,20 +288,6 @@ L.append(f"| replay | 同輸入重新 prepare → 同一 revision；改寫 thesi
 
 
 # ---- Disclosure (gap C1): origin, identity, source tiers, verification summary
-def tier(e):
-    p = e.get("payload") or {}
-    if p.get("source_tier"):
-        return p["source_tier"]
-    k, uri = e.get("kind"), e.get("source_uri", "")
-    if k in ("price_facts",) or uri.startswith("derived://"):
-        return "derived"
-    if k in ("ohlcv", "kpi_series"):
-        return "exchange feed" + ("（經 Thalassa）" if k == "ohlcv" else "")
-    if any(h in uri for h in ("sec.gov", "mops.twse.com.tw", "mopsov.twse.com.tw")):
-        return "primary filing"
-    return "company release"
-
-
 L += [
     "\n## 揭露（Disclosure）\n",
     f"- 來源：agent（origin: agent）；provider `{i['provider']}`，model `{i['model']}`，policy `{i['policy_version']}`",

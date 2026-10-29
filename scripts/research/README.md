@@ -299,7 +299,21 @@ OpenRouter, JEV, Thalassa and TWSE are faked; the source is served from a file:/
 
 `narrative_ledger.py` keeps nine tables in the runner's ledger file (themes, theme_members, theme_edges,
 theme_proposals, materials, narrative_records, narrative_events, narrative_checks, claim_theme_links). Every row carries
-`content_sha256` of its other columns. Nothing in the runner calls it yet (design §9 steps 4 to 11).
+`content_sha256` of its other columns.
+
+What the runner reads from it (design §9 step 4, `assemble.py`; the ledger is opened read-only, a dry run included):
+
+- Agenda symbols: a bare code is Taiwan-listed and priced; `<EXCHANGE>:<TICKER>` goes to `cfg.subject_symbols` with no
+  OHLCV. A bare code that the ledger knows only as a non-Taiwan member's ticker (`3110` vs `TSE:3110`) is refused.
+- A row with `theme_id` researches `tw_stock:theme:<id>`: OHLCV is the theme's Taiwan-listed members approved by as_of
+  plus 0050. A Taiwan code in the row must be one of them; a theme with no Taiwan-listed member is refused (D4).
+- `cfg.narrative_snapshot` (§4.1): open records (`unverified`, `partially_verified`, `stale`, folded at as_of,
+  `first_seen_at <= as_of`) whose subjects meet the run's symbols or whose themes meet the run's themes; subject hits
+  first, newest first, at most 15, the rest in `not_shown`. `research_theme.py` freezes it last as evidence
+  `narrative_snapshot`. No open record, no snapshot: the manifest and prompt are byte-identical to before (pinned in
+  `test_narrative_snapshot.py`).
+- `documents[]` of kind `secondary` need `source_tier` sell-side, media or kol. `claim_precheck.evidence_tier` is the
+  one tier mapping, for the rendered disclosure and the narrative gates.
 
 - Themes, members and edges are written only with a non-empty `--approval-ref`; re-running the same approval is a
   no-op, the same key with different content is refused. Symbols: Taiwan-listed bare (`2408`), others

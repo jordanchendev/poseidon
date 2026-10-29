@@ -467,7 +467,12 @@ def process_row(row, *, state_dir, ledger, keys, opts):
         with run.stage("assemble"):
             try:
                 cfg = assemble_mod.assemble(
-                    row, run_dir, as_of_dt=opts["as_of"], draft=opts.get("draft"), **opts.get("assemble_kw", {})
+                    row,
+                    run_dir,
+                    as_of_dt=opts["as_of"],
+                    draft=opts.get("draft"),
+                    ledger_path=opts.get("narrative_ledger"),
+                    **opts.get("assemble_kw", {}),
                 )
             except assemble_mod.AssembleError as e:
                 raise StageError("assemble", str(e)) from None
@@ -668,6 +673,7 @@ def run_once(args, keys, *, transport=None, assemble_kw=None, as_of=None):
             "jev_model": args.jev_model,
             "draft": {"model": args.draft_model, "reasoning": not args.no_reasoning, "max_tokens": args.max_tokens},
             "assemble_kw": assemble_kw or {},
+            "narrative_ledger": state / "ledger.sqlite",  # read for the snapshot, also by a dry run
         }
         run = process_row(chosen, state_dir=base, ledger=ledger, keys=keys, opts=opts)
         status = run.data["status"]

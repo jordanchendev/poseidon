@@ -912,6 +912,36 @@ def test_secondary_tiers_split(env, tier):
     assert p.returncode != 0 and "source_tier must be one of" in p.stderr
 
 
+def secondary_cfg(env, tier):
+    cfg = copy.deepcopy(env["cfg"])
+    doc = copy.deepcopy(cfg["documents"][0])
+    doc.update(id="secondary:post", kind="secondary", source_uri="https://www.facebook.com/post/1")
+    if tier:
+        doc["source_tier"] = tier
+    cfg["documents"].append(doc)
+    return cfg
+
+
+def test_secondary_kind_tier_comes_from_the_payload(env):
+    sys.path.insert(0, str(HERE))
+    from claim_precheck import evidence_tier
+
+    p, d = go(env, "sec", secondary_cfg(env, "kol"), narrative=env["narrative"])
+    assert p.returncode == 0, p.stderr
+    rev = json.loads((d / "rev.json").read_text())
+    item = next(e for e in rev["manifest_payload"]["evidence"] if e["id"] == "secondary:post")
+    assert rev["manifest_payload"]["capability_json"]["secondary"] is True
+    assert evidence_tier(item) == "kol" and evidence_tier(dict(item, payload={})) != "company release"
+    md = render(d / "rev.json").stdout
+    assert "`secondary:post`：kol；" in md and "二手素材" in md
+
+
+@pytest.mark.parametrize("tier", [None, "primary filing"])
+def test_secondary_kind_without_a_secondary_tier_is_refused(env, tier):
+    p, _ = go(env, f"sec-{tier}", secondary_cfg(env, tier))
+    assert p.returncode != 0 and "needs source_tier sell-side|media|kol" in p.stderr
+
+
 def test_disclosure_block(env):
     cfg = copy.deepcopy(env["cfg"])
     cfg["documents"][0]["source_tier"] = "primary filing"
