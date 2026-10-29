@@ -294,3 +294,24 @@ python3 scripts/research/deliver_outbox.py --outbox $S/state/outbox --bridge "ss
 values). Mount `scripts/` read-only: the runner writes only under `--state-dir`.
 Tests: `PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/test_runner.py` (offline; the bridge,
 OpenRouter, JEV, Thalassa and TWSE are faked; the source is served from a file:// URL through fetch_source).
+
+## Theme and narrative ledger (2026-10-29; design `local_dev/design/2026-10-29-research-theme-and-narrative-ledger.md`)
+
+`narrative_ledger.py` keeps nine tables in the runner's ledger file (themes, theme_members, theme_edges,
+theme_proposals, materials, narrative_records, narrative_events, narrative_checks, claim_theme_links). Every row carries
+`content_sha256` of its other columns. Nothing in the runner calls it yet (design §9 steps 4 to 11).
+
+- Themes, members and edges are written only with a non-empty `--approval-ref`; re-running the same approval is a
+  no-op, the same key with different content is refused. Symbols: Taiwan-listed bare (`2408`), others
+  `<EXCHANGE>:<TICKER>` (`NASDAQ:MU`, `TSE:3110`); `tw_listed` follows from that shape.
+- A narrative's status is the fold of its append-only events (`created`, `status`, `override`, `corroborated`, the last
+  one never changes the status). `TRANSITIONS` is the design §2.4 table: rule, sweep and owner each have their own
+  allowed moves; `set-status` is the owner override and needs `--note`.
+- `review_by` (D6): state claims `first_seen_at` + 180 days; forecasts `resolves_on` + 90 days, and a forecast without
+  a period gets `resolves_on` = `first_seen_at` + 365 days (`resolves_on_default = 1`). `sweep-stale --as-of T` moves
+  only `unverified` records past `review_by` to `stale`.
+- `record-add` refuses a quote that is not verbatim in `--source-file`, a non-atomic claim (`lint_atomic`) and a claim
+  number missing from the quote (`check_numbers`), and needs subjects that are approved members.
+- `export --as-of T` is a point-in-time view (events with `at <= T`), sorted, quotes clipped to 120 characters (D7).
+
+Tests: `PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/test_narrative_ledger.py`.
