@@ -238,6 +238,9 @@ INTAKE_SCHEMA = {
             "kind": "|".join(nl.THEME_KINDS),
             "why": "string (zh-TW)",
             "quote": "verbatim substring of the material the proposal rests on",
+            "keywords": [
+                "optional: up to 8 short words a statement about this theme would contain (zh-TW and English)"
+            ],
             "proposed_members": [
                 {"symbol": "bare Taiwan code or <EXCHANGE>:<TICKER>", "role": "|".join(nl.MEMBER_ROLES)}
             ],
@@ -280,7 +283,8 @@ Rules (a deterministic validator enforces them; violations are refused):
 6. Leave out the author's remarks on credibility or mood ("先參考就好"), general market or investing commentary, and
    anything that is not about a company or a listed theme.
 7. theme_proposals (at most {max_proposals}): only for a bottleneck, tech transition, demand driver or policy that no
-   listed theme covers; quote is verbatim from the material. The owner approves the theme and each member.
+   listed theme covers; quote is verbatim from the material. keywords: words a statement about the theme would
+   contain, used only to flag claims nobody tagged. The owner approves the theme, each member and the keywords.
 8. member_proposals (at most {max_members}): a company the material ties to a listed theme that is not yet one of its
    members; theme_id from the closed list, quote verbatim from the material.
 9. verify_with (at most {max_verify}): official documents a researcher could freeze to check the records.
@@ -387,6 +391,9 @@ def gates(out, m, payload, duplicate, member_duplicate=_no_member_duplicate):
         if p["quote"] not in text:
             reasons.append(f"{where} quote is not a verbatim substring of the material")
             continue
+        if not narrative_check.keywords_ok(p.get("keywords")):
+            reasons.append(f"{where} {narrative_check.keywords_rule()}")
+            continue
         members = p.get("proposed_members") or []
         bad = [
             x
@@ -411,6 +418,7 @@ def gates(out, m, payload, duplicate, member_duplicate=_no_member_duplicate):
                 "why": p["why"].strip(),
                 "locator": paragraph(lines, text, p["quote"])[0],
                 "proposed_members": [{"symbol": x["symbol"], "role": x["role"]} for x in members],
+                "keywords": [w.strip() for w in p.get("keywords") or []],
                 "duplicate_of": dup,
             }
         )
@@ -558,6 +566,7 @@ def write(db, m, plan, kept, as_of, evidence_id):
                 source_ref=f"material:{m['id']}#{p['locator']}",
                 proposed_members=p["proposed_members"],
                 at=as_of,
+                keywords=p.get("keywords", []),
             )
             filed.append({**p, "proposal_id": row["proposal_id"]})
             refs[p["suggested_id"]] = row["proposal_id"]

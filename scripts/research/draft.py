@@ -295,6 +295,7 @@ NARRATIVE_LEDGER_SCHEMA = {
             "kind": "bottleneck|tech_transition|demand_driver|policy",
             "why": "string (zh-TW)",
             "claim_indices": ["index"],
+            "keywords": ["optional: up to 8 short words a claim about this theme would contain (zh-TW and English)"],
             "proposed_members": [
                 {
                     "symbol": "bare Taiwan code or <EXCHANGE>:<TICKER>",
@@ -309,7 +310,7 @@ NARRATIVE_LEDGER_RULES = """
 11. Themes: a claim may carry "theme_ids" chosen ONLY from the closed list in narrative_snapshot, and then must
     carry "about_symbols" (the companies the claim is about) chosen from the research context symbols,
     subject_symbols or the listed theme members. If no listed theme fits, do not tag; propose one in
-    theme_proposals instead.
+    theme_proposals instead, with keywords a claim about it would contain (they only flag untagged claims).
 12. narrative_checks: one entry for EVERY open narrative record listed, no more, no less. verdict is
     verifies | refutes | partially_verifies | untouched. A verdict other than untouched cites claim_indices of
     FACT claims in this narrative whose evidence is the official document(s); partially_verifies also states

@@ -12,6 +12,7 @@ another. Event `at` never goes back in time: a caller whose evidence predates th
 max(evidence available_at, last event at).
 
   theme-add   --ledger L --id ID --title T --kind K [--keyword W ...] --approval-ref REF [--proposal-id P] [--at T]
+  theme-keywords --ledger L --id ID --add W [W ...] --approval-ref REF [--at T]   recall keywords (§5.3) of a theme
   member-add  --ledger L --theme ID --symbol S --role R --approval-ref REF [--at T]
   edge-add    --ledger L --from ID --to ID --relation related|part_of --approval-ref REF [--at T]
   record-add  --ledger L --claim C --claim-type state|forecast [--resolves-on YYYY-MM-DD] --attributed-to A
@@ -81,6 +82,7 @@ FORECAST_DEFAULT_RESOLVE_DAYS = 365
 EXPORT_QUOTE_CHARS = 120  # D7: the export leaves stormtrooper for the vault
 
 THEME_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+MAX_KEYWORD_CHARS = 40
 FOREIGN_SYMBOL = re.compile(r"^[A-Z]{2,8}:[A-Z0-9][A-Z0-9.\-]*$")
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -106,7 +108,12 @@ CREATE TABLE IF NOT EXISTS theme_proposals (
   proposal_id TEXT PRIMARY KEY, suggested_id TEXT NOT NULL, title TEXT NOT NULL, kind TEXT NOT NULL, why TEXT NOT NULL,
   source_ref TEXT NOT NULL, proposed_members_json TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('proposed','accepted','rejected')),
-  decided_at TEXT, decided_ref TEXT, created_at TEXT NOT NULL, content_sha256 TEXT NOT NULL);
+  decided_at TEXT, decided_ref TEXT, created_at TEXT NOT NULL, content_sha256 TEXT NOT NULL,
+  keywords_json TEXT NOT NULL DEFAULT '[]');
+CREATE TABLE IF NOT EXISTS theme_keyword_approvals (
+  theme_id TEXT NOT NULL REFERENCES themes, keyword TEXT NOT NULL,
+  approved_by TEXT NOT NULL, approved_at TEXT NOT NULL, approval_ref TEXT NOT NULL CHECK (approval_ref <> ''),
+  content_sha256 TEXT NOT NULL, PRIMARY KEY (theme_id, keyword));
 CREATE TABLE IF NOT EXISTS materials (
   material_id TEXT PRIMARY KEY, received_at TEXT NOT NULL,
   source_tier TEXT NOT NULL CHECK (source_tier IN ('sell-side','media','kol')),
@@ -189,7 +196,23 @@ def connect(path):
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
     db.executescript(DDL)
+    _migrate(db)
     return db
+
+
+def _migrate(db):
+    """A ledger made before theme proposals carried keywords gets the column, and its proposal rows are rehashed so
+    every content_sha256 still covers all other columns."""
+    if "keywords_json" in {r[1] for r in db.execute("PRAGMA table_info(theme_proposals)")}:
+        return
+    with db:
+        db.execute("ALTER TABLE theme_proposals ADD COLUMN keywords_json TEXT NOT NULL DEFAULT '[]'")
+        for r in db.execute("SELECT * FROM theme_proposals").fetchall():
+            row = {k: v for k, v in dict(r).items() if k != "content_sha256"}
+            db.execute(
+                "UPDATE theme_proposals SET content_sha256 = ? WHERE proposal_id = ?",
+                (content_sha256(row), r["proposal_id"]),
+            )
 
 
 def _insert(db, table, row):
@@ -249,6 +272,15 @@ def _active_theme(db, theme_id):
 
 
 # ---------------------------------------------------------------- themes
+def keyword_list(words):
+    """Stripped, non-empty, first occurrence kept. A keyword is a recall hint (§5.3), never a link."""
+    out = list(dict.fromkeys(str(w).strip() for w in words if str(w).strip()))
+    long = [w for w in out if len(w) > MAX_KEYWORD_CHARS]
+    if long:
+        raise LedgerError(f"keywords longer than {MAX_KEYWORD_CHARS} characters: {long}")
+    return out
+
+
 def add_theme(db, theme_id, title, kind, keywords, approval_ref, proposal_id=None, at=None):
     if not THEME_ID.match(theme_id or ""):
         raise LedgerError(f"theme id {theme_id!r} must be kebab-case")
@@ -260,7 +292,7 @@ def add_theme(db, theme_id, title, kind, keywords, approval_ref, proposal_id=Non
         "theme_id": theme_id,
         "title": title.strip(),
         "kind": kind,
-        "keywords_json": json.dumps(list(dict.fromkeys(keywords)), ensure_ascii=False),
+        "keywords_json": json.dumps(keyword_list(keywords), ensure_ascii=False),
         "status": "active",
         "proposal_id": proposal_id,
     }
@@ -270,6 +302,27 @@ def add_theme(db, theme_id, title, kind, keywords, approval_ref, proposal_id=Non
         return _same_or_refuse(old, wanted, f"theme {theme_id}")
     with db:
         return _insert(db, "themes", {**wanted, **approval})
+
+
+def add_theme_keywords(db, theme_id, keywords, approval_ref, at=None):
+    """The owner adds recall keywords to an existing theme: appended to keywords_json (row rehashed), one
+    theme_keyword_approvals row per new keyword with its approval. -> (theme row, keywords added). A keyword the theme
+    already has is a no-op."""
+    approval = _approval(approval_ref, at)
+    theme = _one(db, "SELECT * FROM themes WHERE theme_id = ?", theme_id)
+    if theme is None:
+        raise LedgerError(f"no theme {theme_id!r}")
+    have = json.loads(theme["keywords_json"])
+    added = [w for w in keyword_list(keywords) if w not in have]
+    if not added:
+        return theme, []
+    with db:  # one transaction: _update's own commit closes it
+        for w in added:
+            _insert(db, "theme_keyword_approvals", {"theme_id": theme_id, "keyword": w, **approval})
+        theme = _update(
+            db, "themes", {"theme_id": theme_id}, {"keywords_json": json.dumps(have + added, ensure_ascii=False)}
+        )
+    return theme, added
 
 
 def add_member(db, theme_id, symbol, role, approval_ref, at=None):
@@ -642,9 +695,10 @@ def _new_proposal_id(db, letter, at):
     return f"{prefix}{1 + max([int(p[len(prefix) :]) for p in taken] or [0])}"
 
 
-def add_theme_proposal(db, *, suggested_id, title, kind, why, source_ref, proposed_members, at):
-    """A theme proposal ('T' + YYYYMMDD + '-' + n, the day of `at`). The same source_ref and suggested_id again returns
-    the row already written, so a rerun files nothing twice. The caller has ruled out duplicates (theme_duplicate)."""
+def add_theme_proposal(db, *, suggested_id, title, kind, why, source_ref, proposed_members, at, keywords=()):
+    """A theme proposal ('T' + YYYYMMDD + '-' + n, the day of `at`) with the recall keywords it suggests (accepting it
+    copies them). The same source_ref and suggested_id again returns the row already written, so a rerun files
+    nothing twice. The caller has ruled out duplicates (theme_duplicate)."""
     if kind not in THEME_KINDS:
         raise LedgerError(f"kind must be one of {'|'.join(THEME_KINDS)}")
     old = _one(db, "SELECT * FROM theme_proposals WHERE source_ref = ? AND suggested_id = ?", source_ref, suggested_id)
@@ -663,6 +717,7 @@ def add_theme_proposal(db, *, suggested_id, title, kind, why, source_ref, propos
                 "why": why,
                 "source_ref": source_ref,
                 "proposed_members_json": json.dumps(proposed_members, ensure_ascii=False, sort_keys=True),
+                "keywords_json": json.dumps(keyword_list(keywords), ensure_ascii=False),
                 "status": "proposed",
                 "decided_at": None,
                 "decided_ref": None,
@@ -767,7 +822,7 @@ def _member_proposals_of(db, theme_id, members, source_ref, at):
 
 def accept_theme_proposal(db, proposal_id, theme_id, *, decision_ref, decided_at):
     """The owner accepts a theme proposal under the id the owner typed. Writes the theme (approval_ref
-    'telegram:<proposal_id>'), claim_theme_links with source owner for the revision claims the proposal cites, and a
+    'telegram:<proposal_id>', the proposal's suggested keywords), claim_theme_links with source owner for the revision claims the proposal cites, and a
     member proposal per proposed member (members need their own approval). -> (theme, already, member proposals).
     A theme id outside the grammar, a proposal rejected before or accepted under another id is refused."""
     p = _proposal(db, "T", proposal_id)
@@ -779,7 +834,8 @@ def accept_theme_proposal(db, proposal_id, theme_id, *, decision_ref, decided_at
             raise LedgerError(f"theme proposal {proposal_id} was already accepted as {t['theme_id']}")
         return t, True, []
     at = iso(decided_at)
-    theme = add_theme(db, theme_id, p["title"], p["kind"], [], f"telegram:{proposal_id}", proposal_id, at)
+    keywords = json.loads(p["keywords_json"])
+    theme = add_theme(db, theme_id, p["title"], p["kind"], keywords, f"telegram:{proposal_id}", proposal_id, at)
     for c in db.execute(
         "SELECT * FROM theme_proposal_claims WHERE proposal_id = ? ORDER BY revision_id, claim_index", (proposal_id,)
     ).fetchall():
@@ -1107,6 +1163,9 @@ def _cmd(a, db):
     if a.cmd == "theme-add":
         r = add_theme(db, a.id, a.title, a.kind, a.keyword, a.approval_ref, a.proposal_id, a.at)
         return f"theme {r['theme_id']} {r['content_sha256']}"
+    if a.cmd == "theme-keywords":
+        r, added = add_theme_keywords(db, a.id, a.add, a.approval_ref, a.at)
+        return f"theme {r['theme_id']} keywords {json.loads(r['keywords_json'])} added {added} {r['content_sha256']}"
     if a.cmd == "member-add":
         r = add_member(db, a.theme, a.symbol, a.role, a.approval_ref, a.at)
         return f"member {r['theme_id']} {r['symbol']} {r['role']} tw_listed={r['tw_listed']}"
@@ -1161,6 +1220,11 @@ def main(argv=None):
     p.add_argument("--keyword", action="append", default=[])
     p.add_argument("--approval-ref", required=True)
     p.add_argument("--proposal-id")
+    p.add_argument("--at")
+    p = cmd("theme-keywords")
+    p.add_argument("--id", required=True)
+    p.add_argument("--add", nargs="+", required=True, metavar="KEYWORD")
+    p.add_argument("--approval-ref", required=True)
     p.add_argument("--at")
     p = cmd("member-add")
     p.add_argument("--theme", required=True)

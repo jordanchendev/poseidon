@@ -42,6 +42,7 @@ MASK = {
     "kind": "tech_transition",
     "why": "ASML 與 TSMC 發起 12 吋光罩聯盟",
     "quote": "與 TSMC 發起 12 吋光罩聯盟，2031 試產線、2033 量產",
+    "keywords": ["12 吋光罩", "photomask"],
     "proposed_members": [{"symbol": "NASDAQ:ASML", "role": "supplier"}, {"symbol": "2330", "role": "customer"}],
 }
 MASK_ASML = ti.rec(
@@ -56,6 +57,7 @@ FOUNDRY_PRICING = {
     "kind": "demand_driver",
     "why": "聯電第三季毛利率改善",
     "claim_indices": [0],
+    "keywords": ["漲價", "price hike"],
     "proposed_members": [{"symbol": "2303", "role": "supplier"}],
 }
 
@@ -232,6 +234,7 @@ def test_theme_accept_releases_records_held_on_it(env):
         "telegram:T20261021-1",
         DECIDED_UTC,
     )
+    assert json.loads(theme["keywords_json"]) == MASK["keywords"]  # the proposal's suggested keywords
     asml_nid = held[MASK_ASML["claim"]]["narrative_id"]
     tsmc_nid = held[MASK_TSMC["claim"]]["narrative_id"]
     (written,) = rows(env, "SELECT * FROM narrative_records")
@@ -320,6 +323,7 @@ def test_revision_proposal_is_in_the_done_notice_and_accepting_links_its_claims(
     assert acks["20261022-d1"][1].startswith("主題提案 T20261021-1 已接受為 wafer-price-hikes，補 1 條 claim 主題連結")
     (theme,) = ti.db_rows(env, "SELECT * FROM themes WHERE theme_id = 'wafer-price-hikes'")
     assert (theme["proposal_id"], theme["approval_ref"]) == ("T20261021-1", "telegram:T20261021-1")
+    assert json.loads(theme["keywords_json"]) == FOUNDRY_PRICING["keywords"]
     (link,) = ti.db_rows(env, "SELECT * FROM claim_theme_links WHERE theme_id = 'wafer-price-hikes'")
     assert (link["revision_id"], link["claim_index"], link["source"], link["evidence_tier"], link["event_time"]) == (
         rev_id,

@@ -412,3 +412,76 @@ def test_seed_file_loads_into_a_trial_ledger(tmp_path):
     exported = {(t["theme_id"], m["symbol"]) for t in doc["themes"] for m in t["members"]}
     candidates = {(t["theme_id"], m["symbol"]) for t in seed["themes"] for m in t["members"]["candidate"]}
     assert candidates and not exported & candidates
+
+
+# ---------------------------------------------------------------- recall keywords (§5.3)
+def test_theme_keywords_need_an_approval_and_rehash_the_theme(tmp_path, db):
+    path = tmp_path / "ledger.sqlite"
+    before = dict(db.execute("SELECT * FROM themes").fetchone())
+    assert cli(path, "theme-keywords", "--id", "physical-ai-demand", "--add", "L4").returncode == 2  # no ref
+    p = cli(path, "theme-keywords", "--id", "physical-ai-demand", "--add", "L4", "--approval-ref", " ")
+    assert p.returncode != 0 and "approval_ref is required" in p.stderr
+    p = cli(path, "theme-keywords", "--id", "no-such-theme", "--add", "L4", "--approval-ref", "cli:owner")
+    assert p.returncode != 0 and "no theme" in p.stderr
+    p = cli(
+        path,
+        "theme-keywords",
+        "--id",
+        "physical-ai-demand",
+        "--add",
+        "自駕",
+        "L4",
+        "robotaxi",
+        "--approval-ref",
+        "cli:owner-2026-10-30",
+        "--at",
+        "2026-10-30T01:00:00Z",
+    )
+    assert p.returncode == 0, p.stderr
+    theme = dict(db.execute("SELECT * FROM themes").fetchone())
+    assert json.loads(theme["keywords_json"]) == ["自駕", "L4", "robotaxi"]  # 自駕 was there already
+    assert theme["approval_ref"] == before["approval_ref"] and theme["content_sha256"] != before["content_sha256"]
+    approvals = [dict(r) for r in db.execute("SELECT * FROM theme_keyword_approvals ORDER BY keyword")]
+    assert [(a["keyword"], a["approval_ref"], a["approved_at"]) for a in approvals] == [
+        ("L4", "cli:owner-2026-10-30", "2026-10-30T01:00:00Z"),
+        ("robotaxi", "cli:owner-2026-10-30", "2026-10-30T01:00:00Z"),
+    ]
+    for r in [theme, *approvals]:
+        stored = r.pop("content_sha256")
+        assert stored == content_sha256(r)
+    again = cli(path, "theme-keywords", "--id", "physical-ai-demand", "--add", "L4", "--approval-ref", "cli:x")
+    assert again.returncode == 0 and "added []" in again.stdout
+    assert dict(db.execute("SELECT * FROM themes").fetchone())["content_sha256"] == p.stdout.split()[-1]
+    assert db.execute("SELECT count(*) FROM theme_keyword_approvals").fetchone()[0] == 2
+
+
+def test_a_ledger_from_before_keywords_gets_the_column_and_valid_hashes(tmp_path):
+    path = tmp_path / "old.sqlite"
+    old = sqlite3.connect(path)
+    old.execute(
+        "CREATE TABLE theme_proposals (proposal_id TEXT PRIMARY KEY, suggested_id TEXT NOT NULL, title TEXT NOT NULL, "
+        "kind TEXT NOT NULL, why TEXT NOT NULL, source_ref TEXT NOT NULL, proposed_members_json TEXT NOT NULL, "
+        "status TEXT NOT NULL, decided_at TEXT, decided_ref TEXT, created_at TEXT NOT NULL, "
+        "content_sha256 TEXT NOT NULL)"
+    )
+    row = {
+        "proposal_id": "T20261020-1",
+        "suggested_id": "x",
+        "title": "X",
+        "kind": "policy",
+        "why": "w",
+        "source_ref": "material:20261020-k1#p1",
+        "proposed_members_json": "[]",
+        "status": "proposed",
+        "decided_at": None,
+        "decided_ref": None,
+        "created_at": "2026-10-20T00:00:00Z",
+    }
+    old.execute("INSERT INTO theme_proposals VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [*row.values(), content_sha256(row)])
+    old.commit()
+    old.close()
+    db = nl.connect(path)
+    (r,) = [dict(x) for x in db.execute("SELECT * FROM theme_proposals")]
+    assert r.pop("keywords_json") == "[]" and r.pop("content_sha256") == content_sha256({**row, "keywords_json": "[]"})
+    nl.connect(path).close()  # the migration runs once
+    db.close()

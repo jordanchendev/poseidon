@@ -9,7 +9,7 @@ gates(narrative, payload, cfg) -> refusal reasons, run inside runner.run_gates (
              claims whose evidence is all official (claim_precheck.OFFICIAL_TIERS); partially_verifies states open_part.
   [proposal] at most 3 narrative_proposals, each an atomic record whose numbers are in the cited claim's quote, a
              forecast's resolves_on names a period of the record, an inference source claim states its basis;
-             theme_proposals are well-formed.
+             theme_proposals are well-formed (suggested keywords: at most MAX_KEYWORDS short strings).
 Without a snapshot there is nothing to check, tag or propose, and a narrative that tries is refused.
 
 apply(ledger_path, revision, payload, cfg, jev, mode) -> narrative_results, run after the revision completes (§4.5):
@@ -61,6 +61,7 @@ from claim_precheck import (
 
 VERDICTS = ("verifies", "refutes", "partially_verifies", "untouched")
 MAX_PROPOSALS = 3  # D11
+MAX_KEYWORDS = 8  # a theme proposal's suggested recall keywords (§5.3)
 NOT_FACT_EVIDENCE = ("narrative_snapshot", "secondary")
 DATE = re.compile(r"^(\d{4})-\d{2}-\d{2}$")
 
@@ -81,6 +82,17 @@ def period_matches(resolves_on, record_claim):
     """resolves_on names a period of the record: its year (2028 / FY28 / 3Q28 / 民國 117 年) is a year the record names."""
     year = int(DATE.match(resolves_on).group(1))
     return any(year in p["years"] for p in extract_periods(record_claim) if p["kind"] == "period")
+
+
+def keywords_ok(v):
+    """A theme proposal's optional suggested keywords."""
+    return v is None or (
+        _strings(v) and len(v) <= MAX_KEYWORDS and all(len(w.strip()) <= nl.MAX_KEYWORD_CHARS for w in v)
+    )
+
+
+def keywords_rule():
+    return f"keywords must be at most {MAX_KEYWORDS} non-empty strings of at most {nl.MAX_KEYWORD_CHARS} characters"
 
 
 def gates(narrative, payload, cfg):
@@ -208,6 +220,8 @@ def gates(narrative, payload, cfg):
             _index(i, claims) for i in t["claim_indices"]
         ):
             reasons.append(f"{where} claim_indices must point to claims in this narrative")
+        if not keywords_ok(t.get("keywords")):
+            reasons.append(f"{where} {keywords_rule()}")
         for m in t.get("proposed_members") or []:
             ok = isinstance(m, dict) and m.get("role") in nl.MEMBER_ROLES
             try:
@@ -447,6 +461,7 @@ def file_theme_proposals(db, revision, by_id, cfg, at):
                 source_ref=source_ref,
                 proposed_members=[{"symbol": m["symbol"], "role": m["role"]} for m in t.get("proposed_members") or []],
                 at=at,
+                keywords=t.get("keywords") or [],
             )["proposal_id"]
         for i in idx:
             best = _best_evidence(claims[i], by_id)

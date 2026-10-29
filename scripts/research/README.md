@@ -358,6 +358,12 @@ that only an open theme or member proposal names is held (`held_records`) until 
 the ledger refuses is listed as unfit. `narrative_results.narrative_proposals` [{index, narrative_id, claim, status
 written|held|unfit, waits, reason}] is rendered as 「新增敘事」 in the done report.
 
+- Recall keywords (§5.3): a theme proposal (revision or intake) may suggest up to 8 `keywords` (each at most 40
+  characters, kept in `theme_proposals.keywords_json`); accepting the theme copies them. The owner adds more with
+  `narrative_ledger.py theme-keywords --ledger L --id <theme> --add <kw> [...] --approval-ref <ref> [--at T]`:
+  `approval_ref` is required, each new keyword gets a `theme_keyword_approvals` row (theme, keyword, approval), the
+  theme's `keywords_json` is appended and its row hash recomputed, and a keyword the theme has is a no-op. A ledger
+  made before this gets the `keywords_json` column on first connect, its proposal rows rehashed.
 - Themes, members and edges are written only with a non-empty `--approval-ref`; re-running the same approval is a
   no-op, the same key with different content is refused. Symbols: Taiwan-listed bare (`2408`), others
   `<EXCHANGE>:<TICKER>` (`NASDAQ:MU`, `TSE:3110`); `tw_listed` follows from that shape.
@@ -474,7 +480,8 @@ the owner typed.
   (`--decisions-json` in host mode). One feed instead of the design's `theme-pending`: the host wrapper, the outbox and
   the ack verb already exist for it, and decisions keep one order.
   - theme-accept: the id must match `^[a-z0-9]+(?:-[a-z0-9]+)*$` (else refused and acked refused); `themes` row with
-    title and kind of the proposal, `approval_ref` `telegram:<T-id>`, `proposal_id`; `claim_theme_links` with
+    title, kind and suggested `keywords` of the proposal, `approval_ref` `telegram:<T-id>`, `proposal_id`;
+    `claim_theme_links` with
     `source` owner for every claim in `theme_proposal_claims`; a member proposal for each proposed member (accepting a
     theme approves no member). Accepting again under the same id is a no-op; under another id, or after a reject, is
     refused.
