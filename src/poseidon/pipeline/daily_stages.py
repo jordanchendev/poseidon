@@ -1267,10 +1267,18 @@ class DailyHoldoutStage(DailyGateStage):
         runner = self.spec_runner(ctx, "holdout")
         engine_result, held = runner.run(params)
         lags = int(ctx.config["gates"]["benchmark"]["hac_lags"])
-        daily = underlying_daily(runner.store, underlying_product(ctx), through=runner.end)
+        symbol = underlying_product(ctx)
+        daily = underlying_daily(runner.store, symbol, through=runner.end)
         stats = benchmark.regress_daily(held, underlying_returns(daily["close"]), basis=runner.basis, lags=lags)
         result = holdout.evaluate_daily(
-            holdout.HoldoutDailyInputs(train, held, runner.basis, stats), ctx.config["thresholds"]
+            holdout.HoldoutDailyInputs(
+                train,
+                held,
+                runner.basis,
+                stats,
+                matched=lambda leverage: beta_matched_run(runner, symbol, leverage),
+            ),
+            ctx.config["thresholds"],
         )
         inputs = {
             **self.best_source(ctx),

@@ -211,13 +211,13 @@ def judge(
     hac = int(g["benchmark"]["hac_lags"])
     always_long = dict.fromkeys(dates, 1.0)
 
-    def matched(leverage: float) -> DailyResult:  # the risk route's beta-matched run: long at a constant leverage
-        return Runner(market, always_long, start=first, end=train_end, execution=execution)(
+    def matched(start: date, end: date | None):  # the risk route's beta-matched run: long at a constant leverage
+        return lambda leverage: Runner(market, always_long, start=start, end=end, execution=execution)(
             RerunRequest({"lev": leverage, "threshold": 0.0})
         )
 
     results[benchmark.GATE] = benchmark.evaluate_daily(
-        benchmark.BenchmarkDailyInputs(best, market.underlying, BASIS, hac, matched=matched), t
+        benchmark.BenchmarkDailyInputs(best, market.underlying, BASIS, hac, matched=matched(first, train_end)), t
     )
     chosen = choose_walk_forward(first, train_end + timedelta(days=1), g["wfe"]["layouts"])
     layout = None
@@ -239,7 +239,9 @@ def judge(
     )
     held = Runner(market, signs, start=holdout_start, end=None, execution=execution)(RerunRequest(best_params))
     stats = benchmark.regress_daily(held, market.underlying, basis=BASIS, lags=hac)
-    results[holdout.GATE] = holdout.evaluate_daily(holdout.HoldoutDailyInputs(best, held, BASIS, stats), t)
+    results[holdout.GATE] = holdout.evaluate_daily(
+        holdout.HoldoutDailyInputs(best, held, BASIS, stats, matched=matched(holdout_start, None)), t
+    )
     assert set(results) == set(DAILY_GATES)
     return {
         "results": results,
