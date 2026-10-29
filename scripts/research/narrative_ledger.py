@@ -37,7 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from assemble import TW_SYMBOL
-from claim_precheck import check_numbers, lint_atomic
+from claim_precheck import OFFICIAL_TIERS, check_numbers, lint_atomic
 
 from poseidon.decision_loop.manifest import content_sha256
 
@@ -81,7 +81,6 @@ FORECAST_REVIEW_DAYS = 90
 FORECAST_DEFAULT_RESOLVE_DAYS = 365
 EXPORT_QUOTE_CHARS = 120  # D7: the export leaves stormtrooper for the vault
 SIGNAL_WINDOW_DAYS = 180  # D11: the cross-company signal window (§5.2)
-OFFICIAL_EVIDENCE_TIERS = ("primary filing", "company release")  # claim_precheck.OFFICIAL_TIERS
 RELAYED_TIERS = ("sell-side", "media", "kol")
 
 THEME_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -825,8 +824,9 @@ def _member_proposals_of(db, theme_id, members, source_ref, at):
 
 def accept_theme_proposal(db, proposal_id, theme_id, *, decision_ref, decided_at):
     """The owner accepts a theme proposal under the id the owner typed. Writes the theme (approval_ref
-    'telegram:<proposal_id>', the proposal's suggested keywords), claim_theme_links with source owner for the revision claims the proposal cites, and a
-    member proposal per proposed member (members need their own approval). -> (theme, already, member proposals).
+    'telegram:<proposal_id>', the proposal's suggested keywords), claim_theme_links with source owner for the revision
+    claims the proposal cites, and a member proposal per proposed member (members need their own approval).
+    -> (theme, already, member proposals).
     A theme id outside the grammar, a proposal rejected before or accepted under another id is refused."""
     p = _proposal(db, "T", proposal_id)
     if p["status"] == "rejected":
@@ -1153,7 +1153,7 @@ def cross_company_signals(db, as_of):
     args = {
         "as_of": as_of,
         "since": since,
-        "official": json.dumps(OFFICIAL_EVIDENCE_TIERS),
+        "official": json.dumps(OFFICIAL_TIERS),
         "relayed": json.dumps(RELAYED_TIERS),
     }
     out = {}
