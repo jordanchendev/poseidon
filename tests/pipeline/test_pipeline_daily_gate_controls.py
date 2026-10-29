@@ -138,7 +138,8 @@ def test_static_leverage_fails_benchmark(seed):
     result = judged["results"]["benchmark"]
     assert not result.passed and result.reason_code in ("alpha_not_positive", "alpha_not_significant"), record
     assert result.report["beta"] > 1.5  # it is leveraged beta, nothing else
-    assert result.report["risk_route"]["status"] == "fail"  # nor a smaller drawdown than its beta-matched self
+    risk = result.report["risk_route"]  # it is its beta-matched self up to contract rounding: no risk route
+    assert risk["status"] == "not_applicable" and risk["tracking"] < risk["min_tracking"]
     assert result.report["alpha_t_min"] == 1.65
     assert judged["results"]["liquidation"].passed
 
