@@ -548,6 +548,48 @@ def test_theme_page_block_has_signals_timeline_and_tracking(vault):
 
 
 @needs_scripts
+def test_an_official_endorsement_is_not_a_status_change_on_the_timeline(vault, tmp_path):
+    """An owner-confirmed R4 endorsement (a corroborated event, status kept) is 官方背書 on the timeline; 狀態變化 is kept
+    for events that move the status (acceptance phase 2a, d9 / d10)."""
+    db = nl.connect(tmp_path / "ledger.sqlite")  # the ledger the vault fixture exported
+    nid = nl.add_record(
+        db,
+        claim="ASML 的訂單取消成本將維持很高",
+        claim_type="forecast",
+        attributed_to="股癌",
+        source_tier="kol",
+        origin_kind="material",
+        origin_ref="material:20261027-k2",
+        origin_evidence_id="secondary:material-20261027-k2",
+        quote="訂單取消成本很高",
+        source_text=MATERIAL,
+        subject_symbols=["NASDAQ:ASML"],
+        theme_ids=["cleanroom-capacity"],
+        first_seen_at="2026-10-27T03:00:00Z",
+    )["narrative_id"]
+    nl.append_event(
+        db,
+        nid,
+        kind="corroborated",
+        to_status="unverified",
+        decided_by="owner",
+        at="2026-10-29T01:00:00Z",
+        rule="R4",
+        basis={"revision_id": REV_ASML, "claim_indices": [0], "approval_ref": "telegram:20261030-d9"},
+    )
+    nl.write_export(db, AS_OF, vault["export"])
+    db.close()
+    theme_pages(vault)
+    block = block_of((vault["v"] / "_kb/wiki/themes/cleanroom-capacity.md").read_text())
+    timeline = block[block.index("### 時間線") : block.index("### 敘事追蹤")]
+    rows = [r for r in timeline.splitlines() if r.startswith("| 20")]
+    (endorsed,) = [r for r in rows if f"`{nid}` 官方背書，狀態維持未證實" in r]
+    assert endorsed.split(" | ")[0] == "| 2026-10-29" and endorsed.split(" | ")[2] == "官方背書"
+    (moved,) = [r for r in rows if f"`{vault['ids']['asml']}` 未證實 → 部分證實" in r]
+    assert moved.split(" | ")[2] == "狀態變化"
+
+
+@needs_scripts
 def test_pages_carry_no_quote_over_120_chars_and_no_material_text(vault):
     theme_pages(vault)
     for p in (vault["v"] / "_kb/wiki/themes").glob("*.md"):

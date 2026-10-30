@@ -542,7 +542,8 @@ changed, each changed line marked `# [themes]`), for the owner to install.
   title, kind, status, approval, keywords, members and `linked_symbols`) and, per theme, creates
   `_kb/wiki/themes/<id>.md` once as a stub; afterwards only the block between `<!-- theme-timeline:start ... -->` and
   `<!-- theme-timeline:end -->` is regenerated: 跨公司訊號 (the export's signals, official and relayed apart), 時間線
-  (官方事實 / 官方預期 / 本系統推論 / 傳聞（層級）/ 狀態變化, oldest first, Research notes linked by scope) and 敘事追蹤.
+  (官方事實 / 官方預期 / 本系統推論 / 傳聞（層級）/ 狀態變化 when the status moved / 官方背書 for a corroborated
+  event, oldest first, Research notes linked by scope) and 敘事追蹤.
   Quotes are at most 120 characters and no material text is in the export (D7). The same export gives no write.
 - `lint.py` rule `theme-id` (ERROR): a `[[themes/<id>]]` link, or a `themes` frontmatter value, whose id is not in the
   registry's YAML block, or any `themes/` link when the registry is missing. `research_links.py` starts a company block
