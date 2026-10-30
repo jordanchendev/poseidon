@@ -216,10 +216,25 @@ def intake_out(records=(), proposals=(), verify=()):
     return {"records": list(records), "theme_proposals": list(proposals), "verify_with": list(verify)}
 
 
+# The ledger the §7.2 cases were written against: the seed's six §7.1 themes. The four themes the owner accepted in the
+# trial (themes-seed-v2: high-na-euv and the rest) came from these same posts, so the cases propose them anew.
+SECTION_7_1 = (
+    "cleanroom-capacity",
+    "memory-supply-tightness",
+    "t-glass-supply",
+    "scale-up-optics",
+    "optics-export-policy",
+    "physical-ai-demand",
+)
+
+
+def section_7_1_themes():
+    return [t for t in json.loads((HERE / "themes.seed.json").read_text())["themes"] if t["theme_id"] in SECTION_7_1]
+
+
 def seed_themes(path):
-    seed = json.loads((HERE / "themes.seed.json").read_text())
     db = nl.connect(path)
-    for t in seed["themes"]:
+    for t in section_7_1_themes():
         nl.add_theme(db, t["theme_id"], t["title"], t["kind"], t["keywords"], "cli:test-seed", at=APPROVED)
         for m in t["members"]["verified"]:
             nl.add_member(db, t["theme_id"], m["symbol"], m["role"], "cli:test-seed", at=APPROVED)

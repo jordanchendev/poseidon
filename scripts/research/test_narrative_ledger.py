@@ -408,10 +408,22 @@ def test_seed_file_loads_into_a_trial_ledger(tmp_path):
     for e in seed["edges"]:
         nl.add_edge(db, e["from"], e["to"], e["relation"], "cli:seed-test")
     doc = json.loads(nl.export(db, "2100-01-01T00:00:00Z"))
-    assert len(doc["themes"]) == 6
+    assert len(doc["themes"]) == 10
     exported = {(t["theme_id"], m["symbol"]) for t in doc["themes"] for m in t["members"]}
     candidates = {(t["theme_id"], m["symbol"]) for t in seed["themes"] for m in t["members"]["candidate"]}
     assert candidates and not exported & candidates
+    # themes-seed-v2: the themes the owner accepted in the trial carry the owner's decision, and so does each member
+    approved = [t for t in seed["themes"] if "approval" in t]
+    assert [t["theme_id"] for t in approved] == [
+        "high-na-euv",
+        "custom-asic-capex",
+        "xpu-interconnect-content",
+        "hbm-base-die-foundry",
+    ]
+    for item in [*approved, *(m for t in approved for m in t["members"]["verified"])]:
+        a = item["approval"]
+        assert a["by"] == "owner" and a["decision_ref"].startswith("telegram:20261030-d"), item
+        assert a["decided_at"].startswith("2026-10-30T") and a["approval_ref"] == f"telegram:{a['proposal_id']}", item
 
 
 # ---------------------------------------------------------------- recall keywords (§5.3)

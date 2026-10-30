@@ -79,9 +79,9 @@ def decision(n, action, target, text, **extra):
 
 
 def seed(path, approve_asml=False):
-    """The seed's verified members only (the candidates, NASDAQ:ASML among them, are not approved)."""
+    """The §7.1 themes' verified members only (the candidates, NASDAQ:ASML among them, are not approved)."""
     db = nl.connect(path)
-    for t in json.loads((HERE / "themes.seed.json").read_text())["themes"]:
+    for t in ti.section_7_1_themes():
         nl.add_theme(db, t["theme_id"], t["title"], t["kind"], t["keywords"], "cli:test-seed", at=ti.APPROVED)
         for m in t["members"]["verified"]:
             nl.add_member(db, t["theme_id"], m["symbol"], m["role"], "cli:test-seed", at=ti.APPROVED)

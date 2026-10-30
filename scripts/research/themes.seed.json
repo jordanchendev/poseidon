@@ -1,8 +1,8 @@
 {
- "seed": "themes-seed-v1",
+ "seed": "themes-seed-v2",
  "design": "local_dev/design/2026-10-29-research-theme-and-narrative-ledger.md §7.1, D5",
- "status": "For owner review. Nothing here is approved or written to any ledger. Members under `candidate` are not to be added until the owner confirms them (D5).",
- "checked_at": "2026-10-29",
+ "status": "The four themes that carry `approval` (high-na-euv, custom-asic-capex, xpu-interconnect-content, hbm-base-die-foundry) and their members were accepted by the owner in Telegram on 2026-10-30 in the trial ledger (stormtrooper ~/v21-trial2): theme proposals T20261029-1/2/3/5, member proposals M20261030-1..8; production adds them with theme-add / member-add (design §9 step 3). Their members are listed under `verified` because the owner approved them, but the member proposals recorded no official source, document or quote (each lists what is missing under `unrecorded`), so they do not meet evidence_rule yet. The six §7.1 themes without `approval` are still for owner review: not approved. Members under `candidate` are not to be added until the owner confirms them (D5).",
+ "checked_at": "2026-10-29 (the six §7.1 themes); 2026-10-30 (the four trial-accepted themes, copied from the trial export narrative_export-2c.json and the trial ledger)",
  "evidence_rule": "verified = an official source (MOPS company profile or 股東會年報, TSE/SZSE/SEC filing, company IR document or press release) supports the member's role; news, sell-side notes and KOL posts are leads only.",
  "mops_note": "MOPS profile = POST https://mopsov.twse.com.tw/mops/web/ajax_t05st03 with co_id. 股東會年報 = POST https://doc.twse.com.tw/server-java/t57sb01 with co_id, year=115, mtype=F, dtype=F04; the server answers with a temporary download link for the file named below.",
  "themes": [
@@ -285,6 +285,202 @@
       "source": "https://www.sec.gov/Archives/edgar/data/1837240/000183724026000043/sym-20260627.htm",
       "document": "Symbotic 10-Q, quarter ended 2026-06-27, filed 2026-08-05",
       "quote": "Symbotic is an automation technology company established to develop technologies to improve operating efficiencies in modern warehouses."
+     }
+    ],
+    "candidate": []
+   }
+  },
+  {
+   "theme_id": "high-na-euv",
+   "title": "High-NA EUV 採用與量產時程",
+   "kind": "tech_transition",
+   "keywords": ["High-NA EUV", "曝光", "量產", "微影", "DRAM", "Intel", "Samsung", "TSMC"],
+   "approval": {
+    "by": "owner",
+    "proposal_id": "T20261029-1",
+    "decision_ref": "telegram:20261030-d3",
+    "decided_at": "2026-10-30T03:30:02Z",
+    "approval_ref": "telegram:T20261029-1"
+   },
+   "proposal": {
+    "suggested_id": "high-na-euv-adoption",
+    "source_ref": "material:20261020-k2#p11",
+    "why": "High-NA EUV 的採用與量產時程是微影技術過渡，現有封閉主題未涵蓋。"
+   },
+   "members": {
+    "verified": [
+     {
+      "symbol": "NASDAQ:ASML",
+      "role": "supplier",
+      "approval": {
+       "by": "owner",
+       "proposal_id": "M20261030-1",
+       "decision_ref": "telegram:20261030-d15",
+       "decided_at": "2026-10-30T06:20:01Z",
+       "approval_ref": "telegram:M20261030-1"
+      },
+      "proposal_source_ref": "theme-proposal:T20261029-1",
+      "unrecorded": ["name", "source", "document", "quote"]
+     },
+     {
+      "symbol": "NASDAQ:INTC",
+      "role": "beneficiary",
+      "approval": {
+       "by": "owner",
+       "proposal_id": "M20261030-2",
+       "decision_ref": "telegram:20261030-d16",
+       "decided_at": "2026-10-30T06:20:02Z",
+       "approval_ref": "telegram:M20261030-2"
+      },
+      "proposal_source_ref": "theme-proposal:T20261029-1",
+      "unrecorded": ["name", "source", "document", "quote"]
+     },
+     {
+      "symbol": "KRX:005930",
+      "role": "beneficiary",
+      "approval": {
+       "by": "owner",
+       "proposal_id": "M20261030-3",
+       "decision_ref": "telegram:20261030-d17",
+       "decided_at": "2026-10-30T06:20:03Z",
+       "approval_ref": "telegram:M20261030-3"
+      },
+      "proposal_source_ref": "theme-proposal:T20261029-1",
+      "unrecorded": ["name", "source", "document", "quote"]
+     },
+     {
+      "symbol": "NYSE:TSM",
+      "role": "beneficiary",
+      "approval": {
+       "by": "owner",
+       "proposal_id": "M20261030-4",
+       "decision_ref": "telegram:20261030-d18",
+       "decided_at": "2026-10-30T06:20:04Z",
+       "approval_ref": "telegram:M20261030-4"
+      },
+      "proposal_source_ref": "theme-proposal:T20261029-1",
+      "unrecorded": ["name", "source", "document", "quote"]
+     }
+    ],
+    "candidate": []
+   }
+  },
+  {
+   "theme_id": "custom-asic-capex",
+   "title": "客製化 ASIC 與 CSP 資本支出",
+   "kind": "demand_driver",
+   "keywords": ["ASIC", "CSP", "客製化晶片", "資本支出", "capex", "hyperscaler", "Marvell", "雲端業者"],
+   "approval": {
+    "by": "owner",
+    "proposal_id": "T20261029-2",
+    "decision_ref": "telegram:20261030-d4",
+    "decided_at": "2026-10-30T03:30:03Z",
+    "approval_ref": "telegram:T20261029-2"
+   },
+   "proposal": {
+    "suggested_id": "custom-asic-demand",
+    "source_ref": "material:20261020-k4#p3",
+    "why": "材料指出 Marvell 的 ASIC 已全數打入美系 CSP，且前十大雲端業者占 2025 年資本支出六成，屬於現有主題（記憶體、光模組政策、scale-up 光互連、T-glass、無塵室、實體 AI）未涵蓋的客製化晶片需求驅動。"
+   },
+   "members": {
+    "verified": [
+     {
+      "symbol": "NASDAQ:MRVL",
+      "role": "beneficiary",
+      "approval": {
+       "by": "owner",
+       "proposal_id": "M20261030-5",
+       "decision_ref": "telegram:20261030-d19",
+       "decided_at": "2026-10-30T06:20:05Z",
+       "approval_ref": "telegram:M20261030-5"
+      },
+      "proposal_source_ref": "theme-proposal:T20261029-2",
+      "unrecorded": ["name", "source", "document", "quote"]
+     }
+    ],
+    "candidate": []
+   }
+  },
+  {
+   "theme_id": "xpu-interconnect-content",
+   "title": "XPU 互連內容價值成長",
+   "kind": "demand_driver",
+   "keywords": ["XPU", "內容價值", "美元", "retimer", "交換器", "光學", "dollar content"],
+   "approval": {
+    "by": "owner",
+    "proposal_id": "T20261029-3",
+    "decision_ref": "telegram:20261030-d5",
+    "decided_at": "2026-10-30T03:30:04Z",
+    "approval_ref": "telegram:T20261029-3"
+   },
+   "proposal": {
+    "suggested_id": "interconnect-content-value",
+    "source_ref": "material:20261020-k5#p4",
+    "why": "每顆 XPU 的互連內容價值由 Hopper 世代的不到 100 美元升到接近 1000 美元，並以數千美元為下一階段目標；現有 scale-up-optics 只描述銅轉光的技術路線，未涵蓋這條以單價內容擴張為核心的需求主軸。"
+   },
+   "members": {
+    "verified": [
+     {
+      "symbol": "NASDAQ:ALAB",
+      "role": "supplier",
+      "approval": {
+       "by": "owner",
+       "proposal_id": "M20261030-6",
+       "decision_ref": "telegram:20261030-d20",
+       "decided_at": "2026-10-30T06:20:06Z",
+       "approval_ref": "telegram:M20261030-6"
+      },
+      "proposal_source_ref": "theme-proposal:T20261029-3",
+      "unrecorded": ["name", "source", "document", "quote"]
+     },
+     {
+      "symbol": "NASDAQ:MRVL",
+      "role": "supplier",
+      "approval": {
+       "by": "owner",
+       "proposal_id": "M20261030-7",
+       "decision_ref": "telegram:20261030-d21",
+       "decided_at": "2026-10-30T06:20:07Z",
+       "approval_ref": "telegram:M20261030-7"
+      },
+      "proposal_source_ref": "theme-proposal:T20261029-3",
+      "unrecorded": ["name", "source", "document", "quote"]
+     }
+    ],
+    "candidate": []
+   }
+  },
+  {
+   "theme_id": "hbm-base-die-foundry",
+   "title": "HBM base die 轉向晶圓代工共同設計",
+   "kind": "tech_transition",
+   "keywords": ["HBM4E", "base die", "晶圓代工", "foundry", "客製化", "共同設計"],
+   "approval": {
+    "by": "owner",
+    "proposal_id": "T20261029-5",
+    "decision_ref": "telegram:20261030-d7",
+    "decided_at": "2026-10-30T03:30:06Z",
+    "approval_ref": "telegram:T20261029-5"
+   },
+   "proposal": {
+    "suggested_id": "hbm-base-die-foundry",
+    "source_ref": "material:20261020-k8#p13",
+    "why": "HBM4E 的 base die 由自家製程改為在晶圓代工製程上與客製版／標準版共同設計，等於把 HBM 價值鏈的一環外移到代工廠，既有主題清單未涵蓋此製程轉移。"
+   },
+   "members": {
+    "verified": [
+     {
+      "symbol": "NASDAQ:MU",
+      "role": "customer",
+      "approval": {
+       "by": "owner",
+       "proposal_id": "M20261030-8",
+       "decision_ref": "telegram:20261030-d22",
+       "decided_at": "2026-10-30T06:20:08Z",
+       "approval_ref": "telegram:M20261030-8"
+      },
+      "proposal_source_ref": "theme-proposal:T20261029-5",
+      "unrecorded": ["name", "source", "document", "quote"]
      }
     ],
     "candidate": []
