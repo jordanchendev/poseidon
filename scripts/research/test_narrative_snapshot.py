@@ -151,6 +151,7 @@ def test_theme_member_without_open_records_gets_the_theme_list(env):
         }
     ]
     assert snap["event_time"] == snap["available_at"] == APPROVED
+    assert cfg["documents"][0]["issuer"] == "2303"  # a spot row's document is the company's own (§5.2)
     assert run["manifest_sha256"] != RUNNER_MANIFEST_SHA256
     prompt = json.loads((env["state"] / "dry-run" / "runs" / AGENDA_ID / "prompt.json").read_text())
     text = json.dumps(prompt, ensure_ascii=False)
@@ -319,7 +320,7 @@ def test_theme_scope_prices_only_taiwan_members_and_0050(env):
         "2408",
         "0050",
     ]  # 2337 approved after as_of
-    assert cfg["subject_symbols"] == ["NASDAQ:MU"]
+    assert cfg["subject_symbols"] == ["NASDAQ:MU"] and cfg["documents"][0]["issuer"] == "NASDAQ:MU"
     assert cfg["theme"] == {"theme_id": "memory-supply-tightness", "title": "記憶體供給吃緊", "kind": "bottleneck"}
     snap = cfg["narrative_snapshot"]["payload"]
     assert snap["records"] == [] and [t["theme_id"] for t in snap["themes"]] == ["memory-supply-tightness"]

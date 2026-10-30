@@ -305,6 +305,8 @@ def test_happy_path_completes_and_reports_done(env):
     assert rev["research"]["claims"][0]["quote"] == "Revenue was NT$68.73 billion for the quarter"
     ev = {e["id"]: e["kind"] for e in rev["manifest_payload"]["evidence"]}
     assert ev[DOC_ID] == "fundamental" and ev["kpi_series:2303"] == "kpi_series" and "ohlcv:0050" in ev
+    doc = next(e for e in rev["manifest_payload"]["evidence"] if e["id"] == DOC_ID)
+    assert "issuer" not in doc["payload"]  # no theme ledger: the manifest is what it was before the ledger existed
     cfg = json.loads((rd / "config.json").read_text())
     assert cfg["scope_key"] == "tw_stock:spot:2303" and cfg["symbols"] == ["2303", "0050"]
     assert cfg["model"] == draft.DEFAULT_MODEL and cfg["draft"]["reasoning"] is True
@@ -567,6 +569,38 @@ def test_template_and_scope_mapping():
     ]
     assert assemble.scope_for(["2303"]) == ("tw_stock:spot:2303", "2303")
     assert assemble.scope_for(["2408", "2344"]) == ("tw_stock:basket:2344-2408", None)
+    # the company that issued the row's document: its one subject, else its spot symbol, else unknown
+    assert assemble.issuer_of(["NASDAQ:ASML"], None) == "NASDAQ:ASML"
+    assert assemble.issuer_of(["NASDAQ:MU"], None) == "NASDAQ:MU"  # a 2408/2344 basket row about Micron
+    assert assemble.issuer_of([], "2303") == "2303"
+    assert assemble.issuer_of([], None) is None and assemble.issuer_of(["NASDAQ:MU", "KRX:000660"], None) is None
+
+
+def test_document_evidence_carries_the_issuer_only_when_given(tmp_path):
+    import hashlib
+
+    import research_theme
+
+    raw = tmp_path / "raw.txt"
+    raw.write_text("Net sales were EUR 7.5 billion.\n")
+    at = "2026-10-15T08:00:00Z"
+    item = {
+        "id": "fundamental:asml-q3",
+        "kind": "fundamental",
+        "title": "ASML Q3",
+        "publisher": "www.sec.gov",
+        "source_uri": "https://www.sec.gov/asml-q3.htm",
+        "event_time": at,
+        "available_at": at,
+        "raw_text_path": str(raw),
+        "raw_files": {"raw.txt": hashlib.sha256(raw.read_bytes()).hexdigest()},
+        "excerpts": [{"locator": "line 1", "text": "Net sales were EUR 7.5 billion."}],
+    }
+    plain = research_theme.document_evidence(item, at)
+    issued = research_theme.document_evidence({**item, "issuer": "NASDAQ:ASML"}, at)
+    assert "issuer" not in plain["payload"] and issued["payload"]["issuer"] == "NASDAQ:ASML"
+    assert issued["payload"]["publisher"] == "www.sec.gov"
+    assert issued["content_sha256"] != plain["content_sha256"]
 
 
 def test_excerpt_cap(tmp_path):

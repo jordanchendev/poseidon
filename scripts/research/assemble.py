@@ -94,6 +94,18 @@ def scope_for(symbols, theme_id=None):
     return "tw_stock:basket:{}".format("-".join(sorted(names))), None
 
 
+def issuer_of(subjects, spot_symbol):
+    """The company that issued the row's primary-source document (owner 2026-10-30), recorded on the document evidence
+    as payload.issuer for the §5.2 official tier: the row's one subject symbol ('NASDAQ:ASML' of a cleanroom-capacity
+    theme row, 'NASDAQ:MU' of a 2408/2344 basket row), else the symbol of a spot scope; None when the row names several
+    subjects or prices a basket or theme without one (the tier then does not count the document). Only a run that
+    carries a narrative_snapshot records it: claims link to themes through the snapshot, and a run that meets no theme
+    keeps the manifest it froze before the ledger existed."""
+    if len(subjects) == 1:
+        return subjects[0]
+    return None if subjects else spot_symbol
+
+
 # ------------------------------------------------------------------------------------------------ theme ledger (read)
 def open_ledger(path):
     """Read-only connection to the runner ledger, or None when there is no ledger or it has no theme tables yet."""
@@ -510,6 +522,11 @@ def assemble(
     kpi_symbols, kpi_notes = kpi_inputs(tw, as_of, kpi_path, fetch_rows=fetch_rows)
     notes += kpi_notes
     scope_key, symbol = scope_for(tw, theme and theme["theme_id"])
+    issuer = issuer_of(subjects, symbol)
+    if snapshot and issuer:
+        doc["issuer"] = issuer
+    elif snapshot:
+        notes.append("document issuer unknown (the row names no single subject and is no spot scope)")
     base = thalassa_base_url or thalassa_env()[0]
     draft = {"model": DEFAULT_DRAFT_MODEL, "reasoning": True, "max_tokens": 32000, **(draft or {})}  # as draft.py
     cfg = {

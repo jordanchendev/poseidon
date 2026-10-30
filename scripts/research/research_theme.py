@@ -173,6 +173,10 @@ def document_evidence(item, as_of):
     if item.get("actuals"):
         validate_actuals(item)
         payload["actuals"] = item["actuals"]
+    if item.get("issuer"):  # the company that issued the document (assemble.issuer_of); the §5.2 official tier
+        if not isinstance(item["issuer"], str) or not item["issuer"].strip():
+            raise SystemExit("document %s issuer must be a symbol" % item["id"])
+        payload["issuer"] = item["issuer"]
     if item.get("source_tier"):
         if item["source_tier"] not in SOURCE_TIERS:
             raise SystemExit("document %s source_tier must be one of %s" % (item["id"], "|".join(SOURCE_TIERS)))

@@ -89,17 +89,31 @@ CLAIMS = {
         ],
     ),
 }
-# The official document each revision's claims cite, frozen in its data_manifests payload. The §5.2 official tier
-# counts their publishers.
+# The official document each revision's claims cite, frozen in its data_manifests payload: (evidence id, url,
+# publisher = the url host, event_time, issuer = the company that issued it, None when the row named none). The §5.2
+# official tier counts issuers.
 DOCS = {
     REV_MU: (
         "fundamental:mu-fq4",
         "https://investors.micron.com/fq4.pdf",
         "investors.micron.com",
         "2026-09-30T20:00:00Z",
+        "NASDAQ:MU",
     ),
-    REV_ASML: ("fundamental:asml-q3", "https://www.sec.gov/asml-q3.htm", "ASML Holding N.V.", "2026-10-15T08:00:00Z"),
-    REV_OLD: ("fundamental:ocp", "https://www.opencompute.org/summit.pdf", "opencompute.org", "2026-10-20T00:00:00Z"),
+    REV_ASML: (
+        "fundamental:asml-q3",
+        "https://www.sec.gov/asml-q3.htm",
+        "www.sec.gov",
+        "2026-10-15T08:00:00Z",
+        "NASDAQ:ASML",
+    ),
+    REV_OLD: (
+        "fundamental:ocp",
+        "https://www.opencompute.org/summit.pdf",
+        "opencompute.org",
+        "2026-10-20T00:00:00Z",
+        None,
+    ),
 }
 # (revision, claim index, theme, about_symbols, claim kind, evidence tier, evidence event_time)
 LINKS = (
@@ -166,13 +180,13 @@ RECORDS = (
 def add_revision(db, rev, scope, claims, doc):
     """A completed revision as research_theme.py stores it (id without dashes, SQLAlchemy Uuid on SQLite) with its
     manifest; every claim cites the one document."""
-    doc_id, uri, publisher, at = doc
+    doc_id, uri, publisher, at, issuer = doc
     evidence = {
         "id": doc_id,
         "kind": "fundamental",
         "source_uri": uri,
         "event_time": at,
-        "payload": {"publisher": publisher},
+        "payload": {"publisher": publisher, **({"issuer": issuer} if issuer else {})},
     }
     manifest_id = rev.replace("-", "")[::-1]
     db.execute("INSERT INTO data_manifests VALUES (?, ?)", (manifest_id, json.dumps({"evidence": [evidence]})))
@@ -284,18 +298,22 @@ def test_cross_company_signals_are_computed_from_the_ledger(tmp_path):
     assert all(len(r["quote"]) <= 120 for r in doc["records"])
 
 
-def test_one_publisher_is_no_official_signal(tmp_path):
+def official_signals(db):
+    doc = json.loads(nl.export(db, AS_OF))
+    return {
+        s["theme_id"]: [c["symbol"] for c in s["companies"]]
+        for s in doc["cross_company_signals"]
+        if s["level"] == "official"
+    }
+
+
+def test_one_issuer_is_no_official_signal(tmp_path):
     """Acceptance 2026-10-30 §4: one Micron document whose fact claims also named 2408 made memory-supply-tightness an
-    official cross-company signal. The official tier needs two publishers; a link whose publisher is unknown (its
+    official cross-company signal. The official tier needs two issuing companies; a link whose issuer is unknown (its
     revision is not in the ledger) is no hit."""
 
     def official():
-        doc = json.loads(nl.export(db, AS_OF))
-        return {
-            s["theme_id"]: [c["symbol"] for c in s["companies"]]
-            for s in doc["cross_company_signals"]
-            if s["level"] == "official"
-        }
+        return official_signals(db)
 
     build_ledger(tmp_path / "ledger.sqlite")
     db = nl.connect(tmp_path / "ledger.sqlite")
@@ -305,7 +323,47 @@ def test_one_publisher_is_no_official_signal(tmp_path):
     link(db, "0badc0de-0000-4000-8000-0000000000c3", 0, "scale-up-optics", ["NASDAQ:MRVL"], at="2026-10-21T00:00:00Z")
     assert official() == {"cleanroom-capacity": ["NASDAQ:ASML", "NASDAQ:MU"]}
     link(db, REV_ASML, 0, "memory-supply-tightness", ["2408"], tier="primary filing", at="2026-10-15T08:00:00Z")
-    assert official()["memory-supply-tightness"] == ["2408", "NASDAQ:MU"]  # a second publisher
+    assert official()["memory-supply-tightness"] == ["2408", "NASDAQ:MU"]  # a second issuer
+    db.close()
+
+
+def test_the_official_tier_counts_issuing_companies_not_url_hosts(tmp_path):
+    """Owner 2026-10-30: the official tier counts the companies that published the cited documents. Two companies'
+    filings on sec.gov are two issuers; one company's documents on two hosts are one."""
+    build_ledger(tmp_path / "ledger.sqlite")
+    db = nl.connect(tmp_path / "ledger.sqlite")
+    nl.add_theme(db, "high-na-euv", "High-NA EUV", "tech_transition", [], "telegram:T-euv", at=APPROVED)
+    for rev, doc_id, at, issuer in (
+        ("a5a1a5a1-0000-4000-8000-0000000000d1", "fundamental:asml-6k", "2026-10-15T08:00:00Z", "NASDAQ:ASML"),
+        ("1e7e1e7e-0000-4000-8000-0000000000d2", "fundamental:intc-8k", "2026-10-23T20:00:00Z", "NASDAQ:INTC"),
+    ):
+        doc = (doc_id, f"https://www.sec.gov/{doc_id[12:]}.htm", "www.sec.gov", at, issuer)
+        add_revision(db, rev, "tw_stock:theme:high-na-euv", [{"kind": "fact", "text": "High-NA 導入"}], doc)
+        link(db, rev, 0, "high-na-euv", [issuer], tier="primary filing", at=at)
+    assert official_signals(db)["high-na-euv"] == ["NASDAQ:ASML", "NASDAQ:INTC"]  # one host, two issuers
+
+    mu_8k = "8c8c8c8c-0000-4000-8000-0000000000d3"  # Micron's 8-K on sec.gov, a host other than its fq4 PDF's
+    doc = ("fundamental:mu-8k", "https://www.sec.gov/mu-8k.htm", "www.sec.gov", "2026-09-30T20:05:00Z", "NASDAQ:MU")
+    add_revision(db, mu_8k, "tw_stock:basket:2344-2408", [{"kind": "fact", "text": "DRAM 供給吃緊"}], doc)
+    link(db, mu_8k, 0, "memory-supply-tightness", ["2408"], tier="primary filing", at=doc[3])
+    assert "memory-supply-tightness" not in official_signals(db)  # two hosts, one issuer
+    db.close()
+
+
+def test_a_link_whose_evidence_names_no_issuer_is_no_official_hit(tmp_path):
+    """A revision frozen before issuers were recorded counts for no one: an old ledger loses the official tier rather
+    than gains a false one."""
+    build_ledger(tmp_path / "ledger.sqlite")
+    db = nl.connect(tmp_path / "ledger.sqlite")
+    nanya = "2408a0a0-0000-4000-8000-0000000000d4"
+    doc = ("fundamental:nanya", "https://mops.twse.com.tw/nanya.pdf", "mops.twse.com.tw", "2026-10-10T08:00:00Z", None)
+    add_revision(db, nanya, "tw_stock:spot:2408", [{"kind": "fact", "text": "DDR4 合約價上漲"}], doc)
+    link(db, nanya, 0, "memory-supply-tightness", ["2408"], tier="company release", at=doc[3])
+    assert "memory-supply-tightness" not in official_signals(db)
+    rerun = "2408b0b0-0000-4000-8000-0000000000d5"  # the same document frozen with its issuer
+    add_revision(db, rerun, "tw_stock:spot:2408", [{"kind": "fact", "text": "DDR4 合約價上漲"}], (*doc[:4], "2408"))
+    link(db, rerun, 0, "memory-supply-tightness", ["2408"], tier="company release", at=doc[3])
+    assert official_signals(db)["memory-supply-tightness"] == ["2408", "NASDAQ:MU"]
     db.close()
 
 
