@@ -182,6 +182,24 @@ def test_contradicts_majority_stands():
     assert judge(Votes(*[("contradicts", 0.8)] * 3))["label"] == "contradicts"
 
 
+def test_supported_part_in_record_takes_the_period_gate_not_the_media_gate():
+    """Owner decision 2026-10-30 (R3): judgement (a) asks whether supported_part is part of the record's claim. A year
+    the record never names cannot be (period); a record that is itself a rumor says nothing about whether it is (media).
+    Judgement (b) reads the cited source with every gate, as the whole-claim judgement does."""
+    record = "市場傳聞某公司 2026 年營收將成長 15%"
+    official = "某公司公告 2026 年營收將成長 15%"
+    part = "某公司 2026 年營收將成長 15%"
+    assert narrative_check._media_gate(part, record)  # the gate (a) leaves out would fire
+    jev = Votes(*[("supports", 0.9)] * (2 * narrative_check.JEV_VOTES))
+    r = narrative_check.judge_part(jev, part, record, official, "claims[1]", "2303", "2026-10-29T00:00:00Z")
+    assert [(r[k]["label"], r[k]["precheck"]) for k in ("in_record", "backed")] == [("supports", "none")] * 2
+    jev = Votes()
+    r = narrative_check.judge_part(
+        jev, "某公司 2027 年營收將成長 15%", record, official, "claims[1]", "2303", "2026-10-29T00:00:00Z"
+    )
+    assert (r["in_record"]["precheck"], r["backed"]["precheck"], jev.calls) == ("period", "period", 0)
+
+
 def test_answer_without_probabilities_is_refused():
     class NoProbabilities(Votes):
         def judge(self, *a):

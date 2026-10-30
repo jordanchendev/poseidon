@@ -38,6 +38,8 @@ CASES = {
     "R9": ("聯電壬案說法成立", "state", None, "untouched", [], None, "supports"),
 }
 SOURCE = "。".join(c[0] for c in CASES.values()) + "。"
+PART = "聯電丙案有一部分成立"  # the R3 check's supported_part
+PART_LABELS = {"in_record": "supports", "backed": "supports"}  # FakeJev's answers for PART, judgements (a) and (b)
 EXPECTED = {  # rule -> (outcome, status after the run with narrative_apply on, event kind written)
     "R1": ("status_change", "verified", "status"),
     "R2": ("status_change", "refuted", "status"),
@@ -57,7 +59,8 @@ def env(runner_env):  # noqa: F811
 
 
 class FakeJev(tr.FakeOpenRouter):
-    """Drafts as FakeOpenRouter; JEV answers a record claim by locator (judgement vs sweep), any other claim supports."""
+    """Drafts as FakeOpenRouter; JEV answers a record claim by locator (judgement vs sweep), PART by PART_LABELS (against
+    the record's claim vs the cited claims), any other claim supports."""
 
     def __init__(self, drafts):
         super().__init__(drafts)
@@ -69,8 +72,12 @@ class FakeJev(tr.FakeOpenRouter):
         req = json.loads(body)
         self.jev_calls.append(req)
         st = req["state"]
-        judged, swept = self.by_claim.get(st["claim"], ("supports", "supports"))
-        label = swept if st["source_context"]["locator"] == "all official excerpts" else judged
+        locator = st["source_context"]["locator"]
+        if st["claim"] == PART:
+            label = PART_LABELS["in_record" if locator == narrative_check.IN_RECORD_LOCATOR else "backed"]
+        else:
+            judged, swept = self.by_claim.get(st["claim"], ("supports", "supports"))
+            label = swept if locator == "all official excerpts" else judged
         return 200, json.dumps(tr.jev_answer(label, 0.9, 0.00002)).encode()
 
 
@@ -124,7 +131,7 @@ def narrative(ids):
             "verdict": c[3],
             "claim_indices": c[4],
             "why": "測試",
-            **({"open_part": "未說明主動性。"} if c[3] == "partially_verifies" else {}),
+            **({"supported_part": PART, "open_part": "未說明主動性。"} if c[3] == "partially_verifies" else {}),
         }
         for rule, c in CASES.items()
     ]
@@ -263,6 +270,136 @@ def test_sweep_support_of_a_refuting_drafter_is_listed_for_the_owner_not_suggest
     assert n == 0
 
 
+# ------------------------------------------------------------------------------------------------ R3 supported_part
+def test_r3_reads_the_supported_part_label():
+    """Owner decision 2026-10-30: a whole-claim says_nothing no longer makes R3; part_label folds the whole-claim label
+    and the two supported_part judgements into the label R3's row reads."""
+    assert narrative_check.decide("state", "partially_verifies", "says_nothing", True, None, "unverified") == (
+        None,
+        "no_change",
+        None,
+    )
+
+    def label(whole, in_record, backed):
+        return narrative_check.part_label(whole, {"in_record": {"label": in_record}, "backed": {"label": backed}})
+
+    assert label("says_nothing", "supports", "supports") == "supports"  # N15
+    assert label("supports", "supports", "supports") == "supports"
+    assert label("says_nothing", "says_nothing", "supports") == "says_nothing"  # ns-712a8221
+    assert label("supports", "contradicts", "supports") == "says_nothing"
+    assert label("says_nothing", "supports", "says_nothing") == "says_nothing"
+    assert label("says_nothing", "supports", "contradicts") == "contradicts"
+    assert label("contradicts", "supports", "supports") == "contradicts"
+
+
+def run_r3(env, monkeypatch, mode, in_record="supports", backed="supports"):
+    """The nine-record run with FakeJev's judgements (a) and (b) of the R3 check's supported_part set."""
+    monkeypatch.setitem(PART_LABELS, "in_record", in_record)
+    monkeypatch.setitem(PART_LABELS, "backed", backed)
+    path, ids, t, _, rev = run(env, mode)
+    res = {x["narrative_id"]: x for x in rev["narrative_results"]["records"]}[ids["R3"]]
+    return path, ids, t, rev, res
+
+
+def suggestion_rows(path, nid):
+    db = sqlite3.connect(path)
+    db.row_factory = sqlite3.Row
+    rows = [dict(r) for r in db.execute("SELECT * FROM narrative_suggestions WHERE narrative_id = ?", (nid,))]
+    db.close()
+    return rows
+
+
+def report_md(env):
+    return subprocess.run(
+        [sys.executable, str(HERE / "render_theme.py"), str(env["run_dir"] / "revision.json")],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def test_r3_takes_a_supported_part_of_the_record_the_cited_claims_back(env, monkeypatch):
+    """Design §7.3 N15: JEV says nothing about the whole record against the cited claim, but the drafter's supported_part
+    is part of the record's claim (a) and the cited claim backs it (b): suggested partially_verified, with supported_part
+    and both judgements in the suggestion and, once the owner confirms, in the event."""
+    path, ids, t, rev, res = run_r3(env, monkeypatch, "confirm")
+    assert (res["rule"], res["outcome"], res["jev_label"], res["sweep_label"]) == (
+        "R3",
+        "status_change",
+        "says_nothing",
+        "says_nothing",
+    )
+    assert res["suggestion"]["status"] == "suggested" and res["why"] == ""
+    votes = ["supports"] * narrative_check.JEV_VOTES
+    assert res["judged"]["in_record"]["votes"] == res["judged"]["backed"]["votes"] == votes
+    # (a) reads the record's claim; (b) reads the same cited source as the whole-claim judgement
+    record = CASES["R3"][0]
+    whole = next(
+        c["state"]["source_context"]["text"]
+        for c in t.jev_calls
+        if c["state"]["claim"] == record and c["state"]["source_context"]["locator"] == "claims[1]"
+    )
+    asked = {
+        (c["state"]["source_context"]["locator"], c["state"]["source_context"]["text"])
+        for c in t.jev_calls
+        if c["state"]["claim"] == PART
+    }
+    assert asked == {(narrative_check.IN_RECORD_LOCATOR, record), ("claims[1]", whole)}
+    [s] = suggestion_rows(path, ids["R3"])
+    basis, jev = json.loads(s["basis_json"]), json.loads(s["jev_json"])
+    assert (basis["supported_part"], basis["open_part"]) == (PART, "未說明主動性。")
+    assert jev["label"] == "says_nothing"
+    assert {k: (v["label"], v["votes"]) for k, v in jev["supported_part"].items()} == {
+        "in_record": ("supports", votes),
+        "backed": ("supports", votes),
+    }
+    result, _ = narrative_check.apply_decision(
+        path,
+        {
+            "decision_id": "20261030-d1",
+            "action": "confirm",
+            "target": s["suggestion_id"],
+            "owner_text": "確認敘事 " + s["suggestion_id"],
+            "decided_at": "2026-10-30T09:00:00Z",
+        },
+    )
+    assert result == "applied"
+    _, events = ledger_rows(path, rev["identity"]["revision_id"])
+    ev = events[ids["R3"]][-1]
+    assert (ev["to_status"], json.loads(ev["basis_json"])["supported_part"]) == ("partially_verified", PART)
+    assert json.loads(ev["jev_json"])["supported_part"]["in_record"]["label"] == "supports"
+
+
+def test_r3_refuses_a_supported_part_that_is_not_part_of_the_record(env, monkeypatch):
+    """ns-712a8221: the cited ASML release claim was true, so it backs what the drafter named (b), but the release never
+    mentions cleanrooms: what the drafter named is not part of the record's claim (a). No suggestion; the report says
+    which judgement failed."""
+    path, ids, _, rev, res = run_r3(env, monkeypatch, "confirm", in_record="says_nothing")
+    reason = "supported_part is not part of the record's claim (JEV says_nothing)"
+    assert (res["rule"], res["outcome"], res["why"]) == (None, "no_change", reason) and "suggestion" not in res
+    assert suggestion_rows(path, ids["R3"]) == []
+    checks, _ = ledger_rows(path, rev["identity"]["revision_id"])
+    assert checks[ids["R3"]]["outcome"] == "no_change"
+    assert f"（不變：{reason}）" in report_md(env)
+
+
+def test_r3_needs_the_cited_claims_to_back_the_supported_part(env, monkeypatch):
+    path, ids, _, rev, res = run_r3(env, monkeypatch, "on", backed="says_nothing")
+    reason = "the cited source does not back supported_part (JEV says_nothing)"
+    assert (res["rule"], res["outcome"], res["why"]) == (None, "no_change", reason)
+    checks, events = ledger_rows(path, rev["identity"]["revision_id"])
+    assert checks[ids["R3"]]["event_seq"] is None and [e["kind"] for e in events[ids["R3"]]] == ["created"]
+
+
+def test_r3_cited_claims_that_contradict_the_supported_part_are_disputed(env, monkeypatch):
+    path, ids, _, _, res = run_r3(env, monkeypatch, "confirm", backed="contradicts")
+    reason = "the cited source does not back supported_part (JEV contradicts)"
+    assert (res["rule"], res["outcome"], res["why"]) == ("R6", "disputed", reason) and "suggestion" not in res
+    assert suggestion_rows(path, ids["R3"]) == []
+    owner = report_md(env)
+    assert f"- `{ids['R3']}` disputed（R6）：{CASES['R3'][0]}；{reason}" in owner[owner.index("### 待 owner 判斷") :]
+
+
 def test_overlapping_rows_are_refused():
     with pytest.raises(AssertionError, match="overlap"):
         narrative_check._expand(
@@ -301,8 +438,9 @@ def test_on_writes_one_event_per_rule_row(env):
     r5 = next(e for e in events[ids["R5"]] if e["rule"] == "R5")
     assert r5["at"] == "2026-10-15T00:00:00Z"  # max(evidence available_at, the record's last event at)
     votes = narrative_check.JEV_VOTES
-    assert len(t.jev_calls) == 2 + votes * (7 + 9)  # fact claims, then judgements (R1-R7) and sweeps (every record)
-    assert run_json["costs"]["jev_narrative_usd"] == pytest.approx(votes * 16 * 0.00002)
+    # fact claims, then judgements (R1-R7), R3's two supported_part judgements and sweeps (every record)
+    assert len(t.jev_calls) == 2 + votes * (7 + 2 + 9)
+    assert run_json["costs"]["jev_narrative_usd"] == pytest.approx(votes * 18 * 0.00002)
 
 
 def test_off_by_default_writes_checks_but_no_events(env):
@@ -347,7 +485,7 @@ def test_rerun_of_the_same_revision_calls_no_jev_and_writes_nothing(env):
     db.close()
     redo = narrative_check.apply(path, rev, payload, cfg, jev, mode="on")
     checks, events = ledger_rows(path, rev["identity"]["revision_id"])
-    assert len(t.jev_calls) == narrative_check.JEV_VOTES * 16 and events == before[1]
+    assert len(t.jev_calls) == narrative_check.JEV_VOTES * 18 and events == before[1]
     assert {nid: c["event_seq"] for nid, c in checks.items()} == {nid: c["event_seq"] for nid, c in before[0].items()}
     assert [x["outcome"] for x in redo["records"]] == [x["outcome"] for x in again["records"]]
 
