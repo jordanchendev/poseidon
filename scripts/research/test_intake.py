@@ -28,9 +28,10 @@ MID = "20261020-k1"
 RECEIVED = "2026-10-20T18:00:00+08:00"
 RECEIVED_UTC = "2026-10-20T10:00:00Z"
 APPROVED = "2026-10-01T00:00:00Z"
-# §7.1 lists NASDAQ:ASML under cleanroom-capacity; NASDAQ:AMD is the subject N11 needs. Neither is in the seed's
-# verified members, so these tests approve them the way the owner would (theme-add / member-add).
-EXTRA_MEMBERS = (("cleanroom-capacity", "NASDAQ:ASML", "constrained"), ("scale-up-optics", "NASDAQ:AMD", "customer"))
+# §7.1 lists NASDAQ:ASML under cleanroom-capacity but it is not in the seed's verified members, so these tests approve
+# it the way the owner would (member-add). NASDAQ:AMD, the subject N11 needs, is a verified member of scale-up-optics
+# in the seed since the owner accepted M20261029-2, so seed_themes gets it from the seed.
+EXTRA_MEMBERS = (("cleanroom-capacity", "NASDAQ:ASML", "constrained"),)
 VIA = "（經股癌轉述）"
 
 

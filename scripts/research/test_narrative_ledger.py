@@ -424,6 +424,17 @@ def test_seed_file_loads_into_a_trial_ledger(tmp_path):
         a = item["approval"]
         assert a["by"] == "owner" and a["decision_ref"].startswith("telegram:20261030-d"), item
         assert a["decided_at"].startswith("2026-10-30T") and a["approval_ref"] == f"telegram:{a['proposal_id']}", item
+    # the six §7.1 themes carry the owner's 2026-10-29 seed review ref, and NASDAQ:AMD (M20261029-2) is the one
+    # telegram-accepted member that sits in one of them
+    assert seed["six_approval_ref"] == "owner-2026-10-29-seed-review"
+    assert len(seed["themes"]) - len(approved) == 6
+    (optics,) = [t for t in seed["themes"] if t["theme_id"] == "scale-up-optics"]
+    (amd,) = [m for m in optics["members"]["verified"] if m["symbol"] == "NASDAQ:AMD"]
+    assert amd["role"] == "customer" and amd["proposal_source_ref"] == "material:20261020-k5#p6"
+    assert amd["approval"]["approval_ref"] == "telegram:M20261029-2"
+    assert amd["approval"]["decided_at"] == "2026-10-30T03:30:01Z"
+    assert sum(len(t["members"]["verified"]) for t in seed["themes"]) == 32
+    assert ("scale-up-optics", "NASDAQ:AMD") in exported
 
 
 # ---------------------------------------------------------------- recall keywords (§5.3)

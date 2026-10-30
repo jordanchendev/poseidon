@@ -415,12 +415,12 @@ written|held|unfit, waits, reason}] is rendered as 「新增敘事」 in the don
   link or record; the `claim_theme_links` and `narrative_records` rows are kept. Other themes are unaffected.
 - The runner rewrites `<state-dir>/narrative_export.json` (export as of now) after every invocation but a dry run;
   `nexus_pull.py` on the MacBook pulls it (no host wrapper change). A failure is logged and never changes the exit code.
-- `themes.seed.json` is the §7.1 seed for the owner to review, with each member's official source. Members under
+- `themes.seed.json` is the §7.1 seed, approved by the owner on 2026-10-29 (`six_approval_ref`), with each member's official source. Members under
   `candidate` are not approved (D5); nothing loads the seed into a ledger except the test's tmp ledger. Since
   themes-seed-v2 it also carries the four themes the owner accepted in the trial ledger on 2026-10-30 (high-na-euv,
   custom-asic-capex, xpu-interconnect-content, hbm-base-die-foundry); each of them and each of their members has
   `approval` (the Telegram decision ref and time), and their members list the fields no proposal recorded under
-  `unrecorded`. The intake and theme-decision tests load only the six §7.1 themes (test_intake.SECTION_7_1).
+  `unrecorded`. NASDAQ:AMD (customer, M20261029-2) is the one such member inside a §7.1 theme (scale-up-optics). The intake and theme-decision tests load only the six §7.1 themes (test_intake.SECTION_7_1).
 
 Tests: `PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/test_narrative_ledger.py`.
 
