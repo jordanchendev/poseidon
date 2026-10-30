@@ -8,6 +8,7 @@ The eight 股癌 posts of §7 (fixtures/gooaye_posts.json, test fixture only) go
 
 import hashlib
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -375,6 +376,16 @@ def test_gate_refusals_name_the_record(tmp_path):
 
 
 # ------------------------------------------------------------------------------------------------ runner
+def test_prompt_takes_the_claims_the_opening_names_first():
+    """Acceptance 2026-10-30 §2: post 8 opens with the rumors it says were confirmed (N15, N17), yet the ten records
+    went to the list below it. Rule 2, right after the cap, says what to take first; the rules stay numbered 1-11."""
+    rules = intake.INTAKE_PROMPT[intake.INTAKE_PROMPT.index("Rules (") :]
+    cap, first, quote = (rules.index(x) for x in ("\n1. records: at most", "\n2. When the material", "\n3. quote:"))
+    assert cap < first < quote
+    assert "first take the claims its title or opening lines name" in rules and "傳聞獲得驗證" in rules
+    assert [int(n) for n in re.findall(r"\n(\d+)\. ", rules)] == list(range(1, 12))
+
+
 def test_post8_records_are_written_with_the_material_tier_and_first_seen_at(env):
     t, rc = run_intake(env, [intake_out(EXPECTED["8"], verify=VERIFY_8)], [material_row("8")])
     assert rc == 0
