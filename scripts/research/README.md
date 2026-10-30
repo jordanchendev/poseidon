@@ -492,7 +492,8 @@ the owner typed.
 - Held records. An intake record tagged with a theme proposal, or whose subject is not yet an approved member, is
   kept in `held_records` (the `add_record` arguments, the quote's line(s), and the open proposal ids it waits for),
   never in `narrative_records`. A subject is covered by an open member proposal of the symbol or an open theme proposal
-  that names it.
+  that names it. Every need must be met and any one proposal meets its need, so notices write the waits as
+  「M… 或 T…」 within a need and 「，以及」 between needs (`nl.waits_text`).
 - Decisions. Sisyphus runs `research-agenda.sh theme-accept <T-id> <theme-id>`, `theme-reject <T-id>`,
   `member-accept <M-id>` or `member-reject <M-id>` with the owner's sentence on STDIN; macminim4 appends a pending
   decision to the same `narrative_decisions.jsonl`, and the runner reads it from the step 8 feed `narrative-pending`

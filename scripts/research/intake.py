@@ -604,13 +604,13 @@ def write(db, m, plan, kept, as_of, evidence_id):
             "resolves_on": r["resolves_on"],
             "decided_by": "rule",
         }
-        themes, waits, missing = nl.record_waits(db, record["theme_ids"], r["subject_symbols"])
+        themes, waits, missing, needs = nl.record_waits(db, record["theme_ids"], r["subject_symbols"])
         nid = nl.narrative_id(record["origin_ref"], r["quote"], r["claim"])
         if missing:
             unfit.append({**r, "narrative_id": nid, "reason": "；".join(missing)})
         elif waits:
             nl.hold_record(db, record, r["paragraph"], waits, as_of)
-            held.append({**r, "narrative_id": nid, "waits": waits})
+            held.append({**r, "narrative_id": nid, "waits": waits, "waits_text": nl.waits_text(needs)})
         else:
             row = nl.add_record(db, **{**record, "theme_ids": themes}, source_text=m["text"])
             written.append({**r, "narrative_id": row["narrative_id"], "theme_ids": themes})
@@ -634,7 +634,7 @@ def notice(m, plan, dropped, out):
         ]
         if held:
             lines.append(f"等待核准 {len(held)} 條（主題或成員核准後寫入，略過就不收）：")
-            lines += [f"- {r['narrative_id']} {short(r['claim'])}（等 {'、'.join(r['waits'])}）" for r in held]
+            lines += [f"- {r['narrative_id']} {short(r['claim'])}（等 {r['waits_text']}）" for r in held]
         if dropped:
             lines.append(f"未收 {len(dropped)} 條（JEV 判定原文段落不支持這個轉述）：")
             lines += [f"- {short(r['claim'])}：{r['judged']['label']} {r['judged']['why']}".rstrip() for r in dropped]

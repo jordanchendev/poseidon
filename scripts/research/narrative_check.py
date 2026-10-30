@@ -554,7 +554,8 @@ def proposal_record(p, claims, by_id, rev_id, as_of):
 def write_narrative_proposals(db, revision, by_id, at):
     """The revision's narrative_proposals (§3.2) through intake's path: written when its themes and subjects are
     approved, held (held_records) when a subject waits for an open proposal, unfit with the reason otherwise.
-    -> [{index, narrative_id, claim, status written|held|unfit, waits, reason}]. A rerun writes nothing twice."""
+    -> [{index, narrative_id, claim, status written|held|unfit, waits, reason}], waits_text too when held. A rerun
+    writes nothing twice."""
     rev_id = revision["identity"]["revision_id"]
     claims = revision["research"]["claims"]
     out = []
@@ -563,12 +564,12 @@ def write_narrative_proposals(db, revision, by_id, at):
         nid = nl.narrative_id(record["origin_ref"], record["quote"], record["claim"])
         row = {"index": k, "narrative_id": nid, "claim": record["claim"], "waits": [], "reason": reason}
         if reason is None:
-            themes, waits, missing = nl.record_waits(db, record["theme_ids"], record["subject_symbols"])
+            themes, waits, missing, needs = nl.record_waits(db, record["theme_ids"], record["subject_symbols"])
             if missing:
                 reason = "；".join(missing)
             elif waits:
                 nl.hold_record(db, record, text, waits, at)
-                row.update(status="held", waits=waits)
+                row.update(status="held", waits=waits, waits_text=nl.waits_text(needs))
             else:
                 try:
                     nl.add_record(db, **{**record, "theme_ids": themes}, source_text=text)
@@ -883,7 +884,7 @@ def released_text(outcomes):
         elif o["status"] == "dropped":
             words.append(f"敘事 {o['narrative_id']} 不收：{o['reason']}")
         else:
-            words.append(f"敘事 {o['narrative_id']} 仍等待 {'、'.join(o['waits'])}")
+            words.append(f"敘事 {o['narrative_id']} 仍等待 {o['waits_text']}")
     return "".join(f"；{w}" for w in words)
 
 

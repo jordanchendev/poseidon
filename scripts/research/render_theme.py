@@ -345,7 +345,8 @@ if proposed:
     STATUS_WORD = {"written": "已寫入", "held": "等待核准", "unfit": "未收"}
     L += ["## 新增敘事（本篇的 narrative_proposals）\n", "| narrative_id | claim | 結果 |", "|---|---|---|"]
     for x in proposed:
-        why = f"：{cell(x['reason'])}" if x.get("reason") else (f"（等 {'、'.join(x['waits'])}）" if x["waits"] else "")
+        waits = x.get("waits_text") or "、".join(x["waits"])  # a revision before waits_text lists the ids only
+        why = f"：{cell(x['reason'])}" if x.get("reason") else (f"（等 {waits}）" if x["waits"] else "")
         L.append(f"| `{x['narrative_id']}` | {cell(x['claim'])} | {STATUS_WORD[x['status']]}{why} |")
     L.append("")
 hits = (d.get("narrative_results") or {}).get("untagged_hits") or []

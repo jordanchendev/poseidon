@@ -895,17 +895,19 @@ def reject_proposal(db, proposal_id, *, decision_ref, decided_at):
 # the owner decides every proposal it needs: written then (first_seen_at unchanged), dropped with the reason when one
 # it needs is rejected. Nothing reaches narrative_records without approved themes and members.
 def record_waits(db, theme_refs, subjects):
-    """-> (theme ids, open proposal ids the record still needs, reasons it can never be written). A theme ref is an
-    active theme id or a theme proposal id; a subject is an approved member of an active theme, or one an open member
-    proposal or open theme proposal names."""
-    themes, waits, missing = [], set(), []
+    """-> (theme ids, open proposal ids the record still needs, reasons it can never be written, needs). A theme ref is
+    an active theme id or a theme proposal id; a subject is an approved member of an active theme, or one an open
+    member proposal or open theme proposal names. needs: one sorted list per unmet need, of the open proposals that
+    could meet it. Every need must be met; within a need one approval is enough (a member proposal of the subject, or
+    a theme proposal naming it, whose accept files the member proposal that then meets it)."""
+    themes, needs, missing = [], [], []
     for ref in theme_refs:
         if THEME_PROPOSAL_ID.match(ref):
             p = _one(db, "SELECT status FROM theme_proposals WHERE proposal_id = ?", ref)
             if p is None:
                 missing.append(f"沒有主題提案 {ref}")
             elif p["status"] == "proposed":
-                waits.add(ref)
+                needs.append([ref])
             elif p["status"] == "rejected":
                 missing.append(f"主題提案 {ref} 已被略過")
             else:
@@ -934,7 +936,7 @@ def record_waits(db, theme_refs, subjects):
             )
         ] + [pid for pid, names in open_themes if s in names]
         if cover:
-            waits.update(cover)
+            needs.append(sorted(set(cover)))
             continue
         gone = [
             r[0]
@@ -946,7 +948,13 @@ def record_waits(db, theme_refs, subjects):
         missing.append(
             f"{s} 不是核准成員" + (f"（成員提案 {'、'.join(gone)} 已被略過）" if gone else "，也沒有待決的提案")
         )
-    return sorted(set(themes)), sorted(waits), missing
+    needs = [list(n) for n in sorted({tuple(n) for n in needs})]
+    return sorted(set(themes)), sorted({w for n in needs for w in n}), missing, needs
+
+
+def waits_text(needs):
+    """zh-TW for a notice: 「M… 或 T…」 within a need, 「，以及」 between needs (record_waits)."""
+    return "，以及 ".join(" 或 ".join(n) for n in needs)
 
 
 def hold_record(db, record, source_text, waits, at):
@@ -976,14 +984,15 @@ def hold_record(db, record, source_text, waits, at):
 def release_held(db, at):
     """Re-gate every held record against the ledger as it is now: written when nothing it needs is pending, dropped
     with the reason when something it needs was rejected, otherwise kept with its refreshed waits. -> the records
-    whose state changed [{narrative_id, status written|dropped|held, reason, waits}]. Re-running changes nothing."""
+    whose state changed [{narrative_id, status written|dropped|held, reason, waits, waits_text}]. Re-running changes
+    nothing."""
     at = iso(at)
     out = []
     for h in db.execute(
         "SELECT * FROM held_records WHERE status = 'held' ORDER BY created_at, narrative_id"
     ).fetchall():
         nid, rec = h["narrative_id"], json.loads(h["record_json"])
-        themes, waits, missing = record_waits(db, rec["theme_ids"], rec["subject_symbols"])
+        themes, waits, missing, needs = record_waits(db, rec["theme_ids"], rec["subject_symbols"])
         if not missing and not waits:
             try:
                 add_record(db, **{**rec, "theme_ids": themes}, source_text=h["source_text"])
@@ -1004,7 +1013,9 @@ def release_held(db, at):
             out.append({"narrative_id": nid, "status": "written", "reason": None, "waits": []})
         elif waits != json.loads(h["waits_json"]):
             _update(db, "held_records", {"narrative_id": nid}, {"waits_json": json.dumps(waits)})
-            out.append({"narrative_id": nid, "status": "held", "reason": None, "waits": waits})
+            out.append(
+                {"narrative_id": nid, "status": "held", "reason": None, "waits": waits, "waits_text": waits_text(needs)}
+            )
     return out
 
 

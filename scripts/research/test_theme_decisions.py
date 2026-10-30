@@ -264,6 +264,45 @@ def test_theme_accept_releases_records_held_on_it(env):
     )
 
 
+def test_waits_text_says_or_within_a_need_and_between_needs():
+    """Acceptance 2026-10-30 §6.11: 「等 M…、T…」 read as both. Every need must be met; one approval meets a need."""
+    assert nl.waits_text([["M20261029-1", "T20261029-1"]]) == "M20261029-1 或 T20261029-1"
+    assert nl.waits_text([["T1"], ["M1", "T2"]]) == "T1，以及 M1 或 T2"
+
+
+def test_a_record_any_of_whose_proposals_releases_it_says_or(env):
+    """N6's subject NASDAQ:ASML is named by a member proposal and by a theme proposal: one need, two ways to meet it.
+    Accepting the member proposal alone writes the record."""
+    seed(ledger(env))
+    n6 = ti.EXPECTED["2"][1]
+    done = take_in(env, out([n6], [MASK], [ASML_MEMBER]))
+    (h,) = rows(env, "SELECT * FROM held_records")
+    assert json.loads(h["waits_json"]) == ["M20261021-1", "T20261021-1"]
+    assert f"- {h['narrative_id']} {n6['claim']}（等 M20261021-1 或 T20261021-1）" in done["text"]
+    acks = decide(env, decision(1, "member-accept", "M20261021-1", "接受成員 M20261021-1"))
+    assert f"敘事 {h['narrative_id']} 已寫入" in acks["20261022-d1"][1]
+
+
+def test_a_record_that_needs_two_approvals_says_both(env):
+    """A record about two companies the accepted theme only proposes waits for both member proposals."""
+    seed(ledger(env))
+    joint = {**MASK_TSMC, "subject_symbols": ["NASDAQ:ASML", "2330"]}
+    take_in(env, out([joint], [MASK]))
+    (h,) = rows(env, "SELECT * FROM held_records")
+    acks = decide(
+        env,
+        decision(1, "theme-accept", "T20261021-1", "接受主題 T20261021-1 photomask-12in", theme_id="photomask-12in"),
+    )
+    mps = {m["symbol"]: m["proposal_id"] for m in rows(env, "SELECT * FROM member_proposals")}
+    asml, tsmc = mps["NASDAQ:ASML"], mps["2330"]
+    assert f"敘事 {h['narrative_id']} 仍等待 {asml}，以及 {tsmc}" in acks["20261022-d1"][1]
+    acks = decide(env, decision(2, "member-accept", asml, f"接受成員 {asml}"))
+    assert f"敘事 {h['narrative_id']} 仍等待 {tsmc}" in acks["20261022-d2"][1]
+    assert rows(env, "SELECT * FROM narrative_records") == []
+    acks = decide(env, decision(3, "member-accept", tsmc, f"接受成員 {tsmc}"))
+    assert f"敘事 {h['narrative_id']} 已寫入" in acks["20261022-d3"][1]
+
+
 def test_theme_reject_drops_records_held_on_it(env):
     seed(ledger(env), approve_asml=True)
     take_in(env, out([MASK_ASML], [MASK]))
