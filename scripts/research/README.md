@@ -401,7 +401,11 @@ written|held|unfit, waits, reason}] is rendered as 「新增敘事」 in the don
   same ledger; assemble records the row's one subject symbol, else its spot symbol, as the issuer; the URL host is
   not the issuer; a link without one is no hit), so one company's documents never make the signal alone; relayed =
   sell-side / media / kol records of the theme not refuted at as_of whose `subject_symbols` cover two or more
-  companies with `first_seen_at` in the window, listed only when the theme is not an official signal.
+  companies with `first_seen_at` in the window, listed only when the theme is not an official signal. A symbol the
+  owner rejected from a theme (a `rejected` member proposal decided by as_of, and no approved member row) is no hit
+  for that theme in either tier and is left out of that theme in the export (dropped from the about_symbols of its
+  links, a link left with none omitted; a record whose every subject was rejected loses that theme), however old the
+  link or record; the `claim_theme_links` and `narrative_records` rows are kept. Other themes are unaffected.
 - The runner rewrites `<state-dir>/narrative_export.json` (export as of now) after every invocation but a dry run;
   `nexus_pull.py` on the MacBook pulls it (no host wrapper change). A failure is logged and never changes the exit code.
 - `themes.seed.json` is the §7.1 seed for the owner to review, with each member's official source. Members under

@@ -198,7 +198,17 @@ def add_revision(db, rev, scope, claims, doc):
     db.commit()
 
 
-def link(db, rev, idx, theme, about, kind="fact", tier="company release", at="2026-09-30T20:00:00Z"):
+def link(
+    db,
+    rev,
+    idx,
+    theme,
+    about,
+    kind="fact",
+    tier="company release",
+    at="2026-09-30T20:00:00Z",
+    created="2026-10-28T00:00:00Z",
+):
     nl.add_link(
         db,
         {
@@ -210,7 +220,7 @@ def link(db, rev, idx, theme, about, kind="fact", tier="company release", at="20
             "evidence_tier": tier,
             "event_time": at,
             "source": "drafter",
-            "created_at": "2026-10-28T00:00:00Z",
+            "created_at": created,
         },
     )
 
@@ -298,8 +308,8 @@ def test_cross_company_signals_are_computed_from_the_ledger(tmp_path):
     assert all(len(r["quote"]) <= 120 for r in doc["records"])
 
 
-def official_signals(db):
-    doc = json.loads(nl.export(db, AS_OF))
+def official_signals(db, as_of=AS_OF):
+    doc = json.loads(nl.export(db, as_of))
     return {
         s["theme_id"]: [c["symbol"] for c in s["companies"]]
         for s in doc["cross_company_signals"]
@@ -375,6 +385,160 @@ def test_signals_are_point_in_time(tmp_path):
     db.close()
     assert [s["theme_id"] for s in before_asml if s["level"] == "official"] == []  # ASML's claim is not out yet
     assert much_later == []  # everything slid out of the window
+
+
+# A theme NASDAQ:ASML is not a member of, and the owner's rejection of the proposal to add it. Acceptance phase 2b: the
+# owner rejected M20261029-1 (NASDAQ:ASML into cleanroom-capacity: ASML's official documents never mention cleanrooms),
+# then the ASML theme revision 20261030-m96 still linked two ASML official facts to that theme, because the [theme]
+# gate admits the run's own subject.
+FAB = "fab-buildout"
+REJECTED_AT = "2026-10-29T03:00:00Z"
+AFTER_REJECTION = "2026-10-30T01:00:00Z"
+
+
+def fab_theme(db):
+    """-> the open member proposal of NASDAQ:ASML into FAB."""
+    nl.add_theme(db, FAB, "晶圓廠擴建", "demand_driver", [], "telegram:T-fab", at=APPROVED)
+    nl.add_member(db, FAB, "NASDAQ:MU", "customer", "telegram:M-fab-mu", at=APPROVED)
+    nl.add_member(db, FAB, "2404", "beneficiary", "telegram:M-fab-2404", at=APPROVED)
+    return nl.add_member_proposal(
+        db,
+        theme_id=FAB,
+        symbol="NASDAQ:ASML",
+        role="supplier",
+        why="ASML 交機受客戶建廠進度影響",
+        source_ref=f"revision:{REV_ASML}",
+        at="2026-10-28T12:00:00Z",
+    )["proposal_id"]
+
+
+def reject(db, proposal_id):
+    nl.reject_proposal(db, proposal_id, decision_ref="telegram:20261029-r1", decided_at=REJECTED_AT)
+
+
+def fab_links(db, created="2026-10-28T00:00:00Z"):
+    """Micron's official fact first, then ASML's: ASML is the second company and the second issuer."""
+    link(db, REV_MU, 0, FAB, ["NASDAQ:MU"], created=created)
+    link(db, REV_ASML, 0, FAB, ["NASDAQ:ASML"], tier="primary filing", at="2026-10-15T08:00:00Z", created=created)
+
+
+def raw_links(db, theme):
+    return sorted(
+        (r[0], r[1], json.loads(r[2]))
+        for r in db.execute(
+            "SELECT revision_id, claim_index, about_symbols_json FROM claim_theme_links WHERE theme_id = ?", (theme,)
+        )
+    )
+
+
+def test_a_member_the_owner_rejected_is_no_official_hit_for_that_theme(tmp_path):
+    """ASML's official facts linked to a theme the owner rejected it from do not make ASML the second company: the
+    theme has no official signal. The links stay in the ledger as the audit record."""
+    build_ledger(tmp_path / "ledger.sqlite")
+    db = nl.connect(tmp_path / "ledger.sqlite")
+    reject(db, fab_theme(db))
+    fab_links(db, created=AFTER_REJECTION)
+    assert FAB not in official_signals(db)
+    assert raw_links(db, FAB) == [(REV_MU, 0, ["NASDAQ:MU"]), (REV_ASML, 0, ["NASDAQ:ASML"])]
+    db.close()
+
+
+def test_a_link_written_before_the_rejection_is_no_official_hit_after_it(tmp_path):
+    """A write-time gate cannot reach links already in the ledger; the signal reads the rejection at as_of."""
+    build_ledger(tmp_path / "ledger.sqlite")
+    db = nl.connect(tmp_path / "ledger.sqlite")
+    proposal = fab_theme(db)
+    fab_links(db)
+    reject(db, proposal)
+    assert official_signals(db, "2026-10-29T00:00:00Z")[FAB] == ["NASDAQ:ASML", "NASDAQ:MU"]  # not rejected yet
+    assert FAB not in official_signals(db)
+    db.close()
+
+
+def test_a_member_rejected_from_one_theme_still_counts_in_the_others(tmp_path):
+    """The rejection is of one (symbol, theme) pair: ASML still counts where it is a member (cleanroom-capacity in this
+    fixture) and where it is merely not a member (memory-supply-tightness), and counts again in the rejected theme once
+    the owner adds it as a member after all."""
+    build_ledger(tmp_path / "ledger.sqlite")
+    db = nl.connect(tmp_path / "ledger.sqlite")
+    reject(db, fab_theme(db))
+    fab_links(db, created=AFTER_REJECTION)
+    link(db, REV_ASML, 0, "memory-supply-tightness", ["NASDAQ:ASML"], tier="primary filing", at="2026-10-15T08:00:00Z")
+    assert official_signals(db) == {
+        "cleanroom-capacity": ["NASDAQ:ASML", "NASDAQ:MU"],
+        "memory-supply-tightness": ["NASDAQ:ASML", "NASDAQ:MU"],
+    }
+    nl.add_member(db, FAB, "NASDAQ:ASML", "supplier", "telegram:M-fab-asml", at="2026-10-30T00:00:00Z")
+    assert official_signals(db)[FAB] == ["NASDAQ:ASML", "NASDAQ:MU"]
+    db.close()
+
+
+def test_the_export_leaves_a_rejected_member_out_of_that_theme(tmp_path):
+    """Through the export the theme page sees no rejected company: it leaves the about_symbols of the theme's links, a
+    link left with none is omitted, and the same symbol's links to other themes are kept."""
+    build_ledger(tmp_path / "ledger.sqlite")
+    db = nl.connect(tmp_path / "ledger.sqlite")
+    proposal = fab_theme(db)
+    fab_links(db)
+    link(db, REV_MU, 1, FAB, ["2404", "NASDAQ:ASML"], kind="inference")
+    reject(db, proposal)
+    doc = json.loads(nl.export(db, AS_OF))
+    links = {(x["theme_id"], x["revision_id"], x["claim_index"]): x for x in doc["claim_theme_links"]}
+    assert {k[1:]: json.loads(x["about_symbols_json"]) for k, x in links.items() if k[0] == FAB} == {
+        (REV_MU, 0): ["NASDAQ:MU"],
+        (REV_MU, 1): ["2404"],
+    }
+    assert json.loads(links[("cleanroom-capacity", REV_ASML, 0)]["about_symbols_json"]) == ["NASDAQ:ASML"]
+    assert raw_links(db, FAB) == [
+        (REV_MU, 0, ["NASDAQ:MU"]),
+        (REV_MU, 1, ["2404", "NASDAQ:ASML"]),
+        (REV_ASML, 0, ["NASDAQ:ASML"]),
+    ]
+    db.close()
+
+
+def two_theme_records(db):
+    """-> narrative ids of an ASML record under cleanroom-capacity (ASML is a member) and FAB (ASML was rejected), which
+    add_record admits, and a Micron record under FAB."""
+    ids = []
+    for claim, quote, subject, themes in (
+        ("ASML 的出貨受客戶無塵室不足限制", "出貨受客戶無塵室不足限制", "NASDAQ:ASML", ["cleanroom-capacity", FAB]),
+        ("Micron 的擴產受無塵室空間限制", "擴產受無塵室空間限制", "NASDAQ:MU", [FAB]),
+    ):
+        ids.append(
+            nl.add_record(
+                db,
+                claim=claim,
+                claim_type="state",
+                attributed_to="股癌",
+                source_tier="kol",
+                origin_kind="material",
+                origin_ref="material:20261029-k3",
+                origin_evidence_id="secondary:material-20261029-k3",
+                quote=quote,
+                source_text=MATERIAL,
+                subject_symbols=[subject],
+                theme_ids=themes,
+                first_seen_at="2026-10-29T05:00:00Z",
+            )["narrative_id"]
+        )
+    return ids
+
+
+def test_a_record_under_two_themes_is_no_relayed_hit_where_its_subject_was_rejected(tmp_path):
+    """add_record admits a subject that is a member of any one of the record's themes, so the relayed tier can carry a
+    rejected pair too. The record stays under the theme ASML is a member of."""
+    build_ledger(tmp_path / "ledger.sqlite")
+    db = nl.connect(tmp_path / "ledger.sqlite")
+    reject(db, fab_theme(db))
+    asml, mu = two_theme_records(db)
+    doc = json.loads(nl.export(db, AS_OF))
+    assert [s for s in doc["cross_company_signals"] if s["theme_id"] == FAB] == []
+    records = {r["narrative_id"]: r for r in doc["records"]}
+    assert (records[asml]["theme_ids"], records[mu]["theme_ids"]) == (["cleanroom-capacity"], [FAB])
+    stored = db.execute("SELECT theme_ids_json FROM narrative_records WHERE narrative_id = ?", (asml,)).fetchone()[0]
+    assert json.loads(stored) == ["cleanroom-capacity", FAB]
+    db.close()
 
 
 # ------------------------------------------------------------------------------------------------ the vault
@@ -587,6 +751,29 @@ def test_an_official_endorsement_is_not_a_status_change_on_the_timeline(vault, t
     assert endorsed.split(" | ")[0] == "| 2026-10-29" and endorsed.split(" | ")[2] == "官方背書"
     (moved,) = [r for r in rows if f"`{vault['ids']['asml']}` 未證實 → 部分證實" in r]
     assert moved.split(" | ")[2] == "狀態變化"
+
+
+@needs_scripts
+def test_a_theme_page_omits_a_company_the_owner_rejected_from_the_theme(vault, tmp_path):
+    """Acceptance phase 2b: ASML showed up on the page of a theme the owner had rejected it from. It is gone from that
+    page (signals, timeline, tracking, registry linked_symbols) and stays on the page of the theme it is a member of."""
+    db = nl.connect(tmp_path / "ledger.sqlite")  # the ledger the vault fixture exported
+    reject(db, fab_theme(db))
+    fab_links(db, created=AFTER_REJECTION)
+    asml, mu = two_theme_records(db)
+    nl.write_export(db, AS_OF, vault["export"])
+    db.close()
+    theme_pages(vault)
+    themes = vault["v"] / "_kb/wiki/themes"
+    fab = block_of((themes / f"{FAB}.md").read_text())
+    assert "NASDAQ:ASML" not in fab and f"`{asml}`" not in fab
+    assert "NASDAQ:MU" in fab and f"`{mu}`" in fab
+    assert "- 官方級（180 天內至少兩家公司各有官方文件的 fact claim）：無" in fab
+    assert f"`{asml}`" in block_of((themes / "cleanroom-capacity.md").read_text())
+    registry = (themes / "_registry.md").read_text()
+    data = __import__("yaml").safe_load(re.search(r"```yaml\n(.*?)```", registry, re.S).group(1))["themes"]
+    assert data[FAB]["linked_symbols"] == ["NASDAQ:MU"]
+    assert "NASDAQ:ASML" in data["cleanroom-capacity"]["linked_symbols"]
 
 
 @needs_scripts

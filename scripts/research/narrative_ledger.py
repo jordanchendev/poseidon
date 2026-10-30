@@ -1195,20 +1195,38 @@ def _clip(text, n=EXPORT_QUOTE_CHARS):
 #             documents on two hosts are one. A link whose evidence names no issuer is no hit.
 #   relayed:  narrative records of a relayed tier (sell-side / media / kol) not refuted at as_of, by subject_symbols and
 #             first_seen_at; a theme that is an official signal is not listed again as relayed.
+# A symbol the owner rejected from a theme (REJECTED_SQL) is no hit for that theme in either tier, whenever its link or
+# record was written; other themes and non-members are unaffected (acceptance phase 2b: M20261029-1 rejected
+# NASDAQ:ASML from cleanroom-capacity, then an ASML revision still linked its official facts there).
+# The record tier needs this too: add_record admits a subject that is a member of any one of the record's themes, so a
+# record tagged with two themes can carry a subject rejected from the other one.
+REJECTED_SQL = """
+rejected AS (
+  SELECT p.theme_id, p.symbol FROM member_proposals p
+  WHERE p.status = 'rejected' AND p.decided_at <= :as_of
+    AND NOT EXISTS (SELECT 1 FROM theme_members m WHERE m.theme_id = p.theme_id AND m.symbol = p.symbol
+                    AND m.approved_at <= :as_of))"""
 SIGNAL_SQL = {
     "official": """
-WITH hits AS (
+WITH"""
+    + REJECTED_SQL
+    + """,
+hits AS (
   SELECT l.theme_id, s.value AS symbol, l.event_time AS at, link_issuer(l.revision_id, l.claim_index) AS issuer
   FROM claim_theme_links l, json_each(l.about_symbols_json) s
   WHERE l.claim_kind = 'fact' AND l.evidence_tier IN (SELECT value FROM json_each(:official))
     AND l.created_at <= :as_of AND l.event_time > :since AND l.event_time <= :as_of
-    AND link_issuer(l.revision_id, l.claim_index) IS NOT NULL)
+    AND link_issuer(l.revision_id, l.claim_index) IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM rejected rj WHERE rj.theme_id = l.theme_id AND rj.symbol = s.value))
 SELECT theme_id, symbol, MIN(at) AS first_at, MAX(at) AS last_at, COUNT(*) AS n FROM hits
 WHERE theme_id IN (SELECT theme_id FROM hits GROUP BY theme_id
                    HAVING COUNT(DISTINCT symbol) >= 2 AND COUNT(DISTINCT issuer) >= 2)
 GROUP BY theme_id, symbol ORDER BY theme_id, symbol""",
     "relayed": """
-WITH status AS (
+WITH"""
+    + REJECTED_SQL
+    + """,
+status AS (
   SELECT e.narrative_id, e.to_status FROM narrative_events e
   WHERE e.seq = (SELECT MAX(x.seq) FROM narrative_events x WHERE x.narrative_id = e.narrative_id
                  AND x.kind IN ('created', 'status', 'override') AND x.at <= :as_of)),
@@ -1217,7 +1235,8 @@ hits AS (
   FROM narrative_records r JOIN status USING (narrative_id), json_each(r.theme_ids_json) t,
        json_each(r.subject_symbols_json) s
   WHERE r.source_tier IN (SELECT value FROM json_each(:relayed)) AND status.to_status <> 'refuted'
-    AND r.first_seen_at > :since AND r.first_seen_at <= :as_of)
+    AND r.first_seen_at > :since AND r.first_seen_at <= :as_of
+    AND NOT EXISTS (SELECT 1 FROM rejected rj WHERE rj.theme_id = t.value AND rj.symbol = s.value))
 SELECT theme_id, symbol, MIN(at) AS first_at, MAX(at) AS last_at, COUNT(*) AS n FROM hits
 WHERE theme_id IN (SELECT theme_id FROM hits GROUP BY theme_id HAVING COUNT(DISTINCT symbol) >= 2)
 GROUP BY theme_id, symbol ORDER BY theme_id, symbol""",
@@ -1245,6 +1264,12 @@ def cross_company_signals(db, as_of):
             sig = out.setdefault((r["theme_id"], level), {"theme_id": r["theme_id"], "level": level, "since": since})
             sig.setdefault("companies", []).append({k: r[k] for k in ("symbol", "first_at", "last_at", "n")})
     return [out[k] for k in sorted(out)]
+
+
+def rejected_members(db, as_of):
+    """{(theme_id, symbol)} the owner rejected at as_of (a rejected member proposal, no approved member row)."""
+    rows = db.execute(f"WITH {REJECTED_SQL} SELECT theme_id, symbol FROM rejected", {"as_of": as_of})
+    return {(r[0], r[1]) for r in rows}
 
 
 def _rev_key(revision_id):
@@ -1294,12 +1319,16 @@ def link_issuers(db):
 def export(db, as_of):
     """Point-in-time view at as_of, sorted, without full source texts. Same ledger + same as_of -> same bytes.
     Each claim_theme_links row carries its revision's scope_key, claim text and quote (clipped) when the revision is
-    in this ledger; cross_company_signals is §5.2 over a SIGNAL_WINDOW_DAYS window ending at as_of."""
+    in this ledger; cross_company_signals is §5.2 over a SIGNAL_WINDOW_DAYS window ending at as_of.
+    A symbol rejected from a theme (rejected_members) is not a company of that theme here: it leaves the about_symbols
+    of the theme's links (a link left with none is omitted) and a record whose every subject was rejected from a theme
+    is not listed under it. The ledger rows stay as they are (a link keeps its row's content_sha256)."""
     as_of = iso(as_of)
 
     def rows(sql, *args):
         return [dict(r) for r in db.execute(sql, args)]
 
+    rejected = rejected_members(db, as_of)
     themes = rows("SELECT * FROM themes WHERE approved_at <= ? ORDER BY theme_id", as_of)
     for t in themes:
         t["keywords"] = json.loads(t.pop("keywords_json"))
@@ -1315,7 +1344,9 @@ def export(db, as_of):
     )
     for r in records:
         r["subject_symbols"] = json.loads(r.pop("subject_symbols_json"))
-        r["theme_ids"] = json.loads(r.pop("theme_ids_json"))
+        r["theme_ids"] = [
+            t for t in json.loads(r.pop("theme_ids_json")) if any((t, s) not in rejected for s in r["subject_symbols"])
+        ]
         r["quote"] = _clip(r["quote"])
         r["events"] = [e for e in events_of(db, r["narrative_id"]) if e["at"] <= as_of]
         for e in r["events"]:
@@ -1326,9 +1357,16 @@ def export(db, as_of):
         r["status"] = fold_status(r["events"])
         r["last_event_at"] = r["events"][-1]["at"]
     checks = rows("SELECT * FROM narrative_checks WHERE checked_at <= ? ORDER BY revision_id, narrative_id", as_of)
-    links = rows(
+    links = []
+    for link in rows(
         "SELECT * FROM claim_theme_links WHERE created_at <= ? ORDER BY revision_id, claim_index, theme_id", as_of
-    )
+    ):
+        about = json.loads(link["about_symbols_json"])
+        kept = [s for s in about if (link["theme_id"], s) not in rejected]
+        if kept:
+            if kept != about:
+                link["about_symbols_json"] = json.dumps(kept)
+            links.append(link)
     revisions = revision_claims(db)
     for link in links:
         scope_key, claims = revisions.get(_rev_key(link["revision_id"]), (None, []))
