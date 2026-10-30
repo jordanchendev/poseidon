@@ -21,6 +21,9 @@ UMC_NOTICE = (
     "expected to increase by approximately 133%...」\n7. Cause of occurrence:\nThe Company does not comment on "
     "speculative reports or market rumors."
 )
+# post 2 of the §7 fixture (股癌, 2026-10-20) and the record N5 the design table expects from it
+ASML_LINE = "- 目前規劃的 27/28 產出無法滿足客戶需求，且新增產能較容易落在 2028 "
+N5 = "ASML 目前規劃的 2027 與 2028 產出無法滿足客戶需求"
 
 
 def years(text):
@@ -86,6 +89,12 @@ def test_lower_bound_forms(text, at_least):
         ("2027 與 2028 年產業 NAND 位元出貨成長", "For calendar 2027, NAND grows", "not_covered", [2028]),
         ("Micron 2026 會計年度第四季資料中心 SSD 營收", "Data center SSD revenue in fiscal Q4", "no_excerpt_years", []),
         ("無塵室不足是產業限制", "In 2026 we add cleanroom space", "no_claim_years", []),
+        # acceptance 2026-10-30 N5: a consecutive two-digit slash pair names two years on the excerpt side
+        (N5, ASML_LINE, "covered", []),
+        (N5, "10/27 法說會：新增產能較容易落在 2028", "not_covered", [2027]),  # a date, not years
+        (N5, "目前規劃的 27/29 產出不足，新增產能落在 2028", "not_covered", [2027]),  # not consecutive
+        (N5, "良率 1.27/28 或 27/28% 的產出，新增產能落在 2028", "not_covered", [2027]),  # numbers that go on
+        ("ASML 的新增產能落在 27/28", "新增產能較容易落在 2028", "no_claim_years", []),  # never on the claim side
     ],
 )
 def test_period_cover(claim, excerpt, status, missing):

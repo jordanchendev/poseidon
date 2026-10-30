@@ -126,12 +126,13 @@ def take_in(env, out, post="2"):
 # ------------------------------------------------------------------------------------------------ member proposals
 def test_member_accept_releases_held_records(env):
     """§7.2 N5-N7 need NASDAQ:ASML in cleanroom-capacity: held until the owner accepts the member proposal. N5 names
-    2027 where the post writes 27/28, so the period precheck drops it before (as in step 8)."""
+    2027 and 2028 where the post writes 27/28; the period precheck reads that pair (acceptance 2026-10-30), so N5 is
+    held with the others instead of dropped."""
     seed(ledger(env))
     done = take_in(env, out(ti.EXPECTED["2"], members=[ASML_MEMBER]))
     assert rows(env, "SELECT * FROM narrative_records") == []
     held = rows(env, "SELECT * FROM held_records ORDER BY narrative_id")
-    assert len(held) == 2 and {(h["status"], h["waits_json"]) for h in held} == {("held", '["M20261021-1"]')}
+    assert len(held) == 3 and {(h["status"], h["waits_json"]) for h in held} == {("held", '["M20261021-1"]')}
     (mp,) = rows(env, "SELECT * FROM member_proposals")
     assert (mp["proposal_id"], mp["theme_id"], mp["symbol"], mp["role"], mp["status"], mp["source_ref"]) == (
         "M20261021-1",
@@ -141,8 +142,8 @@ def test_member_accept_releases_held_records(env):
         "proposed",
         f"material:{ti.MID}#p2",
     )
-    assert (done["records"], done["held"], done["dropped"], done["member_proposals"]) == (0, 2, 1, ["M20261021-1"])
-    assert "等待核准 2 條（主題或成員核准後寫入，略過就不收）：" in done["text"]
+    assert (done["records"], done["held"], done["dropped"], done["member_proposals"]) == (0, 3, 0, ["M20261021-1"])
+    assert "等待核准 3 條（主題或成員核准後寫入，略過就不收）：" in done["text"]
     assert "（等 M20261021-1）" in done["text"]
     assert (
         "- 成員提案 M20261021-1：NASDAQ:ASML 加入 cleanroom-capacity（constrained），ASML 的出貨受客戶無塵室限制；"
@@ -161,7 +162,7 @@ def test_member_accept_releases_held_records(env):
     }
     assert {r["theme_ids_json"] for r in written} == {'["cleanroom-capacity"]'}
     events = rows(env, "SELECT * FROM narrative_events")
-    assert len(events) == 2 and {(e["seq"], e["kind"], e["at"]) for e in events} == {(0, "created", ti.RECEIVED_UTC)}
+    assert len(events) == 3 and {(e["seq"], e["kind"], e["at"]) for e in events} == {(0, "created", ti.RECEIVED_UTC)}
     (member,) = rows(env, "SELECT * FROM theme_members WHERE symbol = 'NASDAQ:ASML'")
     assert (member["theme_id"], member["role"], member["approval_ref"], member["approved_at"]) == (
         "cleanroom-capacity",

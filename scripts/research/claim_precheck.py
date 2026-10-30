@@ -919,12 +919,24 @@ def check_numbers(claim: str, excerpt: str, allow_sum: bool = False) -> dict:
 
 
 # --------------------------------------------------------------------------------------------- narrative gates
+# A two-digit pair of consecutive years such as 「27/28」, read on the excerpt side only (acceptance 2026-10-30, N5):
+# a date (10/27), a non-consecutive pair (27/29) or a number that goes on (1.27/28, 27/28%) is not one.
+SLASH_YEARS = re.compile(r"(?<![\d/.])([2-3]\d)/([2-3]\d)(?![\d/.%])")
+
+
+def slash_years(text: str) -> set[int]:
+    return {2000 + int(y) for m in SLASH_YEARS.finditer(text) if int(m[2]) == int(m[1]) + 1 for y in m.groups()}
+
+
 def check_periods(claim: str, excerpt: str) -> dict:
     """Does the excerpt cover every year the claim names? A claim year is covered when the excerpt names it; a lower
     bound (「至少到 2028 年」) is covered when the excerpt's latest year reaches it. An excerpt that names no year proves
-    nothing either way (no_excerpt_years). A year inside an excerpt "through 2028" span is covered only when named."""
+    nothing either way (no_excerpt_years). A year inside an excerpt "through 2028" span is covered only when named.
+    The excerpt also names the years of a slash pair (slash_years); the claim never does."""
     claim_p = [p for p in extract_periods(claim) if p["kind"] == "period" and p["years"]]
-    have = sorted({y for p in extract_periods(excerpt) if p["kind"] == "period" for y in p["years"]})
+    have = sorted(
+        {y for p in extract_periods(excerpt) if p["kind"] == "period" for y in p["years"]} | slash_years(excerpt)
+    )
     missing = sorted(
         {y for p in claim_p for y in p["years"] if have and (max(have) < y if p["at_least"] else y not in have)}
     )
