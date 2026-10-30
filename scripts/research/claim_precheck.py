@@ -22,7 +22,8 @@ Three pieces:
      * other units: nm/奈米/-nanometer, GB/TB/MB/PB (bytes), MT/s / GT/s, days/天; everything else is ``count``.
      * ranges (``52.3–54.3``, ``US$52.3 billion to US$54.3 billion``, ``between 65% and 67%``, ``65% 到 67%``,
        ``600 億至 640 億美元``) become one quantity with ``range=(lo, hi)``; the left end inherits a missing
-       scale/currency/unit from the right end. ``X ± Y`` / ``X plus or minus Y`` becomes one quantity with ``pm``.
+       scale/currency/unit from the right end. ``X ± Y`` / ``X plus or minus Y`` / ``X 加減 Y`` / ``X 正負 Y``,
+       also after a comma (``X，加減 Y``), becomes one quantity with ``pm``.
      * sign: explicit +/-/− or the nearest direction word in the same clause (increase/up/rose/grew/增/上升 ...
        vs decrease/down/fell/declined/減/下降 ...); a number right after "to"/"至"/"為"/"達"/"at" is a level (no sign).
      * qualifier: ``>`` (more than/over/surpassed/超過/逾/以上), ``<`` (up to/less than/不到/以下),
@@ -593,7 +594,9 @@ def _merge(text, toks):
                 r"(?:between|介於)\s*\S*\s*$", text[max(0, a.span[0] - 14) : a.span[0]], re.I
             )
             is_rng = re.fullmatch(r"\s*(?:to|–|—|~|～|至|到|-)\s*", between, re.I) or is_and
-            is_pm = re.fullmatch(r"\s*(?:±|\+/-|\+/−|plus or minus)\s*", between, re.I)
+            # a comma may open the ± part ("$61.5 billion, plus or minus $1.5 billion", 「$38.15，加減 $1.00」); never a
+            # range's "to": "rose 5%, to 30%" names a level
+            is_pm = re.fullmatch(r"\s*[,，]?\s*(?:±|\+/-|\+/−|plus or minus|加減|正負)\s*", between, re.I)
             if is_rng or is_pm:
                 if not a.has_unit and b.has_unit:  # 52.3–54.3 billion / 600 億至 640 億美元
                     a.value = a.value / a.scale * (b.scale if a.scale == 1.0 else a.scale)
