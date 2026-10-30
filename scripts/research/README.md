@@ -388,7 +388,9 @@ written|held|unfit, waits, reason}] is rendered as 「新增敘事」 in the don
   same ledger, null when absent), `signal_window_days` (180, D11) and `cross_company_signals` [{theme_id, level
   official|relayed, since, companies [{symbol, first_at, last_at, n}]}], computed in SQL (`SIGNAL_SQL`, design §5.2):
   official = fact claims linked to the theme on `primary filing` / `company release` evidence whose `about_symbols`
-  cover two or more companies with evidence event_time in (as_of - 180 d, as_of]; relayed = sell-side / media / kol
+  cover two or more companies with evidence event_time in (as_of - 180 d, as_of], from two or more publishers (the
+  payload publisher of the evidence each link describes, read from the revision's manifest in the same ledger; a link
+  without one is no hit), so one company's document never makes the signal alone; relayed = sell-side / media / kol
   records of the theme not refuted at as_of whose `subject_symbols` cover two or more companies with `first_seen_at`
   in the window, listed only when the theme is not an official signal.
 - The runner rewrites `<state-dir>/narrative_export.json` (export as of now) after every invocation but a dry run;

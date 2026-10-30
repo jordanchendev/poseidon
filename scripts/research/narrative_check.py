@@ -391,7 +391,7 @@ def _tier_rank(tier):
     return next((n for n, t in enumerate(TIER_ORDER) if tier.startswith(t)), len(TIER_ORDER))
 
 
-def _best_evidence(c, by_id):
+def best_evidence(c, by_id):
     """The claim's highest-tier cited evidence (the latest of equals): claim_theme_links' evidence_tier and event_time."""
     cited = [by_id[e] for e in c["evidence_ids"] if e in by_id]
     return max(cited, key=lambda e: (-_tier_rank(evidence_tier(e)), e["event_time"]))
@@ -424,7 +424,7 @@ def write_theme_links(db, revision, by_id):
     for n, c in enumerate(revision["research"]["claims"]):
         if not c.get("theme_ids"):
             continue
-        best = _best_evidence(c, by_id)
+        best = best_evidence(c, by_id)
         for theme_id in c["theme_ids"]:
             nl.add_link(
                 db,
@@ -493,7 +493,7 @@ def file_theme_proposals(db, revision, by_id, cfg, at):
                 keywords=t.get("keywords") or [],
             )["proposal_id"]
         for i in idx:
-            best = _best_evidence(claims[i], by_id)
+            best = best_evidence(claims[i], by_id)
             nl.add_proposal_claim(
                 db,
                 {

@@ -1115,18 +1115,23 @@ def _clip(text, n=EXPORT_QUOTE_CHARS):
 
 # §5.2, computed here and nowhere else: per theme, the companies with hits in the window (since, as_of]. A theme is a
 # signal when its hits cover at least two companies.
-#   official: fact claims linked to the theme whose evidence is official, by about_symbols and evidence event_time.
+#   official: fact claims linked to the theme whose evidence is official, by about_symbols and evidence event_time,
+#             from at least two publishers (link_publisher, a function cross_company_signals registers): a drafter may
+#             name another company in about_symbols, so one company's document alone is never a cross-company signal
+#             (acceptance 2026-10-30: one Micron document listed 2408). A link whose publisher is unknown is no hit.
 #   relayed:  narrative records of a relayed tier (sell-side / media / kol) not refuted at as_of, by subject_symbols and
 #             first_seen_at; a theme that is an official signal is not listed again as relayed.
 SIGNAL_SQL = {
     "official": """
 WITH hits AS (
-  SELECT l.theme_id, s.value AS symbol, l.event_time AS at
+  SELECT l.theme_id, s.value AS symbol, l.event_time AS at, link_publisher(l.revision_id, l.claim_index) AS publisher
   FROM claim_theme_links l, json_each(l.about_symbols_json) s
   WHERE l.claim_kind = 'fact' AND l.evidence_tier IN (SELECT value FROM json_each(:official))
-    AND l.created_at <= :as_of AND l.event_time > :since AND l.event_time <= :as_of)
+    AND l.created_at <= :as_of AND l.event_time > :since AND l.event_time <= :as_of
+    AND link_publisher(l.revision_id, l.claim_index) IS NOT NULL)
 SELECT theme_id, symbol, MIN(at) AS first_at, MAX(at) AS last_at, COUNT(*) AS n FROM hits
-WHERE theme_id IN (SELECT theme_id FROM hits GROUP BY theme_id HAVING COUNT(DISTINCT symbol) >= 2)
+WHERE theme_id IN (SELECT theme_id FROM hits GROUP BY theme_id
+                   HAVING COUNT(DISTINCT symbol) >= 2 AND COUNT(DISTINCT publisher) >= 2)
 GROUP BY theme_id, symbol ORDER BY theme_id, symbol""",
     "relayed": """
 WITH status AS (
@@ -1156,6 +1161,8 @@ def cross_company_signals(db, as_of):
         "official": json.dumps(OFFICIAL_TIERS),
         "relayed": json.dumps(RELAYED_TIERS),
     }
+    publishers = link_publishers(db)
+    db.create_function("link_publisher", 2, lambda rev, idx: publishers.get((_rev_key(rev), idx)), deterministic=True)
     out = {}
     for level, sql in SIGNAL_SQL.items():
         for r in db.execute(sql, args):
@@ -1166,15 +1173,46 @@ def cross_company_signals(db, as_of):
     return [out[k] for k in sorted(out)]
 
 
+def _rev_key(revision_id):
+    """research_theme.py stores a revision id without dashes (SQLAlchemy Uuid on SQLite); the ledger with them."""
+    return str(revision_id).replace("-", "").lower()
+
+
+def _tables(db):
+    return {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+
+
 def revision_claims(db):
     """{revision id without dashes: (scope_key, claims)} of the completed revisions research_theme.py wrote into this
     ledger; {} for a ledger without research_revisions."""
-    if not _one(db, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'research_revisions'"):
+    if "research_revisions" not in _tables(db):
         return {}
     return {
-        str(r["id"]).replace("-", "").lower(): (r["scope_key"], json.loads(r["research_json"]).get("claims") or [])
+        _rev_key(r["id"]): (r["scope_key"], json.loads(r["research_json"]).get("claims") or [])
         for r in db.execute("SELECT id, scope_key, research_json FROM research_revisions WHERE status = 'completed'")
     }
+
+
+def link_publishers(db):
+    """{(revision id without dashes, claim index): publisher} for the claims that cite evidence in the completed
+    revisions whose manifest is in this ledger. The publisher is that of the evidence a claim_theme_links row describes
+    (narrative_check.best_evidence): its payload publisher, else its evidence id, as an official record's attributed_to.
+    {} for a ledger without research_revisions or data_manifests."""
+    from narrative_check import best_evidence
+
+    if not {"research_revisions", "data_manifests"} <= _tables(db):
+        return {}
+    out = {}
+    for r in db.execute(
+        "SELECT r.id, r.research_json, m.payload_json FROM research_revisions r "
+        "JOIN data_manifests m ON m.id = r.manifest_id WHERE r.status = 'completed'"
+    ):
+        by_id = {e["id"]: e for e in json.loads(r["payload_json"]).get("evidence") or []}
+        for n, c in enumerate(json.loads(r["research_json"]).get("claims") or []):
+            if any(e in by_id for e in c.get("evidence_ids") or []):
+                best = best_evidence(c, by_id)
+                out[(_rev_key(r["id"]), n)] = (best.get("payload") or {}).get("publisher") or best["id"]
+    return out
 
 
 def export(db, as_of):
@@ -1217,7 +1255,7 @@ def export(db, as_of):
     )
     revisions = revision_claims(db)
     for link in links:
-        scope_key, claims = revisions.get(link["revision_id"].replace("-", "").lower(), (None, []))
+        scope_key, claims = revisions.get(_rev_key(link["revision_id"]), (None, []))
         claim = claims[link["claim_index"]] if link["claim_index"] < len(claims) else {}
         link["scope_key"] = scope_key
         link["claim_text"] = _clip(claim["text"]) if claim.get("text") else None

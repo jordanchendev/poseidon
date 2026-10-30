@@ -89,6 +89,18 @@ CLAIMS = {
         ],
     ),
 }
+# The official document each revision's claims cite, frozen in its data_manifests payload. The §5.2 official tier
+# counts their publishers.
+DOCS = {
+    REV_MU: (
+        "fundamental:mu-fq4",
+        "https://investors.micron.com/fq4.pdf",
+        "investors.micron.com",
+        "2026-09-30T20:00:00Z",
+    ),
+    REV_ASML: ("fundamental:asml-q3", "https://www.sec.gov/asml-q3.htm", "ASML Holding N.V.", "2026-10-15T08:00:00Z"),
+    REV_OLD: ("fundamental:ocp", "https://www.opencompute.org/summit.pdf", "opencompute.org", "2026-10-20T00:00:00Z"),
+}
 # (revision, claim index, theme, about_symbols, claim kind, evidence tier, evidence event_time)
 LINKS = (
     (REV_MU, 0, "cleanroom-capacity", ["NASDAQ:MU"], "fact", "company release", "2026-09-30T20:00:00Z"),
@@ -151,6 +163,44 @@ RECORDS = (
 )
 
 
+def add_revision(db, rev, scope, claims, doc):
+    """A completed revision as research_theme.py stores it (id without dashes, SQLAlchemy Uuid on SQLite) with its
+    manifest; every claim cites the one document."""
+    doc_id, uri, publisher, at = doc
+    evidence = {
+        "id": doc_id,
+        "kind": "fundamental",
+        "source_uri": uri,
+        "event_time": at,
+        "payload": {"publisher": publisher},
+    }
+    manifest_id = rev.replace("-", "")[::-1]
+    db.execute("INSERT INTO data_manifests VALUES (?, ?)", (manifest_id, json.dumps({"evidence": [evidence]})))
+    research = {"claims": [{**c, "evidence_ids": [doc_id]} for c in claims]}
+    db.execute(
+        "INSERT INTO research_revisions VALUES (?, ?, 'completed', ?, ?)",
+        (rev.replace("-", ""), scope, json.dumps(research, ensure_ascii=False), manifest_id),
+    )
+    db.commit()
+
+
+def link(db, rev, idx, theme, about, kind="fact", tier="company release", at="2026-09-30T20:00:00Z"):
+    nl.add_link(
+        db,
+        {
+            "revision_id": rev,
+            "claim_index": idx,
+            "theme_id": theme,
+            "about_symbols_json": json.dumps(about),
+            "claim_kind": kind,
+            "evidence_tier": tier,
+            "event_time": at,
+            "source": "drafter",
+            "created_at": "2026-10-28T00:00:00Z",
+        },
+    )
+
+
 def build_ledger(path):
     """-> {record key: narrative_id}. The ledger as the runner leaves it, research_revisions included."""
     db = nl.connect(path)
@@ -159,29 +209,15 @@ def build_ledger(path):
         for sym, role in members:
             nl.add_member(db, tid, sym, role, f"telegram:M-{tid}-{sym}", at=APPROVED)
     nl.add_edge(db, "cleanroom-capacity", "memory-supply-tightness", "related", "telegram:E-1", at=APPROVED)
-    # research_theme.py stores the revision id without dashes (SQLAlchemy Uuid on SQLite)
-    db.execute("CREATE TABLE research_revisions (id CHAR(32), scope_key TEXT, status TEXT, research_json TEXT)")
+    db.execute("CREATE TABLE data_manifests (id CHAR(32), payload_json TEXT)")
+    db.execute(
+        "CREATE TABLE research_revisions "
+        "(id CHAR(32), scope_key TEXT, status TEXT, research_json TEXT, manifest_id CHAR(32))"
+    )
     for rev, (scope, claims) in CLAIMS.items():
-        db.execute(
-            "INSERT INTO research_revisions VALUES (?, ?, 'completed', ?)",
-            (rev.replace("-", ""), scope, json.dumps({"claims": claims}, ensure_ascii=False)),
-        )
-    db.commit()
+        add_revision(db, rev, scope, claims, DOCS[rev])
     for rev, idx, theme, about, kind, tier, at in LINKS:
-        nl.add_link(
-            db,
-            {
-                "revision_id": rev,
-                "claim_index": idx,
-                "theme_id": theme,
-                "about_symbols_json": json.dumps(about),
-                "claim_kind": kind,
-                "evidence_tier": tier,
-                "event_time": at,
-                "source": "drafter",
-                "created_at": "2026-10-28T00:00:00Z",
-            },
-        )
+        link(db, rev, idx, theme, about, kind, tier, at)
     ids = {}
     for key, claim, quote, subjects, theme, seen in RECORDS:
         ids[key] = nl.add_record(
@@ -246,6 +282,31 @@ def test_cross_company_signals_are_computed_from_the_ledger(tmp_path):
         "additional cleanroom space",
     )
     assert all(len(r["quote"]) <= 120 for r in doc["records"])
+
+
+def test_one_publisher_is_no_official_signal(tmp_path):
+    """Acceptance 2026-10-30 §4: one Micron document whose fact claims also named 2408 made memory-supply-tightness an
+    official cross-company signal. The official tier needs two publishers; a link whose publisher is unknown (its
+    revision is not in the ledger) is no hit."""
+
+    def official():
+        doc = json.loads(nl.export(db, AS_OF))
+        return {
+            s["theme_id"]: [c["symbol"] for c in s["companies"]]
+            for s in doc["cross_company_signals"]
+            if s["level"] == "official"
+        }
+
+    build_ledger(tmp_path / "ledger.sqlite")
+    db = nl.connect(tmp_path / "ledger.sqlite")
+    rerun = "5e5e5e5e-0000-4000-8000-0000000000b2"  # the same Micron document in another revision
+    add_revision(db, rerun, "tw_stock:basket:2344-2408", [{"kind": "fact", "text": "記憶體供需更緊"}], DOCS[REV_MU])
+    link(db, rerun, 0, "memory-supply-tightness", ["2408", "NASDAQ:MU"])
+    link(db, "0badc0de-0000-4000-8000-0000000000c3", 0, "scale-up-optics", ["NASDAQ:MRVL"], at="2026-10-21T00:00:00Z")
+    assert official() == {"cleanroom-capacity": ["NASDAQ:ASML", "NASDAQ:MU"]}
+    link(db, REV_ASML, 0, "memory-supply-tightness", ["2408"], tier="primary filing", at="2026-10-15T08:00:00Z")
+    assert official()["memory-supply-tightness"] == ["2408", "NASDAQ:MU"]  # a second publisher
+    db.close()
 
 
 def test_signals_are_point_in_time(tmp_path):
