@@ -371,6 +371,11 @@ written|held|unfit, waits, reason}] is rendered as 「新增敘事」 in the don
   completed revision with a snapshot, a claim whose text hits a keyword of a shown theme it is not tagged with
   (`project_vault.keyword_hit`, the vault's concept rule) is listed in `narrative_results.untagged_hits`
   [{claim_index, theme_id, keyword}] and rendered as 「主題召回」 in the done report. A keyword never makes a link.
+  The owner tags such a claim with `narrative_ledger.py link-add --ledger L --revision <id> --claim <index> --theme
+  <theme> [--about <symbol> ...] --approval-ref <ref> [--at T]`: the revision must be completed in the same ledger
+  with its manifest; the `claim_theme_links` row has `source` owner, the claim's kind, and the tier and event_time of
+  its best cited evidence (as the drafter's links); `--about` defaults to the claim's `about_symbols` and is required
+  when it has none; a `claim_link_approvals` row keeps the approval. The same link again is a no-op.
 - Themes, members and edges are written only with a non-empty `--approval-ref`; re-running the same approval is a
   no-op, the same key with different content is refused. Symbols: Taiwan-listed bare (`2408`), others
   `<EXCHANGE>:<TICKER>` (`NASDAQ:MU`, `TSE:3110`); `tw_listed` follows from that shape.

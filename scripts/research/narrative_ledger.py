@@ -4,7 +4,8 @@
 Nine tables in the runner's SQLite ledger (the file research_theme.py and settle_theme.py use), plus
 narrative_suggestions for narrative_apply confirm mode and, for the owner's theme and member approvals (§9 step 9),
 member_proposals, theme_proposal_claims (the revision claims a theme proposal cites, linked when it is accepted) and
-held_records (intake records that wait for a pending proposal). Every row carries content_sha256 = Poseidon
+held_records (intake records that wait for a pending proposal), and claim_link_approvals (the owner's approval of a
+claim_theme_links row added with link-add, §5.3). Every row carries content_sha256 = Poseidon
 content_sha256 of its other columns; the rows with a lifecycle (materials, theme_proposals, member_proposals,
 narrative_suggestions, held_records) are rehashed when it moves.
 A narrative's status is the fold of its append-only events; TRANSITIONS says who may move a record from one status to
@@ -15,6 +16,8 @@ max(evidence available_at, last event at).
   theme-keywords --ledger L --id ID --add W [W ...] --approval-ref REF [--at T]   recall keywords (§5.3) of a theme
   member-add  --ledger L --theme ID --symbol S --role R --approval-ref REF [--at T]
   edge-add    --ledger L --from ID --to ID --relation related|part_of --approval-ref REF [--at T]
+  link-add    --ledger L --revision R --claim N --theme ID [--about S ...] --approval-ref REF [--at T]
+              tag claims[N] of a completed revision in this ledger with a theme (an untagged_hits claim, §5.3)
   record-add  --ledger L --claim C --claim-type state|forecast [--resolves-on YYYY-MM-DD] --attributed-to A
               --source-tier T --origin-ref R --origin-evidence-id E --quote Q --source-file F --subject S [...]
               --theme ID [...] --first-seen-at T
@@ -23,7 +26,7 @@ max(evidence available_at, last event at).
   export      --ledger L --as-of T [--out F]  deterministic narrative_export.json (written tmp + rename)
 
 Symbols: Taiwan-listed bare ('2408'), everything else '<EXCHANGE>:<TICKER>' ('NASDAQ:MU', 'TSE:3110').
-Approval rows (themes, members, edges) need a non-empty approval_ref; agents never pick theme ids.
+Approval rows (themes, members, edges, owner links) need a non-empty approval_ref; agents never pick theme ids.
 Needs the Poseidon worktree on PYTHONPATH (content_sha256).
 """
 
@@ -33,11 +36,12 @@ import json
 import re
 import sqlite3
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from assemble import TW_SYMBOL
-from claim_precheck import OFFICIAL_TIERS, check_numbers, lint_atomic
+from claim_precheck import OFFICIAL_TIERS, check_numbers, evidence_tier, lint_atomic
 
 from poseidon.decision_loop.manifest import content_sha256
 
@@ -167,6 +171,10 @@ CREATE TABLE IF NOT EXISTS theme_proposal_claims (
   about_symbols_json TEXT NOT NULL, claim_kind TEXT NOT NULL CHECK (claim_kind IN ('fact','inference')),
   evidence_tier TEXT NOT NULL, event_time TEXT NOT NULL, created_at TEXT NOT NULL, content_sha256 TEXT NOT NULL,
   PRIMARY KEY (proposal_id, revision_id, claim_index));
+CREATE TABLE IF NOT EXISTS claim_link_approvals (
+  revision_id TEXT NOT NULL, claim_index INTEGER NOT NULL, theme_id TEXT NOT NULL REFERENCES themes,
+  approved_by TEXT NOT NULL, approved_at TEXT NOT NULL, approval_ref TEXT NOT NULL CHECK (approval_ref <> ''),
+  content_sha256 TEXT NOT NULL, PRIMARY KEY (revision_id, claim_index, theme_id));
 CREATE TABLE IF NOT EXISTS held_records (
   narrative_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, source_text TEXT NOT NULL, waits_json TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('held','written','dropped')), reason TEXT, decided_at TEXT,
@@ -355,6 +363,73 @@ def add_edge(db, from_theme, to_theme, relation, approval_ref, at=None):
     with db:
         return _insert(
             db, "theme_edges", {"from_theme": from_theme, "to_theme": to_theme, "relation": relation, **approval}
+        )
+
+
+def add_owner_link(db, revision_id, claim_index, theme_id, approval_ref, about=None, at=None):
+    """The owner tags claims[claim_index] of a completed revision in this ledger with a theme (a §5.3 untagged_hits
+    claim): a claim_theme_links row with source owner, its tier and event_time read from the revision's manifest as the
+    drafter's are (narrative_check.best_evidence), and a claim_link_approvals row with the approval, in one
+    transaction. about: the companies the claim is about, default its about_symbols. A key already linked is a no-op,
+    or refused when about names other companies."""
+    from narrative_check import best_evidence
+
+    approval = _approval(approval_ref, at)
+    _active_theme(db, theme_id)
+    try:
+        rev = str(uuid.UUID(_rev_key(revision_id)))
+    except ValueError:
+        raise LedgerError(f"revision id {revision_id!r} is not a UUID") from None
+    key = (rev, claim_index, theme_id)
+    old = _one(db, "SELECT * FROM claim_theme_links WHERE revision_id = ? AND claim_index = ? AND theme_id = ?", *key)
+    if old and about:
+        wanted = {"about_symbols_json": json.dumps(sorted(set(about)))}
+        return _same_or_refuse(old, wanted, f"link {rev} claims[{claim_index}] {theme_id}")
+    if old:
+        return old
+    found = None
+    if {"research_revisions", "data_manifests"} <= _tables(db):
+        found = _one(
+            db,
+            "SELECT r.research_json, m.payload_json FROM research_revisions r JOIN data_manifests m "
+            "ON m.id = r.manifest_id WHERE r.status = 'completed' AND replace(lower(r.id), '-', '') = ?",
+            _rev_key(rev),
+        )
+    if found is None:
+        raise LedgerError(f"no completed revision {rev} with its manifest in this ledger")
+    claims = json.loads(found["research_json"]).get("claims") or []
+    if not 0 <= claim_index < len(claims):
+        raise LedgerError(f"revision {rev} has no claims[{claim_index}]")
+    claim = claims[claim_index]
+    by_id = {e["id"]: e for e in json.loads(found["payload_json"]).get("evidence") or []}
+    if not any(e in by_id for e in claim.get("evidence_ids") or []):
+        raise LedgerError(f"claims[{claim_index}] cites no evidence of the revision's manifest")
+    about = sorted(set(about or claim.get("about_symbols") or []))
+    if not about:
+        raise LedgerError(f"claims[{claim_index}] has no about_symbols; name the companies it is about")
+    for s in about:
+        symbol_is_tw(s)
+    best = best_evidence(claim, by_id)
+    with db:
+        _insert(
+            db,
+            "claim_link_approvals",
+            {"revision_id": rev, "claim_index": claim_index, "theme_id": theme_id, **approval},
+        )
+        return _insert(
+            db,
+            "claim_theme_links",
+            {
+                "revision_id": rev,
+                "claim_index": claim_index,
+                "theme_id": theme_id,
+                "about_symbols_json": json.dumps(about),
+                "claim_kind": claim["kind"],
+                "evidence_tier": evidence_tier(best),
+                "event_time": iso(best["event_time"]),
+                "source": "owner",
+                "created_at": approval["approved_at"],
+            },
         )
 
 
@@ -1308,6 +1383,10 @@ def _cmd(a, db):
     if a.cmd == "edge-add":
         r = add_edge(db, a.from_theme, a.to_theme, a.relation, a.approval_ref, a.at)
         return f"edge {r['from_theme']} {r['relation']} {r['to_theme']}"
+    if a.cmd == "link-add":
+        r = add_owner_link(db, a.revision, a.claim, a.theme, a.approval_ref, a.about, a.at)
+        about = json.loads(r["about_symbols_json"])
+        return f"link {r['revision_id']} claims[{r['claim_index']}] {r['theme_id']} {about} {r['evidence_tier']} {r['source']}"
     if a.cmd == "record-add":
         r = add_record(
             db,
@@ -1370,6 +1449,13 @@ def main(argv=None):
     p.add_argument("--from", dest="from_theme", required=True)
     p.add_argument("--to", dest="to_theme", required=True)
     p.add_argument("--relation", required=True, choices=EDGE_RELATIONS)
+    p.add_argument("--approval-ref", required=True)
+    p.add_argument("--at")
+    p = cmd("link-add")
+    p.add_argument("--revision", required=True, help="revision id (with or without dashes)")
+    p.add_argument("--claim", required=True, type=int, metavar="INDEX", help="claims[INDEX] of that revision")
+    p.add_argument("--theme", required=True)
+    p.add_argument("--about", action="append", metavar="SYMBOL", help="default: the claim's about_symbols")
     p.add_argument("--approval-ref", required=True)
     p.add_argument("--at")
     p = cmd("record-add")

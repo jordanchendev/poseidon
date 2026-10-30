@@ -485,3 +485,92 @@ def test_a_ledger_from_before_keywords_gets_the_column_and_valid_hashes(tmp_path
     assert r.pop("keywords_json") == "[]" and r.pop("content_sha256") == content_sha256({**row, "keywords_json": "[]"})
     nl.connect(path).close()  # the migration runs once
     db.close()
+
+
+# ---------------------------------------------------------------- owner links (§5.3)
+REV = "ffc27f0e-f684-4f0e-8b32-4756029c755a"
+DOC = {
+    "id": "fundamental:agenda-20261029-m94",
+    "kind": "fundamental",
+    "source_uri": "https://s25.q4cdn.com/621799436/files/Q4-FY26-Prepared-Remarks.pdf",
+    "event_time": "2026-09-30T00:00:00Z",
+    "payload": {"publisher": "s25.q4cdn.com"},
+}
+
+
+def completed_revision(db, claims):
+    """A completed revision and its manifest as research_theme.py stores them (ids without dashes)."""
+    db.execute("CREATE TABLE data_manifests (id CHAR(32), payload_json TEXT)")
+    db.execute(
+        "CREATE TABLE research_revisions (id CHAR(32), scope_key TEXT, status TEXT, research_json TEXT, manifest_id TEXT)"
+    )
+    db.execute("INSERT INTO data_manifests VALUES ('m94', ?)", (json.dumps({"evidence": [DOC]}),))
+    db.execute(
+        "INSERT INTO research_revisions VALUES (?, 'tw_stock:basket:2344-2408', 'completed', ?, 'm94')",
+        (REV.replace("-", ""), json.dumps({"claims": claims}, ensure_ascii=False)),
+    )
+    db.commit()
+
+
+def test_link_add_tags_an_untagged_claim_with_an_approval(tmp_path, db):
+    """Acceptance 2026-10-30 §3: claims[19] and [43] hit 「無塵室」 untagged, and the owner had no way to tag them."""
+    path = tmp_path / "ledger.sqlite"
+    nl.add_theme(db, "cleanroom-capacity", "無塵室產能", "bottleneck", ["無塵室"], "cli:test", at=SEEN)
+    tagged = {"kind": "fact", "text": "記憶體供給吃緊", "evidence_ids": [DOC["id"]], "about_symbols": ["NASDAQ:MU"]}
+    untagged = {"kind": "fact", "text": "Micron 的新無塵室在 2027 年中出貨", "evidence_ids": [DOC["id"]]}
+    completed_revision(db, [tagged, untagged])
+    link = ("link-add", "--revision", REV, "--claim", "1", "--theme", "cleanroom-capacity")
+    assert cli(path, *link).returncode == 2  # argparse: --approval-ref is required
+    p = cli(path, *link, "--approval-ref", " ")
+    assert p.returncode != 0 and "approval_ref is required" in p.stderr
+    p = cli(path, *link, "--approval-ref", "cli:owner")
+    assert p.returncode != 0 and "has no about_symbols" in p.stderr
+    for args, why in (
+        (("--claim", "2"), "has no claims[2]"),
+        (("--theme", "no-such-theme"), "not an active theme"),
+        (("--revision", "m94"), "is not a UUID"),
+        (("--revision", "0badc0de-0000-4000-8000-000000000000"), "no completed revision"),
+        (("--about", "Micron"), "<EXCHANGE>:<TICKER>"),
+    ):
+        flags = dict(zip(link[1::2], link[2::2], strict=True)) | dict(zip(args[::2], args[1::2], strict=True))
+        p = cli(path, "link-add", *[x for kv in flags.items() for x in kv], "--approval-ref", "cli:owner")
+        assert p.returncode != 0 and why in p.stderr, (args, p.stderr)
+    assert db.execute("SELECT count(*) FROM claim_theme_links").fetchone()[0] == 0
+    at = ("--approval-ref", "cli:owner-2026-10-30", "--at", "2026-10-30T02:00:00Z")
+    p = cli(path, *link, "--about", "NASDAQ:MU", *at)
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip() == f"link {REV} claims[1] cleanroom-capacity ['NASDAQ:MU'] company release owner"
+    (row,) = [dict(r) for r in db.execute("SELECT * FROM claim_theme_links")]
+    (approval,) = [dict(r) for r in db.execute("SELECT * FROM claim_link_approvals")]
+    assert {k: row[k] for k in ("revision_id", "claim_index", "theme_id", "about_symbols_json", "claim_kind")} == {
+        "revision_id": REV,
+        "claim_index": 1,
+        "theme_id": "cleanroom-capacity",
+        "about_symbols_json": '["NASDAQ:MU"]',
+        "claim_kind": "fact",
+    }
+    assert (row["evidence_tier"], row["event_time"], row["source"], row["created_at"]) == (
+        "company release",
+        "2026-09-30T00:00:00Z",
+        "owner",
+        "2026-10-30T02:00:00Z",
+    )
+    assert (approval["approved_by"], approval["approval_ref"], approval["approved_at"]) == (
+        "owner",
+        "cli:owner-2026-10-30",
+        "2026-10-30T02:00:00Z",
+    )
+    for r in (row, approval):
+        stored = r.pop("content_sha256")
+        assert stored == content_sha256(r)
+    # the same claim again, its id without dashes: a no-op, refused with other companies
+    again = cli(path, "link-add", "--revision", REV.replace("-", ""), *link[3:], "--approval-ref", "cli:x")
+    assert again.returncode == 0 and again.stdout == p.stdout
+    other = cli(path, *link, "--about", "2408", "--approval-ref", "cli:x")
+    assert other.returncode != 0 and "different about_symbols_json" in other.stderr
+    # a tagged claim takes its own about_symbols
+    assert db.execute("SELECT count(*) FROM claim_link_approvals").fetchone()[0] == 1
+    p = cli(path, "link-add", "--revision", REV, "--claim", "0", "--theme", "cleanroom-capacity", *at)
+    assert p.returncode == 0 and "claims[0] cleanroom-capacity ['NASDAQ:MU']" in p.stdout, p.stderr
+    links = json.loads(nl.export(db, "2026-10-31T00:00:00Z"))["claim_theme_links"]
+    assert [(x["claim_index"], x["source"]) for x in links] == [(0, "owner"), (1, "owner")]
