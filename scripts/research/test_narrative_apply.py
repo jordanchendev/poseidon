@@ -181,6 +181,37 @@ def test_rule_table_rows():
     assert {r[0] for r in narrative_check.RULE_ROWS} == {f"R{n}" for n in range(1, 10)}
 
 
+def test_a_sweep_that_contradicts_a_verifying_drafter_is_disputed():
+    """Acceptance 2026-10-30 §3: nr-392771f0bd and nr-93127dc3ce were forecasts the drafter verified and JEV supported
+    while the sweep contradicted them; the table alone made them R4 endorsements."""
+    d = narrative_check.decide
+    disputed = ("R6", "disputed", None)
+    assert d("forecast", "verifies", "supports", True, True, "unverified", "contradicts") == disputed
+    assert d("forecast", "partially_verifies", "supports", True, True, "unverified", "contradicts") == disputed
+    assert d("state", "verifies", "supports", True, None, "unverified", "contradicts") == disputed
+    # a sweep that agrees, or says nothing, leaves the table's answer
+    r2 = ("R2", "status_change", "refuted")
+    assert d("state", "refutes", "contradicts", True, None, "unverified", "contradicts") == r2
+    r4 = ("R4", "corroborated", None)
+    assert d("forecast", "verifies", "supports", True, True, "unverified", "says_nothing") == r4
+    r9 = ("R9", "missed", None)
+    assert d("forecast", "untouched", "contradicts", False, None, "unverified", "contradicts") == r9
+
+
+def test_sweep_contradiction_is_listed_for_the_owner_not_suggested(env, monkeypatch):
+    monkeypatch.setitem(CASES, "R4", (*CASES["R4"][:6], "contradicts"))
+    path, ids, _, _, rev = run(env, "confirm")
+    res = {x["narrative_id"]: x for x in rev["narrative_results"]["records"]}[ids["R4"]]
+    assert (res["rule"], res["outcome"], res["sweep_label"]) == ("R6", "disputed", "contradicts")
+    assert res["why"] == "drafter verifies and JEV supports, but the sweep contradicts" and "suggestion" not in res
+    checks, events = ledger_rows(path, rev["identity"]["revision_id"])
+    assert checks[ids["R4"]]["outcome"] == "disputed" and [e["kind"] for e in events[ids["R4"]]] == ["created"]
+    db = sqlite3.connect(path)
+    n = db.execute("SELECT COUNT(*) FROM narrative_suggestions WHERE narrative_id = ?", (ids["R4"],)).fetchone()[0]
+    db.close()
+    assert n == 0
+
+
 def test_overlapping_rows_are_refused():
     with pytest.raises(AssertionError, match="overlap"):
         narrative_check._expand(

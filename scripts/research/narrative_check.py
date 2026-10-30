@@ -246,6 +246,8 @@ TIER_ORDER = (*OFFICIAL_TIERS, "exchange feed", "derived", "sell-side", "media",
 #   before_resolution: a forecast's cited evidence event_time is before resolves_on (None for a state claim).
 #   settled: the record is verified or partially_verified now (R2 against R7).
 # A key no row covers is no_change. Two rows covering one key is an import error.
+# Before the table, decide() makes a verifies / partially_verifies record disputed (R6) when the sweep contradicts it:
+# the cited claims may support the record while the document as a whole says otherwise (acceptance 2026-10-30 §3).
 # fmt: off
 RULE_ROWS = (
     # rule, claim_type, verdict, label, basis_ok, before_resolution, settled, outcome, to_status
@@ -283,9 +285,12 @@ def _expand(rows):
 RULES = _expand(RULE_ROWS)
 
 
-def decide(claim_type, verdict, label, basis_ok, before_resolution, status):
+def decide(claim_type, verdict, label, basis_ok, before_resolution, status, sweep=None):
     """(rule, outcome, to_status). A status change the record already has is no_change; one TRANSITIONS does not let
-    the rule make (the record moved since the snapshot) is disputed."""
+    the rule make (the record moved since the snapshot) is disputed. sweep: the sweep label, which overrides the table
+    only when it contradicts a drafter verifies / partially_verifies."""
+    if verdict in ("verifies", "partially_verifies") and sweep == "contradicts":
+        return "R6", "disputed", None
     key = (claim_type, verdict, label, basis_ok, before_resolution, status in SETTLED)
     rule, outcome, to_status = RULES.get(key, (None, "no_change", None))
     if outcome == "status_change" and to_status == status:
@@ -298,6 +303,8 @@ def decide(claim_type, verdict, label, basis_ok, before_resolution, status):
 def why(rule, outcome, verdict, label, sweep, status, to_status):
     if outcome == "missed":
         return f"drafter marked it untouched but the sweep says {sweep}"
+    if rule == "R6" and verdict != "refutes" and sweep == "contradicts":
+        return f"drafter {verdict} and JEV {label}, but the sweep contradicts"
     if rule == "R6":
         return f"drafter {verdict} but JEV {label}"
     if rule == "R7":
@@ -683,6 +690,7 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
                 basis_ok,
                 before_resolution,
                 status,
+                sweep,
             )
             seq = suggestion = None
             if mode != "off" and outcome in ("status_change", "corroborated"):
