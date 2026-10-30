@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import news
 import tw
+import tw_groups
 import us
 from netio import FetchError
 from numfmt import weekday_zh
@@ -394,6 +395,7 @@ class Collector:
         except (tw.NotReady, FetchError) as e:
             self.log(f"TPEx quotes {d} unavailable: {e}")
             self.gap("上櫃個股行情（TPEx）未取得")
+        group_ranking, group_status = tw_groups.fetch(self.f, self.cfg, d, self.log)
         data = {
             "session_date": d.isoformat(),
             "indices": idx,
@@ -412,6 +414,9 @@ class Collector:
             "data": data,
             "headlines": self.headlines("tw"),
             "as_of": f"{d.isoformat()} 收盤（Asia/Taipei）",
+            # Kept out of "data": the model never sees it and the number check does not cover it.
+            "group_ranking": group_ranking,
+            "group_ranking_status": group_status,
         }
 
     def tw_premarket(self, d):
@@ -609,6 +614,8 @@ def collect(kind, d, collector):
         "sources": collector.sources,
         "gaps": collector.gaps,
         "retry_gaps": collector.retry_gaps,
+        "group_ranking": res.get("group_ranking"),
+        "group_ranking_status": res.get("group_ranking_status"),
         "must_missing": collector.must_missing,
         "generated_at": collector.now.astimezone(TPE).isoformat(timespec="seconds"),
     }

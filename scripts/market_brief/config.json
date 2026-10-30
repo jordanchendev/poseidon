@@ -78,6 +78,12 @@
       {"id": "marketwatch-top", "name": "MarketWatch Top Stories", "type": "rss", "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories", "markets": ["us"]}
     ]
   },
+  "thalassa": {
+    "_comment": "Group strength section of tw-postmarket. The key is read only from this 600 env file and variable (no fallback); a missing file/variable or any failure skips the section, never the brief. Base URL as used by the research runner on stormtrooper.",
+    "base_url": "http://192.168.31.241:8001",
+    "key_file": "~/market-brief/secrets/thalassa.env",
+    "key_var": "MARKET_BRIEF_THALASSA_API_KEY"
+  },
   "tw": {
     "big_turnover_yi": 10,
     "otc_big_turnover_yi": 5,

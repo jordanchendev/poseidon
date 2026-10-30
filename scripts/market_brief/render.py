@@ -235,6 +235,48 @@ def _tw_summary_table(t):
     return _kv_table(rows)
 
 
+def _pct1_cell(x):
+    return _arw(x, fmt_pct(x, 1))
+
+
+def _group_section(g):
+    """族群強弱 from the Thalassa group ranking (already in percent). All groups: 16 rows are ~0.6k characters on
+    the phone, less than the 類股 table above it, so one table serves both the md and Telegram."""
+    t = g["taiex"]
+    out = [
+        "",
+        f"## 族群強弱（{len(g['groups'])} 族群，等權、已還原除權息）",
+        "",
+        f"加權指數 20 日 {fmt_pct(t['ret20'], 1)}、60 日 {fmt_pct(t['ret60'], 1)}。"
+        "名次由 20 日、60 日相對加權指數的名次，加上成交占比變化的名次合計。",
+        "",
+    ]
+    rows = [
+        [
+            x["rank"] if x["rank"] is not None else "—",
+            x["name"],
+            x["n"],
+            _pct1_cell(x["ret20"]),
+            _pct1_cell(x["ret60"]),
+            fmt(x["share"], 1),
+            _pct1_cell(x["share_chg"]),
+        ]
+        for x in g["groups"]
+    ]
+    out += _table(
+        ["#", "族群", "檔數", "20日", "60日", "占比%", "占比變化"],
+        ["r", "l", "r", "r", "r", "r", "r"],
+        rows,
+        tg="#=#; 20日=R20!; 60日=R60; 占比%=Shr; 占比變化=ShrChg; 族群",
+    )
+    out += ["", "占比＝族群近 20 日平均成交值占全市場普通股的比重；占比變化＝相對近 60 日平均。"]
+    missing = [f"{x['name']} {'、'.join(x['missing'])}" for x in g["groups"] if x["missing"]]
+    if missing:
+        out += ["", "個股資料缺漏（未計入該族群）：" + "；".join(missing)]
+    out += ["", "這是看資金流向的參考，不是買進訊號；族群輪動規則在樣本外並不穩定。"]
+    return out
+
+
 def _deterministic_one_liner(facts):
     d = facts["data"]
     k = facts["kind"]
@@ -275,7 +317,7 @@ def _deterministic_one_liner(facts):
 
 
 # ------------------------------------------------------------------------------------------------ bodies
-def _body_tw_post(d, cfg_tw):
+def _body_tw_post(d, cfg_tw, groups=None):
     out = ["## 大盤", ""]
     rows = [[i["name"], fmt(i["close"]), chg_cell(i["chg"]), pct_cell(i["pct"])] for i in d["indices"]]
     out += _table(
@@ -329,6 +371,8 @@ def _body_tw_post(d, cfg_tw):
         [[x["name"], fmt(x["close"]), pct_cell(x["pct"])] for x in secs],
         tg="漲跌%=Chg%!; 類股",
     )
+    if groups:
+        out += _group_section(groups)
     out += [
         "",
         "## 三大法人（上市，單位：億元）",
@@ -480,7 +524,7 @@ def render(facts, section=None, llm_meta=None, cfg=None):
         parts += ["> **資料未齊**：" + "；".join(facts["gaps"]), ""]
     parts += ["## 一句話", section["one_liner"] if section else det_one, ""]
     body = {
-        "tw-postmarket": lambda: _body_tw_post(d, (cfg or {}).get("tw", {})),
+        "tw-postmarket": lambda: _body_tw_post(d, (cfg or {}).get("tw", {}), facts.get("group_ranking")),
         "tw-premarket": lambda: _body_tw_pre(d),
         "us-premarket": lambda: _body_us_pre(d),
         "us-postmarket": lambda: _body_us_post(d),
