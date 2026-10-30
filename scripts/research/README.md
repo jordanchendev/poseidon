@@ -344,7 +344,9 @@ After the revision completes (§9 step 6), `narrative_check.apply` runs on every
 against the cited fact claims (quote and evidence texts) when the verdict is not `untouched`, and sweeps it against all
 official excerpts in document order (12,000 characters, a cut source sets `sweep_truncated`). `RULE_ROWS` is the §4.5
 table R1 to R9 keyed by (claim_type, verdict, label, basis_ok, before_resolution, settled); a key no row covers is
-`no_change`, and a status the rule may not reach under `TRANSITIONS` is `disputed`. One `narrative_checks` row per
+`no_change`, and a status the rule may not reach under `TRANSITIONS` is `disputed`. Before the table, a drafter and a
+sweep that disagree in direction (verifies / partially_verifies against a sweep that contradicts, refutes against a
+sweep that supports; `SWEEP_DISAGREES`) are R6 `disputed`. One `narrative_checks` row per
 record always; a `status` or `corroborated` event only with `runner.py --narrative-apply on` (default `off` until the
 §9 step 7 control set passes), at max(evidence available_at, the record's last event at). A revision whose check rows
 exist is skipped without JEV; an event that already names the revision is reused. The results go to

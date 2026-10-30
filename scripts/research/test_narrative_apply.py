@@ -212,6 +212,57 @@ def test_sweep_contradiction_is_listed_for_the_owner_not_suggested(env, monkeypa
     assert n == 0
 
 
+def test_a_sweep_that_supports_a_refuting_drafter_is_disputed():
+    """The drafter and the independent sweep disagree in direction either way: refutes + sweep supports is disputed,
+    as verifies + sweep contradicts is. Same-direction sweeps leave the table's answer."""
+    d = narrative_check.decide
+    disputed = ("R6", "disputed", None)
+    assert d("state", "refutes", "contradicts", True, None, "unverified", "supports") == disputed  # table: R2 refuted
+    assert d("forecast", "refutes", "contradicts", True, False, "unverified", "supports") == disputed  # table: R5
+    assert d("state", "refutes", "contradicts", True, None, "verified", "supports") == disputed  # table: R7
+    # the same direction, or no sweep, leaves the table's answer
+    assert d("state", "refutes", "contradicts", True, None, "unverified", "contradicts") == (
+        "R2",
+        "status_change",
+        "refuted",
+    )
+    assert d("state", "refutes", "contradicts", True, None, "unverified", None) == ("R2", "status_change", "refuted")
+    assert d("state", "refutes", "contradicts", True, None, "unverified", "says_nothing") == (
+        "R2",
+        "status_change",
+        "refuted",
+    )
+    assert d("state", "verifies", "supports", True, None, "unverified", "supports") == (
+        "R1",
+        "status_change",
+        "verified",
+    )
+    w = narrative_check.why
+    assert w("R6", "disputed", "refutes", "contradicts", "supports", "unverified", None) == (
+        "drafter refutes and JEV contradicts, but the sweep supports"
+    )
+    assert w("R6", "disputed", "refutes", "supports", "supports", "unverified", None) == (
+        "drafter refutes but JEV supports and the sweep supports"
+    )
+    assert w("R6", "disputed", "refutes", "supports", "says_nothing", "unverified", None) == (
+        "drafter refutes but JEV supports"
+    )
+
+
+def test_sweep_support_of_a_refuting_drafter_is_listed_for_the_owner_not_suggested(env, monkeypatch):
+    monkeypatch.setitem(CASES, "R2", (*CASES["R2"][:6], "supports"))
+    path, ids, _, _, rev = run(env, "confirm")
+    res = {x["narrative_id"]: x for x in rev["narrative_results"]["records"]}[ids["R2"]]
+    assert (res["rule"], res["outcome"], res["sweep_label"]) == ("R6", "disputed", "supports")
+    assert res["why"] == "drafter refutes and JEV contradicts, but the sweep supports" and "suggestion" not in res
+    checks, events = ledger_rows(path, rev["identity"]["revision_id"])
+    assert checks[ids["R2"]]["outcome"] == "disputed" and [e["kind"] for e in events[ids["R2"]]] == ["created"]
+    db = sqlite3.connect(path)
+    n = db.execute("SELECT COUNT(*) FROM narrative_suggestions WHERE narrative_id = ?", (ids["R2"],)).fetchone()[0]
+    db.close()
+    assert n == 0
+
+
 def test_overlapping_rows_are_refused():
     with pytest.raises(AssertionError, match="overlap"):
         narrative_check._expand(

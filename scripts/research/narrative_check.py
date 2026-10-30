@@ -246,8 +246,10 @@ TIER_ORDER = (*OFFICIAL_TIERS, "exchange feed", "derived", "sell-side", "media",
 #   before_resolution: a forecast's cited evidence event_time is before resolves_on (None for a state claim).
 #   settled: the record is verified or partially_verified now (R2 against R7).
 # A key no row covers is no_change. Two rows covering one key is an import error.
-# Before the table, decide() makes a verifies / partially_verifies record disputed (R6) when the sweep contradicts it:
-# the cited claims may support the record while the document as a whole says otherwise (acceptance 2026-10-30 §3).
+# Before the table, decide() makes a record disputed (R6) when the drafter and the sweep disagree in direction: a
+# verifies / partially_verifies the sweep contradicts (the cited claims may support the record while the document as a
+# whole says otherwise; acceptance 2026-10-30 §3), or a refutes the sweep supports.
+SWEEP_DISAGREES = {"verifies": "contradicts", "partially_verifies": "contradicts", "refutes": "supports"}
 # fmt: off
 RULE_ROWS = (
     # rule, claim_type, verdict, label, basis_ok, before_resolution, settled, outcome, to_status
@@ -288,8 +290,8 @@ RULES = _expand(RULE_ROWS)
 def decide(claim_type, verdict, label, basis_ok, before_resolution, status, sweep=None):
     """(rule, outcome, to_status). A status change the record already has is no_change; one TRANSITIONS does not let
     the rule make (the record moved since the snapshot) is disputed. sweep: the sweep label, which overrides the table
-    only when it contradicts a drafter verifies / partially_verifies."""
-    if verdict in ("verifies", "partially_verifies") and sweep == "contradicts":
+    only when it disagrees with the drafter's direction (SWEEP_DISAGREES)."""
+    if sweep is not None and SWEEP_DISAGREES.get(verdict) == sweep:
         return "R6", "disputed", None
     key = (claim_type, verdict, label, basis_ok, before_resolution, status in SETTLED)
     rule, outcome, to_status = RULES.get(key, (None, "no_change", None))
@@ -303,8 +305,10 @@ def decide(claim_type, verdict, label, basis_ok, before_resolution, status, swee
 def why(rule, outcome, verdict, label, sweep, status, to_status):
     if outcome == "missed":
         return f"drafter marked it untouched but the sweep says {sweep}"
-    if rule == "R6" and verdict != "refutes" and sweep == "contradicts":
-        return f"drafter {verdict} and JEV {label}, but the sweep contradicts"
+    if rule == "R6" and SWEEP_DISAGREES.get(verdict) == sweep:
+        if label == sweep:
+            return f"drafter {verdict} but JEV {label} and the sweep {sweep}"
+        return f"drafter {verdict} and JEV {label}, but the sweep {sweep}"
     if rule == "R6":
         return f"drafter {verdict} but JEV {label}"
     if rule == "R7":
