@@ -6,7 +6,8 @@ gates(narrative, payload, cfg) -> refusal reasons, run inside runner.run_gates (
   [theme]    theme_ids come from the snapshot's closed list and need about_symbols from the run's symbols, its subject
              symbols or the listed theme members.
   [check]    narrative_checks has exactly one entry per snapshot record. A verdict other than untouched cites FACT
-             claims whose evidence is all official (claim_precheck.OFFICIAL_TIERS); partially_verifies states open_part.
+             claims whose evidence is all official (claim_precheck.OFFICIAL_TIERS); partially_verifies states
+             supported_part (the part of the record's claim the cited claims establish) and open_part.
   [proposal] at most 3 narrative_proposals, each an atomic record whose numbers are in the cited claim's quote, a
              forecast's resolves_on names a period of the record, an inference source claim states its basis;
              theme_proposals are well-formed (suggested keywords: at most MAX_KEYWORDS short strings).
@@ -167,8 +168,9 @@ def gates(narrative, payload, cfg):
                         f"[check] {nid}: claims[{i}] cites evidence of tier {tiers}; a check cites fact claims whose "
                         f"evidence is all official ({' / '.join(OFFICIAL_TIERS)})"
                     )
-            if verdict == "partially_verifies" and not (isinstance(x.get("open_part"), str) and x["open_part"].strip()):
-                reasons.append(f"[check] {nid}: partially_verifies must state open_part")
+            for part in ("supported_part", "open_part") if verdict == "partially_verifies" else ():
+                if not (isinstance(x.get(part), str) and x[part].strip()):
+                    reasons.append(f"[check] {nid}: partially_verifies must state {part}")
 
     props = narrative.get("narrative_proposals") or []
     if not isinstance(props, list) or not all(isinstance(p, dict) for p in props):

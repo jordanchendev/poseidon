@@ -38,6 +38,7 @@ CASES = {
     "R9": ("聯電壬案說法成立", "state", None, "untouched", [], None, "supports"),
 }
 SOURCE = "。".join(c[0] for c in CASES.values()) + "。"
+PART = "聯電丙案有一部分成立"  # the R3 check's supported_part
 EXPECTED = {  # rule -> (outcome, status after the run with narrative_apply on, event kind written)
     "R1": ("status_change", "verified", "status"),
     "R2": ("status_change", "refuted", "status"),
@@ -124,7 +125,7 @@ def narrative(ids):
             "verdict": c[3],
             "claim_indices": c[4],
             "why": "測試",
-            **({"open_part": "未說明主動性。"} if c[3] == "partially_verifies" else {}),
+            **({"supported_part": PART, "open_part": "未說明主動性。"} if c[3] == "partially_verifies" else {}),
         }
         for rule, c in CASES.items()
     ]

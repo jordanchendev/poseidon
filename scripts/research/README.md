@@ -333,7 +333,8 @@ block, `NARRATIVE_LEDGER_SCHEMA` (claim `theme_ids` / `about_symbols`, `narrativ
 - `[evidence]` a fact claim never cites `narrative_snapshot` or `secondary` evidence.
 - `[theme]` `theme_ids` from the snapshot's list, with `about_symbols` from the run's symbols, subjects or theme members.
 - `[check]` exactly one check per shown record; a verdict other than `untouched` cites fact claims whose evidence is all
-  `primary filing` or `company release`; `partially_verifies` states `open_part`.
+  `primary filing` or `company release`; `partially_verifies` states `supported_part` (the part of the record's claim
+  the cited claims establish) and `open_part`.
 - `[proposal]` at most 3 narrative proposals: atomic, numbers in the source claim's quote, a forecast's `resolves_on`
   year in a period the record names, an inference source with a stated basis; theme proposals well-formed.
 

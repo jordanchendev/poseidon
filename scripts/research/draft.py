@@ -275,6 +275,10 @@ NARRATIVE_LEDGER_SCHEMA = {
             "narrative_id": "nr-... (one entry per open record in narrative_snapshot)",
             "verdict": "verifies|refutes|partially_verifies|untouched",
             "claim_indices": ["index of a FACT claim citing official documents; [] for untouched"],
+            "supported_part": (
+                "string (zh-TW), only for partially_verifies: the part of the record's claim that the cited claims "
+                "establish, in the record's own words"
+            ),
             "open_part": "string (zh-TW), only for partially_verifies: what the evidence does not establish",
             "why": "string (zh-TW)",
         }
@@ -315,7 +319,9 @@ NARRATIVE_LEDGER_RULES = """
 12. narrative_checks: one entry for EVERY open narrative record listed, no more, no less. verdict is
     verifies | refutes | partially_verifies | untouched. A verdict other than untouched cites claim_indices of
     FACT claims in this narrative whose evidence is the official document(s); partially_verifies also states
-    open_part (what the evidence does not establish). Never cite a narrative record as evidence for a fact.
+    supported_part (the part of the RECORD's claim that the cited claims establish, worded as part of that claim,
+    not a restatement of the cited claims) and open_part (what the evidence does not establish). Never cite a
+    narrative record as evidence for a fact.
 13. narrative_proposals (optional, at most 3): a forward-looking or cross-company statement worth tracking.
     Each points to ONE claim in this narrative (claim_index); for an inference claim the record is our
     inference; for a fact claim that reports a company's expectation, the record is that expectation

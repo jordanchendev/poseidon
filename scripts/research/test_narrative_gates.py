@@ -67,6 +67,7 @@ def ledger_narrative(ids):
             "narrative_id": ids[1],
             "verdict": "partially_verifies",
             "claim_indices": [1],
+            "supported_part": "聯電成熟製程仍有產能在運轉。",
             "open_part": "未說明產能利用率。",
             "why": "毛利率只間接相關。",
         },
@@ -244,6 +245,21 @@ def test_each_gate_refuses(seeded, mutate, tag, needle):
     mutate(n)
     reasons = gate_reasons(seeded, n)
     assert any(r.startswith(tag) and needle in r for r in reasons), reasons
+
+
+def test_partially_verifies_must_state_supported_part(seeded):
+    """Owner decision 2026-10-30 (R3): JEV judges the part of the record a partial check says the cited claims
+    establish, so the drafter must name it, as it names open_part."""
+    for blank in ({}, {"supported_part": " "}):
+        n = ledger_narrative(seeded["ids"])
+        del n["narrative_checks"][1]["supported_part"]
+        n["narrative_checks"][1].update(blank)
+        reasons = gate_reasons(seeded, n)
+        assert any(r.startswith("[check]") and "partially_verifies must state supported_part" in r for r in reasons), (
+            blank,
+            reasons,
+        )
+    assert '"supported_part"' in seeded["prompt"][0]["content"]
 
 
 def test_proposal_from_an_inference_without_basis_is_refused(seeded):
