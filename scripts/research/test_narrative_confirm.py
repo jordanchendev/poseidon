@@ -187,6 +187,88 @@ def test_a_rejected_change_is_not_suggested_again(env):
     }
 
 
+def corroborations_of(path, nid):
+    return [s for s in suggestions_all(path) if s["narrative_id"] == nid and s["kind"] == "corroborated"]
+
+
+def test_the_same_document_frozen_again_is_not_suggested_again(env):
+    """Owner decision 2026-10-30: trial run 20261030-m99 re-froze the Micron remarks of 20261029-m94 and suggested R4
+    again (ns-a9165163, ns-dd5e60a8) for records the owner had confirmed. The same document under a new revision id
+    and evidence id is suppressed while the first suggestion is pending and after it is confirmed; the check row is
+    written and the report says which suggestion it repeats."""
+    path, ids, _t, _run_json, rev = ta.run(env, "confirm")
+    first = nl.suggestion_id(rev["identity"]["revision_id"], ids["R4"])
+    later = ta.refrozen(rev)
+    res = ta.apply_later(env, later, "confirm")
+    assert res[ids["R4"]]["suggestion"] == {"id": None, "status": "suppressed", "duplicate_of": first}
+    assert res[ids["R2"]]["suggestion"]["status"] == "suggested"  # a status change is not an endorsement
+    checks, _ = ta.ledger_rows(path, later["identity"]["revision_id"])
+    assert (checks[ids["R4"]]["outcome"], checks[ids["R4"]]["event_seq"]) == ("corroborated", None)
+    db = nl.connect(path)
+    nl.confirm_suggestion(db, first, decision_ref="telegram:20261022-d1", decided_at=DECIDED_AT, note="確認敘事")
+    db.close()
+    again = ta.apply_later(env, ta.refrozen(rev, n=3), "confirm")
+    assert again[ids["R4"]]["suggestion"] == {"id": None, "status": "suppressed", "duplicate_of": first}
+    assert [s["suggestion_id"] for s in corroborations_of(path, ids["R4"])] == [first]
+    # the done report says why no suggestion is listed
+    rev_path = env["run_dir"] / "revision.json"
+    results = {"narrative_apply": "confirm", "records": [res[ids["R4"]]]}
+    rev_path.write_text(json.dumps({**later, "narrative_results": results}))
+    md = subprocess.run(
+        [sys.executable, str(HERE / "render_theme.py"), str(rev_path)], capture_output=True, text=True, check=True
+    ).stdout
+    assert f"官方背書（同一份證據已背書過 {first}，不再寫入）" in md
+
+
+def test_a_different_document_corroborates_again(env):
+    """Corroboration by other evidence still counts: a different document (other raw files) backing the same record is
+    a new suggestion, and that document frozen again repeats it, not the first."""
+    path, ids, _t, _run_json, rev = ta.run(env, "confirm")
+    first = nl.suggestion_id(rev["identity"]["revision_id"], ids["R4"])
+    other = ta.refrozen(rev, raw_files={"other.htm": "0" * 64})
+    res = ta.apply_later(env, other, "confirm")
+    second = nl.suggestion_id(other["identity"]["revision_id"], ids["R4"])
+    assert (res[ids["R4"]]["suggestion"]["id"], res[ids["R4"]]["suggestion"]["status"]) == (second, "suggested")
+    assert [s["suggestion_id"] for s in corroborations_of(path, ids["R4"])] == [first, second]
+    again = ta.refrozen(rev, n=3, raw_files={"other.htm": "0" * 64})
+    assert ta.apply_later(env, again, "confirm")[ids["R4"]]["suggestion"] == {
+        "id": None,
+        "status": "suppressed",
+        "duplicate_of": second,
+    }
+
+
+def test_a_corroboration_stored_without_evidence_sha256_is_compared_by_its_quotes(env):
+    """A suggestion written before basis carried evidence_sha256 (the trial ledger's ns-48c45f58, ns-3aa4b89b) is the
+    same evidence when every quote it stored is in the newly cited document; a document without them is new."""
+    path, ids, _t, _run_json, rev = ta.run(env, "confirm")
+    first = nl.suggestion_id(rev["identity"]["revision_id"], ids["R4"])
+    db = nl.connect(path)
+    s = nl._one(db, "SELECT basis_json FROM narrative_suggestions WHERE suggestion_id = ?", first)
+    basis = json.loads(s["basis_json"])
+    del basis["evidence_sha256"]
+    nl._update(db, "narrative_suggestions", {"suggestion_id": first}, {"basis_json": json.dumps(basis)})
+    db.close()
+    same = ta.apply_later(env, ta.refrozen(rev), "confirm")
+    assert same[ids["R4"]]["suggestion"] == {"id": None, "status": "suppressed", "duplicate_of": first}
+    excerpts = [{"locator": "line 1", "text": "Capacity stays tight next year."}]
+    other = ta.refrozen(rev, n=3, raw_files={"other.htm": "0" * 64}, excerpts=excerpts)
+    assert ta.apply_later(env, other, "confirm")[ids["R4"]]["suggestion"]["status"] == "suggested"
+
+
+def test_a_rejected_endorsement_is_still_not_suggested_again(env):
+    """The rejection rule is unchanged: after the owner rejects an R4 suggestion the same document frozen again is
+    suppressed by that rejection (not reported as a repeat), and nothing is written."""
+    path, ids, _t, _run_json, rev = ta.run(env, "confirm")
+    rejected = nl.suggestion_id(rev["identity"]["revision_id"], ids["R4"])
+    db = nl.connect(path)
+    nl.reject_suggestion(db, rejected, decision_ref="telegram:20261022-d1", decided_at=DECIDED_AT)
+    db.close()
+    res = ta.apply_later(env, ta.refrozen(rev), "confirm")
+    assert res[ids["R4"]]["suggestion"] == {"id": None, "status": "suppressed", "suppressed_by": rejected}
+    assert [s["status"] for s in corroborations_of(path, ids["R4"])] == ["rejected"]
+
+
 def suggestions_all(path):
     db = nl.connect(path)
     try:

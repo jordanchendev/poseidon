@@ -482,6 +482,14 @@ set supports at >= 0.95. `off` and `on` behave as before.
   suggestion, and the same change to that record is not suggested again (the result shows `suppressed_by`); set is
   `set_status` with the same approval_ref. Each decision is acked with `narrative-ack <id> applied|refused` and a
   zh-TW message the bridge sends to Telegram. A decision delivered again is a no-op (`（先前已套用，未重複寫入）`).
+- One piece of evidence corroborates a record once (owner decision 2026-10-30, after ns-a9165163 / ns-dd5e60a8): with
+  mode on or confirm, a corroborated event or suggestion is not written when every cited evidence already backs a
+  corroborated event or a pending or confirmed corroborated suggestion of the record from another revision. An
+  evidence is the sha256 of its raw files (a document; its id and content_sha256 change on a re-freeze), else of its
+  payload; basis keeps the list as `evidence_sha256`, and an older row without it counts when every quote it stored is
+  in the cited evidence's texts. The check row is written; the result shows `duplicate_of` (mode on) or a suppressed
+  `suggestion` with `duplicate_of` (confirm), and render_theme.py says 「同一份證據已背書過 …，不再寫入」. A rejected
+  suggestion still suppresses first (`suppressed_by`).
 
 ### Host wrapper (proposed; the live `~/research-runner/run.sh` is the owner's)
 

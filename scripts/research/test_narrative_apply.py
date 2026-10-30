@@ -9,6 +9,7 @@ import json
 import sqlite3
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -465,6 +466,48 @@ def test_off_by_default_writes_checks_but_no_events(env):
         assert f"`{ids[rule]}`" in owner and f"（{rule}）" in owner
     done = json.loads(tr.bridge_calls(env, "done")[0]["stdin"])
     assert "## 敘事變化" in done["report_md"]
+
+
+def refrozen(rev, n=2, raw_files=None, excerpts=None):
+    """rev as a later run under a new revision id with its agenda document frozen again, as run 20261030-m99 re-froze
+    the Micron remarks of 20261029-m94: a new evidence id, an issuer and one excerpt more (so the item's content_sha256
+    changes), the same raw files. raw_files (and excerpts) make it a different document."""
+    later = json.loads(json.dumps(rev))
+    later["identity"]["revision_id"] = str(uuid.uuid4())
+    new_id = f"{tr.DOC_ID}-r{n}"
+    for e in later["manifest_payload"]["evidence"]:
+        if e["id"] == tr.DOC_ID:
+            p = e["payload"]
+            p["excerpts"] = excerpts or [*p["excerpts"], {"locator": "line 999", "text": "Guidance follows."}]
+            p["issuer"] = "2303"
+            p["raw_files"] = raw_files or p["raw_files"]
+            e.update(id=new_id, content_sha256=nl.content_sha256(p))
+    for c in later["research"]["claims"]:
+        c["evidence_ids"] = [new_id if x == tr.DOC_ID else x for x in c["evidence_ids"]]
+    return later
+
+
+def apply_later(env, later, mode):
+    cfg = json.loads((env["run_dir"] / "config.json").read_text())
+    jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
+    out = narrative_check.apply(env["state"] / "ledger.sqlite", later, later["manifest_payload"], cfg, jev, mode=mode)
+    return {x["narrative_id"]: x for x in out["records"]}
+
+
+def test_the_same_document_frozen_again_corroborates_a_record_once(env):
+    """Owner decision 2026-10-30, after ns-a9165163 and ns-dd5e60a8 in the trial ledger: one piece of evidence
+    corroborates a record once. With narrative_apply on, the same document under a new revision id (new evidence id,
+    re-cut excerpts) writes no second corroborated event; its check row is written and names the first event."""
+    path, ids, _t, _run_json, rev = run(env, "on")
+    (first,) = [e for e in ledger_rows(path, rev["identity"]["revision_id"])[1][ids["R4"]] if e["rule"] == "R4"]
+    assert first["kind"] == "corroborated"
+    later = refrozen(rev)
+    res = apply_later(env, later, "on")[ids["R4"]]
+    checks, events = ledger_rows(path, later["identity"]["revision_id"])
+    assert [e["kind"] for e in events[ids["R4"]]] == ["created", "corroborated"]
+    assert (res["rule"], res["outcome"], res["event_seq"]) == ("R4", "corroborated", None)
+    assert res["duplicate_of"] == f"{ids['R4']}#{first['seq']}"
+    assert (checks[ids["R4"]]["outcome"], checks[ids["R4"]]["event_seq"]) == ("corroborated", None)
 
 
 def test_rerun_of_the_same_revision_calls_no_jev_and_writes_nothing(env):

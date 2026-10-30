@@ -32,6 +32,10 @@ apply(ledger_path, revision, payload, cfg, jev, mode) -> narrative_results, run 
      check's event (or suggestion) keeps supported_part and open_part in basis and both part judgements in jev.
      mode confirm (owner decision 2026-10-29): the event is held as a narrative_suggestions row instead and the result
      carries `suggestion` {id, status, line}; the owner confirms or rejects it in Telegram.
+     One piece of evidence corroborates a record once (owner decision 2026-10-30): a corroborated event or suggestion
+     whose every cited evidence (evidence_sha256, kept in basis) already backs a corroborated event or a pending or
+     confirmed corroborated suggestion of the record from another revision is not written; the check row is, and the
+     result names the first of them (`duplicate_of` with mode on, a suppressed `suggestion` with mode confirm).
   Before the records, one claim_theme_links row per (claim, theme_id) the drafter tagged, enabled or not: a link is
   not a status change (D2). An existing key is kept, so a rerun writes no link twice. The revision's theme_proposals
   are filed in every mode too (file_theme_proposals) and listed in the done notice for the owner (§3.3, §9 step 9).
@@ -678,11 +682,44 @@ def _suggestion(db, sid, rec, claims):
     return {"id": sid, "status": s["status"], "line": line}
 
 
+def evidence_sha256(e):
+    """What one cited evidence is, for "one piece of evidence corroborates a record once" (owner decision 2026-10-30,
+    after ns-a9165163 and ns-dd5e60a8): the sha256 of a document's raw files, else of its payload. A re-freeze of the
+    same document gives it a new evidence id and may re-cut its excerpts or add payload keys (issuer), so neither the id
+    nor the item's content_sha256 stays the same; the raw files do."""
+    raw = e["payload"].get("raw_files")
+    return nl.content_sha256(sorted(raw.values()) if raw else e["payload"])
+
+
+def corroborated_before(db, nid, rev_id, cited):
+    """The first corroboration of the record by another revision when every cited evidence has corroborated it before,
+    else None. A corroboration stored before basis carried evidence_sha256 is compared by its quotes: when each quote
+    it stored is in the cited evidence's texts, it covers the cited evidence that holds one of them; one with no
+    quotes covers nothing."""
+    import draft as draft_mod
+
+    new = {evidence_sha256(e) for e in cited}
+    covered, first = set(), None
+    for name, basis in nl.corroborations(db, nid, rev_id):
+        if "evidence_sha256" in basis:
+            hit = new & set(basis["evidence_sha256"])
+        else:
+            quotes = [q for q in basis.get("quotes") or [] if q]
+            hit = set()
+            if quotes and all(draft_mod.quote_in_evidence(q, cited) for q in quotes):
+                hit = {evidence_sha256(e) for e in cited if any(draft_mod.quote_in_evidence(q, [e]) for q in quotes)}
+        if hit:
+            covered |= hit
+            first = first or name
+    return first if new and covered >= new else None
+
+
 def apply(ledger_path, revision, payload, cfg, jev, *, mode):
     """narrative_results for revision.json ({narrative_apply, jev_model, records}), or None without a snapshot.
     mode off: check rows only. on: the rule writes its events. confirm (owner decision 2026-10-29, the first 4 weeks):
     each event the rule would write becomes a narrative_suggestions row the owner confirms or rejects in Telegram; a
-    change the owner rejected for this record before is not suggested again (the result names that rejection)."""
+    change the owner rejected for this record before is not suggested again (the result names that rejection). In both
+    modes a corroboration by evidence that has corroborated the record before is not written (corroborated_before)."""
     if mode not in APPLY_MODES:
         raise ValueError(f"narrative_apply mode must be one of {'|'.join(APPLY_MODES)}")
     snap = snapshot_of(payload)
@@ -757,7 +794,7 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
                 status,
                 sweep,
             )
-            seq = suggestion = None
+            seq = suggestion = dup = None
             if mode != "off" and outcome in ("status_change", "corroborated"):
                 event = {
                     "kind": "status" if outcome == "status_change" else "corroborated",
@@ -770,6 +807,11 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
                         "quotes": [claims[i].get("quote") for i in idx],
                         "tiers": tiers,
                         **{k: chk[k] for k in ("supported_part", "open_part") if verdict == "partially_verifies"},
+                        **(
+                            {"evidence_sha256": [evidence_sha256(e) for e in cited]}
+                            if outcome == "corroborated"
+                            else {}
+                        ),
                     },
                     "rule": rule,
                     "jev": {
@@ -780,12 +822,19 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
                     },
                     "drafter_verdict": verdict,
                 }
+                if outcome == "corroborated" and not mine:
+                    dup = corroborated_before(db, nid, rev_id, cited)
                 if mode == "on":
-                    seq = mine[-1]["seq"] if mine else nl.append_event(db, nid, decided_by="rule", **event)["seq"]
+                    if mine:
+                        seq = mine[-1]["seq"]
+                    elif not dup:
+                        seq = nl.append_event(db, nid, decided_by="rule", **event)["seq"]
                 else:
                     gone = nl.rejected_suggestion(db, nid, event["kind"], event["to_status"])
                     if gone:
                         suggestion = {"id": None, "status": "suppressed", "suppressed_by": gone["suggestion_id"]}
+                    elif dup:
+                        suggestion = {"id": None, "status": "suppressed", "duplicate_of": dup}
                     else:
                         sid = nl.add_suggestion(db, revision_id=rev_id, nid=nid, from_status=status, **event)[
                             "suggestion_id"
@@ -813,6 +862,8 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
             )
             if suggestion:
                 out[-1]["suggestion"] = suggestion
+            elif dup:
+                out[-1]["duplicate_of"] = dup
     finally:
         db.close()
     return {

@@ -1128,6 +1128,30 @@ def rejected_suggestion(db, nid, kind, to_status):
     )
 
 
+def corroborations(db, nid, revision_id):
+    """The record's corroborations from revisions other than revision_id, oldest first: its corroborated events and its
+    pending or confirmed corroborated suggestions -> [(name, basis)]. name is the suggestion id when there is one (a
+    confirmed suggestion's event carries it too), else '<narrative id>#<event seq>'."""
+    rows = [
+        (e["recorded_at"], json.loads(e["basis_json"]), f"{nid}#{e['seq']}")
+        for e in events_of(db, nid)
+        if e["kind"] == "corroborated"
+    ]
+    rows += [
+        (s["created_at"], json.loads(s["basis_json"]), s["suggestion_id"])
+        for s in db.execute(
+            "SELECT * FROM narrative_suggestions WHERE narrative_id = ? AND kind = 'corroborated' "
+            "AND status IN ('suggested', 'confirmed')",
+            (nid,),
+        )
+    ]
+    out = {}
+    for _at, basis, name in sorted(rows, key=lambda r: r[0]):
+        if basis.get("revision_id") != revision_id:
+            out.setdefault(basis.get("suggestion_id", name), basis)
+    return list(out.items())
+
+
 def confirm_suggestion(db, sid, *, decision_ref, decided_at, note):
     """Write the suggested event decided_by owner (basis.approval_ref = decision_ref, note = the owner's sentence) at
     max(decided_at, the record's last event at). -> (row, already): a suggestion confirmed before is a no-op.

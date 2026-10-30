@@ -273,8 +273,12 @@ def status_label(status, tier, claim_type):
 
 
 def unwritten(x):
-    """Why a rule outcome has no event: narrative_apply off, or a confirm-mode suggestion and where it stands."""
+    """Why a rule outcome has no event: narrative_apply off, evidence that corroborated the record before, or a
+    confirm-mode suggestion and where it stands."""
     sug = x.get("suggestion") or {}
+    dup = x.get("duplicate_of") or sug.get("duplicate_of")
+    if dup:
+        return f"（同一份證據已背書過 {dup}，不再寫入）"
     if sug.get("status") == "suppressed":
         return f"（同一變化曾被駁回 {sug['suppressed_by']}，不再建議）"
     if sug.get("status") == "suggested":
