@@ -411,13 +411,49 @@ class Jev:
 
     @staticmethod
     def source_text(claim, cited):
-        """The claim's quote, then the full texts of its cited evidence, capped at SOURCE_CAP."""
-        parts = []
-        if isinstance(claim.get("quote"), str) and claim["quote"].strip():
-            parts.append("Quoted: " + claim["quote"].strip())
-        for item in cited:
-            parts.append("[{}]\n{}".format(item["id"], "\n".join(draft_mod.evidence_texts(item))))
-        return cap("\n\n".join(parts), JEV_SOURCE_CAP)
+        """The text JEV judges `claim` against: source_window's text."""
+        return Jev.source_window(claim, cited)[0]
+
+    @staticmethod
+    def source_window(claim, cited):
+        """(text, truncated 0|1): "Quoted: <quote>", then per cited item "[id]" and its units one per line, at most
+        JEV_SOURCE_CAP characters. A unit is one entry of draft.evidence_texts: an excerpt (one verified paragraph,
+        `lines a-b`) of a document, the whole rendered block of any other evidence.
+        When everything fits, every unit in document order (truncated 0). Otherwise the units are taken in this order,
+        each kept only if the text still fits: the units holding the quote, their neighbours (the unit before and after
+        in the same item), then every other unit in document order. Kept units print in document order; a "…" line
+        stands for each run of left-out units. If no unit holding the quote fits (or none holds it), the document-order
+        text cut at the cap."""
+        quote = claim.get("quote").strip() if isinstance(claim.get("quote"), str) else ""
+        head = ["Quoted: " + quote] if quote else []
+        items = [(item["id"], draft_mod.evidence_texts(item)) for item in cited]
+        full = "\n\n".join(head + ["[{}]\n{}".format(i, "\n".join(texts)) for i, texts in items])
+        if len(full.strip()) <= JEV_SOURCE_CAP:
+            return cap(full, JEV_SOURCE_CAP), 0
+
+        def render(keep):
+            parts = list(head)
+            for n, (eid, texts) in enumerate(items):
+                lines, gap = [], False
+                for k, t in enumerate(texts):
+                    if (n, k) in keep:
+                        lines += ["…", t] if gap else [t]
+                        gap = False
+                    else:
+                        gap = True
+                if lines:
+                    parts.append("[{}]\n{}".format(eid, "\n".join(lines + ["…"] * gap)))
+            return "\n\n".join(parts).strip()
+
+        q = draft_mod._canon(quote)
+        units = [(n, k) for n, (_, texts) in enumerate(items) for k in range(len(texts))]
+        anchors = [(n, k) for n, k in units if q and q in draft_mod._canon(items[n][1][k])]
+        near = [(n, k + d) for n, k in anchors for d in (-1, 1) if 0 <= k + d < len(items[n][1])]
+        keep = set()
+        for u in dict.fromkeys(anchors + near + units):
+            if len(render(keep | {u})) <= JEV_SOURCE_CAP:
+                keep.add(u)
+        return (render(keep) if keep.intersection(anchors) else cap(full, JEV_SOURCE_CAP)), 1
 
     def judge(self, claim, source_text, locator, symbol, as_of):
         """One citation_relation judgement -> {label, confidence, probabilities, latency_ms}. Raises draft.PostError."""
@@ -459,14 +495,20 @@ def jev_check(narrative, payload, cfg, jev):
         if c.get("kind") != "fact":
             continue
         cited = [by_id[i] for i in c["evidence_ids"] if i in by_id]
+        source, truncated = jev.source_window(c, cited)
         try:
-            ans = jev.judge(
-                c["text"], jev.source_text(c, cited), ", ".join(c["evidence_ids"]), run_symbol(cfg), payload["as_of"]
-            )
+            ans = jev.judge(c["text"], source, ", ".join(c["evidence_ids"]), run_symbol(cfg), payload["as_of"])
         except draft_mod.PostError as e:
             raise StageError("jev", f"JEV call failed on claims[{n}]: {e}") from None
         per.append(
-            {"claim_index": n, "claim": c["text"], "kind": c.get("kind"), "evidence_ids": c["evidence_ids"], **ans}
+            {
+                "claim_index": n,
+                "claim": c["text"],
+                "kind": c.get("kind"),
+                "evidence_ids": c["evidence_ids"],
+                **ans,
+                "source_truncated": truncated,
+            }
         )
     labels = [p["label"] for p in per]
     return {
@@ -477,7 +519,8 @@ def jev_check(narrative, payload, cfg, jev):
         "contradicts": labels.count("contradicts"),
         "says_nothing": labels.count("says_nothing"),
         "run_at": now_iso(),
-        "scope": "fact claims only (inference claims gated by precheck + quote check); source = claim quote + cited evidence texts",
+        "scope": "fact claims only (inference claims gated by precheck + quote check); source = claim quote + cited "
+        "evidence texts, past the cap the quoted excerpt and its neighbours first (per_claim source_truncated)",
         "usage_total": dict(jev.usage_total),
         "per_claim": per,
     }

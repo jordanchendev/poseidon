@@ -393,6 +393,77 @@ def test_inference_claim_is_not_sent_to_jev(env):
     assert all("價格事實" not in j["state"]["claim"] for j in t.jev_calls)
 
 
+# Micron FQ4 FY26 prepared remarks (m95, 2026-10-30): the basis statement opens the document, the guidance closes it.
+MU_DOC = "fundamental:agenda-20261030-m95"
+MU_BASIS = (
+    "Today’s discussion of financial results is presented on a non-GAAP (generally accepted accounting principles) "
+    "financial basis unless otherwise specified. A reconciliation of GAAP to non-GAAP financial measures can be found "
+    "on our website."
+)
+MU_GUIDANCE = [
+    "We expect FQ1 revenue to be a record $61.5 billion, plus or minus $1.5 billion; gross margin to be approximately "
+    "86.25%; and operating expenses to be approximately $2.06 billion. Based on a share count of approximately 1.15 "
+    "billion shares, we expect EPS to be $38.15 per share, plus or minus $1.00.",
+    "We expect fiscal 2027 to be another record year, with sequential revenue growth each quarter.",
+    "We anticipate fiscal Q1 to be the floor for gross margins in fiscal 2027. We expect higher gross margins beyond "
+    "fiscal Q1 for the remainder of fiscal 2027, with a more moderate rate of price increases.",
+    "In fiscal Q1, we project capex of around $11.5 billion and anticipate first-half fiscal 2027 capex to be "
+    "approximately $25 billion.",
+]
+
+
+def mu_doc(n_body):
+    body = [f"Body paragraph {i} reviews end markets, products and the fiscal Q4 results. " * 6 for i in range(n_body)]
+    texts = [MU_BASIS, *body, *MU_GUIDANCE]
+    return {
+        "id": MU_DOC,
+        "kind": "fundamental",
+        "payload": {"excerpts": [{"locator": f"lines {10 * i}-{10 * i + 5}", "text": t} for i, t in enumerate(texts)]},
+    }
+
+
+def judge_facts(doc, quote):
+    """runner.jev_check over one fact claim quoting `quote` from `doc` -> (JEV source text sent, its per_claim)."""
+    claim = {"kind": "fact", "text": "Micron claim", "evidence_ids": [doc["id"]], "quote": quote}
+    t = FakeOpenRouter([])
+    payload = {"evidence": [doc], "as_of": "2026-10-30T04:20:00Z"}
+    res = runner.jev_check({"claims": [claim]}, payload, {"symbol": "MU"}, runner.Jev(JEV_KEY, transport=t))
+    (call,), (per,) = t.jev_calls, res["per_claim"]
+    src = call["state"]["source_context"]["text"]
+    assert runner.Jev.source_text(claim, [doc]) == src  # narrative_check's call sees the same text
+    return src, per
+
+
+def test_jev_source_past_the_cap_keeps_the_quoted_excerpt_its_neighbours_and_the_opening():
+    doc = mu_doc(30)
+    texts = draft.evidence_texts(doc)
+    assert len("\n".join(texts)) > runner.JEV_SOURCE_CAP  # in document order the guidance sits past the cap
+    quote = "with a more moderate rate of price increases"
+    src, per = judge_facts(doc, quote)
+    assert per["source_truncated"] == 1 and len(src) <= runner.JEV_SOURCE_CAP
+    # the opening basis statement still comes first, in document order
+    assert src.startswith(f"Quoted: {quote}\n\n[{MU_DOC}]\n{MU_BASIS}\n")
+    # the quoted excerpt whole, with the excerpt before and after it
+    assert src.endswith("\n".join(MU_GUIDANCE[1:4]))
+    # some body excerpts are left out, and a "…" line marks where
+    assert not all(t in src for t in texts) and "\n…\n" in src
+
+
+def test_jev_source_that_fits_is_unchanged():
+    doc = mu_doc(2)
+    src, per = judge_facts(doc, "gross margin to be approximately 86.25%")
+    texts = "\n".join(draft.evidence_texts(doc))
+    assert src == f"Quoted: gross margin to be approximately 86.25%\n\n[{MU_DOC}]\n{texts}"
+    assert per["source_truncated"] == 0
+
+
+def test_jev_source_without_the_quote_in_a_long_document_is_the_document_order_cut():
+    doc = mu_doc(30)
+    src, per = judge_facts(doc, "a quote no excerpt holds")
+    full = "Quoted: a quote no excerpt holds\n\n[{}]\n{}".format(MU_DOC, "\n".join(draft.evidence_texts(doc)))
+    assert src == full[: runner.JEV_SOURCE_CAP - 1] + "…" and per["source_truncated"] == 1
+
+
 @pytest.mark.parametrize(
     ("response", "needle"),
     [
