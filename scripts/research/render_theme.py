@@ -321,6 +321,7 @@ if snap and snap["records"]:
             new = status_label(before, src, ct) + "，官方背書" + ("" if written else unwritten(x))
         else:
             new = status_label(before, src, ct) + (f"（{outcome}）" if outcome in ("disputed", "missed") else "")
+            new += f"（不變：{cell(x['why'])}）" if outcome == "no_change" and x.get("why") else ""
         idx = x.get("claim_indices", drafted.get(nid, {}).get("claim_indices")) or []
         basis = "；".join(
             f"claims[{i}]「{cell(r['claims'][i].get('quote', ''), 60)}」" for i in idx if 0 <= i < len(r["claims"])

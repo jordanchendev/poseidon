@@ -89,6 +89,18 @@ def test_confirm_writes_suggestions_not_events(env):
     assert "### 待 owner 確認（narrative_apply confirm）" in md and res[ids["R1"]]["suggestion"]["line"] in md
 
 
+def test_a_partial_suggestion_shows_supported_part_next_to_open_part(env):
+    """Owner decision 2026-10-30: the owner confirms an R3 change against what the cited claims establish and what they
+    leave open, so the notice line carries both; a suggestion from another verdict carries neither."""
+    _path, ids, _t, _run_json, rev = ta.run(env, "confirm")
+    res = {x["narrative_id"]: x for x in rev["narrative_results"]["records"]}
+    line = res[ids["R3"]]["suggestion"]["line"]
+    assert f"；撐住的部分「{ta.PART}」；未撐住的部分「未說明主動性。」；回覆「確認敘事 " in line
+    assert "撐住的部分" not in res[ids["R1"]]["suggestion"]["line"]
+    done = json.loads(tr.bridge_calls(env, "done")[0]["stdin"])
+    assert line in [s["line"] for s in done["suggestions"]]
+
+
 def test_on_and_off_results_carry_no_suggestion(env):
     _path, _ids, _t, _run_json, rev = ta.run(env, "on")
     assert all("suggestion" not in x for x in rev["narrative_results"]["records"])

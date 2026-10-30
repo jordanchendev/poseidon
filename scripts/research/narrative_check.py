@@ -15,16 +15,21 @@ Without a snapshot there is nothing to check, tag or propose, and a narrative th
 
 apply(ledger_path, revision, payload, cfg, jev, mode) -> narrative_results, run after the revision completes (§4.5):
   1. judgement: for a verdict other than untouched, judge_record judges the record's claim against the cited fact
-     claims' quotes and evidence texts (runner.Jev.source_text, capped).
+     claims' quotes and evidence texts (runner.Jev.source_text, capped). A state partially_verifies also gets
+     judge_part (owner decision 2026-10-30): supported_part against the record's claim (in_record: it is part of the
+     record) and against the same cited source (backed); part_label folds the three into the label R3 reads.
   2. sweep: judge_record judges every shown record against all official excerpts in document order, capped; a cut
      source sets sweep_truncated = 1.
      judge_record (owner decision 2026-10-29): PRECHECKS (period, media) make it says_nothing without JEV; otherwise
-     the JEV_VOTES-vote majority at mean probability >= MIN_WIN_PROBABILITY, else says_nothing. Each result keeps both
-     answers under `judged` (precheck, votes, p_label, why).
+     the JEV_VOTES-vote majority at mean probability >= MIN_WIN_PROBABILITY, else says_nothing. Each result keeps the
+     answers under `judged` (judgement, sweep, and in_record / backed for a state partial: precheck, votes, p_label,
+     why).
   3. RULES (R1-R9 below) decide the outcome from (claim_type, verdict, label, basis_ok, before_resolution, settled).
+     A state partially_verifies that R3 does not take says why: which supported_part judgement failed.
   4. one narrative_checks row per shown record always; a status or corroborated event only with mode on, at
      max(evidence available_at, the record's last event at). A revision whose check row exists is skipped without JEV,
-     and an event that already names the revision is reused, so a rerun after a crash writes nothing twice.
+     and an event that already names the revision is reused, so a rerun after a crash writes nothing twice. A partial
+     check's event (or suggestion) keeps supported_part and open_part in basis and both part judgements in jev.
      mode confirm (owner decision 2026-10-29): the event is held as a narrative_suggestions row instead and the result
      carries `suggestion` {id, status, line}; the owner confirms or rejects it in Telegram.
   Before the records, one claim_theme_links row per (claim, theme_id) the drafter tagged, enabled or not: a link is
@@ -243,7 +248,10 @@ SETTLED = ("verified", "partially_verified")
 # claim_theme_links.evidence_tier is the highest tier a claim cites (design §2.5), ranked in this order
 TIER_ORDER = (*OFFICIAL_TIERS, "exchange feed", "derived", "sell-side", "media", "kol")
 # Design §4.5 rule table. Key: (claim_type, drafter verdict, label, basis_ok, before_resolution, settled).
-#   label: the judgement JEV label, or the sweep label for an untouched record.
+#   label: the judgement JEV label, or the sweep label for an untouched record. For a state partially_verifies it is
+#     part_label(): supports only when JEV finds supported_part both in the record's claim and in the cited source
+#     (owner decision 2026-10-30, after ns-712a8221 and ns-06ab94e2: R3 used to take the whole-claim judgement's
+#     supports or says_nothing, and nothing checked that the cited facts back any part of the record).
 #   basis_ok: every cited evidence is official and every cited fact claim has JEV supports (R3's condition).
 #   before_resolution: a forecast's cited evidence event_time is before resolves_on (None for a state claim).
 #   settled: the record is verified or partially_verified now (R2 against R7).
@@ -257,7 +265,7 @@ RULE_ROWS = (
     # rule, claim_type, verdict, label, basis_ok, before_resolution, settled, outcome, to_status
     ("R1", "state", "verifies", "supports", True, None, ANY, "status_change", "verified"),
     ("R2", "state", "refutes", "contradicts", True, None, False, "status_change", "refuted"),
-    ("R3", "state", "partially_verifies", ("supports", "says_nothing"), True, None, ANY, "status_change", "partially_verified"),
+    ("R3", "state", "partially_verifies", "supports", True, None, ANY, "status_change", "partially_verified"),
     ("R4", "forecast", ("verifies", "partially_verifies"), "supports", True, True, ANY, "corroborated", None),
     ("R5", "forecast", "verifies", "supports", True, False, ANY, "status_change", "verified"),
     ("R5", "forecast", "refutes", "contradicts", True, False, False, "status_change", "refuted"),
@@ -304,13 +312,31 @@ def decide(claim_type, verdict, label, basis_ok, before_resolution, status, swee
     return rule, outcome, to_status
 
 
-def why(rule, outcome, verdict, label, sweep, status, to_status):
+def part_label(label, part):
+    """The label R3's row reads for a state partially_verifies, from the whole-claim judgement label and judge_part:
+    contradicts (R6) when the cited source contradicts the record or supported_part; supports when JEV finds
+    supported_part in the record's claim and in the cited source; says_nothing (no row: no_change) otherwise."""
+    if "contradicts" in (label, part["backed"]["label"]):
+        return "contradicts"
+    return "supports" if part["in_record"]["label"] == part["backed"]["label"] == "supports" else "says_nothing"
+
+
+def why(rule, outcome, verdict, label, sweep, status, to_status, part=None):
+    """label: the whole-claim judgement label. part: judge_part's answer for a state partially_verifies."""
     if outcome == "missed":
         return f"drafter marked it untouched but the sweep says {sweep}"
     if rule == "R6" and SWEEP_DISAGREES.get(verdict) == sweep:
         if label == sweep:
             return f"drafter {verdict} but JEV {label} and the sweep {sweep}"
         return f"drafter {verdict} and JEV {label}, but the sweep {sweep}"
+    if part and rule in (None, "R6") and label != "contradicts":
+        a, b = part["in_record"]["label"], part["backed"]["label"]
+        failed = []
+        if a != "supports":
+            failed.append(f"supported_part is not part of the record's claim (JEV {a})")
+        if b != "supports":
+            failed.append(f"the cited source does not back supported_part (JEV {b})")
+        return "; ".join(failed)
     if rule == "R6":
         return f"drafter {verdict} but JEV {label}"
     if rule == "R7":
@@ -365,6 +391,29 @@ def judge_record(jev, claim, source, locator, symbol, as_of, prechecks=PRECHECKS
         "p_label": p,
         "why": "" if stands else f"JEV {top} {n}/{JEV_VOTES} at mean probability {p}",
     }
+
+
+# Judgement (a) reads the record's claim, not evidence: a year the record never names cannot be part of it (period), but
+# the media gate asks whether an official notice merely restates a media report, which says nothing about whether
+# supported_part is part of a record that is often itself a rumor.
+IN_RECORD_PRECHECKS = (("period", _period_gate),)
+IN_RECORD_LOCATOR = "the narrative record's claim"
+
+
+def judge_part(jev, supported_part, record_claim, source, locator, symbol, as_of):
+    """R3's two judgements of a partial check's supported_part -> {in_record, backed} judge_record answers.
+    in_record: the record's claim as the source (IN_RECORD_PRECHECKS); it must support supported_part, so a drafter
+    cannot name the cited fact itself as the supported part. backed: the judgement's cited source, every PRECHECKS."""
+    return {
+        "in_record": judge_record(
+            jev, supported_part, record_claim, IN_RECORD_LOCATOR, symbol, as_of, prechecks=IN_RECORD_PRECHECKS
+        ),
+        "backed": judge_record(jev, supported_part, source, locator, symbol, as_of),
+    }
+
+
+def _jev_record(ans):
+    return {k: ans[k] for k in ("label", "precheck", "votes", "p_label")}
 
 
 def sweep_source(payload, cap):
@@ -598,27 +647,34 @@ STATUS_WORDS = {
 }
 
 
-def suggestion_line(sid, rec, kind, from_status, to_status, rule, idx, claims):
-    """The done notice's line for one suggestion (owner decision 2026-10-29: confirm in Telegram)."""
+def suggestion_line(sid, rec, kind, from_status, to_status, rule, basis, claims):
+    """The done notice's line for one suggestion (owner decision 2026-10-29: confirm in Telegram). basis: the stored
+    event basis; a partial check's supported_part and open_part follow the cited claims."""
 
     def short(text, n=40):
         text = " ".join(str(text or "").split())
         return text if len(text) <= n else text[: n - 1] + "…"
 
-    basis = "；".join(f"claims[{i}]「{short(claims[i].get('quote'))}」" for i in idx if 0 <= i < len(claims))
+    idx = basis.get("claim_indices", [])
+    cited = "；".join(f"claims[{i}]「{short(claims[i].get('quote'))}」" for i in idx if 0 <= i < len(claims))
+    parts = "".join(
+        f"；{word}「{short(basis[k])}」"
+        for k, word in (("supported_part", "撐住的部分"), ("open_part", "未撐住的部分"))
+        if basis.get(k)
+    )
     head = f"建議 {sid}：{rec['narrative_id']}「{short(rec['claim'])}」"
     if kind == "status":
         change = f"由 {STATUS_WORDS[from_status]} 改為 {STATUS_WORDS[to_status]}（{rule}）"
     else:
         change = f"記一筆官方背書（{rule}，狀態維持 {STATUS_WORDS[from_status]}）"
-    return f"{head}{change}，依據 {basis or '—'}；回覆「確認敘事 {sid}」或「駁回敘事 {sid}」"
+    return f"{head}{change}，依據 {cited or '—'}{parts}；回覆「確認敘事 {sid}」或「駁回敘事 {sid}」"
 
 
 def _suggestion(db, sid, rec, claims):
     """The confirm-mode `suggestion` entry of a result, from the stored row."""
     s = nl._one(db, "SELECT * FROM narrative_suggestions WHERE suggestion_id = ?", sid)
-    idx = json.loads(s["basis_json"]).get("claim_indices", [])
-    line = suggestion_line(sid, rec, s["kind"], s["from_status"], s["to_status"], s["rule"], idx, claims)
+    basis = json.loads(s["basis_json"])
+    line = suggestion_line(sid, rec, s["kind"], s["from_status"], s["to_status"], s["rule"], basis, claims)
     return {"id": sid, "status": s["status"], "line": line}
 
 
@@ -671,7 +727,7 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
             mine = [e for e in events if json.loads(e["basis_json"]).get("revision_id") == rev_id]
             status = nl.fold_status(events[: mine[0]["seq"]] if mine else events)
             cited = list({e: by_id[e] for i in idx for e in claims[i]["evidence_ids"] if e in by_id}.values())
-            label = jev_ans = None
+            label = jev_ans = part = None
             if verdict != "untouched":
                 source = "\n\n".join(
                     jev.source_text(claims[i], [by_id[e] for e in claims[i]["evidence_ids"] if e in by_id]) for i in idx
@@ -679,6 +735,8 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
                 locator = ", ".join(f"claims[{i}]" for i in idx)
                 jev_ans = judge_record(jev, rec["claim"], source, locator, symbol, payload["as_of"])
                 label = jev_ans["label"]
+            if verdict == "partially_verifies" and rec["claim_type"] == "state":
+                part = judge_part(jev, chk["supported_part"], rec["claim"], source, locator, symbol, payload["as_of"])
             sweep_ans = judge_record(jev, rec["claim"], sweep_text, "all official excerpts", symbol, payload["as_of"])
             sweep = sweep_ans["label"]
             tiers = [evidence_tier(e) for e in cited]
@@ -693,7 +751,7 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
             rule, outcome, to_status = decide(
                 rec["claim_type"],
                 verdict,
-                label if verdict != "untouched" else sweep,
+                sweep if verdict == "untouched" else part_label(label, part) if part else label,
                 basis_ok,
                 before_resolution,
                 status,
@@ -711,15 +769,14 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
                         "evidence_ids": [e["id"] for e in cited],
                         "quotes": [claims[i].get("quote") for i in idx],
                         "tiers": tiers,
+                        **{k: chk[k] for k in ("supported_part", "open_part") if verdict == "partially_verifies"},
                     },
                     "rule": rule,
                     "jev": {
                         "model": jev.model,
                         "endpoint": jev.path,
-                        "label": label,
-                        "precheck": jev_ans["precheck"],
-                        "votes": jev_ans["votes"],
-                        "p_label": jev_ans["p_label"],
+                        **_jev_record(jev_ans),
+                        **({"supported_part": {k: _jev_record(v) for k, v in part.items()}} if part else {}),
                     },
                     "drafter_verdict": verdict,
                 }
@@ -750,8 +807,10 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
                     "checked_at": nl.now(),
                 },
             )
-            reason = why(rule, outcome, verdict, label, sweep, status, to_status)
-            out.append(_result(row, rule, to_status, reason, {"judgement": jev_ans, "sweep": sweep_ans}))
+            reason = why(rule, outcome, verdict, label, sweep, status, to_status, part)
+            out.append(
+                _result(row, rule, to_status, reason, {"judgement": jev_ans, "sweep": sweep_ans, **(part or {})})
+            )
             if suggestion:
                 out[-1]["suggestion"] = suggestion
     finally:

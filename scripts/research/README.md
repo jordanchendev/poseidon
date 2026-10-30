@@ -347,7 +347,13 @@ official excerpts in document order (12,000 characters, a cut source sets `sweep
 table R1 to R9 keyed by (claim_type, verdict, label, basis_ok, before_resolution, settled); a key no row covers is
 `no_change`, and a status the rule may not reach under `TRANSITIONS` is `disputed`. Before the table, a drafter and a
 sweep that disagree in direction (verifies / partially_verifies against a sweep that contradicts, refutes against a
-sweep that supports; `SWEEP_DISAGREES`) are R6 `disputed`. One `narrative_checks` row per
+sweep that supports; `SWEEP_DISAGREES`) are R6 `disputed`. A state `partially_verifies` gets two more judgements of
+the drafter's `supported_part` (owner decision 2026-10-30, after ns-712a8221 and ns-06ab94e2): against the record's
+claim (`in_record`, period precheck only: it must be part of the record) and against the same cited source (`backed`).
+R3 takes it only when both support; a `backed` (or whole-claim) contradicts is R6, anything else is `no_change` with a
+`why` naming the failed judgement, shown in 「敘事變化」. The event or suggestion keeps `supported_part` and
+`open_part` in basis and both judgements under jev `supported_part`; the confirm line shows both parts. One
+`narrative_checks` row per
 record always; a `status` or `corroborated` event only with `runner.py --narrative-apply on` (default `off` until the
 §9 step 7 control set passes), at max(evidence available_at, the record's last event at). A revision whose check rows
 exist is skipped without JEV; an event that already names the revision is reused. The results go to
@@ -460,7 +466,8 @@ set supports at >= 0.95. `off` and `on` behave as before.
 - Each event the rule would write (status change or corroboration) becomes a `narrative_suggestions` row
   (`ns-` + 8 hex of the revision and record ids). The check row is written as in `off`. The result carries
   `suggestion` {id, status, line}; `done` stdin JSON adds `suggestions` [{id, narrative_id, line}], and the bridge
-  appends each line (「建議 ns-… … 由 未證實 改為 部分證實（R3），依據 claims[i]「…」；回覆「確認敘事 ns-…」或「駁回敘事 ns-…」」)
+  appends each line (「建議 ns-… … 由 未證實 改為 部分證實（R3），依據 claims[i]「…」；撐住的部分「…」；未撐住的部分「…」；回覆
+  「確認敘事 ns-…」或「駁回敘事 ns-…」」, the two parts only for a partially_verifies)
   to the notice. render_theme.py lists them under 「待 owner 確認」.
 - The owner replies; Sisyphus runs `research-agenda.sh narrative-confirm|narrative-reject <ns-id>` (or
   `narrative-set <nr-id> <status>`, the §4.6 override) with the owner's sentence on STDIN; macminim4 checks the id
