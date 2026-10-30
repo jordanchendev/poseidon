@@ -340,17 +340,21 @@ def test_subjects_must_be_approved_or_proposed_members(tmp_path):
     }
     reasons, _ = intake.gates(intake_out([intel]), m, payload, lambda s, t: (None, None))
     assert len(reasons) == 1 and reasons[0].startswith("[subject] records[0]") and "NASDAQ:INTC" in reasons[0]
-    reasons, plan = intake.gates(intake_out([intel], [proposal]), m, payload, lambda s, t: (None, None))
+    # a theme proposal admits its members into a record tagged with it, never into a record of another theme
+    reasons, _ = intake.gates(intake_out([intel], [proposal]), m, payload, lambda s, t: (None, None))
+    assert len(reasons) == 1 and reasons[0].startswith("[subject] records[0]") and "NASDAQ:INTC" in reasons[0]
+    on_it = dict(intel, theme_ids=["high-na-euv"])
+    reasons, plan = intake.gates(intake_out([on_it], [proposal]), m, payload, lambda s, t: (None, None))
     assert reasons == [] and plan["proposals"][0]["duplicate_of"] is None
     # a proposal that repeats an existing theme files nothing, so its members do not admit a subject
     reasons, plan = intake.gates(
-        intake_out([intel], [proposal]), m, payload, lambda s, t: ("theme:cleanroom-capacity", None)
+        intake_out([on_it], [proposal]), m, payload, lambda s, t: ("theme:cleanroom-capacity", None)
     )
     assert len(reasons) == 1 and reasons[0].startswith("[subject]")
     # one that repeats an open proposal admits that proposal's members
     open_members = [{"symbol": "NASDAQ:INTC", "role": "customer"}]
     reasons, _ = intake.gates(
-        intake_out([intel], [proposal]), m, payload, lambda s, t: ("proposal:T20261019-1", open_members)
+        intake_out([on_it], [proposal]), m, payload, lambda s, t: ("proposal:T20261019-1", open_members)
     )
     assert reasons == []
 

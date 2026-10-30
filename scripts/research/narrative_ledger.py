@@ -476,8 +476,8 @@ def add_record(
     decided_by="rule",
 ):
     """Writes the record and its seq-0 'created' event. The quote must be verbatim in source_text, the claim must be
-    atomic and its numbers must match the quote (the record is a transcription, so strict). A subject is an approved
-    member of an active theme; a record that needs a pending proposal waits in held_records (hold_record)."""
+    atomic and its numbers must match the quote (the record is a transcription, so strict). Each subject is an approved
+    member of one of the record's themes; a record that needs a pending proposal waits in held_records (hold_record)."""
     if claim_type not in CLAIM_TYPES:
         raise LedgerError(f"claim_type must be one of {'|'.join(CLAIM_TYPES)}")
     if source_tier not in SOURCE_TIERS:
@@ -502,16 +502,12 @@ def add_record(
         raise LedgerError("a record needs at least one subject symbol and one theme")
     for t in theme_ids:
         _active_theme(db, t)
-    members = {
-        r[0]
-        for r in db.execute(
-            "SELECT m.symbol FROM theme_members m JOIN themes t USING (theme_id) WHERE t.status = 'active'"
-        )
-    }
     for s in subject_symbols:
         symbol_is_tw(s)
-        if s not in members:
-            raise LedgerError(f"subject {s} is not an approved member of an active theme")
+        if not any(
+            _one(db, "SELECT 1 FROM theme_members WHERE theme_id = ? AND symbol = ?", t, s) for t in set(theme_ids)
+        ):
+            raise LedgerError(f"subject {s} is not an approved member of {', '.join(sorted(set(theme_ids)))}")
     first_seen_at = iso(first_seen_at)
     resolves_on, resolves_default, review_by = review_dates(claim_type, first_seen_at, resolves_on)
     nid = narrative_id(origin_ref, quote, claim)
@@ -966,23 +962,27 @@ def reject_proposal(db, proposal_id, *, decision_ref, decided_at):
 
 
 # ---------------------------------------------------------------- held records (§9 step 9)
-# An intake record whose theme is still a proposal, or whose subject is not yet an approved member, waits here until
-# the owner decides every proposal it needs: written then (first_seen_at unchanged), dropped with the reason when one
-# it needs is rejected. Nothing reaches narrative_records without approved themes and members.
+# An intake record whose theme is still a proposal, or whose subject is not yet an approved member of one of its
+# themes, waits here until the owner decides every proposal it needs: written then (first_seen_at unchanged), dropped
+# with the reason when the only way it had was rejected. Nothing reaches narrative_records without approved themes and
+# members of them. A member the owner rejected from theme A is not admitted through a proposal into theme B: the
+# record stays under A (owner 2026-10-30; acceptance phase 2a, M20261029-1).
 def record_waits(db, theme_refs, subjects):
     """-> (theme ids, open proposal ids the record still needs, reasons it can never be written, needs). A theme ref is
-    an active theme id or a theme proposal id; a subject is an approved member of an active theme, or one an open
-    member proposal or open theme proposal names. needs: one sorted list per unmet need, of the open proposals that
-    could meet it. Every need must be met; within a need one approval is enough (a member proposal of the subject, or
-    a theme proposal naming it, whose accept files the member proposal that then meets it)."""
-    themes, needs, missing = [], [], []
+    an active theme id or a theme proposal id. A subject must be an approved member of one of the record's own themes;
+    until it is, it waits for an open member proposal of it into one of them, or for an open theme proposal among the
+    record's refs that names it (whose accept files that member proposal). Proposals into other themes do not count.
+    needs: one sorted list per unmet need, of the open proposals that could meet it. Every need must be met; within a
+    need one approval is enough."""
+    themes, needs, missing, open_refs = [], [], [], {}
     for ref in theme_refs:
         if THEME_PROPOSAL_ID.match(ref):
-            p = _one(db, "SELECT status FROM theme_proposals WHERE proposal_id = ?", ref)
+            p = _one(db, "SELECT status, proposed_members_json FROM theme_proposals WHERE proposal_id = ?", ref)
             if p is None:
                 missing.append(f"沒有主題提案 {ref}")
             elif p["status"] == "proposed":
                 needs.append([ref])
+                open_refs[ref] = {m["symbol"] for m in json.loads(p["proposed_members_json"])}
             elif p["status"] == "rejected":
                 missing.append(f"主題提案 {ref} 已被略過")
             else:
@@ -991,40 +991,26 @@ def record_waits(db, theme_refs, subjects):
             themes.append(ref)
         else:
             missing.append(f"{ref} 不是有效主題")
-    members = {
-        r[0]
-        for r in db.execute(
-            "SELECT m.symbol FROM theme_members m JOIN themes t USING (theme_id) WHERE t.status = 'active'"
-        )
-    }
-    open_themes = [
-        (p["proposal_id"], {m["symbol"] for m in json.loads(p["proposed_members_json"])})
-        for p in db.execute("SELECT * FROM theme_proposals WHERE status = 'proposed'")
-    ]
-    for s in subjects:
-        if s in members:
+    own = sorted(set(themes))
+    for s in subjects if own or open_refs else ():  # no theme of its own left: the theme reasons say why
+        member_of = {r[0] for r in db.execute("SELECT theme_id FROM theme_members WHERE symbol = ?", (s,))}
+        if member_of & set(own):
             continue
-        cover = [
-            r[0]
-            for r in db.execute(
-                "SELECT proposal_id FROM member_proposals WHERE symbol = ? AND status = 'proposed'", (s,)
-            )
-        ] + [pid for pid, names in open_themes if s in names]
+        proposals = db.execute(
+            "SELECT proposal_id, theme_id, status FROM member_proposals WHERE symbol = ? ORDER BY proposal_id", (s,)
+        ).fetchall()
+        cover = [p["proposal_id"] for p in proposals if p["status"] == "proposed" and p["theme_id"] in own]
+        cover += [ref for ref, names in open_refs.items() if s in names]
         if cover:
             needs.append(sorted(set(cover)))
             continue
-        gone = [
-            r[0]
-            for r in db.execute(
-                "SELECT proposal_id FROM member_proposals WHERE symbol = ? AND status = 'rejected' ORDER BY proposal_id",
-                (s,),
-            )
-        ]
+        gone = [p["proposal_id"] for p in proposals if p["status"] == "rejected" and p["theme_id"] in own]
         missing.append(
-            f"{s} 不是核准成員" + (f"（成員提案 {'、'.join(gone)} 已被略過）" if gone else "，也沒有待決的提案")
+            f"{s} 不是 {'、'.join(own + sorted(open_refs))} 的核准成員"
+            + (f"（成員提案 {'、'.join(gone)} 已被略過）" if gone else "，也沒有待決的提案")
         )
     needs = [list(n) for n in sorted({tuple(n) for n in needs})]
-    return sorted(set(themes)), sorted({w for n in needs for w in n}), missing, needs
+    return own, sorted({w for n in needs for w in n}), missing, needs
 
 
 def waits_text(needs):

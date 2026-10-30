@@ -575,9 +575,19 @@ def test_revision_narrative_proposals_become_records_in_every_mode(env):
 
 
 def test_a_fact_on_non_official_evidence_is_no_record_and_a_pending_member_holds_one(env):
-    """§6.1: only official evidence makes an official record. A subject that only an open theme proposal names waits in
-    held_records and is written once the owner accepts the theme and the member."""
+    """§6.1: only official evidence makes an official record. A subject that is no member of the record's theme waits in
+    held_records for a member proposal into that theme and is written once the owner accepts it; a theme proposal
+    that names the subject for another theme does not count (acceptance phase 2a)."""
     path, db = snap_t.ledger(env["tmp"])
+    member = nl.add_member_proposal(
+        db,
+        theme_id="foundry-utilization",
+        symbol="NASDAQ:INTC",
+        role="competitor",
+        why="測試",
+        source_ref="material:20261019-k9#p1",
+        at="2026-10-19T00:00:00Z",
+    )["proposal_id"]
     db.close()
     n = tagged_narrative()
     assert env["run"](FakeJev([n])) == 0
@@ -586,6 +596,7 @@ def test_a_fact_on_non_official_evidence_is_no_record_and_a_pending_member_holds
     rev["research"]["narrative_proposals"] = [
         {**PROPOSALS[1], "record_claim": "聯電股價反應將待事件後確認"},
         {**PROPOSALS[0], "subject_symbols": ["NASDAQ:INTC"]},
+        {**PROPOSALS[0], "record_claim": "聯電第三季營收創高", "subject_symbols": ["NASDAQ:AMD"]},
     ]
     rev["research"]["theme_proposals"] = [
         {
@@ -594,17 +605,22 @@ def test_a_fact_on_non_official_evidence_is_no_record_and_a_pending_member_holds
             "kind": "demand_driver",
             "why": "測試",
             "claim_indices": [0],
-            "proposed_members": [{"symbol": "NASDAQ:INTC", "role": "competitor"}],
+            "proposed_members": [
+                {"symbol": "NASDAQ:INTC", "role": "competitor"},
+                {"symbol": "NASDAQ:AMD", "role": "customer"},
+            ],
         }
     ]
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
     res = narrative_check.apply(
         path, rev, rev["manifest_payload"], cfg, runner.Jev(JEV_KEY, transport=FakeJev([])), mode="off"
     )
-    unfit, waiting = res["narrative_proposals"]
+    unfit, waiting, other = res["narrative_proposals"]
     assert unfit["status"] == "unfit" and "不全是官方文件" in unfit["reason"]
     pid = res["theme_proposals"][0]["id"]
-    assert waiting["status"] == "held" and waiting["waits"] == [pid]
+    assert waiting["status"] == "held" and waiting["waits"] == [member]
+    assert other["status"] == "unfit"
+    assert other["reason"] == "NASDAQ:AMD 不是 foundry-utilization 的核准成員，也沒有待決的提案"
     rows, _, held = records(path)
     assert unfit["narrative_id"] not in rows and waiting["narrative_id"] not in rows
     assert [h["narrative_id"] for h in held] == [waiting["narrative_id"]]
@@ -619,14 +635,13 @@ def test_a_fact_on_non_official_evidence_is_no_record_and_a_pending_member_holds
             **kw,
         },
     )
-    assert decide(1, "theme-accept", pid, theme_id="foundry-pricing")[0] == "applied"
-    db = sqlite3.connect(path)
-    (member,) = db.execute("SELECT proposal_id FROM member_proposals WHERE symbol = 'NASDAQ:INTC'").fetchone()
-    db.close()
+    result, message = decide(1, "theme-accept", pid, theme_id="foundry-pricing")
+    assert result == "applied" and waiting["narrative_id"] not in message
     result, message = decide(2, "member-accept", member)
     assert result == "applied" and f"敘事 {waiting['narrative_id']} 已寫入" in message
     rows, _, _ = records(path)
     assert rows[waiting["narrative_id"]]["source_tier"] == "official"
+    assert rows[waiting["narrative_id"]]["theme_ids_json"] == '["foundry-utilization"]'
 
 
 def test_keyword_hits_on_untagged_claims_are_listed_never_linked(env):

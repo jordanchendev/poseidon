@@ -184,7 +184,7 @@ def test_member_reject_drops_held_records_with_the_reason(env):
     assert message.startswith("成員提案 M20261021-1 已略過：NASDAQ:ASML 不加入 cleanroom-capacity，之後不再提出")
     assert rows(env, "SELECT * FROM narrative_records") == []
     held = rows(env, "SELECT * FROM held_records")
-    reason = "NASDAQ:ASML 不是核准成員（成員提案 M20261021-1 已被略過）"
+    reason = "NASDAQ:ASML 不是 cleanroom-capacity 的核准成員（成員提案 M20261021-1 已被略過）"
     assert {(h["status"], h["reason"], h["decided_at"]) for h in held} == {("dropped", reason, DECIDED_UTC)}
     assert all(f"敘事 {h['narrative_id']} 不收：{reason}" in message for h in held)
     # accepting it later is refused; the member is never proposed again
@@ -208,8 +208,9 @@ def test_member_reject_drops_held_records_with_the_reason(env):
 
 # ------------------------------------------------------------------------------------------------ material themes
 def test_theme_accept_releases_records_held_on_it(env):
-    """A record tagged with a theme proposal waits for it; accepting it under the owner's id writes the record with that
-    id. A subject that only the proposal names then waits for its member proposal, filed by the accept."""
+    """A record tagged with a theme proposal waits for it; accepting it under the owner's id files a member proposal per
+    proposed member, and each record then waits for its subject's: NASDAQ:ASML, though a member of cleanroom-capacity,
+    joins photomask-12in only by its own approval. Accepting it writes the record under the owner's id."""
     seed(ledger(env), approve_asml=True)
     done = take_in(env, out([MASK_ASML, MASK_TSMC], [MASK]))
     assert done["theme_proposals"] == ["T20261021-1"] and done["held"] == 2
@@ -238,12 +239,7 @@ def test_theme_accept_releases_records_held_on_it(env):
     assert json.loads(theme["keywords_json"]) == MASK["keywords"]  # the proposal's suggested keywords
     asml_nid = held[MASK_ASML["claim"]]["narrative_id"]
     tsmc_nid = held[MASK_TSMC["claim"]]["narrative_id"]
-    (written,) = rows(env, "SELECT * FROM narrative_records")
-    assert (written["narrative_id"], written["theme_ids_json"], written["first_seen_at"]) == (
-        asml_nid,
-        '["photomask-12in"]',
-        ti.RECEIVED_UTC,
-    )
+    assert rows(env, "SELECT * FROM narrative_records") == []
     # the proposed members are not approved with the theme: each is a member proposal of its own
     mps = {m["symbol"]: m for m in rows(env, "SELECT * FROM member_proposals")}
     assert {s: (m["theme_id"], m["role"], m["status"]) for s, m in mps.items()} == {
@@ -251,9 +247,17 @@ def test_theme_accept_releases_records_held_on_it(env):
         "2330": ("photomask-12in", "customer", "proposed"),
     }
     assert rows(env, "SELECT * FROM theme_members WHERE theme_id = 'photomask-12in'") == []
-    m2330 = mps["2330"]["proposal_id"]
+    m2330, masml = mps["2330"]["proposal_id"], mps["NASDAQ:ASML"]["proposal_id"]
     assert f"回覆「接受成員 {m2330}」或「略過成員 {m2330}」" in message
-    assert f"敘事 {asml_nid} 已寫入" in message and f"敘事 {tsmc_nid} 仍等待 {m2330}" in message
+    assert f"敘事 {asml_nid} 仍等待 {masml}" in message and f"敘事 {tsmc_nid} 仍等待 {m2330}" in message
+    acks = decide(env, decision(3, "member-accept", masml, f"接受成員 {masml}"))
+    assert acks["20261022-d3"][0] == "applied" and f"敘事 {asml_nid} 已寫入" in acks["20261022-d3"][1]
+    (written,) = rows(env, "SELECT * FROM narrative_records")
+    assert (written["narrative_id"], written["theme_ids_json"], written["first_seen_at"]) == (
+        asml_nid,
+        '["photomask-12in"]',
+        ti.RECEIVED_UTC,
+    )
     acks = decide(env, decision(2, "member-accept", m2330, f"接受成員 {m2330}"))
     assert acks["20261022-d2"][0] == "applied" and f"敘事 {tsmc_nid} 已寫入" in acks["20261022-d2"][1]
     tsmc = rows(env, "SELECT * FROM narrative_records WHERE narrative_id = ?", tsmc_nid)[0]
@@ -271,15 +275,71 @@ def test_waits_text_says_or_within_a_need_and_between_needs():
 
 
 def test_a_record_any_of_whose_proposals_releases_it_says_or(env):
-    """N6's subject NASDAQ:ASML is named by a member proposal and by a theme proposal: one need, two ways to meet it.
-    Accepting the member proposal alone writes the record."""
+    """A record tagged with an active theme and a theme proposal: its subject NASDAQ:ASML is named by a member proposal
+    into the one and by the other: one need, two ways to meet it. Accepting the member proposal alone writes it."""
     seed(ledger(env))
-    n6 = ti.EXPECTED["2"][1]
+    n6 = {**ti.EXPECTED["2"][1], "theme_ids": ["cleanroom-capacity", "mask-12-inch"]}
     done = take_in(env, out([n6], [MASK], [ASML_MEMBER]))
     (h,) = rows(env, "SELECT * FROM held_records")
     assert json.loads(h["waits_json"]) == ["M20261021-1", "T20261021-1"]
-    assert f"- {h['narrative_id']} {n6['claim']}（等 M20261021-1 或 T20261021-1）" in done["text"]
-    acks = decide(env, decision(1, "member-accept", "M20261021-1", "接受成員 M20261021-1"))
+    assert f"- {h['narrative_id']} {n6['claim']}（等 M20261021-1 或 T20261021-1，以及 T20261021-1）" in done["text"]
+    acks = decide(
+        env,
+        decision(1, "member-accept", "M20261021-1", "接受成員 M20261021-1"),
+        decision(2, "theme-accept", "T20261021-1", "接受主題 T20261021-1 photomask-12in", theme_id="photomask-12in"),
+    )
+    assert f"敘事 {h['narrative_id']} 已寫入" in acks["20261022-d2"][1]
+    (written,) = rows(env, "SELECT * FROM narrative_records")
+    assert written["theme_ids_json"] == '["cleanroom-capacity", "photomask-12in"]'
+
+
+def test_a_member_rejected_from_its_theme_is_not_admitted_through_another_theme(env):
+    """Acceptance phase 2a: the owner rejected NASDAQ:ASML into cleanroom-capacity (M20261029-1), yet the ASML records
+    of that theme re-waited on a theme proposal that named ASML for another theme, and accepting that would have
+    written them under cleanroom-capacity. Only proposals that make the subject a member of the record's own theme
+    count, so the reject drops them; the other theme's later approvals do not bring them back."""
+    seed(ledger(env))
+    n6 = ti.EXPECTED["2"][1]  # cleanroom-capacity, NASDAQ:ASML
+    done = take_in(env, out([n6], [MASK], [ASML_MEMBER]))
+    (h,) = rows(env, "SELECT * FROM held_records")
+    assert json.loads(h["waits_json"]) == ["M20261021-1"]
+    assert f"- {h['narrative_id']} {n6['claim']}（等 M20261021-1）" in done["text"]
+    acks = decide(env, decision(1, "member-reject", "M20261021-1", "略過成員 M20261021-1"))
+    reason = "NASDAQ:ASML 不是 cleanroom-capacity 的核准成員（成員提案 M20261021-1 已被略過）"
+    assert f"敘事 {h['narrative_id']} 不收：{reason}" in acks["20261022-d1"][1]
+    (h,) = rows(env, "SELECT * FROM held_records")
+    assert (h["status"], h["reason"]) == ("dropped", reason)
+    acks = decide(
+        env,
+        decision(2, "theme-accept", "T20261021-1", "接受主題 T20261021-1 photomask-12in", theme_id="photomask-12in"),
+    )
+    masml = rows(
+        env, "SELECT proposal_id FROM member_proposals WHERE theme_id = 'photomask-12in' AND symbol = ?", "NASDAQ:ASML"
+    )
+    acks.update(decide(env, decision(3, "member-accept", masml[0]["proposal_id"], "接受成員")))
+    assert acks["20261022-d3"][0] == "applied"
+    assert all(h["narrative_id"] not in acks[d][1] for d in ("20261022-d2", "20261022-d3"))
+    assert rows(env, "SELECT * FROM narrative_records") == []
+    assert rows(env, "SELECT status FROM held_records") == [{"status": "dropped"}]
+
+
+def test_a_subject_of_another_theme_waits_for_its_own_member_proposal(env):
+    """New material: a subject that is an approved member of another theme only is not a member of the record's theme;
+    the gate asks for a member proposal into the record's theme, and the record waits for it."""
+    seed(ledger(env), approve_asml=True)  # NASDAQ:ASML is a member of cleanroom-capacity only
+    m = intake.parse_row(ti.material_row("2"))
+    other = {**ti.EXPECTED["2"][1], "theme_ids": ["memory-supply-tightness"]}
+    _dup, member_dup = intake._duplicate_fn(ledger(env))
+    reasons, _plan = intake.gates(
+        out([other]), m, ti.snapshot_payload(ledger(env)), lambda s, t: (None, None), member_dup
+    )
+    assert len(reasons) == 1 and reasons[0].startswith("[subject] records[0] subject_symbols ['NASDAQ:ASML']")
+    into = {**ASML_MEMBER, "theme_id": "memory-supply-tightness"}
+    take_in(env, out([other], members=[into]))
+    (h,) = rows(env, "SELECT * FROM held_records")
+    (mp,) = rows(env, "SELECT * FROM member_proposals")
+    assert json.loads(h["waits_json"]) == [mp["proposal_id"]] and mp["theme_id"] == "memory-supply-tightness"
+    acks = decide(env, decision(1, "member-accept", mp["proposal_id"], "接受成員"))
     assert f"敘事 {h['narrative_id']} 已寫入" in acks["20261022-d1"][1]
 
 

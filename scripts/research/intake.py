@@ -14,8 +14,8 @@ narrative records and theme proposals, never into a revision (research_revisions
      verify_with[].
   4. gates (one repair round): quote verbatim in the material, lint_atomic, check_numbers (record against its quote,
      strict), a forecast's resolves_on names a period of the record, theme ids from the closed list or the suggested
-     id of a theme proposal filed here, subjects that are approved members or members a proposal filed here names, at
-     most MAX_RECORDS records.
+     id of a theme proposal filed here, each subject an approved member of one of the record's themes or a member a
+     proposal filed here names into one of them, at most MAX_RECORDS records.
   5. faithful-paraphrase check: judge_record (period precheck, then the JEV vote) of each record against the material's
      heading line and the line(s) its quote sits in; anything but supports drops the record and lists it in the notice.
   6. writes: theme_proposals and member_proposals (duplicates of an approved theme or member or of an open proposal are
@@ -279,9 +279,10 @@ Rules (a deterministic validator enforces them; violations are refused):
    that names a period, the last day of it (2028 -> 2028-12-31); null when it names none (the program sets a default);
    always null for a state.
 6. theme_ids: chosen ONLY from the closed theme list below (never invent an id), or, when no listed theme fits, the
-   suggested_id of one of your theme_proposals. subject_symbols: the companies the record is about, chosen from the
-   listed theme members, the proposed_members of your theme_proposals, or the symbol of one of your member_proposals.
-   A record that relies on a proposal waits until the owner approves it. A statement no theme fits is not a record.
+   suggested_id of one of your theme_proposals. subject_symbols: the companies the record is about, each a member of
+   one of the record's theme_ids: a listed member of that theme, a proposed_member of that theme proposal, or the
+   symbol of one of your member_proposals into that theme. A record that relies on a proposal waits until the owner
+   approves it. A statement no theme fits is not a record.
 7. Leave out the author's remarks on credibility or mood ("先參考就好"), general market or investing commentary, and
    anything that is not about a company or a listed theme.
 8. theme_proposals (at most {max_proposals}): only for a bottleneck, tech transition, demand driver or policy that no
@@ -357,13 +358,15 @@ def gates(out, m, payload, duplicate, member_duplicate=_no_member_duplicate):
     proposals carry duplicate_of (None, 'theme:<id>' / 'member:<theme>', 'proposal:<id>' or 'rejected:<id>'), each
     record its locator and paragraph. duplicate(suggested_id, title) -> (duplicate_of, members of the open proposal it
     repeats or None); member_duplicate(theme_id, symbol) -> duplicate_of. A record may name a theme proposal filed here
-    by its suggested_id, and a subject that a proposal filed here (or the open one it repeats) names; it then waits for
-    the owner (held_records). A proposal the owner rejected admits nothing."""
+    by its suggested_id, and a subject that a proposal filed here (or the open one it repeats) names into one of the
+    record's themes; it then waits for the owner (held_records). A subject must belong to one of the record's own themes
+    (nl.record_waits): a member of another theme does not qualify. A proposal the owner rejected admits nothing."""
     text = m["text"]
     snap = narrative_check.snapshot_of(payload)
     themes = snap["payload"]["themes"] if snap else []
     closed = {t["theme_id"] for t in themes}
-    approved = {x["symbol"] for t in themes for x in t["members"]}
+    # theme id or proposal suggested_id -> the subjects a record tagged with it may name
+    allowed = {t["theme_id"]: {x["symbol"] for x in t["members"]} for t in themes}
     reasons = []
     for key in ("records", "theme_proposals", "member_proposals", "verify_with"):
         v = out.get(key, [])
@@ -382,7 +385,7 @@ def gates(out, m, payload, duplicate, member_duplicate=_no_member_duplicate):
     if not _strings(verify) or len(verify) > MAX_VERIFY_WITH or any(len(x) > 200 for x in verify):
         reasons.append(f"[schema] verify_with must be at most {MAX_VERIFY_WITH} strings of at most 200 characters")
     lines = lines_of(text)
-    plan_props, extra, refs = [], set(), set()
+    plan_props, refs = [], set()
     for k, p in enumerate(props):
         where = f"[proposal] theme_proposals[{k}]"
         if not all(isinstance(p.get(f), str) and p[f].strip() for f in ("suggested_id", "title", "why", "quote")):
@@ -406,10 +409,13 @@ def gates(out, m, payload, duplicate, member_duplicate=_no_member_duplicate):
             reasons.append(f"{where} proposed members {bad or members} need a valid symbol and role")
             continue
         dup, open_members = duplicate(p["suggested_id"].strip(), p["title"].strip())
-        if dup is None:
-            extra |= {x["symbol"] for x in members}
+        sid = p["suggested_id"].strip()
+        if (dup or "").startswith("theme:"):  # a record tagged sid is written under that theme (write: refs)
+            allowed[sid] = allowed.setdefault(dup.split(":", 1)[1], set())
+        elif dup is None:
+            allowed.setdefault(sid, set()).update(x["symbol"] for x in members)
         elif open_members is not None:
-            extra |= {x["symbol"] for x in open_members}
+            allowed.setdefault(sid, set()).update(x["symbol"] for x in open_members)
         if not (dup or "").startswith("rejected:"):
             refs.add(p["suggested_id"].strip())
         plan_props.append(
@@ -442,7 +448,7 @@ def gates(out, m, payload, duplicate, member_duplicate=_no_member_duplicate):
             continue
         dup = member_duplicate(p["theme_id"], p["symbol"])
         if not (dup or "").startswith("rejected:"):
-            extra.add(p["symbol"])
+            allowed.setdefault(p["theme_id"], set()).add(p["symbol"])
         plan_members.append(
             {
                 "theme_id": p["theme_id"],
@@ -453,7 +459,7 @@ def gates(out, m, payload, duplicate, member_duplicate=_no_member_duplicate):
                 "duplicate_of": dup,
             }
         )
-    allowed, taggable = approved | extra, closed | refs
+    taggable = closed | refs
     plan_records = []
     for n, r in enumerate(records):
         where = f"records[{n}]"
@@ -493,12 +499,14 @@ def gates(out, m, payload, duplicate, member_duplicate=_no_member_duplicate):
                 f"({sorted(closed) or 'no theme approved yet'}) or the suggested_id of a theme proposal filed here; "
                 "a statement no theme fits is not a record"
             )
-        if not (_strings(subjects) and subjects) or set(subjects) - allowed:
-            outside = sorted(set(subjects or []) - allowed) if _strings(subjects) else subjects
+        mine = set().union(*(allowed.get(t, set()) for t in tags)) if _strings(tags) else set()
+        if not (_strings(subjects) and subjects) or set(subjects) - mine:
+            outside = sorted(set(subjects or []) - mine) if _strings(subjects) else subjects
             problems.append(
-                f"[subject] {where} subject_symbols {outside} must be approved members of a listed theme or members "
-                "a theme or member proposal filed here names (a proposal that repeats an existing theme files no "
-                "member; one the owner rejected admits none)"
+                f"[subject] {where} subject_symbols {outside} must each be an approved member of one of the record's "
+                "theme_ids, or a member that a theme or member proposal filed here names into one of them (a member "
+                "of another theme does not count; a proposal that repeats an existing theme files no member; one the "
+                "owner rejected admits none)"
             )
         reasons += problems
         if not problems:

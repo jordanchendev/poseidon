@@ -388,7 +388,8 @@ written|held|unfit, waits, reason}] is rendered as 「新增敘事」 in the don
   a period gets `resolves_on` = `first_seen_at` + 365 days (`resolves_on_default = 1`). `sweep-stale --as-of T` moves
   only `unverified` records past `review_by` to `stale`.
 - `record-add` refuses a quote that is not verbatim in `--source-file`, a non-atomic claim (`lint_atomic`) and a claim
-  number missing from the quote (`check_numbers`), and needs subjects that are approved members.
+  number missing from the quote (`check_numbers`), and needs each subject to be an approved member of one of the
+  record's themes.
 - `export --as-of T` is a point-in-time view (events with `at <= T`), sorted, quotes clipped to 120 characters (D7),
   written tmp + rename with `--out`. `narrative-export-v2` (§9 step 10) adds, per `claim_theme_links` row, the
   revision's `scope_key`, `claim_text` and `claim_quote` (clipped; from the completed `research_revisions` row in the
@@ -429,9 +430,10 @@ bridge's `material-pending` (`--materials-json` in host mode):
   (`claim_precheck._CAUSAL`: 帶動, 由於, driven by …), because a record is checked later one statement at a time;
   `check_numbers` of the record against its quote; a forecast's `resolves_on` names a year of the record (else null:
   the ledger default); theme ids from the closed list, or the `suggested_id` of a theme proposal filed in the same
-  output; subjects that are approved members, or members a theme or member proposal filed in the same output names (a
-  proposal that repeats an active theme files no member of its own; one that repeats an open proposal admits that
-  proposal's members; one the owner rejected admits nothing); member proposals name a listed theme; at most 10
+  output; each subject an approved member of one of the record's themes, or a member a theme or member proposal filed
+  in the same output names into one of them (a member of another theme does not count; a proposal that repeats an
+  active theme files no member of its own; one that repeats an open proposal admits that proposal's members; one the
+  owner rejected admits nothing); member proposals name a listed theme; at most 10
   records, 3 theme proposals, 3 member proposals, 5 `verify_with`. Refused twice -> `material-needs-review`.
 - Faithful-paraphrase check: `narrative_check.judge_record` (period precheck, then the 3-vote JEV majority) of each
   record against the material's heading line (its first non-empty line) and the line(s) its quote sits in: a post's
@@ -497,10 +499,12 @@ the owner typed.
   adds `theme_proposals` [{id, line}] and the bridge appends each line to the notice:
   「主題提案 T…：<title>（<kind>），依據 claims[i]；建議 id <suggested>；提案成員 …；回覆「接受主題 T… <id>」或「略過主題 T…」」.
   Intake files theme and member proposals as above and lists them in the material-done notice.
-- Held records. An intake record tagged with a theme proposal, or whose subject is not yet an approved member, is
-  kept in `held_records` (the `add_record` arguments, the quote's line(s), and the open proposal ids it waits for),
-  never in `narrative_records`. A subject is covered by an open member proposal of the symbol or an open theme proposal
-  that names it. Every need must be met and any one proposal meets its need, so notices write the waits as
+- Held records. An intake record tagged with a theme proposal, or whose subject is not yet an approved member of one
+  of its themes, is kept in `held_records` (the `add_record` arguments, the quote's line(s), and the open proposal ids
+  it waits for), never in `narrative_records`. A subject is covered by an open member proposal of the symbol into one
+  of the record's themes, or by an open theme proposal the record is tagged with that names it; a proposal into
+  another theme does not count, so a member the owner rejected from the record's theme drops the record (「NASDAQ:ASML
+  不是 cleanroom-capacity 的核准成員（成員提案 M… 已被略過）」) even when another theme proposes the symbol. Every need must be met and any one proposal meets its need, so notices write the waits as
   「M… 或 T…」 within a need and 「，以及」 between needs (`nl.waits_text`).
 - Decisions. Sisyphus runs `research-agenda.sh theme-accept <T-id> <theme-id>`, `theme-reject <T-id>`,
   `member-accept <M-id>` or `member-reject <M-id>` with the owner's sentence on STDIN; macminim4 appends a pending
