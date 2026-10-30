@@ -311,7 +311,7 @@ def test_happy_path_completes_and_reports_done(env):
     # draft request: JSON mode, reasoning flag, generous max_tokens, model from config
     req = t.chat_calls[0]
     assert req["response_format"] == {"type": "json_object"} and req["reasoning"] == {"enabled": True}
-    assert req["max_tokens"] == 16000 and req["model"] == draft.DEFAULT_MODEL
+    assert req["max_tokens"] == 32000 and req["model"] == draft.DEFAULT_MODEL
     assert "Revenue was NT$68.73 billion" in req["messages"][1]["content"]
     # bridge + ledger
     done = bridge_calls(env, "done")

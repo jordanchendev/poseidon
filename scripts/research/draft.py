@@ -37,7 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 DRAFT_KEY_VAR = "RESEARCH_DRAFT_OPENROUTER_KEY"
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash-1017"
-DEFAULT_MAX_TOKENS = 16000
+# A revision showing 15 snapshot records ran out at 16000 (12,801 reasoning tokens; acceptance 2026-10-30).
+DEFAULT_MAX_TOKENS = 32000
 STANCES = ("watch", "neutral", "hold", "long", "short")
 CATALYST_TYPES = ("monthly_revenue", "earnings_call", "agm", "investor_day", "product_event", "regulatory", "other")
 OHLCV_TAIL = 30

@@ -511,7 +511,7 @@ def assemble(
     notes += kpi_notes
     scope_key, symbol = scope_for(tw, theme and theme["theme_id"])
     base = thalassa_base_url or thalassa_env()[0]
-    draft = {"model": DEFAULT_DRAFT_MODEL, "reasoning": True, "max_tokens": 16000, **(draft or {})}
+    draft = {"model": DEFAULT_DRAFT_MODEL, "reasoning": True, "max_tokens": 32000, **(draft or {})}  # as draft.py
     cfg = {
         "scope_key": scope_key,
         **({"symbol": symbol} if symbol else {}),

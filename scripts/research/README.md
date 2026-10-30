@@ -221,7 +221,7 @@ pending row ─ assemble.py ─ research_theme.py (freeze + prepare) ─ draft.p
   `> [!warning] 事前推論：事件（<date>）尚未發生…` (event date before as_of: `證據中沒有事件（<date>）的結果…`);
   project_vault.py writes `event_status` to the frontmatter (machine field, like next_review_at).
 - **draft.py**: OpenRouter chat completions, model from config (default `deepseek/deepseek-v4.1-flash-1017`),
-  `response_format: json_object`, `reasoning.enabled` (default on; `--no-reasoning`), `max_tokens` 16000.
+  `response_format: json_object`, `reasoning.enabled` (default on; `--no-reasoning`), `max_tokens` 32000.
   `content=None` or `finish_reason=length` is a draft failure. Records configured model, returned model, prompt sha256,
   finish_reason, usage and `usage.cost`. Narrative schema = the research_theme schema (`tl_dr`, `thesis`, `stance`
   watch|neutral|hold|long|short, `change_summary`, `next_review_at`, optional `catalysts`, `risks`,
