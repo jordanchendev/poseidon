@@ -4,8 +4,8 @@
 - Downloads the URL (SEC EDGAR gets the required identifying User-Agent; others a browser UA), refuses Cloudflare
   challenge pages, records sha256 of the raw file and of the text conversion (HTML -> text via stdlib parser,
   PDF -> text via `pdftotext -layout`).
-- Proposes excerpts: paragraphs (blank-line separated, page footers removed as whole lines) that match
-  template anchors for the document type; each proposal is verified to be a verbatim substring of the text
+- Proposes excerpts: paragraphs (blank-line separated, page footers removed as whole lines unless a paragraph runs
+  on across one) that match template anchors for the document type; each proposal is verified to be a verbatim substring of the text
   file under the same canonicalisation research_theme.py uses, so what you keep will freeze.
 - Prints JSON: {"document": {...}, "proposed_excerpts": [...]}; copy `document` into the config and prune the
   excerpt list by hand (or pass --keep all).
@@ -25,6 +25,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -49,6 +50,8 @@ TEMPLATES = {
     "generic": [r"."],
 }
 FOOTER = re.compile(r"^\s*(©|\(c\)|Page \d+|\d+\s*/\s*\d+\s*$)", re.I)
+# A paragraph whose last line ends otherwise runs on across a page footer (acceptance 2026-10-30, N18).
+SENTENCE_END = (".", "。", "!", "?", "！", "？", ":", "：", '"', "'", "”", "’", "」", "』", ")", "）", "]", "】")
 
 
 class _Text(HTMLParser):
@@ -110,13 +113,49 @@ def to_text(raw_path, ctype):
     return txt
 
 
+def running_header(lines):
+    """Lines that head two or more pages: the text at a form feed (pdftotext starts each page with one) up to the
+    first blank line."""
+    seen, state = Counter(), None  # "feed": a form feed, no text yet; "text": inside the header
+    for line in lines:
+        text = line.replace("\f", "").strip()
+        if "\f" in line:
+            state = "feed"
+        if state and text:
+            seen[text] += 1
+            state = "text"
+        elif state == "text":
+            state = None
+    return {t for t, k in seen.items() if k >= 2}
+
+
 def paragraphs(text_path):
+    """(first line, last line, text) per paragraph. A paragraph cut by a page footer before it ends a sentence runs on
+    across the footer and the next page's running header, which stay in its text so that it is still a verbatim span
+    of the file; the blank lines between them do not end it."""
     lines = Path(text_path).read_text(encoding="utf-8", errors="replace").split("\n")
+    header = running_header(lines)
     paras, cur, start = [], [], None
+    across = False  # inside the page break of a paragraph that runs on
     bullet = re.compile(r"^\s*([•\-\*▪·]|\(?\d{1,2}[.)])\s*\S")
     for n, line in enumerate(lines, 1):
         if "\f" in line:
             line = line.replace("\f", "")
+        if across:
+            if not line.strip():
+                continue
+            if FOOTER.match(line) or line.strip() in header:
+                cur.append(line)
+                continue
+            across = False  # the paragraph goes on with this line
+        elif cur and not cur[-1].rstrip().endswith(SENTENCE_END) and FOOTER.match(line):
+            across = True
+            cur.append(line)
+            continue
+        elif cur and not line.strip() and not cur[-1].rstrip().endswith(SENTENCE_END):
+            following = next((x for x in lines[n:] if x.strip()), "")
+            if FOOTER.match(following):
+                continue  # the blank lines before a footer that cuts the paragraph
         if FOOTER.match(line) or not line.strip() or re.fullmatch(r"[ |]+", line):
             # a blank line does not end a paragraph whose last line ends with ':' (lead-in before bullets) or is a bullet
             if cur and (cur[-1].rstrip().endswith((":", "：", ",", "，", ";", "；")) or bullet.match(cur[-1])):
