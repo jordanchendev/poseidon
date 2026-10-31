@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from poseidon.pipeline.refdata import daily, taifex, twse
+from poseidon.pipeline.refdata import daily, taifex, taifex_options, twse
 from poseidon.pipeline.refdata import datasets as D
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.refdata.taifex import MarketSchedule, official_last_trading_day
@@ -161,13 +161,19 @@ def test_daily_job_is_idempotent_and_reports_freshness(tmp_path, small_world):
     assert [c for c in calls if c.startswith("holidays_")] == ["holidays_2026", "holidays_2027"]  # current + next
 
 
-def test_freshness_checks_the_last_txo_day_session_when_the_store_has_it(tmp_path, small_world):
+def test_freshness_checks_the_last_txo_day_session_when_its_updater_runs(tmp_path, small_world):
     store = RefdataStore(tmp_path)
     now = local(2026, 10, 24, 17, 0)  # 10-23 was closed (typhoon), so 10-22 is the latest trading day
     assert (
         OPTION_QUOTES
         not in daily.run_daily(store, now=now, fetchers=small_world, code_version="t")["freshness"]["datasets"]
     )
+    txo = [taifex_options.DAILY_UPDATER]
+    assert daily.freshness(store, now, txo)["datasets"][OPTION_QUOTES] == {
+        "last": None,
+        "lag_trading_days": None,
+        "fresh": False,
+    }  # not built yet: stale, not left out
 
     def txo_through(last: str) -> None:
         days = [day for day in pd.to_datetime(["2026-10-20", "2026-10-21", "2026-10-22"]) if day <= pd.Timestamp(last)]
@@ -185,11 +191,11 @@ def test_freshness_checks_the_last_txo_day_session_when_the_store_has_it(tmp_pat
         )
 
     txo_through("2026-10-21")  # the 10-22 night session (dated 10-27) is not the 10-22 day session
-    late = daily.freshness(store, now)
+    late = daily.freshness(store, now, txo)
     assert late["datasets"][OPTION_QUOTES] == {"last": "2026-10-21", "lag_trading_days": 1, "fresh": False}
     assert OPTION_QUOTES in late["stale"]
     txo_through("2026-10-22")
-    current = daily.freshness(store, now)["datasets"][OPTION_QUOTES]
+    current = daily.freshness(store, now, txo)["datasets"][OPTION_QUOTES]
     assert current == {"last": "2026-10-22", "lag_trading_days": 0, "fresh": True}
 
 
@@ -209,16 +215,20 @@ def test_a_blocked_source_stops_the_job_without_raising(tmp_path, small_world):
     assert result["errors"][0]["kind"] == "blocked" and result["freshness"]["status"] == "missing"
 
 
-def test_extra_updaters_run_and_their_failure_is_contained(tmp_path, small_world, monkeypatch):
+def test_extra_updaters_run_and_their_failure_is_contained(tmp_path, small_world):
     seen = []
 
     def txo(store, *, today, code_version):
         seen.append(today)
         raise RuntimeError("txo source down")
 
-    monkeypatch.setitem(daily.EXTRA_UPDATERS, "txo", txo)
+    updater = D.DailyUpdater("txo", txo, lambda _store, _since: {})
     result = daily.run_daily(
-        RefdataStore(tmp_path), now=local(2026, 10, 27, 17, 0), fetchers=small_world, code_version="t"
+        RefdataStore(tmp_path),
+        now=local(2026, 10, 27, 17, 0),
+        fetchers=small_world,
+        code_version="t",
+        updaters=[updater],
     )
     assert seen == [date(2026, 10, 27)]
     assert {"group": "txo", "kind": "RuntimeError", "error": "txo source down"} in result["errors"]

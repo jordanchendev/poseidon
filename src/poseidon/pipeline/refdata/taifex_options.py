@@ -44,7 +44,7 @@ Storage: both datasets go through :class:`refdata.store.RefdataStore`
 ``refresh_months``, then rebuilds the months a full build would change (expiry
 resolution reads the whole trading calendar; see :func:`update_daily`) and the
 store rewrites only what changed.
-:func:`daily_update` is the ``refdata.daily.EXTRA_UPDATERS`` hook: the same
+:func:`daily_update` is the daily job's update (``DAILY_UPDATER``): the same
 update, on a store that already holds the history (the one-time backfill is
 this module's CLI).
 
@@ -69,6 +69,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from poseidon.pipeline.refdata.datasets import DailyUpdater
 from poseidon.pipeline.refdata.fetch import TAIFEX_MIN_INTERVAL, PoliteFetcher
 from poseidon.pipeline.refdata.store import DatasetMissingError, RefdataStore, SourceRecord
 
@@ -698,7 +699,7 @@ def update(
 
 
 def daily_update(store: RefdataStore, *, today: date, code_version: str) -> list[UpdateReport]:
-    """The ``refdata.daily.EXTRA_UPDATERS`` hook (09:00Z): the refresh window, missing months and the settlement table.
+    """The daily job's update (09:00Z): the refresh window, missing months and the settlement table.
 
     Built from nothing it would fetch every month since 2001 (about 600 requests, 25 minutes) inside the
     daily job, so a store without the dataset is an error naming the one-time backfill instead.
@@ -710,6 +711,18 @@ def daily_update(store: RefdataStore, *, today: date, code_version: str) -> list
             "(python -m poseidon.pipeline.refdata.taifex_options --code-version <sha>)"
         )
     return update(store, today=today, code_version=code_version)
+
+
+def last_days(store: RefdataStore, since: pd.Timestamp) -> dict[str, pd.Timestamp | None]:
+    """The daily job's freshness rule: the last TXO day session (a hedged run's paper waits for that day)."""
+
+    if not store.exists(DAILY_DATASET):
+        return {DAILY_DATASET: None}
+    frame = store.read(DAILY_DATASET, start=since, rows=lambda rows: rows.loc[rows["session"] == "day", ["trade_date"]])
+    return {DAILY_DATASET: pd.Timestamp(frame["trade_date"].max()) if len(frame) else None}
+
+
+DAILY_UPDATER = DailyUpdater(DAILY_DATASET, daily_update, last_days)
 
 
 def main(argv: Sequence[str] | None = None) -> None:

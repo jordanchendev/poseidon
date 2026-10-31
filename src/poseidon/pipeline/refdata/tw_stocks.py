@@ -13,7 +13,7 @@ official schedule (``twse_market_calendar``). A day both say is closed is droppe
 
 ``build`` fetches every symbol's full history (one GET per symbol, Thalassa is on the LAN) and
 commits month partitions; unchanged months are left as they are, so the daily job (``update``,
-registered in ``refdata.daily.EXTRA_UPDATERS`` by the runner task) is idempotent. Build by hand:
+``DAILY_UPDATER``, which the runner task passes to ``refdata.daily.run_daily``) is idempotent. Build by hand:
 ``python -m poseidon.pipeline.refdata.tw_stocks --code-version <sha>`` with
 ``POSEIDON_THALASSA_BASE_URL`` / ``POSEIDON_THALASSA_API_KEY`` in the environment.
 """
@@ -28,7 +28,7 @@ from datetime import date
 
 import pandas as pd
 
-from poseidon.pipeline.refdata.datasets import MARKET_CALENDAR, UpdateReport
+from poseidon.pipeline.refdata.datasets import MARKET_CALENDAR, DailyUpdater, UpdateReport, UpdaterUnconfigured
 from poseidon.pipeline.refdata.fetch import PoliteFetcher
 from poseidon.pipeline.refdata.store import CommitResult, RefdataStore, SourceRecord
 from poseidon.pipeline.refdata.taifex import MarketSchedule
@@ -147,13 +147,12 @@ def build(
 
 
 def update(store: RefdataStore, *, today: date, code_version: str) -> list[UpdateReport]:
-    """The ``refdata.daily.EXTRA_UPDATERS`` hook: rebuild from Thalassa when the runner has its address."""
+    """The daily job's update: rebuild from Thalassa; a runner without its address is an error."""
 
     from poseidon.core.config import settings
 
     if not settings.thalassa_base_url or not settings.thalassa_api_key:
-        logger.info("%s: POSEIDON_THALASSA_BASE_URL / API_KEY not set; skipped", DATASET)
-        return []
+        raise UpdaterUnconfigured("POSEIDON_THALASSA_BASE_URL / POSEIDON_THALASSA_API_KEY not set; not updated")
     result = build(
         store, code_version=code_version, thalassa_url=settings.thalassa_base_url, api_key=settings.thalassa_api_key
     )
@@ -163,6 +162,18 @@ def update(store: RefdataStore, *, today: date, code_version: str) -> list[Updat
         DATASET, result.changed, rows, manifest["coverage"], manifest["content_sha256"], 0, tuple(result.written)
     )
     return [report]
+
+
+def last_days(store: RefdataStore, since: pd.Timestamp) -> dict[str, pd.Timestamp | None]:
+    """The daily job's freshness rule: the last day the feed has a bar for (any symbol)."""
+
+    if not store.exists(DATASET):
+        return {DATASET: None}
+    frame = store.read(DATASET, start=since)
+    return {DATASET: pd.Timestamp(frame["trade_date"].max()) if len(frame) else None}
+
+
+DAILY_UPDATER = DailyUpdater(DATASET, update, last_days)
 
 
 # --------------------------------------------------------------------------- reads

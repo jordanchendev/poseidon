@@ -12,7 +12,7 @@ import pytest
 from pytest import approx
 
 from poseidon.pipeline.refdata import tw_stocks
-from poseidon.pipeline.refdata.datasets import FUTURES, MARKET_CALENDAR, TAIEX, TAIEX_TR
+from poseidon.pipeline.refdata.datasets import FUTURES, MARKET_CALENDAR, TAIEX, TAIEX_TR, UpdaterUnconfigured
 from poseidon.pipeline.refdata.engine_input import MAX_STOCK_GAP_DAYS, StockDataGap, align_stock_bars
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.refdata.taifex import MarketSchedule
@@ -152,12 +152,14 @@ def test_build_commits_session_rows_and_is_idempotent(world):
     assert store.manifest(STOCKS)["sources"][0]["name"] == "thalassa_0050_1d.json"
 
 
-def test_update_hook_skips_without_thalassa_settings_and_reports_otherwise(world, monkeypatch):
+def test_update_hook_refuses_without_thalassa_settings_and_reports_otherwise(world, monkeypatch):
     from poseidon.core.config import settings
 
     store, client, _days = world
     monkeypatch.setattr(settings, "thalassa_base_url", "")
-    assert tw_stocks.update(store, today=date(2026, 3, 3), code_version="t") == []
+    with pytest.raises(UpdaterUnconfigured, match="POSEIDON_THALASSA_BASE_URL"):
+        tw_stocks.update(store, today=date(2026, 3, 3), code_version="t")
+    assert not store.exists(STOCKS)
     monkeypatch.setattr(settings, "thalassa_base_url", "http://thalassa")
     monkeypatch.setattr(settings, "thalassa_api_key", "k")
     monkeypatch.setattr(tw_stocks, "thalassa_client", lambda _key: client)

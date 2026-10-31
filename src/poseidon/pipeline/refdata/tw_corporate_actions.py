@@ -43,7 +43,7 @@ from urllib.parse import urlencode
 
 import pandas as pd
 
-from poseidon.pipeline.refdata.datasets import UpdateReport
+from poseidon.pipeline.refdata.datasets import DailyUpdater, UpdateReport, UpdaterUnconfigured
 from poseidon.pipeline.refdata.fetch import PoliteFetcher
 from poseidon.pipeline.refdata.store import CommitResult, DatasetMissingError, RefdataError, RefdataStore, SourceRecord
 
@@ -869,16 +869,15 @@ def actions_complete_through(reader) -> date:
 
 
 def update(store: RefdataStore, *, today: date, code_version: str) -> list[UpdateReport]:
-    """The ``refdata.daily.EXTRA_UPDATERS`` hook: rebuild the actions, the TAI50 sessions and the
+    """The daily job's update (``DAILY_UPDATER``): rebuild the actions, the TAI50 sessions and the
     cross-check from TWSE and Thalassa, complete through ``today`` (the job runs after the 16:00
     Taipei publication). The three datasets are idempotent: ``changed`` follows the content hash, so
-    a day with no new action reports nothing."""
+    a day with no new action reports nothing. A runner without Thalassa's address is an error."""
 
     from poseidon.core.config import settings
 
     if not settings.thalassa_base_url or not settings.thalassa_api_key:
-        logger.info("%s: POSEIDON_THALASSA_BASE_URL / API_KEY not set; skipped", DATASET)
-        return []
+        raise UpdaterUnconfigured("POSEIDON_THALASSA_BASE_URL / POSEIDON_THALASSA_API_KEY not set; not updated")
     before = {name: _content(store, name) for name in (DATASET, TAI50_DATASET, CROSSCHECK_DATASET)}
     results = build(
         store,
@@ -901,6 +900,15 @@ def update(store: RefdataStore, *, today: date, code_version: str) -> list[Updat
 
 def _content(store: RefdataStore, dataset: str) -> str | None:
     return store.content_sha256(dataset) if store.exists(dataset) else None
+
+
+def last_days(store: RefdataStore, since: pd.Timestamp) -> dict[str, pd.Timestamp | None]:
+    """The daily job's freshness rule: the day the actions are complete through (the stock paper's cutoff)."""
+
+    return {DATASET: pd.Timestamp(actions_complete_through(store)) if store.exists(DATASET) else None}
+
+
+DAILY_UPDATER = DailyUpdater(DATASET, update, last_days)
 
 
 def main(argv: list[str] | None = None) -> None:

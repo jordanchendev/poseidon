@@ -141,9 +141,9 @@ def main() -> None:
         finally:
             timings["taifex_txo_seconds"] = round(time.monotonic() - start, 1)
 
-    daily.EXTRA_UPDATERS[taifex_options.DAILY_DATASET] = timed_txo
+    txo = dataclasses.replace(taifex_options.DAILY_UPDATER, update=timed_txo)
     clock = time.monotonic()
-    job = daily.run_daily(store, now=datetime.now(UTC), code_version=args.code_version)
+    job = daily.run_daily(store, now=datetime.now(UTC), code_version=args.code_version, updaters=[txo])
     evidence["daily_job"] = {
         "seconds": round(time.monotonic() - clock, 1),
         **timings,

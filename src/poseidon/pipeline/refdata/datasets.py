@@ -185,6 +185,24 @@ class UpdateReport:
     rebuilt: tuple[str, ...]  # partition keys rewritten
 
 
+class UpdaterUnconfigured(RuntimeError):
+    """A daily updater's source is not configured on this host: an error of the job, never a silent skip."""
+
+
+@dataclass(frozen=True)
+class DailyUpdater:
+    """A dataset group the daily job (``refdata.daily.run_daily``) refreshes after the core ones.
+
+    ``update(store, *, today, code_version)`` refreshes it. ``last_days(store, since)`` is its freshness
+    rule: per dataset it keeps current, the last trading day the store holds (``None`` when the store
+    lacks the dataset, which is stale), checked against the expected trading day like a core dataset.
+    """
+
+    group: str
+    update: Callable[..., list]
+    last_days: Callable[[RefdataStore, pd.Timestamp], dict[str, pd.Timestamp | None]]
+
+
 def _summary(store: RefdataStore, name: str, changed: bool, fetched: int, rebuilt) -> UpdateReport:
     manifest = store.manifest(name)
     rows = sum(part["rows"] for part in manifest["partitions"])

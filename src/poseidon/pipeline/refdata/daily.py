@@ -30,17 +30,18 @@ against the latest *final US date* (rows are US dates), tolerating ``VIX_LAG_DAY
 Taiwan decision reads it one calendar day late (``v3.instruments.align_signal_frame``), so the paper
 waits for the US close of the previous US day only when that row is missing.
 
-``EXTRA_UPDATERS`` is the hook for later datasets (TXO quotes, Thalassa stock bars, corporate
-actions; the runner task registers them): each entry ``name -> fn(store, today=..., code_version=...)
--> list[UpdateReport]`` runs after the futures and TWSE groups, and its failure is recorded without
-stopping the others. When the store holds ``taifex_txo_daily`` its last day session is checked like a
-futures product's: a hedged run's paper waits for that day (``shadow_paper_daily.load_inputs``).
+``updaters`` are the later datasets (Thalassa stock bars, corporate actions, TXO quotes; the runner
+task passes them, ``tasks.update_refdata_daily``): each ``datasets.DailyUpdater`` runs after the futures
+and TWSE groups, and its failure is recorded without stopping the others. An updater whose source is
+not configured on the host raises ``UpdaterUnconfigured``, an error of kind ``unconfigured``. Each one
+declares its freshness rule (``last_days``), so the report covers every dataset the job keeps: a
+dataset the store lacks is stale, never left out.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Iterable
 from dataclasses import asdict
 from datetime import UTC, datetime, time
 
@@ -55,7 +56,8 @@ from poseidon.pipeline.refdata.datasets import (
     TAIEX,
     TAIEX_TR,
     VIX,
-    UpdateReport,
+    DailyUpdater,
+    UpdaterUnconfigured,
     update_all,
     update_vix,
 )
@@ -63,7 +65,6 @@ from poseidon.pipeline.refdata.engine_input import last_day_session, product_quo
 from poseidon.pipeline.refdata.fetch import CBOE_MIN_INTERVAL, PoliteFetcher, SourceBlockedError, SourceError
 from poseidon.pipeline.refdata.store import RefdataError, RefdataStore
 from poseidon.pipeline.refdata.taifex import MarketSchedule
-from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
 from poseidon.pipeline.window import MARKET_TZ
 
 logger = logging.getLogger(__name__)
@@ -74,8 +75,6 @@ SCHEDULE_WARN_FROM = (12, 1)
 VIX_LAG_DAYS = 4  # weekend plus a US holiday between the last final US date and the last row
 LTD_WARN_DAYS = 62  # front and next monthly contract
 DAILY_TASK = "poseidon.pipeline.tasks.update_refdata_daily"
-UpdaterHook = Callable[..., list[UpdateReport]]
-EXTRA_UPDATERS: dict[str, UpdaterHook] = {}
 
 
 def beat_entry() -> dict:
@@ -106,7 +105,7 @@ def _entry(last: pd.Timestamp | None, expected: pd.Timestamp, schedule: MarketSc
     return {"last": last.date().isoformat(), "lag_trading_days": lag, "fresh": lag == 0}
 
 
-def freshness(store: RefdataStore, now: datetime) -> dict:
+def freshness(store: RefdataStore, now: datetime, updaters: Iterable[DailyUpdater] = ()) -> dict:
     schedule = MarketSchedule.from_frame(store.read(MARKET_CALENDAR)) if store.exists(MARKET_CALENDAR) else None
     if schedule is None:
         return {"status": "missing", "missing": [MARKET_CALENDAR]}
@@ -122,12 +121,9 @@ def freshness(store: RefdataStore, now: datetime) -> dict:
         frame = store.read(name, start=since)
         last = pd.Timestamp(frame["trade_date"].max()) if len(frame) else None
         datasets[name] = _entry(last, expected, schedule, closed)
-    if store.exists(OPTION_QUOTES):
-        frame = store.read(
-            OPTION_QUOTES, start=since, rows=lambda rows: rows.loc[rows["session"] == "day", ["trade_date"]]
-        )
-        last = pd.Timestamp(frame["trade_date"].max()) if len(frame) else None
-        datasets[OPTION_QUOTES] = _entry(last, expected, schedule, closed)
+    for updater in updaters:
+        for name, last in updater.last_days(store, since).items():
+            datasets[name] = _entry(last, expected, schedule, closed)
     if store.exists(VIX):  # a US series: its last row is the latest final US date, not a Taiwan trading day
         frame = store.read(VIX, start=since)
         last = pd.Timestamp(frame["trade_date"].max()) if len(frame) else None
@@ -166,6 +162,7 @@ def run_daily(
     now: datetime | None = None,
     fetchers=None,
     code_version: str = "unknown",
+    updaters: Iterable[DailyUpdater] = (),
 ) -> dict:
     """Update every daily dataset, then check freshness. Never raises for stale or blocked data."""
 
@@ -186,13 +183,16 @@ def run_daily(
             result["updates"].append(asdict(update_vix(store, fetcher, now=now, code_version=code_version)))
         except Exception as error:  # the US VIX must never take the Taiwan datasets down
             result["errors"].append({"group": "cboe", "kind": type(error).__name__, "error": str(error)[:500]})
-    for name, hook in EXTRA_UPDATERS.items():
+    updaters = tuple(updaters)
+    for updater in updaters:
         try:
-            result["updates"].extend(asdict(r) for r in hook(store, today=today, code_version=code_version))
+            result["updates"].extend(asdict(r) for r in updater.update(store, today=today, code_version=code_version))
+        except UpdaterUnconfigured as error:
+            result["errors"].append({"group": updater.group, "kind": "unconfigured", "error": str(error)[:500]})
         except Exception as error:  # a later dataset must never take the core ones down
-            result["errors"].append({"group": name, "kind": type(error).__name__, "error": str(error)[:500]})
+            result["errors"].append({"group": updater.group, "kind": type(error).__name__, "error": str(error)[:500]})
     try:
-        result["freshness"] = freshness(store, now)
+        result["freshness"] = freshness(store, now, updaters)
     except RefdataError as error:
         result["freshness"] = {"status": "error", "error": str(error)[:500]}
     result["changed"] = sorted(u["dataset"] for u in result["updates"] if u["changed"])

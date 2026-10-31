@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import logging
 import shutil
 from datetime import date
 from pathlib import Path
@@ -14,8 +16,9 @@ from pytest import approx
 
 from poseidon.core.config import settings
 from poseidon.pipeline import shadow_paper_daily as spd
-from poseidon.pipeline.refdata import daily, tw_stocks
+from poseidon.pipeline.refdata import daily, taifex_options, tw_stocks
 from poseidon.pipeline.refdata import tw_corporate_actions as ca
+from poseidon.pipeline.refdata.datasets import TAIEX, TAIEX_TR
 from poseidon.pipeline.refdata.fetch import PoliteFetcher
 from poseidon.pipeline.refdata.store import RefdataError, RefdataStore
 from poseidon.pipeline.refdata.tw_corporate_actions import ACTION_COLUMNS
@@ -322,26 +325,77 @@ def test_the_update_is_idempotent_and_picks_up_a_late_action(updater):
     assert ca.actions_complete_through(store) == date(2026, 10, 28)
 
 
-def test_the_update_skips_without_a_thalassa_address(updater, monkeypatch):
-    store, _client = updater
+def job_store(store):
+    """``world`` with the total-return index too, so the job's freshness check reads every core dataset."""
+
+    _commit(store, TAIEX_TR, store.read(TAIEX)[["trade_date", "close"]], "trade_date")
+    return store
+
+
+def stock_updaters():
+    return [tw_stocks.DAILY_UPDATER, ca.DAILY_UPDATER]
+
+
+def test_without_a_thalassa_address_the_job_reports_an_error_and_stale_stock_data(world, updater, monkeypatch, caplog):
+    store, _client = updater  # the same root as world: its bars through 2026-10-21, the stale actions snapshot
+    job_store(store)
     monkeypatch.setattr(settings, "thalassa_base_url", "")
-    assert ca.update(store, today=date(2026, 10, 23), code_version="t") == []
-    assert not store.exists(ca.DATASET)
+    monkeypatch.setattr(daily, "update_all", lambda *a, **k: [])
+    now = pd.Timestamp("2026-10-22 09:00", tz="UTC").to_pydatetime()  # 17:00 Taipei, a day after the last bar
+    with caplog.at_level(logging.WARNING):
+        result = daily.run_daily(store, now=now, fetchers={}, code_version="t", updaters=stock_updaters())
+    assert [(e["group"], e["kind"]) for e in result["errors"]] == [
+        (STOCKS, "unconfigured"),
+        (ca.DATASET, "unconfigured"),
+    ]
+    assert all("POSEIDON_THALASSA_BASE_URL" in e["error"] for e in result["errors"])
+    assert result["updates"] == [] and ca.actions_complete_through(store) == SNAPSHOT_DAY.date()  # nothing rebuilt
+    fresh = result["freshness"]
+    assert fresh["status"] == "stale" and {STOCKS, ca.DATASET} <= set(fresh["stale"])
+    assert fresh["datasets"][STOCKS]["last"] == "2026-10-21" and fresh["datasets"][ca.DATASET]["last"] == "2026-03-30"
+    [record] = [r for r in caplog.records if r.name == daily.__name__]
+    assert record.levelno == logging.WARNING and "unconfigured" in record.getMessage()
 
 
-def test_the_runner_task_registers_the_extra_updaters(monkeypatch):
+def test_a_dataset_the_store_lacks_is_stale_not_left_out(updater):
+    store, _client = updater
+    since = pd.Timestamp("2026-09-01")
+    assert tw_stocks.DAILY_UPDATER.last_days(store, since) == {STOCKS: None}
+    assert ca.DAILY_UPDATER.last_days(store, since) == {ca.DATASET: None}
+    assert taifex_options.DAILY_UPDATER.last_days(store, since) == {taifex_options.DAILY_DATASET: None}
+
+
+def test_on_a_configured_runner_the_job_updates_the_actions_without_errors_and_reports_them_fresh(
+    world, updater, monkeypatch
+):
+    store, _client = updater
+    job_store(store)
+    monkeypatch.setattr(daily, "update_all", lambda *a, **k: [])
+    monkeypatch.setattr(daily, "PRODUCTS", ("TX",))  # world's futures are TX only
+    bars = dataclasses.replace(tw_stocks.DAILY_UPDATER, update=lambda _store, **_kw: [])  # world's bars, no Thalassa
+    now = pd.Timestamp("2026-10-21 09:00", tz="UTC").to_pydatetime()  # 17:00 Taipei on the last bar's day
+    result = daily.run_daily(store, now=now, fetchers={}, code_version="t", updaters=[bars, ca.DAILY_UPDATER])
+    assert result["errors"] == []
+    assert {u["dataset"] for u in result["updates"]} == {ca.DATASET, ca.TAI50_DATASET, ca.CROSSCHECK_DATASET}
+    assert ca.actions_complete_through(store) == date(2026, 10, 21)
+    fresh = result["freshness"]
+    assert fresh["status"] == "fresh" and fresh["stale"] == []
+    assert fresh["datasets"][STOCKS] == {"last": "2026-10-21", "lag_trading_days": 0, "fresh": True}
+    assert fresh["datasets"][ca.DATASET] == {"last": "2026-10-21", "lag_trading_days": 0, "fresh": True}
+
+
+def test_the_runner_task_runs_the_stock_actions_and_txo_updaters(monkeypatch):
     monkeypatch.setenv("POSEIDON_PIPELINE_EXPECTED_DATABASE", "poseidon_pipeline")
     from poseidon.pipeline import tasks
-    from poseidon.pipeline.refdata import taifex_options
 
-    monkeypatch.setattr(daily, "EXTRA_UPDATERS", {})
-    monkeypatch.setattr(daily, "run_daily", lambda **_kw: {})
+    seen = {}
+    monkeypatch.setattr(daily, "run_daily", lambda **kw: seen.update(kw) or {})
     tasks.update_refdata_daily()
-    assert {
-        STOCKS: tw_stocks.update,
-        ca.DATASET: ca.update,
-        taifex_options.DAILY_DATASET: taifex_options.daily_update,
-    } == daily.EXTRA_UPDATERS
+    assert [(u.group, u.update) for u in seen["updaters"]] == [
+        (STOCKS, tw_stocks.update),
+        (ca.DATASET, ca.update),
+        (taifex_options.DAILY_DATASET, taifex_options.daily_update),
+    ]
 
 
 def test_one_failing_updater_is_reported_and_does_not_stop_the_other(updater, monkeypatch):
@@ -352,9 +406,9 @@ def test_one_failing_updater_is_reported_and_does_not_stop_the_other(updater, mo
 
     monkeypatch.setattr(daily, "update_all", lambda *a, **k: [])
     monkeypatch.setattr(daily, "freshness", lambda *a, **k: {"status": "fresh"})
-    monkeypatch.setattr(daily, "EXTRA_UPDATERS", {STOCKS: boom, ca.DATASET: ca.update})
+    failing = dataclasses.replace(tw_stocks.DAILY_UPDATER, update=boom)
     now = pd.Timestamp("2026-10-23 09:00", tz="UTC").to_pydatetime()
-    result = daily.run_daily(store, now=now, fetchers={}, code_version="t")
+    result = daily.run_daily(store, now=now, fetchers={}, code_version="t", updaters=[failing, ca.DAILY_UPDATER])
     assert result["errors"] == [{"group": STOCKS, "kind": "RuntimeError", "error": "thalassa down"}]
     assert {u["dataset"] for u in result["updates"]} == {ca.DATASET, ca.TAI50_DATASET, ca.CROSSCHECK_DATASET}
     assert ca.DATASET in result["changed"]
