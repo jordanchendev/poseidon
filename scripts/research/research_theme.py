@@ -56,7 +56,7 @@ Claim precheck (claim_precheck.py, run before complete_human_research on every n
     also match A+B of two cited quantities; a derivation precheck recomputed is recorded as `derived` [{claim, how, from}].
     Claims citing price_facts/ohlcv are not numerically checked (their numbers come from derived facts, not excerpts);
     claims citing no excerpt-bearing evidence are not numerically checked either. See the fact/inference split above.
-  - atomic: a non-atomic claim refuses completion unless cfg["allow_non_atomic"] is true. For inference claims the
+  - atomic: a non-atomic claim always refuses completion. For inference claims the
     multi-quantity rule does not refuse (a derivation names its inputs); causal clauses still do (lint_atomic kind).
 """
 
@@ -1313,7 +1313,7 @@ def validate_supersedes(db, narrative):
     return str(u)
 
 
-def precheck_claims(narrative, evidence, allow_non_atomic=False):
+def precheck_claims(narrative, evidence):
     """Numeric + atomic precheck for every claim; raises SystemExit listing every problem. Returns per-claim results."""
     by_id = {e["id"]: e for e in evidence}
     problems, results = [], []
@@ -1371,11 +1371,8 @@ def precheck_claims(narrative, evidence, allow_non_atomic=False):
         if numbers == "mismatch":
             det = "; ".join("%s (%s)" % (u["claim"], u["kind"]) for u in num["unmatched"])
             problems.append("claims[%d] numeric mismatch vs cited excerpts %s: %s" % (n, ids, det))
-        if not atom["ok"] and not allow_non_atomic:
-            problems.append(
-                "claims[%d] is non-atomic (%s): split into %s, or set allow_non_atomic in the config"
-                % (n, atom["reason"], atom["clauses"])
-            )
+        if not atom["ok"]:
+            problems.append("claims[%d] is non-atomic (%s): split into %s" % (n, atom["reason"], atom["clauses"]))
     if problems:
         raise SystemExit("claim precheck refused completion:\n  " + "\n  ".join(problems))
     return results
@@ -1616,7 +1613,7 @@ def main():
             if narrative.get("disclosure") not in (None, disc):
                 raise SystemExit("narrative.disclosure and config pilot_position both set; keep one")
             narrative["disclosure"] = disc
-        info["claim_precheck"] = precheck_claims(narrative, evidence, bool(cfg.get("allow_non_atomic")))
+        info["claim_precheck"] = precheck_claims(narrative, evidence)
         principal = AuthPrincipal(
             "claude-code:aquarium-ef", frozenset({"researcher"}), frozenset({cfg["account_scope"]})
         )

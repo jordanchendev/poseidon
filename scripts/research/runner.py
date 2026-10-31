@@ -387,7 +387,7 @@ def run_gates(narrative, payload, cfg):
             )
     # claim_precheck strict (numbers: fact any mismatch, inference scale/sign), lint_atomic, GAAP basis
     try:
-        report["claim_precheck"] = rt.precheck_claims(narrative, payload["evidence"], allow_non_atomic=False)
+        report["claim_precheck"] = rt.precheck_claims(narrative, payload["evidence"])
     except SystemExit as e:
         for line in str(e).splitlines()[1:]:
             line = line.strip()

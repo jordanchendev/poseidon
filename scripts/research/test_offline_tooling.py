@@ -450,15 +450,11 @@ def test_numeric_mismatch_refuses_completion(env):
     assert "1,000 (scale)" in p.stderr and not (d / "rev.json").exists()
 
 
-def test_non_atomic_refused_unless_allowed(env):
+def test_non_atomic_claim_refused(env):
     n = copy.deepcopy(env["narrative"])
     n["claims"][0]["text"] = "Revenue was 100 units, up 20% year over year."
     p, d = go(env, "atomref", narrative=n)
     assert p.returncode != 0 and "claims[0] is non-atomic" in p.stderr and not (d / "rev.json").exists()
-    cfg = copy.deepcopy(env["cfg"])
-    cfg["allow_non_atomic"] = True
-    p, d = go(env, "atomok", cfg=cfg, narrative=n)
-    assert p.returncode == 0, p.stderr
 
 
 @pytest.mark.parametrize(

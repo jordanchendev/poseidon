@@ -229,8 +229,7 @@ pending row ─ assemble.py ─ research_theme.py (freeze + prepare) ─ draft.p
   quote}` and `quote` must be copied verbatim from one cited evidence text (document excerpt, or a line of the rendered
   kpi / price_facts / ohlcv block shown in the prompt). `quote` is stored in research_json (Poseidon keeps extra claim keys).
 - **Gates** (runner.py `run_gates`): schema (incl. Poseidon `validate_research`: >= 3 claims, required fundamental + ohlcv
-  cited), `validate_narrative_extras` / `validate_variant_perception`, quote-in-cited-evidence, `precheck_claims` with
-  `allow_non_atomic=False` (fact: any numeric mismatch refuses; inference: scale/sign, also against an A-B/A+B
+  cited), `validate_narrative_extras` / `validate_variant_perception`, quote-in-cited-evidence, `precheck_claims` (fact: any numeric mismatch refuses; inference: scale/sign, also against an A-B/A+B
   derivation; a recomputed derivation is recorded as `derived` [{claim, how, from, value}]), lint_atomic (inference
   claims: the multi-quantity rule does not refuse, causal clauses still do), GAAP basis, inference basis marker
   (`claim_precheck.has_inference_basis`: 推算 估算 推估 推論 估計 判斷 研判 預期 預估 可能 若 如果 假設 換算 計算 相減
