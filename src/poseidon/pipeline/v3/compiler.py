@@ -73,7 +73,7 @@ from poseidon.pipeline.refdata.store import DatasetMissingError, RefdataStore
 from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
 from poseidon.pipeline.refdata.taifex_options import FSP_DATASET as OPTION_FINAL
 from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
-from poseidon.pipeline.refdata.tw_corporate_actions import load_actions
+from poseidon.pipeline.refdata.tw_corporate_actions import require_actions
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
 from poseidon.pipeline.refdata.tw_stocks import read_bars
 from poseidon.pipeline.v3.instruments import (
@@ -471,10 +471,10 @@ def compile_spec(
             aligned = align_stock_bars(rows, data_days, alias)
         except StockDataGap as error:
             raise NotCompilable(str(error)) from error
-        actions = load_actions(store, instrument.symbol) if store.exists(ACTIONS) else None
         try:
+            actions = require_actions(store, instrument.symbol)
             futures[alias] = stock_input(ContractSpec.from_instrument(instrument), aligned, actions)
-        except ValueError as error:
+        except (DatasetMissingError, ValueError) as error:
             raise NotCompilable(f"{alias}: {error}") from error
         carried = int((~aligned["traded"]).sum())
         if carried:

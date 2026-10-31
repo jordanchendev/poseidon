@@ -88,7 +88,7 @@ from poseidon.pipeline.refdata.store import RefdataError
 from poseidon.pipeline.refdata.taifex import MarketSchedule
 from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
 from poseidon.pipeline.refdata.taifex_options import FSP_DATASET as OPTION_FINAL
-from poseidon.pipeline.refdata.tw_corporate_actions import COMPLETE_THROUGH, actions_complete_through, load_actions
+from poseidon.pipeline.refdata.tw_corporate_actions import COMPLETE_THROUGH, actions_complete_through, require_actions
 from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
 from poseidon.pipeline.refdata.tw_stocks import read_bars
@@ -267,8 +267,8 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
     does). The trading calendar is the futures
     products' common day-session dates, or, with no futures, the stocks' union of bar dates; a stock
     without a bar on a calendar day is carried forward (``align_stock_bars``), and its corporate
-    actions are booked from ``tw_corporate_actions`` when the store has that dataset, exactly as
-    ``v3.compiler.compile_spec`` does for the backtest.
+    actions are booked from ``tw_corporate_actions``, exactly as ``v3.compiler.compile_spec`` does for
+    the backtest; a store without that dataset raises (the paper waits, it never books raw prices).
 
     A run with hedges also waits for its option chain (``_option_bound``): the last TXO day session,
     a paper day without TXO quotes, a monthly expiry on a paper day without its final settlement
@@ -302,7 +302,8 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
     )
     ends = [*last.values(), *stock_last.values()]
     ends += [complete_through(name, frame) for name, frame in aux_full.items()]
-    if stock_insts and reader.exists(ACTIONS):  # an action dated after the snapshot is not booked, so wait for it
+    if stock_insts:  # raw bars need the actions; one dated after the snapshot is not booked, so wait for it
+        actions = require_actions(reader)
         actions_end = pd.Timestamp(actions_complete_through(reader))
         ends.append(actions_end)
         last_dates[f"{ACTIONS}:{COMPLETE_THROUGH}"] = _iso(actions_end)
@@ -345,7 +346,6 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
     }
     if stock_insts:
         data_days = calendar[calendar <= cutoff]
-        actions = load_actions(reader) if reader.exists(ACTIONS) else None
         for name, inst in stock_insts.items():
             symbol = inst.spec.symbol
             rows = stock_rows[name]
@@ -353,7 +353,7 @@ def load_inputs(reader: RefdataReader, compiled: CompiledStrategy, settings: dic
                 aligned = align_stock_bars(rows[rows["date"] <= cutoff], data_days, name)
             except StockDataGap as error:
                 raise RefdataError(str(error)) from error
-            mine = actions[actions["symbol"] == symbol] if actions is not None else None
+            mine = actions[actions["symbol"] == symbol]
             try:
                 futures[name] = stock_input(inst.spec, aligned, mine)
             except ValueError as error:

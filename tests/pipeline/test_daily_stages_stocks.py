@@ -7,6 +7,7 @@ The synthetic store of ``daily_paper_support`` (TX, TAIEX, the real 2026 schedul
 from __future__ import annotations
 
 import dataclasses
+import shutil
 from datetime import date
 
 import numpy as np
@@ -27,7 +28,7 @@ from poseidon.pipeline.daily_stages import (
 )
 from poseidon.pipeline.engine import BookView, ContractSpec, Decision, EngineConfig, MarketView
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, MARKET_CALENDAR, TAIEX
-from poseidon.pipeline.refdata.store import frame_sha256
+from poseidon.pipeline.refdata.store import RefdataStore, frame_sha256
 from poseidon.pipeline.refdata.tw_corporate_actions import ACTION_COLUMNS
 from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
 from poseidon.pipeline.refdata.tw_stocks import COLUMNS
@@ -172,6 +173,15 @@ def test_stock_underlying_is_total_return_adjusted_across_the_split(stock_store)
     base = underlying_daily(store, "0050", through=through)  # no action: the raw bars
     raw_base = stock_store.read(STOCKS, end=through).query("symbol == '0050'")["close"].to_numpy()
     assert base["close"].to_numpy() == approx(raw_base)
+
+
+def test_a_stock_underlying_without_the_actions_dataset_is_not_compilable(stock_store, tmp_path):
+    root = tmp_path / "refdata"
+    shutil.copytree(stock_store.root, root, ignore=lambda _dir, names: [n for n in names if n == ACTIONS])
+    through = date(2026, 6, 1)
+    store = WindowStore(RefdataStore(root), through, frozenset({"stock"}))
+    with pytest.raises(NotCompilable, match=f"benchmark underlying: {ACTIONS} is missing"):
+        underlying_daily(store, "00631L", through=through)
 
 
 # ----------------------------------------------------------------------------- the daily paper

@@ -59,8 +59,9 @@ from poseidon.pipeline.gates.param_stability import EDGE_AT_BOUND_KEY
 from poseidon.pipeline.plan import V3_GATE_STAGES
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, TAIEX, TAIEX_TR, VIX
 from poseidon.pipeline.refdata.engine_input import StockDataGap, align_stock_bars
+from poseidon.pipeline.refdata.store import DatasetMissingError
 from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
-from poseidon.pipeline.refdata.tw_corporate_actions import load_actions
+from poseidon.pipeline.refdata.tw_corporate_actions import require_actions
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
 from poseidon.pipeline.refdata.tw_stocks import read_bars
 from poseidon.pipeline.stages import BaseStage, StageResult
@@ -931,10 +932,9 @@ def stock_underlying_daily(store, symbol: str, *, through: date) -> pd.DataFrame
     sessions = pd.DatetimeIndex(
         sorted(store.read(STOCKS, start=bars["date"].min(), end=through)["trade_date"].unique())
     )
-    actions = load_actions(store, symbol) if store.exists(ACTIONS) else None
     try:
-        booked = stock_bars(align_stock_bars(bars, sessions, symbol), actions)
-    except (StockDataGap, ValueError) as error:
+        booked = stock_bars(align_stock_bars(bars, sessions, symbol), require_actions(store, symbol))
+    except (StockDataGap, ValueError, DatasetMissingError) as error:
         raise NotCompilable(f"benchmark underlying: {error}") from error
     # back-adjusted like the futures series: a bar is scaled by the factors of the actions booked after it
     after = booked["factor"].iloc[::-1].cumprod().iloc[::-1].shift(-1, fill_value=1.0).to_numpy()

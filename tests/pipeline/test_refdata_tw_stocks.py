@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import date
 
 import numpy as np
@@ -272,6 +273,14 @@ def test_stock_data_gaps_are_not_compilable(stock_store):
         doc = rotation()
         doc["instruments"]["base"]["symbol"] = "2330"
         compile_spec(doc, start=days[120], store=store)
+
+
+def test_a_stock_spec_without_the_actions_dataset_is_not_compilable(stock_store, tmp_path):
+    store, days, _split = stock_store
+    root = tmp_path / "refdata"
+    shutil.copytree(store.root, root, ignore=lambda _dir, names: [n for n in names if n == ACTIONS])
+    with pytest.raises(NotCompilable, match=f"{ACTIONS} is missing: raw stock bars cannot be booked"):
+        compile_spec(rotation(), start=days[120], store=RefdataStore(root))
 
 
 def test_refdata_datasets_and_first_days_cover_stocks_only_for_stock_specs(stock_store):

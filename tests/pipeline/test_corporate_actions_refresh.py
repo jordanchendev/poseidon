@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import date
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from poseidon.pipeline import shadow_paper_daily as spd
 from poseidon.pipeline.refdata import daily, tw_stocks
 from poseidon.pipeline.refdata import tw_corporate_actions as ca
 from poseidon.pipeline.refdata.fetch import PoliteFetcher
-from poseidon.pipeline.refdata.store import RefdataStore
+from poseidon.pipeline.refdata.store import RefdataError, RefdataStore
 from poseidon.pipeline.refdata.tw_corporate_actions import ACTION_COLUMNS
 from poseidon.pipeline.refdata.tw_stocks import COLUMNS
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
@@ -208,6 +209,26 @@ def test_a_snapshot_without_recorded_meta_counts_from_the_day_it_was_built(world
     assert ca.actions_complete_through(reader) == date(2026, 10, 24)
     legacy["built_at"] = "2026-10-24T17:00:00Z"  # already the 25th in Taipei
     assert ca.actions_complete_through(reader) == date(2026, 10, 25)
+
+
+def test_without_the_actions_dataset_the_stock_paper_waits_instead_of_booking_raw_prices(world, tmp_path):
+    shutil.rmtree(Path(world.root) / ca.DATASET)  # 00631L's raw close falls to a quarter on the split day
+    view = AsOf(world, VIEW_DAY)
+    with pytest.raises(RefdataError, match=f"{ca.DATASET} is missing"):
+        spd.load_inputs(view, stock_strategy(), spd.DEFAULT_DAILY_SHADOW_PAPER, date(2026, 3, 25))
+
+    driver = DailyDriver(tmp_path / "run", view, strategy=stock_strategy(), started_at=PAPER_STARTED)
+    result = driver.wake(morning_after(VIEW_DAY))
+    assert result.verdict is Verdict.PASS and result.is_waiting
+    assert result.report["snapshot"]["kind"] == "source_error"
+    assert f"{ca.DATASET} is missing" in result.report["snapshot"]["error"]
+    assert driver.ledger()["days"] == [] and result.report["trading_days"] == 0  # no day booked from raw prices
+
+    # a futures-only spec does not need the dataset
+    futures_only = spd.load_inputs(
+        AsOf(world, "2026-03-27"), compiled(), spd.DEFAULT_DAILY_SHADOW_PAPER, date(2026, 3, 25)
+    )
+    assert futures_only.futures and not any(key.startswith(ca.DATASET) for key in futures_only.sources)
 
 
 # ----------------------------------------------------------------------------- the updater

@@ -45,7 +45,7 @@ import pandas as pd
 
 from poseidon.pipeline.refdata.datasets import UpdateReport
 from poseidon.pipeline.refdata.fetch import PoliteFetcher
-from poseidon.pipeline.refdata.store import CommitResult, RefdataError, RefdataStore, SourceRecord
+from poseidon.pipeline.refdata.store import CommitResult, DatasetMissingError, RefdataError, RefdataStore, SourceRecord
 
 logger = logging.getLogger(__name__)
 
@@ -764,6 +764,14 @@ def load_actions(store: RefdataStore, symbol: str | None = None) -> pd.DataFrame
     rows = store.read(DATASET)
     frame = _as_dates(rows, "date") if len(rows) else pd.DataFrame(columns=ACTION_COLUMNS)
     return frame if symbol is None else frame[frame["symbol"] == symbol].reset_index(drop=True)
+
+
+def require_actions(reader, symbol: str | None = None) -> pd.DataFrame:
+    """:func:`load_actions` for booking a stock: its bars are raw prices, so without the dataset a split
+    would read as a loss. A store without it raises :class:`DatasetMissingError`, never ``None``."""
+    if not reader.exists(DATASET):
+        raise DatasetMissingError(f"{DATASET} is missing: raw stock bars cannot be booked without corporate actions")
+    return load_actions(reader, symbol)
 
 
 def load_sessions(store: RefdataStore) -> set[date]:
