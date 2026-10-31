@@ -15,12 +15,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from poseidon.api.auth import AuthPrincipal, get_auth_principal
 from poseidon.core.database import get_db
 from poseidon.decision_loop.manifest import ManifestService, ValidationError
-from poseidon.decision_loop.research import ResearchService
+from poseidon.decision_loop.research import ResearchService, superseded_by
 from poseidon.models.data_manifest import DataManifest
 from poseidon.models.research_revision import ResearchRevision
 
@@ -71,6 +71,7 @@ class RevisionPrepareRequest(BaseModel):
     model: NonEmptyText
     runtime_digest: NonEmptyText
     expected_previous_revision_id: uuid.UUID | None = None
+    supersedes_revision_id: uuid.UUID | None = None
 
 
 class RevisionCompleteRequest(BaseModel):
@@ -101,6 +102,10 @@ class RevisionResponse(BaseModel):
     runtime_digest: str
     research_json: dict[str, JsonValue]
     created_at: datetime
+    supersedes_revision_id: uuid.UUID | None = None
+    correction_reason: str | None = None
+    superseded_by: uuid.UUID | None = None
+    precheck_json: list[JsonValue] | None = None
 
 
 def _raise_api_error(error: Exception) -> NoReturn:
@@ -165,6 +170,7 @@ def _manifest_response(manifest: DataManifest) -> dict:
 
 
 def _revision_response(revision: ResearchRevision) -> dict:
+    correction = superseded_by(object_session(revision), revision.id)
     return {
         "id": revision.id,
         "status": revision.status,
@@ -179,6 +185,10 @@ def _revision_response(revision: ResearchRevision) -> dict:
         "runtime_digest": revision.runtime_digest,
         "research_json": revision.research_json,
         "created_at": revision.created_at,
+        "supersedes_revision_id": revision.supersedes_revision_id,
+        "correction_reason": revision.correction_reason,
+        "superseded_by": correction.id if correction else None,
+        "precheck_json": revision.precheck_json,
     }
 
 
@@ -241,6 +251,7 @@ def prepare_revision(
             provider=body.provider,
             model=body.model,
             runtime_digest=body.runtime_digest,
+            supersedes_revision_id=body.supersedes_revision_id,
             **options,
         )
 

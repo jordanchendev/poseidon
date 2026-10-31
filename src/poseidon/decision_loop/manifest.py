@@ -14,6 +14,11 @@ class ValidationError(ValueError):
     """A frozen-input contract was violated."""
 
 
+# Attribution tiers (SEED-002 B3). Absent tiers keep the pre-v21 contract.
+SOURCE_TIERS = frozenset({"official-prepared", "official-qa", "third-party-transcript", "secondary", "derived"})
+NON_FACT_TIERS = frozenset({"third-party-transcript", "secondary"})
+
+
 def canonical_json(value) -> str:
     try:
         return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
@@ -43,6 +48,42 @@ def required_text(value, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValidationError(f"{field} must be non-empty text")
     return value
+
+
+def source_tier(value, field: str):
+    """Return a declared tier, or None when absent; unknown values are rejected."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in SOURCE_TIERS:
+        raise ValidationError(f"{field} must be one of {', '.join(sorted(SOURCE_TIERS))}")
+    return value
+
+
+def canonical_excerpt_text(value: str) -> str:
+    """Collapse all whitespace (incl. form feeds) and drop bare table-pipe tokens."""
+    return " ".join(token for token in value.split() if token != "|")
+
+
+def verify_excerpts_in_raw_text(payload, evidence_id: str) -> None:
+    """SEED-002 B1: when a payload carries raw_text and excerpts, every excerpt must quote it."""
+    if not isinstance(payload, dict) or "raw_text" not in payload or "excerpts" not in payload:
+        return
+    raw_text = payload["raw_text"]
+    if not isinstance(raw_text, str):
+        raise ValidationError(f"evidence {evidence_id} payload.raw_text must be text")
+    excerpts = payload["excerpts"]
+    if not isinstance(excerpts, list) or not excerpts:
+        raise ValidationError(f"evidence {evidence_id} payload.excerpts must be a non-empty list")
+    source = canonical_excerpt_text(raw_text)
+    for excerpt in excerpts:
+        if not isinstance(excerpt, dict):
+            raise ValidationError(f"evidence {evidence_id} excerpts must be objects")
+        locator = required_text(excerpt.get("locator"), f"evidence {evidence_id} excerpt.locator")
+        quoted = excerpt.get("text")
+        if not isinstance(quoted, str) or not canonical_excerpt_text(quoted):
+            raise ValidationError(f"evidence {evidence_id} excerpt {locator} text must be non-empty text")
+        if canonical_excerpt_text(quoted) not in source:
+            raise ValidationError(f"evidence {evidence_id} excerpt {locator} is not found in payload.raw_text")
 
 
 def insert_once(session, record_type, digest_field: str, digest: str, **fields):
@@ -101,6 +142,8 @@ def validate_manifest(request: dict, as_of=None) -> dict:
             raise ValidationError("future evidence is not cutoff-visible")
         if "payload" not in item or item.get("content_sha256") != content_sha256(item["payload"]):
             raise ValidationError("evidence content hash mismatch")
+        source_tier(item.get("source_tier"), f"evidence {evidence_id} source_tier")
+        verify_excerpts_in_raw_text(item["payload"], evidence_id)
         events_by_kind.setdefault(kind, []).append(timestamp(item["event_time"], "event_time"))
     for kind, rule in required.items():
         if capabilities.get(kind) is not True or not events_by_kind.get(kind):

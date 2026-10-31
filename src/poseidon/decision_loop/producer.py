@@ -30,6 +30,7 @@ from poseidon.decision_loop.manifest import (
     verify_manifest,
 )
 from poseidon.decision_loop.releases import ExecutableStrategyConfig
+from poseidon.decision_loop.research import superseded_revision_ids
 from poseidon.models.data_manifest import DataManifest
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
 from poseidon.models.position_lot import PositionLot
@@ -354,11 +355,22 @@ class ProducerService:
         return versions
 
     def _research_lookup(self, manifest_payload, cutoff):
+        """Latest completed, not superseded research of the scope with as_of <= cutoff.
+
+        Revisions superseded by a completed correction (SEED-002 C3) are skipped, so an original and its
+        same-as_of correction never compete. Remaining ties on as_of are broken by created_at, then
+        str(id), the same order as ResearchService._predecessor.
+        """
+
         def lookup(scope_key):
             rows = self.session.execute(
                 select(ResearchRevision, DataManifest)
                 .join(DataManifest, DataManifest.id == ResearchRevision.manifest_id)
-                .where(ResearchRevision.scope_key == scope_key, ResearchRevision.status == "completed")
+                .where(
+                    ResearchRevision.scope_key == scope_key,
+                    ResearchRevision.status == "completed",
+                    ResearchRevision.id.not_in(superseded_revision_ids()),
+                )
             ).all()
             eligible = []
             for revision, manifest in rows:
@@ -369,7 +381,7 @@ class ProducerService:
                     and payload.get("account_scope") == manifest_payload.get("account_scope")
                     and as_of <= cutoff
                 ):
-                    eligible.append((as_of, str(revision.id), revision.id))
+                    eligible.append((as_of, revision.created_at, str(revision.id), revision.id))
             return max(eligible)[-1] if eligible else None
 
         return lookup

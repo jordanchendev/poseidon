@@ -284,3 +284,29 @@ def test_reads_are_scope_filtered_and_never_leak_narratives(client):
 
     assert client.get(f"/api/v1/research/revisions/{uuid.uuid4()}", headers=_headers(VIEWER_KEY)).status_code == 404
     assert client.get(f"/api/v1/research/manifests/{uuid.uuid4()}", headers=_headers(VIEWER_KEY)).status_code == 404
+
+
+def test_correction_is_prepared_and_reported_through_the_api(client):
+    http, _ = client
+    manifest, original = _prepared(http)
+    completed = _complete(http, original, manifest).json()
+    assert (completed["supersedes_revision_id"], completed["superseded_by"]) == (None, None)
+    assert len(completed["precheck_json"]) == 3
+
+    fix = _prepare(http, manifest["id"], supersedes_revision_id=original["id"]).json()
+    assert fix["supersedes_revision_id"] == original["id"]
+    assert fix["request_sha256"] != original["request_sha256"]
+    research = dict(
+        _narrative_for(manifest),
+        supersedes=original["id"],
+        correction_reason="numeric_error",
+        change_summary="CORRECTION: claims[0] restated",
+    )
+    assert _complete(http, fix, manifest, research=dict(research, change_summary="restated")).status_code == 422
+    done = _complete(http, fix, manifest, research=research).json()
+    assert (done["status"], done["correction_reason"]) == ("completed", "numeric_error")
+
+    old = http.get(f"/api/v1/research/revisions/{original['id']}", headers=_headers(RESEARCHER_KEY)).json()
+    assert (old["status"], old["superseded_by"]) == ("completed", fix["id"])
+    again = _prepare(http, manifest["id"], supersedes_revision_id=original["id"], model="again")
+    assert again.status_code == 422
