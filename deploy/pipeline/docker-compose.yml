@@ -1,0 +1,86 @@
+# Isolated strategy-pipeline runner (Phase 101 soak: never touches production).
+#
+#   Owner prerequisites on stormtrooper:
+#     1. docker exec -it infra-postgres-1 psql -U admin -c "CREATE DATABASE poseidon_pipeline OWNER poseidon"
+#     2. env file (chmod 600), default ~/strategy-pipeline/pipeline.env, holding at least
+#          POSEIDON_DATABASE_URL=postgresql://poseidon:<password>@host.docker.internal:5433/poseidon_pipeline
+#          POSEIDON_API_PRINCIPALS_JSON={"<sha256 of key>": {"actor_id": "strategy-bridge", "roles": ["researcher"], "account_scopes": []}, ...}
+#     3. mkdir -p ~/strategy-pipeline/artifacts ~/strategy-pipeline/refdata
+#        (refdata seeded with `python -m poseidon.pipeline.refdata ...`; spec v3 runs refuse to start without it)
+#     4. ~/strategy-pipeline/secrets/strategy-pipeline-openrouter.env (chmod 600), one line
+#          STRATEGY_PIPELINE_OPENROUTER_KEY=<key>      (worker only)
+#        and in pipeline.env the non-secret pin of that key's masked OpenRouter label
+#          POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL=<data.label of GET https://openrouter.ai/api/v1/key>
+#   Start (from the repo root):
+#     PIPELINE_GIT_SHA=$(git rev-parse --short HEAD) docker compose -f deploy/pipeline/docker-compose.yml up -d --build
+#
+# Redis db 4 (broker + RedBeat) / db 5 (cache); queue poseidon_pipeline;
+# RedBeat prefix poseidon-pipeline:redbeat: (see poseidon/pipeline/celery_app.py).
+# Every process runs poseidon.pipeline.guard and refuses to start unless the
+# database URL names poseidon_pipeline.
+name: poseidon-pipeline
+
+x-pipeline-service: &pipeline-service
+  image: poseidon-pipeline:${PIPELINE_GIT_SHA:?set PIPELINE_GIT_SHA to the checked-out git sha}
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+  env_file:
+    - ${PIPELINE_ENV_FILE:-${HOME}/strategy-pipeline/pipeline.env}
+  # Run as the host owner of the bind mounts so files under refdata/ and artifacts/ stay owned by jordan.
+  user: "1000:1000"
+  environment:
+    # The image has no passwd entry for 1000, so HOME would be /.
+    HOME: /tmp
+    TZ: Asia/Taipei
+    POSEIDON_REDIS_URL: redis://host.docker.internal:6379/5
+    POSEIDON_REDIS_CELERY_URL: redis://host.docker.internal:6379/4
+    POSEIDON_REDIS_CACHE_URL: redis://host.docker.internal:6379/5
+    POSEIDON_PIPELINE_EXPECTED_DATABASE: poseidon_pipeline
+    POSEIDON_PIPELINE_CODE_VERSION: ${PIPELINE_GIT_SHA}
+    POSEIDON_PIPELINE_ARTIFACTS_ROOT: /data/strategy-pipeline/artifacts
+    POSEIDON_PIPELINE_REFDATA_ROOT: /data/strategy-pipeline/refdata
+  # Spec v3 runs read the refdata store; only the worker writes it (update_refdata_daily).
+  volumes:
+    - ${HOME}/strategy-pipeline/artifacts:/data/strategy-pipeline/artifacts
+    - ${HOME}/strategy-pipeline/refdata:/data/strategy-pipeline/refdata:ro
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  restart: unless-stopped
+
+services:
+  api:
+    <<: *pipeline-service
+    command: >-
+      sh -c "python -m poseidon.pipeline.guard
+      && alembic -n pipeline upgrade head
+      && exec uvicorn poseidon.pipeline.app:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8011:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  worker:
+    <<: *pipeline-service
+    # Only the worker gets the LLM key (spec_generate runs here); api and beat never see it.
+    env_file:
+      - ${PIPELINE_ENV_FILE:-${HOME}/strategy-pipeline/pipeline.env}
+      - ${PIPELINE_LLM_ENV_FILE:-${HOME}/strategy-pipeline/secrets/strategy-pipeline-openrouter.env}
+    volumes:
+      - ${HOME}/strategy-pipeline/artifacts:/data/strategy-pipeline/artifacts
+      - ${HOME}/strategy-pipeline/refdata:/data/strategy-pipeline/refdata
+    command: celery -A poseidon.pipeline.celery_app worker -Q poseidon_pipeline -c 2 --loglevel=info
+    depends_on:
+      api:
+        condition: service_healthy
+
+  beat:
+    <<: *pipeline-service
+    command: celery -A poseidon.pipeline.celery_app beat --loglevel=info
+    depends_on:
+      api:
+        condition: service_healthy

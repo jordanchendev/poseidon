@@ -62,12 +62,14 @@ class GridSearchOptimizer:
         cost_model: CostModel,
         initial_capital: float = 1_000_000.0,
         sizing_config: SizingConfig | None = None,
+        gap_aware_stops: bool = False,
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
         self.cost_model = cost_model
         self.initial_capital = initial_capital
         self.sizing_config = sizing_config or SizingConfig()
+        self._runner_extra = {"gap_aware_stops": True} if gap_aware_stops else {}
 
     def optimize(
         self,
@@ -110,6 +112,7 @@ class GridSearchOptimizer:
                 cost_model=self.cost_model,
                 initial_capital=self.initial_capital,
                 sizing_config=self.sizing_config,
+                **self._runner_extra,
             )
             result = runner.run(ohlcv)
 
@@ -143,6 +146,7 @@ class BayesianOptimizer:
         sizing_config: SizingConfig | None = None,
         db_session: Any | None = None,
         fill_model: FillModel | None = None,
+        gap_aware_stops: bool = False,
     ) -> None:
         self.feature_engine = feature_engine
         self.risk_engine = risk_engine
@@ -151,12 +155,13 @@ class BayesianOptimizer:
         self.sizing_config = sizing_config or SizingConfig()
         self.db_session = db_session
         self.fill_model = fill_model
+        self._runner_extra = {"gap_aware_stops": True} if gap_aware_stops else {}
 
     def optimize(
         self,
         strategy_factory: Callable[[dict], BaseStrategy],
         ohlcv: pd.DataFrame,
-        param_space: dict[str, tuple[Any, Any, str]],
+        param_space: dict[str, tuple[Any, Any, str] | tuple[Any, Any, str, Any]],
         n_trials: int = 100,
         metric: str = "composite_score",
         seed: int = 42,
@@ -169,8 +174,9 @@ class BayesianOptimizer:
             strategy_factory: Callable that takes a params dict and returns
                 a configured BaseStrategy instance.
             ohlcv: Historical OHLCV DataFrame.
-            param_space: Dict mapping parameter names to (low, high, type) tuples.
-                Type is "int" or "float".
+            param_space: Dict mapping parameter names to (low, high, type) tuples,
+                or (low, high, type, step) to restrict suggestions to the grid
+                ``low + k * step``. Type is "int" or "float".
                 E.g. {"period": (5, 60, "int"), "threshold": (0.5, 0.9, "float")}.
             n_trials: Number of optimization trials. Default: 100.
             metric: Metric name from BacktestResult.metrics to maximize.
@@ -198,11 +204,14 @@ class BayesianOptimizer:
 
         def objective(trial: optuna.Trial) -> float:
             params: dict[str, Any] = {}
-            for name, (low, high, ptype) in param_space.items():
+            for name, spec in param_space.items():
+                low, high, ptype = spec[:3]
+                # Optional 4th element: grid step (DSL v2 $param); 3-tuples stay continuous.
+                step = spec[3] if len(spec) > 3 else None
                 if ptype == "int":
-                    params[name] = trial.suggest_int(name, low, high)
+                    params[name] = trial.suggest_int(name, low, high, step=int(step) if step else 1)
                 elif ptype == "float":
-                    params[name] = trial.suggest_float(name, low, high)
+                    params[name] = trial.suggest_float(name, low, high, step=step)
                 else:
                     msg = f"Unsupported param type: {ptype!r}. Use 'int' or 'float'."
                     raise ValueError(msg)
@@ -217,6 +226,7 @@ class BayesianOptimizer:
                 initial_capital=self.initial_capital,
                 sizing_config=self.sizing_config,
                 fill_model=self.fill_model,
+                **self._runner_extra,
             )
             result = runner.run(ohlcv, db_session=self.db_session)
 

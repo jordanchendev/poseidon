@@ -1,0 +1,1054 @@
+"""``spec_validate`` for spec v3 (design 2026-10-24 §3.7), in order:
+
+1. shape: the frame (:class:`~poseidon.pipeline.v3.spec.SpecV3`), every component
+   known and in the right slot, every instrument known and tradable;
+2. ``$param``: references well-formed, declared, used, on tunable fields, 1-4 of
+   them; every grid value valid for every field that uses it;
+3. component parameters (strict models with bounds; DSL v2 via ``validate_v2``);
+4. cross rules: frequencies, chain order, duplicates, sleeve/instrument links,
+   allocation, execution, DSL fast-path constraints, component checks;
+5. data feasibility: every instrument has bars over ``[start - warm-up, end)``, and every
+   index a signal reads (``index:taiex`` from 1999-01-05, ``index:taiex_tr`` from 2003-01-02)
+   has rows there; proxy price intervals become ``notes``. With ``FeasibilityContext.choose_start``
+   (run creation, spec_generate) the daily window start is chosen first (:class:`WindowStart`);
+6. contract-count feasibility: no grid point sizes to 0 contracts or misses its
+   target leverage by more than 25 %;
+7. margin feasibility: initial margin at the largest leverage <= 80 % of equity;
+8. policy: leverage cap 5x on equity-sized sleeves.
+
+Stages 1-4 stop at the first stage with problems (later stages need their
+output); 5-8 all run and accumulate. Every message names the path into the
+raw document and what to change, so it can go back to the LLM for repair.
+"""
+
+from __future__ import annotations
+
+import copy
+import dataclasses
+import itertools
+import math
+from bisect import bisect_left
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+from typing import Any
+
+from pydantic import ValidationError
+
+from poseidon.pipeline.engine.specs import KIND_POLICIES
+from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_PRICE_DATASET
+from poseidon.pipeline.v3 import components as _components  # noqa: F401  (registers the components)
+from poseidon.pipeline.v3.dsl_bridge import DSL_MARKETS
+from poseidon.pipeline.v3.instruments import (
+    INSTRUMENTS,
+    INTRADAY_FREQUENCIES,
+    MAX_MARGIN_UTILISATION,
+    REFERENCE_INDEX_LEVEL,
+    SAME_INDEX_FAMILY,
+    TX_INTRADAY_DATA_SINCE,
+    Instrument,
+    data_since,
+    declared,
+    ordered_frequencies,
+    price_series_key,
+    signal_index,
+)
+from poseidon.pipeline.v3.registry import (
+    PLANNED_COMPONENTS,
+    REGISTRY,
+    AllocationComponent,
+    CheckContext,
+    Component,
+    LeverageComponent,
+    SizingComponent,
+    components_for,
+)
+from poseidon.pipeline.v3.spec import (
+    DEFAULT_INITIAL_CAPITAL_TWD,
+    MAX_PARAMS,
+    MIN_PARAMS,
+    PARAM_REF_KEY,
+    RESERVED_ALIASES,
+    SpecV3,
+    component_slots,
+    is_param_ref,
+    join_path,
+    strategy_class,
+    substitute,
+    walk,
+)
+
+LEVERAGE_CAP = 5.0  # §12 #7, on equity-sized sleeves
+MAX_ROUNDING_ERROR = 0.25  # §3.7.5: |actual - target| / target
+DAILY_WINDOW_START = date(2001, 1, 2)  # §12 #3
+INTRADAY_WINDOW_START = TX_INTRADAY_DATA_SINCE  # plan.DATA_START
+TRADING_DAYS_PER_YEAR = 245
+# The execution_timing gate's signal_lag_1d scenario reads every signal series one row late, and the
+# compiler adds that lag to the warm-up; a window start chosen from a series' first day leaves room for it.
+SIGNAL_LAG_WARMUP_BARS = 1
+# Sessions loaded and required beyond a session-counted warm-up: an instrument can miss sessions TWSE held
+# (suspended for a split: 0050 5 sessions in 2025-06, 00631L 4 in 2026-03) and a US index (VIX) keeps its own days.
+WARMUP_MARGIN_SESSIONS = 10
+SESSION_CALENDAR = "twse_taiex_daily"  # TWSE sessions as held: typhoon closures included, the days of TX's day session
+GRID_ENUMERATION_LIMIT = 20_000  # beyond this, sizing feasibility checks the grid corners only
+DSL_SYMBOLS = tuple(DSL_MARKETS)
+
+
+@dataclass(frozen=True)
+class SpecIssue:
+    path: str
+    msg: str
+    type: str = "value_error"
+
+    def text(self) -> str:
+        return f"{self.path or 'spec'}: {self.msg}"
+
+    def as_dict(self) -> dict[str, str]:
+        return {"path": self.path, "msg": self.msg, "type": self.type}
+
+
+@dataclass(frozen=True)
+class SessionWarmup:
+    """Warm-up counted in sessions of ``days`` (the run's frozen ``data.warmup`` rule, ``v3.config.session_warmup``).
+
+    Runs frozen without the rule keep the calendar-day estimate (:func:`warmup_calendar_days`), which falls short
+    where holidays cluster: 268 calendar days held 173 sessions before 2023-08-20 (Lunar New Year, a typhoon day).
+    """
+
+    days: tuple[date, ...]  # sorted, non-empty
+    margin: int
+
+    def load_from(self, start: date, bars: int) -> date:
+        """First day to load so ``bars`` plus ``margin`` sessions precede ``start`` (the first session when fewer do)."""
+
+        return self.days[max(bisect_left(self.days, start) - bars - self.margin, 0)]
+
+    def start_after(self, since: date, bars: int) -> date:
+        """First day with ``bars`` plus ``margin`` sessions in ``[since, day)``; weekdays past the last session."""
+
+        index = bisect_left(self.days, since) + bars + self.margin
+        if index < len(self.days):
+            return self.days[index]
+        day = max(self.days[-1], since - timedelta(days=1))
+        for _ in range(index - len(self.days) + 1):
+            day += timedelta(days=1 if day.weekday() < 4 else 7 - day.weekday())
+        return day
+
+    def count(self, since: date, start: date) -> int:
+        """Sessions in ``[since, start)``."""
+
+        return bisect_left(self.days, start) - bisect_left(self.days, since)
+
+
+@dataclass(frozen=True)
+class FeasibilityContext:
+    """What the validator knows about the run's data. Missing parts fall back to checked-in defaults.
+
+    ``prices`` maps a price-source symbol (TX for the TX family) to the price
+    points to size at, e.g. ``(first_bar_close, max_close)`` of the window.
+    """
+
+    start: date | None = None
+    end: date | None = None
+    prices: Mapping[str, tuple[float, ...]] | None = None
+    # First day of each daily series in the run's refdata (``price_series_key`` / ``SignalIndex.dataset``
+    # -> date), read from the dataset manifests. A series not listed falls back to the checked-in table.
+    series_since: Mapping[str, date] | None = None
+    # Daily specs: the window start is not frozen yet. The validator chooses it (``V3Validation.window``)
+    # as max(``start`` or the default start, the latest first day of a series the spec reads + warm-up).
+    choose_start: bool = False
+    # A run frozen with ``data.warmup``: warm-up in sessions. None: the calendar-day estimate.
+    warmup: SessionWarmup | None = None
+
+
+@dataclass(frozen=True)
+class WindowStart:
+    """The daily window start chosen for a spec (owner decision 2026-10-25).
+
+    A series that starts after the default window start moves the run's start to that series' first day
+    plus the warm-up (the history at each ``$param``'s largest grid value plus the signal-lag scenario, in
+    sessions plus a margin under :class:`SessionWarmup`, else ``warmup_calendar_days``), so the first tradable
+    bar has full indicators. Chosen once, when the run's config is frozen; later stages read the frozen start.
+    """
+
+    start: date
+    default_start: date
+    series_since: Mapping[str, date]  # every daily series the spec reads -> its first day
+    binding: str | None  # the series that moved the start; None: the default start stands
+    warmup_bars: int
+    warmup_calendar_days: int | None  # None: counted in sessions (``margin_sessions``)
+    no_warmup: tuple[str, ...] = ()  # series read from the start on only (a hedge's option chain): no warm-up added
+    margin_sessions: int | None = None
+
+    def warmup_text(self) -> str:
+        if self.margin_sessions is None:
+            return f"{self.warmup_bars} bars, {self.warmup_calendar_days} calendar days"
+        return f"{self.warmup_bars} bars + {self.margin_sessions} sessions"
+
+    @property
+    def moved(self) -> bool:
+        return self.binding is not None
+
+    def as_config(self) -> dict:
+        """The frozen record (``config["data"]["start_rule"]``) of a start that moved."""
+
+        if self.margin_sessions is None:
+            rule, warmup = "+ warm-up", {"warmup_calendar_days": self.warmup_calendar_days}
+        else:
+            rule, warmup = (
+                f"+ warm-up + margin, in {SESSION_CALENDAR} sessions",
+                {"margin_sessions": self.margin_sessions},
+            )
+        return {
+            "rule": f"start = max(default_start, latest first day of a series the spec reads {rule})",
+            "default_start": self.default_start.isoformat(),
+            "series_since": {key: day.isoformat() for key, day in sorted(self.series_since.items())},
+            "binding_series": self.binding,
+            "warmup_bars": self.warmup_bars,
+            **warmup,
+            "source": "refdata dataset manifests (coverage.start; futures: the product's first row)",
+        } | ({"no_warmup_series": list(self.no_warmup)} if self.no_warmup else {})
+
+
+@dataclass(frozen=True)
+class V3Validation:
+    ok: bool
+    errors: tuple[SpecIssue, ...] = ()
+    unsupported: tuple[SpecIssue, ...] = ()
+    notes: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()  # never fail the spec: a $param's declared range touches a component hard bound
+    template: dict | None = None  # the raw document as given
+    resolved: dict | None = None  # every $param at its default
+    params: dict = field(default_factory=dict)  # name -> ParamSpec
+    strategy_class: str | None = None
+    window: WindowStart | None = None  # with ``FeasibilityContext.choose_start``: the chosen daily start
+
+
+class _Issues:
+    def __init__(self):
+        self.errors: list[SpecIssue] = []
+        self.unsupported: list[SpecIssue] = []
+
+    def error(self, path, msg, kind="value_error"):
+        self.errors.append(SpecIssue(path if isinstance(path, str) else join_path(path), msg, kind))
+
+    def unsupported_(self, path, msg):
+        self.unsupported.append(SpecIssue(path if isinstance(path, str) else join_path(path), msg, "unsupported"))
+
+    def any(self) -> bool:
+        return bool(self.errors or self.unsupported)
+
+
+def _pydantic_issues(issues: _Issues, error: ValidationError, prefix: tuple) -> None:
+    for item in error.errors():
+        issues.error((*prefix, *item["loc"]), item["msg"], item["type"])
+
+
+def _choices(slot: str) -> str:
+    return ", ".join(component.name for component in components_for(slot))
+
+
+def _result(issues: _Issues, **kwargs) -> V3Validation:
+    return V3Validation(
+        ok=not issues.any(), errors=tuple(issues.errors), unsupported=tuple(issues.unsupported), **kwargs
+    )
+
+
+# --------------------------------------------------------------------------- stage 1: shape
+
+
+def _check_shape(doc: dict, issues: _Issues) -> None:
+    for path, slot, ref in component_slots(doc):
+        name = ref["component"]
+        component = REGISTRY.get(name)
+        if component is None:
+            if name in PLANNED_COMPONENTS:
+                issues.unsupported_(
+                    (*path, "component"),
+                    f"component {name!r} is not available yet (planned: {PLANNED_COMPONENTS[name]})",
+                )
+            else:
+                choices = _choices(slot) or "none registered yet"
+                issues.error((*path, "component"), f"unknown {slot} component {name!r}; choose one of: {choices}")
+        elif component.slot != slot:
+            choices = _choices(slot) or "none registered yet"
+            issues.error(
+                (*path, "component"),
+                f"{name} is a {component.slot} component, not a {slot} component; choose one of: {choices}",
+            )
+    for alias, decl in doc["instruments"].items():
+        base = ("instruments", alias)
+        if alias in RESERVED_ALIASES:
+            issues.error(
+                base,
+                f"alias {alias!r} is reserved in series refs (self: the sleeve's own instrument, index: a TWSE index)",
+            )
+        instrument = INSTRUMENTS.get(decl["symbol"])
+        if instrument is None:
+            tradable = ", ".join(symbol for symbol, row in INSTRUMENTS.items() if row.tradable)
+            issues.error((*base, "symbol"), f"unknown symbol {decl['symbol']!r}; choose one of: {tradable}")
+            continue
+        if instrument.hedge_component is not None:
+            issues.error(
+                (*base, "symbol"),
+                f"{instrument.symbol} is not a sleeve instrument; buy it with {instrument.hedge_component} in the "
+                "hedges of a TX, MTX or TMF sleeve",
+            )
+            continue
+        if not instrument.tradable:
+            issues.unsupported_(
+                (*base, "symbol"), f"{instrument.symbol} is not available yet (planned: {instrument.planned})"
+            )
+            continue
+        if instrument.kind == "future" and decl.get("roll") is None:
+            issues.error(
+                (*base, "roll"),
+                "a futures instrument needs a roll policy: roll.before_settlement (1d) or roll.at_settlement (intraday)",
+            )
+        if instrument.kind != "future" and decl.get("roll") is not None:
+            issues.error((*base, "roll"), f"{instrument.symbol} is not a future; remove roll")
+        if decl.get("unit") is not None and instrument.kind != "stock":
+            issues.error(
+                (*base, "unit"),
+                f"unit (board_lot / odd_lot) is for stocks and ETFs; {instrument.symbol} is a {instrument.kind}",
+            )
+
+
+# --------------------------------------------------------------------------- stage 2: $param
+
+
+def _walk_outside(node: Any, path: tuple, skip: set[tuple]):
+    if path in skip:
+        return
+    yield path, node
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from _walk_outside(value, (*path, key), skip)
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from _walk_outside(value, (*path, index), skip)
+
+
+def _check_param_refs(doc: dict, params: dict, issues: _Issues) -> dict[str, list[tuple[tuple, Component]]]:
+    """Return ``{param name: [(component path, component)]}`` for the grid sweep."""
+
+    users: dict[str, list[tuple[tuple, Component]]] = {}
+    param_paths = set()
+    for path, _slot, ref in component_slots(doc):
+        component = REGISTRY[ref["component"]]
+        base = (*path, "params")
+        param_paths.add(base)
+        for ref_path, node in walk(ref.get("params") or {}, base):
+            if not is_param_ref(node):
+                continue
+            name = node[PARAM_REF_KEY]
+            if len(node) != 1 or not isinstance(name, str):
+                issues.error(ref_path, 'a parameter reference must be exactly {"$param": "<name>"}')
+                continue
+            if name not in params:
+                declared = ", ".join(sorted(params)) or "none"
+                issues.error(ref_path, f"unknown parameter {name!r}; declared in params: {declared}")
+                continue
+            users.setdefault(name, []).append((path, component))
+            if component.name == "direction.dsl_rules":
+                continue  # the DSL validator checks where its $params may go
+            if len(ref_path) != len(base) + 1:
+                issues.error(ref_path, f"a $param must replace a whole top-level parameter of {component.name}")
+                continue
+            field_name = ref_path[-1]
+            if field_name not in component.tunable:
+                tunable = ", ".join(sorted(component.tunable)) or "none"
+                issues.error(ref_path, f"{component.name}.{field_name} cannot be a $param; tunable fields: {tunable}")
+                continue
+            annotation = component.Params.model_fields[field_name].annotation
+            if annotation is int and params[name].type != "int":
+                issues.error(
+                    ref_path, f"{component.name}.{field_name} is an integer; declare params.{name} with type int"
+                )
+    for path, node in _walk_outside(doc, (), param_paths | {("params",)}):
+        if is_param_ref(node):
+            issues.error(path, "a $param is only allowed inside a component's params")
+    for name in params:
+        if name not in users:
+            issues.error(("params", name), f"parameter {name!r} is declared but never used")
+    count = len(params)
+    if not MIN_PARAMS <= count <= MAX_PARAMS:
+        issues.error(
+            "params",
+            f"a spec declares {MIN_PARAMS}-{MAX_PARAMS} tunable $params, this one declares {count}; parameterise the "
+            "values worth tuning (moving-average days, band, volatility window or k, base leverage)",
+        )
+    return users
+
+
+# --------------------------------------------------------------------------- stage 3: component params
+
+
+def _at(doc: dict, path: tuple) -> Any:
+    node = doc
+    for part in path:
+        node = node[part]
+    return node
+
+
+def _dsl_document(sleeve: dict, doc: dict, params: dict) -> tuple[dict, dict[str, str]]:
+    """The DSL v2 document a dsl_rules sleeve stands for, and a map of DSL top-level keys to spec paths."""
+
+    alias = sleeve["instrument"]
+    symbol = doc["instruments"][alias]["symbol"]
+    body = dict(sleeve["direction"].get("params") or {})
+    used = {node[PARAM_REF_KEY] for _path, node in walk(body) if is_param_ref(node) and node[PARAM_REF_KEY] in params}
+    v2 = {**body, "symbol": symbol, "market": DSL_MARKETS.get(symbol, ""), "interval": doc["frequency"]}
+    if used:
+        v2["params"] = {name: params[name] for name in sorted(used)}
+    outside = {
+        "symbol": f"instruments.{alias}.symbol",
+        "market": f"instruments.{alias}.symbol",
+        "interval": "frequency",
+    }
+    return v2, outside
+
+
+def _check_dsl_rules(path: tuple, sleeve: dict, doc: dict, issues: _Issues) -> None:
+    from poseidon.strategies.dsl.v2 import DslUnsupportedError, DslValidationError, validate_v2
+
+    raw_params = doc.get("params") or {}
+    v2, outside = _dsl_document(sleeve, doc, raw_params)
+    misplaced = [
+        key for key in ("symbol", "market", "interval", "params") if key in (sleeve["direction"].get("params") or {})
+    ]
+    for key in misplaced:
+        where = {"params": "the spec's top-level params", "interval": "frequency"}.get(key, "the instrument")
+        issues.error((*path, "params", key), f"remove {key!r}: in spec v3 it comes from {where}")
+    if misplaced:
+        return
+    base = (*path, "params")
+    try:
+        validate_v2(v2)
+    except DslUnsupportedError as error:
+        for item in error.errors:
+            issues.unsupported_(_dsl_path(item["path"], base, outside), f"direction.dsl_rules: {item['msg']}")
+    except DslValidationError as error:
+        for item in error.errors:
+            issues.error(_dsl_path(item["path"], base, outside), f"direction.dsl_rules: {item['msg']}", item["type"])
+
+
+def _dsl_path(dsl_path: str, base: tuple, outside: dict[str, str]) -> str:
+    head = dsl_path.split(".", 1)[0]
+    if head == "params":
+        return dsl_path
+    if head in outside:
+        return outside[head]
+    return join_path((*base, dsl_path)) if dsl_path else join_path(base)
+
+
+def _parse_components(resolved: dict, template: dict, issues: _Issues) -> dict[tuple, Any]:
+    parsed: dict[tuple, Any] = {}
+    for path, _slot, ref in component_slots(resolved):
+        component = REGISTRY[ref["component"]]
+        if component.name == "direction.dsl_rules":
+            _check_dsl_rules(path, _at(template, path[:2]), template, issues)
+            parsed[path] = component.parse(ref.get("params") or {})
+            continue
+        try:
+            parsed[path] = component.parse(ref.get("params") or {})
+        except ValidationError as error:
+            _pydantic_issues(issues, error, (*path, "params"))
+    return parsed
+
+
+def _sweep_grid(template: dict, params: dict, users: dict, values: dict, issues: _Issues) -> None:
+    """Every grid value of every $param must be valid for every (non-DSL) field that uses it."""
+
+    for name, spec in params.items():
+        for path, component in users.get(name, []):
+            if component.name == "direction.dsl_rules":
+                continue
+            raw = _at(template, path).get("params") or {}
+            failure = None
+            for value in spec.grid():
+                trial = substitute(raw, {**values, name: spec.cast(value)})
+                try:
+                    component.parse(trial)
+                except ValidationError as error:
+                    first = error.errors()[0]
+                    where = join_path((*path, "params", *first["loc"]))
+                    failure = f"value {value!r} is invalid at {where}: {first['msg']}"
+                    break
+            if failure:
+                issues.error(("params", name), failure, "param_range")
+                break
+
+
+def _bound_warnings(template: dict, params: dict, users: dict) -> tuple[str, ...]:
+    """One warning per ($param, component field) whose declared range touches the field's own ge/le bound.
+
+    The pipeline cannot step past that bound, so param_stability loses that neighbour of the best point.
+    Widening the other side of the range keeps the best off the edge.
+    """
+
+    out: list[str] = []
+    for name in sorted(params):
+        spec = params[name]
+        low, high = spec.cast(spec.low), spec.cast(spec.high)
+        for path, component in users.get(name, []):
+            if component.name == "direction.dsl_rules":
+                continue
+            raw = _at(template, path).get("params") or {}
+            for field_name, node in raw.items():
+                if not (is_param_ref(node) and node[PARAM_REF_KEY] == name):
+                    continue
+                for meta in component.Params.model_fields[field_name].metadata:
+                    if hasattr(meta, "ge") and low <= meta.ge:
+                        side, bound = "low", meta.ge
+                    elif hasattr(meta, "le") and high >= meta.le:
+                        side, bound = "high", meta.le
+                    else:
+                        continue
+                    out.append(
+                        f"params.{name}: the declared {side} {(low if side == 'low' else high):g} touches "
+                        f"{component.name}.{field_name}'s hard bound {bound:g}; when the best lands on that edge "
+                        f"param_stability cannot judge the neighbour beyond it. Widen the other side of the range "
+                        f"to keep the best off the edge"
+                    )
+    return tuple(dict.fromkeys(out))
+
+
+# --------------------------------------------------------------------------- stage 4: cross rules
+
+
+def _check_cross(resolved: dict, parsed: dict, issues: _Issues) -> None:
+    frequency = resolved["frequency"]
+    aliases = {alias: declared(decl) for alias, decl in resolved["instruments"].items()}
+    for path, _slot, ref in component_slots(resolved):
+        component = REGISTRY[ref["component"]]
+        if frequency not in component.frequencies:
+            supported = ", ".join(ordered_frequencies(component.frequencies))
+            issues.error(
+                (*path, "component"),
+                f"{component.name} supports frequency {supported}; the spec frequency is {frequency}",
+            )
+
+    seen_ids: dict[str, int] = {}
+    used_aliases: set[str] = set()
+    bases: set[str] = set()
+    has_dsl = False
+    for index, sleeve in enumerate(resolved["sleeves"]):
+        base = ("sleeves", index)
+        if sleeve["id"] in seen_ids:
+            issues.error((*base, "id"), f"duplicate sleeve id {sleeve['id']!r} (also sleeves.{seen_ids[sleeve['id']]})")
+        seen_ids.setdefault(sleeve["id"], index)
+        alias = sleeve["instrument"]
+        instrument = aliases.get(alias)
+        if instrument is None:
+            known = ", ".join(aliases)
+            issues.error((*base, "instrument"), f"unknown instrument alias {alias!r}; declared: {known}")
+        used_aliases.add(alias)
+        direction = sleeve["direction"]
+        if (
+            instrument is not None
+            and not KIND_POLICIES[instrument.kind].short
+            and direction["component"] == "direction.constant"
+            and (direction.get("params") or {}).get("side") == "short"
+        ):
+            issues.error(
+                (*base, "direction", "params", "side"),
+                f"{instrument.symbol} cannot be sold short (short_stock); shorts only via futures",
+            )
+
+        sizing: SizingComponent = REGISTRY[sleeve["sizing"]["component"]]
+        bases.add(sizing.basis)
+        chain = sleeve.get("leverage") or []
+        names = [link["component"] for link in chain]
+        if sizing.uses_leverage:
+            if not chain:
+                issues.error((*base, "leverage"), f"{sizing.name} needs a leverage chain starting with leverage.base")
+            elif names[0] != "leverage.base":
+                issues.error((*base, "leverage", 0, "component"), "the leverage chain must start with leverage.base")
+        elif chain:
+            issues.error(
+                (*base, "leverage"),
+                f"{sizing.name} ignores leverage; remove the leverage chain or use sizing.target_leverage",
+            )
+        for link, name in enumerate(names):
+            if link > 0 and name == "leverage.base":
+                issues.error((*base, "leverage", link, "component"), "leverage.base may only be the first link")
+        for list_name in ("leverage", "exits", "hedges"):
+            listed = [ref["component"] for ref in sleeve.get(list_name) or []]
+            for position, name in enumerate(listed):
+                if name in listed[:position]:
+                    issues.error(
+                        (*base, list_name, position, "component"),
+                        f"{name} appears twice in {list_name}; keep one (the same slot cannot repeat a component)",
+                    )
+
+        if sleeve["direction"]["component"] == "direction.dsl_rules":
+            has_dsl = True
+            _check_dsl_sleeve(base, sleeve, instrument, issues)
+
+        for path, _slot, ref in component_slots({**resolved, "sleeves": [sleeve], "instruments": {}}):
+            if path[0] != "sleeves":
+                continue
+            real_path = (*base, *path[2:])
+            component = REGISTRY[ref["component"]]
+            ctx = CheckContext(resolved, frequency, sleeve, instrument, aliases)
+            params = parsed[real_path]
+            for rel, message in component.check(params, ctx):
+                issues.error((*real_path, "params", rel) if rel else real_path, message)
+            signal = getattr(params, "signal", None)
+            if isinstance(signal, str) and signal.split(":")[0] != "self":
+                used_aliases.add(signal.split(":")[0])
+
+    allocation_signal = getattr(parsed[("allocation",)], "signal", None)
+    if isinstance(allocation_signal, str):
+        used_aliases.add(allocation_signal.split(":")[0])
+    for alias in aliases:
+        if alias not in used_aliases:
+            issues.error(("instruments", alias), f"instrument alias {alias!r} is not used by any sleeve or series")
+    if len(bases) > 1:
+        issues.error("sleeves", "all sleeves must share one sizing basis (all equity-sized or all fixed contracts)")
+
+    allocation: AllocationComponent = REGISTRY[resolved["allocation"]["component"]]
+    count = len(resolved["sleeves"])
+    if not allocation.min_sleeves <= count <= allocation.max_sleeves:
+        issues.error(
+            "allocation.component",
+            f"{allocation.name} takes {allocation.min_sleeves}-{allocation.max_sleeves} sleeves, the spec has {count}",
+        )
+    else:
+        ctx = CheckContext(resolved, frequency, None, None, aliases)
+        for rel, message in allocation.check(parsed[("allocation",)], ctx):
+            issues.error(("allocation", "params", rel) if rel else ("allocation",), message)
+    execution = REGISTRY[resolved["execution"]["component"]]
+    all_dsl = all(sleeve["direction"]["component"] == "direction.dsl_rules" for sleeve in resolved["sleeves"])
+    if execution.fill == "signal_close" and not all_dsl:
+        issues.error("execution.component", "execution.signal_close is only for direction.dsl_rules (DSL v2 parity)")
+    if has_dsl and execution.fill != "signal_close":
+        issues.error(
+            "execution.component", "direction.dsl_rules fills at the signal bar's close: use execution.signal_close"
+        )
+    for alias, decl in resolved["instruments"].items():
+        roll = decl.get("roll")
+        if roll is not None:
+            component = REGISTRY[roll["component"]]
+            ctx = CheckContext(resolved, frequency, None, aliases[alias], aliases)
+            for rel, message in component.check(parsed[("instruments", alias, "roll")], ctx):
+                path = ("instruments", alias, "roll", "params", rel) if rel else ("instruments", alias, "roll")
+                issues.error(path, message)
+
+
+def _check_dsl_sleeve(base: tuple, sleeve: dict, instrument: Instrument | None, issues: _Issues) -> None:
+    """Until DSL parity (step 7) the fast path is exactly the v1 shape: fixed contracts, trade on signal change."""
+
+    if sleeve["sizing"]["component"] != "sizing.fixed_contracts":
+        issues.error((*base, "sizing", "component"), "direction.dsl_rules sizes with sizing.fixed_contracts")
+    if sleeve["rebalance"]["component"] != "rebalance.on_signal_change":
+        issues.error((*base, "rebalance", "component"), "direction.dsl_rules trades with rebalance.on_signal_change")
+    for list_name, where in (("exits", "the DSL risk block"), ("hedges", "a later milestone")):
+        if sleeve.get(list_name):
+            issues.error((*base, list_name), f"direction.dsl_rules takes no {list_name}; use {where}")
+    if instrument is not None and instrument.symbol not in DSL_SYMBOLS:
+        issues.error((*base, "instrument"), f"direction.dsl_rules trades {' or '.join(DSL_SYMBOLS)} only")
+
+
+# --------------------------------------------------------------------------- stages 5-8: feasibility and policy
+
+
+def warmup_calendar_days(bars: int, frequency: str) -> int:
+    """Calendar days of data to load before the window start for ``bars`` warm-up bars."""
+
+    if frequency in INTRADAY_FREQUENCIES:
+        return 0  # intraday runs warm up inside the data window (plan.DEFAULT_GATES["warmup_days"])
+    return math.ceil(bars * 365 / TRADING_DAYS_PER_YEAR) + 7
+
+
+def _history_bars(template: dict, params: dict) -> int:
+    """Warm-up at each $param's largest grid value (history grows with window lengths)."""
+
+    high = {name: spec.cast(spec.high) for name, spec in params.items()}
+    resolved = substitute(template, high)
+    bars = 0
+    for _path, _slot, ref in component_slots(resolved):
+        component = REGISTRY[ref["component"]]
+        if component.name == "direction.dsl_rules":
+            continue
+        bars = max(bars, component.history(component.parse(ref.get("params") or {})))
+    return bars
+
+
+def _window_uncovered(series: str, since: date, start: date) -> str:
+    """The run's data window is frozen in its config, not in the spec, so no spec edit can fix this."""
+
+    return (
+        f"{series} data starts {since.isoformat()}, after the run's data window start {start.isoformat()}; "
+        "the window is fixed by the run config, so this series cannot be read in this run"
+    )
+
+
+def _check_data(
+    resolved: dict, template: dict, params: dict, feasibility: FeasibilityContext, issues, notes
+) -> WindowStart | None:
+    frequency = resolved["frequency"]
+    daily = frequency not in INTRADAY_FREQUENCIES
+    start = feasibility.start or (DAILY_WINDOW_START if daily else INTRADAY_WINDOW_START)
+    bars = _history_bars(template, params)
+    sessions = feasibility.warmup if daily else None
+    warmup = timedelta(days=warmup_calendar_days(bars, frequency))
+    known = feasibility.series_since or {}
+    series: list[tuple[tuple, str, str | None, date, str]] = []  # (path, label, key, first day, fix)
+    no_warmup: set[str] = set()  # keys read from the window start on only (a hedge's option chain)
+    instruments: list[Instrument] = []
+    for alias, decl in resolved["instruments"].items():
+        instrument = declared(decl)
+        path = ("instruments", alias, "symbol")
+        key = price_series_key(instrument) if daily else None
+        since = known[key] if key in known else data_since(instrument, frequency)
+        if since is None:
+            issues.error(path, f"{instrument.symbol} has no {frequency} data source")
+            continue
+        instruments.append(instrument)
+        series.append((path, f"{instrument.symbol} {frequency}", key, since, "shorten the warm-up windows"))
+    for path, _slot, ref in component_slots(resolved):
+        component = REGISTRY[ref["component"]]
+        if component.name == "direction.dsl_rules":
+            continue
+        signal = getattr(component.parse(ref.get("params") or {}), "signal", None)
+        index = signal_index(signal) if isinstance(signal, str) else None
+        if index is not None:
+            since = known.get(index.dataset, index.data_since)
+            label, fix = f"{signal} ({index.name_en})", "shorten the warm-up windows or read another series"
+            series.append(((*path, "params", "signal"), label, index.dataset, since, fix))
+        option_symbol = getattr(component, "option_symbol", None)
+        if option_symbol is not None:
+            option = INSTRUMENTS[option_symbol]
+            key = OPTION_PRICE_DATASET
+            since = known.get(key, option.daily_data_since)
+            series.append(((*path, "component"), f"{option.symbol} {frequency}", key, since, "remove the hedge"))
+            no_warmup.add(key)
+
+    window = None
+    if feasibility.choose_start and daily and series:
+        lagged_bars = bars + SIGNAL_LAG_WARMUP_BARS
+        lagged = warmup_calendar_days(lagged_bars, frequency)
+
+        def ready(since: date, key: str | None) -> date:
+            if key in no_warmup:
+                return since
+            return sessions.start_after(since, lagged_bars) if sessions else since + timedelta(days=lagged)
+
+        latest, binding = max((ready(since, key), key) for _path, _label, key, since, _fix in series)
+        window = WindowStart(
+            start=max(start, latest),
+            default_start=start,
+            series_since={key: since for _path, _label, key, since, _fix in series if key is not None},
+            binding=binding if latest > start else None,
+            warmup_bars=lagged_bars,
+            warmup_calendar_days=None if sessions else lagged,
+            no_warmup=tuple(sorted(no_warmup)),
+            margin_sessions=sessions.margin if sessions else None,
+        )
+        start = window.start
+    need_from = start - warmup
+    for path, label, key, since, fix in series:
+        if start < since:
+            issues.unsupported_(path, _window_uncovered(label, since, start))
+        elif key in no_warmup:
+            continue
+        elif sessions is not None and (held := sessions.count(since, start)) < bars:
+            issues.error(
+                path,
+                f"{label} data starts {since.isoformat()}; the warm-up needs {bars} sessions before the window start "
+                f"{start.isoformat()}, the data has {held}; {fix}",
+            )
+        elif sessions is None and need_from < since:
+            issues.error(
+                path,
+                f"{label} data starts {since.isoformat()}; the window start {start.isoformat()} minus the warm-up "
+                f"({bars} bars, {warmup.days} calendar days) needs data from {need_from.isoformat()}; {fix}",
+            )
+    for instrument in instruments:
+        note = instrument.proxy_note(start)
+        if note:
+            notes.append(note)
+    if feasibility.end is not None and feasibility.end <= start:
+        if window is not None and window.moved:
+            path, label, _key, since, _fix = next(item for item in series if item[2] == window.binding)
+            issues.unsupported_(
+                path,
+                f"{label} data starts {since.isoformat()}; with the warm-up ({window.warmup_text()}) the run's "
+                f"window would start {start.isoformat()}, not before the data end {feasibility.end.isoformat()}",
+            )
+        else:
+            issues.error(
+                "", f"the data window end {feasibility.end.isoformat()} is not after its start {start.isoformat()}"
+            )
+    return window
+
+
+def _grid_points(names: list[str], params: dict):
+    if not names:
+        return [{}]
+    size = math.prod(params[name].grid_size() for name in names)
+    if size <= GRID_ENUMERATION_LIMIT:
+        axes = [params[name].grid() for name in names]
+    else:
+        axes = [[params[name].cast(params[name].low), params[name].cast(params[name].high)] for name in names]
+    return [dict(zip(names, combo, strict=True)) for combo in itertools.product(*axes)]
+
+
+def _chain(links: list[tuple[LeverageComponent, Any]]) -> tuple[float, float]:
+    nominal = upper = 0.0
+    for component, params in links:
+        nominal = component.nominal(params, nominal)
+        upper = component.upper(params, upper)
+    return nominal, upper
+
+
+def _noun(instrument: Instrument | None, units: int = 2) -> str:
+    noun = (
+        "contract" if instrument is None or instrument.kind != "stock" else ("share" if instrument.lot == 1 else "lot")
+    )
+    return noun + ("" if units == 1 else "s")
+
+
+def _units_text(units: int, instrument: Instrument | None = None) -> str:
+    return f"{units} {_noun(instrument, units)}"
+
+
+def _contracts(units: int) -> str:
+    return _units_text(units)
+
+
+def _family_hint(
+    price: float, leverage: float, equity: float, current: Instrument, sizing, sizing_params, alias: str = ""
+) -> str:
+    if current.kind == "stock":
+        if current.lot == 1:
+            return "raise initial capital or the share of equity"
+        shares = dataclasses.replace(current, lot=1)
+        units = sizing.units(
+            sizing_params, equity=equity, direction=1, leverage=leverage, weight=1.0, price=price, instrument=shares
+        )
+        actual = units * shares.notional_twd(price) / equity
+        return (
+            f"trade odd lots: set instruments.{alias}.unit to odd_lot (one share per unit): "
+            f"{_units_text(units, shares)} ~ {actual:.2f}x"
+        )
+    options = []
+    for symbol in SAME_INDEX_FAMILY:
+        other = INSTRUMENTS[symbol]
+        if other.symbol == current.symbol or other.point_value_twd >= current.point_value_twd or not other.tradable:
+            continue
+        units = sizing.units(
+            sizing_params, equity=equity, direction=1, leverage=leverage, weight=1.0, price=price, instrument=other
+        )
+        actual = units * other.notional_twd(price) / equity
+        options.append(f"{symbol} ({other.notional_twd(price):,.0f} TWD each): {_contracts(units)} ~ {actual:.2f}x")
+    if not options:
+        return "raise initial capital or the target leverage"
+    return "use a smaller contract on the same index: " + "; ".join(options)
+
+
+def _check_sizing(resolved: dict, template: dict, params: dict, feasibility: FeasibilityContext, issues) -> None:
+    equity = float(resolved.get("capital", {}).get("initial_twd", DEFAULT_INITIAL_CAPITAL_TWD))
+    allocation: AllocationComponent = REGISTRY[resolved["allocation"]["component"]]
+    sleeve_ids = tuple(sleeve["id"] for sleeve in resolved["sleeves"])
+    weight_bounds = allocation.weight_bounds(allocation.parse(resolved["allocation"].get("params") or {}), sleeve_ids)
+    for index, sleeve in enumerate(resolved["sleeves"]):
+        sizing: SizingComponent = REGISTRY[sleeve["sizing"]["component"]]
+        if sizing.basis != "equity":
+            continue
+        base = ("sleeves", index)
+        alias = sleeve["instrument"]
+        instrument = declared(resolved["instruments"][alias])
+        paid_in_full = instrument.kind == "stock"
+        source = instrument.price_proxy or instrument.symbol
+        fallback = instrument.reference_price or REFERENCE_INDEX_LEVEL
+        prices = tuple((feasibility.prices or {}).get(source) or (fallback,))
+        weight, weight_upper = weight_bounds[sleeve["id"]]
+        raw_sleeve = template["sleeves"][index]
+        refs = [raw_sleeve["sizing"], *raw_sleeve.get("leverage", [])]
+        names = sorted(
+            {node[PARAM_REF_KEY] for ref in refs for _path, node in walk(ref.get("params") or {}) if is_param_ref(node)}
+        )
+        defaults = {name: spec.cast(spec.default) for name, spec in params.items()}
+        reported = {"units": False, "margin": False, "cap": False, "cash": False, "hedge": False}
+        grid = []
+        for point in _grid_points(names, params):
+            values = {**defaults, **point}
+            links = []
+            for link in raw_sleeve.get("leverage", []):
+                component = REGISTRY[link["component"]]
+                links.append((component, component.parse(substitute(link.get("params") or {}, values))))
+            sizing_params = sizing.parse(substitute(raw_sleeve["sizing"].get("params") or {}, values))
+            nominal, upper = _chain(links)
+            grid.append((point, sizing_params, nominal, upper))
+        # Name the grid point only when the exposure actually varies over the grid.
+        exposures = {(sizing.exposure(p, nominal), sizing.exposure(p, upper)) for _point, p, nominal, upper in grid}
+        varies = len(exposures) > 1
+        for point, sizing_params, nominal, upper in grid:
+            where = f" at {point}" if varies else ""
+            target, reach = sizing.exposure(sizing_params, nominal), sizing.exposure(sizing_params, upper)
+            if sizing.uses_leverage and upper > LEVERAGE_CAP + 1e-9 and not reported["cap"]:
+                reported["cap"] = True
+                issues.error(
+                    (*base, "leverage"), f"leverage can reach {upper:g}x{where}, above the {LEVERAGE_CAP:g}x policy cap"
+                )
+            if paid_in_full and reach * weight_upper > 1.0 + 1e-9 and not reported["cash"]:
+                reported["cash"] = True
+                issues.error(
+                    (*base, "leverage" if sizing.uses_leverage else "sizing"),
+                    f"{instrument.symbol} is paid in full (no margin loans): the position can reach "
+                    f"{reach * weight_upper:.2f}x equity{where}, above 1x; leverage only via a futures sleeve",
+                )
+            for price in prices:
+                notional = instrument.notional_twd(price)
+                units = sizing.units(
+                    sizing_params,
+                    equity=equity,
+                    direction=1,
+                    leverage=nominal,
+                    weight=weight,
+                    price=price,
+                    instrument=instrument,
+                )
+                goal = target * weight
+                actual = units * notional / equity
+                for position, hedge in enumerate(sleeve.get("hedges") or []):
+                    component = REGISTRY[hedge["component"]]
+                    policy = component.policy(
+                        component.parse(hedge.get("params") or {}), name="hedge", underlying="", chain=""
+                    )
+                    option = INSTRUMENTS[component.option_symbol]
+                    covered = policy.units(units, instrument.point_value_twd * instrument.lot, option.point_value_twd)
+                    if units and not covered and not reported["hedge"]:
+                        reported["hedge"] = True
+                        issues.error(
+                            (*base, "hedges", position),
+                            f"target {nominal:g}x{where} on {equity:,.0f} TWD at price {price:,.0f} buys "
+                            f"{_contracts(units)} of {instrument.symbol}, which sizes to 0 {option.symbol} puts "
+                            f"(cover_ratio {policy.cover_ratio:g} x {units} x {instrument.point_value_twd:g} / "
+                            f"{option.point_value_twd:g} < 1); raise cover_ratio, capital or leverage",
+                        )
+                if not reported["units"] and (units == 0 or abs(actual - goal) / goal > MAX_ROUNDING_ERROR):
+                    reported["units"] = True
+                    hint = _family_hint(price, nominal * weight, equity, instrument, sizing, sizing_params, alias)
+                    bought = f"buys {_units_text(units, instrument)} of {instrument.symbol} ({notional:,.0f} TWD notional each)"
+                    if units:
+                        bought += f" = {actual:.2f}x, {abs(actual - goal) / goal:.0%} off target"
+                    issues.error(
+                        (*base, "sizing"),
+                        f"target {goal:g}x{where} on {equity:,.0f} TWD at price {price:,.0f} {bought}; "
+                        f"0 {_noun(instrument)} or more than {MAX_ROUNDING_ERROR:.0%} rounding error is infeasible; "
+                        f"{hint}",
+                    )
+                upper_units = sizing.units(
+                    sizing_params,
+                    equity=equity,
+                    direction=1,
+                    leverage=upper,
+                    weight=weight_upper,
+                    price=price,
+                    instrument=instrument,
+                )
+                margin = upper_units * notional * instrument.initial_margin_ratio
+                if not reported["margin"] and margin > equity * MAX_MARGIN_UTILISATION:
+                    reported["margin"] = True
+                    issues.error(
+                        (*base, "leverage"),
+                        f"at {upper:g}x{where} the initial margin {margin:,.0f} TWD exceeds "
+                        f"{MAX_MARGIN_UTILISATION:.0%} of equity ({equity * MAX_MARGIN_UTILISATION:,.0f} TWD); "
+                        "lower the leverage",
+                    )
+
+
+# --------------------------------------------------------------------------- entry point
+
+
+def validate_spec_v3(doc: Any, *, feasibility: FeasibilityContext | None = None) -> V3Validation:
+    """Validate a spec v3 document (template with ``$param`` references) in the §3.7 order."""
+
+    issues = _Issues()
+    feasibility = feasibility or FeasibilityContext()
+    if not isinstance(doc, dict):
+        issues.error("", "a spec v3 document must be a JSON object")
+        return _result(issues)
+    try:
+        frame = SpecV3.model_validate(doc)
+    except ValidationError as error:
+        _pydantic_issues(issues, error, ())
+        return _result(issues)
+    template = copy.deepcopy(doc)
+    params = dict(frame.params)
+    _check_shape(template, issues)
+    if issues.any():
+        return _result(issues, template=template, params=params)
+
+    users = _check_param_refs(template, params, issues)
+    if issues.any():
+        return _result(issues, template=template, params=params)
+    values = {name: spec.cast(spec.default) for name, spec in params.items()}
+    resolved = substitute(template, values)
+
+    parsed = _parse_components(resolved, template, issues)
+    if not issues.any():
+        _sweep_grid(template, params, users, values, issues)
+    if issues.any():
+        return _result(issues, template=template, resolved=resolved, params=params)
+
+    _check_cross(resolved, parsed, issues)
+    if issues.any():
+        return _result(issues, template=template, resolved=resolved, params=params)
+
+    notes: list[str] = []
+    window = _check_data(resolved, template, params, feasibility, issues, notes)
+    _check_sizing(resolved, template, params, feasibility, issues)
+    return _result(
+        issues,
+        notes=tuple(dict.fromkeys(notes)),
+        warnings=_bound_warnings(template, params, users),
+        template=template,
+        resolved=resolved,
+        params=params,
+        strategy_class=strategy_class(resolved),
+        window=window,
+    )
+
+
+class SpecV3Validator:
+    """``config_json["spec_validator"] == "spec_v3"`` (CONFIG_VERSION 6). No run freezes it before step 4."""
+
+    name = "spec_v3"
+
+    def validate_spec(self, spec: dict):
+        from poseidon.pipeline.spec_validation import SpecValidation
+
+        result = validate_spec_v3(spec)
+        return SpecValidation(
+            result.ok,
+            tuple(issue.text() for issue in result.errors),
+            tuple(issue.text() for issue in result.unsupported),
+        )
+
+    def resolve(self, spec: dict) -> dict:
+        """``{"spec", "template", "params", "notes", "strategy_class"}`` for a spec that passed."""
+
+        result = validate_spec_v3(spec)
+        if not result.ok:
+            raise ValueError("resolve() needs a spec that passed validate_spec()")
+        return {
+            "spec": result.resolved,
+            "template": result.template,
+            "params": {
+                name: {
+                    "type": p.type,
+                    "low": p.cast(p.low),
+                    "high": p.cast(p.high),
+                    "step": p.step,
+                    "default": p.cast(p.default),
+                }
+                for name, p in sorted(result.params.items())
+            },
+            "notes": list(result.notes),
+            "strategy_class": result.strategy_class,
+        }

@@ -1,0 +1,1580 @@
+{
+  "$defs": {
+    "AllocationFixedWeights": {
+      "additionalProperties": false,
+      "description": "Constant weights per sleeve id (sum <= 1); each sleeve's sizing is scaled by its weight.",
+      "properties": {
+        "component": {
+          "const": "allocation.fixed_weights",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/AllocationFixedWeightsParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "allocation.fixed_weights",
+      "type": "object"
+    },
+    "AllocationFixedWeightsParams": {
+      "additionalProperties": false,
+      "properties": {
+        "weights": {
+          "maxProperties": 4,
+          "minProperties": 2,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,31}$": {
+              "exclusiveMinimum": 0.0,
+              "maximum": 1.0,
+              "type": "number"
+            }
+          },
+          "title": "Weights",
+          "type": "object"
+        }
+      },
+      "required": [
+        "weights"
+      ],
+      "title": "AllocationFixedWeightsParams",
+      "type": "object"
+    },
+    "AllocationInverseVol": {
+      "additionalProperties": false,
+      "description": "Weights proportional to 1 / realised volatility of each sleeve's own series over window_days, sum 1.",
+      "properties": {
+        "component": {
+          "const": "allocation.inverse_vol",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/AllocationInverseVolParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "allocation.inverse_vol",
+      "type": "object"
+    },
+    "AllocationInverseVolParams": {
+      "additionalProperties": false,
+      "properties": {
+        "window_days": {
+          "anyOf": [
+            {
+              "maximum": 120,
+              "minimum": 10,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 20,
+          "title": "Window Days"
+        }
+      },
+      "title": "AllocationInverseVolParams",
+      "type": "object"
+    },
+    "AllocationRegimeSwitch": {
+      "additionalProperties": false,
+      "description": "Two sleeves: all weight on sleeve `on` while signal > MA x (1 + band), on sleeve `off` once < MA x (1 - band) (regime.ma_band hysteresis).",
+      "properties": {
+        "component": {
+          "const": "allocation.regime_switch",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/AllocationRegimeSwitchParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "allocation.regime_switch",
+      "type": "object"
+    },
+    "AllocationRegimeSwitchParams": {
+      "additionalProperties": false,
+      "properties": {
+        "band_pct": {
+          "anyOf": [
+            {
+              "maximum": 0.1,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 0.02,
+          "title": "Band Pct"
+        },
+        "ma_days": {
+          "anyOf": [
+            {
+              "maximum": 400,
+              "minimum": 20,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 200,
+          "title": "Ma Days"
+        },
+        "off": {
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "title": "Off",
+          "type": "string"
+        },
+        "on": {
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "title": "On",
+          "type": "string"
+        },
+        "signal": {
+          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr|vix))$",
+          "title": "Signal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "signal",
+        "on",
+        "off"
+      ],
+      "title": "AllocationRegimeSwitchParams",
+      "type": "object"
+    },
+    "AllocationSingle": {
+      "additionalProperties": false,
+      "description": "One sleeve, weight 1.",
+      "properties": {
+        "component": {
+          "const": "allocation.single",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/AllocationSingleParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "allocation.single",
+      "type": "object"
+    },
+    "AllocationSingleParams": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "AllocationSingleParams",
+      "type": "object"
+    },
+    "Capital": {
+      "additionalProperties": false,
+      "properties": {
+        "initial_twd": {
+          "default": 1000000,
+          "maximum": 20000000,
+          "minimum": 300000,
+          "title": "Initial Twd",
+          "type": "number"
+        }
+      },
+      "title": "Capital",
+      "type": "object"
+    },
+    "DirectionConstant": {
+      "additionalProperties": false,
+      "description": "Always long or always short; the leverage chain then decides how much.",
+      "properties": {
+        "component": {
+          "const": "direction.constant",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/DirectionConstantParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "direction.constant",
+      "type": "object"
+    },
+    "DirectionConstantParams": {
+      "additionalProperties": false,
+      "properties": {
+        "side": {
+          "enum": [
+            "long",
+            "short"
+          ],
+          "title": "Side",
+          "type": "string"
+        }
+      },
+      "required": [
+        "side"
+      ],
+      "title": "DirectionConstantParams",
+      "type": "object"
+    },
+    "DirectionDslRules": {
+      "additionalProperties": false,
+      "description": "DSL v2.1 intraday rules for TX/MTX (sessions, opening range, EMA/SMA/ATR/RSI, N-bar channels, exits in the DSL risk block); 1 fixed contract, fills at the signal bar's close.",
+      "properties": {
+        "component": {
+          "const": "direction.dsl_rules",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "description": "a DSL v2 document without symbol/market/interval/params (see the DSL v2 schema)",
+          "title": "Params",
+          "type": "object"
+        }
+      },
+      "required": [
+        "component",
+        "params"
+      ],
+      "title": "direction.dsl_rules",
+      "type": "object"
+    },
+    "DrawdownStep": {
+      "additionalProperties": false,
+      "description": "From a drawdown of ``drawdown_pct`` (a fraction of the rolling high) on, the leverage is ``leverage``.",
+      "properties": {
+        "drawdown_pct": {
+          "exclusiveMinimum": 0.0,
+          "maximum": 0.9,
+          "title": "Drawdown Pct",
+          "type": "number"
+        },
+        "leverage": {
+          "exclusiveMinimum": 0.0,
+          "maximum": 5.0,
+          "title": "Leverage",
+          "type": "number"
+        }
+      },
+      "required": [
+        "drawdown_pct",
+        "leverage"
+      ],
+      "title": "DrawdownStep",
+      "type": "object"
+    },
+    "ExecutionNextOpen": {
+      "additionalProperties": false,
+      "description": "Decide after the daily close, fill at the next session's open (TX family: 15:00 night open).",
+      "properties": {
+        "component": {
+          "const": "execution.next_open",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutionNextOpenParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "execution.next_open",
+      "type": "object"
+    },
+    "ExecutionNextOpenParams": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "ExecutionNextOpenParams",
+      "type": "object"
+    },
+    "ExecutionSignalClose": {
+      "additionalProperties": false,
+      "description": "Fill at the signal bar's close; only for direction.dsl_rules (DSL v2 parity).",
+      "properties": {
+        "component": {
+          "const": "execution.signal_close",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutionSignalCloseParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "execution.signal_close",
+      "type": "object"
+    },
+    "ExecutionSignalCloseParams": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "ExecutionSignalCloseParams",
+      "type": "object"
+    },
+    "HedgeProtectivePut": {
+      "additionalProperties": false,
+      "description": "Buy TXO monthly puts against the long futures position: strike nearest close x (1 - moneyness), front or next month, roll before its own expiry or when the front month expires, optional take-profit (sell at take_profit_multiple x the fill price, buy a new one); cover_ratio 1 = 1 put per 5 TMF; daily settlement prices.",
+      "properties": {
+        "component": {
+          "const": "hedge.protective_put",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/HedgeProtectivePutParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "hedge.protective_put",
+      "type": "object"
+    },
+    "HedgeProtectivePutParams": {
+      "additionalProperties": false,
+      "properties": {
+        "cover_ratio": {
+          "anyOf": [
+            {
+              "maximum": 1.5,
+              "minimum": 0.25,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 1.0,
+          "title": "Cover Ratio"
+        },
+        "moneyness_pct": {
+          "anyOf": [
+            {
+              "maximum": 0.2,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 0.05,
+          "title": "Moneyness Pct"
+        },
+        "roll_days_before_expiry": {
+          "anyOf": [
+            {
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 5,
+          "title": "Roll Days Before Expiry"
+        },
+        "roll_when": {
+          "default": "own_expiry",
+          "enum": [
+            "own_expiry",
+            "front_expiry"
+          ],
+          "title": "Roll When",
+          "type": "string"
+        },
+        "take_profit_multiple": {
+          "anyOf": [
+            {
+              "maximum": 20.0,
+              "minimum": 1.5,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Take Profit Multiple"
+        },
+        "tenor": {
+          "default": "front",
+          "enum": [
+            "front",
+            "next"
+          ],
+          "title": "Tenor",
+          "type": "string"
+        }
+      },
+      "title": "HedgeProtectivePutParams",
+      "type": "object"
+    },
+    "InstrumentDecl": {
+      "additionalProperties": false,
+      "properties": {
+        "roll": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "roll.at_settlement": "#/$defs/RollAtSettlement",
+                  "roll.before_settlement": "#/$defs/RollBeforeSettlement"
+                },
+                "propertyName": "component"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/RollBeforeSettlement"
+                },
+                {
+                  "$ref": "#/$defs/RollAtSettlement"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Roll"
+        },
+        "symbol": {
+          "enum": [
+            "TX",
+            "MTX",
+            "TMF",
+            "0050",
+            "006204",
+            "00631L",
+            "00675L",
+            "1216",
+            "1301",
+            "1303",
+            "2002",
+            "2059",
+            "2301",
+            "2303",
+            "2308",
+            "2317",
+            "2327",
+            "2330",
+            "2344",
+            "2345",
+            "2357",
+            "2360",
+            "2368",
+            "2379",
+            "2382",
+            "2383",
+            "2395",
+            "2408",
+            "2412",
+            "2449",
+            "2454",
+            "2603",
+            "2615",
+            "2801",
+            "2880",
+            "2881",
+            "2882",
+            "2883",
+            "2884",
+            "2885",
+            "2886",
+            "2887",
+            "2890",
+            "2891",
+            "2892",
+            "2912",
+            "3008",
+            "3017",
+            "3034",
+            "3037",
+            "3045",
+            "3231",
+            "3653",
+            "3661",
+            "3711",
+            "4904",
+            "4938",
+            "5871",
+            "5876",
+            "5880",
+            "6505",
+            "6669"
+          ],
+          "title": "Symbol",
+          "type": "string"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "enum": [
+                "board_lot",
+                "odd_lot"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "title": "InstrumentDecl",
+      "type": "object"
+    },
+    "LevelStep": {
+      "additionalProperties": false,
+      "description": "From a signal level of ``level`` on, the leverage is ``leverage``.",
+      "properties": {
+        "level": {
+          "exclusiveMinimum": 0.0,
+          "maximum": 1000.0,
+          "title": "Level",
+          "type": "number"
+        },
+        "leverage": {
+          "exclusiveMinimum": 0.0,
+          "maximum": 5.0,
+          "title": "Leverage",
+          "type": "number"
+        }
+      },
+      "required": [
+        "level",
+        "leverage"
+      ],
+      "title": "LevelStep",
+      "type": "object"
+    },
+    "LeverageBase": {
+      "additionalProperties": false,
+      "description": "Base leverage L0 = value x equity (first link of the leverage chain).",
+      "properties": {
+        "component": {
+          "const": "leverage.base",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/LeverageBaseParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "leverage.base",
+      "type": "object"
+    },
+    "LeverageBaseParams": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "maximum": 5.0,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "LeverageBaseParams",
+      "type": "object"
+    },
+    "LeverageDrawdownLadder": {
+      "additionalProperties": false,
+      "description": "Drawdown ladder (adds leverage when the PRICE falls): leverage steps UP as the signal falls from its rolling high, e.g. -10% -> 2x, -20% -> 3x; hold keeps the reached step until the drawdown recovers to release_drawdown_pct. Never lowers leverage. NOT the planned risk.drawdown_brake (cuts leverage after the strategy's own equity drawdown).",
+      "properties": {
+        "component": {
+          "const": "leverage.drawdown_ladder",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/LeverageDrawdownLadderParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "leverage.drawdown_ladder",
+      "type": "object"
+    },
+    "LeverageDrawdownLadderParams": {
+      "additionalProperties": false,
+      "properties": {
+        "hold": {
+          "default": false,
+          "title": "Hold",
+          "type": "boolean"
+        },
+        "lookback_days": {
+          "anyOf": [
+            {
+              "maximum": 500,
+              "minimum": 20,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 120,
+          "title": "Lookback Days"
+        },
+        "release_drawdown_pct": {
+          "default": 0.05,
+          "exclusiveMaximum": 0.9,
+          "minimum": 0.0,
+          "title": "Release Drawdown Pct",
+          "type": "number"
+        },
+        "signal": {
+          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr|vix))$",
+          "title": "Signal",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/DrawdownStep"
+          },
+          "maxItems": 6,
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "signal",
+        "steps"
+      ],
+      "title": "LeverageDrawdownLadderParams",
+      "type": "object"
+    },
+    "LeverageLevelLadder": {
+      "additionalProperties": false,
+      "description": "Level ladder (adds leverage when a signal LEVEL is high): leverage steps UP as the signal reaches thresholds, e.g. VIX >= 30 -> 2x, >= 40 -> 3x; hold keeps the step until the signal falls to release_below. Never lowers leverage.",
+      "properties": {
+        "component": {
+          "const": "leverage.level_ladder",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/LeverageLevelLadderParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "leverage.level_ladder",
+      "type": "object"
+    },
+    "LeverageLevelLadderParams": {
+      "additionalProperties": false,
+      "properties": {
+        "hold": {
+          "default": false,
+          "title": "Hold",
+          "type": "boolean"
+        },
+        "release_below": {
+          "default": 0.0,
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "title": "Release Below",
+          "type": "number"
+        },
+        "signal": {
+          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr|vix))$",
+          "title": "Signal",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/LevelStep"
+          },
+          "maxItems": 6,
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "signal",
+        "steps"
+      ],
+      "title": "LeverageLevelLadderParams",
+      "type": "object"
+    },
+    "ParamRef": {
+      "additionalProperties": false,
+      "description": "``{\"$param\": \"<name>\"}``: the value is the tunable spec-level parameter ``<name>``.",
+      "properties": {
+        "$param": {
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "title": "$Param",
+          "type": "string"
+        }
+      },
+      "required": [
+        "$param"
+      ],
+      "title": "ParamRef",
+      "type": "object"
+    },
+    "ParamSpec": {
+      "additionalProperties": false,
+      "description": "A tunable parameter. Values are restricted to ``low + k * step`` (grid).",
+      "properties": {
+        "default": {
+          "title": "Default",
+          "type": "number"
+        },
+        "high": {
+          "title": "High",
+          "type": "number"
+        },
+        "low": {
+          "title": "Low",
+          "type": "number"
+        },
+        "step": {
+          "title": "Step",
+          "type": "number"
+        },
+        "type": {
+          "enum": [
+            "int",
+            "float"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "low",
+        "high",
+        "step",
+        "default"
+      ],
+      "title": "ParamSpec",
+      "type": "object"
+    },
+    "RebalanceDaily": {
+      "additionalProperties": false,
+      "description": "Re-size every trading day when the target differs by at least min_change_units.",
+      "properties": {
+        "component": {
+          "const": "rebalance.daily",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/RebalanceDailyParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "rebalance.daily",
+      "type": "object"
+    },
+    "RebalanceDailyParams": {
+      "additionalProperties": false,
+      "properties": {
+        "min_change_units": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 1,
+          "title": "Min Change Units"
+        }
+      },
+      "title": "RebalanceDailyParams",
+      "type": "object"
+    },
+    "RebalanceMonthly": {
+      "additionalProperties": false,
+      "description": "Trade once a month only, on the first, last or n-th trading day of the month (n only with nth_trading_day; TWSE / TAIFEX calendar, closures included): switch and re-size to the target there, hold in between; a run's first day enters.",
+      "properties": {
+        "component": {
+          "const": "rebalance.monthly",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/RebalanceMonthlyParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "rebalance.monthly",
+      "type": "object"
+    },
+    "RebalanceMonthlyAtRoll": {
+      "additionalProperties": false,
+      "description": "Re-size only when the futures position rolls (monthly); direction changes still trade at once.",
+      "properties": {
+        "component": {
+          "const": "rebalance.monthly_at_roll",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/RebalanceMonthlyAtRollParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "rebalance.monthly_at_roll",
+      "type": "object"
+    },
+    "RebalanceMonthlyAtRollParams": {
+      "additionalProperties": false,
+      "properties": {
+        "min_change_units": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 1,
+          "title": "Min Change Units"
+        }
+      },
+      "title": "RebalanceMonthlyAtRollParams",
+      "type": "object"
+    },
+    "RebalanceMonthlyParams": {
+      "additionalProperties": false,
+      "properties": {
+        "day": {
+          "default": "last_trading_day",
+          "enum": [
+            "last_trading_day",
+            "first_trading_day",
+            "nth_trading_day"
+          ],
+          "title": "Day",
+          "type": "string"
+        },
+        "min_change_units": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 1,
+          "title": "Min Change Units"
+        },
+        "n": {
+          "default": 1,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "N",
+          "type": "integer"
+        }
+      },
+      "title": "RebalanceMonthlyParams",
+      "type": "object"
+    },
+    "RebalanceOnSignalChange": {
+      "additionalProperties": false,
+      "description": "Trade only when the direction changes (enter / exit / reverse); no re-sizing in between.",
+      "properties": {
+        "component": {
+          "const": "rebalance.on_signal_change",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/RebalanceOnSignalChangeParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "rebalance.on_signal_change",
+      "type": "object"
+    },
+    "RebalanceOnSignalChangeParams": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "RebalanceOnSignalChangeParams",
+      "type": "object"
+    },
+    "RebalanceThresholdBand": {
+      "additionalProperties": false,
+      "description": "Re-size when the actual leverage drifts more than band_pct from the target (relative).",
+      "properties": {
+        "component": {
+          "const": "rebalance.threshold_band",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/RebalanceThresholdBandParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "rebalance.threshold_band",
+      "type": "object"
+    },
+    "RebalanceThresholdBandParams": {
+      "additionalProperties": false,
+      "properties": {
+        "band_pct": {
+          "anyOf": [
+            {
+              "maximum": 0.5,
+              "minimum": 0.01,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 0.1,
+          "title": "Band Pct"
+        }
+      },
+      "title": "RebalanceThresholdBandParams",
+      "type": "object"
+    },
+    "RegimeMaBand": {
+      "additionalProperties": false,
+      "description": "Moving-average regime with a hysteresis band: below MA x (1 - band) switch to off_leverage, back above MA x (1 + band) restore the incoming leverage.",
+      "properties": {
+        "component": {
+          "const": "regime.ma_band",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/RegimeMaBandParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "regime.ma_band",
+      "type": "object"
+    },
+    "RegimeMaBandParams": {
+      "additionalProperties": false,
+      "properties": {
+        "band_pct": {
+          "anyOf": [
+            {
+              "maximum": 0.1,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 0.02,
+          "title": "Band Pct"
+        },
+        "ma_days": {
+          "anyOf": [
+            {
+              "maximum": 400,
+              "minimum": 20,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 200,
+          "title": "Ma Days"
+        },
+        "off_leverage": {
+          "anyOf": [
+            {
+              "maximum": 5.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 0.5,
+          "title": "Off Leverage"
+        },
+        "signal": {
+          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr|vix))$",
+          "title": "Signal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "signal"
+      ],
+      "title": "RegimeMaBandParams",
+      "type": "object"
+    },
+    "RiskVolCap": {
+      "additionalProperties": false,
+      "description": "Volatility cap: leverage = min(incoming, k / annualised realised volatility over window_days).",
+      "properties": {
+        "component": {
+          "const": "risk.vol_cap",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/RiskVolCapParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "risk.vol_cap",
+      "type": "object"
+    },
+    "RiskVolCapParams": {
+      "additionalProperties": false,
+      "properties": {
+        "k": {
+          "anyOf": [
+            {
+              "maximum": 3.0,
+              "minimum": 0.1,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 0.75,
+          "title": "K"
+        },
+        "signal": {
+          "pattern": "^((self|[a-z][a-z0-9_]{0,31}):(open|high|low|close|adjusted)|index:(taiex|taiex_tr|vix))$",
+          "title": "Signal",
+          "type": "string"
+        },
+        "window_days": {
+          "anyOf": [
+            {
+              "maximum": 120,
+              "minimum": 5,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 20,
+          "title": "Window Days"
+        }
+      },
+      "required": [
+        "signal"
+      ],
+      "title": "RiskVolCapParams",
+      "type": "object"
+    },
+    "RollAtSettlement": {
+      "additionalProperties": false,
+      "description": "Intraday R1 futures: synthetic roll on settlement day (13:25 close -> 13:30 open, both legs costed).",
+      "properties": {
+        "component": {
+          "const": "roll.at_settlement",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/RollAtSettlementParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "roll.at_settlement",
+      "type": "object"
+    },
+    "RollAtSettlementParams": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "RollAtSettlementParams",
+      "type": "object"
+    },
+    "RollBeforeSettlement": {
+      "additionalProperties": false,
+      "description": "Daily futures: roll to the next contract month days_before trading days before settlement.",
+      "properties": {
+        "component": {
+          "const": "roll.before_settlement",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/RollBeforeSettlementParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "roll.before_settlement",
+      "type": "object"
+    },
+    "RollBeforeSettlementParams": {
+      "additionalProperties": false,
+      "properties": {
+        "days_before": {
+          "default": 1,
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Days Before",
+          "type": "integer"
+        }
+      },
+      "title": "RollBeforeSettlementParams",
+      "type": "object"
+    },
+    "SizingFixedContracts": {
+      "additionalProperties": false,
+      "description": "A fixed number of contracts n whenever the direction is non-zero (v1 behaviour).",
+      "properties": {
+        "component": {
+          "const": "sizing.fixed_contracts",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/SizingFixedContractsParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "sizing.fixed_contracts",
+      "type": "object"
+    },
+    "SizingFixedContractsParams": {
+      "additionalProperties": false,
+      "properties": {
+        "n": {
+          "anyOf": [
+            {
+              "maximum": 20,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 1,
+          "title": "N"
+        }
+      },
+      "title": "SizingFixedContractsParams",
+      "type": "object"
+    },
+    "SizingFixedNotional": {
+      "additionalProperties": false,
+      "description": "A fixed share of equity as notional, no leverage chain: units = equity x weight x pct_of_equity% / (price x point value x lot).",
+      "properties": {
+        "component": {
+          "const": "sizing.fixed_notional",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/SizingFixedNotionalParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "sizing.fixed_notional",
+      "type": "object"
+    },
+    "SizingFixedNotionalParams": {
+      "additionalProperties": false,
+      "properties": {
+        "pct_of_equity": {
+          "anyOf": [
+            {
+              "maximum": 300,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/ParamRef"
+            }
+          ],
+          "default": 100,
+          "title": "Pct Of Equity"
+        },
+        "rounding": {
+          "default": "floor",
+          "enum": [
+            "floor",
+            "nearest"
+          ],
+          "title": "Rounding",
+          "type": "string"
+        }
+      },
+      "title": "SizingFixedNotionalParams",
+      "type": "object"
+    },
+    "SizingTargetLeverage": {
+      "additionalProperties": false,
+      "description": "Equity-based integer contracts: units = equity x direction x leverage / (price x point value).",
+      "properties": {
+        "component": {
+          "const": "sizing.target_leverage",
+          "title": "Component",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/SizingTargetLeverageParams"
+        }
+      },
+      "required": [
+        "component"
+      ],
+      "title": "sizing.target_leverage",
+      "type": "object"
+    },
+    "SizingTargetLeverageParams": {
+      "additionalProperties": false,
+      "properties": {
+        "rounding": {
+          "default": "floor",
+          "enum": [
+            "floor",
+            "nearest"
+          ],
+          "title": "Rounding",
+          "type": "string"
+        }
+      },
+      "title": "SizingTargetLeverageParams",
+      "type": "object"
+    },
+    "Sleeve": {
+      "additionalProperties": false,
+      "properties": {
+        "direction": {
+          "discriminator": {
+            "mapping": {
+              "direction.constant": "#/$defs/DirectionConstant",
+              "direction.dsl_rules": "#/$defs/DirectionDslRules"
+            },
+            "propertyName": "component"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DirectionConstant"
+            },
+            {
+              "$ref": "#/$defs/DirectionDslRules"
+            }
+          ],
+          "title": "Direction"
+        },
+        "exits": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "maxItems": 0,
+          "title": "Exits",
+          "type": "array"
+        },
+        "hedges": {
+          "items": {
+            "$ref": "#/$defs/HedgeProtectivePut"
+          },
+          "title": "Hedges",
+          "type": "array"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "instrument": {
+          "title": "Instrument",
+          "type": "string"
+        },
+        "leverage": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "leverage.base": "#/$defs/LeverageBase",
+                "leverage.drawdown_ladder": "#/$defs/LeverageDrawdownLadder",
+                "leverage.level_ladder": "#/$defs/LeverageLevelLadder",
+                "regime.ma_band": "#/$defs/RegimeMaBand",
+                "risk.vol_cap": "#/$defs/RiskVolCap"
+              },
+              "propertyName": "component"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/LeverageBase"
+              },
+              {
+                "$ref": "#/$defs/RegimeMaBand"
+              },
+              {
+                "$ref": "#/$defs/RiskVolCap"
+              },
+              {
+                "$ref": "#/$defs/LeverageDrawdownLadder"
+              },
+              {
+                "$ref": "#/$defs/LeverageLevelLadder"
+              }
+            ]
+          },
+          "title": "Leverage",
+          "type": "array"
+        },
+        "rebalance": {
+          "discriminator": {
+            "mapping": {
+              "rebalance.daily": "#/$defs/RebalanceDaily",
+              "rebalance.monthly": "#/$defs/RebalanceMonthly",
+              "rebalance.monthly_at_roll": "#/$defs/RebalanceMonthlyAtRoll",
+              "rebalance.on_signal_change": "#/$defs/RebalanceOnSignalChange",
+              "rebalance.threshold_band": "#/$defs/RebalanceThresholdBand"
+            },
+            "propertyName": "component"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RebalanceDaily"
+            },
+            {
+              "$ref": "#/$defs/RebalanceMonthlyAtRoll"
+            },
+            {
+              "$ref": "#/$defs/RebalanceThresholdBand"
+            },
+            {
+              "$ref": "#/$defs/RebalanceOnSignalChange"
+            },
+            {
+              "$ref": "#/$defs/RebalanceMonthly"
+            }
+          ],
+          "title": "Rebalance"
+        },
+        "sizing": {
+          "discriminator": {
+            "mapping": {
+              "sizing.fixed_contracts": "#/$defs/SizingFixedContracts",
+              "sizing.fixed_notional": "#/$defs/SizingFixedNotional",
+              "sizing.target_leverage": "#/$defs/SizingTargetLeverage"
+            },
+            "propertyName": "component"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/SizingTargetLeverage"
+            },
+            {
+              "$ref": "#/$defs/SizingFixedNotional"
+            },
+            {
+              "$ref": "#/$defs/SizingFixedContracts"
+            }
+          ],
+          "title": "Sizing"
+        }
+      },
+      "required": [
+        "id",
+        "instrument",
+        "direction",
+        "sizing",
+        "rebalance"
+      ],
+      "title": "Sleeve",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Spec v3, REGISTRY_VERSION 3. Shape only: cross rules, $param policy (1-4), feasibility and the 5x leverage cap are checked by spec_validate.",
+  "properties": {
+    "allocation": {
+      "discriminator": {
+        "mapping": {
+          "allocation.fixed_weights": "#/$defs/AllocationFixedWeights",
+          "allocation.inverse_vol": "#/$defs/AllocationInverseVol",
+          "allocation.regime_switch": "#/$defs/AllocationRegimeSwitch",
+          "allocation.single": "#/$defs/AllocationSingle"
+        },
+        "propertyName": "component"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AllocationSingle"
+        },
+        {
+          "$ref": "#/$defs/AllocationFixedWeights"
+        },
+        {
+          "$ref": "#/$defs/AllocationInverseVol"
+        },
+        {
+          "$ref": "#/$defs/AllocationRegimeSwitch"
+        }
+      ],
+      "title": "Allocation"
+    },
+    "capital": {
+      "$ref": "#/$defs/Capital"
+    },
+    "description": {
+      "default": "",
+      "maxLength": 500,
+      "title": "Description",
+      "type": "string"
+    },
+    "execution": {
+      "discriminator": {
+        "mapping": {
+          "execution.next_open": "#/$defs/ExecutionNextOpen",
+          "execution.signal_close": "#/$defs/ExecutionSignalClose"
+        },
+        "propertyName": "component"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ExecutionNextOpen"
+        },
+        {
+          "$ref": "#/$defs/ExecutionSignalClose"
+        }
+      ],
+      "title": "Execution"
+    },
+    "frequency": {
+      "enum": [
+        "1d",
+        "1m",
+        "5m",
+        "15m"
+      ],
+      "title": "Frequency",
+      "type": "string"
+    },
+    "instruments": {
+      "patternProperties": {
+        "^[a-z][a-z0-9_]{0,31}$": {
+          "$ref": "#/$defs/InstrumentDecl"
+        }
+      },
+      "title": "Instruments",
+      "type": "object"
+    },
+    "name": {
+      "pattern": "^[a-z0-9_]{3,64}$",
+      "title": "Name",
+      "type": "string"
+    },
+    "params": {
+      "patternProperties": {
+        "^[a-z][a-z0-9_]{0,31}$": {
+          "$ref": "#/$defs/ParamSpec"
+        }
+      },
+      "title": "Params",
+      "type": "object"
+    },
+    "sleeves": {
+      "items": {
+        "$ref": "#/$defs/Sleeve"
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "title": "Sleeves",
+      "type": "array"
+    },
+    "spec_version": {
+      "const": 3,
+      "title": "Spec Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "spec_version",
+    "name",
+    "frequency",
+    "instruments",
+    "sleeves",
+    "allocation",
+    "execution"
+  ],
+  "title": "Strategy spec v3 (registry 3)",
+  "type": "object"
+}

@@ -27,6 +27,7 @@ from poseidon.models.backtest import BacktestRecord
 from poseidon.models.strategy import StrategyRecord
 from poseidon.risk.engine import RiskEngine
 from poseidon.strategies.rule_strategy import RuleStrategy
+from poseidon.strategies.rule_strategy_v2 import build_rule_strategy
 from poseidon.strategies.voting_strategy import VotingStrategy
 from poseidon.workers.celery_app import celery_app
 
@@ -1706,7 +1707,7 @@ def run_backtest_task(
             if record.strategy_type == "liquidity_sweep":
                 strategy = LiquiditySweepStrategyFactory.from_config(record.config, strategy_id=record.id)
             elif record.strategy_type == "rule":
-                strategy = RuleStrategy(config=record.config, strategy_id=record.id)
+                strategy = build_rule_strategy(record.config, strategy_id=record.id)
             elif record.strategy_type == "voting":
                 strategy = VotingStrategy(config=record.config, strategy_id=record.id)
             elif record.strategy_type == "model":
@@ -1982,7 +1983,7 @@ def run_dual_mode_task(
                     record.config, strategy_id=record.id
                 )
             elif record.strategy_type == "rule":
-                strategy_factory = lambda: RuleStrategy(config=record.config, strategy_id=record.id)  # noqa: E731
+                strategy_factory = lambda: build_rule_strategy(record.config, strategy_id=record.id)  # noqa: E731
             elif record.strategy_type == "model":
                 raise ValueError("Dual-mode comparison not supported for model strategies")
             else:
@@ -2692,6 +2693,7 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
             # model is initialised with available_models=None; AutoResearchRunner's per-market loop
             #   (runner.py:164-173) calls list_ready_models(market) and passes
             #   available_models into the pipeline, which reaches build_trial_factory() dynamically.
+            from poseidon.backtest.dsl_v2_factory import DslV2StrategyFactory
             from poseidon.backtest.model_strategy_factory import ModelStrategyFactory
             from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory
 
@@ -2701,6 +2703,8 @@ def autoresearch_run(self, search_config: dict, markets: list[dict]) -> dict:
                     feature_names=feature_names or [],
                     direction_mode=search_config.get("strategy_mode", "bidirectional"),
                 ),
+                # DSL v2: the search space is the spec's own $param grid.
+                "rule_v2": lambda: DslV2StrategyFactory(spec=base_config_json or {}),
                 "model": lambda: ModelStrategyFactory(available_models=None),
             }
 
