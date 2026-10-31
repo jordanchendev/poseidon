@@ -103,11 +103,15 @@ for e in i["evidence"]:
 
 
 def num(x):
-    return (
-        "n/a"
-        if x is None
-        else (f"{int(x):,}" if float(x).is_integer() else f"{x:,.4g}" if abs(x) >= 1000 else f"{x:g}")
-    )
+    """Integers with thousands separators; from 1000 up, thousands separators and up to 2 decimals with trailing zeros
+    dropped (market_brief numfmt.fmt_price: 12,345.6 / 1,234.57); below 1000, 6 significant digits (EPS 1.2345)."""
+    if x is None:
+        return "n/a"
+    if float(x).is_integer():
+        return f"{int(x):,}"
+    if abs(x) >= 1000:
+        return f"{x:,.2f}".rstrip("0").rstrip(".")
+    return f"{x:g}"
 
 
 def span(g):

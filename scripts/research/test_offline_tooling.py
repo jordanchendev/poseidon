@@ -846,6 +846,36 @@ def test_kpi_gap_gives_null_trailing_and_no_rows_refused(env):
     assert p.returncode != 0 and "no symbol has a monthly revenue row visible at as_of" in p.stderr
 
 
+NUM_CASES = [  # P0-9: from 1000 up, ,.4g gave 1.235e+04 / 9.877e+05 / 1,234
+    (12345.6, "12,345.6"),
+    (987654.3, "987,654.3"),
+    (1234.5, "1,234.5"),
+    (-12345.6, "-12,345.6"),
+    (1234.567, "1,234.57"),
+    (1234.999, "1,235"),
+    (1000.004, "1,000"),
+    (2_200_000, "2,200,000"),
+    (2_200_000.0, "2,200,000"),
+    (999.5, "999.5"),
+    (1.2345, "1.2345"),
+    (None, "n/a"),
+]
+
+
+def test_kpi_values_render_with_thousands_separators_and_up_to_two_decimals(env):
+    p, d = go(env, "kpinum", narrative=env["narrative"], extra=kpi_env(env))
+    assert p.returncode == 0, p.stderr
+    rev = json.loads((d / "rev.json").read_text())
+    kpi = next(e for e in rev["manifest_payload"]["evidence"] if e["kind"] == "kpi_series")["payload"]
+    for start in range(0, len(NUM_CASES), 6):  # the table shows the last 6 points
+        cases = NUM_CASES[start : start + 6]
+        kpi["points"] = [{"period": f"2026-{k + 1:02d}", "value": v} for k, (v, _) in enumerate(cases)]
+        (d / "rev.json").write_text(json.dumps(rev))
+        md = render(d / "rev.json").stdout
+        for k, (v, want) in enumerate(cases):
+            assert f"| 2026-{k + 1:02d} | {want} | n/a | n/a |" in md, (v, want)
+
+
 # ------------------------------------------------------------------------------------------------ read-across + disclosure
 def test_config_read_across_refused_toward_about_symbols(env):
     cfg = copy.deepcopy(env["cfg"])
