@@ -1,0 +1,88 @@
+{
+  "_comment": "market_brief config. Paths may start with ~. Slot times are local to each slot's tz; US slots follow America/New_York (DST-aware). tw-postmarket is 17:45 because TWSE revises the day's turnover totals after 16:30 (seen 2026-10-22).",
+  "state_dir": "~/market-brief/state",
+  "outbox_dir": "~/market-brief/outbox",
+  "watchlist_file": "~/market-brief/watchlist.json",
+  "bridge": "ssh research-bridge",
+  "window_minutes": 90,
+  "complete_wait_minutes": 60,
+  "slots": {
+    "us-postmarket": {"tz": "America/New_York", "time": "17:15", "market": "us"},
+    "tw-premarket": {"tz": "Asia/Taipei", "time": "08:15", "market": "tw"},
+    "tw-postmarket": {"tz": "Asia/Taipei", "time": "17:45", "market": "tw"},
+    "us-premarket": {"tz": "America/New_York", "time": "08:45", "market": "us"}
+  },
+  "llm": {
+    "key_file": "~/research-runner/secrets/research-draft-openrouter.env",
+    "key_var": "RESEARCH_DRAFT_OPENROUTER_KEY",
+    "model": "deepseek/deepseek-v4.1-flash-1017",
+    "reasoning": false,
+    "max_tokens": 6000,
+    "timeout_s": 180,
+    "app_title": "market-brief",
+    "app_referer": "https://github.com/jordanchendev/poseidon#market-brief",
+    "user": "market-brief"
+  },
+  "nyse_holidays": {
+    "_source": "NYSE holiday rules (Sat -> Fri, Sun -> Mon; New Year's on Sat not observed). Re-check https://www.nyse.com/markets/hours-calendars each December.",
+    "2026": ["2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25"],
+    "2027": ["2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24"]
+  },
+  "us_instruments": {
+    "indices": [
+      {"key": "SPX", "label": "S&P 500", "cnbc": ".SPX", "yahoo": "^GSPC"},
+      {"key": "IXIC", "label": "那斯達克", "cnbc": ".IXIC", "yahoo": "^IXIC"},
+      {"key": "DJI", "label": "道瓊工業", "cnbc": ".DJI", "yahoo": "^DJI"},
+      {"key": "RUT", "label": "羅素 2000", "cnbc": ".RUT", "yahoo": "^RUT"},
+      {"key": "SOX", "label": "費城半導體", "cnbc": ".SOX", "yahoo": "^SOX"},
+      {"key": "VIX", "label": "VIX", "cnbc": ".VIX", "yahoo": "^VIX"}
+    ],
+    "rates_fx": [
+      {"key": "US10Y", "label": "美 10 年期公債殖利率", "cnbc": "US10Y", "yahoo": "^TNX", "kind": "yield"},
+      {"key": "US2Y", "label": "美 2 年期公債殖利率", "cnbc": "US2Y", "kind": "yield"},
+      {"key": "DXY", "label": "美元指數", "cnbc": ".DXY", "yahoo": "DX-Y.NYB", "nd": 3},
+      {"key": "USDTWD", "label": "美元/新台幣", "cnbc": "TWD=", "yahoo": "USDTWD=X", "nd": 3},
+      {"key": "USDJPY", "label": "美元/日圓", "cnbc": "JPY=", "yahoo": "JPY=X"},
+      {"key": "WTI", "label": "WTI 原油", "cnbc": "@CL.1", "yahoo": "CL=F"},
+      {"key": "GOLD", "label": "黃金", "cnbc": "@GC.1", "yahoo": "GC=F"}
+    ],
+    "futures": [
+      {"key": "ES", "label": "S&P 500 期貨", "cnbc": "@SP.1", "yahoo": "ES=F"},
+      {"key": "NQ", "label": "那斯達克 100 期貨", "cnbc": "@ND.1", "yahoo": "NQ=F"},
+      {"key": "YM", "label": "道瓊期貨", "cnbc": "@DJ.1", "yahoo": "YM=F"}
+    ],
+    "asia": [
+      {"key": "N225", "label": "日經 225", "cnbc": ".N225", "yahoo": "^N225"},
+      {"key": "KS11", "label": "韓國 KOSPI", "cnbc": ".KS11", "yahoo": "^KS11"},
+      {"key": "HSI", "label": "香港恆生", "cnbc": ".HSI", "yahoo": "^HSI"}
+    ],
+    "sectors": [
+      {"key": "XLK", "label": "科技"}, {"key": "XLF", "label": "金融"}, {"key": "XLE", "label": "能源"},
+      {"key": "XLV", "label": "醫療保健"}, {"key": "XLY", "label": "非必需消費"}, {"key": "XLP", "label": "必需消費"},
+      {"key": "XLI", "label": "工業"}, {"key": "XLU", "label": "公用事業"}, {"key": "XLB", "label": "原物料"},
+      {"key": "XLRE", "label": "房地產"}, {"key": "XLC", "label": "通訊服務"}, {"key": "SMH", "label": "半導體"}
+    ]
+  },
+  "adr": {"us": "TSM", "tw": "2330", "shares_per_adr": 5, "fx": "USDTWD"},
+  "news": {
+    "lookback_hours": 20,
+    "per_feed": 4,
+    "max_items": 12,
+    "feeds": [
+      {"id": "cnyes-tw", "name": "鉅亨網 台股", "type": "cnyes", "url": "https://api.cnyes.com/media/api/v1/newslist/category/tw_stock?limit=30", "markets": ["tw"]},
+      {"id": "cnyes-headline", "name": "鉅亨網 頭條", "type": "cnyes", "url": "https://api.cnyes.com/media/api/v1/newslist/category/headline?limit=30", "markets": ["tw", "us"]},
+      {"id": "yahoo-tw-market", "name": "Yahoo 股市 台股盤勢", "type": "rss", "url": "https://tw.stock.yahoo.com/rss?category=tw-market", "markets": ["tw"]},
+      {"id": "cnyes-us", "name": "鉅亨網 美股", "type": "cnyes", "url": "https://api.cnyes.com/media/api/v1/newslist/category/us_stock?limit=30", "markets": ["us"]},
+      {"id": "cnbc-markets", "name": "CNBC Markets", "type": "rss", "url": "https://www.cnbc.com/id/20910258/device/rss/rss.html", "markets": ["us", "tw"]},
+      {"id": "cnbc-top", "name": "CNBC Top News", "type": "rss", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html", "markets": ["us"]},
+      {"id": "marketwatch-top", "name": "MarketWatch Top Stories", "type": "rss", "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories", "markets": ["us"]}
+    ]
+  },
+  "tw": {
+    "big_turnover_yi": 10,
+    "otc_big_turnover_yi": 5,
+    "top_turnover_n": 20,
+    "movers_n": 8,
+    "sectors_n": 8
+  }
+}

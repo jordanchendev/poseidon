@@ -1,0 +1,427 @@
+#!/usr/bin/env python3
+# PROPOSED REPLACEMENT for macminim4 ~/.openclaw/bin/research_bridge.py (Python 3.9), adds the `brief` verb.
+# Based on the 110-line original read 2026-10-22; the installed copy (md5 051f6faa...) is the previous revision of
+# this file. Every added/changed line is marked "# [brief]".
+# Archive: each brief is written add-only into the Nexus vault _kb/raw/market-daily/<date>-<kind>.md (Nexus raw
+# schema, as nexus_pull's to_nexus_raw builds it) BEFORE any Telegram send; nexus_pull's sensitive-content patterns
+# are checked first (a hit skips the vault write, Telegram still goes out). Sisyphus/output is no longer written.
+# `brief-archive <kind> <YYYY-MM-DD>` writes an already delivered brief (from market-briefs/) into Nexus only.
+# Every Nexus write (or identical existing note) is also copied to ~/.openclaw/briefs-mirror (outside iCloud: TCC
+# blocks the launchd brief server from iCloud Drive); `brief-mirror-sync` re-syncs the whole folder one-way.
+# Apply: diff this file against the live one, copy it over, keep mode/owner as they are. Nothing else changes:
+# pending / done / needs-review behave exactly as before. The authorized_keys forced-command entry is unchanged.
+# Delivery client: scripts/market_brief/deliver.py runs `ssh research-bridge brief <kind> <YYYY-MM-DD>` with JSON
+# {filename, summary, report_md} on stdin. Exit 0 delivered (or duplicate already sent), 2 refused, 1 retryable
+# (Telegram send failed: the report is saved, the client keeps its outbox entry, the retry resends).
+# With telegram_md in the JSON, the full phone-format text is sent first (plain message, OpenClaw chunks it) and the
+# md file follows with a one-line caption; markers <file>.text-sent / <file>.sent make a retry resend only what failed.
+# `brief-resend <kind> <YYYY-MM-DD>` (stdin JSON {telegram_md}) resends the text of a delivered brief (no markers).
+# `brief-failed <kind> <YYYY-MM-DD>` (stdin = one-line reason) sends "市場報告未產出 <kind> <date>：<reason>" once per
+# kind+date (marker file next to the reports); a repeat is logged and exits 0 without sending.
+"""research-bridge: forced-command endpoint for the stormtrooper research runner (Python 3.9).
+
+Only reachable through one authorized_keys entry (command=..., from=stormtrooper LAN). Commands come from
+SSH_ORIGINAL_COMMAND; free text (summary / reason) is read from stdin, never from the command line.
+  pending                       -> JSON list of agenda rows with status accepted
+  done <agenda_id> <rev_uuid>   -> status done + revision_id; stdin = one-line summary, or JSON {summary, report_md}:
+                                   the report is saved under ~/.openclaw/media/research-reports/ and attached to the notice
+  needs-review <agenda_id>      -> status needs_review; stdin = reason; Telegram notice
+  brief <kind> <YYYY-MM-DD>     -> market brief; stdin = JSON {filename, summary, report_md}; the report is saved under
+                                   ~/.openclaw/media/market-briefs/, written into Nexus _kb/raw/market-daily/ and
+                                   sent to Telegram                                                       # [brief]
+  brief-archive <kind> <date>   -> write a delivered brief into Nexus only (no Telegram)                 # [brief]
+  brief-mirror-sync             -> one-way sync Nexus market-daily -> ~/.openclaw/briefs-mirror          # [brief]
+  brief-failed <kind> <date>    -> one Telegram notice that the brief was not produced; stdin = reason   # [brief]
+  brief-resend <kind> <date>    -> resend the full text of a delivered brief; stdin = JSON {telegram_md} # [brief]
+"""
+import datetime, json, os, re, subprocess, sys
+
+AGENDA = os.path.expanduser("~/.openclaw/research/agenda.jsonl")
+LOG = os.path.expanduser("~/.openclaw/research/bridge.log")
+REPORTS = os.path.expanduser("~/.openclaw/media/research-reports")  # under an OpenClaw media root, so --media may read it
+STDIN_CAP = 450000
+OPENCLAW = "/opt/homebrew/bin/openclaw"
+ACCOUNT, CHAT = "main_bot", "6051426738"
+ID_RE = re.compile(r"^\d{8}-m?\d{1,3}$")
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+BRIEFS = os.path.expanduser("~/.openclaw/media/market-briefs")  # under an OpenClaw media root            # [brief]
+NEXUS = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Nexus")  # live-synced vault  # [brief]
+NEXUS_MARKET = "_kb/raw/market-daily"                                                                    # [brief]
+# Mirror outside iCloud for the launchd brief server (TCC blocks launchd python from iCloud Drive).        # [brief]
+MIRROR = os.path.expanduser("~/.openclaw/briefs-mirror")                                                  # [brief]
+MIRROR_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z-]+\.md$")  # same as brief_server.NAME_RE         # [brief]
+# Same patterns as nexus_pull.py / phase101-vault-pull.sh (CI = case-insensitive, CS = case-sensitive).   # [brief]
+SENSITIVE_CI = [                                                                                         # [brief]
+    r"(^|[\s,{])([a-z0-9]+[_-])*(password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|cookie|dsn|database[_-]?url|redis[_-]?url)\s*[=:]\s*[^\]\s,}]+",
+    r"[a-z][a-z0-9+.-]*://[^\s/@]*(:[^\s/@]*)?@",                                                         # [brief]
+    r"(authorization|bearer)\s*[:= ]\s*[^\]\s,}]+",                                                       # [brief]
+    r"(password|passwd|secret|token|api[_-]?key|authorization)\s*[=:]\s*[^\s]{6,}",                        # [brief]
+    r"x-api-key:\s*[^\s]{16,}",                                                                           # [brief]
+    r"key[^A-Za-z0-9_]{0,3}[A-Za-z0-9_-]{43}([^A-Za-z0-9_]|$)",                                              # [brief]
+]                                                                                                        # [brief]
+SENSITIVE_CS = [r"-----BEGIN ([A-Z0-9 ]+ )?PRIVATE KEY-----", r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"]  # [brief]
+BRIEF_KINDS = ("tw-premarket", "tw-postmarket", "us-premarket", "us-postmarket")                       # [brief]
+TG_TEXT_CAP = 20000  # telegram_md cap after cleaning; OpenClaw chunks the text at 4000 rendered chars        # [brief]
+BRIEF_DATE_RE = re.compile(r"^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")                       # [brief]
+
+
+def now():
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def log(msg):
+    with open(LOG, "a") as fh: fh.write("%s %s\n" % (now(), msg))
+
+
+def load():
+    with open(AGENDA) as fh: return [json.loads(l) for l in fh if l.strip()]
+
+
+def save(rows):
+    tmp = AGENDA + ".bridge.tmp"
+    with open(tmp, "w") as fh:
+        for r in rows: fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    os.replace(tmp, AGENDA)
+
+
+def clean(text, limit):
+    text = "".join(ch for ch in text if ch.isprintable() or ch == "\n").strip()
+    return text[:limit]
+
+
+def telegram(text, media=None):
+    env = dict(os.environ, PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+    cmd = [OPENCLAW, "message", "send", "--channel", "telegram", "--account", ACCOUNT, "--target", CHAT,
+           "--json", "--message", text]
+    if media: cmd += ["--media", media, "--force-document"]
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
+    return out.returncode == 0
+
+
+def save_report(row, rev, md):
+    md = "".join(ch for ch in md if ch.isprintable() or ch in "\n\t")
+    os.makedirs(REPORTS, mode=0o700, exist_ok=True)
+    name = "%s-%s-%s.md" % ("-".join(row["symbols"]), row["id"], rev[:8])
+    path = os.path.join(REPORTS, name)
+    fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh: fh.write(md)
+    os.replace(path + ".tmp", path)
+    return path
+
+
+def fail(msg):
+    log("refused: " + msg); print(msg, file=sys.stderr); sys.exit(2)
+
+
+def _write_atomic(path, text, mode):                                                                    # [brief]
+    tmp = os.path.join(os.path.dirname(path), "." + os.path.basename(path) + ".tmp")                    # [brief]
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)                                       # [brief]
+    with os.fdopen(fd, "w", encoding="utf-8") as fh: fh.write(text)                                      # [brief]
+    os.replace(tmp, path)                                                                                # [brief]
+
+
+def _read(path):                                                                                         # [brief]
+    with open(path, encoding="utf-8") as fh: return fh.read()                                            # [brief]
+
+
+def _sensitive(text):                                                                                   # [brief]
+    for pat in SENSITIVE_CI:                                                                             # [brief]
+        if re.search(pat, text, re.I | re.M): return pat                                                 # [brief]
+    for pat in SENSITIVE_CS:                                                                             # [brief]
+        if re.search(pat, text, re.M): return pat                                                        # [brief]
+    return None                                                                                          # [brief]
+
+
+def _split_fm(md):                                                                                       # [brief]
+    """(frontmatter dict, body) for the subset render.frontmatter writes: `k: v` (JSON-quoted or bare),
+    `k: [a, b]` and `k:` + `  - "item"` lists."""                                                          # [brief]
+    m = re.match(r"---\n(.*?)\n---\n?(.*)", md, re.S)                                                     # [brief]
+    if not m: return {}, md                                                                              # [brief]
+    fm, key = {}, None                                                                                   # [brief]
+    for line in m.group(1).splitlines():                                                                 # [brief]
+        if line.startswith("  - ") and key:                                                              # [brief]
+            v = line[4:].strip()                                                                         # [brief]
+            fm.setdefault(key, []).append(json.loads(v) if v.startswith('"') else v); continue           # [brief]
+        k, sep, v = line.partition(":")                                                                  # [brief]
+        if not sep or line.startswith(" "): continue                                                     # [brief]
+        key, v = k.strip(), v.strip()                                                                    # [brief]
+        if v.startswith("[") and v.endswith("]"):                                                        # [brief]
+            fm[key] = [x.strip().strip('"') for x in v[1:-1].split(",") if x.strip()]                     # [brief]
+        elif v.startswith('"'):                                                                          # [brief]
+            try: fm[key] = json.loads(v)                                                                 # [brief]
+            except ValueError: fm[key] = v                                                               # [brief]
+        else:                                                                                            # [brief]
+            fm[key] = v if v else []                                                                     # [brief]
+    return fm, m.group(2)                                                                                # [brief]
+
+
+def to_nexus_raw(name, md, today=None):                                                                  # [brief]
+    """Brief md -> Nexus raw note: nexus_pull to_nexus_raw() schema (type source, status stable, origin agent,
+    source_kind market_daily, compiled false, ...) with source_system market-brief, plus market/session/
+    session_date/model/data_gaps. Values are JSON-quoted, which is valid YAML."""                       # [brief]
+    fm, body = _split_fm(md)                                                                             # [brief]
+    q = lambda v: json.dumps(str(v), ensure_ascii=False)                                                 # [brief]
+    tags = [str(t) for t in (fm.get("tags") or []) if isinstance(fm.get("tags"), list)]                 # [brief]
+    if "market-daily" not in tags: tags.append("market-daily")                                           # [brief]
+    sources = fm.get("sources") if isinstance(fm.get("sources"), list) else []                           # [brief]
+    gaps = fm.get("data_gaps") if isinstance(fm.get("data_gaps"), list) else []                          # [brief]
+    lines = ["---", "type: source", "title: %s" % q(fm.get("title") or name[:-3]), "status: stable",      # [brief]
+             "created: %s" % q(fm.get("created") or name[:10]),                                          # [brief]
+             "updated: %s" % q(today or datetime.date.today().isoformat()), "tags:"]                      # [brief]
+    lines += ["- %s" % q(t) for t in tags]                                                               # [brief]
+    lines += ["origin: agent", "source_system: market-brief", "source_kind: market_daily",               # [brief]
+              "source_path: %s" % q("stormtrooper:market-brief/" + name)]                                 # [brief]
+    lines += (["sources:"] + ["- %s" % q(x) for x in sources]) if sources else ["sources: []"]          # [brief]
+    lines += ["compiled: false", "compiled_into: []"]                                                    # [brief]
+    if fm.get("as_of"): lines.append("as_of: %s" % q(fm["as_of"]))                                       # [brief]
+    for k in ("market", "session", "session_date", "model"):                                             # [brief]
+        if fm.get(k): lines.append("%s: %s" % (k, q(fm[k])))                                             # [brief]
+    lines += (["data_gaps:"] + ["- %s" % q(g) for g in gaps]) if gaps else ["data_gaps: []"]           # [brief]
+    lines.append("---")                                                                                  # [brief]
+    return "\n".join(lines) + "\n" + body                                                                # [brief]
+
+
+def _mirror_copy(src, name):                                                                             # [brief]
+    """Copy the exact bytes (and mtime) of src to MIRROR/name atomically; mirror dir 700, file 600."""     # [brief]
+    os.makedirs(MIRROR, mode=0o700, exist_ok=True)                                                       # [brief]
+    os.chmod(MIRROR, 0o700)                                                                              # [brief]
+    with open(src, "rb") as fh: data = fh.read()                                                         # [brief]
+    dst = os.path.join(MIRROR, name)                                                                     # [brief]
+    tmp = os.path.join(MIRROR, "." + name + ".tmp")                                                      # [brief]
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)                                       # [brief]
+    with os.fdopen(fd, "wb") as fh: fh.write(data)                                                       # [brief]
+    st = os.stat(src)                                                                                    # [brief]
+    os.utime(tmp, (st.st_atime, st.st_mtime))                                                            # [brief]
+    os.replace(tmp, dst)                                                                                 # [brief]
+
+
+def _mirror(name):                                                                                       # [brief]
+    try:                                                                                                 # [brief]
+        _mirror_copy(os.path.join(NEXUS, NEXUS_MARKET, name), name)                                      # [brief]
+    except OSError as e:                                                                                 # [brief]
+        log("brief %s: mirror copy failed: %s" % (name, type(e).__name__))                               # [brief]
+
+
+def brief_mirror_sync(argv):                                                                             # [brief]
+    """brief-mirror-sync: one-way Nexus market-daily -> MIRROR (new/changed copied, vanished deleted)."""  # [brief]
+    if len(argv) != 1: fail("bad arguments")                                                             # [brief]
+    src_dir = os.path.join(NEXUS, NEXUS_MARKET)                                                          # [brief]
+    try:                                                                                                 # [brief]
+        names = [n for n in os.listdir(src_dir) if MIRROR_NAME_RE.match(n)                               # [brief]
+                 and os.path.isfile(os.path.join(src_dir, n)) and not os.path.islink(os.path.join(src_dir, n))]
+    except OSError as e:                                                                                 # [brief]
+        fail("cannot list Nexus %s: %s" % (NEXUS_MARKET, type(e).__name__))                              # [brief]
+    os.makedirs(MIRROR, mode=0o700, exist_ok=True)                                                       # [brief]
+    copied = unchanged = deleted = 0                                                                     # [brief]
+    for n in names:                                                                                      # [brief]
+        src, dst = os.path.join(src_dir, n), os.path.join(MIRROR, n)                                     # [brief]
+        if os.path.isfile(dst):                                                                          # [brief]
+            s1, s2 = os.stat(src), os.stat(dst)                                                          # [brief]
+            same = s1.st_size == s2.st_size and int(s1.st_mtime) == int(s2.st_mtime)                     # [brief]
+            if not same:                                                                                 # [brief]
+                with open(src, "rb") as a, open(dst, "rb") as b: same = a.read() == b.read()            # [brief]
+            if same: unchanged += 1; continue                                                            # [brief]
+        _mirror_copy(src, n); copied += 1                                                                # [brief]
+    keep = set(names)                                                                                    # [brief]
+    for n in os.listdir(MIRROR):                                                                         # [brief]
+        if MIRROR_NAME_RE.match(n) and n not in keep:                                                    # [brief]
+            os.remove(os.path.join(MIRROR, n)); deleted += 1                                             # [brief]
+    if copied or deleted: log("brief-mirror-sync copied=%d deleted=%d unchanged=%d" % (copied, deleted, unchanged))
+    print(json.dumps({"copied": copied, "deleted": deleted, "unchanged": unchanged}))                     # [brief]
+
+
+def nexus_archive(name, md):                                                                             # [brief]
+    """Add-only write into Nexus. -> 'written' | 'duplicate' | 'sensitive' | 'no-vault'; refuses (exit 2) when a
+    note with the same name but a different body exists (frontmatter may differ: compile flips `compiled`)."""
+    if not os.path.isfile(os.path.join(NEXUS, "AGENTS.md")):                                             # [brief]
+        log("brief %s: Nexus vault not found, not archived" % name); return "no-vault"                    # [brief]
+    hit = _sensitive(md)                                                                                 # [brief]
+    if hit:                                                                                              # [brief]
+        log("brief %s: sensitive pattern %r, not written to Nexus" % (name, hit[:40])); return "sensitive"
+    raw = to_nexus_raw(name, md)                                                                         # [brief]
+    folder = os.path.join(NEXUS, NEXUS_MARKET)                                                           # [brief]
+    os.makedirs(folder, exist_ok=True)                                                                   # [brief]
+    dest = os.path.join(folder, name)                                                                    # [brief]
+    try:                                                                                                 # [brief]
+        with open(dest, "x", encoding="utf-8") as fh: fh.write(raw)                                      # [brief]
+    except FileExistsError:                                                                              # [brief]
+        if _split_fm(_read(dest))[1] == _split_fm(raw)[1]:                                               # [brief]
+            _mirror(name)                                                                                # [brief]
+            return "duplicate"                                                                           # [brief]
+        fail("Nexus %s/%s exists with a different body; left as is" % (NEXUS_MARKET, name))             # [brief]
+    log("brief %s: written to Nexus %s" % (name, NEXUS_MARKET))                                          # [brief]
+    _mirror(name)                                                                                        # [brief]
+    return "written"                                                                                     # [brief]
+
+
+def brief_archive(argv):                                                                                 # [brief]
+    """brief-archive <kind> <YYYY-MM-DD>: write the delivered market-briefs/<date>-<kind>.md into Nexus."""
+    if len(argv) != 3 or argv[1] not in BRIEF_KINDS or not BRIEF_DATE_RE.match(argv[2]): fail("bad arguments")
+    name = "%s-%s.md" % (argv[2], argv[1])                                                               # [brief]
+    path = os.path.join(BRIEFS, name)                                                                    # [brief]
+    if not os.path.isfile(path): fail("brief %s was not delivered here" % name)                          # [brief]
+    status = nexus_archive(name, _read(path))                                                            # [brief]
+    log("brief-archive %s nexus=%s" % (name, status))                                                    # [brief]
+    print(json.dumps({"file": name, "nexus": status}))                                                   # [brief]
+
+
+def _clean_tg(text):                                                                                     # [brief]
+    """Telegram markdown from the client: printable chars + newlines; None when over the cap."""          # [brief]
+    text = "".join(ch for ch in text if ch.isprintable() or ch == "\n").strip()                          # [brief]
+    return text if 0 < len(text) <= TG_TEXT_CAP else None                                                # [brief]
+
+
+def _send(name, what, text, media=None):                                                                 # [brief]
+    try:                                                                                                 # [brief]
+        return telegram(text, media)                                                                     # [brief]
+    except (OSError, subprocess.TimeoutExpired) as e:                                                    # [brief]
+        log("brief %s: telegram %s failed: %s" % (name, what, type(e).__name__)); return False           # [brief]
+
+
+def brief(argv):                                                                                         # [brief]
+    """brief <kind> <YYYY-MM-DD>; stdin JSON {filename, summary, report_md[, telegram_md]}.               # [brief]
+    With telegram_md: the full text is sent first (no media, OpenClaw chunks it), then the md file with a   # [brief]
+    one-line caption. Markers <file>.text-sent / <file>.sent let a retry resend only the part that failed."""
+    if len(argv) != 3 or argv[1] not in BRIEF_KINDS or not BRIEF_DATE_RE.match(argv[2]): fail("bad arguments")
+    kind, date = argv[1], argv[2]                                                                        # [brief]
+    raw = sys.stdin.read(STDIN_CAP + 1)                                                                  # [brief]
+    if len(raw) > STDIN_CAP: fail("stdin too large")                                                     # [brief]
+    try:                                                                                                 # [brief]
+        payload = json.loads(raw)                                                                        # [brief]
+    except ValueError:                                                                                   # [brief]
+        fail("stdin is not valid JSON")                                                                  # [brief]
+    if not isinstance(payload, dict): fail("stdin must be a JSON object")                                # [brief]
+    name = "%s-%s.md" % (date, kind)  # derived here; the client value must match, never trusted as a path
+    if payload.get("filename") not in (None, name): fail("filename mismatch")                           # [brief]
+    md, summary = payload.get("report_md"), payload.get("summary")                                       # [brief]
+    if not isinstance(md, str) or not md.startswith("---\n") or "\npromote: nexus\n" not in md:          # [brief]
+        fail("report_md must be markdown with frontmatter (promote: nexus)")                            # [brief]
+    if not isinstance(summary, str): fail("summary must be a string")                                    # [brief]
+    tg = payload.get("telegram_md")                                                                      # [brief]
+    if tg is not None:                                                                                   # [brief]
+        if not isinstance(tg, str): fail("telegram_md must be a string")                                 # [brief]
+        tg = _clean_tg(tg)                                                                               # [brief]
+        if tg is None: fail("telegram_md empty or longer than %d characters" % TG_TEXT_CAP)              # [brief]
+    md = "".join(ch for ch in md if ch.isprintable() or ch in "\n\t")                                    # [brief]
+    text = clean(summary, 600)                                                                           # [brief]
+    os.makedirs(BRIEFS, mode=0o700, exist_ok=True)                                                       # [brief]
+    path = os.path.join(BRIEFS, name)                                                                    # [brief]
+    marker, text_marker = path + ".sent", path + ".text-sent"                                            # [brief]
+    if os.path.exists(path):                                                                             # [brief]
+        if _read(path) != md: fail("brief %s already delivered with different content" % name)          # [brief]
+    else:                                                                                                # [brief]
+        _write_atomic(path, md, 0o600)                                                                   # [brief]
+    nexus = nexus_archive(name, md)  # before Telegram, so an outage never blocks the archive            # [brief]
+    if os.path.exists(marker) and (tg is None or os.path.exists(text_marker)):                           # [brief]
+        log("brief %s duplicate, already sent" % name)                                                   # [brief]
+        print(json.dumps({"file": name, "telegram_sent": True, "duplicate": True, "nexus": nexus})); return
+    text_sent = None                                                                                     # [brief]
+    if tg is not None:                                                                                   # [brief]
+        text_sent = os.path.exists(text_marker) or _send(name, "text", tg)                               # [brief]
+        if text_sent and not os.path.exists(text_marker): open(text_marker, "w").close()                 # [brief]
+        caption = "完整報告 md：%s" % name                                                                 # [brief]
+    else:                                                                                                # [brief]
+        caption = text + "\n完整報告見附件。"                                                               # [brief]
+    sent = os.path.exists(marker) or _send(name, "document", caption, path)                              # [brief]
+    if sent and not os.path.exists(marker): open(marker, "w").close()                                    # [brief]
+    ok = sent and text_sent is not False                                                                 # [brief]
+    log("brief %s telegram_sent=%s text_sent=%s nexus=%s" % (name, sent, text_sent, nexus))              # [brief]
+    print(json.dumps({"file": name, "telegram_sent": ok, "document_sent": sent, "text_sent": text_sent, "nexus": nexus}))
+    if not ok: sys.exit(1)  # retryable: the client keeps the outbox entry; markers skip what was sent   # [brief]
+
+
+def brief_resend(argv):                                                                                  # [brief]
+    """brief-resend <kind> <YYYY-MM-DD>; stdin JSON {telegram_md}. Text only, no attachment, no markers;   # [brief]
+    refused unless that brief was already delivered here."""                                             # [brief]
+    if len(argv) != 3 or argv[1] not in BRIEF_KINDS or not BRIEF_DATE_RE.match(argv[2]): fail("bad arguments")
+    kind, date = argv[1], argv[2]                                                                        # [brief]
+    name = "%s-%s.md" % (date, kind)                                                                     # [brief]
+    if not os.path.isfile(os.path.join(BRIEFS, name)): fail("brief %s was not delivered here" % name)   # [brief]
+    raw = sys.stdin.read(STDIN_CAP + 1)                                                                  # [brief]
+    if len(raw) > STDIN_CAP: fail("stdin too large")                                                     # [brief]
+    try:                                                                                                 # [brief]
+        payload = json.loads(raw)                                                                        # [brief]
+    except ValueError:                                                                                   # [brief]
+        fail("stdin is not valid JSON")                                                                  # [brief]
+    tg = payload.get("telegram_md") if isinstance(payload, dict) else None                               # [brief]
+    if not isinstance(tg, str): fail("telegram_md must be a string")                                     # [brief]
+    tg = _clean_tg(tg)                                                                                   # [brief]
+    if tg is None: fail("telegram_md empty or longer than %d characters" % TG_TEXT_CAP)                  # [brief]
+    sent = _send(name, "resend text", tg)                                                                # [brief]
+    log("brief-resend %s telegram_sent=%s chars=%d" % (name, sent, len(tg)))                             # [brief]
+    print(json.dumps({"file": name, "telegram_sent": sent}))                                             # [brief]
+    if not sent: sys.exit(1)                                                                             # [brief]
+
+def brief_failed(argv):                                                                                  # [brief]
+    """brief-failed <kind> <YYYY-MM-DD>; stdin = one-line reason. One notice per kind+date."""            # [brief]
+    if len(argv) != 3 or argv[1] not in BRIEF_KINDS or not BRIEF_DATE_RE.match(argv[2]): fail("bad arguments")
+    kind, date = argv[1], argv[2]                                                                        # [brief]
+    raw = sys.stdin.read(4097)                                                                           # [brief]
+    if len(raw) > 4096: fail("stdin too large")                                                          # [brief]
+    reason = " ".join(clean(raw, 2000).split())[:500] or "（未提供）"                                     # [brief]
+    os.makedirs(BRIEFS, mode=0o700, exist_ok=True)                                                       # [brief]
+    marker = os.path.join(BRIEFS, "%s-%s.failed-sent" % (date, kind))                                    # [brief]
+    if os.path.exists(marker):                                                                           # [brief]
+        log("brief-failed %s %s duplicate, already sent" % (kind, date))                                 # [brief]
+        print(json.dumps({"kind": kind, "date": date, "telegram_sent": True, "duplicate": True})); return
+    try:                                                                                                 # [brief]
+        sent = telegram("市場報告未產出 %s %s：%s" % (kind, date, reason))                                    # [brief]
+    except (OSError, subprocess.TimeoutExpired) as e:                                                    # [brief]
+        log("brief-failed %s %s: telegram failed: %s" % (kind, date, type(e).__name__)); sent = False    # [brief]
+    if sent:                                                                                             # [brief]
+        with open(marker, "w") as fh: fh.write(reason + "\n")                                            # [brief]
+    log("brief-failed %s %s telegram_sent=%s reason=%s" % (kind, date, sent, reason[:200]))             # [brief]
+    print(json.dumps({"kind": kind, "date": date, "telegram_sent": sent}, ensure_ascii=False))           # [brief]
+    if not sent: sys.exit(1)  # retryable                                                                # [brief]
+
+
+def main():
+    argv = os.environ.get("SSH_ORIGINAL_COMMAND", "").split()
+    if not argv: fail("no command")
+    cmd = argv[0]
+    if cmd == "pending" and len(argv) == 1:
+        print(json.dumps([r for r in load() if r.get("status") == "accepted"], ensure_ascii=False)); return
+    if cmd == "brief":                                                                                   # [brief]
+        brief(argv); return                                                                              # [brief]
+    if cmd == "brief-failed":                                                                            # [brief]
+        brief_failed(argv); return                                                                       # [brief]
+    if cmd == "brief-mirror-sync":                                                                       # [brief]
+        brief_mirror_sync(argv); return                                                                  # [brief]
+    if cmd == "brief-archive":                                                                           # [brief]
+        brief_archive(argv); return                                                                      # [brief]
+    if cmd == "brief-resend":                                                                            # [brief]
+        brief_resend(argv); return                                                                       # [brief]
+    if cmd not in ("done", "needs-review"): fail("unknown command %r" % cmd[:20])
+    if len(argv) != (3 if cmd == "done" else 2) or not ID_RE.match(argv[1]): fail("bad arguments")
+    if cmd == "done" and not UUID_RE.match(argv[2]): fail("bad revision id")
+    raw = sys.stdin.read(STDIN_CAP + 1)
+    if len(raw) > STDIN_CAP: fail("stdin too large")
+    report_md = None
+    if cmd == "done" and raw.lstrip().startswith("{"):
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            fail("stdin is not valid JSON")
+        raw, report_md = str(payload.get("summary") or ""), payload.get("report_md")
+        if report_md is not None and not isinstance(report_md, str): fail("report_md must be a string")
+    text = clean(raw, 600)
+    rows = load(); hits = [r for r in rows if r["id"] == argv[1]]
+    if len(hits) != 1: fail("agenda id not found: %s" % argv[1])
+    r = hits[0]
+    if r.get("status") != "accepted": fail("agenda %s is %s, not accepted" % (r["id"], r.get("status")))
+    if cmd == "done":
+        r.update(status="done", done_at=now(), revision_id=argv[2], runner="stormtrooper")
+        msg = "研究完成 %s [%s]\nrevision %s\n%s" % (r["id"], ",".join(r["symbols"]), argv[2][:8], text or r["topic"])
+    else:
+        r.update(status="needs_review", needs_review_at=now(), needs_review_reason=text, runner="stormtrooper")
+        msg = "研究需要人工檢查 %s [%s]\n%s\n原因：%s" % (r["id"], ",".join(r["symbols"]), r["topic"][:80], text or "（未提供）")
+    media = save_report(r, argv[2], report_md) if (cmd == "done" and report_md) else None
+    if media: r["report_path"] = media
+    save(rows)
+    sent = telegram(msg + ("\n完整報告見附件。" if media else ""), media)
+    log("%s %s telegram_sent=%s attachment=%s" % (cmd, r["id"], sent, bool(media)))
+    print(json.dumps({"id": r["id"], "status": r["status"], "telegram_sent": sent}, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

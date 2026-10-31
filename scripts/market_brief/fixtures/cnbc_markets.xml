@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:metadata="http://search.cnbc.com/rss/2.0/modules/siteContentMetadata" version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link rel="self" type="application/rss+xml" href="https://www.cnbc.com/id/20910258/device/rss/rss.html"/>
+    <language>en-us</language>
+    <ttl>60</ttl>
+    <title>Economy</title>
+    <feed_asset>
+      <id>20910258</id>
+      <type>franchise</type>
+      <subtype>section</subtype>
+      <seo>https://www.cnbc.com/economy/</seo>
+    </feed_asset>
+    <lastBuildDate>Wed, 21 Oct 2026 08:00 GMT</lastBuildDate>
+    <pubDate>Wed, 21 Oct 2026 08:00 GMT</pubDate>
+    <link>https://www.cnbc.com/economy/</link>
+    <description><![CDATA[Find the latest economic news, current events and headlines, as well as blogs and video from CNBC.com.]]></description>
+    <item>
+      <link>https://www.cnbc.com/2026/10/21/inflation-uk-cpi-interest-rates.html</link>
+      <guid isPermaLink="false">108440623</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108440623</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>UK inflation jumps to 3.5% — cementing rate hike expectations</title>
+      <description><![CDATA[U.K. inflation rose by a hotter-than-expected 3.5% in the 12 months to September, driven by the surging cost of motor fuels.]]></description>
+      <pubDate>Wed, 21 Oct 2026 07:50:10 GMT</pubDate>
+    </item><item>
+      <link>https://www.cnbc.com/2026/10/20/car-buyers-china-tech-price-europe.html</link>
+      <guid isPermaLink="false">108435175</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108435175</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Car buyers are demanding lower prices and better tech. Automakers must deliver both</title>
+      <description><![CDATA[Bain says tech leads purchase considerations in China while price remains No. 1 in the U.S. and Europe, as pressure mounts on Western carmakers.]]></description>
+      <pubDate>Wed, 21 Oct 2026 01:01:01 GMT</pubDate>
+    </item><item>
+      <link>https://www.cnbc.com/2026/10/20/housing-mortgage-rates-real-estate-federal-reserve.html</link>
+      <guid isPermaLink="false">108437551</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108437551</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Housing is flashing warning signs just as the Fed weighs more interest rate hikes</title>
+      <description><![CDATA[Housing data deteriorated further in September, according to separate reports Tuesday.]]></description>
+      <pubDate>Wed, 21 Oct 2026 11:20:58 GMT</pubDate>
+    </item></channel></rss>

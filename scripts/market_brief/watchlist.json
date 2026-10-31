@@ -1,0 +1,22 @@
+{
+  "_comment": "Owner-editable watchlist. Copy to ~/market-brief/watchlist.json on stormtrooper to override this bundled seed. tw: TWSE or TPEx codes; us: US tickers (CNBC symbols; yahoo used only as fallback).",
+  "tw": [
+    {"code": "2330", "note": "Phase 101 pilot"},
+    {"code": "2454"},
+    {"code": "2317"},
+    {"code": "2303"},
+    {"code": "2382"},
+    {"code": "3711"},
+    {"code": "0050"}
+  ],
+  "us": [
+    {"symbol": "TSM"},
+    {"symbol": "NVDA"},
+    {"symbol": "AMD"},
+    {"symbol": "AVGO"},
+    {"symbol": "MU"},
+    {"symbol": "AAPL"},
+    {"symbol": "MSFT"},
+    {"symbol": "ASML"}
+  ]
+}

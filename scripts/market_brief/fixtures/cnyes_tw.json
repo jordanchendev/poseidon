@@ -1,0 +1,34 @@
+{
+"items": {
+"total": 863,
+"per_page": 5,
+"current_page": 1,
+"last_page": 173,
+"next_page_url": "/media/api/v1/newslist/category/tw_stock?page=2",
+"prev_page_url": null,
+"from": 1,
+"to": 5,
+"data": [
+{
+"newsId": 6635756,
+"title": "〈台股盤後〉「薔琵」攪局震盪近1300點 跌846點收最低46041.43點",
+"publishAt": 1792650677,
+"categoryName": "台股新聞"
+},
+{
+"newsId": 6635771,
+"title": "長榮航太(2645-TW)維修需求旺、股價卻承壓！短期利空還是獲利成長的時間差？",
+"publishAt": 1792650604,
+"categoryName": "台股新聞"
+},
+{
+"newsId": 6635760,
+"title": "內資軋空外資 光復台股！",
+"publishAt": 1792649909,
+"categoryName": "台股新聞"
+}
+]
+},
+"message": "成功",
+"statusCode": 200
+}

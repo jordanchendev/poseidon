@@ -1,0 +1,37 @@
+
+EX-99
+2
+umc-ex99.htm
+EX-99
+
+ EX-99
+
+ www.umc.com
+ Exhibit
+Exhibit Description 
+
+99.1 Announcement on 2026/10/07: To clarify news reported by Chinatimes on October 6, 2026
+99.2 Announcement on 2026/10/13: UMC will convene Q3 2026 Investor Conference
+
+Exhibit 99.1
+To clarify news reported by Chinatimes on October 6, 2026
+1. Date of occurrence of the event: 2026/10/07
+2. Company name: UNITED MICROELECTRONICS CORP.
+3. Relationship with the Company (please enter “the company itself” or “subsidiaries”): the company itself
+4. Reciprocal shareholding percentage: N/A
+5. Name of the reporting media: Chinatimes
+6. Content of the report:
+「...UMC’s 2026 revenue is estimated to grow by nearly 21% year on year, with profit expected to increase by approximately 133%...」
+7. Cause of occurrence:
+The Company does not comment on speculative reports or market rumors. Regarding the Company’s financial and operating results, please refer to the public notice on MOPS.
+8. Countermeasures: None
+9. Any other matters that need to be specified: None
+
+Exhibit 99.2
+UMC will convene Q3 2026 Investor Conference
+1. Date of institutional investor conference: 2026/10/28
+2. Time of institutional investor conference: 17:00
+3. Location of institutional investor conference: Online teleconference
+4. Outline of institutional investor conference: UMC Q3 2026 Financial and Operating Results
+5. Any other matters that need to be specified: None
+
