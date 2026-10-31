@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Evaluate JEV (via OpenRouter) on the human-labelled claim control set.
 
-Stdlib only. The API key is read from --env-file inside this process only and is
-never printed, logged, or written. expected_label / note are never sent.
+Stdlib only. The API key is EVAL_OPENROUTER_KEY only (poseidon.core.eval_key: the process environment, i.e.
+docker --env-file ~/secrets/eval-openrouter.env, or --env-file given here); never printed, logged, or written. expected_label / note are never sent.
 
 --precheck runs claim_precheck.check_numbers / lint_atomic on every case first:
   * numeric mismatch -> predicted `contradicts` deterministically, JEV is NOT called for that case
@@ -26,21 +26,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from claim_precheck import precheck as run_precheck
 
+
+def eval_key_or_exit(env_file=None) -> str:
+    from poseidon.core.eval_key import EvalKeyError, read_eval_key
+
+    try:
+        return read_eval_key(env_file=env_file)
+    except EvalKeyError as error:
+        raise SystemExit(str(error)) from None
+
+
 BASE = "https://openrouter.ai/api"
 PRIMARY, FALLBACK = "/v1/systemone", "/alpha/decisions"
 LABELS = ["supports", "contradicts", "says_nothing"]
-KEY_VAR = "JEV_RESEARCH_OPENROUTER_KEY"
 DEFAULT_CS = "local_dev/research/claim-control-set/tsmc-3q26-6k.json"
-
-
-def load_key(path: Path) -> str:
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line.startswith(KEY_VAR + "="):
-            v = line.split("=", 1)[1].strip().strip("'\"")
-            if v:
-                return v
-    raise SystemExit(f"{KEY_VAR} not found in env file")
 
 
 def build_request(case: dict, model: str, as_of: str) -> dict:
@@ -109,7 +108,7 @@ def main():
     ap.add_argument("--control-set", default=DEFAULT_CS)
     ap.add_argument("--out-dir")
     ap.add_argument("--model", default="typesafe/jev-1.13")
-    ap.add_argument("--env-file", default="~/.config/aquarium/jev-openrouter.env")
+    ap.add_argument("--env-file", help="env file with EVAL_OPENROUTER_KEY; default: the process environment")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--precheck", action="store_true", help="decide numeric mismatches deterministically (no JEV call)")
     ap.add_argument(
@@ -132,10 +131,10 @@ def main():
         )
         return
 
+    key = eval_key_or_exit(a.env_file)
     ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     out = Path(a.out_dir or f"local_dev/research/claim-control-set/runs/{ts}")
     (out / "cases").mkdir(parents=True, exist_ok=True)
-    key = load_key(Path(a.env_file).expanduser())
 
     before = key_info(key)
     print("key before:", before)

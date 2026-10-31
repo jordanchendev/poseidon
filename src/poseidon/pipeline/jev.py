@@ -278,10 +278,12 @@ class JevSession:
         *,
         pin: str | None,
         environ: Mapping[str, str] | None = None,
+        key_var: str = KEY_ENV,
         client_factory: ClientFactory | None = None,
         clock: Callable[[], float] = time.monotonic,
     ):
         self.config = config
+        self._key_var = key_var
         self._pin = pin
         self._environ = os.environ if environ is None else environ
         self._factory = client_factory or _default_client_factory
@@ -295,9 +297,9 @@ class JevSession:
     # ---- lifecycle
 
     def open(self) -> dict:
-        key = (self._environ.get(KEY_ENV) or "").strip()
+        key = (self._environ.get(self._key_var) or "").strip()
         if not key:
-            raise JevUnavailable(f"JEV key {KEY_ENV} is not set in this process; refusing to call JEV")
+            raise JevUnavailable(f"JEV key {self._key_var} is not set in this process; refusing to call JEV")
         if not self._pin:
             raise JevUnavailable("POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL is not pinned; refusing to call JEV")
         self._key = key

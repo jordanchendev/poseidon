@@ -2,11 +2,12 @@
 """Run the narrative JEV control set through the production judgement (design 2026-10-29 §9 step 7, D10).
 
 Each case goes through narrative_check.judge_record, the function narrative_apply uses for its judgement and sweep:
-the period and media prechecks, then JEV_VOTES JEV calls and the majority rule. The key comes from a 600 env file
-(draft.load_key, JEV_RESEARCH_OPENROUTER_KEY) and is never printed. Labels and notes are never sent.
+the period and media prechecks, then JEV_VOTES JEV calls and the majority rule. The key is EVAL_OPENROUTER_KEY
+only (poseidon.core.eval_key): from the environment (docker --env-file ~/secrets/eval-openrouter.env) or --env-file.
+It is never printed. Labels and notes are never sent.
 
 D10 passes when no case labelled says_nothing ends supports or contradicts.
-  python scripts/research/narrative_eval_control_set.py --env-file <600 env> --out <report.json>
+  python scripts/research/narrative_eval_control_set.py --out <report.json>
 """
 
 import argparse
@@ -19,7 +20,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import draft  # noqa: E402
+import jev_eval_control_set  # noqa: E402
 import narrative_check  # noqa: E402
 import runner  # noqa: E402
 
@@ -41,12 +42,12 @@ class Recording:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--control-set", default=str(HERE / "narrative_control_set.json"))
-    ap.add_argument("--env-file", required=True)
+    ap.add_argument("--env-file", help="env file with EVAL_OPENROUTER_KEY; default: the process environment")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
     cs = json.loads(Path(a.control_set).read_text(encoding="utf-8"))
-    jev = runner.Jev(draft.load_key(a.env_file, runner.JEV_KEY_VAR))
+    jev = runner.Jev(jev_eval_control_set.eval_key_or_exit(a.env_file))
     rec = Recording(jev)
     rows = []
     for c in cs["cases"]:

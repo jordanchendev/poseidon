@@ -10,12 +10,13 @@ fills it, ``--labels proposed_label`` evaluates against Claude's draft labels, a
           per-label precision / recall and the confusion matrix for "stage" (precheck decides a multiple /
           sign mismatch, JEV the rest) and "jev_only". Labels are never sent to JEV.
 
-Key: only ``STRATEGY_PIPELINE_OPENROUTER_KEY``, read from ``--env-file`` inside this process (never
-printed); pin: ``POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL`` from the environment.
+Key: only ``EVAL_OPENROUTER_KEY`` (poseidon.core.eval_key; the process environment via docker --env-file
+~/secrets/eval-openrouter.env, or ``--env-file``), never printed; pin: ``EVAL_OPENROUTER_KEY_LABEL`` from the
+environment. The pipeline's own key and pin are not used here.
 
 Usage (stormtrooper throwaway container):
   python scripts/pipeline_jev_control_set.py render CS.jsonl SPECS.json
-  python scripts/pipeline_jev_control_set.py eval CS.jsonl SPECS.json --env-file /secrets/openrouter.env \
+  python scripts/pipeline_jev_control_set.py eval CS.jsonl SPECS.json -e EVAL_OPENROUTER_KEY_LABEL \
       --labels proposed_label --out /out/run
 """
 
@@ -23,16 +24,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import statistics
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from poseidon.core.eval_key import EVAL_KEY_VAR, EvalKeyError, read_eval_key, read_eval_label
 from poseidon.pipeline import jev
 from poseidon.pipeline.clause_precheck import precheck
 from poseidon.pipeline.plan import DEFAULT_SPEC_FAITHFULNESS
-from poseidon.pipeline.spec_llm import KEY_ENV
 from poseidon.pipeline.v3.describe import describe_spec
 from poseidon.pipeline.v3.validation import validate_spec_v3
 
@@ -62,16 +62,6 @@ def render(args) -> None:
         row["statement"] = templates[row["spec_id"]]["statement"]
     args.control_set.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
     print(f"rendered {len(rows)} statements")
-
-
-def read_key(path: Path) -> str:
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip().removeprefix("export ").strip()
-        if line.startswith(KEY_ENV + "="):
-            value = line.split("=", 1)[1].strip().strip("'\"")
-            if value:
-                return value
-    raise SystemExit(f"{KEY_ENV} not found in the env file")
 
 
 def metrics(rows: list[dict], field: str) -> dict:
@@ -110,9 +100,12 @@ def evaluate(args) -> None:
     labelled = [row for row in rows if row.get(args.labels) in LABELS]
     if len(labelled) != len(rows):
         raise SystemExit(f"{len(rows) - len(labelled)} rows have no valid {args.labels}")
-    pin = os.environ.get("POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL")
+    try:
+        key, pin = read_eval_key(env_file=args.env_file), read_eval_label()
+    except EvalKeyError as error:
+        raise SystemExit(str(error)) from None
     config = {**DEFAULT_SPEC_FAITHFULNESS, "max_calls_per_attempt": len(rows), "max_cost_usd_per_attempt": args.budget}
-    session = jev.JevSession(config, pin=pin, environ={KEY_ENV: read_key(args.env_file)})
+    session = jev.JevSession(config, pin=pin, environ={EVAL_KEY_VAR: key}, key_var=EVAL_KEY_VAR)
     out = args.out
     out.mkdir(parents=True, exist_ok=True)
     results = []
@@ -214,7 +207,9 @@ def main(argv=None) -> None:
         cmd.add_argument("control_set", type=Path)
         cmd.add_argument("specs", type=Path)
         if name == "eval":
-            cmd.add_argument("--env-file", type=Path, required=True)
+            cmd.add_argument(
+                "--env-file", type=Path, help="env file with EVAL_OPENROUTER_KEY; default: the environment"
+            )
             cmd.add_argument("--labels", default="label", choices=["label", "proposed_label"])
             cmd.add_argument("--out", type=Path, required=True)
             cmd.add_argument("--budget", type=float, default=0.10, help="max USD for the whole run")

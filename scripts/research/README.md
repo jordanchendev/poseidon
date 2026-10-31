@@ -262,6 +262,11 @@ python scripts/research/runner.py --state-dir ~/research-runner/state \
   `JEV_RESEARCH_OPENROUTER_KEY=...` (`export` and quotes allowed). Keys are read only from these files, never from the
   process environment; a missing/empty key exits 3 with a message naming the variable, before the bridge is touched.
 - Thalassa: `POSEIDON_THALASSA_BASE_URL` / `POSEIDON_THALASSA_API_KEY` from the process env (`docker --env-file`).
+- Evaluation (control sets) is separate from the live run: `jev_eval_control_set.py`, `narrative_eval_control_set.py`
+  (and the pipeline's `scripts/pipeline_jev_control_set.py`) read only `EVAL_OPENROUTER_KEY` (OpenRouter key
+  `aquarium-eval`, stormtrooper `~/secrets/eval-openrouter.env`, 600, one line) through `poseidon.core.eval_key`. Pass the file with
+  `docker run --env-file ~/secrets/eval-openrouter.env` (or `--env-file FILE` on the script). There is no fallback to
+  `JEV_RESEARCH_OPENROUTER_KEY` or any other name; a missing key exits before any request or output file.
 - `--dry-run`: assemble + freeze/prepare + prompt only, under `<state>/dry-run/` (own ledger), no keys, no model / JEV /
   bridge writes; writes `prompt.json`.
 - Exit codes: 0 handled / nothing to do / lock busy, 3 key file, 4 a bridge report failed (retried next run),
