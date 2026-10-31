@@ -10,6 +10,7 @@ from threading import Barrier
 import pandas as pd
 import pytest
 from sqlalchemy import delete, event, func, select, text, update
+from sqlalchemy.exc import IntegrityError
 
 from poseidon.broker.base import BrokerAdapter, BrokerCapabilities, BrokerCapabilityError, BrokerOrderSnapshot
 from poseidon.broker.paper_adapter import PaperBrokerAdapter, _ensure_legacy_baselines
@@ -2004,13 +2005,18 @@ def test_prepare_attempt_does_not_lock_fills_before_account_advisory(seed):
     assert lock_events.count("fills") == 1
 
 
-@pytest.mark.parametrize("origin", ["manual", "unknown"])
+# Migration 047 makes an unknown origin (ck_orders_order_origin_allowlist) and a decision-anchored
+# manual order (ck_orders_decision_id_origin) unrepresentable; the representable non-durable
+# corruption is an unanchored manual order, which the service must still refuse.
+@pytest.mark.parametrize("origin", ["manual"])
 def test_submission_rejects_non_exact_durable_origin_before_io(seed, origin):
     _opening(seed)
     result = _materialize(seed)
     order_id = uuid.UUID(result["order_ids"][0])
     with seed.sessions() as session, session.begin():
-        session.get(OrderRecord, order_id).order_origin = origin
+        order = session.get(OrderRecord, order_id)
+        order.order_origin = origin
+        order.decision_id = None
     adapter = _MarkerAdapter(seed.sessions, order_id)
 
     with pytest.raises(ReconciliationConflictError, match="durable order intent"):
@@ -2019,7 +2025,7 @@ def test_submission_rejects_non_exact_durable_origin_before_io(seed, origin):
     assert adapter.place_calls == adapter.lookup_calls == 0
 
 
-@pytest.mark.parametrize("origin", ["manual", "unknown"])
+@pytest.mark.parametrize("origin", ["manual"])
 def test_projection_rejects_non_exact_durable_origin(seed, origin):
     _opening(seed)
     result = _materialize(seed)
@@ -2028,6 +2034,7 @@ def test_projection_rejects_non_exact_durable_origin(seed, origin):
     with seed.sessions() as session, session.begin():
         order = session.get(OrderRecord, order_id)
         order.order_origin = origin
+        order.decision_id = None
         order.status = "partially_filled"
         order.broker_order_id = f"PAPER-{uuid.uuid4().hex}"
         order.submit_attempted_at = NOW
@@ -2046,6 +2053,27 @@ def test_projection_rejects_non_exact_durable_origin(seed, origin):
 
     with pytest.raises(FillProjectionConflictError, match="canonical decision"):
         project(seed, fill_id)
+
+
+@pytest.mark.parametrize(
+    ("changes", "constraint"),
+    [
+        ({"order_origin": "unknown", "decision_id": None}, "ck_orders_order_origin_allowlist"),
+        ({"order_origin": "manual"}, "ck_orders_decision_id_origin"),
+    ],
+    ids=["unknown", "anchored-manual"],
+)
+def test_047_database_refuses_non_exact_durable_origin(seed, changes, constraint):
+    _opening(seed)
+    result = _materialize(seed)
+    order_id = uuid.UUID(result["order_ids"][0])
+    with seed.sessions() as session, pytest.raises(IntegrityError) as error, session.begin():
+        session.execute(update(OrderRecord).where(OrderRecord.id == order_id).values(**changes))
+    assert error.value.orig.diag.constraint_name == constraint
+    with seed.sessions() as session:
+        order = session.get(OrderRecord, order_id)
+        assert order.order_origin == "stop_loss"
+        assert order.decision_id is not None
 
 
 @pytest.mark.parametrize(

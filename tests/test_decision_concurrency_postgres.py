@@ -284,7 +284,7 @@ def test_database_constraints_reject_duplicate_pair_and_orphan(seed):
         session.add(
             DecisionEvent(
                 decision_id=decision_id,
-                event_type="constraint_probe",
+                event_type="approved",
                 actor_id="test",
                 expected_revision=90,
                 idempotency_key="constraint-key",
@@ -297,7 +297,7 @@ def test_database_constraints_reject_duplicate_pair_and_orphan(seed):
     invalid = [
         DecisionEvent(
             decision_id=decision_id,
-            event_type="duplicate_replay",
+            event_type="rejected",
             actor_id="test",
             expected_revision=91,
             idempotency_key="constraint-key",
@@ -306,7 +306,7 @@ def test_database_constraints_reject_duplicate_pair_and_orphan(seed):
         ),
         DecisionEvent(
             decision_id=decision_id,
-            event_type="invalid_pair",
+            event_type="expired",
             actor_id="test",
             expected_revision=92,
             idempotency_key="missing-request-digest",
@@ -315,7 +315,7 @@ def test_database_constraints_reject_duplicate_pair_and_orphan(seed):
         ),
         DecisionEvent(
             decision_id=uuid.uuid4(),
-            event_type="orphan",
+            event_type="created",
             actor_id="test",
             expected_revision=0,
             payload_json={},

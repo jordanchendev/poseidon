@@ -104,8 +104,7 @@ def _outcome_manifest_request(
         "account_scope": "paper:phase99",
         "capability_json": {kind: True for kind in ("price", "benchmark", "fx", "calendar", "research")},
         "required_data": {
-            kind: {"max_age_seconds": 31536000}
-            for kind in ("price", "benchmark", "fx", "calendar", "research")
+            kind: {"max_age_seconds": 31536000} for kind in ("price", "benchmark", "fx", "calendar", "research")
         },
         "evidence": [
             _evidence(
@@ -326,6 +325,7 @@ def test_trade_mark_horizon_ignores_open_or_early_exit_state(outcome_session, ex
             account_scope=decision.account_scope,
             account_generation="phase99-generation",
             client_order_ref=f"PH99-{uuid.uuid4().hex}",
+            execution_key=uuid.uuid4(),
             instrument="spot",
             intent_json=stored_intent,
             intent_sha256=content_sha256(stored_intent),
@@ -481,10 +481,7 @@ def test_label_contract_and_static_service_boundaries():
     source = inspect.getsource(outcomes)
     tree = ast.parse(source)
     imported = {
-        alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-        for alias in node.names
+        alias.name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names
     }
     assert not {name for name in imported if "dsh" in name.lower() or "llm" in name.lower()}
     service = ast.parse(inspect.getsource(OutcomeService))
@@ -502,15 +499,10 @@ def test_outcome_rows_are_append_only_and_same_input_replays(outcome_session):
     snapshot, _decision, _contract, _manifest = seed
     first = _label(outcome_session, seed, MONDAY)
     second = _label(outcome_session, seed, MONDAY)
-    assert [(row.id, row.content_sha256) for row in first] == [
-        (row.id, row.content_sha256) for row in second
-    ]
-    assert (
-        outcome_session.query(OutcomeRecord)
-        .filter(OutcomeRecord.evaluation_snapshot_id == snapshot.id)
-        .count()
-        == len(first)
-    )
+    assert [(row.id, row.content_sha256) for row in first] == [(row.id, row.content_sha256) for row in second]
+    assert outcome_session.query(OutcomeRecord).filter(
+        OutcomeRecord.evaluation_snapshot_id == snapshot.id
+    ).count() == len(first)
 
 
 def _add_reconciled_trade(
@@ -542,6 +534,7 @@ def _add_reconciled_trade(
         account_scope=decision.account_scope,
         account_generation=generation,
         client_order_ref=f"PH99-open-{uuid.uuid4().hex}",
+        execution_key=uuid.uuid4(),
         instrument="spot",
         intent_json={"evaluation_snapshot_id": str(uuid.uuid4())},
         intent_sha256=content_sha256({"opening": str(snapshot.id)}),
@@ -568,6 +561,7 @@ def _add_reconciled_trade(
         account_scope=decision.account_scope,
         account_generation=generation,
         client_order_ref=f"PH99-close-{uuid.uuid4().hex}",
+        execution_key=uuid.uuid4(),
         instrument="spot",
         intent_json=exact_intent,
         intent_sha256=content_sha256(exact_intent),
@@ -682,6 +676,7 @@ def _add_reconciled_trade(
             account_scope=decision.account_scope,
             account_generation=generation,
             client_order_ref=f"OTHER-{uuid.uuid4().hex}",
+            execution_key=uuid.uuid4(),
             instrument="spot",
             intent_json={"evaluation_snapshot_id": str(uuid.uuid4())},
             intent_sha256=content_sha256({"unrelated": str(snapshot.id)}),
@@ -721,19 +716,13 @@ def test_trade_pnl_uses_exact_cost_revision_and_reconciliation(outcome_session, 
     assert trade.metrics_json["actual"]["gross"] == "10.000000000000000000"
     assert trade.metrics_json["actual"]["cost_total"] == "1.500000000000000000"
     assert trade.metrics_json["actual"]["net"] == "8.500000000000000000"
-    assert {item["classification"] for item in trade.metrics_json["actual"]["cost_components"]} == set(
-        classifications
-    )
-    assert trade.metrics_json["counterfactual"] == [
-        {"assumption_version": "paper-execution-v1", "net": "7"}
-    ]
+    assert {item["classification"] for item in trade.metrics_json["actual"]["cost_components"]} == set(classifications)
+    assert trade.metrics_json["counterfactual"] == [{"assumption_version": "paper-execution-v1", "net": "7"}]
     economic = outcome_session.scalar(
         select(EconomicReconciliation).where(EconomicReconciliation.account_reconciliation_id == reconciliation.id)
     )
     assert economic is not None
-    assert economic.cost_revision_ids_json == [
-        {"id": str(revision.id), "content_sha256": revision.content_sha256}
-    ]
+    assert economic.cost_revision_ids_json == [{"id": str(revision.id), "content_sha256": revision.content_sha256}]
 
 
 @pytest.mark.parametrize(

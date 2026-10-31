@@ -395,7 +395,9 @@ def test_fifo_invalid_projection_fails_without_partial_mutation(seed, corruption
         if corruption == "unknown_status":
             fill.projection_status = "unknown"
         elif corruption == "missing_client":
-            order.client_order_ref = None
+            # 047 ck_orders_decision_origin_identity forbids a NULL reference on decision orders;
+            # an empty reference is the representable missing-client corruption.
+            order.client_order_ref = ""
         elif corruption == "missing_broker":
             fill.broker_fill_id = None
         else:

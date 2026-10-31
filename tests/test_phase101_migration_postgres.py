@@ -141,7 +141,8 @@ def _assert_check_violation(engine, statement, params):
 
 def test_046_empty_upgrade_head_and_checks(phase101_migration_database):
     config, engine = phase101_migration_database
-    command.upgrade(config, "head")
+    # 047 (hardening) now follows 046; pin the 046 revision explicitly.
+    command.upgrade(config, "046")
     assert _version(engine) == "046"
     assert "'bootstrap'" in _check_definition(engine, "ck_strategy_release_events_type")
     shape = _check_definition(engine, "ck_strategy_release_events_shape")
