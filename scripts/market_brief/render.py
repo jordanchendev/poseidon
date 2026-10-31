@@ -239,6 +239,9 @@ def _pct1_cell(x):
     return _arw(x, fmt_pct(x, 1))
 
 
+GROUPS_SKIPPED = "族群強弱：本期未取得"  # shown in place of the section; the reason stays in the log and run record
+
+
 def _group_section(g):
     """族群強弱 from the Thalassa group ranking (already in percent). All groups: 16 rows are ~0.6k characters on
     the phone, less than the 類股 table above it, so one table serves both the md and Telegram."""
@@ -317,7 +320,7 @@ def _deterministic_one_liner(facts):
 
 
 # ------------------------------------------------------------------------------------------------ bodies
-def _body_tw_post(d, cfg_tw, groups=None):
+def _body_tw_post(d, cfg_tw, groups=None, groups_expected=False):
     out = ["## 大盤", ""]
     rows = [[i["name"], fmt(i["close"]), chg_cell(i["chg"]), pct_cell(i["pct"])] for i in d["indices"]]
     out += _table(
@@ -373,6 +376,8 @@ def _body_tw_post(d, cfg_tw, groups=None):
     )
     if groups:
         out += _group_section(groups)
+    elif groups_expected:
+        out += ["", GROUPS_SKIPPED]
     out += [
         "",
         "## 三大法人（上市，單位：億元）",
@@ -524,7 +529,9 @@ def render(facts, section=None, llm_meta=None, cfg=None):
         parts += ["> **資料未齊**：" + "；".join(facts["gaps"]), ""]
     parts += ["## 一句話", section["one_liner"] if section else det_one, ""]
     body = {
-        "tw-postmarket": lambda: _body_tw_post(d, (cfg or {}).get("tw", {}), facts.get("group_ranking")),
+        "tw-postmarket": lambda: _body_tw_post(
+            d, (cfg or {}).get("tw", {}), facts.get("group_ranking"), bool((cfg or {}).get("thalassa"))
+        ),
         "tw-premarket": lambda: _body_tw_pre(d),
         "us-premarket": lambda: _body_us_pre(d),
         "us-postmarket": lambda: _body_us_post(d),

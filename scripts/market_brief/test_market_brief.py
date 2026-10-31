@@ -1578,12 +1578,68 @@ class TestGroupRanking(unittest.TestCase):
         self.assertIsNone(facts["group_ranking"])
         self.assertIn("HTTP 500", facts["group_ranking_status"])
         self.assertEqual(facts["gaps"], [])
-        md, _ = render.render(facts, None, None, cfg())
-        self.assertNotIn("族群強弱", md)
+        md, _ = render.render(facts, None, None, self.cfg)
+        self.assertNotIn("## 族群強弱", md)
+        self.assertIn("族群強弱：本期未取得", md)
+        self.assertNotIn("HTTP 500", md)  # the reason (URL, key path) never reaches the reader
+        self.assertIn("族群強弱：本期未取得", render.telegram_text(md))
         self.assertIn("## 三大法人", md)
         rec = run.run_record(facts, None, Fetcher())
         self.assertIn("HTTP 500", rec["group_ranking"])
         self.assertTrue(any("section skipped" in m for m in self.logs))
+
+    def _assert_brief_without_section(self, facts):
+        self.assertEqual(facts["status"], "ok")
+        self.assertIsNone(facts["group_ranking"])
+        self.assertEqual(facts["gaps"], [])  # an optional section never delays the brief
+        md, _ = render.render(facts, None, None, self.cfg)
+        self.assertIn("族群強弱：本期未取得", md)
+        self.assertIn("族群強弱：本期未取得", render.telegram_text(md))
+        self.assertIn("## 三大法人", md)
+        for secret in (GROUP_KEY, str(self.keyfile), "192.168.31.241"):
+            self.assertNotIn(secret, md)
+        self.assertTrue(any("section skipped" in m for m in self.logs), self.logs)
+
+    def test_unreadable_key_file_still_sends_the_brief(self):
+        real = Path.read_text
+
+        def deny_key_file(path, *a, **kw):  # the key file passes the mode check but cannot be read
+            if path == self.keyfile:
+                raise PermissionError(13, "Permission denied", str(path))
+            return real(path, *a, **kw)
+
+        with mock.patch.object(Path, "read_text", deny_key_file):
+            self._assert_brief_without_section(self._collect(GroupTransport(200, group_reply())))
+
+    def test_non_utf8_key_file_still_sends_the_brief(self):
+        self.keyfile.write_bytes(b"export MARKET_BRIEF_THALASSA_API_KEY=\xff\xfe\x80\n")
+        os.chmod(self.keyfile, 0o600)
+        self._assert_brief_without_section(self._collect(GroupTransport(200, group_reply())))
+
+    def test_config_missing_base_url_still_sends_the_brief(self):
+        del self.cfg["thalassa"]["base_url"]
+        self._assert_brief_without_section(self._collect(GroupTransport(200, group_reply())))
+
+    def test_non_dict_group_in_reply_still_sends_the_brief(self):
+        reply = group_reply()
+        reply["groups"].append("oops")
+        self._assert_brief_without_section(self._collect(GroupTransport(200, reply)))
+
+    def test_no_thalassa_config_shows_no_skip_line(self):
+        facts = self._collect(GroupTransport(200, group_reply()))
+        facts["group_ranking"] = None
+        md, _ = render.render(facts, None, None, {k: v for k, v in self.cfg.items() if k != "thalassa"})
+        self.assertNotIn("族群強弱", md)
+
+    def test_groups_are_ordered_by_rank_whatever_the_reply_order(self):
+        reply = group_reply()
+        reply["groups"].reverse()  # unranked first, rank 3, 2, 1
+        data, status = self.fetch(GroupTransport(200, reply))
+        self.assertEqual(status, "ok")
+        self.assertEqual([g["name"] for g in data["groups"]], ["PCB 材料", "散熱", "電源", "網通"])
+        md, _ = render.render(self._collect(GroupTransport(200, reply)), None, None, self.cfg)
+        self.assertLess(md.index("| 1 | PCB 材料"), md.index("| 2 | 散熱"))
+        self.assertLess(md.index("| 3 | 電源"), md.index("| — | 網通"))
 
     def test_other_slots_do_not_call_thalassa(self):
         t = GroupTransport(200, group_reply())
