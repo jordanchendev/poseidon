@@ -14,6 +14,7 @@ sys.path.insert(0, str(HERE))
 import jev_eval_control_set  # noqa: E402
 import narrative_eval_control_set  # noqa: E402
 
+CS = str(HERE / "narrative_control_set.json")
 OLD = {
     "JEV_EVAL_OPENROUTER_KEY": "old-eval",
     "JEV_RESEARCH_OPENROUTER_KEY": "old-research",
@@ -36,7 +37,7 @@ def _run(module, monkeypatch, *argv):
 def test_jev_eval_stops_without_the_eval_key_and_writes_nothing(old_names_only, monkeypatch, tmp_path, capsys):
     out = tmp_path / "run"
     with pytest.raises(SystemExit) as caught:
-        _run(jev_eval_control_set, monkeypatch, "--out-dir", str(out))
+        _run(jev_eval_control_set, monkeypatch, "--control-set", CS, "--out-dir", str(out))
     assert "EVAL_OPENROUTER_KEY" in str(caught.value) and "eval-openrouter.env" in str(caught.value)
     assert not out.exists()
     assert not any(value in capsys.readouterr().out for value in OLD.values())
@@ -46,7 +47,16 @@ def test_jev_eval_env_file_with_only_old_names_is_refused(old_names_only, monkey
     env = tmp_path / "old.env"
     env.write_text("".join(f"{k}={v}\n" for k, v in OLD.items()))
     with pytest.raises(SystemExit, match="EVAL_OPENROUTER_KEY"):
-        _run(jev_eval_control_set, monkeypatch, "--env-file", str(env), "--out-dir", str(tmp_path / "run"))
+        _run(
+            jev_eval_control_set,
+            monkeypatch,
+            "--control-set",
+            CS,
+            "--env-file",
+            str(env),
+            "--out-dir",
+            str(tmp_path / "run"),
+        )
 
 
 def test_narrative_eval_stops_without_the_eval_key_and_writes_nothing(old_names_only, monkeypatch, tmp_path):
@@ -57,5 +67,5 @@ def test_narrative_eval_stops_without_the_eval_key_and_writes_nothing(old_names_
 
 
 def test_jev_eval_dry_run_needs_no_key(old_names_only, monkeypatch, capsys):
-    _run(jev_eval_control_set, monkeypatch, "--control-set", str(HERE / "narrative_control_set.json"), "--dry-run")
+    _run(jev_eval_control_set, monkeypatch, "--control-set", CS, "--dry-run")
     assert "citation_relation" in capsys.readouterr().out
