@@ -31,6 +31,7 @@ import render  # noqa: E402
 import run  # noqa: E402
 import tradingcal  # noqa: E402
 import tw  # noqa: E402
+import tw_groups  # noqa: E402
 import us  # noqa: E402
 from netio import Fetcher, FetchError  # noqa: E402
 
@@ -38,6 +39,7 @@ FIX = HERE / "fixtures"
 TPE = ZoneInfo("Asia/Taipei")
 D21 = dt.date(2026, 10, 21)
 D22 = dt.date(2026, 10, 22)
+date = dt.date
 
 
 def fx(name):
@@ -45,7 +47,9 @@ def fx(name):
 
 
 def cfg():
-    return json.loads((HERE / "config.json").read_text(encoding="utf-8"))
+    c = json.loads((HERE / "config.json").read_text(encoding="utf-8"))
+    c["thalassa"]["key_file"] = "/nonexistent/market-brief-tests/thalassa.env"  # never read a real key in tests
+    return c
 
 
 def U(x):
@@ -1421,6 +1425,230 @@ class TestMirror(unittest.TestCase):
         self.assertFalse(run.deliver.mirror_sync("ssh research-bridge", log=logs.append, runner=runner))
         self.assertEqual(runner_calls[0], ["ssh", "research-bridge", "brief-mirror-sync"])
         self.assertIn("exit 255", logs[0])
+
+
+# ================================================================================================ group strength
+GROUP_KEY = "tg-test-key-0123456789abcdef"
+
+
+def group_reply(d=D21, **over):
+    def g(name, rank, r20, r60, share, chg, n=4, valid=4, missing=()):
+        return {
+            "group": name, "n_members": n, "n_valid": valid, "missing": list(missing), "members": [],
+            "ret20": r20, "ret60": r60, "rel20": None, "rel60": None, "turnover_share": share,
+            "turnover_share_change": chg, "score": None, "rank": rank, "rank_ex_flow": rank,
+        }  # fmt: skip
+
+    resp = {
+        "date": d.isoformat(),
+        "table_version": "2026-10-30-v1",
+        "table_sha": "abc123abc123",
+        "min_members": 2,
+        "taiex": {"ret20": -0.034488, "ret60": 0.161144},
+        "groups": [
+            g("PCB 材料", 1, 0.102931, 0.904889, 0.051935, 0.312588),
+            g("散熱", 2, -0.075877, 0.724185, 0.028786, 0.013613, 5, 4, ["8996"]),
+            g("電源", 3, -0.135707, 0.110137, 0.022431, -0.176795, 3, 3),
+            g("網通", None, None, None, 0.008628, 0.146662, 2, 0, ["2345", "5388"]),
+        ],
+    }
+    resp.update(over)
+    return resp
+
+
+class GroupTransport:
+    def __init__(self, status=200, body=None):
+        self.status, self.body, self.calls = status, body, []
+
+    def __call__(self, method, url, headers, body, timeout):
+        self.calls.append((method, url, dict(headers)))
+        if "/api/v1/tw/groups/ranking" in url:
+            raw = self.body if isinstance(self.body, bytes) else json.dumps(self.body).encode()
+            return self.status, raw
+        return 404, b"not found"
+
+
+class TestGroupRanking(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.keyfile = Path(self.tmp.name) / "thalassa.env"
+        self.keyfile.write_text(f"export MARKET_BRIEF_THALASSA_API_KEY={GROUP_KEY}\n")
+        os.chmod(self.keyfile, 0o600)
+        self.cfg = cfg()
+        self.cfg["thalassa"]["key_file"] = str(self.keyfile)
+        self.logs = []
+
+    def fetch(self, transport, d=D21):
+        f = Fetcher(transport=transport, sleep=lambda s: None)
+        out = tw_groups.fetch(f, self.cfg, d, self.logs.append)
+        self.assertNotIn(GROUP_KEY, json.dumps(f.log) + "\n".join(self.logs))  # the key is never logged
+        return out
+
+    def test_fetch_ok_sends_key_header_and_shapes_percent(self):
+        t = GroupTransport(200, group_reply())
+        data, status = self.fetch(t)
+        self.assertEqual(status, "ok")
+        ((method, url, headers),) = t.calls
+        self.assertEqual((method, url), ("GET", "http://192.168.31.241:8001/api/v1/tw/groups/ranking?date=2026-10-21"))
+        self.assertEqual(headers["X-API-Key"], GROUP_KEY)
+        self.assertEqual(data["taiex"], {"ret20": -3.4, "ret60": 16.1})
+        first = data["groups"][0]
+        self.assertEqual((first["name"], first["rank"], first["ret20"], first["ret60"]), ("PCB 材料", 1, 10.3, 90.5))
+        self.assertEqual((first["share"], first["share_chg"]), (5.2, 31.3))
+        self.assertIsNone(data["groups"][3]["rank"])
+
+    def test_every_failure_skips_the_section_and_logs_why(self):
+        cases = {}
+        cases["no key file"] = lambda: (self.keyfile.unlink(), GroupTransport(200, group_reply()))[1]
+        cases["wrong variable"] = lambda: (
+            self.keyfile.write_text(f"export OTHER_VAR={GROUP_KEY}\n"),
+            GroupTransport(200, group_reply()),
+        )[1]
+        cases["open permissions"] = lambda: (os.chmod(self.keyfile, 0o644), GroupTransport(200, group_reply()))[1]
+        cases["http 500"] = lambda: GroupTransport(500, b"boom")
+        cases["http 401"] = lambda: GroupTransport(401, b'{"detail":"Invalid API key"}')
+        cases["http 404"] = lambda: GroupTransport(404, b'{"detail":"x"}')
+        cases["not json"] = lambda: GroupTransport(200, b"<html>")
+        cases["wrong date"] = lambda: GroupTransport(200, group_reply(date(2026, 10, 20)))
+        cases["no groups"] = lambda: GroupTransport(200, group_reply(groups=[]))
+        cases["missing field"] = lambda: GroupTransport(200, group_reply(groups=[{"group": "A", "rank": 1}]))
+        cases["no taiex"] = lambda: GroupTransport(200, group_reply(taiex={"ret20": None, "ret60": None}))
+        for name, make in cases.items():
+            self.setUp()
+            with self.subTest(name):
+                data, status = self.fetch(make())
+                self.assertIsNone(data)
+                self.assertNotEqual(status, "ok")
+                self.assertTrue(any("section skipped" in m for m in self.logs), self.logs)
+
+    def test_no_fallback_to_environment(self):
+        self.keyfile.unlink()
+        env = {"MARKET_BRIEF_THALASSA_API_KEY": "from-env", "RESEARCH_DRAFT_OPENROUTER_KEY": "other"}
+        t = GroupTransport(200, group_reply())
+        with mock.patch.dict(os.environ, env):
+            data, _ = self.fetch(t)
+        self.assertIsNone(data)
+        self.assertEqual(t.calls, [])  # no request without the file's key
+
+    def _collect(self, transport):
+        routes = [("groups/ranking", lambda url, body: transport("GET", url, {}, body, 1)), *TW_ROUTES_21]
+        c = collect.Collector(
+            fetcher(routes), self.cfg, WATCH, calendar(), dt.datetime(2026, 10, 22, 8, 30, tzinfo=dt.UTC),
+            log=self.logs.append,
+        )  # fmt: skip
+        return collect.collect("tw-postmarket", D21, c)
+
+    def test_section_in_md_and_telegram(self):
+        facts = self._collect(GroupTransport(200, group_reply()))
+        self.assertEqual(facts["status"], "ok")
+        self.assertEqual(facts["group_ranking_status"], "ok")
+        self.assertNotIn("group_ranking", json.dumps(facts["data"]))  # the model never sees it
+        md, _ = render.render(facts, None, None, cfg())
+        for needle in (
+            "## 族群強弱（4 族群，等權、已還原除權息）",
+            "加權指數 20 日 -3.4%、60 日 +16.1%",
+            "| # | 族群 | 檔數 | 20日 | 60日 | 占比% | 占比變化 |",
+            f"| 1 | PCB 材料 | 4 | {U('+10.3%')} | {U('+90.5%')} | 5.2 | {U('+31.3%')} |",
+            f"| 3 | 電源 | 3 | {D('-13.6%')} | {U('+11.0%')} | 2.2 | {D('-17.7%')} |",
+            "| — | 網通 | 2 | — | — | 0.9 | " + U("+14.7%") + " |",
+            "<!-- tg: #=#; 20日=R20!; 60日=R60; 占比%=Shr; 占比變化=ShrChg; 族群 -->",
+            "個股資料缺漏（未計入該族群）：散熱 8996；網通 2345、5388",
+            "不是買進訊號",
+        ):
+            self.assertIn(needle, md)
+        self.assertLess(md.index("## 類股表現"), md.index("## 族群強弱"))
+        self.assertLess(md.index("## 族群強弱"), md.index("## 三大法人"))
+        self.assertNotIn(GROUP_KEY, md)
+        for pat in NEXUS_SENSITIVE_CI:
+            self.assertIsNone(re.search(pat, md, re.I | re.M), pat)
+        tg = render.telegram_text(md)
+        block = tg.split("**族群強弱（4 族群，等權、已還原除權息）**")[1].split("**三大法人")[0]
+        self.assertIn("不是買進訊號", block)
+        table = block.split("```")[1].strip("\n").split("\n")
+        self.assertEqual(len(table), 5)  # header + 4 groups
+        self.assertRegex(table[1], r"^1\s+\+10\.3%\s+\+90\.5%\s+5\.2\s+\+31\.3% PCB 材料 🔴$")
+        self.assertRegex(table[0], r"^#\s+R20\s+R60\s+Shr\s+ShrChg 族群$")
+        self.assertTrue(table[3].endswith("電源 🟢"), table[3])
+        self.assertLessEqual(max(len(r) for r in table), 40)
+
+    def test_brief_goes_out_without_section_when_endpoint_fails(self):
+        facts = self._collect(GroupTransport(500, b"boom"))
+        self.assertEqual(facts["status"], "ok")
+        self.assertIsNone(facts["group_ranking"])
+        self.assertIn("HTTP 500", facts["group_ranking_status"])
+        self.assertEqual(facts["gaps"], [])
+        md, _ = render.render(facts, None, None, self.cfg)
+        self.assertNotIn("## 族群強弱", md)
+        self.assertIn("族群強弱：本期未取得", md)
+        self.assertNotIn("HTTP 500", md)  # the reason (URL, key path) never reaches the reader
+        self.assertIn("族群強弱：本期未取得", render.telegram_text(md))
+        self.assertIn("## 三大法人", md)
+        rec = run.run_record(facts, None, Fetcher())
+        self.assertIn("HTTP 500", rec["group_ranking"])
+        self.assertTrue(any("section skipped" in m for m in self.logs))
+
+    def _assert_brief_without_section(self, facts):
+        self.assertEqual(facts["status"], "ok")
+        self.assertIsNone(facts["group_ranking"])
+        self.assertEqual(facts["gaps"], [])  # an optional section never delays the brief
+        md, _ = render.render(facts, None, None, self.cfg)
+        self.assertIn("族群強弱：本期未取得", md)
+        self.assertIn("族群強弱：本期未取得", render.telegram_text(md))
+        self.assertIn("## 三大法人", md)
+        for secret in (GROUP_KEY, str(self.keyfile), "192.168.31.241"):
+            self.assertNotIn(secret, md)
+        self.assertTrue(any("section skipped" in m for m in self.logs), self.logs)
+
+    def test_unreadable_key_file_still_sends_the_brief(self):
+        real = Path.read_text
+
+        def deny_key_file(path, *a, **kw):  # the key file passes the mode check but cannot be read
+            if path == self.keyfile:
+                raise PermissionError(13, "Permission denied", str(path))
+            return real(path, *a, **kw)
+
+        with mock.patch.object(Path, "read_text", deny_key_file):
+            self._assert_brief_without_section(self._collect(GroupTransport(200, group_reply())))
+
+    def test_non_utf8_key_file_still_sends_the_brief(self):
+        self.keyfile.write_bytes(b"export MARKET_BRIEF_THALASSA_API_KEY=\xff\xfe\x80\n")
+        os.chmod(self.keyfile, 0o600)
+        self._assert_brief_without_section(self._collect(GroupTransport(200, group_reply())))
+
+    def test_config_missing_base_url_still_sends_the_brief(self):
+        del self.cfg["thalassa"]["base_url"]
+        self._assert_brief_without_section(self._collect(GroupTransport(200, group_reply())))
+
+    def test_non_dict_group_in_reply_still_sends_the_brief(self):
+        reply = group_reply()
+        reply["groups"].append("oops")
+        self._assert_brief_without_section(self._collect(GroupTransport(200, reply)))
+
+    def test_no_thalassa_config_shows_no_skip_line(self):
+        facts = self._collect(GroupTransport(200, group_reply()))
+        facts["group_ranking"] = None
+        md, _ = render.render(facts, None, None, {k: v for k, v in self.cfg.items() if k != "thalassa"})
+        self.assertNotIn("族群強弱", md)
+
+    def test_groups_are_ordered_by_rank_whatever_the_reply_order(self):
+        reply = group_reply()
+        reply["groups"].reverse()  # unranked first, rank 3, 2, 1
+        data, status = self.fetch(GroupTransport(200, reply))
+        self.assertEqual(status, "ok")
+        self.assertEqual([g["name"] for g in data["groups"]], ["PCB 材料", "散熱", "電源", "網通"])
+        md, _ = render.render(self._collect(GroupTransport(200, reply)), None, None, self.cfg)
+        self.assertLess(md.index("| 1 | PCB 材料"), md.index("| 2 | 散熱"))
+        self.assertLess(md.index("| 3 | 電源"), md.index("| — | 網通"))
+
+    def test_other_slots_do_not_call_thalassa(self):
+        t = GroupTransport(200, group_reply())
+        routes = [("groups/ranking", lambda url, body: t("GET", url, {}, body, 1)), *TW_ROUTES_21]
+        c = collect.Collector(
+            fetcher(routes), self.cfg, WATCH, calendar(), dt.datetime(2026, 10, 22, 8, 30, tzinfo=dt.UTC)
+        )
+        collect.collect("tw-premarket", D22, c)
+        self.assertEqual(t.calls, [])
 
 
 class TestColours(unittest.TestCase):

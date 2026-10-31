@@ -135,6 +135,7 @@ def run_record(facts, meta, fetcher):
         "generated_at": facts["generated_at"],
         "gaps": facts["gaps"],
         "must_missing": facts["must_missing"],
+        "group_ranking": facts.get("group_ranking_status"),
         "llm": meta,
         "fetches": fetcher.log,
     }
