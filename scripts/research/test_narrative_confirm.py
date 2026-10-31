@@ -161,6 +161,74 @@ def test_owner_decisions_are_applied_once_and_acked(env):
     assert again[-1]["stdin"].strip().endswith("（先前已套用，未重複寫入）")
 
 
+def confirm_events(path, rev_id, nid, sid):
+    _checks, events = ta.ledger_rows(path, rev_id)
+    return [e for e in events[nid] if json.loads(e["basis_json"]).get("suggestion_id") == sid]
+
+
+@pytest.mark.parametrize("rule", ["R3", "R4"])  # a status change and a corroboration
+def test_a_confirm_killed_before_its_row_is_written_writes_nothing_and_applies_once_when_resent(env, monkeypatch, rule):
+    """P0-3: the event and the confirmed row are one transaction, so a crash between them leaves neither; the bridge's
+    re-send of the un-acked decision applies it once, and a re-send after that is a no-op."""
+    path, ids, _t, _run_json, rev = ta.run(env, "confirm")
+    rev_id = rev["identity"]["revision_id"]
+    nid, sid = ids[rule], nl.suggestion_id(rev_id, ids[rule])
+    real, crashed = nl._update, []
+
+    def killed_once(*a, **k):
+        if not crashed:
+            crashed.append(a)
+            raise RuntimeError("killed")
+        return real(*a, **k)
+
+    monkeypatch.setattr(nl, "_update", killed_once)
+    d = decision(1, "confirm", sid, "確認敘事 " + sid)
+    with pytest.raises(RuntimeError, match="killed"):
+        narrative_check.apply_decision(path, d)
+    assert confirm_events(path, rev_id, nid, sid) == [] and suggestions(path)[nid]["status"] == "suggested"
+    result, message = narrative_check.apply_decision(path, d)
+    assert result == "applied" and message.startswith(f"敘事建議 {sid} 已確認") and "先前已套用" not in message
+    [ev] = confirm_events(path, rev_id, nid, sid)
+    s = suggestions(path)[nid]
+    assert (s["status"], s["event_seq"], s["decision_ref"]) == ("confirmed", ev["seq"], "telegram:20261022-d1")
+    before = ta.ledger_rows(path, rev_id), suggestions(path)
+    result, message = narrative_check.apply_decision(path, d)
+    assert result == "applied" and message.endswith("（先前已套用，未重複寫入）")
+    assert (ta.ledger_rows(path, rev_id), suggestions(path)) == before
+
+
+@pytest.mark.parametrize("rule", ["R3", "R4"])
+def test_a_ledger_left_with_the_event_and_a_suggested_row_is_finished_without_a_second_event(env, rule):
+    """P0-3: a ledger that crashed under the old two-commit order holds the owner event (basis.suggestion_id) while the
+    suggestion is still suggested. The re-sent decision finishes the row against that event: a status suggestion is
+    not refused as a move from its own status, a corroboration is not written twice."""
+    path, ids, _t, _run_json, rev = ta.run(env, "confirm")
+    rev_id = rev["identity"]["revision_id"]
+    nid, sid = ids[rule], nl.suggestion_id(rev_id, ids[rule])
+    db = nl.connect(path)
+    s = nl._one(db, "SELECT * FROM narrative_suggestions WHERE suggestion_id = ?", sid)
+    nl.append_event(  # what the old confirm_suggestion had committed when it crashed
+        db,
+        nid,
+        kind=s["kind"],
+        to_status=s["to_status"],
+        decided_by="owner",
+        at=DECIDED_AT,
+        basis={**json.loads(s["basis_json"]), "suggestion_id": sid, "approval_ref": "telegram:20261022-d1"},
+        rule=s["rule"],
+        jev=json.loads(s["jev_json"]),
+        drafter_verdict=s["drafter_verdict"],
+        note="確認敘事 " + sid,
+    )
+    db.close()
+    [ev] = confirm_events(path, rev_id, nid, sid)
+    result, message = narrative_check.apply_decision(path, decision(1, "confirm", sid, "確認敘事 " + sid))
+    assert result == "applied" and message.endswith("（先前已套用，未重複寫入）"), message
+    assert confirm_events(path, rev_id, nid, sid) == [ev]
+    s = suggestions(path)[nid]
+    assert (s["status"], s["event_seq"], s["decision_ref"]) == ("confirmed", ev["seq"], "telegram:20261022-d1")
+
+
 def test_a_rejected_change_is_not_suggested_again(env):
     path, ids, _t, _run_json, rev = ta.run(env, "confirm")
     db = nl.connect(path)
