@@ -41,8 +41,10 @@ import assemble as assemble_mod  # noqa: E402
 import draft as draft_mod  # noqa: E402
 import narrative_check  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
-from claim_precheck import _CAUSAL, check_numbers, lint_atomic  # noqa: E402
+from claim_precheck import check_numbers, lint_atomic  # noqa: E402
 from refusal import ResearchRefusal  # noqa: E402
+
+from poseidon.decision_loop.claim_quantities import _CAUSAL  # noqa: E402
 
 MATERIAL_ID = re.compile(r"^\d{8}-k\d{1,4}$")
 MAX_RECORDS = 10  # D11
