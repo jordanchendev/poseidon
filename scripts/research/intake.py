@@ -12,8 +12,8 @@ narrative records and theme proposals, never into a revision (research_revisions
      ManifestService.freeze writes data_manifests only.
   3. intake draft (same key and model as the research draft, D9): records[], theme_proposals[], member_proposals[],
      verify_with[].
-  4. gates (one repair round): quote verbatim in the material, lint_atomic, check_numbers (record against its quote,
-     strict), a forecast's resolves_on names a period of the record, theme ids from the closed list or the suggested
+  4. gates (one repair round): quote verbatim in the material, record_rules.record_problems (atomic incl. no causal
+     link, numbers against its quote, claim_type / resolves_on), theme ids from the closed list or the suggested
      id of a theme proposal filed here, each subject an approved member of one of the record's themes or a member a
      proposal filed here names into one of them, at most MAX_RECORDS records.
   5. faithful-paraphrase check: judge_record (period precheck, then the JEV vote) of each record against the material's
@@ -41,10 +41,8 @@ import assemble as assemble_mod  # noqa: E402
 import draft as draft_mod  # noqa: E402
 import narrative_check  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
-from claim_precheck import check_numbers, lint_atomic  # noqa: E402
+import record_rules  # noqa: E402
 from refusal import ResearchRefusal  # noqa: E402
-
-from poseidon.decision_loop.claim_quantities import _CAUSAL  # noqa: E402
 
 MATERIAL_ID = re.compile(r"^\d{8}-k\d{1,4}$")
 MAX_RECORDS = 10  # D11
@@ -53,9 +51,6 @@ MAX_PROPOSALS = 3
 MAX_MEMBER_PROPOSALS = 3
 REQUIRED_DATA = {"secondary": {"max_age_seconds": 30 * 86400}}
 FAITHFUL_PRECHECKS = (("period", narrative_check._period_gate),)
-# A record is checked later against official text one statement at a time, so a causal or driver link (帶動 / 由於 /
-# driven by ...) is a second claim even where lint_atomic's verb lexicon sees one clause (design §7.2, post 8).
-CAUSAL_RE = re.compile(_CAUSAL, re.I)
 TIER_WORDS = {"kol": "KOL", "media": "媒體", "sell-side": "賣方"}
 NOTICE_CAP = 3500
 
@@ -474,28 +469,7 @@ def gates(out, m, payload, duplicate, member_duplicate=_no_member_duplicate):
         problems = []
         if quote not in text:
             problems.append(f"[quote] {where} quote is not a verbatim substring of the material; copy it exactly")
-        atom = lint_atomic(claim)
-        if not atom["ok"]:
-            problems.append(
-                f"[atomic] {where} claim is {atom['reason']}; split it into {atom['clauses']} or leave it out"
-            )
-        elif CAUSAL_RE.search(claim):
-            problems.append(
-                f"[atomic] {where} claim links a cause to an effect ({CAUSAL_RE.search(claim).group(0)}); a record is "
-                "one statement: file the cause and the effect as separate records or leave the link out"
-            )
-        num = check_numbers(claim, quote)
-        if num["status"] == "mismatch":
-            det = "; ".join(f"{u['claim']} ({u['kind']})" for u in num["unmatched"])
-            problems.append(f"[numbers] {where} claim numbers are not in its quote: {det}")
-        if ct not in nl.CLAIM_TYPES:
-            problems.append(f"[schema] {where} claim_type must be state|forecast")
-        elif ro is not None and (ct == "state" or not isinstance(ro, str) or not nl.DATE.match(ro)):
-            problems.append(
-                f"[schema] {where} resolves_on is a YYYY-MM-DD date of a forecast only (null for the default)"
-            )
-        elif ro is not None and not narrative_check.period_matches(ro, claim):
-            problems.append(f"[schema] {where} resolves_on {ro} names no period the claim mentions; give null instead")
+        problems += [f"[{p.tag}] {where} {p.message}" for p in record_rules.record_problems(claim, quote, ct, ro)]
         tags, subjects = r.get("theme_ids"), r.get("subject_symbols")
         if not (_strings(tags) and tags) or set(tags) - taggable:
             problems.append(

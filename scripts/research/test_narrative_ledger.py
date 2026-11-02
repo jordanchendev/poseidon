@@ -282,6 +282,8 @@ def test_record_dates_follow_d6(db):
         ({"quote": "exceeds 300GB"}, "verbatim"),
         ({"claim": "L4 以上自駕車需要 300GB 以上的記憶體"}, "number"),
         ({"claim": "L4 以上自駕車需要 200GB 以上的記憶體，因為感測器資料量增加 3 倍"}, "atomic"),
+        ({"claim": "感測器資料帶動 L4 以上自駕車需要 200GB 以上的記憶體"}, "links a cause to an effect"),
+        ({"claim_type": "state", "resolves_on": "2027-06-30"}, "of a forecast only"),
         ({"subject_symbols": ["NYSE:JBL"]}, "not an approved member"),
         ({"theme_ids": ["cleanroom-capacity"]}, "not an active theme"),
     ],
@@ -596,3 +598,29 @@ def test_link_add_tags_an_untagged_claim_with_an_approval(tmp_path, db):
     assert p.returncode == 0 and "claims[0] cleanroom-capacity ['NASDAQ:MU']" in p.stdout, p.stderr
     links = json.loads(nl.export(db, "2026-10-31T00:00:00Z"))["claim_theme_links"]
     assert [(x["claim_index"], x["source"]) for x in links] == [(0, "owner"), (1, "owner")]
+
+
+# ---------------------------------------------------------------- re-validation of filed records (decision 2026-10-31)
+def test_revalidate_flags_records_filed_before_a_rule_and_writes_nothing(db, tmp_path, capsys):
+    import revalidate_records
+
+    ok = record(db)
+    # a record filed before the causal rule applied to it, written as the ledger held it then
+    old = dict(nl._one(db, "SELECT * FROM narrative_records WHERE narrative_id = ?", ok))
+    old.pop("content_sha256")
+    old.update(narrative_id="nr-legacy0001", claim="感測器資料帶動 L4 以上自駕車需要 200GB 以上的記憶體")
+    with db:
+        nl._insert(db, "narrative_records", old)
+    db.commit()
+    path = tmp_path / "ledger.sqlite"
+    before = path.read_bytes()
+    assert revalidate_records.main(["--ledger", str(path)]) == 0
+    out, err = capsys.readouterr()
+    (line,) = out.splitlines()
+    nid, origin_kind, origin_ref, status, tags, messages = line.split("\t")
+    assert (nid, origin_kind, origin_ref, status, tags) == ("nr-legacy0001", "owner", "owner:test-0", "None", "atomic")
+    assert "links a cause to an effect (帶動)" in messages
+    assert "1 of 2 records flagged" in err
+    assert path.read_bytes() == before
+    assert revalidate_records.main(["--ledger", str(path), "--origin", "revision"]) == 0
+    assert capsys.readouterr().out == ""

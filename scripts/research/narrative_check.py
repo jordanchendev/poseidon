@@ -8,8 +8,9 @@ gates(narrative, payload, cfg) -> refusal reasons, run inside runner.run_gates (
   [check]    narrative_checks has exactly one entry per snapshot record. A verdict other than untouched cites FACT
              claims whose evidence is all official (claim_precheck.OFFICIAL_TIERS); partially_verifies states
              supported_part (the part of the record's claim the cited claims establish) and open_part.
-  [proposal] at most 3 narrative_proposals, each an atomic record whose numbers are in the cited claim's quote, a
-             forecast's resolves_on names a period of the record, an inference source claim states its basis;
+  [proposal] at most 3 narrative_proposals, each a legal record (record_rules.record_problems: atomic with no causal
+             link, numbers in the cited claim's quote, claim_type / resolves_on), an inference source claim states its
+             basis;
              theme_proposals are well-formed (suggested keywords: at most MAX_KEYWORDS short strings).
 Without a snapshot there is nothing to check, tag or propose, and a narrative that tries is refused.
 
@@ -59,14 +60,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import narrative_ledger as nl
+import record_rules
 from claim_precheck import (
     OFFICIAL_TIERS,
-    check_numbers,
     check_periods,
     evidence_tier,
-    extract_periods,
     has_inference_basis,
-    lint_atomic,
     quoted_media,
 )
 
@@ -74,7 +73,6 @@ VERDICTS = ("verifies", "refutes", "partially_verifies", "untouched")
 MAX_PROPOSALS = 3  # D11
 MAX_KEYWORDS = 8  # a theme proposal's suggested recall keywords (§5.3)
 NOT_FACT_EVIDENCE = ("narrative_snapshot", "secondary")
-DATE = re.compile(r"^(\d{4})-\d{2}-\d{2}$")
 
 
 def snapshot_of(payload):
@@ -87,12 +85,6 @@ def _strings(v):
 
 def _index(v, claims):
     return isinstance(v, int) and not isinstance(v, bool) and 0 <= v < len(claims)
-
-
-def period_matches(resolves_on, record_claim):
-    """resolves_on names a period of the record: its year (2028 / FY28 / 3Q28 / 民國 117 年) is a year the record names."""
-    year = int(DATE.match(resolves_on).group(1))
-    return any(year in p["years"] for p in extract_periods(record_claim) if p["kind"] == "period")
 
 
 def keywords_ok(v):
@@ -198,19 +190,17 @@ def gates(narrative, payload, cfg):
         if not (isinstance(rc, str) and rc.strip()):
             reasons.append(f"{where} record_claim must be a non-empty string")
             continue
-        atom = lint_atomic(rc)
-        if not atom["ok"]:
-            reasons.append(f"{where} record_claim is {atom['reason']}; split it into {atom['clauses']}")
-        num = check_numbers(rc, src.get("quote") or "")
-        if num["status"] == "mismatch":
-            det = "; ".join(f"{u['claim']} ({u['kind']})" for u in num["unmatched"])
-            reasons.append(f"{where} record_claim numbers are not in claims[{p['claim_index']}]'s quote: {det}")
-        if ct not in nl.CLAIM_TYPES:
-            reasons.append(f"{where} claim_type must be state|forecast")
-        elif ro is not None and (ct == "state" or not isinstance(ro, str) or not DATE.match(ro)):
-            reasons.append(f"{where} resolves_on is a YYYY-MM-DD date of a forecast only (null to take the default)")
-        elif ro is not None and not period_matches(ro, rc):
-            reasons.append(f"{where} resolves_on {ro} names no period that record_claim mentions; give null instead")
+        reasons += [
+            f"{where} {x.message}"
+            for x in record_rules.record_problems(
+                rc,
+                src.get("quote") or "",
+                ct,
+                ro,
+                name="record_claim",
+                quote_name=f"claims[{p['claim_index']}]'s quote",
+            )
+        ]
         if src.get("kind") == "inference" and not has_inference_basis(src.get("text", "")):
             reasons.append(f"{where} points to an inference claim that states no basis")
         if not (_strings(p.get("theme_ids")) and p["theme_ids"]) or set(p["theme_ids"]) - theme_ids:
@@ -281,7 +271,7 @@ RULE_ROWS = (
     ("R9", ANY, "untouched", ("supports", "contradicts"), ANY, ANY, ANY, "missed", None),
 )
 # fmt: on
-RULE_DIMENSIONS = (nl.CLAIM_TYPES, VERDICTS, LABELS, (True, False), (None, True, False), (True, False))
+RULE_DIMENSIONS = (record_rules.CLAIM_TYPES, VERDICTS, LABELS, (True, False), (None, True, False), (True, False))
 
 
 def _expand(rows):

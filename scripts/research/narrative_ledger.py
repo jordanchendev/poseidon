@@ -40,8 +40,10 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import record_rules
 from assemble import TW_SYMBOL
-from claim_precheck import OFFICIAL_TIERS, check_numbers, evidence_tier, lint_atomic
+from claim_precheck import OFFICIAL_TIERS, evidence_tier
+from record_rules import CLAIM_TYPES
 
 from poseidon.decision_loop.manifest import content_sha256
 
@@ -50,7 +52,6 @@ THEME_KINDS = ("bottleneck", "tech_transition", "demand_driver", "policy")
 MEMBER_ROLES = ("constrained", "supplier", "beneficiary", "customer", "competitor")
 EDGE_RELATIONS = ("related", "part_of")
 SOURCE_TIERS = ("official", "sell-side", "media", "kol", "our-inference")
-CLAIM_TYPES = ("state", "forecast")
 STATUSES = ("unverified", "partially_verified", "verified", "refuted", "stale")
 # Event kind -> who may write it. 'corroborated' never changes the status.
 # A rule-table change the owner confirmed in Telegram (narrative_apply confirm) is a status or corroborated event
@@ -90,7 +91,6 @@ RELAYED_TIERS = ("sell-side", "media", "kol")
 THEME_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MAX_KEYWORD_CHARS = 40
 FOREIGN_SYMBOL = re.compile(r"^[A-Z]{2,8}:[A-Z0-9][A-Z0-9.\-]*$")
-DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 DDL = """
 CREATE TABLE IF NOT EXISTS themes (
@@ -443,17 +443,14 @@ def _date_plus(day, days):
 
 
 def review_dates(claim_type, first_seen_at, resolves_on):
-    """(resolves_on, resolves_on_default, review_by) per D6. review_by is the end of that UTC day."""
+    """(resolves_on, resolves_on_default, review_by) per D6 for a record record_rules accepted. review_by is the end
+    of that UTC day."""
     seen_day = first_seen_at[:10]
     if claim_type == "state":
-        if resolves_on:
-            raise LedgerError("a state claim has no resolves_on")
         return None, 0, _date_plus(seen_day, STATE_REVIEW_DAYS) + "T23:59:59Z"
     default = 0
     if not resolves_on:
         resolves_on, default = _date_plus(seen_day, FORECAST_DEFAULT_RESOLVE_DAYS), 1
-    if not DATE.match(resolves_on):
-        raise LedgerError("resolves_on must be YYYY-MM-DD")
     return resolves_on, default, _date_plus(resolves_on, FORECAST_REVIEW_DAYS) + "T23:59:59Z"
 
 
@@ -475,11 +472,10 @@ def add_record(
     resolves_on=None,
     decided_by="rule",
 ):
-    """Writes the record and its seq-0 'created' event. The quote must be verbatim in source_text, the claim must be
-    atomic and its numbers must match the quote (the record is a transcription, so strict). Each subject is an approved
-    member of one of the record's themes; a record that needs a pending proposal waits in held_records (hold_record)."""
-    if claim_type not in CLAIM_TYPES:
-        raise LedgerError(f"claim_type must be one of {'|'.join(CLAIM_TYPES)}")
+    """Writes the record and its seq-0 'created' event. The quote must be verbatim in source_text and the record legal
+    (record_rules.record_problems: atomic with no causal link, its numbers in the quote, claim_type / resolves_on).
+    Each subject is an approved member of one of the record's themes; a record that needs a pending proposal waits in
+    held_records (hold_record)."""
     if source_tier not in SOURCE_TIERS:
         raise LedgerError(f"source_tier must be one of {'|'.join(SOURCE_TIERS)}")
     for name, v in (
@@ -493,11 +489,9 @@ def add_record(
             raise LedgerError(f"{name} is required")
     if quote not in source_text:
         raise LedgerError(f"quote is not a verbatim substring of {origin_evidence_id}")
-    atomic = lint_atomic(claim)
-    if not atomic["ok"]:
-        raise LedgerError(f"claim is not atomic ({atomic['reason']})")
-    if check_numbers(claim, quote)["status"] == "mismatch":
-        raise LedgerError("a number in the claim is not in the quote")
+    problems = record_rules.record_problems(claim, quote, claim_type, resolves_on, check_period=False)
+    if problems:
+        raise LedgerError("; ".join(p.message for p in problems))
     if not subject_symbols or not theme_ids:
         raise LedgerError("a record needs at least one subject symbol and one theme")
     for t in theme_ids:

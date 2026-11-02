@@ -182,6 +182,11 @@ def _non_atomic_record(n):
     n["narrative_proposals"][0]["record_claim"] = "聯電第四季出貨增加 5%，毛利率上升到 35%"
 
 
+def _causal_record(n):
+    """Owner decision 2026-10-31: a causal link is a second claim in a revision's proposal too (record_rules)."""
+    n["narrative_proposals"][0]["record_claim"] = "成熟製程需求帶動聯電 2026 年第四季晶圓出貨量增加"
+
+
 def _record_number_not_in_quote(n):
     n["narrative_proposals"][0]["record_claim"] = "聯電 2026 年第四季晶圓出貨量將增加 9%"
 
@@ -228,6 +233,7 @@ def _theme_proposal_bad_member(n):
         (_about_outside, "[theme]", "about_symbols ['NASDAQ:NVDA']"),
         (_four_proposals, "[proposal]", "at most 3"),
         (_non_atomic_record, "[proposal]", "non-atomic"),
+        (_causal_record, "[proposal]", "links a cause to an effect (帶動)"),
         (_record_number_not_in_quote, "[proposal]", "numbers are not in claims[3]'s quote"),
         (_resolves_on_without_period, "[proposal]", "names no period"),
         (_state_with_resolves_on, "[proposal]", "of a forecast only"),
