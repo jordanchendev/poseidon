@@ -130,18 +130,14 @@ class BacktestPortfolio:
     def _position_value(self, pos: dict, price: float) -> float:
         """Value of an open position added on top of cash for equity.
 
-        Fully funded: entry notional (already deducted from cash) plus
-        unrealized PnL. Margined: unrealized PnL only.
+        Fully funded: a long holds the asset (``price * qty``); a short owes
+        the buy-back (``-price * qty``) because its entry proceeds are already
+        in cash. Margined: unrealized PnL only.
         """
-        entry = pos["entry_price"]
-        qty = pos["quantity"]
-        if pos.get("side") == "short":
-            unrealized = (entry - price) * qty * self.point_value
-        else:
-            unrealized = (price - entry) * qty * self.point_value
+        sign = -1.0 if pos.get("side") == "short" else 1.0
         if self.is_margined:
-            return unrealized
-        return entry * qty + unrealized
+            return sign * (price - pos["entry_price"]) * pos["quantity"] * self.point_value
+        return sign * price * pos["quantity"]
 
     @property
     def equity(self) -> float:
