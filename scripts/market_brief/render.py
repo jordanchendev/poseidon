@@ -280,6 +280,59 @@ def _group_section(g):
     return out
 
 
+MARKET_ZH = {"twse": "上市", "tpex": "上櫃"}
+
+
+def _credit_section(c):
+    """信用交易 from the Thalassa market credit endpoint (already in display units). ``c`` is the shaped data or
+    ``{"skipped": public reason}``. Changes are plain signed numbers: more margin is not good or bad news, so no
+    red/green arrows."""
+    if c.get("skipped"):
+        return ["", f"信用交易：本期未取得（{c['skipped']}）"]
+    out = ["", f"## 信用交易（{c['date']}，融資融券）", ""]
+    rows = [
+        [
+            MARKET_ZH[m],
+            fmt(x["amount_yi"], 1),
+            fmt_signed(x["amount_chg_yi"], 1),
+            fmt_signed(x["balance_chg"], 0),
+            fmt_signed(x["short_chg"], 0),
+            fmt(x["ratio"], 1) + "%",
+        ]
+        for m, x in c["latest"].items()
+    ]
+    out += _table(
+        ["市場", "融資金額(億)", "金額增減(億)", "融資餘額增減(張)", "融券增減(張)", "估算維持率"],
+        ["l", "r", "r", "r", "r", "r"],
+        rows,
+        tg="融資金額(億)=Amt; 金額增減(億)=AmtChg; 融資餘額增減(張)=BalChg; 融券增減(張)=ShChg; 估算維持率=Est; 市場",
+    )
+    out += [
+        "",
+        "估算維持率＝融資股票以當日收盤計的市值 ÷ 融資金額，是市場平均的估算值，不是交易所公布的數字。"
+        "券商是對個別帳戶以整戶維持率 130% 追繳，所以這個數字不是斷頭線，看水位與變化即可。",
+    ]
+    if len(c["trend"]) > 1:
+        t = [
+            [
+                r["date"][5:],
+                fmt(r["twse"]["amount_yi"], 1),
+                fmt(r["twse"]["ratio"], 1) + "%" if r["twse"]["ratio"] is not None else "—",
+                fmt(r["tpex"]["amount_yi"], 1),
+                fmt(r["tpex"]["ratio"], 1) + "%" if r["tpex"]["ratio"] is not None else "—",
+            ]
+            for r in c["trend"]
+        ]
+        out += ["", f"近 {len(t)} 個交易日（融資金額單位：億元）", ""]
+        out += _table(
+            ["日期", "上市融資", "上市估算", "上櫃融資", "上櫃估算"],
+            ["l", "r", "r", "r", "r"],
+            t,
+            tg="上市融資=TWSE; 上市估算=TWEst; 上櫃融資=TPEx; 上櫃估算=TPEst; 日期",
+        )
+    return out
+
+
 def _deterministic_one_liner(facts):
     d = facts["data"]
     k = facts["kind"]
@@ -407,7 +460,7 @@ def _body_tw_post(d, cfg_tw, groups=None, groups_expected=False):
     return out
 
 
-def _body_tw_pre(d):
+def _body_tw_pre(d, credit=None):
     out = [f"## 美股收盤（{d['us_session_date']}）", "", *_quote_table(d["us_indices"], "指數", "收盤")]
     out += ["", "## 利率、匯率與商品（產出時最新報價）", "", *_quote_table(d["rates_fx"])]
     out += ["", "## 台積電 ADR", ""]
@@ -454,6 +507,8 @@ def _body_tw_pre(d):
     out += ["", f"## 前一交易日台股（{prev['date']}）" if prev else "## 前一交易日台股", "", *_tw_summary_table(prev)]
     if prev:
         out += ["", "### Watchlist（前一交易日收盤）", "", *_tw_watch_table(prev["watchlist"])]
+    if credit:
+        out += _credit_section(credit)
     out += ["", "## 今日除權息（上市）", ""]
     ex = d.get("exdiv_today")
     if ex is None:
@@ -532,7 +587,7 @@ def render(facts, section=None, llm_meta=None, cfg=None):
         "tw-postmarket": lambda: _body_tw_post(
             d, (cfg or {}).get("tw", {}), facts.get("group_ranking"), bool((cfg or {}).get("thalassa"))
         ),
-        "tw-premarket": lambda: _body_tw_pre(d),
+        "tw-premarket": lambda: _body_tw_pre(d, facts.get("credit")),
         "us-premarket": lambda: _body_us_pre(d),
         "us-postmarket": lambda: _body_us_post(d),
     }[kind]()

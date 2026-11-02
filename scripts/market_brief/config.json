@@ -79,7 +79,7 @@
     ]
   },
   "thalassa": {
-    "_comment": "Group strength section of tw-postmarket. The key is read only from this 600 env file and variable (no fallback); a missing file/variable or any failure skips the section, never the brief. Base URL as used by the research runner on stormtrooper.",
+    "_comment": "Group strength section of tw-postmarket and credit (信用交易) section of tw-premarket. The key is read only from this 600 env file and variable (no fallback); a missing file/variable or any failure skips the section, never the brief. Base URL as used by the research runner on stormtrooper.",
     "base_url": "http://192.168.31.241:8001",
     "key_file": "~/market-brief/secrets/thalassa.env",
     "key_var": "MARKET_BRIEF_THALASSA_API_KEY"
