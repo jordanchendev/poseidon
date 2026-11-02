@@ -208,7 +208,7 @@ def test_pipeline_celery_app_schedules_only_the_sweeper_and_the_refdata_job():
     assert set(conf.beat_schedule) == {"sweep-pipelines", "update-refdata-daily"}
     refdata = conf.beat_schedule["update-refdata-daily"]
     assert refdata["task"] == beat_entry()["task"] == "poseidon.pipeline.tasks.update_refdata_daily"
-    assert refdata["schedule"] == beat_entry()["schedule"]  # 09:00Z = 17:00 Asia/Taipei
+    assert refdata["schedule"] == beat_entry()["schedule"]  # 09:40Z = 17:40 Asia/Taipei
     assert conf.beat_schedule["sweep-pipelines"]["task"] == "poseidon.pipeline.tasks.sweep_pipelines"
     assert conf.beat_schedule["sweep-pipelines"]["schedule"] == 300.0
     assert conf.redbeat_key_prefix == "poseidon-pipeline:redbeat:"

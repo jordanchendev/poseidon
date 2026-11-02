@@ -29,14 +29,14 @@ def sweep_pipelines() -> dict:
 
 @pipeline_celery_app.task(name="poseidon.pipeline.tasks.update_refdata_daily", max_retries=0)
 def update_refdata_daily() -> dict:
-    """Daily refdata update + freshness (``refdata.daily``), on the runner beat at 09:00Z
+    """Daily refdata update + freshness (``refdata.daily``), on the runner beat at 09:40Z
     (``celery_app.beat_schedule["update-refdata-daily"]``)."""
 
     from poseidon.core.config import settings
     from poseidon.pipeline.refdata import taifex_options, tw_corporate_actions, tw_stocks
     from poseidon.pipeline.refdata.daily import run_daily
 
-    # Thalassa stock bars and TWSE corporate actions (a runner without Thalassa's address records an
+    # Thalassa stock bars and corporate actions (a runner without Thalassa's address records an
     # "unconfigured" error), then the TXO quotes hedged runs read; each one fails alone (run_daily records
     # the error and goes on) and each one's datasets are in the freshness report.
     updaters = (tw_stocks.DAILY_UPDATER, tw_corporate_actions.DAILY_UPDATER, taifex_options.DAILY_UPDATER)

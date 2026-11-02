@@ -425,7 +425,7 @@ DAILY_GATES: dict = {
 # paper_target_match_min, paper_pnl_tolerance_ticks) are in DAILY_THRESHOLDS above: one source.
 DAILY_SHADOW_PAPER: dict = {
     "mode": "daily_target",
-    "wake_local_time": "09:30",  # after the 17:00 refdata job of the previous day (refdata.daily)
+    "wake_local_time": "09:30",  # after the 17:40 refdata job of the previous day (refdata.daily)
     "wake_weekdays": [0, 1, 2, 3, 4, 5, 6],
     "source_retry_minutes": 60,  # refdata unreadable: try again this soon (never fails the stage)
     "stale_after_trading_days": 3,  # report (never fail) when the data lags more scheduled trading days than this

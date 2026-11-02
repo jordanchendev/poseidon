@@ -1,14 +1,16 @@
 """The daily refdata job: idempotent incremental update + freshness check (design §9.2).
 
-Schedule: once a day at **09:00Z (17:00 Asia/Taipei)**, every day of the week.
+Schedule: once a day at **09:40Z (17:40 Asia/Taipei)**, every day of the week.
 
 * TAIFEX publishes the day session's daily quotes after the 13:45 close (the expiring contract
   stops at 13:30) and TWSE the TAIEX / total-return rows after its 13:30 close; both are out by
   about 15:00-16:00 Taipei. The night session TAIFEX books into a trading day ended at 05:00
-  that morning, so at 17:00 trading day D is complete in both sources.
-* 09:00Z is right after the 06:00-08:40Z heavy-CPU window and the whole run is ~15 polite
-  requests (2 months x 3 products + FSP page at >= 1.5 s, 2 TWSE months x 2 + 2 schedule years at
-  >= 3 s): well under a minute.
+  that morning, so at 17:40 trading day D is complete in both sources.
+* Thalassa's daily corporate-action run starts at 09:20Z; the ``tw_corporate_actions`` updater
+  requires it complete through the day's session (a 09:00Z job would always find the day before),
+  so the job runs 20 minutes after it, still outside the 06:00-08:40Z heavy-CPU window. The core
+  run is ~15 polite requests (2 months x 3 products + FSP page at >= 1.5 s, 2 TWSE months x 2 + 2
+  schedule years at >= 3 s): well under a minute.
 * The daily shadow paper wakes at 09:30 Taipei (01:30Z) the next morning and only evaluates days
   the data already has, so a missed or late job just delays the paper by a day (it waits, it
   never fails on stale data). Weekend runs are no-ops that catch up a failed Friday.
@@ -30,7 +32,7 @@ against the latest *final US date* (rows are US dates), tolerating ``VIX_LAG_DAY
 Taiwan decision reads it one calendar day late (``v3.instruments.align_signal_frame``), so the paper
 waits for the US close of the previous US day only when that row is missing.
 
-``updaters`` are the later datasets (Thalassa stock bars, corporate actions, TXO quotes; the runner
+``updaters`` are the later datasets (Thalassa stock bars and corporate actions, TXO quotes; the runner
 task passes them, ``tasks.update_refdata_daily``): each ``datasets.DailyUpdater`` runs after the futures
 and TWSE groups, and its failure is recorded without stopping the others. An updater whose source is
 not configured on the host raises ``UpdaterUnconfigured``, an error of kind ``unconfigured``. Each one
@@ -69,7 +71,7 @@ from poseidon.pipeline.window import MARKET_TZ
 
 logger = logging.getLogger(__name__)
 
-DAILY_RUN_UTC = time(9, 0)  # 17:00 Asia/Taipei
+DAILY_RUN_UTC = time(9, 40)  # 17:40 Asia/Taipei, after Thalassa's 09:20Z corporate-action run
 PUBLISHED_BY_LOCAL = time(16, 0)
 SCHEDULE_WARN_FROM = (12, 1)
 VIX_LAG_DAYS = 4  # weekend plus a US holiday between the last final US date and the last row

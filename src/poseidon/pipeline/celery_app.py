@@ -4,7 +4,7 @@ Deliberately separate from ``poseidon.workers.celery_app``: that app's beat
 schedule carries decision-loop and portfolio producers that must never run in
 the runner. This app imports only ``poseidon.pipeline.tasks`` and schedules
 only ``sweep_pipelines`` and the daily refdata job (``update_refdata_daily``,
-17:00 Asia/Taipei, ``refdata.daily.beat_entry``) that spec v3 daily runs and
+17:40 Asia/Taipei, ``refdata.daily.beat_entry``) that spec v3 daily runs and
 their shadow paper read.
 """
 

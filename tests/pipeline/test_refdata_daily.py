@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 
 import pandas as pd
@@ -248,10 +248,11 @@ def test_expected_latest_trading_day(now, expected):
     assert daily.expected_latest_trading_day(now, schedule_2026()).date().isoformat() == expected
 
 
-def test_beat_entry_is_17_00_taipei_outside_the_heavy_window():
+def test_beat_entry_is_17_40_taipei_after_thalassas_corporate_action_run_and_outside_the_heavy_window():
     entry = daily.beat_entry()
     assert entry["task"] == "poseidon.pipeline.tasks.update_refdata_daily"
-    assert entry["schedule"].hour == {9} and entry["schedule"].minute == {0}
+    assert entry["schedule"].hour == {9} and entry["schedule"].minute == {40}
+    assert time(9, 20) < daily.DAILY_RUN_UTC  # Thalassa's corporate-action beat (09:20Z) has run
     assert not 6 <= daily.DAILY_RUN_UTC.hour + daily.DAILY_RUN_UTC.minute / 60 <= 8 + 40 / 60
     # wired into the runner beat as "update-refdata-daily" (test_pipeline_unit checks the schedule)
 

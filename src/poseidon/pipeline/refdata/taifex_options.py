@@ -699,7 +699,7 @@ def update(
 
 
 def daily_update(store: RefdataStore, *, today: date, code_version: str) -> list[UpdateReport]:
-    """The daily job's update (09:00Z): the refresh window, missing months and the settlement table.
+    """The daily job's update (09:40Z): the refresh window, missing months and the settlement table.
 
     Built from nothing it would fetch every month since 2001 (about 600 requests, 25 minutes) inside the
     daily job, so a store without the dataset is an error naming the one-time backfill instead.
