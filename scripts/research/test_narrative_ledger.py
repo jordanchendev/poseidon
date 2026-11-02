@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 import narrative_ledger as nl  # noqa: E402
 
 from poseidon.decision_loop.manifest import content_sha256  # noqa: E402

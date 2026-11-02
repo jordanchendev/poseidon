@@ -8,11 +8,9 @@ or note. No network.
 
 import hashlib
 import json
-import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 
 from jev_eval_control_set import LABELS, build_request  # noqa: E402
 

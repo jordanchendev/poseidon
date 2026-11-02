@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 import research_theme  # noqa: E402
 import settle_theme  # noqa: E402
 

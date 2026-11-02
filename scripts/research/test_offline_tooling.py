@@ -256,7 +256,6 @@ def test_legacy_narrative_without_new_fields_renders(env):
 
 
 # ------------------------------------------------------------------ claim_precheck (stdlib, no Poseidon needed)
-sys.path.insert(0, str(HERE))
 from claim_precheck import check_numbers, extract_quantities, lint_atomic  # noqa: E402
 
 

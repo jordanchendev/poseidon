@@ -4,13 +4,11 @@ sweep and the control-set evaluation. No network.
   PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/test_narrative_precheck.py
 """
 
-import sys
 from pathlib import Path
 
 import pytest
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 
 import narrative_check  # noqa: E402
 from claim_precheck import check_periods, extract_periods, quoted_media  # noqa: E402

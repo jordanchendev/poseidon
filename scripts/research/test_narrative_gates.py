@@ -14,29 +14,26 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 
 import draft  # noqa: E402
 import runner  # noqa: E402
-import test_narrative_snapshot as snap_t  # noqa: E402
-import test_runner as tr  # noqa: E402
-from test_runner import AGENDA_ID, DOC_ID, FakeOpenRouter  # noqa: E402
-from test_runner import env as runner_env  # noqa: E402,F401  (pytest finds it by this name)
+import testkit as tk  # noqa: E402
+from testkit import AGENDA_ID, DOC_ID, FakeOpenRouter  # noqa: E402
 
 OUTLOOK = "The company expects wafer shipments to increase by high-single digit in the fourth quarter of 2026"
 
 
 @pytest.fixture()
-def env(runner_env):  # noqa: F811
+def env(runner_env):
     return runner_env
 
 
 @pytest.fixture()
 def seeded(env):
     """Ledger with two open KOL records about 2303; the snapshot lists the newer one first."""
-    _, db = snap_t.ledger(env["tmp"])
-    older = snap_t.utilization(db, 1, "2026-10-02T00:00:00Z")
-    newer = snap_t.add(
+    _, db = tk.ledger(env["tmp"])
+    older = tk.utilization(db, 1, "2026-10-02T00:00:00Z")
+    newer = tk.add(
         db,
         2,
         "聯電成熟製程產能利用率偏高",
@@ -46,7 +43,7 @@ def seeded(env):
         "2026-10-03T00:00:00Z",
     )
     db.close()
-    run = snap_t.dry_run(env)
+    run = tk.dry_run(env)
     led = runner.Ledger(env["state"] / "dry-run" / "ledger.sqlite")
     payload = led.manifest_payload(run["manifest_sha256"])
     led.close()
@@ -56,7 +53,7 @@ def seeded(env):
 
 
 def ledger_narrative(ids):
-    n = tr.good_narrative()
+    n = tk.good_narrative()
     n["claims"][0].update(theme_ids=["foundry-utilization"], about_symbols=["2303", "NYSE:UMC"])
     n["claims"].append(
         {"kind": "fact", "text": "聯電預期 2026 年第四季晶圓出貨量將增加。", "evidence_ids": [DOC_ID], "quote": OUTLOOK}
@@ -279,7 +276,7 @@ def test_without_a_snapshot_nothing_may_be_checked_tagged_or_proposed(seeded):
     reasons = gate_reasons(seeded, ledger_narrative(seeded["ids"]), payload)
     for tag in ("[check]", "[theme]", "[proposal]"):
         assert any(r.startswith(tag) for r in reasons), (tag, reasons)
-    assert gate_reasons(seeded, tr.good_narrative(), payload) == []
+    assert gate_reasons(seeded, tk.good_narrative(), payload) == []
 
 
 # ------------------------------------------------------------------------------------------------ runner + render

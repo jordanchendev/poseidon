@@ -18,7 +18,6 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 import narrative_ledger as nl  # noqa: E402
 
 SCRIPTS = Path(os.environ.get("NEXUS_VAULT_SCRIPTS") or "/nonexistent")
