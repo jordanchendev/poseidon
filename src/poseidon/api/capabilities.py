@@ -7,10 +7,11 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel as PydanticBaseModel
 
-from poseidon.api.auth import AuthPrincipal, get_auth_principal, verify_api_key
+from poseidon.api.auth import AuthorizedRoute, get_auth_principal, verify_api_key
 from poseidon.capabilities.registry import get_all_capabilities
+from poseidon.core.authz import AuthPrincipal
 
-router = APIRouter()
+router = APIRouter(route_class=AuthorizedRoute)
 
 
 class ComponentCapabilityResponse(PydanticBaseModel):

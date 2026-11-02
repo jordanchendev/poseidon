@@ -8,13 +8,12 @@ from datetime import UTC, datetime, timedelta
 from itertools import product
 
 import pytest
-from fastapi import HTTPException
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import func, text
 
-from poseidon.api.auth import AuthPrincipal
 from poseidon.backtest.experiment_tracker import ExperimentTracker
 from poseidon.backtest.voting_strategy_factory import _build_config_from_params
+from poseidon.core.authz import AuthorizationError, AuthPrincipal
 from poseidon.core.canonical import content_sha256
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionPolicy
 from poseidon.decision_loop.releases import (
@@ -724,10 +723,8 @@ def test_release_replay_rechecks_retained_account_scope(phase99_session_factory)
         service = ReleaseService(session)
         _release(service, graph)
 
-        with pytest.raises(HTTPException) as denied:
+        with pytest.raises(AuthorizationError):
             _release(service, graph, principal=release_manager("paper:revoked"))
-
-        assert denied.value.status_code == 403
         assert session.query(StrategyReleaseEvent).filter_by(strategy_id=graph.strategy_id).count() == 1
         session.rollback()
 
@@ -1458,9 +1455,8 @@ def test_transition_rejects_stale_pointer_revision_and_unauthorized_principal(ph
             frozenset({"paper:pilot"}),
         )
 
-        with pytest.raises(HTTPException) as denied:
+        with pytest.raises(AuthorizationError):
             _release(service, graph, principal=worker)
-        assert denied.value.status_code == 403
         with pytest.raises(DecisionConflictError, match="revision"):
             _release(service, graph, expected_revision=1, key="stale-revision")
         with pytest.raises(DecisionConflictError, match="pointer"):

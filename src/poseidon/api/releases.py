@@ -11,7 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from poseidon.api.auth import AuthPrincipal, get_auth_principal
+from poseidon.api.auth import AuthorizedRoute, get_auth_principal
+from poseidon.core.authz import AuthPrincipal
 from poseidon.core.database import get_db
 from poseidon.core.errors import ValidationError
 from poseidon.decision_loop.decisions import DecisionConflictError
@@ -21,7 +22,7 @@ from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from poseidon.models.strategy_version import StrategyVersion
 
-router = APIRouter()
+router = APIRouter(route_class=AuthorizedRoute)
 NonNegativeRevision = Annotated[int, Field(strict=True, ge=0)]
 Reason = Annotated[str, Field(min_length=1, max_length=1024)]
 

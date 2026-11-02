@@ -5,7 +5,6 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
-from fastapi import HTTPException
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -19,7 +18,7 @@ from pydantic import (
 )
 from sqlalchemy import and_, or_, select
 
-from poseidon.api.auth import AuthPrincipal
+from poseidon.core.authz import AuthorizationError, AuthPrincipal
 from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.core.errors import ValidationError
 from poseidon.core.locks import lock_identity
@@ -1546,7 +1545,7 @@ class DecisionService:
 
     def list_pending(self, *, principal, now=None):
         if not principal.account_scopes:
-            raise HTTPException(status_code=403, detail="Account scope not authorized")
+            raise AuthorizationError("Account scope not authorized")
         current_time = timestamp(now if now is not None else datetime.now(UTC), "now")
         return (
             self.session.query(DecisionRecord)

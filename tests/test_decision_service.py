@@ -12,8 +12,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
-from poseidon.api.auth import AuthPrincipal
 from poseidon.api.traces import TraceService
+from poseidon.core.authz import AuthorizationError, AuthPrincipal
 from poseidon.core.canonical import content_sha256
 from poseidon.core.errors import ValidationError
 from poseidon.decision_loop.decisions import (
@@ -705,9 +705,8 @@ def test_system_transition_refreshes_revision_after_another_writer(db, operation
 def test_creation_requires_worker_role_and_exact_account_scope(db):
     run, _, snapshot_ids = decision_inputs(db)
     for principal in (manager(), worker("paper:other")):
-        with pytest.raises(HTTPException) as error:
+        with pytest.raises(AuthorizationError):
             create_decision(db, run.id, snapshot_ids, principal=principal)
-        assert error.value.status_code == 403
 
 
 def test_approve_exact_double_click_replays_one_transition(db):
@@ -826,9 +825,8 @@ def test_authorization_runs_before_stored_idempotency_replay(db):
     service.approve(decision.id, body, principal=manager(), idempotency_key="protected", now=now)
 
     for principal in (worker(), manager(scope="paper:other")):
-        with pytest.raises(HTTPException) as error:
+        with pytest.raises(AuthorizationError):
             service.approve(decision.id, body, principal=principal, idempotency_key="protected", now=now)
-        assert error.value.status_code == 403
 
 
 def test_action_consistency_rejects_override_without_matching_frozen_intents(db):
@@ -950,9 +948,8 @@ def test_get_pending_and_trace_are_account_scoped_and_frozen(db):
     assert trace["stages"][5]["state"] == "Not required"
     assert trace["stages"][6]["state"] == "Unavailable"
 
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(AuthorizationError):
         service.trace(decision.id, principal=manager(scope="paper:other"))
-    assert error.value.status_code == 403
 
 
 def test_evaluation_trace_uses_only_the_anchor_snapshot_for_stage_truth(db):

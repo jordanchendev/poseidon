@@ -7,14 +7,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import create_engine, event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
-from poseidon.api.auth import AuthPrincipal
+from poseidon.core.authz import AuthorizationError, AuthPrincipal
 from poseidon.core.canonical import content_sha256
 from poseidon.decision_loop.decisions import DecisionPolicy
 from poseidon.decision_loop.evaluation import EvaluationService, snapshot_payload
@@ -400,9 +399,9 @@ def test_producer_rejects_human_or_out_of_scope_principals(db):
     manifest = ManifestService(db).freeze(manifest_request())
     service = ProducerService(db, signal_evaluator=long_signal)
     researcher = AuthPrincipal("human:researcher", frozenset({"researcher"}), frozenset({ACCOUNT}))
-    with pytest.raises(HTTPException):
+    with pytest.raises(AuthorizationError):
         service.produce(version.id, manifest.id, decision_as_of=AS_OF, principal=researcher, mode="decision")
-    with pytest.raises(HTTPException):
+    with pytest.raises(AuthorizationError):
         service.produce(version.id, manifest.id, decision_as_of=AS_OF, principal=worker("paper:other"), mode="decision")
     assert _counts(db) == (0, 0, 0)
 

@@ -9,7 +9,7 @@ from decimal import ROUND_FLOOR, Decimal
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import Float, func, select
 
-from poseidon.api.auth import AuthPrincipal
+from poseidon.core.authz import AuthPrincipal
 from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.core.errors import ValidationError
 from poseidon.core.locks import lock_account

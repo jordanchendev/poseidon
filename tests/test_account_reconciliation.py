@@ -12,9 +12,9 @@ import pandas as pd
 import pytest
 from sqlalchemy import delete, select, text, update
 
-from poseidon.api.auth import AuthPrincipal
 from poseidon.broker.base import BrokerCapabilityError
 from poseidon.broker.paper_adapter import PaperBrokerAdapter
+from poseidon.core.authz import AuthPrincipal
 from poseidon.core.canonical import content_sha256
 from poseidon.decision_loop.execution import (
     DecisionExecutionService,

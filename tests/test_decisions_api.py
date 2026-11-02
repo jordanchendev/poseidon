@@ -7,10 +7,11 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from poseidon.api import decisions as decisions_api
+from poseidon.core.authz import AuthorizationError
 from poseidon.core.canonical import content_sha256
 from poseidon.core.config import settings
 from poseidon.core.database import get_db
@@ -688,9 +689,9 @@ def test_unknown_write_failure_rolls_back_and_is_not_reclassified(api):
     assert session.rollbacks == 1
 
 
-def test_authorization_http_exception_is_preserved(api):
+def test_domain_authorization_error_is_http_403(api):
     client, session, service = api
-    service.failures["create"] = HTTPException(status_code=403, detail="Role not authorized")
+    service.failures["create"] = AuthorizationError("Role not authorized")
     response = client.post("/api/v1/decisions/", json=_create_body(), headers=_headers(WORKER_KEY))
     assert response.status_code == 403
     assert response.json()["detail"] == "Role not authorized"

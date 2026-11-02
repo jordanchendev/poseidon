@@ -101,7 +101,7 @@ def _configured_protective_route(market):
 
 def _run_durable_protective(*, origin, market, triggered, source_holding_ids_by_identity=None):
     """Commit protective intents per lot identity, then enqueue UUID-only submission."""
-    from poseidon.api.auth import AuthPrincipal
+    from poseidon.core.authz import AuthPrincipal
     from poseidon.core.canonical import content_sha256
     from poseidon.decision_loop.execution import ProtectiveExecutionService
 
@@ -357,8 +357,8 @@ def _execute_approved_decision(market):
     """One ordinary writer: commit a validated claim before UUID-only worker calls."""
     import yaml
 
-    from poseidon.api.auth import AuthPrincipal
     from poseidon.broker.config import BrokerConfig
+    from poseidon.core.authz import AuthPrincipal
     from poseidon.decision_loop.decisions import DecisionConflictError, DecisionService
     from poseidon.decision_loop.execution import DecisionExecutionService, ExecutionConflictError
 
@@ -483,8 +483,8 @@ def materialize_execution_claim(decision_id: str) -> dict:
     persisted_id = uuid.UUID(decision_id)
     from sqlalchemy import select
 
-    from poseidon.api.auth import AuthPrincipal
     from poseidon.broker.paper_adapter import validated_position_economics
+    from poseidon.core.authz import AuthPrincipal
     from poseidon.decision_loop.execution import DecisionExecutionService
     from poseidon.models.decision_record import DecisionRecord
     from poseidon.models.paper_broker_fill import PaperBrokerFill
@@ -779,10 +779,10 @@ def _loop_as_of(value: str | None) -> str:
 
 def _decision_worker_principal():
     """Resolve the loop actor only from configured principals; never from task payloads."""
-    from poseidon.api.auth import _configured_principals
+    from poseidon.core.authz import configured_principals
     from poseidon.decision_loop.producer import resolve_worker_principal
 
-    principal = resolve_worker_principal(settings.decision_loop_worker_principal_id, _configured_principals().values())
+    principal = resolve_worker_principal(settings.decision_loop_worker_principal_id, configured_principals().values())
     principal.require_account_scope(settings.decision_loop_approved_account_scope)
     return principal
 

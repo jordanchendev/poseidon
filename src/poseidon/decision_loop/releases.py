@@ -8,12 +8,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import func, select, text
 
-from poseidon.api.auth import AuthPrincipal
+from poseidon.core.authz import AuthorizationError, AuthPrincipal
 from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.core.errors import ValidationError
 from poseidon.core.locks import lock_account
@@ -1037,7 +1036,7 @@ class ReleaseService:
         try:
             principal.require_role("release_manager")
             principal.require_account_scope(policy.account_scope)
-        except HTTPException:
+        except AuthorizationError:
             return _predicate("release_authority", "blocked", "principal lacks human release authority", **evidence)
         return _predicate("release_authority", "passed", "human release manager covers account scope", **evidence)
 

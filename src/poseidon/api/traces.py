@@ -13,7 +13,8 @@ from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from poseidon.api.auth import AuthPrincipal, get_auth_principal
+from poseidon.api.auth import AuthorizedRoute, get_auth_principal
+from poseidon.core.authz import AuthPrincipal
 from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.core.database import get_db
 from poseidon.core.timeutil import stored_iso_time
@@ -37,7 +38,7 @@ from poseidon.models.research_revision import ResearchRevision
 from poseidon.models.signal import SignalRecord
 from poseidon.signals.schemas import SignalTraceMetadata
 
-router = APIRouter()
+router = APIRouter(route_class=AuthorizedRoute)
 TraceAnchor = Literal["decision", "signal", "evaluation"]
 TraceState = Literal[
     "Available",

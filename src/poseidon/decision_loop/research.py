@@ -3,11 +3,10 @@
 import json
 import uuid
 
-from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import aliased
 
-from poseidon.api.auth import AuthPrincipal
+from poseidon.core.authz import AuthorizationError, AuthPrincipal
 from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.core.errors import ValidationError
 from poseidon.core.locks import lock_identity
@@ -416,7 +415,7 @@ class ResearchService:
             raise ValidationError("frozen research request identity mismatch")
         payload = manifest.payload_json
         if payload.get("account_scope") != account_scope:
-            raise HTTPException(status_code=403, detail="Research account scope not authorized")
+            raise AuthorizationError("Research account scope not authorized")
         if request_sha256 != revision.request_sha256:
             raise ValidationError("research request digest mismatch")
         previous = (

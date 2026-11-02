@@ -20,7 +20,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, model_validator
 from sqlalchemy.orm import Session
 
-from poseidon.api.auth import AuthPrincipal, get_auth_principal
+from poseidon.api.auth import AuthorizedRoute, get_auth_principal
+from poseidon.core.authz import AuthPrincipal
 from poseidon.core.canonical import content_sha256
 from poseidon.core.database import get_db
 from poseidon.pipeline.models import DRAFTERS
@@ -37,7 +38,7 @@ from poseidon.pipeline.service import (
 from poseidon.pipeline.state import RunStatus
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(route_class=AuthorizedRoute)
 
 WRITE_ROLE = "researcher"
 READ_ROLES = frozenset({"viewer", "researcher", "release_manager"})

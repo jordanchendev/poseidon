@@ -456,6 +456,27 @@ def scan_loop_producers(root: Path) -> list[str]:
     return sorted(set(issues))
 
 
+# Only the web layer may import the web framework; the domain raises poseidon.core.authz.AuthorizationError
+# and the API maps it to HTTP 403. pipeline/app.py is the strategy pipeline service's app entry point.
+WEB_LAYER = ("api/", "main.py", "pipeline/app.py")
+WEB_FRAMEWORK_MODULES = ("fastapi", "starlette", "poseidon.api")
+
+
+def scan_web_framework_imports(root: Path) -> list[str]:
+    """Modules outside the web layer that import FastAPI, Starlette, or poseidon.api (function-local too)."""
+    package = root / "src/poseidon"
+    issues = []
+    for path in sorted(package.rglob("*.py")):
+        relative = path.relative_to(package).as_posix()
+        if relative.startswith(WEB_LAYER):
+            continue
+        label = f"src/poseidon/{relative}"
+        for imported in _imports(path.read_text(encoding="utf-8"), label):
+            if any(imported == module or imported.startswith(f"{module}.") for module in WEB_FRAMEWORK_MODULES):
+                issues.append(f"web framework import {imported}: {label}")
+    return sorted(set(issues))
+
+
 def bundle() -> dict:
     def snapshot(identity: str, as_of: str, prefix: str, revenue: int, close: int) -> dict:
         return {
@@ -612,6 +633,35 @@ class Phase100DshBoundaryTests(unittest.TestCase):
         self.assertNotIn("ExecutableStrategyConfig", issues)
         self.assertNotIn("loop pointer write active_version_id: src/poseidon/decision_loop/producer.py", issues)
         self.assertNotIn("submit_decision_order: src/poseidon/workers/cpu_tasks.py:scheduled_recover", issues)
+
+    def test_domain_layer_does_not_import_the_web_framework(self) -> None:
+        self.assertEqual(scan_web_framework_imports(POSEIDON_ROOT), [])
+
+    def test_web_framework_detector_flags_domain_imports_only(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixtures = {
+                "src/poseidon/decision_loop/service.py": "from fastapi import HTTPException\n",
+                "src/poseidon/workers/tasks.py": "def run():\n    from poseidon.api.auth import get_auth_principal\n",
+                "src/poseidon/pipeline/stages.py": "import starlette.status\n",
+                "src/poseidon/api/routes.py": "from fastapi import APIRouter\n",
+                "src/poseidon/main.py": "from fastapi import FastAPI\n",
+                "src/poseidon/pipeline/app.py": "from poseidon.api import pipelines\n",
+                "src/poseidon/core/authz.py": "class AuthorizationError(PermissionError):\n    pass\n",
+            }
+            for relative, content in fixtures.items():
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            issues = scan_web_framework_imports(root)
+        self.assertEqual(
+            issues,
+            [
+                "web framework import fastapi.HTTPException: src/poseidon/decision_loop/service.py",
+                "web framework import poseidon.api.auth.get_auth_principal: src/poseidon/workers/tasks.py",
+                "web framework import starlette.status: src/poseidon/pipeline/stages.py",
+            ],
+        )
 
     def test_dsh_root_evidence_allowlist_is_exact(self) -> None:
         with TemporaryDirectory() as directory:

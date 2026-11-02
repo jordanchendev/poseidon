@@ -17,7 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.orm import Session
 
-from poseidon.api.auth import AuthPrincipal, get_auth_principal
+from poseidon.api.auth import AuthorizedRoute, get_auth_principal
+from poseidon.core.authz import AuthPrincipal
 from poseidon.core.database import get_db
 from poseidon.models.experiment_campaign import ExperimentCampaign
 from poseidon.models.strategy_version import StrategyVersion
@@ -29,7 +30,7 @@ from poseidon.research.campaign import (
 )
 from poseidon.workers.celery_app import POSEIDON_CPU_QUEUE, celery_app
 
-router = APIRouter()
+router = APIRouter(route_class=AuthorizedRoute)
 RUN_REVIEW_TASK = "poseidon.workers.cpu_tasks.run_review_campaign"
 Digest = Annotated[str, Field(min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")]
 

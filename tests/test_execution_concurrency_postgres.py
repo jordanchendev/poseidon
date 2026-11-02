@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import create_engine, delete, event, select, text
 from sqlalchemy.orm import Session
 
-from poseidon.api.auth import AuthPrincipal
+from poseidon.core.authz import AuthPrincipal
 from poseidon.core.canonical import content_sha256
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionService
 from poseidon.decision_loop.evaluation import EvaluationService

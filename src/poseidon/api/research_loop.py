@@ -17,7 +17,8 @@ from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, object_session
 
-from poseidon.api.auth import AuthPrincipal, get_auth_principal
+from poseidon.api.auth import AuthorizedRoute, get_auth_principal
+from poseidon.core.authz import AuthorizationError, AuthPrincipal
 from poseidon.core.database import get_db
 from poseidon.core.errors import ValidationError
 from poseidon.decision_loop.manifest import ManifestService
@@ -25,7 +26,7 @@ from poseidon.decision_loop.research import ResearchService, superseded_by
 from poseidon.models.data_manifest import DataManifest
 from poseidon.models.research_revision import ResearchRevision
 
-router = APIRouter()
+router = APIRouter(route_class=AuthorizedRoute)
 NonEmptyText = Annotated[str, Field(min_length=1, max_length=512)]
 Digest = Annotated[str, Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")]
 RevisionStatus = Literal["prepared", "completed", "needs_review"]
@@ -121,7 +122,7 @@ def _require_any_role(principal: AuthPrincipal, roles: tuple[str, ...]) -> None:
     for role in roles:
         try:
             principal.require_role(role)
-        except HTTPException:
+        except AuthorizationError:
             continue
         return
     raise HTTPException(status_code=403, detail="Role not authorized")

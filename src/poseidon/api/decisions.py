@@ -12,14 +12,15 @@ from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from poseidon.api.auth import AuthPrincipal, get_auth_principal
+from poseidon.api.auth import AuthorizedRoute, get_auth_principal
+from poseidon.core.authz import AuthPrincipal
 from poseidon.core.database import get_db
 from poseidon.core.errors import ValidationError
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionNotFoundError, DecisionService
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.order import OrderRecord
 
-router = APIRouter()
+router = APIRouter(route_class=AuthorizedRoute)
 PositiveRevision = Annotated[int, Field(strict=True, ge=1)]
 DecisionAction = Literal["watch", "hold", "enter", "add", "reduce", "exit", "reject"]
 DecisionStatus = Literal[
