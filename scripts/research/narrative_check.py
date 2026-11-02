@@ -16,7 +16,7 @@ Without a snapshot there is nothing to check, tag or propose, and a narrative th
 
 apply(ledger_path, revision, payload, cfg, jev, mode) -> narrative_results, run after the revision completes (§4.5):
   1. judgement: for a verdict other than untouched, judge_record judges the record's claim against the cited fact
-     claims' quotes and evidence texts (runner.Jev.source_text, capped). A state partially_verifies also gets
+     claims' quotes and evidence texts (jev_client.Jev.source_text, capped). A state partially_verifies also gets
      judge_part (owner decision 2026-10-30): supported_part against the record's claim (in_record: it is part of the
      record) and against the same cited source (backed); part_label folds the three into the label R3 reads.
   2. sweep: judge_record judges every shown record against all official excerpts in document order, capped; a cut

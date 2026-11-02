@@ -45,6 +45,7 @@ import narrative_decisions  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 import narrative_proposals  # noqa: E402
 import record_rules  # noqa: E402
+from live_keys import LiveKeys  # noqa: E402
 from refusal import ResearchRefusal  # noqa: E402
 
 MATERIAL_ID = re.compile(r"^\d{8}-k\d{1,4}$")
@@ -697,7 +698,7 @@ def _duplicate_fn(ledger_path):
     return duplicate, member_duplicate
 
 
-def process_material(m, *, run_dir, ledger_path, keys, opts, data):
+def process_material(m: dict, *, run_dir: Path, ledger_path: Path, keys: LiveKeys, opts: dict, data: dict) -> dict:
     """Intake of one parsed material; fills `data` (run.json) and returns the material-done payload.
     Raises IntakeError(stage, reason, details) for a failure the owner has to look at."""
     run_dir = Path(run_dir)
@@ -745,11 +746,11 @@ def process_material(m, *, run_dir, ledger_path, keys, opts, data):
         for round_no in (1, 2):
             try:
                 if round_no == 1:
-                    attempt = _draft_call(messages, keys["draft"], d, transport)
+                    attempt = _draft_call(messages, keys.draft, d, transport)
                 else:
                     attempt = _draft_call(
                         draft_mod.repair_messages(attempt.messages, attempt.content, reasons),
-                        keys["draft"],
+                        keys.draft,
                         d,
                         transport,
                     )

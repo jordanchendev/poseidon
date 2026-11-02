@@ -15,6 +15,7 @@ import pytest
 
 HERE = Path(__file__).resolve().parent
 
+import jev_client  # noqa: E402
 import narrative_check  # noqa: E402
 import narrative_decisions  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
@@ -314,7 +315,7 @@ def test_on_writes_one_event_per_rule_row(env):
         "quotes": ["Revenue was NT$68.73 billion for the quarter"],
         "tiers": ["company release"],
     }
-    assert jev["label"] == "supports" and jev["model"] == runner.JEV_MODEL
+    assert jev["label"] == "supports" and jev["model"] == jev_client.JEV_MODEL
     r5 = next(e for e in events[ids["R5"]] if e["rule"] == "R5")
     assert r5["at"] == "2026-10-15T00:00:00Z"  # max(evidence available_at, the record's last event at)
     votes = narrative_check.JEV_VOTES
@@ -369,7 +370,7 @@ def test_rerun_of_the_same_revision_calls_no_jev_and_writes_nothing(env):
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
     before = ledger_rows(path, rev["identity"]["revision_id"])
     t = FakeJev([])
-    jev = runner.Jev(JEV_KEY, transport=t)
+    jev = jev_client.Jev(JEV_KEY, transport=t)
     again = narrative_check.apply(path, rev, payload, cfg, jev, mode="on")
     assert t.jev_calls == [] and ledger_rows(path, rev["identity"]["revision_id"]) == before
     assert [x["outcome"] for x in again["records"]] == [x["outcome"] for x in rev["narrative_results"]["records"]]
@@ -387,7 +388,7 @@ def test_rerun_of_the_same_revision_calls_no_jev_and_writes_nothing(env):
 
 
 def test_truncated_sweep_is_recorded(env, monkeypatch):
-    monkeypatch.setattr(runner.Jev, "SOURCE_CAP", 80)
+    monkeypatch.setattr(jev_client.Jev, "SOURCE_CAP", 80)
     path, _, t, _, rev = run(env)
     checks, _ = ledger_rows(path, rev["identity"]["revision_id"])
     assert {c["sweep_truncated"] for c in checks.values()} == {1}
@@ -471,7 +472,7 @@ def link_keys(rows):
 
 def test_tagged_claims_are_linked_once_with_narrative_apply_off(env):
     path, t, run_json, rev = run_tagged(env)
-    assert rev["narrative_results"] == {"narrative_apply": "off", "jev_model": runner.JEV_MODEL, "records": []}
+    assert rev["narrative_results"] == {"narrative_apply": "off", "jev_model": jev_client.JEV_MODEL, "records": []}
     assert "narrative_error" not in run_json and len(t.jev_calls) == 2  # the fact claims only: no record to judge
     rows = links(path)
     assert link_keys(rows) == expected_links(rev)
@@ -499,7 +500,7 @@ def test_rerun_writes_no_link_twice(env):
     before = links(path)
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
     t = FakeJev([])
-    narrative_check.apply(path, rev, rev["manifest_payload"], cfg, runner.Jev(JEV_KEY, transport=t), mode="on")
+    narrative_check.apply(path, rev, rev["manifest_payload"], cfg, jev_client.Jev(JEV_KEY, transport=t), mode="on")
     assert links(path) == before and t.jev_calls == []
 
 
@@ -513,7 +514,7 @@ def test_links_lost_to_a_crash_are_written_by_the_next_apply(env, monkeypatch):
     assert rev["identity"]["status"] == "completed"
     monkeypatch.undo()
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
-    jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
+    jev = jev_client.Jev(JEV_KEY, transport=FakeJev([]))
     narrative_check.apply(path, rev, rev["manifest_payload"], cfg, jev, mode="off")
     assert link_keys(links(path)) == expected_links(rev)
 
@@ -527,7 +528,7 @@ def test_no_snapshot_writes_no_links(env):
     payload = dict(rev["manifest_payload"])
     payload["evidence"] = [e for e in payload["evidence"] if e["kind"] != "narrative_snapshot"]
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
-    jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
+    jev = jev_client.Jev(JEV_KEY, transport=FakeJev([]))
     assert narrative_check.apply(path, rev, payload, cfg, jev, mode="on") is None
     assert links(path) == []
 
@@ -603,7 +604,7 @@ def test_revision_narrative_proposals_become_records_in_every_mode(env):
     assert f"`{official['narrative_id']}`" in section and section.count("已寫入") == 2
     # a rerun of the same revision writes nothing twice
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
-    jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
+    jev = jev_client.Jev(JEV_KEY, transport=FakeJev([]))
     again = narrative_check.apply(path, rev, rev["manifest_payload"], cfg, jev, mode="on")
     assert again["narrative_proposals"] == out and records(path) == (rows, events, held)
 
@@ -647,7 +648,7 @@ def test_a_fact_on_non_official_evidence_is_no_record_and_a_pending_member_holds
     ]
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
     res = narrative_check.apply(
-        path, rev, rev["manifest_payload"], cfg, runner.Jev(JEV_KEY, transport=FakeJev([])), mode="off"
+        path, rev, rev["manifest_payload"], cfg, jev_client.Jev(JEV_KEY, transport=FakeJev([])), mode="off"
     )
     unfit, waiting, other = res["narrative_proposals"]
     assert unfit["status"] == "unfit" and "不全是官方文件" in unfit["reason"]

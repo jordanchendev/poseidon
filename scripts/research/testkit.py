@@ -15,6 +15,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import intake
+import jev_client
 import narrative_check
 import narrative_ledger as nl
 import runner
@@ -405,7 +406,7 @@ def refrozen(rev, n=2, raw_files=None, excerpts=None):
 
 def apply_later(env, later, mode):
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
-    jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
+    jev = jev_client.Jev(JEV_KEY, transport=FakeJev([]))
     out = narrative_check.apply(env["state"] / "ledger.sqlite", later, later["manifest_payload"], cfg, jev, mode=mode)
     return {x["narrative_id"]: x for x in out["records"]}
 

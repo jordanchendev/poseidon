@@ -14,11 +14,11 @@ import pytest
 
 HERE = Path(__file__).resolve().parent
 
+import jev_client  # noqa: E402
 import narrative_check  # noqa: E402
 import narrative_decisions  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 import narrative_suggestions  # noqa: E402
-import runner  # noqa: E402
 import testkit as tk  # noqa: E402
 from testkit import JEV_KEY  # noqa: E402
 
@@ -239,7 +239,7 @@ def test_a_rejected_change_is_not_suggested_again(env):
     later = json.loads(json.dumps(rev))
     later["identity"]["revision_id"] = str(uuid.uuid4())
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
-    jev = runner.Jev(JEV_KEY, transport=tk.FakeJev([]))
+    jev = jev_client.Jev(JEV_KEY, transport=tk.FakeJev([]))
     out = narrative_check.apply(path, later, later["manifest_payload"], cfg, jev, mode="confirm")
     res = {x["narrative_id"]: x for x in out["records"]}
     assert res[ids["R1"]]["suggestion"] == {"id": None, "status": "suppressed", "suppressed_by": rejected}
@@ -248,7 +248,7 @@ def test_a_rejected_change_is_not_suggested_again(env):
     # rerunning the same revision calls no JEV and reports the stored suggestions
     t = tk.FakeJev([])
     redo = narrative_check.apply(
-        path, later, later["manifest_payload"], cfg, runner.Jev(JEV_KEY, transport=t), mode="confirm"
+        path, later, later["manifest_payload"], cfg, jev_client.Jev(JEV_KEY, transport=t), mode="confirm"
     )
     assert t.jev_calls == []
     assert {x["narrative_id"]: (x.get("suggestion") or {}).get("id") for x in redo["records"]} == {

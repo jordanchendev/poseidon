@@ -16,6 +16,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 
 import intake  # noqa: E402
+import jev_client  # noqa: E402
 import narrative_check  # noqa: E402
 import narrative_decisions  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
@@ -490,7 +491,7 @@ def test_rejected_theme_is_not_proposed_again(rev_env):
     later["identity"]["revision_id"] = str(uuid.uuid4())
     later["research"]["theme_proposals"] = [FOUNDRY_PRICING, dict(FOUNDRY_PRICING, suggested_id="wafer-pricing")]
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
-    jev = runner.Jev(JEV_KEY, transport=tk.FakeJev([]))
+    jev = jev_client.Jev(JEV_KEY, transport=tk.FakeJev([]))
     out = narrative_check.apply(path, later, later["manifest_payload"], cfg, jev, mode="off")
     assert [(p["id"], p["status"], p["duplicate_of"]) for p in out["theme_proposals"]] == [
         (None, "duplicate", "rejected:T20261021-1"),

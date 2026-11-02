@@ -18,6 +18,8 @@ HERE = Path(__file__).resolve().parent
 
 import assemble  # noqa: E402
 import draft  # noqa: E402
+import jev_client  # noqa: E402
+import live_keys  # noqa: E402
 import runner  # noqa: E402
 from refusal import ResearchRefusal  # noqa: E402
 from testkit import (  # noqa: E402
@@ -64,7 +66,7 @@ def test_happy_path_completes_and_reports_done(env):
     assert run["models"] == {
         "draft_configured": draft.DEFAULT_MODEL,
         "draft_returned": [RETURNED_MODEL],
-        "jev": runner.JEV_MODEL,
+        "jev": jev_client.JEV_MODEL,
     }
     assert run["costs"]["draft_usd"] == 0.0021 and run["costs"]["jev_usd"] == pytest.approx(0.0002)
     assert run["draft_calls"][0]["prompt_sha256"] == draft.sha256_json(
@@ -201,20 +203,20 @@ def judge_facts(doc, quote):
     claim = {"kind": "fact", "text": "Micron claim", "evidence_ids": [doc["id"]], "quote": quote}
     t = FakeOpenRouter([])
     payload = {"evidence": [doc], "as_of": "2026-10-30T04:20:00Z"}
-    res = runner.jev_check({"claims": [claim]}, payload, {"symbol": "MU"}, runner.Jev(JEV_KEY, transport=t))
+    res = runner.jev_check({"claims": [claim]}, payload, {"symbol": "MU"}, jev_client.Jev(JEV_KEY, transport=t))
     (call,), (per,) = t.jev_calls, res["per_claim"]
     src = call["state"]["source_context"]["text"]
-    assert runner.Jev.source_text(claim, [doc]) == src  # narrative_check's call sees the same text
+    assert jev_client.Jev.source_text(claim, [doc]) == src  # narrative_check's call sees the same text
     return src, per
 
 
 def test_jev_source_past_the_cap_keeps_the_quoted_excerpt_its_neighbours_and_the_opening():
     doc = mu_doc(30)
     texts = draft.evidence_texts(doc)
-    assert len("\n".join(texts)) > runner.JEV_SOURCE_CAP  # in document order the guidance sits past the cap
+    assert len("\n".join(texts)) > jev_client.JEV_SOURCE_CAP  # in document order the guidance sits past the cap
     quote = "with a more moderate rate of price increases"
     src, per = judge_facts(doc, quote)
-    assert per["source_truncated"] == 1 and len(src) <= runner.JEV_SOURCE_CAP
+    assert per["source_truncated"] == 1 and len(src) <= jev_client.JEV_SOURCE_CAP
     # the opening basis statement still comes first, in document order
     assert src.startswith(f"Quoted: {quote}\n\n[{MU_DOC}]\n{MU_BASIS}\n")
     # the quoted excerpt whole, with the excerpt before and after it
@@ -235,7 +237,7 @@ def test_jev_source_without_the_quote_in_a_long_document_is_the_document_order_c
     doc = mu_doc(30)
     src, per = judge_facts(doc, "a quote no excerpt holds")
     full = "Quoted: a quote no excerpt holds\n\n[{}]\n{}".format(MU_DOC, "\n".join(draft.evidence_texts(doc)))
-    assert src == full[: runner.JEV_SOURCE_CAP - 1] + "…" and per["source_truncated"] == 1
+    assert src == full[: jev_client.JEV_SOURCE_CAP - 1] + "…" and per["source_truncated"] == 1
 
 
 @pytest.mark.parametrize(
@@ -259,13 +261,13 @@ def test_draft_failures_need_review(env, response, needle):
 def test_missing_or_unsafe_draft_key_is_a_named_error(env, capsys):
     t = FakeOpenRouter([good_narrative()])
     empty = env["tmp"] / "secrets" / "empty.env"
-    empty.write_text(f"{draft.DRAFT_KEY_VAR}=\nOTHER_KEY=abc\n")
+    empty.write_text(f"{live_keys.DRAFT_KEY_VAR}=\nOTHER_KEY=abc\n")
     empty.chmod(0o600)
     assert env["run"](t, draft_env_path=empty) == runner.EXIT_KEY
-    assert f"{draft.DRAFT_KEY_VAR} missing or empty" in capsys.readouterr().err
+    assert f"{live_keys.DRAFT_KEY_VAR} missing or empty" in capsys.readouterr().err
     assert env["run"](t, draft_env_path=env["tmp"] / "nope.env") == runner.EXIT_KEY
     loose = env["tmp"] / "secrets" / "loose.env"
-    loose.write_text(f"{draft.DRAFT_KEY_VAR}=x\n")
+    loose.write_text(f"{live_keys.DRAFT_KEY_VAR}=x\n")
     loose.chmod(0o644)
     assert env["run"](t, draft_env_path=loose) == runner.EXIT_KEY
     assert "want 600" in capsys.readouterr().err
@@ -273,14 +275,14 @@ def test_missing_or_unsafe_draft_key_is_a_named_error(env, capsys):
 
 
 def test_load_key_never_reads_process_env(tmp_path, monkeypatch):
-    monkeypatch.setenv(draft.DRAFT_KEY_VAR, "from-env")
+    monkeypatch.setenv(live_keys.DRAFT_KEY_VAR, "from-env")
     f = tmp_path / "k.env"
     f.write_text("# comment\nexport OTHER=1\n")
     f.chmod(0o600)
-    with pytest.raises(draft.MissingKeyError):
-        draft.load_key(f, draft.DRAFT_KEY_VAR)
-    f.write_text(f"{draft.DRAFT_KEY_VAR}='quoted-value'\n")
-    assert draft.load_key(f, draft.DRAFT_KEY_VAR) == "quoted-value"
+    with pytest.raises(live_keys.MissingKeyError):
+        live_keys.load_key(f, live_keys.DRAFT_KEY_VAR)
+    f.write_text(f"{live_keys.DRAFT_KEY_VAR}='quoted-value'\n")
+    assert live_keys.load_key(f, live_keys.DRAFT_KEY_VAR) == "quoted-value"
 
 
 def test_idempotent_rerun_reports_again_without_new_work(env):

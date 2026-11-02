@@ -5,9 +5,9 @@ The model sees only the frozen manifest evidence (document excerpts with ids, kp
 OHLCV tail, guidance when present) and the narrative schema below. Its JSON mode is a convenience; the authority is the
 runner's local validator (gates in runner.py + research_theme.py at completion).
 
-Key: RESEARCH_DRAFT_OPENROUTER_KEY, read only from the env file given on the command line (600 permissions). A missing
-or empty key raises MissingKeyError naming the variable; no other variable is consulted. The key and request headers are
-never logged or written; errors carry only HTTP status and a short response body.
+Key: RESEARCH_DRAFT_OPENROUTER_KEY, read by live_keys.py only from the env file given on the command line (600
+permissions); a missing or empty key raises live_keys.MissingKeyError naming the variable. The key and request headers
+are never logged or written; errors carry only HTTP status and a short response body.
 
 Narrative ledger (design 2026-10-29 §4.2-§4.3): when the manifest carries a narrative_snapshot, the prompt adds its
 closed theme list and open records, the schema extension NARRATIVE_LEDGER_SCHEMA and rules 11-14. Without one the
@@ -22,9 +22,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
-import stat
 import sys
 import time
 import urllib.error
@@ -35,8 +33,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import consensus
 import kpi_series
+import live_keys
 
-DRAFT_KEY_VAR = "RESEARCH_DRAFT_OPENROUTER_KEY"
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash-1017"
 # A revision showing 15 snapshot records ran out at 16000 (12,801 reasoning tokens; acceptance 2026-10-30).
@@ -45,11 +43,6 @@ STANCES = ("watch", "neutral", "hold", "long", "short")
 CATALYST_TYPES = ("monthly_revenue", "earnings_call", "agm", "investor_day", "product_event", "regulatory", "other")
 OHLCV_TAIL = 30
 RETRY_SLEEP_S = 2
-_KEY_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
-
-
-class MissingKeyError(Exception):
-    """Named fail-closed error for an absent/empty/unsafe key file; carries no key material."""
 
 
 class DraftError(Exception):
@@ -58,25 +51,6 @@ class DraftError(Exception):
     def __init__(self, reason, record=None):
         super().__init__(reason)
         self.record = record or {}
-
-
-# ------------------------------------------------------------------------------------------------ keys
-def load_key(env_file, var):
-    """Value of `var` from a 600 env file (`VAR=value` or `export VAR="value"`). Never consults os.environ."""
-    path = Path(os.path.expanduser(str(env_file or "")))
-    if not env_file or not path.is_file():
-        raise MissingKeyError(f"{var}: env file {path} not found")
-    mode = stat.S_IMODE(path.stat().st_mode)
-    if mode & 0o077:
-        raise MissingKeyError(f"{var}: env file {path} must not be group/other accessible (mode {mode:o}, want 600)")
-    for line in path.read_text(encoding="utf-8").splitlines():
-        m = _KEY_LINE.match(line)
-        if m and m.group(1) == var:
-            value = m.group(2).strip().strip("'\"")
-            if value:
-                return value
-            break
-    raise MissingKeyError(f"{var} missing or empty in {path}")
 
 
 # ------------------------------------------------------------------------------------------------ HTTP
@@ -513,7 +487,7 @@ def main():
     ap = argparse.ArgumentParser(description="Draft a narrative from a frozen manifest payload (manual use).")
     ap.add_argument("--config", required=True)
     ap.add_argument("--manifest-json", required=True, help="frozen manifest payload JSON (manifest_payload)")
-    ap.add_argument("--env-file", required=True, help=f"600 env file holding {DRAFT_KEY_VAR}")
+    ap.add_argument("--env-file", required=True, help=f"600 env file holding {live_keys.DRAFT_KEY_VAR}")
     ap.add_argument("--out", required=True)
     ap.add_argument("--print-prompt", action="store_true", help="print the messages and exit (no call, no key)")
     a = ap.parse_args()
@@ -523,8 +497,8 @@ def main():
         print(json.dumps(build_messages(cfg, payload), ensure_ascii=False, indent=1))
         return
     try:
-        key = load_key(a.env_file, DRAFT_KEY_VAR)
-    except MissingKeyError as e:
+        key = live_keys.load_key(a.env_file, live_keys.DRAFT_KEY_VAR)
+    except live_keys.MissingKeyError as e:
         sys.exit(f"key error: {e}")
     try:
         res = draft(cfg, payload, key)

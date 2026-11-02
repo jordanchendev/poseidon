@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import assemble
-import draft
+import live_keys
 import pytest
 import runner
 from testkit import (
@@ -39,8 +39,8 @@ def runner_env(tmp_path, monkeypatch):
     secrets = tmp_path / "secrets"
     secrets.mkdir()
     draft_env, jev_env = secrets / "draft.env", secrets / "jev.env"
-    draft_env.write_text(f"{draft.DRAFT_KEY_VAR}={DRAFT_KEY}\n")
-    jev_env.write_text(f'export {runner.JEV_KEY_VAR}="{JEV_KEY}"\n')
+    draft_env.write_text(f"{live_keys.DRAFT_KEY_VAR}={DRAFT_KEY}\n")
+    jev_env.write_text(f'export {live_keys.JEV_KEY_VAR}="{JEV_KEY}"\n')
     draft_env.chmod(0o600)
     jev_env.chmod(0o600)
     bridge_py = tmp_path / "bridge.py"
