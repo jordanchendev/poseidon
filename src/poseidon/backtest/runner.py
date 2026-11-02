@@ -111,6 +111,8 @@ class _FakePositionEntry:
             "_funding_costs_total",
             "_funding_costs_by_trade",
             "_last_funding_settlement",
+            "_equity_series_cached",
+            "_trade_records_cached",
         }
     )
 )
