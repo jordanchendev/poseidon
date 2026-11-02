@@ -1168,7 +1168,7 @@ def test_consensus_frozen_and_surprise_rendered(env):
         and gm["vs_range"] == "within"
     )
     assert gm["actual"]["source"] == "claims[3]" and gm["actual"]["published_at"] == f"{day(EVENT_IDX)}T10:00:00Z"
-    from research_theme import replay_surprise
+    from consensus import replay_surprise
 
     assert replay_surprise(rev["manifest_payload"]) == {"surprise:AAA": True}
     tampered = copy.deepcopy(rev["manifest_payload"])
@@ -1410,7 +1410,7 @@ TREND = [
 
 
 def test_yahoo_probe_parses_embedded_quote_summary(tmp_path):
-    from research_theme import fetch_yahoo_consensus
+    from consensus import fetch_yahoo_consensus
 
     op = FakeOpener({"https://finance.yahoo.com/quote/TSM/analysis/": (200, yahoo_page(TREND))})
     data, st = fetch_yahoo_consensus("2330", "TSM", tmp_path / "raw", adr=True, opener=op)
@@ -1426,7 +1426,7 @@ def test_yahoo_probe_parses_embedded_quote_summary(tmp_path):
 
 
 def test_yahoo_probe_failures_are_clean(tmp_path):
-    from research_theme import fetch_yahoo_consensus
+    from consensus import fetch_yahoo_consensus
 
     cf = FakeOpener({"https://finance.yahoo.com/": (200, b"<html><title>Just a moment...</title>cf-chl</html>")})
     data, st = fetch_yahoo_consensus("2303", "UMC", tmp_path, opener=cf)
@@ -1479,7 +1479,7 @@ def test_consensus_live_without_mapping_does_not_fail(env):
     ],
 )
 def test_norm_period(raw, expected):
-    from research_theme import norm_period
+    from consensus import norm_period
 
     assert norm_period(raw) == expected
 

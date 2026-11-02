@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draft a research narrative from frozen evidence with an OpenRouter chat completion (stdlib only).
+"""Draft a research narrative from frozen evidence with an OpenRouter chat completion (urllib, no SDK).
 
 The model sees only the frozen manifest evidence (document excerpts with ids, kpi_series table, price_facts, a compact
 OHLCV tail, guidance when present) and the narrative schema below. Its JSON mode is a convenience; the authority is the
@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import consensus
+import kpi_series
 
 DRAFT_KEY_VAR = "RESEARCH_DRAFT_OPENROUTER_KEY"
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -179,21 +181,19 @@ def snapshot_text(payload):
 
 def evidence_texts(item):
     """Texts a claim citing `item` may quote verbatim: one per excerpt for documents, one rendered block otherwise."""
-    import research_theme
-
     kind, p = item["kind"], item["payload"]
     if p.get("excerpts") is not None:
         return [ex["text"] for ex in p["excerpts"]]
     if kind == "kpi_series":
-        return [research_theme.kpi_text(p)]
+        return [kpi_series.kpi_text(p)]
     if kind == "price_facts":
         return [price_facts_text(p)]
     if kind == "ohlcv":
         return [ohlcv_text(p)]
     if kind == "consensus":
-        return [research_theme.consensus_text(p)]
+        return [consensus.consensus_text(p)]
     if kind == "surprise":
-        return [research_theme.surprise_text(p)]
+        return [consensus.surprise_text(p)]
     if kind == "narrative_snapshot":
         return [snapshot_text(p)]
     return [json.dumps(p, ensure_ascii=False, sort_keys=True)]

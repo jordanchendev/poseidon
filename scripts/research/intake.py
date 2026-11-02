@@ -39,6 +39,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import assemble as assemble_mod  # noqa: E402
 import draft as draft_mod  # noqa: E402
+import guidance  # noqa: E402
 import narrative_check  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 import record_rules  # noqa: E402
@@ -194,7 +195,7 @@ def freeze(ledger_path, as_of, doc, snap):
     except ResearchRefusal as e:
         raise IntakeError("freeze", str(e)) from None
     if snap:
-        evidence.append(rt.snapshot_evidence(snap, as_of))
+        evidence.append(guidance.snapshot_evidence(snap, as_of))
     request = {
         "market": "tw_stock",
         "interval": "material",

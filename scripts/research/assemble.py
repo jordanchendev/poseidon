@@ -54,6 +54,7 @@ import tenacity
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fetch_source
+import kpi_series
 from refusal import ResearchRefusal
 
 from poseidon.core.circuit_breaker import CircuitBreakerOpenError
@@ -460,15 +461,11 @@ def write_bars(symbols, as_of_dt, csv_path, fetch_bars=thalassa_daily_bars):
 
 # ------------------------------------------------------------------------------------------------ TWSE kpi_series
 def twse_rows():
-    import research_theme
-
-    return research_theme.load_kpi_rows(None)
+    return kpi_series.load_kpi_rows(None)
 
 
 def kpi_inputs(symbols, as_of, out_path, fetch_rows=twse_rows):
     """(kpi_symbols, notes). Saves only the rows for `symbols`; symbols with no row visible at as_of are dropped."""
-    import research_theme
-
     cands = [s for s in symbols if s != BENCHMARK and re.fullmatch(r"\d{4}", s)]
     if not cands:
         return [], ["kpi_series: no TWSE numeric symbol"]
@@ -477,7 +474,7 @@ def kpi_inputs(symbols, as_of, out_path, fetch_rows=twse_rows):
     except (OSError, ValueError, KeyError) as e:  # network, timeout, a body that is not the rows
         return [], [f"kpi_series skipped: TWSE t187ap05_L fetch failed ({type(e).__name__}: {e})"]
     keep = [r for r in rows if str(r.get("公司代號", "")).strip() in cands]
-    usable = [s for s in cands if research_theme.kpi_series_evidence(s, keep, uri, fetched, as_of) is not None]
+    usable = [s for s in cands if kpi_series.kpi_series_evidence(s, keep, uri, fetched, as_of) is not None]
     notes = [f"kpi_series: no t187ap05_L row visible at as_of for {s}" for s in cands if s not in usable]
     if usable:
         Path(out_path).write_text(
