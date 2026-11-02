@@ -214,11 +214,15 @@ class BacktestPortfolio:
         return signal.market in ("crypto_spot", "crypto_perp")
 
     def _resolve_quantity(self, signal: Signal, fill_price: float) -> float:
-        """Quantity for an entry: fixed contracts, or notional-derived (int for non-crypto)."""
+        """Quantity for an entry: fixed contracts, or notional-derived (int for non-crypto).
+
+        ``quantity_pct`` is a fraction of the sizing base in currency notional, so a unit
+        costs ``fill_price * point_value`` (one TX contract at 20,000 points is 4M TWD).
+        """
         if self.sizing_config.mode == SizingMode.FIXED_CONTRACTS:
             return float(self.sizing_config.contracts)
         quantity_pct = signal.quantity_pct or 0.1
-        raw_quantity = self._sizing_base() * quantity_pct / fill_price
+        raw_quantity = self._sizing_base() * quantity_pct / (fill_price * self.point_value)
         return raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
 
     def _execute_long(self, signal: Signal, price: float, key: str) -> TradeRecord | None:

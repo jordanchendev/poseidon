@@ -46,14 +46,14 @@ def test_limit_fill_uses_fixed_contracts():
     assert trade is not None and trade.quantity == 2
 
 
-def test_notional_mode_unchanged():
+def test_notional_mode_buys_contracts_by_their_currency_notional():
     pf = BacktestPortfolio(
-        1_000_000.0, COST_MODELS["tw_futures"], SizingConfig(mode=SizingMode.FIXED_NOTIONAL, notional_pct=0.1)
+        20_000_000.0, COST_MODELS["tw_futures"], SizingConfig(mode=SizingMode.FIXED_NOTIONAL, notional_pct=0.8)
     )
     sig = _sig(SignalAction.LONG)
-    sig.quantity_pct = 0.1
+    sig.quantity_pct = 0.8
     trade = pf.execute_fill(sig, _bar(33000.0))
-    assert trade is not None and trade.quantity == int(1_000_000 * 0.1 / 33001.0)
+    assert trade is not None and trade.quantity == int(20_000_000 * 0.8 / (33001.0 * 200))  # 2 contracts
 
 
 def test_runner_fixed_one_contract_with_pipeline_costs_on_real_tx():

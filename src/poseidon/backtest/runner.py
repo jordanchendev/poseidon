@@ -49,6 +49,10 @@ class _PortfolioAdapter:
     BacktestPortfolio has a different internal structure (dict of dicts instead
     of PositionEntry objects). This adapter bridges the gap so the SAME risk
     engine code path runs without modification.
+
+    Exposure is currency notional (``quantity * entry_price * point_value``) over
+    initial capital, so one TX contract (point_value 200) counts 200x its index
+    points, as the leverage cap must see it.
     """
 
     def __init__(self, portfolio: BacktestPortfolio) -> None:
@@ -58,13 +62,12 @@ class _PortfolioAdapter:
     def open_position_count(self) -> int:
         return len(self._portfolio.positions)
 
+    def _quantity_pct(self, pos: dict) -> float:
+        notional = pos["quantity"] * pos["entry_price"] * self._portfolio.point_value
+        return notional / self._portfolio.initial_capital
+
     def total_exposure(self) -> float:
-        return (
-            sum(pos["quantity"] * pos["entry_price"] for pos in self._portfolio.positions.values())
-            / self._portfolio.initial_capital
-            if self._portfolio.positions
-            else 0.0
-        )
+        return sum(self._quantity_pct(pos) for pos in self._portfolio.positions.values())
 
     def get_position(self, market: str, symbol: str):
         key = f"{market}:{symbol}"
@@ -77,7 +80,7 @@ class _PortfolioAdapter:
             market=market,
             instrument="spot",
             side=pos["side"],
-            quantity_pct=pos["quantity"] * pos["entry_price"] / self._portfolio.initial_capital,
+            quantity_pct=self._quantity_pct(pos),
             entry_time=pos["entry_time"],
         )
 
@@ -819,8 +822,8 @@ class BacktestRunner:
             return signal.quantity_pct or cfg.quantity_pct
 
         if cfg.mode == SizingMode.FIXED_NOTIONAL:
-            # Portfolio._sizing_base() returns initial_capital for this mode,
-            # so notional_pct * initial_capital / price gives fixed notional.
+            # Portfolio._sizing_base() returns initial_capital for this mode, so
+            # notional_pct * initial_capital / (price * point_value) units give fixed notional.
             return cfg.notional_pct
 
         if cfg.mode == SizingMode.VOL_TARGET:
@@ -836,13 +839,16 @@ class BacktestRunner:
             raw_pct = cfg.target_vol / realized_vol
             return min(raw_pct, cfg.max_position_pct)
 
+        point_value = float(getattr(self.cost_model, "point_value", 1.0))
+
         if cfg.mode == SizingMode.FIXED_CONTRACTS:
-            # Portfolio ignores quantity_pct in this mode; report the implied
-            # notional fraction so RiskEngine exposure rules see a sane number.
+            # Portfolio ignores quantity_pct in this mode; report the implied notional
+            # fraction (contracts x price x point_value / capital, uncapped) so RiskEngine
+            # exposure rules see the real leverage of the contracts.
             entry_price = (
                 signal.order_price if signal.order_price is not None else float(features_slice.iloc[-1]["close"])
             )
-            return min(1.0, cfg.contracts * entry_price / self.initial_capital) if self.initial_capital > 0 else 0.0
+            return cfg.contracts * entry_price * point_value / self.initial_capital if self.initial_capital > 0 else 0.0
 
         if cfg.mode == SizingMode.FIXED_RISK:
             # Entry price = order_price for limit, bar close for market
@@ -863,14 +869,13 @@ class BacktestRunner:
                 )
                 return cfg.notional_pct
 
-            # qty = (equity * risk_pct) / distance
-            # self._ar_last_portfolio is set in _run_loop (line ~526) BEFORE bar iteration.
-            # It holds the BacktestPortfolio instance, giving access to .equity during sizing.
-            # The autoresearch_guard decorator explicitly allows _ar_* prefixed attributes.
+            # qty = (equity * risk_pct) / (distance * point_value): a stop hit loses
+            # risk_pct of equity in currency. self._ar_last_portfolio is set in _run_loop
+            # BEFORE bar iteration (the autoresearch_guard allows _ar_* attributes).
             equity = self._ar_last_portfolio.equity
             risk_amount = equity * cfg.risk_pct
-            raw_qty = risk_amount / distance
-            raw_notional_pct = (raw_qty * entry_price) / self.initial_capital
+            raw_qty = risk_amount / (distance * point_value)
+            raw_notional_pct = (raw_qty * entry_price * point_value) / self.initial_capital
 
             # Cap at max_notional_pct
             return min(raw_notional_pct, cfg.max_notional_pct)

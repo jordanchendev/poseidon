@@ -18,8 +18,12 @@ import pytest
 from poseidon.backtest.cost_model import COST_MODELS, CostModel
 from poseidon.backtest.metrics import compute_metrics
 from poseidon.backtest.pending_orders import FillEvent
-from poseidon.backtest.portfolio import BacktestPortfolio
+from poseidon.backtest.portfolio import BacktestPortfolio, SizingConfig, SizingMode
 from poseidon.signals.schemas import InstrumentType, Signal, SignalAction
+
+# Futures entries are sized in contracts: one TX contract is ~4.4M TWD of notional, so a notional
+# fraction of a 1M account never buys one (tests/backtest/test_futures_exposure_sizing.py).
+ONE_CONTRACT = SizingConfig(mode=SizingMode.FIXED_CONTRACTS, contracts=1)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -114,7 +118,7 @@ class TestFuturesPnL:
 
     def test_futures_pnl_long_profit(self, tw_futures_cost):
         """TX long entry at 22000, close at 22100. PnL ~ 100 * 200 = 20000 TWD."""
-        p = BacktestPortfolio(1_000_000, tw_futures_cost)
+        p = BacktestPortfolio(1_000_000, tw_futures_cost, ONE_CONTRACT)
 
         # Open long
         sig_open = make_futures_signal(SignalAction.LONG)
@@ -138,7 +142,7 @@ class TestFuturesPnL:
 
     def test_futures_pnl_short_profit(self, tw_futures_cost):
         """TX short entry at 22000, close at 21900. PnL ~ 100 * 200 = 20000 TWD."""
-        p = BacktestPortfolio(1_000_000, tw_futures_cost)
+        p = BacktestPortfolio(1_000_000, tw_futures_cost, ONE_CONTRACT)
 
         # Open short
         sig_open = make_futures_signal(SignalAction.SHORT)
@@ -160,7 +164,7 @@ class TestFuturesPnL:
 
     def test_futures_pnl_long_loss(self, tw_futures_cost):
         """TX long entry at 22000, close at 21900. PnL ~ -100 * 200 = -20000 TWD."""
-        p = BacktestPortfolio(1_000_000, tw_futures_cost)
+        p = BacktestPortfolio(1_000_000, tw_futures_cost, ONE_CONTRACT)
 
         # Open long
         sig_open = make_futures_signal(SignalAction.LONG)
@@ -191,7 +195,7 @@ class TestFuturesSlippage:
 
     def test_futures_slippage_tick_size(self, tw_futures_cost):
         """Verify _apply_slippage with tick_size=1.0 gives exactly 1 point slippage."""
-        p = BacktestPortfolio(1_000_000, tw_futures_cost)
+        p = BacktestPortfolio(1_000_000, tw_futures_cost, ONE_CONTRACT)
         price = 22000.0
 
         # Buy slippage: price + 1 tick (= 1 point for TX)
@@ -223,7 +227,7 @@ class TestFuturesEquity:
     def test_futures_equity_mark_to_market(self, tw_futures_cost):
         """Open TX long at 22000, record_equity_point at 22100.
         Unrealized gain should reflect point_value=200."""
-        p = BacktestPortfolio(1_000_000, tw_futures_cost)
+        p = BacktestPortfolio(1_000_000, tw_futures_cost, ONE_CONTRACT)
 
         # Open long
         sig_open = make_futures_signal(SignalAction.LONG)
@@ -266,7 +270,7 @@ class TestFuturesSLExit:
 
     def test_futures_sl_exit_pnl(self, tw_futures_cost):
         """Open TX long, trigger SL via execute_sl_tp_exit. PnL uses point_value."""
-        p = BacktestPortfolio(1_000_000, tw_futures_cost)
+        p = BacktestPortfolio(1_000_000, tw_futures_cost, ONE_CONTRACT)
 
         # Open long
         sig_open = make_futures_signal(SignalAction.LONG)
@@ -385,9 +389,9 @@ class TestMTXPointValue:
 
     def test_mtx_point_value(self, tw_futures_mtx_cost):
         """MTX entry/exit with point_value=50. PnL = diff * 50."""
-        p = BacktestPortfolio(500_000, tw_futures_mtx_cost)
+        p = BacktestPortfolio(500_000, tw_futures_mtx_cost, ONE_CONTRACT)
 
-        # Open MTX long (quantity_pct=0.05 so 500K*0.05/22001 ~= 1 contract)
+        # Open one MTX long contract (ONE_CONTRACT sizing)
         sig_open = make_futures_signal(
             SignalAction.LONG,
             symbol="MTX",
@@ -463,10 +467,10 @@ class TestFuturesCashAccounting:
         ],
     )
     def test_round_trip_equity_delta_equals_trade_pnl(self, action, entry, exit_):
-        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES, ONE_CONTRACT)
         t_open, t_close = _round_trip(p, action, entry, exit_)
 
-        assert t_open.quantity == 1  # 1M * 0.025 / ~22000 -> 1 contract
+        assert t_open.quantity == 1
         assert not p.positions
         final_equity = p.equity_curve[-1][1]
         assert final_equity - 1_000_000 == pytest.approx(t_close.pnl, abs=1e-6)
@@ -478,7 +482,7 @@ class TestFuturesCashAccounting:
         assert t_close.pnl == pytest.approx(gross - t_close.fees)
 
     def test_long_fees_are_charged_on_notional(self):
-        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES, ONE_CONTRACT)
         t_open, t_close = _round_trip(p, SignalAction.LONG, 22000.0, 22100.0)
 
         # 1 tick slippage each side: buy at 22001, sell at 22099.
@@ -491,7 +495,7 @@ class TestFuturesCashAccounting:
         assert t_close.pnl == pytest.approx(98.0 * 200.0 - entry_fee - exit_fee)
 
     def test_short_fees_are_charged_on_notional(self):
-        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES, ONE_CONTRACT)
         t_open, t_close = _round_trip(p, SignalAction.SHORT, 22000.0, 21900.0)
 
         # Short sells at 21999, covers at 21901.
@@ -503,14 +507,14 @@ class TestFuturesCashAccounting:
 
     def test_tx_registry_tax_on_notional(self, tw_futures_cost):
         """Registry TX: 0 commission, tax 0.002% of exit notional (~88 TWD at 22000)."""
-        p = BacktestPortfolio(1_000_000, tw_futures_cost)
+        p = BacktestPortfolio(1_000_000, tw_futures_cost, ONE_CONTRACT)
         _, t_close = _round_trip(p, SignalAction.LONG, 22000.0, 22000.0)
         assert t_close.fees == pytest.approx(21999.0 * 200.0 * 0.00002)
         assert p.equity_curve[-1][1] - 1_000_000 == pytest.approx(t_close.pnl)
 
     def test_no_equity_jump_at_close(self):
         """Mark-to-market just before the close equals equity after it, minus exit fees and slippage."""
-        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES, ONE_CONTRACT)
         p.execute_fill(make_futures_signal(SignalAction.LONG, signal_time=T0), make_bar(22000.0, T0))
         p.record_equity_point(T1, 22100.0)
         before_close = p.equity_curve[-1][1]
@@ -526,14 +530,14 @@ class TestFuturesCashAccounting:
 
     def test_entry_only_costs_fees_not_notional(self):
         """One TX contract (~4.4M TWD notional) opens on 1M capital; cash only drops by the fee."""
-        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES, ONE_CONTRACT)
         t_open = p.execute_fill(make_futures_signal(SignalAction.LONG), make_bar(22000.0))
         assert t_open is not None
         assert p.cash == pytest.approx(1_000_000 - t_open.fees)
         assert p.equity == pytest.approx(1_000_000 - t_open.fees)
 
     def test_sl_tp_exit_equity_delta_equals_trade_pnl(self):
-        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES, ONE_CONTRACT)
         p.record_equity_point(T0, 22000.0)
         p.execute_fill(make_futures_signal(SignalAction.SHORT, signal_time=T0), make_bar(22000.0, T0))
         t_tp = p.execute_sl_tp_exit("tw_futures:TX", 21700.0, "tp", make_bar(21700.0, T1))
@@ -544,7 +548,7 @@ class TestFuturesCashAccounting:
         assert p.equity_curve[-1][1] - 1_000_000 == pytest.approx(t_tp.pnl)
 
     def test_limit_fill_round_trip_equity_delta_equals_trade_pnl(self):
-        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES, ONE_CONTRACT)
         p.record_equity_point(T0, 22000.0)
         sig = make_futures_signal(SignalAction.LONG, signal_time=T0)
         t_open = p.execute_limit_fill(
@@ -560,7 +564,7 @@ class TestFuturesCashAccounting:
 
     def test_metrics_follow_trade_pnl(self):
         """Losing TX trade: total_return, Sharpe and drawdown all reflect the 200x PnL."""
-        p = BacktestPortfolio(1_000_000, TX_WITH_FEES)
+        p = BacktestPortfolio(1_000_000, TX_WITH_FEES, ONE_CONTRACT)
         _, t_close = _round_trip(p, SignalAction.LONG, 22000.0, 21500.0)
         equity = pd.Series([e for _, e, _ in p.equity_curve], index=[t for t, _, _ in p.equity_curve])
         m = compute_metrics(equity, p.trades)
