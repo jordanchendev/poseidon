@@ -69,7 +69,7 @@ class TestWalkForwardConfig:
 
     def test_default_min_trades_per_oos(self):
         cfg = WalkForwardConfig()
-        assert cfg.min_trades_per_oos == 30
+        assert cfg.min_trades_per_oos == 5
 
     def test_default_min_wfe(self):
         cfg = WalkForwardConfig()
@@ -370,6 +370,18 @@ class TestStrategyFactoryInjection:
         assert analyzer._fill_model == "pessimistic"
 
 
+class _StubStrategyFactory:
+    """Strategy factory stand-in: analyze() rebuilds a fresh strategy per window through it."""
+
+    @staticmethod
+    def to_config_dict(strategy):
+        return {}
+
+    @staticmethod
+    def from_config(config):
+        return MagicMock()
+
+
 class TestAnalyzeIntegration:
     """Integration tests for WalkForwardAnalyzer.analyze with mocked runner."""
 
@@ -406,7 +418,7 @@ class TestAnalyzeIntegration:
         re = MagicMock()
         cost_model = MagicMock()
 
-        analyzer = WalkForwardAnalyzer(fe, re, cost_model)
+        analyzer = WalkForwardAnalyzer(fe, re, cost_model, strategy_factory=_StubStrategyFactory)
         ohlcv = _make_ohlcv(400)
         cfg = WalkForwardConfig(train_days=252, test_days=63, step_days=63)
         result = analyzer.analyze(MagicMock(), ohlcv, cfg)
@@ -417,10 +429,10 @@ class TestAnalyzeIntegration:
 
     @patch("poseidon.backtest.walk_forward.BacktestRunner")
     def test_analyze_insufficient_trades(self, MockRunner):
-        """analyze() flags insufficient_trades when OOS has < 30 trades."""
+        """analyze() flags too many windows whose OOS trades fall below min_trades_per_oos (5)."""
         # Good WFE but low trade count
         is_result = self._make_mock_backtest_result(ann_return=0.20, trade_count=50)
-        oos_result = self._make_mock_backtest_result(ann_return=0.15, trade_count=10)
+        oos_result = self._make_mock_backtest_result(ann_return=0.15, trade_count=3)
         runner_instance = MagicMock()
         runner_instance.run.side_effect = [is_result, oos_result] * 10
         MockRunner.return_value = runner_instance
@@ -429,17 +441,17 @@ class TestAnalyzeIntegration:
         re = MagicMock()
         cost_model = MagicMock()
 
-        analyzer = WalkForwardAnalyzer(fe, re, cost_model)
+        analyzer = WalkForwardAnalyzer(fe, re, cost_model, strategy_factory=_StubStrategyFactory)
         ohlcv = _make_ohlcv(400)
         cfg = WalkForwardConfig(train_days=252, test_days=63, step_days=63)
         result = analyzer.analyze(MagicMock(), ohlcv, cfg)
 
-        assert any("insufficient_trades" in f for f in result.flags)
+        assert any(f.startswith("too_many_insufficient_windows_") for f in result.flags)
         assert result.passed is False
 
     @patch("poseidon.backtest.walk_forward.BacktestRunner")
     def test_analyze_passed(self, MockRunner):
-        """analyze() returns passed=True when WFE >= 0.50 and trades >= 30."""
+        """analyze() returns passed=True when WFE >= 0.50 and OOS trades >= min_trades_per_oos."""
         is_result = self._make_mock_backtest_result(ann_return=0.20, trade_count=50)
         oos_result = self._make_mock_backtest_result(ann_return=0.15, trade_count=40)
         runner_instance = MagicMock()
@@ -450,7 +462,7 @@ class TestAnalyzeIntegration:
         re = MagicMock()
         cost_model = MagicMock()
 
-        analyzer = WalkForwardAnalyzer(fe, re, cost_model)
+        analyzer = WalkForwardAnalyzer(fe, re, cost_model, strategy_factory=_StubStrategyFactory)
         ohlcv = _make_ohlcv(400)
         cfg = WalkForwardConfig(train_days=252, test_days=63, step_days=63)
         result = analyzer.analyze(MagicMock(), ohlcv, cfg)
@@ -472,7 +484,7 @@ class TestAnalyzeIntegration:
         re = MagicMock()
         cost_model = MagicMock()
 
-        analyzer = WalkForwardAnalyzer(fe, re, cost_model)
+        analyzer = WalkForwardAnalyzer(fe, re, cost_model, strategy_factory=_StubStrategyFactory)
         ohlcv = _make_ohlcv(400)
         cfg = WalkForwardConfig(train_days=252, test_days=63, step_days=63)
         result = analyzer.analyze(MagicMock(), ohlcv, cfg)
@@ -497,7 +509,7 @@ class TestAnalyzeIntegration:
         re = MagicMock()
         cost_model = MagicMock()
 
-        analyzer = WalkForwardAnalyzer(fe, re, cost_model)
+        analyzer = WalkForwardAnalyzer(fe, re, cost_model, strategy_factory=_StubStrategyFactory)
         ohlcv = _make_ohlcv(600)
         result = analyzer.analyze(MagicMock(), ohlcv)
 

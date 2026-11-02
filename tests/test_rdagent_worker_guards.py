@@ -20,6 +20,11 @@ pytestmark = pytest.mark.skipif(
     reason="requires the qlib-research RD-Agent image",
 )
 
+_LIVE_THALASSA = pytest.mark.skipif(
+    os.environ.get("STORMTROOPER") != "1",
+    reason="stormtrooper-only smoke — reads live TX/0050 bars from Thalassa; set STORMTROOPER=1 inside qlib-research container",
+)
+
 
 class _Stop(Exception):
     pass
@@ -281,6 +286,7 @@ def test_all_actual_templates_have_one_single_asset_strategy_and_exchange(tmp_pa
                 assert params["min_data_in_leaf"] == 20 and params["num_leaves"] == 8, template
 
 
+@_LIVE_THALASSA
 def test_rewritten_baseline_alpha158_labels_are_finite_and_vary():
     """The copied upstream baseline can prepare meaningful TX labels without an LLM."""
     import numpy as np
@@ -337,6 +343,7 @@ def test_rewritten_baseline_alpha158_labels_are_finite_and_vary():
         assert values.std() > 0
 
 
+@_LIVE_THALASSA
 def test_rewritten_baseline_runs_signal_driven_backtest(tmp_path, monkeypatch):
     """No-paid upstream baseline trains, predicts, and trades the TX provider."""
     import qlib
@@ -386,6 +393,7 @@ def test_rewritten_baseline_runs_signal_driven_backtest(tmp_path, monkeypatch):
     assert all(math.isfinite(float(metrics[key])) for key in ("sh_full", "sortino", "mdd"))
 
 
+@_LIVE_THALASSA
 def test_factor_workspace_uses_run_scoped_tx_0050_hdf_data(tmp_path):
     """Actual upstream factor data introspection finds no China-data generator path."""
     import pandas as pd

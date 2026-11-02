@@ -15,7 +15,8 @@ config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep loggers created before an in-process migration (API, workers, tests) enabled.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 # A non-default ini section (``alembic -n pipeline``) may name its own metadata

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import importlib.util
 import types
 
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("rdagent") is None,
+    reason="requires the qlib-research RD-Agent image",
+)
 
 
 class _Query:

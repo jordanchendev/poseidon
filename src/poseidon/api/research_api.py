@@ -53,7 +53,7 @@ async def create_training_run(
     request: TrainRequest,
     db: Session = Depends(get_db),
 ):
-    """Create a training run and dispatch to qlib_queue (RESEARCH-API-01).
+    """Create a training run and dispatch to the poseidon_qlib queue (RESEARCH-API-01).
 
     Validates handler_class and model_class against the static allowlist
     Unknown classes are rejected with 422 before any DB write.
@@ -86,7 +86,7 @@ async def create_training_run(
     db.commit()
     db.refresh(run)
 
-    # Dispatch to qlib_queue via send_task (no direct import of qlib_tasks)
+    # Dispatch to the poseidon_qlib queue via send_task (no direct import of qlib_tasks)
     celery_app.send_task(
         "poseidon.workers.qlib_tasks.qlib_train",
         args=[str(run.run_id)],

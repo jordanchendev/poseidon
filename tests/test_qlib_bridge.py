@@ -155,7 +155,7 @@ class TestDatasetBuilder:
 
     def test_build_with_no_data_returns_empty_qlib_frame(self):
         session = MagicMock()
-        with patch("poseidon.qlib.dataset_builder.read_ohlcv") as mock_read:
+        with patch("poseidon.qlib.dataset_builder.RemoteDataRepository.read_ohlcv") as mock_read:
             mock_read.return_value = pd.DataFrame()  # empty
             b = DatasetBuilder(session, market="crypto_perp", interval="4h")
             result = b.build(symbols=["BTCUSDT"], start=None, end=None)
@@ -166,7 +166,7 @@ class TestDatasetBuilder:
 
     def test_build_with_single_symbol_produces_multi_index(self):
         session = MagicMock()
-        with patch("poseidon.qlib.dataset_builder.read_ohlcv") as mock_read:
+        with patch("poseidon.qlib.dataset_builder.RemoteDataRepository.read_ohlcv") as mock_read:
             mock_read.return_value = _ohlcv_frame(rows=4)
             b = DatasetBuilder(session, market="crypto_perp", interval="1d")
             result = b.build(symbols=["BTCUSDT"], start=None, end=None)
@@ -185,7 +185,7 @@ class TestDatasetBuilder:
 
     def test_build_with_multiple_symbols_concatenates(self):
         session = MagicMock()
-        with patch("poseidon.qlib.dataset_builder.read_ohlcv") as mock_read:
+        with patch("poseidon.qlib.dataset_builder.RemoteDataRepository.read_ohlcv") as mock_read:
             # Return same shape for each symbol
             mock_read.side_effect = lambda *args, **kwargs: _ohlcv_frame(rows=3)
             b = DatasetBuilder(session, market="crypto_perp", interval="1d")
@@ -198,7 +198,7 @@ class TestDatasetBuilder:
 
     def test_build_skips_empty_symbol_data(self):
         session = MagicMock()
-        with patch("poseidon.qlib.dataset_builder.read_ohlcv") as mock_read:
+        with patch("poseidon.qlib.dataset_builder.RemoteDataRepository.read_ohlcv") as mock_read:
             # First symbol has data, second is empty
             mock_read.side_effect = [
                 _ohlcv_frame(rows=2),
@@ -221,7 +221,7 @@ class TestDatasetBuilder:
                 "poseidon.qlib.dataset_builder.get_snapshot_at",
                 return_value=fake_snapshot,
             ),
-            patch("poseidon.qlib.dataset_builder.read_ohlcv") as mock_read,
+            patch("poseidon.qlib.dataset_builder.RemoteDataRepository.read_ohlcv") as mock_read,
         ):
             mock_read.return_value = _ohlcv_frame(rows=2)
             b = DatasetBuilder(session, market="crypto_perp", interval="1d")
@@ -247,7 +247,7 @@ class _StubBuilder:
     def __init__(self, df: pd.DataFrame):
         self._df = df
 
-    def build(self, symbols=None, start=None, end=None, snapshot_date=None):
+    def build(self, symbols=None, start=None, end=None, snapshot_date=None, feature_specs=None):
         return self._df
 
 
@@ -425,9 +425,11 @@ class TestPoseidonDataHandler:
         # Verify MultiIndex columns were applied to the loader's input
         loader_df = captured["loader_config"]
         assert isinstance(loader_df.columns, pd.MultiIndex)
+        # Features plus the next-period-return label column added in b41c9b7.
         top_levels = {col[0] for col in loader_df.columns}
-        assert top_levels == {"feature"}
-        bottom_levels = sorted(col[1] for col in loader_df.columns)
+        assert top_levels == {"feature", "label"}
+        assert [col for col in loader_df.columns if col[0] == "label"] == [("label", "label")]
+        bottom_levels = sorted(col[1] for col in loader_df.columns if col[0] == "feature")
         assert bottom_levels == [
             "$close",
             "$high",

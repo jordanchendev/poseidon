@@ -81,8 +81,7 @@ client = TestClient(app, raise_server_exceptions=False)
 # --------------- Secured endpoints to test ---------------
 
 SECURED_ENDPOINTS = [
-    ("GET", "/api/data/backfill/status"),
-    ("POST", "/api/data/fetch"),
+    ("GET", "/api/data/ohlcv?symbol=TEST&market=crypto&interval=1d"),
     ("POST", "/api/sentiment"),
     ("GET", "/api/sentiment?symbol=TEST"),
     ("GET", "/api/risk-rules"),

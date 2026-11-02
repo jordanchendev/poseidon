@@ -210,12 +210,13 @@ def test_list_rule_types():
     assert resp.status_code == 200
     types = resp.json()
     assert isinstance(types, list)
-    assert len(types) == 5
+    assert len(types) == 6
     assert "position_limit" in types
     assert "loss_limit" in types
     assert "frequency" in types
     assert "confidence_threshold" in types
     assert "leverage_cap" in types
+    assert "var_limit" in types
 
 
 def test_list_rules_ordered_by_priority():

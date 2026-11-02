@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 
 def test_daily_bin_dump_is_readable_by_qlib(tmp_path, monkeypatch):
     """The writer contract is qlib's reader, not an assumed wheel CLI."""
+    pytest.importorskip("qlib")
     from poseidon.rdagent import dataset_builder
 
     dates = pd.date_range("2024-01-02", periods=3, freq="B", tz="UTC")

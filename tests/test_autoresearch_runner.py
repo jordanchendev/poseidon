@@ -45,10 +45,14 @@ def _make_ohlcv() -> pd.DataFrame:
     )
 
 
-@patch("poseidon.autoresearch.runner.read_ohlcv")
+class _StubOrchestrator:
+    """Real class stand-in: the runner wraps the orchestrator class with autoresearch_guard()."""
+
+
+@patch("poseidon.autoresearch.runner.RemoteDataRepository.read_ohlcv")
 @patch("poseidon.autoresearch.runner.ParameterSearchPipeline")
 @patch("poseidon.autoresearch.runner.ModelManager")
-@patch("poseidon.autoresearch.runner.FeatureEngine")
+@patch("poseidon.autoresearch.runner.FeatureOrchestrator", new_callable=lambda: _StubOrchestrator)
 @patch("poseidon.autoresearch.runner.RiskEngine")
 class TestAutoResearchRunner:
     """Integration tests for AutoResearchRunner."""

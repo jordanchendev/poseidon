@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0.0",
+  "phase": "85",
+  "symbol": "ETHUSDT",
+  "interval": "1m",
+  "study_name": "phase85_ethusdt_seed42",
+  "storage_url_redacted": "postgresql://poseidon:***@host.docker.internal:5433/poseidon?options=-csearch_path%3Doptuna",
+  "n_trials_target": 100,
+  "n_trials_completed": 100,
+  "n_trials_failed": 0,
+  "best_params": {
+    "lookback_bars": 10079,
+    "cooldown_bars": 478,
+    "wick_ratio_min": 0.2683259446773983,
+    "breakout_distance_min": 0.16143760215227146,
+    "oi_buildup_min": 0.6170770342130214,
+    "fib_level": 0.6057134073574875,
+    "atr_multiplier_low": 2.6495987818097047,
+    "atr_multiplier_mid": 1.568208657641005,
+    "atr_multiplier_high": 3.384109213554907
+  },
+  "factory_params_resolved": {
+    "lookback_bars": 10079,
+    "wick_ratio_min": 0.2683259446773983,
+    "breakout_distance_min": 0.16143760215227146,
+    "oi_buildup_min": 0.6170770342130214,
+    "confirmation_threshold": 0.5,
+    "w_oi_drop": 0.4,
+    "w_volume": 0.3,
+    "w_funding": 0.3,
+    "fib_level": 0.6057134073574875,
+    "atr_mult_regime_0": 2.6495987818097047,
+    "atr_mult_regime_1": 1.568208657641005,
+    "atr_mult_regime_2": 3.384109213554907,
+    "atr_mult_regime_3": 2.0,
+    "cooldown_bars": 478,
+    "trailing_activation_r": 1.0,
+    "trail_atr_multiplier": 2.0
+  },
+  "best_value_is_sharpe": 2.41565794457756,
+  "bars_per_year": 525600,
+  "seed": 42,
+  "data_window": {
+    "start": "2025-07-31T00:00:00+00:00",
+    "end": "2026-04-26T00:00:00+00:00"
+  },
+  "budget_summary": {
+    "total_seconds": 178.55047416384332,
+    "optuna_seconds": 0.3216770850121975,
+    "wfe_seconds": 123.77499431790784,
+    "peak_rss_mb": 263.89453125
+  },
+  "frozen_gate_anchor": "5a1ecc9",
+  "verdict_inputs": {
+    "n_trials_completed": 100,
+    "n_trials_failed": 0,
+    "best_value_is_sharpe": 2.41565794457756
+  },
+  "generated_at": "2026-04-28T07:21:36Z"
+}

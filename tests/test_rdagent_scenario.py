@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from poseidon.rdagent.scenario import ALLOWED_THESIS_CLASSES
+
+_LIVE_THALASSA = pytest.mark.skipif(
+    os.environ.get("STORMTROOPER") != "1",
+    reason="stormtrooper-only smoke — reads live TX/0050 bars from Thalassa; set STORMTROOPER=1 inside qlib-research container",
+)
 
 
 def test_allowed_thesis_classes_are_the_exact_six():
@@ -20,11 +27,14 @@ def test_allowed_thesis_classes_are_the_exact_six():
 def test_scenario_class_pickle_roundtrip():
     import pickle
 
+    pytest.importorskip("rdagent")
+
     from poseidon.rdagent.scenario import PoseidonQuantScenario
 
     assert pickle.loads(pickle.dumps(PoseidonQuantScenario)) is PoseidonQuantScenario
 
 
+@_LIVE_THALASSA
 def test_upstream_quant_scenario_keeps_factor_and_model_coder_contracts(tmp_path):
     """No-paid construction uses run-scoped HDF data and upstream coder prompts."""
     qlib = pytest.importorskip("qlib")

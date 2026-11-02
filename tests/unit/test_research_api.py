@@ -153,7 +153,7 @@ def test_train_dispatches_to_qlib_queue(client, celery_calls):
     call = celery_calls[0]
     assert call["task"] == "poseidon.workers.qlib_tasks.qlib_train"
     assert call["args"] == [run_id]
-    assert call["queue"] == "qlib_queue"
+    assert call["queue"] == "poseidon_qlib"
 
 
 # --- Tests: GET /runs ------------------------------------------------------

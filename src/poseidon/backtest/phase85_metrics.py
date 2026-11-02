@@ -17,8 +17,8 @@ Public surface:
   when every window has IS Sharpe ≤ 0 (verdict undefined).
 * ``oos_aggregate_sharpe_trade_weighted(per_window)`` — trade-count
   weighted mean OOS Sharpe; safe when total trades == 0.
-* ``to_jsonable(obj)`` — numpy/pandas serialization helper for
-  ``json.dumps(payload, default=to_jsonable)``.
+* ``finite_or_none(payload)`` and ``to_jsonable(obj)`` — NaN/Inf clearing and the
+  numpy/pandas serializer for ``json.dumps(finite_or_none(payload), default=to_jsonable)``.
 * ``BARS_PER_YEAR_1M`` — constant (525_600 1m bars per year).
 """
 
@@ -126,19 +126,12 @@ def oos_aggregate_sharpe_trade_weighted(per_window) -> float:
 def to_jsonable(obj):
     """JSON serializer for numpy / pandas scalars + timestamps + arrays.
 
-    Pass as ``json.dumps(payload, default=to_jsonable)``.
-
-    NaN floats are converted to ``None`` because JSON has no NaN literal —
-    downstream verdict logic must never see the string ``"NaN"`` in
-    artifact files. Inf floats are likewise converted to ``None``.
+    Pass as ``json.dumps(finite_or_none(payload), default=to_jsonable)``.
     """
     if isinstance(obj, np.integer):
         return int(obj)
     if isinstance(obj, np.floating):
-        value = float(obj)
-        if math.isnan(value) or math.isinf(value):
-            return None
-        return value
+        return float(obj)
     if isinstance(obj, np.ndarray):
         return obj.tolist()
     if isinstance(obj, pd.Timestamp):
@@ -152,9 +145,27 @@ def to_jsonable(obj):
     raise TypeError(f"to_jsonable: unsupported {type(obj)!r}")
 
 
+def finite_or_none(value):
+    """Replace every NaN/Inf float, nested in dicts, lists, or tuples, with ``None``.
+
+    JSON has no NaN literal and verdict logic must never read ``"NaN"`` from an
+    artifact. ``json.dumps`` encodes ``float`` subclasses such as ``np.float64``
+    itself and never hands them to ``default=to_jsonable``, so non-finite values
+    are cleared before encoding.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: finite_or_none(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [finite_or_none(item) for item in value]
+    return value
+
+
 __all__ = [
     "BARS_PER_YEAR_1M",
     "compute_max_consecutive_losses",
+    "finite_or_none",
     "oos_aggregate_sharpe_trade_weighted",
     "to_jsonable",
     "wfe_degradation_excluding_is_negative",

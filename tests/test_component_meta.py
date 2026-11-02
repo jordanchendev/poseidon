@@ -237,12 +237,14 @@ class TestConcreteStrategyAnnotations:
         assert CryptoTrendStrategy.supports_live is True
         assert CryptoTrendStrategy.stateful is True
 
-    def test_revenue_breakout_supports_live(self):
+    def test_revenue_breakout_is_backtest_only(self):
+        """The 67-01 rewrite (377f735) made it a backtest-only benchmark."""
         from poseidon.strategies.portfolio.revenue_breakout import (
             RevenueBreakoutStrategy,
         )
 
-        assert RevenueBreakoutStrategy.supports_live is True
+        assert RevenueBreakoutStrategy.supports_live is False
+        assert RevenueBreakoutStrategy.supports_backtest is True
         assert RevenueBreakoutStrategy.stateful is False
 
 

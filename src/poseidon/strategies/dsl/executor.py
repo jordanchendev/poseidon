@@ -78,4 +78,5 @@ def evaluate_condition(
     cond_type = condition.get("type")
     if cond_type not in CONDITION_REGISTRY:
         raise ValueError(f"Unknown condition type: '{cond_type}'. Available: {list(CONDITION_REGISTRY.keys())}")
-    return CONDITION_REGISTRY[cond_type](condition, features, row_idx)
+    # Evaluators compare pandas/numpy scalars; coerce so callers always get a Python bool, not numpy.bool_.
+    return bool(CONDITION_REGISTRY[cond_type](condition, features, row_idx))

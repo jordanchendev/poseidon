@@ -91,7 +91,7 @@ def test_validation_error_format():
     """POST with invalid body returns consistent validation error format."""
     # Missing required fields (name, strategy_type, symbol, market)
     resp = client.post(
-        "/strategies",
+        "/api/strategies",
         json={},
         headers=API_KEY_HEADER,
     )
@@ -108,7 +108,7 @@ def test_not_found_error_format():
     """GET a non-existent resource returns consistent 404 format."""
     random_id = str(uuid.uuid4())
     resp = client.get(
-        f"/strategies/{random_id}",
+        f"/api/strategies/{random_id}",
         headers=API_KEY_HEADER,
     )
     assert resp.status_code == 404
@@ -120,7 +120,7 @@ def test_not_found_error_format():
 
 def test_missing_api_key_error_format():
     """Request without API key returns consistent 401 format."""
-    resp = client.get("/strategies")
+    resp = client.get("/api/strategies")
     assert resp.status_code == 401
     body = resp.json()
     assert body["error_code"] == "HTTP_401"
@@ -131,7 +131,7 @@ def test_missing_api_key_error_format():
 def test_invalid_api_key_error_format():
     """Request with invalid API key returns consistent 401 format."""
     resp = client.get(
-        "/strategies",
+        "/api/strategies",
         headers={"X-API-Key": "invalid-key"},
     )
     assert resp.status_code == 401
@@ -144,19 +144,19 @@ def test_invalid_api_key_error_format():
 def test_error_response_content_type():
     """All error responses return application/json content type."""
     # 401 - missing key
-    resp = client.get("/strategies")
+    resp = client.get("/api/strategies")
     assert "application/json" in resp.headers.get("content-type", "")
 
     # 404 - not found
     random_id = str(uuid.uuid4())
     resp = client.get(
-        f"/strategies/{random_id}",
+        f"/api/strategies/{random_id}",
         headers=API_KEY_HEADER,
     )
     assert "application/json" in resp.headers.get("content-type", "")
 
     # 422 - validation error
-    resp = client.post("/strategies", json={}, headers=API_KEY_HEADER)
+    resp = client.post("/api/strategies", json={}, headers=API_KEY_HEADER)
     assert "application/json" in resp.headers.get("content-type", "")
 
 

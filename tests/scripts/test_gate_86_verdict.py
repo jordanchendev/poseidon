@@ -24,13 +24,14 @@ import pytest
 # parents[0]=tests/scripts, parents[1]=tests, parents[2]=poseidon.
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "gate_86_verdict.py"
 
-# Aquarium root for locating real upstream artifacts (parents[3] = aquarium/).
-AQUARIUM_ROOT = Path(__file__).resolve().parents[3]
-REAL_BTC_WFE = AQUARIUM_ROOT / ".planning/phases/85-optuna-wfe-validation/artifacts/btcusdt_wfe.json"
-REAL_ETH_WFE = AQUARIUM_ROOT / ".planning/phases/85-optuna-wfe-validation/artifacts/ethusdt_wfe.json"
-REAL_BTC_OPTUNA = AQUARIUM_ROOT / ".planning/phases/85-optuna-wfe-validation/artifacts/btcusdt_optuna.json"
-REAL_ETH_OPTUNA = AQUARIUM_ROOT / ".planning/phases/85-optuna-wfe-validation/artifacts/ethusdt_optuna.json"
-REAL_GATE_YAML = AQUARIUM_ROOT / ".planning/phases/84-strategy-1m-adaptation-frozen-gate/GATE.yaml"
+# Copies of the phase 84/85 planning artifacts (aquarium .planning/milestones/v17.0-phases), vendored so the
+# CLI tests run in an isolated checkout.
+ARTIFACTS = Path(__file__).resolve().parent / "fixtures" / "gate_86"
+REAL_BTC_WFE = ARTIFACTS / "btcusdt_wfe.json"
+REAL_ETH_WFE = ARTIFACTS / "ethusdt_wfe.json"
+REAL_BTC_OPTUNA = ARTIFACTS / "btcusdt_optuna.json"
+REAL_ETH_OPTUNA = ARTIFACTS / "ethusdt_optuna.json"
+REAL_GATE_YAML = ARTIFACTS / "GATE.yaml"
 
 
 def _import_script():

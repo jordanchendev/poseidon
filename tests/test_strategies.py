@@ -69,17 +69,22 @@ def sample_features():
 
 
 class TestModelStrategy:
-    def test_model_strategy_evaluate_filters_hold(self, sample_features):
+    def test_model_strategy_acts_on_the_last_bar_only(self, sample_features):
+        """evaluate() turns only the current (last) prediction into a signal; a hold emits nothing."""
         preds = pd.DataFrame(
             {"prediction": ["long", "hold", "short"], "confidence": [0.9, 0.5, 0.8]},
             index=sample_features.index,
         )
-        model = DummyModel(predictions_df=preds)
-        ms = ModelStrategy(name="test", model=model, symbol="2330", market="tw_stock")
+        ms = ModelStrategy(name="test", model=DummyModel(predictions_df=preds), symbol="2330", market="tw_stock")
         signals = ms.evaluate(sample_features)
-        assert len(signals) == 2
-        assert signals[0].action == SignalAction.LONG
-        assert signals[1].action == SignalAction.SHORT
+        assert [signal.action for signal in signals] == [SignalAction.SHORT]
+
+        holding = pd.DataFrame(
+            {"prediction": ["long", "short", "hold"], "confidence": [0.9, 0.8, 0.5]},
+            index=sample_features.index,
+        )
+        ms = ModelStrategy(name="test", model=DummyModel(predictions_df=holding), symbol="2330", market="tw_stock")
+        assert ms.evaluate(sample_features) == []
 
     def test_model_strategy_signal_fields(self, sample_features):
         preds = pd.DataFrame(

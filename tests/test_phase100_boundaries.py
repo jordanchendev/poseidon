@@ -42,7 +42,14 @@ ALLOWED_DSH_ARTIFACTS = {
     "tests/test_dsh_2330_poc.py",
     "tests/test_dsh_decision_poc.py",
     "tests/test_dsh_research.py",
+    # The strategy pipeline's JEV evaluator, merged to main in B4 (2026-11-01).
+    "scripts/research/jev_eval_control_set.py",
+    "tests/pipeline/jev_support.py",
 }
+# Sanctioned production uses of the JEV/DeepSeek names: the strategy pipeline's JEV evaluator (B4 merge) and the
+# shared evaluation-key reader. DSH itself still has no production path; pyproject.toml keeps its dependency check.
+ALLOWED_PRODUCTION_JEV_FILES = frozenset({"src/poseidon/core/eval_key.py", "pyproject.toml"})
+ALLOWED_PRODUCTION_JEV_PREFIX = "src/poseidon/pipeline/"
 ALLOWED_ROOT_EVIDENCE = {
     "../.planning/workstreams/investment-decision-loop/phases/100-release-gate-kairos-and-dsh-gate/"
     "evidence/phase100-dsh-acceptance.py",
@@ -284,7 +291,8 @@ def scan_boundary(root: Path) -> list[str]:
     for path in dict.fromkeys(production_files):
         relative = path.relative_to(root).as_posix()
         text = path.read_text(encoding="utf-8", errors="replace")
-        for match in PRODUCTION_DSH_PATTERN.finditer(text):
+        jev_allowed = relative in ALLOWED_PRODUCTION_JEV_FILES or relative.startswith(ALLOWED_PRODUCTION_JEV_PREFIX)
+        for match in () if jev_allowed else PRODUCTION_DSH_PATTERN.finditer(text):
             issues.append(f"production DSH semantic {match.group(0)}: {relative}")
         if relative == "docker-compose.yml" and "dsh" in text.lower():
             issues.append("production DSH Compose service/profile: docker-compose.yml")

@@ -386,8 +386,8 @@ class TestVirtualPortfolio:
 class TestRuleRegistry:
     """Tests for the RULE_REGISTRY mapping."""
 
-    def test_registry_has_five_entries(self) -> None:
-        assert len(RULE_REGISTRY) == 5
+    def test_registry_has_six_entries(self) -> None:
+        assert len(RULE_REGISTRY) == 6
 
     def test_registry_keys(self) -> None:
         expected = {
@@ -396,6 +396,7 @@ class TestRuleRegistry:
             "frequency",
             "confidence_threshold",
             "leverage_cap",
+            "var_limit",
         }
         assert set(RULE_REGISTRY.keys()) == expected
 
