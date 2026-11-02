@@ -109,3 +109,30 @@ def test_pipeline_control_set_stops_before_any_request_without_the_eval_key(tmp_
     with pytest.raises(SystemExit, match=EVAL_LABEL_VAR):  # the pipeline pin is for the pipeline key, not this one
         module.evaluate(args)
     assert not args.out.exists()
+
+
+def test_a_label_mismatch_names_the_pin_variable_of_the_path_that_read_it():
+    from poseidon.pipeline.spec_llm import PIN_ENV, reset_identity_cache
+
+    config = {**DEFAULT_SPEC_FAITHFULNESS}
+    reset_identity_cache()
+    fake = FakeOpenRouter(label="sk-or-v1-other")
+    evaluation = JevSession(
+        config,
+        pin=LABEL,
+        environ={EVAL_KEY_VAR: KEY},
+        key_var=EVAL_KEY_VAR,
+        pin_var=EVAL_LABEL_VAR,
+        client_factory=fake.factory(),
+    )
+    with pytest.raises(JevUnavailable) as caught:
+        evaluation.open()
+    assert f"does not match {EVAL_LABEL_VAR}" in str(caught.value) and PIN_ENV not in str(caught.value)
+    with pytest.raises(JevUnavailable, match=f"^{EVAL_LABEL_VAR} is not pinned"):
+        JevSession(config, pin="", environ={EVAL_KEY_VAR: KEY}, key_var=EVAL_KEY_VAR, pin_var=EVAL_LABEL_VAR).open()
+
+    pipeline = JevSession(
+        config, pin=LABEL, environ={"STRATEGY_PIPELINE_OPENROUTER_KEY": KEY}, client_factory=fake.factory()
+    )
+    with pytest.raises(JevUnavailable, match=f"does not match {PIN_ENV}"):
+        pipeline.open()

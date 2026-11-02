@@ -38,7 +38,14 @@ from typing import Any
 import httpx
 
 from poseidon.decision_loop.manifest import canonical_json
-from poseidon.pipeline.spec_llm import KEY_ENV, MAX_TEXT, OpenRouterClient, OpenRouterError, verify_key_identity
+from poseidon.pipeline.spec_llm import (
+    KEY_ENV,
+    MAX_TEXT,
+    PIN_ENV,
+    OpenRouterClient,
+    OpenRouterError,
+    verify_key_identity,
+)
 from poseidon.pipeline.v3 import components as _components  # noqa: F401  (registers the components)
 from poseidon.pipeline.v3.registry import REGISTRY
 
@@ -279,11 +286,13 @@ class JevSession:
         pin: str | None,
         environ: Mapping[str, str] | None = None,
         key_var: str = KEY_ENV,
+        pin_var: str = PIN_ENV,
         client_factory: ClientFactory | None = None,
         clock: Callable[[], float] = time.monotonic,
     ):
         self.config = config
         self._key_var = key_var
+        self._pin_var = pin_var
         self._pin = pin
         self._environ = os.environ if environ is None else environ
         self._factory = client_factory or _default_client_factory
@@ -301,11 +310,13 @@ class JevSession:
         if not key:
             raise JevUnavailable(f"JEV key {self._key_var} is not set in this process; refusing to call JEV")
         if not self._pin:
-            raise JevUnavailable("POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL is not pinned; refusing to call JEV")
+            raise JevUnavailable(f"{self._pin_var} is not pinned; refusing to call JEV")
         self._key = key
         self._client = self._factory(key, float(self.config["request_timeout_seconds"]))
         try:
-            self.key_identity = verify_key_identity(self._client, key=key, pin=self._pin, clock=self._clock)
+            self.key_identity = verify_key_identity(
+                self._client, key=key, pin=self._pin, pin_var=self._pin_var, clock=self._clock
+            )
         except OpenRouterError as error:
             self.key_identity = {"checked": "failed"}
             self.close()

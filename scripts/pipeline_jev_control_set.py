@@ -12,12 +12,12 @@ fills it, ``--labels proposed_label`` evaluates against Claude's draft labels, a
 
 Key: only ``EVAL_OPENROUTER_KEY`` (poseidon.core.eval_key; the process environment via docker --env-file
 ~/secrets/eval-openrouter.env, or ``--env-file``), never printed; pin: ``EVAL_OPENROUTER_KEY_LABEL`` from the
-environment. The pipeline's own key and pin are not used here.
+environment (docker --env-file ~/secrets/eval-openrouter-label.env). The pipeline's own key and pin are not used here.
 
-Usage (stormtrooper throwaway container):
+Usage (stormtrooper throwaway container; both env files are docker run options, the key file 600, one line each):
   python scripts/pipeline_jev_control_set.py render CS.jsonl SPECS.json
-  python scripts/pipeline_jev_control_set.py eval CS.jsonl SPECS.json -e EVAL_OPENROUTER_KEY_LABEL \
-      --labels proposed_label --out /out/run
+  docker run --rm --env-file ~/secrets/eval-openrouter.env --env-file ~/secrets/eval-openrouter-label.env ... \
+      python scripts/pipeline_jev_control_set.py eval CS.jsonl SPECS.json --labels proposed_label --out /out/run
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from poseidon.core.eval_key import EVAL_KEY_VAR, EvalKeyError, read_eval_key, read_eval_label
+from poseidon.core.eval_key import EVAL_KEY_VAR, EVAL_LABEL_VAR, EvalKeyError, read_eval_key, read_eval_label
 from poseidon.pipeline import jev
 from poseidon.pipeline.clause_precheck import precheck
 from poseidon.pipeline.plan import DEFAULT_SPEC_FAITHFULNESS
@@ -105,7 +105,7 @@ def evaluate(args) -> None:
     except EvalKeyError as error:
         raise SystemExit(str(error)) from None
     config = {**DEFAULT_SPEC_FAITHFULNESS, "max_calls_per_attempt": len(rows), "max_cost_usd_per_attempt": args.budget}
-    session = jev.JevSession(config, pin=pin, environ={EVAL_KEY_VAR: key}, key_var=EVAL_KEY_VAR)
+    session = jev.JevSession(config, pin=pin, environ={EVAL_KEY_VAR: key}, key_var=EVAL_KEY_VAR, pin_var=EVAL_LABEL_VAR)
     out = args.out
     out.mkdir(parents=True, exist_ok=True)
     results = []

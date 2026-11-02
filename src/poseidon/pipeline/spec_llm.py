@@ -55,6 +55,7 @@ from poseidon.strategies.dsl.v2.schema import (
 from poseidon.strategies.dsl.v2.validate import merge_risk, walk_model
 
 KEY_ENV = "STRATEGY_PIPELINE_OPENROUTER_KEY"
+PIN_ENV = "POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL"  # the pinned label of KEY_ENV
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 IDENTITY_CACHE_SECONDS = 600.0
 PROMPT_VERSION = 6  # 5: DSL v2.1 (smoothed indicator, rolling channel, b_mult); 6: grids bracket
@@ -288,9 +289,17 @@ def reset_identity_cache() -> None:
 
 
 def verify_key_identity(
-    client: OpenRouterClient, *, key: str, pin: str, clock: Callable[[], float] = time.monotonic
+    client: OpenRouterClient,
+    *,
+    key: str,
+    pin: str,
+    pin_var: str = PIN_ENV,
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict:
-    """Return ``{"checked": "live"|"cached", ...}``; raise ``OpenRouterError`` on mismatch or failure."""
+    """Return ``{"checked": "live"|"cached", ...}``; raise ``OpenRouterError`` on mismatch or failure.
+
+    ``pin_var`` names the variable ``pin`` was read from (the pipeline's, or the eval key's on the
+    control-set path), for the mismatch message only."""
 
     fingerprint = _fingerprint(pin, key)
     now = clock()
@@ -301,7 +310,7 @@ def verify_key_identity(
     data = client.key_info()
     label = data.get("label")
     if not isinstance(label, str) or label != pin:
-        raise OpenRouterError("key label does not match POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL")
+        raise OpenRouterError(f"key label does not match {pin_var}")
     with _identity_lock:
         _identity_cache[fingerprint] = now
     result = {"checked": "live"}
