@@ -13,8 +13,9 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+import narrative_export  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
+import narrative_proposals  # noqa: E402
 
 from poseidon.decision_loop.manifest import content_sha256  # noqa: E402
 
@@ -283,6 +284,8 @@ def test_record_dates_follow_d6(db):
         ({"quote": "exceeds 300GB"}, "verbatim"),
         ({"claim": "L4 以上自駕車需要 300GB 以上的記憶體"}, "number"),
         ({"claim": "L4 以上自駕車需要 200GB 以上的記憶體，因為感測器資料量增加 3 倍"}, "atomic"),
+        ({"claim": "感測器資料帶動 L4 以上自駕車需要 200GB 以上的記憶體"}, "links a cause to an effect"),
+        ({"claim_type": "state", "resolves_on": "2027-06-30"}, "of a forecast only"),
         ({"subject_symbols": ["NYSE:JBL"]}, "not an approved member"),
         ({"theme_ids": ["cleanroom-capacity"]}, "not an active theme"),
     ],
@@ -391,7 +394,7 @@ def test_export_clips_quotes_to_120_chars(db):
         theme_ids=["physical-ai-demand"],
         first_seen_at=SEEN,
     )
-    quote = json.loads(nl.export(db, "2026-11-01T00:00:00Z"))["records"][0]["quote"]
+    quote = json.loads(narrative_export.export(db, "2026-11-01T00:00:00Z"))["records"][0]["quote"]
     assert len(quote) == 120 and quote.endswith("…")
 
 
@@ -407,7 +410,7 @@ def test_seed_file_loads_into_a_trial_ledger(tmp_path):
             assert m["role"] in nl.MEMBER_ROLES and m["why_unconfirmed"]
     for e in seed["edges"]:
         nl.add_edge(db, e["from"], e["to"], e["relation"], "cli:seed-test")
-    doc = json.loads(nl.export(db, "2100-01-01T00:00:00Z"))
+    doc = json.loads(narrative_export.export(db, "2100-01-01T00:00:00Z"))
     assert len(doc["themes"]) == 10
     exported = {(t["theme_id"], m["symbol"]) for t in doc["themes"] for m in t["members"]}
     candidates = {(t["theme_id"], m["symbol"]) for t in seed["themes"] for m in t["members"]["candidate"]}
@@ -595,5 +598,47 @@ def test_link_add_tags_an_untagged_claim_with_an_approval(tmp_path, db):
     assert db.execute("SELECT count(*) FROM claim_link_approvals").fetchone()[0] == 1
     p = cli(path, "link-add", "--revision", REV, "--claim", "0", "--theme", "cleanroom-capacity", *at)
     assert p.returncode == 0 and "claims[0] cleanroom-capacity ['NASDAQ:MU']" in p.stdout, p.stderr
-    links = json.loads(nl.export(db, "2026-10-31T00:00:00Z"))["claim_theme_links"]
+    links = json.loads(narrative_export.export(db, "2026-10-31T00:00:00Z"))["claim_theme_links"]
     assert [(x["claim_index"], x["source"]) for x in links] == [(0, "owner"), (1, "owner")]
+
+
+# ---------------------------------------------------------------- re-validation of filed records (decision 2026-10-31)
+def test_revalidate_flags_records_filed_before_a_rule_and_writes_nothing(db, tmp_path, capsys):
+    import revalidate_records
+
+    ok = record(db)
+    # a record filed before the causal rule applied to it, written as the ledger held it then
+    old = dict(nl._one(db, "SELECT * FROM narrative_records WHERE narrative_id = ?", ok))
+    old.pop("content_sha256")
+    old.update(narrative_id="nr-legacy0001", claim="感測器資料帶動 L4 以上自駕車需要 200GB 以上的記憶體")
+    with db:
+        nl._insert(db, "narrative_records", old)
+    db.commit()
+    # an intake record held for a pending proposal, which add_record will gate when it is released
+    held = dict(
+        claim="感測器資料帶動自駕車記憶體需求",
+        claim_type="state",
+        attributed_to="a",
+        source_tier="kol",
+        origin_kind="material",
+        origin_ref="material:20261020-k9",
+        origin_evidence_id="secondary:material-20261020-k9",
+        quote=QUOTE,
+        subject_symbols=["NASDAQ:MU"],
+        theme_ids=["T20261020-1"],
+        first_seen_at=SEEN,
+    )
+    held_id = narrative_proposals.hold_record(db, held, SOURCE, ["T20261020-1"], SEEN)["narrative_id"]
+    path = tmp_path / "ledger.sqlite"
+    before = path.read_bytes()
+    assert revalidate_records.main(["--ledger", str(path)]) == 0
+    out, err = capsys.readouterr()
+    line, held_line = out.splitlines()
+    nid, origin_kind, origin_ref, status, tags, messages = line.split("\t")
+    assert (nid, origin_kind, origin_ref, status, tags) == ("nr-legacy0001", "owner", "owner:test-0", "None", "atomic")
+    assert "links a cause to an effect (帶動)" in messages
+    assert held_line.split("\t")[:5] == [held_id, "held", "material:20261020-k9", "held", "atomic"]
+    assert "1 of 2 records and 1 held records flagged" in err
+    assert path.read_bytes() == before
+    assert revalidate_records.main(["--ledger", str(path), "--origin", "revision"]) == 0
+    assert capsys.readouterr().out == ""

@@ -6,11 +6,9 @@ No network, no pdftotext: the converted text is written here.
   PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/test_fetch_source.py
 """
 
-import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 import fetch_source  # noqa: E402
 
 FOOT = "© 2026 Example Memory, Inc.                                                   September 30, 2026\n"

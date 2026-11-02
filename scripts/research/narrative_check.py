@@ -8,14 +8,15 @@ gates(narrative, payload, cfg) -> refusal reasons, run inside runner.run_gates (
   [check]    narrative_checks has exactly one entry per snapshot record. A verdict other than untouched cites FACT
              claims whose evidence is all official (claim_precheck.OFFICIAL_TIERS); partially_verifies states
              supported_part (the part of the record's claim the cited claims establish) and open_part.
-  [proposal] at most 3 narrative_proposals, each an atomic record whose numbers are in the cited claim's quote, a
-             forecast's resolves_on names a period of the record, an inference source claim states its basis;
+  [proposal] at most 3 narrative_proposals, each a legal record (record_rules.record_problems: atomic with no causal
+             link, numbers in the cited claim's quote, claim_type / resolves_on), an inference source claim states its
+             basis;
              theme_proposals are well-formed (suggested keywords: at most MAX_KEYWORDS short strings).
 Without a snapshot there is nothing to check, tag or propose, and a narrative that tries is refused.
 
 apply(ledger_path, revision, payload, cfg, jev, mode) -> narrative_results, run after the revision completes (§4.5):
   1. judgement: for a verdict other than untouched, judge_record judges the record's claim against the cited fact
-     claims' quotes and evidence texts (runner.Jev.source_text, capped). A state partially_verifies also gets
+     claims' quotes and evidence texts (jev_client.Jev.source_text, capped). A state partially_verifies also gets
      judge_part (owner decision 2026-10-30): supported_part against the record's claim (in_record: it is part of the
      record) and against the same cited source (backed); part_label folds the three into the label R3 reads.
   2. sweep: judge_record judges every shown record against all official excerpts in document order, capped; a cut
@@ -51,7 +52,6 @@ apply_decision(ledger_path, decision) -> (applied | refused, message): one owner
 
 import itertools
 import json
-import re
 import statistics
 import sys
 from collections import Counter
@@ -59,14 +59,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import narrative_ledger as nl
+import narrative_proposals
+import narrative_suggestions
+import record_rules
 from claim_precheck import (
     OFFICIAL_TIERS,
-    check_numbers,
+    best_evidence,
     check_periods,
     evidence_tier,
-    extract_periods,
     has_inference_basis,
-    lint_atomic,
     quoted_media,
 )
 
@@ -74,7 +75,6 @@ VERDICTS = ("verifies", "refutes", "partially_verifies", "untouched")
 MAX_PROPOSALS = 3  # D11
 MAX_KEYWORDS = 8  # a theme proposal's suggested recall keywords (§5.3)
 NOT_FACT_EVIDENCE = ("narrative_snapshot", "secondary")
-DATE = re.compile(r"^(\d{4})-\d{2}-\d{2}$")
 
 
 def snapshot_of(payload):
@@ -87,12 +87,6 @@ def _strings(v):
 
 def _index(v, claims):
     return isinstance(v, int) and not isinstance(v, bool) and 0 <= v < len(claims)
-
-
-def period_matches(resolves_on, record_claim):
-    """resolves_on names a period of the record: its year (2028 / FY28 / 3Q28 / 民國 117 年) is a year the record names."""
-    year = int(DATE.match(resolves_on).group(1))
-    return any(year in p["years"] for p in extract_periods(record_claim) if p["kind"] == "period")
 
 
 def keywords_ok(v):
@@ -198,19 +192,17 @@ def gates(narrative, payload, cfg):
         if not (isinstance(rc, str) and rc.strip()):
             reasons.append(f"{where} record_claim must be a non-empty string")
             continue
-        atom = lint_atomic(rc)
-        if not atom["ok"]:
-            reasons.append(f"{where} record_claim is {atom['reason']}; split it into {atom['clauses']}")
-        num = check_numbers(rc, src.get("quote") or "")
-        if num["status"] == "mismatch":
-            det = "; ".join(f"{u['claim']} ({u['kind']})" for u in num["unmatched"])
-            reasons.append(f"{where} record_claim numbers are not in claims[{p['claim_index']}]'s quote: {det}")
-        if ct not in nl.CLAIM_TYPES:
-            reasons.append(f"{where} claim_type must be state|forecast")
-        elif ro is not None and (ct == "state" or not isinstance(ro, str) or not DATE.match(ro)):
-            reasons.append(f"{where} resolves_on is a YYYY-MM-DD date of a forecast only (null to take the default)")
-        elif ro is not None and not period_matches(ro, rc):
-            reasons.append(f"{where} resolves_on {ro} names no period that record_claim mentions; give null instead")
+        reasons += [
+            f"{where} {x.message}"
+            for x in record_rules.record_problems(
+                rc,
+                src.get("quote") or "",
+                ct,
+                ro,
+                name="record_claim",
+                quote_name=f"claims[{p['claim_index']}]'s quote",
+            )
+        ]
         if src.get("kind") == "inference" and not has_inference_basis(src.get("text", "")):
             reasons.append(f"{where} points to an inference claim that states no basis")
         if not (_strings(p.get("theme_ids")) and p["theme_ids"]) or set(p["theme_ids"]) - theme_ids:
@@ -249,8 +241,6 @@ def gates(narrative, payload, cfg):
 ANY = "*"
 LABELS = ("supports", "contradicts", "says_nothing")
 SETTLED = ("verified", "partially_verified")
-# claim_theme_links.evidence_tier is the highest tier a claim cites (design §2.5), ranked in this order
-TIER_ORDER = (*OFFICIAL_TIERS, "exchange feed", "derived", "sell-side", "media", "kol")
 # Design §4.5 rule table. Key: (claim_type, drafter verdict, label, basis_ok, before_resolution, settled).
 #   label: the judgement JEV label, or the sweep label for an untouched record. For a state partially_verifies it is
 #     part_label(): supports only when JEV finds supported_part both in the record's claim and in the cited source
@@ -281,7 +271,7 @@ RULE_ROWS = (
     ("R9", ANY, "untouched", ("supports", "contradicts"), ANY, ANY, ANY, "missed", None),
 )
 # fmt: on
-RULE_DIMENSIONS = (nl.CLAIM_TYPES, VERDICTS, LABELS, (True, False), (None, True, False), (True, False))
+RULE_DIMENSIONS = (record_rules.CLAIM_TYPES, VERDICTS, LABELS, (True, False), (None, True, False), (True, False))
 
 
 def _expand(rows):
@@ -446,16 +436,6 @@ def _result(row, rule, to_status, reason, judged=None):
     }
 
 
-def _tier_rank(tier):
-    return next((n for n, t in enumerate(TIER_ORDER) if tier.startswith(t)), len(TIER_ORDER))
-
-
-def best_evidence(c, by_id):
-    """The claim's highest-tier cited evidence (the latest of equals): claim_theme_links' evidence_tier and event_time."""
-    cited = [by_id[e] for e in c["evidence_ids"] if e in by_id]
-    return max(cited, key=lambda e: (-_tier_rank(evidence_tier(e)), e["event_time"]))
-
-
 def untagged_hits(db, revision, snap_payload):
     """§5.3 recall: a claim whose text hits a keyword of a theme in the snapshot's closed list that the drafter did not
     tag -> [{claim_index, theme_id, keyword}] for the owner. A keyword never makes a link (project_vault.keyword_hit,
@@ -533,14 +513,14 @@ def file_theme_proposals(db, revision, by_id, cfg, at):
         own = nl._one(
             db, "SELECT proposal_id FROM theme_proposals WHERE source_ref = ? AND suggested_id = ?", source_ref, sid
         )
-        dup = None if own else nl.theme_duplicate(db, sid, title)
+        dup = None if own else narrative_proposals.theme_duplicate(db, sid, title)
         if dup and not dup.startswith("proposal:"):
             out.append({"id": None, "status": "duplicate", "duplicate_of": dup, "title": title})
             continue
         if dup:
             pid = dup.split(":", 1)[1]
         else:
-            pid = nl.add_theme_proposal(
+            pid = narrative_proposals.add_theme_proposal(
                 db,
                 suggested_id=sid,
                 title=title,
@@ -553,7 +533,7 @@ def file_theme_proposals(db, revision, by_id, cfg, at):
             )["proposal_id"]
         for i in idx:
             best = best_evidence(claims[i], by_id)
-            nl.add_proposal_claim(
+            narrative_proposals.add_proposal_claim(
                 db,
                 {
                     "proposal_id": pid,
@@ -623,12 +603,14 @@ def write_narrative_proposals(db, revision, by_id, at):
         nid = nl.narrative_id(record["origin_ref"], record["quote"], record["claim"])
         row = {"index": k, "narrative_id": nid, "claim": record["claim"], "waits": [], "reason": reason}
         if reason is None:
-            themes, waits, missing, needs = nl.record_waits(db, record["theme_ids"], record["subject_symbols"])
+            themes, waits, missing, needs = narrative_proposals.record_waits(
+                db, record["theme_ids"], record["subject_symbols"]
+            )
             if missing:
                 reason = "；".join(missing)
             elif waits:
-                nl.hold_record(db, record, text, waits, at)
-                row.update(status="held", waits=waits, waits_text=nl.waits_text(needs))
+                narrative_proposals.hold_record(db, record, text, waits, at)
+                row.update(status="held", waits=waits, waits_text=narrative_proposals.waits_text(needs))
             else:
                 try:
                     nl.add_record(db, **{**record, "theme_ids": themes}, source_text=text)
@@ -700,7 +682,7 @@ def corroborated_before(db, nid, rev_id, cited):
 
     new = {evidence_sha256(e) for e in cited}
     covered, first = set(), None
-    for name, basis in nl.corroborations(db, nid, rev_id):
+    for name, basis in narrative_suggestions.corroborations(db, nid, rev_id):
         if "evidence_sha256" in basis:
             hit = new & set(basis["evidence_sha256"])
         else:
@@ -747,7 +729,7 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
             if done:
                 ev = [e for e in nl.events_of(db, nid) if e["seq"] == done["event_seq"]]
                 res = _result(dict(done), ev[0]["rule"] if ev else None, ev[0]["to_status"] if ev else None, "")
-                sid = nl.suggestion_id(rev_id, nid)
+                sid = narrative_suggestions.suggestion_id(rev_id, nid)
                 s = nl._one(db, "SELECT * FROM narrative_suggestions WHERE suggestion_id = ?", sid)
                 if mode == "confirm" and s:
                     rec = nl._one(db, "SELECT * FROM narrative_records WHERE narrative_id = ?", nid)
@@ -830,15 +812,15 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
                     elif not dup:
                         seq = nl.append_event(db, nid, decided_by="rule", **event)["seq"]
                 else:
-                    gone = nl.rejected_suggestion(db, nid, event["kind"], event["to_status"])
+                    gone = narrative_suggestions.rejected_suggestion(db, nid, event["kind"], event["to_status"])
                     if gone:
                         suggestion = {"id": None, "status": "suppressed", "suppressed_by": gone["suggestion_id"]}
                     elif dup:
                         suggestion = {"id": None, "status": "suppressed", "duplicate_of": dup}
                     else:
-                        sid = nl.add_suggestion(db, revision_id=rev_id, nid=nid, from_status=status, **event)[
-                            "suggestion_id"
-                        ]
+                        sid = narrative_suggestions.add_suggestion(
+                            db, revision_id=rev_id, nid=nid, from_status=status, **event
+                        )["suggestion_id"]
                         suggestion = _suggestion(db, sid, rec, claims)
             row = nl.add_check(
                 db,
@@ -874,153 +856,3 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
         **({"narrative_proposals": new_records} if new_records else {}),
         **({"untagged_hits": hits} if hits else {}),
     }
-
-
-# ------------------------------------------------------------------------------------------------ owner decisions
-DECISION_ID = re.compile(r"^\d{8}-d\d{1,4}$")
-SUGGESTION_ID = re.compile(r"^ns-[0-9a-f]{8}$")
-NARRATIVE_ID = re.compile(r"^nr-[0-9a-f]{10}$")
-OWNER_TEXT_CAP = 2000
-# action -> (target id pattern, what the target is). The narrative-pending feed carries every owner decision: narrative
-# suggestions and overrides (§4.6), and theme and member approvals (§3.3, §9 step 9).
-TARGETS = {
-    "confirm": (SUGGESTION_ID, "a suggestion id ns-xxxxxxxx"),
-    "reject": (SUGGESTION_ID, "a suggestion id ns-xxxxxxxx"),
-    "set": (NARRATIVE_ID, "a narrative id nr-xxxxxxxxxx"),
-    "theme-accept": (nl.THEME_PROPOSAL_ID, "a theme proposal id T<YYYYMMDD>-n"),
-    "theme-reject": (nl.THEME_PROPOSAL_ID, "a theme proposal id T<YYYYMMDD>-n"),
-    "member-accept": (nl.MEMBER_PROPOSAL_ID, "a member proposal id M<YYYYMMDD>-n"),
-    "member-reject": (nl.MEMBER_PROPOSAL_ID, "a member proposal id M<YYYYMMDD>-n"),
-}
-
-
-def parse_decision(d):
-    """A narrative-pending row -> {decision_id, action, target, to_status, theme_id, owner_text, decided_at}, or
-    ValueError. theme-accept carries theme_id, the id exactly as the owner typed it (its grammar is the ledger's rule)."""
-    did = str(d.get("decision_id", ""))
-    if not DECISION_ID.match(did):
-        raise ValueError(f"malformed decision id {did!r}")
-    action, target, text = d.get("action"), str(d.get("target", "")), d.get("owner_text")
-    if action not in TARGETS:
-        raise ValueError(f"unknown action {action!r}")
-    pattern, what = TARGETS[action]
-    if not pattern.match(target):
-        raise ValueError(f"{action} needs {what}, not {target!r}")
-    if action == "set" and d.get("to_status") not in nl.STATUSES:
-        raise ValueError("set needs a narrative id nr-xxxxxxxxxx and a status " + "|".join(nl.STATUSES))
-    if action == "theme-accept" and not (isinstance(d.get("theme_id"), str) and d["theme_id"]):
-        raise ValueError("theme-accept needs theme_id, the id the owner typed")
-    if not isinstance(text, str) or not text.strip() or len(text) > OWNER_TEXT_CAP:
-        raise ValueError(f"owner_text must be the owner's sentence (1-{OWNER_TEXT_CAP} characters)")
-    return {
-        "decision_id": did,
-        "action": action,
-        "target": target,
-        "to_status": d.get("to_status"),
-        "theme_id": d.get("theme_id"),
-        "owner_text": text.strip(),
-        "decided_at": nl.iso(d.get("decided_at")),
-    }
-
-
-def member_line(p):
-    """The notice line for one member proposal; the owner accepts or rejects it in Telegram."""
-    return (
-        f"成員提案 {p['proposal_id']}：{p['symbol']} 加入 {p['theme_id']}（{p['role']}），{p['why']}；"
-        f"回覆「接受成員 {p['proposal_id']}」或「略過成員 {p['proposal_id']}」"
-    )
-
-
-def _suggestion_decision(db, dec, ref):
-    target, decided_at = dec["target"], dec["decided_at"]
-    if dec["action"] == "confirm":
-        row, again = nl.confirm_suggestion(db, target, decision_ref=ref, decided_at=decided_at, note=dec["owner_text"])
-        change = (
-            f"改為 {STATUS_WORDS[row['to_status']]}"
-            if row["kind"] == "status"
-            else f"記一筆官方背書（狀態維持 {STATUS_WORDS[row['to_status']]}）"
-        )
-        return f"敘事建議 {target} 已確認：{row['narrative_id']} {change}", again
-    row, again = nl.reject_suggestion(db, target, decision_ref=ref, decided_at=decided_at)
-    return f"敘事建議 {target} 已駁回：{row['narrative_id']} 狀態不變，同一個變化之後不再建議", again
-
-
-def _set_decision(db, dec, ref):
-    target, to_status = dec["target"], dec["to_status"]
-    events = nl.events_of(db, target)
-    if not events:
-        raise nl.LedgerError(f"no narrative record {target}")
-    again = any(json.loads(e["basis_json"]).get("approval_ref") == ref for e in events)
-    if not again:
-        at = max(dec["decided_at"], events[-1]["at"])
-        nl.set_status(db, target, to_status, dec["owner_text"], at=at, approval_ref=ref)
-    return f"敘事 {target} 已由 owner 設為 {STATUS_WORDS[to_status]}", again
-
-
-def _theme_decision(db, dec, ref):
-    pid = dec["target"]
-    if dec["action"] == "theme-reject":
-        _row, again = nl.reject_proposal(db, pid, decision_ref=ref, decided_at=dec["decided_at"])
-        return f"主題提案 {pid} 已略過，之後不再提出", again
-    theme, again, members = nl.accept_theme_proposal(
-        db, pid, dec["theme_id"], decision_ref=ref, decided_at=dec["decided_at"]
-    )
-    links = db.execute("SELECT COUNT(*) FROM theme_proposal_claims WHERE proposal_id = ?", (pid,)).fetchone()[0]
-    text = f"主題提案 {pid} 已接受為 {theme['theme_id']}" + (f"，補 {links} 條 claim 主題連結" if links else "")
-    return text + "".join(f"；{member_line(m)}" for m in members), again
-
-
-def _member_decision(db, dec, ref):
-    pid = dec["target"]
-    if dec["action"] == "member-reject":
-        row, again = nl.reject_proposal(db, pid, decision_ref=ref, decided_at=dec["decided_at"])
-        return f"成員提案 {pid} 已略過：{row['symbol']} 不加入 {row['theme_id']}，之後不再提出", again
-    member, again = nl.accept_member_proposal(db, pid, decision_ref=ref, decided_at=dec["decided_at"])
-    return f"成員提案 {pid} 已接受：{member['symbol']} 加入 {member['theme_id']}（{member['role']}）", again
-
-
-HANDLERS = {
-    "confirm": _suggestion_decision,
-    "reject": _suggestion_decision,
-    "set": _set_decision,
-    "theme-accept": _theme_decision,
-    "theme-reject": _theme_decision,
-    "member-accept": _member_decision,
-    "member-reject": _member_decision,
-}
-RELEASES = ("theme-accept", "theme-reject", "member-accept", "member-reject")
-
-
-def released_text(outcomes):
-    """What a theme or member decision did to the held intake records."""
-    words = []
-    for o in outcomes:
-        if o["status"] == "written":
-            words.append(f"敘事 {o['narrative_id']} 已寫入")
-        elif o["status"] == "dropped":
-            words.append(f"敘事 {o['narrative_id']} 不收：{o['reason']}")
-        else:
-            words.append(f"敘事 {o['narrative_id']} 仍等待 {o['waits_text']}")
-    return "".join(f"；{w}" for w in words)
-
-
-def apply_decision(ledger_path, d):
-    """One owner decision from Telegram -> ("applied" | "refused", zh-TW message for the owner). A decision applied
-    before is applied again as a no-op, so a delivery repeated after a lost ack writes nothing twice. After a theme or
-    member decision the held intake records are re-gated (nl.release_held) and the message says what moved."""
-    try:
-        dec = parse_decision(d)
-    except (ValueError, nl.LedgerError) as e:
-        return "refused", f"敘事決定 {d.get('decision_id')} 格式不對，未套用：{e}"
-    did, action, target = dec["decision_id"], dec["action"], dec["target"]
-    ref = f"telegram:{did}"
-    db = nl.connect(ledger_path)
-    try:
-        done, again = HANDLERS[action](db, dec, ref)
-        if action in RELEASES:
-            done += released_text(nl.release_held(db, dec["decided_at"]))
-        return "applied", done + ("（先前已套用，未重複寫入）" if again else "")
-    except nl.LedgerError as e:
-        return "refused", f"敘事決定 {did}（{action} {target}）未套用：{e}"
-    finally:
-        db.close()

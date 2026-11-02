@@ -30,7 +30,7 @@ through the same narrative-pending feed and release the intake records held for 
 Any failure -> the revision stays prepared, bridge `needs-review <agenda_id>` with a short reason on stdin.
 No escalation to another model.
 
-After every invocation but a dry run, narrative_export.json (narrative_ledger.export as of now, written tmp + rename)
+After every invocation but a dry run, narrative_export.json (narrative_export.export as of now, written tmp + rename)
 is refreshed next to the ledger for the MacBook's nexus_pull.py (design §3.4); a failure there is logged only.
 State (all under --state-dir): ledger.sqlite (research_theme tables + runner_runs), runs/<agenda_id>/{config.json,
 narrative.json, revision.json, run.json, bars.csv, sources/}, runs/material-<id>/{sources/material.txt,
@@ -50,7 +50,6 @@ import json
 import logging
 import os
 import re
-import shlex
 import sqlite3
 import subprocess
 import sys
@@ -63,157 +62,32 @@ sys.path.insert(0, str(HERE))
 import assemble as assemble_mod  # noqa: E402
 import draft as draft_mod  # noqa: E402
 import intake as intake_mod  # noqa: E402
+import live_keys  # noqa: E402
 import narrative_check  # noqa: E402
+import narrative_decisions  # noqa: E402
+import narrative_export  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
+from bridge import (  # noqa: E402
+    AGENDA_ID,
+    DECISION_ID,
+    MATERIAL_ID,
+    REASON_CAP,
+    SUMMARY_CAP,
+    Bridge,
+    BridgeError,
+    OutboxBridge,
+)
 from claim_precheck import has_inference_basis  # noqa: E402
+from jev_client import JEV_MODEL, Jev  # noqa: E402
+from live_keys import LiveKeys  # noqa: E402
+from refusal import ResearchRefusal  # noqa: E402
+from textcap import cap, one_line  # noqa: E402
 
-JEV_KEY_VAR = "JEV_RESEARCH_OPENROUTER_KEY"
-JEV_MODEL = "typesafe/jev-1.13"
-JEV_BASE = "https://openrouter.ai/api"
-JEV_PRIMARY, JEV_FALLBACK = "/v1/systemone", "/alpha/decisions"
-JEV_SOURCE_CAP = 12000
-REPORT_CAP = 400_000  # chars of rendered Markdown attached to the done report
-AGENDA_ID = re.compile(r"^\d{8}-m?\d{1,3}$")
-MATERIAL_ID = intake_mod.MATERIAL_ID
-DECISION_ID = narrative_check.DECISION_ID
-NOTICE_CAP = 1000  # narrative-ack message; the bridge keeps 1000 characters
-REVISION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-REASON_CAP = 580
 NARRATIVE_EXPORT = "narrative_export.json"
-SUMMARY_CAP = 300
 DEFAULT_BRIDGE = "ssh research-bridge"
 EXIT_KEY, EXIT_BRIDGE_REPORT, EXIT_BRIDGE_PENDING = 3, 4, 5
 
 log = logging.getLogger("research-runner")
-
-
-# ------------------------------------------------------------------------------------------------ bridge
-class BridgeError(Exception):
-    pass
-
-
-class Bridge:
-    """Forced-command agenda bridge: `<cmd> pending`, `<cmd> done <id> <rev>` (tl_dr on stdin),
-    `<cmd> needs-review <id>` (reason on stdin); materials: `material-pending`, `material-done <id>` (JSON on stdin),
-    `material-needs-review <id>` (reason on stdin); owner decisions: `narrative-pending`,
-    `narrative-ack <decision_id> applied|refused` (message on stdin). Exit code 2 = refused (stderr has the reason)."""
-
-    def __init__(self, cmd, timeout=60):
-        self.argv = shlex.split(cmd)
-        self.timeout = timeout
-
-    def _run(self, args, stdin=""):
-        try:
-            p = subprocess.run(
-                [*self.argv, *args], input=stdin, capture_output=True, text=True, timeout=self.timeout, check=False
-            )
-        except (OSError, subprocess.TimeoutExpired) as e:
-            raise BridgeError(f"bridge {args[0]} failed to run: {type(e).__name__}") from None
-        if p.returncode == 2:
-            raise BridgeError(f"bridge {args[0]} refused: {p.stderr.strip()[:300]}")
-        if p.returncode != 0:
-            raise BridgeError(f"bridge {args[0]} exit {p.returncode}: {p.stderr.strip()[:300]}")
-        return p.stdout
-
-    def _list(self, verb):
-        out = self._run([verb])
-        try:
-            rows = json.loads(out)
-        except ValueError:
-            raise BridgeError(f"bridge {verb} returned non-JSON output") from None
-        if not isinstance(rows, list):
-            raise BridgeError(f"bridge {verb} returned {type(rows).__name__}, not a list")
-        return rows
-
-    def pending(self):
-        return self._list("pending")
-
-    def material_pending(self):
-        return self._list("material-pending")
-
-    def narrative_pending(self):
-        return self._list("narrative-pending")
-
-    def done(self, agenda_id, revision_id, summary, report_md=None, suggestions=(), theme_proposals=()):
-        """stdin is the one-line summary, or JSON {summary, report_md, suggestions, theme_proposals} when a rendered
-        report is attached, narrative_apply confirm has suggestions or the revision proposed themes (the bridge saves the
-        report, sends it to Telegram as a document and appends one line per suggestion {id, narrative_id, line} and per
-        theme proposal {id, line} to the notice)."""
-        if not AGENDA_ID.match(agenda_id) or not REVISION_ID.match(revision_id):
-            raise BridgeError(f"refusing to report malformed ids {agenda_id!r} / {revision_id!r}")
-        line = one_line(summary, SUMMARY_CAP)
-        if report_md and len(report_md) > REPORT_CAP:
-            log.warning(
-                "report for %s is %d chars (> %d); sent without attachment", agenda_id, len(report_md), REPORT_CAP
-            )
-            report_md = None
-        if report_md or suggestions or theme_proposals:
-            stdin = json.dumps(
-                {
-                    "summary": line,
-                    **({"report_md": report_md} if report_md else {}),
-                    **({"suggestions": list(suggestions)} if suggestions else {}),
-                    **({"theme_proposals": list(theme_proposals)} if theme_proposals else {}),
-                },
-                ensure_ascii=False,
-            )
-        else:
-            stdin = line + "\n"
-        self._run(["done", agenda_id, revision_id], stdin)
-
-    def material_done(self, material_id, payload):
-        if not MATERIAL_ID.match(material_id):
-            raise BridgeError(f"refusing to report malformed material id {material_id!r}")
-        self._run(["material-done", material_id], json.dumps(payload, ensure_ascii=False))
-
-    def material_needs_review(self, material_id, reason):
-        if not MATERIAL_ID.match(material_id):
-            raise BridgeError(f"refusing to report malformed material id {material_id!r}")
-        self._run(["material-needs-review", material_id], cap(reason, REASON_CAP) + "\n")
-
-    def narrative_ack(self, decision_id, result, message):
-        if not DECISION_ID.match(decision_id) or result not in ("applied", "refused"):
-            raise BridgeError(f"refusing to ack malformed decision {decision_id!r} {result!r}")
-        self._run(["narrative-ack", decision_id, result], cap(message, NOTICE_CAP) + "\n")
-
-    def needs_review(self, agenda_id, reason):
-        if not AGENDA_ID.match(agenda_id):
-            raise BridgeError(f"refusing to report malformed agenda id {agenda_id!r}")
-        self._run(["needs-review", agenda_id], cap(reason, REASON_CAP) + "\n")
-
-
-class OutboxBridge(Bridge):
-    """For containers without an ssh client: every report verb is queued as <outbox>/<id>.json ({verb, args, stdin}) and
-    delivered by deliver_outbox.py on the host. The list verbs still run the bridge command (or the runner reads the
-    host's --agenda-json / --materials-json / --decisions-json). One file per agenda, material or decision id, so a
-    re-report replaces the queued one."""
-
-    LIST_VERBS = ("pending", "material-pending", "narrative-pending")
-
-    def __init__(self, cmd, outbox):
-        super().__init__(cmd)
-        self.outbox = Path(outbox)
-
-    def _run(self, args, stdin=""):
-        if args[0] in self.LIST_VERBS:
-            return super()._run(args, stdin)
-        try:
-            self.outbox.mkdir(parents=True, exist_ok=True)
-            tmp = self.outbox / f".{args[1]}.json.tmp"
-            tmp.write_text(json.dumps({"verb": args[0], "args": args[1:], "stdin": stdin}, ensure_ascii=False))
-            tmp.replace(self.outbox / f"{args[1]}.json")
-        except OSError as e:
-            raise BridgeError(f"outbox write failed: {e}") from None
-        return ""
-
-
-def one_line(text, n):
-    return cap(" ".join(str(text or "").split()), n)
-
-
-def cap(text, n):
-    text = str(text or "").strip()
-    return text if len(text) <= n else text[: n - 1] + "…"
 
 
 # ------------------------------------------------------------------------------------------------ runner ledger
@@ -300,6 +174,11 @@ def research_theme(config_path, cfg, ledger_path, narrative_path=None, out_path=
 
 # ------------------------------------------------------------------------------------------------ gates
 NARRATIVE_LISTS = ("risks", "invalidation_conditions", "unknowns")
+# What a validator raises on a drafted narrative of the wrong shape (a list where an object belongs, a missing key):
+# a gate reason the repair round can fix, not a runner failure.
+MALFORMED = (TypeError, KeyError, AttributeError, ValueError)
+# What a research_theme.py subprocess call raises: its refusal (RuntimeError with stderr), a timeout, unreadable output.
+SUBPROCESS_FAILED = (RuntimeError, subprocess.TimeoutExpired, OSError, ValueError)
 NARRATIVE_TEXTS = ("tl_dr", "thesis", "stance", "change_summary", "next_review_at")
 
 
@@ -313,10 +192,11 @@ def apply_event(narrative, cfg):
     return narrative
 
 
-def run_gates(narrative, payload, cfg):
+def run_gates(narrative: dict, payload: dict, cfg: dict) -> tuple[list[str], dict]:
     """All local checks; returns (reasons, report). An empty reasons list means the narrative may be completed."""
     import research_theme as rt
 
+    from poseidon.decision_loop.manifest import ValidationError
     from poseidon.decision_loop.research import validate_research
 
     reasons, report = [], {}
@@ -339,7 +219,7 @@ def run_gates(narrative, payload, cfg):
         body["symbol"] = cfg["symbol"]
     try:
         validate_research(body, types.SimpleNamespace(scope_key=cfg["scope_key"]), payload)
-    except Exception as e:  # ValidationError and malformed shapes
+    except (ValidationError, *MALFORMED) as e:
         reasons.append(f"[schema] {e}")
     for fn in (
         lambda: rt.validate_narrative_extras(narrative, payload["as_of"]),
@@ -347,9 +227,9 @@ def run_gates(narrative, payload, cfg):
     ):
         try:
             fn()
-        except SystemExit as e:
+        except ResearchRefusal as e:
             reasons.append(f"[schema] {e}")
-        except Exception as e:
+        except MALFORMED as e:
             reasons.append(f"[schema] {type(e).__name__}: {e}")
     # quote-in-cited-evidence (the document excerpts themselves were verified against the source text at freeze)
     by_id = {e["id"]: e for e in payload["evidence"]}
@@ -388,106 +268,20 @@ def run_gates(narrative, payload, cfg):
     # claim_precheck strict (numbers: fact any mismatch, inference scale/sign), lint_atomic, GAAP basis
     try:
         report["claim_precheck"] = rt.precheck_claims(narrative, payload["evidence"])
-    except SystemExit as e:
-        for line in str(e).splitlines()[1:]:
-            line = line.strip()
+    except ResearchRefusal as e:
+        for line in e.problems:
             tag = "atomic" if "non-atomic" in line else "gaap_basis" if "GAAP" in line else "precheck"
             reasons.append(f"[{tag}] {line}")
-    except Exception as e:
+    except MALFORMED as e:
         reasons.append(f"[precheck] {type(e).__name__}: {e}")
     return reasons, report
-
-
-# ------------------------------------------------------------------------------------------------ JEV
-class Jev:
-    """JEV calls on one endpoint: the primary path, switched once to the alpha path when this client's first call gets a
-    404. Sums usage over its calls. Used for the fact claims and for narrative_apply (design 2026-10-29 §4.5)."""
-
-    SOURCE_CAP = JEV_SOURCE_CAP
-
-    def __init__(self, key, model=JEV_MODEL, transport=None, path=JEV_PRIMARY):
-        self.key, self.model, self.transport, self.path = key, model, transport, path
-        self.calls, self.usage_total = 0, {}
-
-    @staticmethod
-    def source_text(claim, cited):
-        """The text JEV judges `claim` against: source_window's text."""
-        return Jev.source_window(claim, cited)[0]
-
-    @staticmethod
-    def source_window(claim, cited):
-        """(text, truncated 0|1): "Quoted: <quote>", then per cited item "[id]" and its units one per line, at most
-        JEV_SOURCE_CAP characters. A unit is one entry of draft.evidence_texts: an excerpt (one verified paragraph,
-        `lines a-b`) of a document, the whole rendered block of any other evidence.
-        When everything fits, every unit in document order (truncated 0). Otherwise the units are taken in this order,
-        each kept only if the text still fits: the units holding the quote, their neighbours (the unit before and after
-        in the same item), then every other unit in document order. Kept units print in document order; a "…" line
-        stands for each run of left-out units. If no unit holding the quote fits (or none holds it), the document-order
-        text cut at the cap."""
-        quote = claim.get("quote").strip() if isinstance(claim.get("quote"), str) else ""
-        head = ["Quoted: " + quote] if quote else []
-        items = [(item["id"], draft_mod.evidence_texts(item)) for item in cited]
-        full = "\n\n".join(head + ["[{}]\n{}".format(i, "\n".join(texts)) for i, texts in items])
-        if len(full.strip()) <= JEV_SOURCE_CAP:
-            return cap(full, JEV_SOURCE_CAP), 0
-
-        def render(keep):
-            parts = list(head)
-            for n, (eid, texts) in enumerate(items):
-                lines, gap = [], False
-                for k, t in enumerate(texts):
-                    if (n, k) in keep:
-                        lines += ["…", t] if gap else [t]
-                        gap = False
-                    else:
-                        gap = True
-                if lines:
-                    parts.append("[{}]\n{}".format(eid, "\n".join(lines + ["…"] * gap)))
-            return "\n\n".join(parts).strip()
-
-        q = draft_mod._canon(quote)
-        units = [(n, k) for n, (_, texts) in enumerate(items) for k in range(len(texts))]
-        anchors = [(n, k) for n, k in units if q and q in draft_mod._canon(items[n][1][k])]
-        near = [(n, k + d) for n, k in anchors for d in (-1, 1) if 0 <= k + d < len(items[n][1])]
-        keep = set()
-        for u in dict.fromkeys(anchors + near + units):
-            if len(render(keep | {u})) <= JEV_SOURCE_CAP:
-                keep.add(u)
-        return (render(keep) if keep.intersection(anchors) else cap(full, JEV_SOURCE_CAP)), 1
-
-    def judge(self, claim, source_text, locator, symbol, as_of):
-        """One citation_relation judgement -> {label, confidence, probabilities, latency_ms}. Raises draft.PostError."""
-        from jev_eval_control_set import build_request
-
-        case = {"symbol": symbol, "claim": claim, "source": {"text": source_text, "locator": locator}}
-        req = build_request(case, self.model, as_of)
-        kw = {"transport": self.transport} if self.transport else {}
-        t0 = time.monotonic()
-        try:
-            resp = draft_mod.post_json(JEV_BASE + self.path, self.key, req, timeout=60, **kw)
-        except draft_mod.PostError as e:
-            if self.calls or e.status != 404 or self.path != JEV_PRIMARY:
-                raise
-            self.path = JEV_FALLBACK
-            resp = draft_mod.post_json(JEV_BASE + self.path, self.key, req, timeout=60, **kw)
-        self.calls += 1
-        ans = (resp.get("answers") or {}).get("citation_relation") or {}
-        for k, v in (resp.get("usage") or {}).items():
-            if isinstance(v, (int, float)):
-                self.usage_total[k] = self.usage_total.get(k, 0) + v
-        return {
-            "label": ans.get("choice"),
-            "confidence": ans.get("confidence"),
-            "probabilities": ans.get("probabilities"),
-            "latency_ms": round((time.monotonic() - t0) * 1000),
-        }
 
 
 def run_symbol(cfg):
     return cfg.get("symbol") or ",".join(cfg["symbols"])
 
 
-def jev_check(narrative, payload, cfg, jev):
+def jev_check(narrative: dict, payload: dict, cfg: dict, jev: Jev) -> dict:
     """Judge every fact claim with JEV; returns jev_results (UMC revision shape). Raises StageError on a call failure."""
     by_id = {e["id"]: e for e in payload["evidence"]}
     per = []
@@ -575,7 +369,7 @@ def write_json(path, obj):
     Path(path).write_text(json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
-def process_row(row, *, state_dir, ledger, keys, opts):
+def process_row(row: dict, *, state_dir, ledger: Ledger, keys: LiveKeys | None, opts: dict) -> Run:
     """Run the pipeline for one row; returns the Run (status completed | needs_review | dry_run)."""
     run_dir = Path(state_dir) / "runs" / row["id"]
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -608,7 +402,7 @@ def process_row(row, *, state_dir, ledger, keys, opts):
             try:
                 info = research_theme(config_path, cfg, ledger_path)
                 payload = ledger.manifest_payload(info["manifest_sha256"])
-            except Exception as e:
+            except SUBPROCESS_FAILED as e:
                 raise StageError("prepare", f"freeze/prepare refused: {e}") from None
         revision = {"identity": info, "research": None, "manifest_payload": payload}
         run.data.update(revision_id=info["revision_id"], manifest_sha256=info["manifest_sha256"])
@@ -629,12 +423,12 @@ def process_row(row, *, state_dir, ledger, keys, opts):
                         attempt = draft_mod.draft(
                             cfg,
                             payload,
-                            keys["draft"],
+                            keys.draft,
                             previous_revision_id=info.get("previous_revision_id"),
                             transport=transport,
                         )
                     else:
-                        attempt = draft_mod.repair(cfg, attempt, reasons, keys["draft"], transport=transport)
+                        attempt = draft_mod.repair(cfg, attempt, reasons, keys.draft, transport=transport)
                 except draft_mod.DraftError as e:
                     run.data["draft_calls"].append({"round": round_no, **e.record, "error": str(e)})
                     raise StageError("draft", str(e)) from None
@@ -652,7 +446,7 @@ def process_row(row, *, state_dir, ledger, keys, opts):
             raise StageError("gates", "validator refused after one repair round", reasons)
         narrative = attempt.narrative
         # JEV
-        jev_client = Jev(keys["jev"], opts.get("jev_model", JEV_MODEL), transport)
+        jev_client = Jev(keys.jev, opts.get("jev_model", JEV_MODEL), transport)
         with run.stage("jev"):
             jev = jev_check(narrative, payload, cfg, jev_client)
         revision["jev_results"] = jev
@@ -671,18 +465,18 @@ def process_row(row, *, state_dir, ledger, keys, opts):
         with run.stage("complete"):
             try:
                 research_theme(config_path, cfg, ledger_path, run_dir / "narrative.json", run_dir / "revision.json")
-            except Exception as e:
+            except SUBPROCESS_FAILED as e:
                 raise StageError("complete", f"research_theme refused completion: {e}") from None
         revision = json.loads((run_dir / "revision.json").read_text(encoding="utf-8"))
         revision["jev_results"] = jev
         run.data["status"] = "completed"
         # narrative_apply (design 2026-10-29 §4.5): a check that fails is recorded; the revision stays completed
         with run.stage("narrative"):
-            narr_jev = Jev(keys["jev"], jev_client.model, transport, path=jev_client.path)
+            narr_jev = Jev(keys.jev, jev_client.model, transport, path=jev_client.path)
             mode = opts.get("narrative_apply", "off")
             try:
                 results = narrative_check.apply(ledger_path, revision, payload, cfg, narr_jev, mode=mode)
-            except Exception as e:
+            except Exception as e:  # crash barrier: the revision is completed, so this stage may only be recorded
                 log.exception("narrative_apply failed for %s", row.get("id"))
                 run.data["narrative_error"] = f"{type(e).__name__}: {cap(str(e), 300)}"
                 results = None
@@ -701,7 +495,7 @@ def process_row(row, *, state_dir, ledger, keys, opts):
         run.data["failed_stage"] = e.stage
         run.data["reasons"] = [e.reason, *e.details]
         return run
-    except Exception as e:  # a bug must not leave the topic silently half-done
+    except Exception as e:  # crash barrier: a bug must not leave the topic silently half-done
         log.exception("internal error while processing %s", row.get("id"))
         run.data["status"] = "needs_review"
         run.data["failed_stage"] = "internal"
@@ -823,7 +617,7 @@ def run_decisions(bridge, rows, ledger_path):
         if not DECISION_ID.match(did):
             log.error("skipping decision row with malformed id %r", did)
             continue
-        result, message = narrative_check.apply_decision(ledger_path, d)
+        result, message = narrative_decisions.apply_decision(ledger_path, d)
         log.info("decision %s %s: %s", did, result, message)
         try:
             bridge.narrative_ack(did, result, message)
@@ -848,7 +642,7 @@ def material_report(bridge, material_id, data):
     return True
 
 
-def process_material_row(row, run_dir, ledger_path, keys, opts):
+def process_material_row(row: dict, run_dir: Path, ledger_path: Path, keys: LiveKeys, opts: dict) -> dict:
     """Intake of one bridge row; run.json is written whatever happens. -> run.json data (status intaken|needs_review)."""
     run_dir.mkdir(parents=True, exist_ok=True)
     data = {
@@ -870,7 +664,7 @@ def process_material_row(row, run_dir, ledger_path, keys, opts):
         data["status"] = "intaken"
     except intake_mod.IntakeError as e:
         data.update(status="needs_review", failed_stage=e.stage, reasons=[e.reason, *e.details])
-    except Exception as e:  # a bug must not leave the material silently half-done
+    except Exception as e:  # crash barrier: a bug must not leave the material silently half-done
         log.exception("internal error while taking in material %s", row.get("id"))
         data.update(status="needs_review", failed_stage="internal", reasons=[f"{type(e).__name__}: {e}"])
     finally:
@@ -894,7 +688,7 @@ def process_material_row(row, run_dir, ledger_path, keys, opts):
     return data
 
 
-def run_materials(bridge, rows, base, keys, opts):
+def run_materials(bridge: Bridge, rows: list, base: Path, keys: LiveKeys, opts: dict) -> int:
     """At most one new material per invocation. A material the bridge still lists after it was taken in (or sent to
     needs_review) is reported again from its run.json, without a new model call."""
     rc, chosen = 0, None
@@ -921,7 +715,7 @@ def run_materials(bridge, rows, base, keys, opts):
     return rc
 
 
-def run_owner_inputs(args, bridge, base, keys, *, transport, as_of):
+def run_owner_inputs(args, bridge: Bridge, base: Path, keys: LiveKeys, *, transport, as_of) -> int:
     """Owner decisions first (they may settle a suggestion the agenda run would otherwise show again), then one material."""
     decisions, rc1 = owner_rows(args, bridge, "narrative-pending")
     rc2 = run_decisions(bridge, decisions, base / "ledger.sqlite") if decisions else 0
@@ -930,13 +724,13 @@ def run_owner_inputs(args, bridge, base, keys, *, transport, as_of):
         "as_of": as_of or datetime.datetime.now(datetime.UTC).replace(second=0, microsecond=0),
         "transport": transport,
         "draft": {"model": args.draft_model, "reasoning": not args.no_reasoning, "max_tokens": args.max_tokens},
-        "jev_factory": lambda: Jev(keys["jev"], args.jev_model, transport),
+        "jev_factory": lambda: Jev(keys.jev, args.jev_model, transport),
     }
     rc4 = run_materials(bridge, materials, base, keys, opts) if materials else 0
     return rc1 or rc2 or rc3 or rc4
 
 
-def run_once(args, keys, *, transport=None, assemble_kw=None, as_of=None):
+def run_once(args, keys: LiveKeys | None, *, transport=None, assemble_kw=None, as_of=None) -> int:
     state = Path(args.state_dir).expanduser()
     base = state / "dry-run" if args.dry_run else state
     base.mkdir(parents=True, exist_ok=True)
@@ -956,14 +750,16 @@ def refresh_export(state):
     try:
         db = nl.connect(state / "ledger.sqlite")
         try:
-            nl.write_export(db, nl.now(), state / NARRATIVE_EXPORT)
+            narrative_export.write_export(db, nl.now(), state / NARRATIVE_EXPORT)
         finally:
             db.close()
-    except Exception:
+    except (nl.LedgerError, sqlite3.Error, OSError, ValueError):
         log.exception("narrative export failed")
 
 
-def run_agenda(args, keys, bridge, state, base, *, transport, assemble_kw, as_of):
+def run_agenda(
+    args, keys: LiveKeys | None, bridge: Bridge, state: Path, base: Path, *, transport, assemble_kw, as_of
+) -> int:
     if args.agenda_json:
         rows = json.loads(Path(args.agenda_json).read_text(encoding="utf-8"))
     else:
@@ -1038,8 +834,8 @@ def setup_logging(state_dir):
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Research runner: one accepted agenda topic per invocation.")
     ap.add_argument("--state-dir", required=True)
-    ap.add_argument("--draft-env", help=f"600 env file with {draft_mod.DRAFT_KEY_VAR}")
-    ap.add_argument("--jev-env", help=f"600 env file with {JEV_KEY_VAR}")
+    ap.add_argument("--draft-env", help=f"600 env file with {live_keys.DRAFT_KEY_VAR}")
+    ap.add_argument("--jev-env", help=f"600 env file with {live_keys.JEV_KEY_VAR}")
     ap.add_argument("--bridge", default=DEFAULT_BRIDGE, help="agenda bridge command (default: %(default)s)")
     ap.add_argument("--agenda-json", help="read pending rows from this file instead of `<bridge> pending`")
     ap.add_argument(
@@ -1079,12 +875,11 @@ def main(argv=None, *, transport=None, assemble_kw=None, as_of=None):
     state = Path(args.state_dir).expanduser()
     state.mkdir(parents=True, exist_ok=True)
     setup_logging(state)
-    keys = {}
+    keys = None  # a dry run calls no model
     if not args.dry_run:
         try:
-            keys["draft"] = draft_mod.load_key(args.draft_env, draft_mod.DRAFT_KEY_VAR)
-            keys["jev"] = draft_mod.load_key(args.jev_env, JEV_KEY_VAR)
-        except draft_mod.MissingKeyError as e:
+            keys = live_keys.load_live_keys(args.draft_env, args.jev_env)
+        except live_keys.MissingKeyError as e:
             log.error("key error: %s", e)
             return EXIT_KEY
     lock = open(state / "runner.lock", "w")  # noqa: SIM115 - held for the whole run

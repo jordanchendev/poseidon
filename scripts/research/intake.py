@@ -12,8 +12,8 @@ narrative records and theme proposals, never into a revision (research_revisions
      ManifestService.freeze writes data_manifests only.
   3. intake draft (same key and model as the research draft, D9): records[], theme_proposals[], member_proposals[],
      verify_with[].
-  4. gates (one repair round): quote verbatim in the material, lint_atomic, check_numbers (record against its quote,
-     strict), a forecast's resolves_on names a period of the record, theme ids from the closed list or the suggested
+  4. gates (one repair round): quote verbatim in the material, record_rules.record_problems (atomic incl. no causal
+     link, numbers against its quote, claim_type / resolves_on), theme ids from the closed list or the suggested
      id of a theme proposal filed here, each subject an approved member of one of the record's themes or a member a
      proposal filed here names into one of them, at most MAX_RECORDS records.
   5. faithful-paraphrase check: judge_record (period precheck, then the JEV vote) of each record against the material's
@@ -39,9 +39,14 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import assemble as assemble_mod  # noqa: E402
 import draft as draft_mod  # noqa: E402
+import guidance  # noqa: E402
 import narrative_check  # noqa: E402
+import narrative_decisions  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
-from claim_precheck import _CAUSAL, check_numbers, lint_atomic  # noqa: E402
+import narrative_proposals  # noqa: E402
+import record_rules  # noqa: E402
+from live_keys import LiveKeys  # noqa: E402
+from refusal import ResearchRefusal  # noqa: E402
 
 MATERIAL_ID = re.compile(r"^\d{8}-k\d{1,4}$")
 MAX_RECORDS = 10  # D11
@@ -50,9 +55,6 @@ MAX_PROPOSALS = 3
 MAX_MEMBER_PROPOSALS = 3
 REQUIRED_DATA = {"secondary": {"max_age_seconds": 30 * 86400}}
 FAITHFUL_PRECHECKS = (("period", narrative_check._period_gate),)
-# A record is checked later against official text one statement at a time, so a causal or driver link (帶動 / 由於 /
-# driven by ...) is a second claim even where lint_atomic's verb lexicon sees one clause (design §7.2, post 8).
-CAUSAL_RE = re.compile(_CAUSAL, re.I)
 TIER_WORDS = {"kol": "KOL", "media": "媒體", "sell-side": "賣方"}
 NOTICE_CAP = 3500
 
@@ -185,17 +187,18 @@ def freeze(ledger_path, as_of, doc, snap):
     data_manifests table only."""
     import research_theme as rt
     from sqlalchemy import create_engine
+    from sqlalchemy.exc import SQLAlchemyError
     from sqlalchemy.orm import Session
 
-    from poseidon.decision_loop.manifest import ManifestService
+    from poseidon.decision_loop.manifest import ManifestService, ValidationError
     from poseidon.models.base import Base
 
     try:
         evidence = [rt.document_evidence(doc, as_of)]
-    except SystemExit as e:
+    except ResearchRefusal as e:
         raise IntakeError("freeze", str(e)) from None
     if snap:
-        evidence.append(rt.snapshot_evidence(snap, as_of))
+        evidence.append(guidance.snapshot_evidence(snap, as_of))
     request = {
         "market": "tw_stock",
         "interval": "material",
@@ -212,7 +215,7 @@ def freeze(ledger_path, as_of, doc, snap):
             manifest = ManifestService(session).freeze(request)
             session.commit()
             return manifest.content_sha256, manifest.payload_json
-    except Exception as e:  # ValidationError and SQL errors
+    except (ValidationError, SQLAlchemyError) as e:
         raise IntakeError("freeze", f"{type(e).__name__}: {e}") from None
     finally:
         engine.dispose()
@@ -360,7 +363,7 @@ def gates(out, m, payload, duplicate, member_duplicate=_no_member_duplicate):
     repeats or None); member_duplicate(theme_id, symbol) -> duplicate_of. A record may name a theme proposal filed here
     by its suggested_id, and a subject that a proposal filed here (or the open one it repeats) names into one of the
     record's themes; it then waits for the owner (held_records). A subject must belong to one of the record's own themes
-    (nl.record_waits): a member of another theme does not qualify. A proposal the owner rejected admits nothing."""
+    (narrative_proposals.record_waits): a member of another theme does not qualify. A proposal the owner rejected admits nothing."""
     text = m["text"]
     snap = narrative_check.snapshot_of(payload)
     themes = snap["payload"]["themes"] if snap else []
@@ -470,28 +473,7 @@ def gates(out, m, payload, duplicate, member_duplicate=_no_member_duplicate):
         problems = []
         if quote not in text:
             problems.append(f"[quote] {where} quote is not a verbatim substring of the material; copy it exactly")
-        atom = lint_atomic(claim)
-        if not atom["ok"]:
-            problems.append(
-                f"[atomic] {where} claim is {atom['reason']}; split it into {atom['clauses']} or leave it out"
-            )
-        elif CAUSAL_RE.search(claim):
-            problems.append(
-                f"[atomic] {where} claim links a cause to an effect ({CAUSAL_RE.search(claim).group(0)}); a record is "
-                "one statement: file the cause and the effect as separate records or leave the link out"
-            )
-        num = check_numbers(claim, quote)
-        if num["status"] == "mismatch":
-            det = "; ".join(f"{u['claim']} ({u['kind']})" for u in num["unmatched"])
-            problems.append(f"[numbers] {where} claim numbers are not in its quote: {det}")
-        if ct not in nl.CLAIM_TYPES:
-            problems.append(f"[schema] {where} claim_type must be state|forecast")
-        elif ro is not None and (ct == "state" or not isinstance(ro, str) or not nl.DATE.match(ro)):
-            problems.append(
-                f"[schema] {where} resolves_on is a YYYY-MM-DD date of a forecast only (null for the default)"
-            )
-        elif ro is not None and not narrative_check.period_matches(ro, claim):
-            problems.append(f"[schema] {where} resolves_on {ro} names no period the claim mentions; give null instead")
+        problems += [f"[{p.tag}] {where} {p.message}" for p in record_rules.record_problems(claim, quote, ct, ro)]
         tags, subjects = r.get("theme_ids"), r.get("subject_symbols")
         if not (_strings(tags) and tags) or set(tags) - taggable:
             problems.append(
@@ -567,7 +549,7 @@ def write(db, m, plan, kept, as_of, evidence_id):
     for p in plan["proposals"]:
         dup = p["duplicate_of"]
         if dup is None:
-            row = nl.add_theme_proposal(
+            row = narrative_proposals.add_theme_proposal(
                 db,
                 suggested_id=p["suggested_id"],
                 title=p["title"],
@@ -585,7 +567,7 @@ def write(db, m, plan, kept, as_of, evidence_id):
     members = []
     for p in plan.get("member_proposals", []):
         if p["duplicate_of"] is None:
-            row = nl.add_member_proposal(
+            row = narrative_proposals.add_member_proposal(
                 db,
                 theme_id=p["theme_id"],
                 symbol=p["symbol"],
@@ -612,13 +594,13 @@ def write(db, m, plan, kept, as_of, evidence_id):
             "resolves_on": r["resolves_on"],
             "decided_by": "rule",
         }
-        themes, waits, missing, needs = nl.record_waits(db, record["theme_ids"], r["subject_symbols"])
+        themes, waits, missing, needs = narrative_proposals.record_waits(db, record["theme_ids"], r["subject_symbols"])
         nid = nl.narrative_id(record["origin_ref"], r["quote"], r["claim"])
         if missing:
             unfit.append({**r, "narrative_id": nid, "reason": "；".join(missing)})
         elif waits:
-            nl.hold_record(db, record, r["paragraph"], waits, as_of)
-            held.append({**r, "narrative_id": nid, "waits": waits, "waits_text": nl.waits_text(needs)})
+            narrative_proposals.hold_record(db, record, r["paragraph"], waits, as_of)
+            held.append({**r, "narrative_id": nid, "waits": waits, "waits_text": narrative_proposals.waits_text(needs)})
         else:
             row = nl.add_record(db, **{**record, "theme_ids": themes}, source_text=m["text"])
             written.append({**r, "narrative_id": row["narrative_id"], "theme_ids": themes})
@@ -663,7 +645,7 @@ def notice(m, plan, dropped, out):
             ]
         if out["members"]:
             lines.append("成員提案：")
-            lines += [f"- {narrative_check.member_line(p)}" for p in out["members"]]
+            lines += [f"- {narrative_decisions.member_line(p)}" for p in out["members"]]
         dups = [p for p in plan["proposals"] if p["duplicate_of"]]
         dups += [
             {"title": f"{p['symbol']} 加入 {p['theme_id']}", "duplicate_of": p["duplicate_of"]}
@@ -697,7 +679,7 @@ def _duplicate_fn(ledger_path):
     def duplicate(suggested_id, title):
         db = nl.connect(ledger_path)
         try:
-            dup = nl.theme_duplicate(db, suggested_id, title)
+            dup = narrative_proposals.theme_duplicate(db, suggested_id, title)
             members = None
             if dup and dup.startswith("proposal:"):
                 row = nl._one(db, "SELECT proposed_members_json FROM theme_proposals WHERE proposal_id = ?", dup[9:])
@@ -709,14 +691,14 @@ def _duplicate_fn(ledger_path):
     def member_duplicate(theme_id, symbol):
         db = nl.connect(ledger_path)
         try:
-            return nl.member_duplicate(db, theme_id, symbol)
+            return narrative_proposals.member_duplicate(db, theme_id, symbol)
         finally:
             db.close()
 
     return duplicate, member_duplicate
 
 
-def process_material(m, *, run_dir, ledger_path, keys, opts, data):
+def process_material(m: dict, *, run_dir: Path, ledger_path: Path, keys: LiveKeys, opts: dict, data: dict) -> dict:
     """Intake of one parsed material; fills `data` (run.json) and returns the material-done payload.
     Raises IntakeError(stage, reason, details) for a failure the owner has to look at."""
     run_dir = Path(run_dir)
@@ -764,11 +746,11 @@ def process_material(m, *, run_dir, ledger_path, keys, opts, data):
         for round_no in (1, 2):
             try:
                 if round_no == 1:
-                    attempt = _draft_call(messages, keys["draft"], d, transport)
+                    attempt = _draft_call(messages, keys.draft, d, transport)
                 else:
                     attempt = _draft_call(
                         draft_mod.repair_messages(attempt.messages, attempt.content, reasons),
-                        keys["draft"],
+                        keys.draft,
                         d,
                         transport,
                     )

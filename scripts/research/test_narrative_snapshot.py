@@ -5,25 +5,19 @@ assemble.py runs with fake fetchers against a seeded runner ledger; research_the
 """
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 
 import assemble  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 import runner  # noqa: E402
-import test_runner as tr  # noqa: E402
+import testkit as tk  # noqa: E402
 from claim_precheck import evidence_tier  # noqa: E402
-from test_runner import AGENDA_ID, AS_OF, ROW, FakeOpenRouter  # noqa: E402
-from test_runner import env as runner_env  # noqa: E402,F401  (pytest finds it by this name)
+from testkit import AFTER_AS_OF, AGENDA_ID, APPROVED, AS_OF, ROW, FakeOpenRouter, add, dry_run, ledger, utilization  # noqa: E402
 
-APPROVED = "2026-10-01T00:00:00Z"
-AFTER_AS_OF = "2026-10-25T00:00:00Z"
-SOURCE = "UMC 成熟製程產能利用率偏高。ASML 出貨受客戶無塵室限制。Nittobo T glass 產能擴充。記憶體供給吃緊。"
 # manifest_sha256 / prompt_sha256 of the test_runner fixture row (2303, dry run), taken at c81d35b before step 4.
 RUNNER_MANIFEST_SHA256 = "5eaa71cea89f0625c7a4332940fa76f64912136c888d507bd1c08ed8c51815c3"
 RUNNER_PROMPT_SHA256 = "f3f268549dfcb755f383d4d109fec9270d1d4cd4e02ea3ed8699d5468f655473"
@@ -32,75 +26,17 @@ RUNNER_CONTENT_SHA256 = "dfb75a549dcd0db16c1ecf6223d41724f7b8e4fbb74f7390a6e7b3e
 
 
 @pytest.fixture()
-def env(runner_env):  # noqa: F811
+def env(runner_env):
     return runner_env
 
 
-def seed_themes(db, fixture_at=APPROVED):
-    """Four themes. The fixture row's symbol 2303 joins foundry-utilization at fixture_at (None: never)."""
-    for tid, title, members in (
-        ("foundry-utilization", "晶圓代工產能利用率", [("NYSE:UMC", "supplier")]),
-        ("cleanroom-capacity", "無塵室產能", [("NASDAQ:ASML", "constrained"), ("2404", "beneficiary")]),
-        ("t-glass-supply", "T-glass 供給", [("TSE:3110", "supplier"), ("1303", "supplier")]),
-        (
-            "memory-supply-tightness",
-            "記憶體供給吃緊",
-            [("NASDAQ:MU", "supplier"), ("2408", "supplier"), ("2344", "supplier")],
-        ),
-    ):
-        nl.add_theme(db, tid, title, "bottleneck", [], "test:owner", at=APPROVED)
-        for sym, role in members:
-            nl.add_member(db, tid, sym, role, "test:owner", at=APPROVED)
-    nl.add_member(db, "memory-supply-tightness", "2337", "supplier", "test:owner", at=AFTER_AS_OF)
-    if fixture_at:
-        nl.add_member(db, "foundry-utilization", "2303", "supplier", "test:owner", at=fixture_at)
-
-
-def add(db, n, claim, quote, subjects, themes, first_seen, claim_type="state"):
-    return nl.add_record(
-        db,
-        claim=claim,
-        claim_type=claim_type,
-        attributed_to="股癌",
-        source_tier="kol",
-        origin_kind="material",
-        origin_ref=f"material:20261001-k{n}",
-        origin_evidence_id="secondary:material",
-        quote=quote,
-        source_text=SOURCE,
-        subject_symbols=subjects,
-        theme_ids=themes,
-        first_seen_at=first_seen,
-    )["narrative_id"]
-
-
-def utilization(db, n, first_seen, subjects=("2303",), themes=("foundry-utilization",)):
-    return add(db, n, "聯電成熟製程產能利用率偏高", "產能利用率偏高", list(subjects), list(themes), first_seen)
-
-
-def ledger(tmp_path, fixture_at=APPROVED):
-    path = tmp_path / "state" / "ledger.sqlite"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    db = nl.connect(path)
-    seed_themes(db, fixture_at)
-    return path, db
-
-
 def fake_bars(symbol, start, end):
-    return tr.fake_bars("2303" if symbol != "0050" else "0050", start, end)
+    return tk.fake_bars("2303" if symbol != "0050" else "0050", start, end)
 
 
 def assemble_row(env, path, row=ROW, sub="a"):
     kw = dict(env["assemble_kw"], fetch_bars=env.get("fetch_bars", fake_bars))
     return assemble.assemble(row, env["tmp"] / sub, as_of_dt=AS_OF, ledger_path=path, **kw)
-
-
-def dry_run(env):
-    rows = env["tmp"] / "rows.json"
-    rows.write_text(json.dumps([ROW]))
-    argv = ["--state-dir", str(env["state"]), "--bridge", "/nonexistent", "--dry-run", "--agenda-json", str(rows)]
-    assert runner.main(argv, transport=FakeOpenRouter([]), assemble_kw=env["assemble_kw"], as_of=AS_OF) == 0
-    return json.loads((env["state"] / "dry-run" / "runs" / AGENDA_ID / "run.json").read_text())
 
 
 # ------------------------------------------------------------------------------------------------ hash stability
@@ -255,7 +191,7 @@ def test_theme_hit_without_subject_hit_is_shown_after_subject_hits(env):
 def test_no_theme_member_keeps_completed_revision(env):
     _, db = ledger(env["tmp"], None)
     db.close()
-    assert env["run"](FakeOpenRouter([tr.good_narrative()])) == 0
+    assert env["run"](FakeOpenRouter([tk.good_narrative()])) == 0
     rev = json.loads((env["run_dir"] / "revision.json").read_text())
     assert rev["identity"]["manifest_sha256"] == RUNNER_MANIFEST_SHA256
     assert rev["identity"]["content_sha256"] == RUNNER_CONTENT_SHA256

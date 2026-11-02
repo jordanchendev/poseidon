@@ -12,9 +12,9 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 import research_theme  # noqa: E402
 import settle_theme  # noqa: E402
+from refusal import ResearchRefusal  # noqa: E402
 
 START = date(2026, 9, 1)
 N, DECIDE, HORIZON = 40, 25, 30  # decided as_of = day 25 09:00Z; horizon = day 30 01:00Z; bars at 00:00Z
@@ -380,7 +380,7 @@ def test_superseded_excluded_and_converted_without_force(chain, capsys):
 
 
 def test_supersede_pointer_must_exist(chain):
-    with pytest.raises(SystemExit, match="not a completed revision in this ledger"):
+    with pytest.raises(ResearchRefusal, match="not a completed revision in this ledger"):
         make_revision(
             chain["tmp"],
             chain["ledger"],

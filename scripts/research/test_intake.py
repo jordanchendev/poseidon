@@ -6,305 +6,53 @@ The eight 股癌 posts of §7 (fixtures/gooaye_posts.json, test fixture only) go
   PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/test_intake.py
 """
 
-import hashlib
 import json
 import re
-import sqlite3
-import sys
 from pathlib import Path
 
 import pytest
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 
 import intake  # noqa: E402
-import narrative_ledger as nl  # noqa: E402
-import test_runner as tr  # noqa: E402
-from test_runner import env as runner_env  # noqa: E402,F401  (pytest finds it by this name)
-
-POSTS = {k: v["text"] for k, v in json.loads((HERE / "fixtures" / "gooaye_posts.json").read_text())["posts"].items()}
-MID = "20261020-k1"
-RECEIVED = "2026-10-20T18:00:00+08:00"
-RECEIVED_UTC = "2026-10-20T10:00:00Z"
-APPROVED = "2026-10-01T00:00:00Z"
-# §7.1 lists NASDAQ:ASML under cleanroom-capacity but it is not in the seed's verified members, so these tests approve
-# it the way the owner would (member-add). NASDAQ:AMD, the subject N11 needs, is a verified member of scale-up-optics
-# in the seed since the owner accepted M20261029-2, so seed_themes gets it from the seed.
-EXTRA_MEMBERS = (("cleanroom-capacity", "NASDAQ:ASML", "constrained"),)
-VIA = "（經股癌轉述）"
-
-
-def rec(claim, quote, subjects, theme, attributed, claim_type="state", resolves_on=None):
-    return {
-        "claim": claim,
-        "claim_type": claim_type,
-        "resolves_on": resolves_on,
-        "attributed_to": attributed,
-        "quote": quote,
-        "subject_symbols": subjects,
-        "theme_ids": [theme],
-    }
-
-
-NITTOBO = "日東紡（經產業タイムズ、股癌轉述）"
-# §7.2 N1-N19 as the gates accept them. Where the design table differs: N1 drops 「隨競爭者進入而」 (a second
-# statement); N9 and N19 keep resolves_on null, because 「明年」 and 「兩年以上」 name no year the period gate can match
-# (§2.3), so the program sets first_seen_at + 365 days; N10 keeps the post's 144/288/576 (check_numbers refuses a bare
-# 144); N17 says 帶出 as the post does (帶動 is a causal link the intake gate refuses).
-EXPECTED = {
-    "1": [
-        rec(
-            "日東紡的 T glass 市佔率未來可能略降",
-            "份額未來可能略降",
-            ["TSE:3110"],
-            "t-glass-supply",
-            NITTOBO,
-            "forecast",
-        ),
-        rec(
-            "日東紡 T glass 的金額規模會持續向上",
-            "但金額規模會持續向上",
-            ["TSE:3110"],
-            "t-glass-supply",
-            NITTOBO,
-            "forecast",
-        ),
-        rec(
-            "日東紡把到 2027 年度的投資上調 400 億日圓至 1,200 億日圓",
-            "把到 2027 年度的投資上調 400 億日圓至 1,200 億日圓",
-            ["TSE:3110"],
-            "t-glass-supply",
-            NITTOBO,
-        ),
-        rec(
-            "日東紡的 T glass 產能目標為 2025 年度的 3 倍",
-            "T glass 產能目標為 2025 年度的 3 倍",
-            ["TSE:3110"],
-            "t-glass-supply",
-            NITTOBO,
-        ),
-    ],
-    "2": [
-        rec(
-            "ASML 目前規劃的 2027 與 2028 產出無法滿足客戶需求",
-            "目前規劃的 27/28 產出無法滿足客戶需求",
-            ["NASDAQ:ASML"],
-            "cleanroom-capacity",
-            "ASML" + VIA,
-        ),
-        rec(
-            "ASML 的出貨受客戶無塵室不足限制",
-            "看來連 asml 都明顯受到 cleanroom 的缺乏限制",
-            ["NASDAQ:ASML"],
-            "cleanroom-capacity",
-            "股癌推論",
-        ),
-        rec(
-            "ASML 的訂單取消成本高於客戶預付款",
-            "取消成本高於預付款",
-            ["NASDAQ:ASML"],
-            "cleanroom-capacity",
-            "ASML" + VIA,
-        ),
-    ],
-    "3": [],
-    "4": [
-        rec(
-            "櫃內 scale-up 連接 100% 使用銅",
-            "櫃內 scale up 100% 走銅",
-            ["NASDAQ:MRVL"],
-            "scale-up-optics",
-            "Marvell" + VIA,
-        ),
-        rec(
-            "Marvell 的 scale-up optics 營收明年會從接近零成長到數億美元",
-            "scale up optics 在明年會從幾乎為零的營收往數億 USD 跑",
-            ["NASDAQ:MRVL"],
-            "scale-up-optics",
-            "Marvell" + VIA,
-            "forecast",
-        ),
-    ],
-    "5": [
-        rec(
-            "GPU 叢集擴大到 144/288/576 顆時銅連接不可行",
-            "cluster 從 72 顆擴大到 144/288/576 顆 GPU 時，物理限制使銅不可行",
-            ["NASDAQ:ALAB"],
-            "scale-up-optics",
-            "Astera Labs" + VIA,
-        ),
-        rec(
-            "AMD MI450 系列採用 UALink over Ethernet",
-            "MI450 系列採用 UALink over Ethernet",
-            ["NASDAQ:AMD"],
-            "scale-up-optics",
-            "AMD（經 Astera CEO、股癌轉述）",
-        ),
-    ],
-    "6": [
-        rec(
-            "實體 AI 的實際商業化還要兩年以上",
-            "JBL 意見是實體 AI 還要兩年以上",
-            ["NYSE:JBL"],
-            "physical-ai-demand",
-            "Jabil" + VIA,
-            "forecast",
-        ),
-    ],
-    "7": [
-        rec(
-            "3.2T 會成為美國對中政策的施力點",
-            "3.2T 會是對中政策施力點",
-            ["SZSE:300308", "SZSE:300502"],
-            "optics-export-policy",
-            "Morgan Stanley" + VIA,
-            "forecast",
-        ),
-        rec(
-            "中國模組廠可透過採購 Marvell DSP 與 LITE／COHR 雷射湊足 65% 美國 BOM 門檻",
-            "innolight 這類公司只要去採購 marvell DSP + LITE/COHR 的雷射湊足 65% bom content 還是可以輸美",
-            ["SZSE:300308", "NASDAQ:MRVL", "NASDAQ:LITE", "NYSE:COHR"],
-            "optics-export-policy",
-            "Morgan Stanley" + VIA,
-        ),
-        rec(
-            "中國可能以 InP 基板出口管制反制",
-            "中國可能控制 inp 基板出口反制",
-            ["SZSE:300308", "SZSE:300502"],
-            "optics-export-policy",
-            "Morgan Stanley" + VIA,
-            "forecast",
-        ),
-    ],
-    "8": [
-        rec(
-            "客戶為保出貨量主動壓低每台伺服器的記憶體用量",
-            "因為客戶為了保出貨量，主動壓低每台記憶體用量",
-            ["NASDAQ:MU"],
-            "memory-supply-tightness",
-            "市場傳聞（股癌稱已獲 Micron 證實）",
-        ),
-        rec(
-            "記憶體供給吃緊會延續到至少 2028 年",
-            "市場吃緊會一直支撐到 2028",
-            ["NASDAQ:MU"],
-            "memory-supply-tightness",
-            "Micron" + VIA,
-            "forecast",
-            "2028-12-31",
-        ),
-        rec(
-            "agentic AI 帶出伺服器 CPU 的新需求",
-            "agentic AI 帶出 CPU 新需求",
-            ["NASDAQ:MU"],
-            "memory-supply-tightness",
-            "Micron" + VIA,
-        ),
-        rec(
-            "L4 以上自駕車需要 200GB 以上的記憶體",
-            "L4 以上自駕車用 200GB 以上記憶體",
-            ["NASDAQ:MU"],
-            "physical-ai-demand",
-            "Micron" + VIA,
-        ),
-    ],
-}
-VERIFY_8 = ["Micron FQ4 FY26 prepared remarks", "Micron FQ4 FY26 earnings call transcript (Q&A)"]
-
-
-def intake_out(records=(), proposals=(), verify=()):
-    return {"records": list(records), "theme_proposals": list(proposals), "verify_with": list(verify)}
-
-
-# The ledger the §7.2 cases were written against: the seed's six §7.1 themes. The four themes the owner accepted in the
-# trial (themes-seed-v2: high-na-euv and the rest) came from these same posts, so the cases propose them anew.
-SECTION_7_1 = (
-    "cleanroom-capacity",
-    "memory-supply-tightness",
-    "t-glass-supply",
-    "scale-up-optics",
-    "optics-export-policy",
-    "physical-ai-demand",
+import testkit as tk  # noqa: E402
+from testkit import (  # noqa: E402
+    EXPECTED_RECORDS,
+    MID,
+    POSTS,
+    RECEIVED_UTC,
+    VERIFY_8,
+    VIA,
+    db_rows,
+    intake_out,
+    material_done,
+    material_row,
+    rec,
+    run_intake,
+    run_json,
+    seed_intake_themes,
+    snapshot_payload,
 )
 
 
-def section_7_1_themes():
-    return [t for t in json.loads((HERE / "themes.seed.json").read_text())["themes"] if t["theme_id"] in SECTION_7_1]
-
-
-def seed_themes(path):
-    db = nl.connect(path)
-    for t in section_7_1_themes():
-        nl.add_theme(db, t["theme_id"], t["title"], t["kind"], t["keywords"], "cli:test-seed", at=APPROVED)
-        for m in t["members"]["verified"]:
-            nl.add_member(db, t["theme_id"], m["symbol"], m["role"], "cli:test-seed", at=APPROVED)
-    for theme_id, symbol, role in EXTRA_MEMBERS:
-        nl.add_member(db, theme_id, symbol, role, "cli:test-owner", at=APPROVED)
-    db.close()
-
-
-def material_row(post, mid=MID, tier="kol", author="股癌", url=None):
-    text = POSTS[post]
-    return {
-        "id": mid,
-        "tier": tier,
-        "author": author,
-        "url": url,
-        "received_at": RECEIVED,
-        "text_sha256": hashlib.sha256(text.encode()).hexdigest(),
-        "chars": len(text),
-        "text": text,
-        "status": "accepted",
-    }
-
-
 @pytest.fixture()
-def env(runner_env):  # noqa: F811
+def env(runner_env):
     runner_env["state"].mkdir(parents=True)
-    seed_themes(runner_env["state"] / "ledger.sqlite")
+    seed_intake_themes(runner_env["state"] / "ledger.sqlite")
     runner_env["set_bridge"](rows=[])
     runner_env["run_dir"] = runner_env["state"] / "runs" / f"material-{MID}"
     return runner_env
 
 
-def run_intake(env, drafts, rows, jev_label=lambda claim: "supports", *extra):
-    env["set_bridge"](**{"material-pending": rows})
-    t = tr.FakeOpenRouter(drafts, jev_label)
-    rc = env["run"](t, *extra)
-    return t, rc
-
-
-def db_rows(env, sql, *args):
-    db = sqlite3.connect(env["state"] / "ledger.sqlite")
-    db.row_factory = sqlite3.Row
-    try:
-        return [dict(r) for r in db.execute(sql, args)]
-    finally:
-        db.close()
-
-
-def run_json(env):
-    return json.loads((env["run_dir"] / "run.json").read_text())
-
-
-def material_done(env):
-    return [json.loads(c["stdin"]) for c in tr.bridge_calls(env, "material-done")]
-
-
-# ------------------------------------------------------------------------------------------------ the §7.2 records
-def snapshot_payload(path, as_of="2026-10-21T04:20:00Z"):
-    snap = intake.intake_snapshot(path, as_of)
-    return {"as_of": as_of, "evidence": [snap]}
-
-
-@pytest.mark.parametrize("post", sorted(EXPECTED))
+@pytest.mark.parametrize("post", sorted(EXPECTED_RECORDS))
 def test_section_7_2_records_pass_every_gate(tmp_path, post):
     path = tmp_path / "ledger.sqlite"
-    seed_themes(path)
+    seed_intake_themes(path)
     m = intake.parse_row(material_row(post))
-    reasons, plan = intake.gates(intake_out(EXPECTED[post]), m, snapshot_payload(path), lambda s, t: (None, None))
-    assert reasons == [] and len(plan["records"]) == len(EXPECTED[post])
+    reasons, plan = intake.gates(
+        intake_out(EXPECTED_RECORDS[post]), m, snapshot_payload(path), lambda s, t: (None, None)
+    )
+    assert reasons == [] and len(plan["records"]) == len(EXPECTED_RECORDS[post])
     for r in plan["records"]:
         assert r["quote"] in r["paragraph"] and r["locator"].startswith("p")
 
@@ -312,7 +60,7 @@ def test_section_7_2_records_pass_every_gate(tmp_path, post):
 def test_section_7_2_lint_refusals(tmp_path):
     """Post 7's AAOI comparison (two quantities) and post 8's agentic line copied as one record (a 帶動 link)."""
     path = tmp_path / "ledger.sqlite"
-    seed_themes(path)
+    seed_intake_themes(path)
     aaoi = "aaoi 年化約 1200 萬顆，對比 Innolight 4430 萬＋Eoptolink 5670 萬顆"
     agentic = "agentic workload 跑在 CPU 上，帶動 LPDDR、DDR、SSD"
     cases = [
@@ -336,7 +84,7 @@ def test_section_7_2_lint_refusals(tmp_path):
 
 def test_subjects_must_be_approved_or_proposed_members(tmp_path):
     path = tmp_path / "ledger.sqlite"
-    seed_themes(path)
+    seed_intake_themes(path)
     m = intake.parse_row(material_row("2"))
     payload = snapshot_payload(path)
     intel = rec(
@@ -377,12 +125,12 @@ def test_subjects_must_be_approved_or_proposed_members(tmp_path):
 
 def test_gate_refusals_name_the_record(tmp_path):
     path = tmp_path / "ledger.sqlite"
-    seed_themes(path)
+    seed_intake_themes(path)
     m = intake.parse_row(material_row("8"))
-    good = EXPECTED["8"][1]
+    good = EXPECTED_RECORDS["8"][1]
     bad = [
         (dict(good, quote="市場吃緊會一直支撐到 2029"), "[quote] records[0]"),
-        (dict(EXPECTED["8"][3], claim="L4 以上自駕車需要 300GB 以上的記憶體"), "[numbers] records[0]"),
+        (dict(EXPECTED_RECORDS["8"][3], claim="L4 以上自駕車需要 300GB 以上的記憶體"), "[numbers] records[0]"),
         (dict(good, resolves_on="2027-12-31"), "names no period"),
         (dict(good, claim_type="state"), "resolves_on is a YYYY-MM-DD date of a forecast only"),
         (dict(good, theme_ids=["memory-cycle"]), "[theme] records[0]"),
@@ -407,7 +155,7 @@ def test_prompt_takes_the_claims_the_opening_names_first():
 
 
 def test_post8_records_are_written_with_the_material_tier_and_first_seen_at(env):
-    t, rc = run_intake(env, [intake_out(EXPECTED["8"], verify=VERIFY_8)], [material_row("8")])
+    t, rc = run_intake(env, [intake_out(EXPECTED_RECORDS["8"], verify=VERIFY_8)], [material_row("8")])
     assert rc == 0
     data = run_json(env)
     assert data["status"] == "intaken", data["reasons"]
@@ -454,7 +202,7 @@ def test_post8_records_are_written_with_the_material_tier_and_first_seen_at(env)
 @pytest.mark.parametrize(("tier", "word"), [("sell-side", "賣方"), ("media", "媒體")])
 def test_record_tier_is_the_material_tier(env, tier, word):
     row = material_row("2", tier=tier, author="產業タイムズ")
-    _, rc = run_intake(env, [intake_out(EXPECTED["2"])], [row])
+    _, rc = run_intake(env, [intake_out(EXPECTED_RECORDS["2"])], [row])
     assert rc == 0
     assert {r["source_tier"] for r in db_rows(env, "SELECT source_tier FROM narrative_records")} == {tier}
     assert material_done(env)[0]["text"].startswith(f"素材整理完成 {MID}（{word} 產業タイムズ）")
@@ -471,8 +219,8 @@ def test_post3_yields_no_record_and_says_no_theme(env):
 
 
 def test_quote_not_verbatim_is_refused_then_repaired(env):
-    bad = dict(EXPECTED["2"][2], quote="取消成本高於客戶預付款")
-    t, rc = run_intake(env, [intake_out([bad]), intake_out([EXPECTED["2"][2]])], [material_row("2")])
+    bad = dict(EXPECTED_RECORDS["2"][2], quote="取消成本高於客戶預付款")
+    t, rc = run_intake(env, [intake_out([bad]), intake_out([EXPECTED_RECORDS["2"][2]])], [material_row("2")])
     assert rc == 0
     data = run_json(env)
     assert data["status"] == "intaken" and len(t.chat_calls) == 2
@@ -484,12 +232,12 @@ def test_quote_not_verbatim_is_refused_then_repaired(env):
 
 
 def test_refused_twice_goes_to_needs_review(env):
-    bad = dict(EXPECTED["2"][2], quote="取消成本高於客戶預付款")
+    bad = dict(EXPECTED_RECORDS["2"][2], quote="取消成本高於客戶預付款")
     t, rc = run_intake(env, [intake_out([bad]), intake_out([bad])], [material_row("2")])
     assert rc == 0 and len(t.chat_calls) == 2 and t.jev_calls == []
     data = run_json(env)
     assert (data["status"], data["failed_stage"]) == ("needs_review", "gates")
-    (call,) = tr.bridge_calls(env, "material-needs-review")
+    (call,) = tk.bridge_calls(env, "material-needs-review")
     assert call["args"][1:] == [MID] and call["stdin"].startswith(
         "gates: validator refused after one repair round; [quote]"
     )
@@ -498,9 +246,12 @@ def test_refused_twice_goes_to_needs_review(env):
 
 
 def test_record_jev_does_not_support_is_dropped_and_listed(env):
-    drop = EXPECTED["8"][0]["claim"]
+    drop = EXPECTED_RECORDS["8"][0]["claim"]
     _t, rc = run_intake(
-        env, [intake_out(EXPECTED["8"])], [material_row("8")], lambda c: "says_nothing" if c == drop else "supports"
+        env,
+        [intake_out(EXPECTED_RECORDS["8"])],
+        [material_row("8")],
+        lambda c: "says_nothing" if c == drop else "supports",
     )
     assert rc == 0
     claims = {r["claim"] for r in db_rows(env, "SELECT claim FROM narrative_records")}
@@ -527,7 +278,7 @@ def test_theme_proposals_are_filed_and_duplicates_listed(env):
         "kind": "bottleneck",
         "quote": "這個環節是許多設備廠商開始刷成績的瓶頸",
     }
-    _, rc = run_intake(env, [intake_out(EXPECTED["2"], [new, dup])], [material_row("2")])
+    _, rc = run_intake(env, [intake_out(EXPECTED_RECORDS["2"], [new, dup])], [material_row("2")])
     assert rc == 0
     (p,) = db_rows(env, "SELECT * FROM theme_proposals")
     assert (p["proposal_id"], p["suggested_id"], p["status"], p["source_ref"]) == (
@@ -549,16 +300,16 @@ def test_bridge_row_problems_go_to_needs_review(env):
     unreadable["text_error"] = "text does not match text_sha256"
     t, rc = run_intake(env, [], [tampered, unreadable])
     assert rc == 0 and t.chat_calls == []
-    calls = {c["args"][1]: c["stdin"] for c in tr.bridge_calls(env, "material-needs-review")}
+    calls = {c["args"][1]: c["stdin"] for c in tk.bridge_calls(env, "material-needs-review")}
     assert calls == {MID: "intake: material text does not match text_sha256\n"}
     _, rc = run_intake(env, [], [unreadable])
-    calls = {c["args"][1]: c["stdin"] for c in tr.bridge_calls(env, "material-needs-review")}
+    calls = {c["args"][1]: c["stdin"] for c in tk.bridge_calls(env, "material-needs-review")}
     assert calls["20261020-k2"].startswith("bridge: the bridge could not deliver the text: text does not match")
     assert db_rows(env, "SELECT * FROM materials") == []
 
 
 def test_listed_again_is_reported_again_without_a_model_call(env):
-    _, rc = run_intake(env, [intake_out(EXPECTED["8"])], [material_row("8")])
+    _, rc = run_intake(env, [intake_out(EXPECTED_RECORDS["8"])], [material_row("8")])
     assert rc == 0
     first = db_rows(env, "SELECT narrative_id, content_sha256 FROM narrative_records ORDER BY narrative_id")
     t, rc = run_intake(env, [], [material_row("8")])  # the first material-done did not land
@@ -578,7 +329,7 @@ def test_host_mode_reads_files_and_queues_reports_in_the_outbox(env):
     agenda, materials = env["tmp"] / "agenda.json", env["tmp"] / "materials.json"
     agenda.write_text("[]")
     materials.write_text(json.dumps([material_row("3")]))
-    t = tr.FakeOpenRouter([intake_out()])
+    t = tk.FakeOpenRouter([intake_out()])
     rc = env["run"](t, "--agenda-json", str(agenda), "--materials-json", str(materials), "--outbox", str(outbox))
     assert rc == 0 and env["bridge"]().get("calls") is None  # host mode: no bridge call from the container
     entry = json.loads((outbox / f"{MID}.json").read_text())
@@ -586,5 +337,5 @@ def test_host_mode_reads_files_and_queues_reports_in_the_outbox(env):
     assert deliver_outbox.main(["--outbox", str(outbox), "--bridge", env["bridge_cmd"]]) == 0
     assert material_done(env)[0]["records"] == 0
     # without --materials-json a host-mode run takes in nothing
-    t = tr.FakeOpenRouter([])
+    t = tk.FakeOpenRouter([])
     assert env["run"](t, "--agenda-json", str(agenda), "--outbox", str(outbox)) == 0 and t.chat_calls == []

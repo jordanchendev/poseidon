@@ -9,38 +9,22 @@ import json
 import sqlite3
 import subprocess
 import sys
-import uuid
 from pathlib import Path
 
 import pytest
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 
+import jev_client  # noqa: E402
 import narrative_check  # noqa: E402
+import narrative_decisions  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
+import narrative_proposals  # noqa: E402
 import runner  # noqa: E402
-import test_narrative_snapshot as snap_t  # noqa: E402
-import test_runner as tr  # noqa: E402
-from test_runner import JEV_KEY  # noqa: E402
-from test_runner import env as runner_env  # noqa: E402,F401  (pytest finds it by this name)
+import testkit as tk  # noqa: E402
+from testkit import CASES, JEV_KEY, PART, PART_LABELS, FakeJev, apply_later, ledger_rows, refrozen, run  # noqa: E402
 
 DOC_TIME = "2026-10-06T00:00:00Z"  # available_at of the agenda document (event_date 2026-10-06)
-# rule -> (claim, claim_type, resolves_on, verdict, claim_indices, judgement label, sweep label)
-CASES = {
-    "R1": ("聯電甲案說法成立", "state", None, "verifies", [0], "supports", "supports"),
-    "R2": ("聯電乙案說法成立", "state", None, "refutes", [0], "contradicts", "contradicts"),
-    "R3": ("聯電丙案說法成立", "state", None, "partially_verifies", [1], "says_nothing", "says_nothing"),
-    "R4": ("聯電丁案預期將成立", "forecast", "2027-06-30", "verifies", [0], "supports", "supports"),
-    "R5": ("聯電戊案預期將成立", "forecast", "2026-09-30", "verifies", [0], "supports", "supports"),
-    "R6": ("聯電己案說法成立", "state", None, "verifies", [0], "says_nothing", "says_nothing"),
-    "R7": ("聯電庚案說法成立", "state", None, "refutes", [0], "contradicts", "contradicts"),
-    "R8": ("聯電辛案說法成立", "state", None, "untouched", [], None, "says_nothing"),
-    "R9": ("聯電壬案說法成立", "state", None, "untouched", [], None, "supports"),
-}
-SOURCE = "。".join(c[0] for c in CASES.values()) + "。"
-PART = "聯電丙案有一部分成立"  # the R3 check's supported_part
-PART_LABELS = {"in_record": "supports", "backed": "supports"}  # FakeJev's answers for PART, judgements (a) and (b)
 EXPECTED = {  # rule -> (outcome, status after the run with narrative_apply on, event kind written)
     "R1": ("status_change", "verified", "status"),
     "R2": ("status_change", "refuted", "status"),
@@ -55,112 +39,8 @@ EXPECTED = {  # rule -> (outcome, status after the run with narrative_apply on, 
 
 
 @pytest.fixture()
-def env(runner_env):  # noqa: F811
+def env(runner_env):
     return runner_env
-
-
-class FakeJev(tr.FakeOpenRouter):
-    """Drafts as FakeOpenRouter; JEV answers a record claim by locator (judgement vs sweep), PART by PART_LABELS (against
-    the record's claim vs the cited claims), any other claim supports."""
-
-    def __init__(self, drafts):
-        super().__init__(drafts)
-        self.by_claim = {c[0]: (c[5], c[6]) for c in CASES.values()}
-
-    def __call__(self, url, headers, body, timeout):
-        if url.endswith("/chat/completions"):
-            return super().__call__(url, headers, body, timeout)
-        req = json.loads(body)
-        self.jev_calls.append(req)
-        st = req["state"]
-        locator = st["source_context"]["locator"]
-        if st["claim"] == PART:
-            label = PART_LABELS["in_record" if locator == narrative_check.IN_RECORD_LOCATOR else "backed"]
-        else:
-            judged, swept = self.by_claim.get(st["claim"], ("supports", "supports"))
-            label = swept if locator == "all official excerpts" else judged
-        return 200, json.dumps(tr.jev_answer(label, 0.9, 0.00002)).encode()
-
-
-def seed(env):
-    path, db = snap_t.ledger(env["tmp"])
-    ids = {}
-    for n, (rule, (claim, ctype, resolves_on, *_)) in enumerate(CASES.items()):
-        ids[rule] = nl.add_record(
-            db,
-            claim=claim,
-            claim_type=ctype,
-            resolves_on=resolves_on,
-            attributed_to="股癌",
-            source_tier="kol",
-            origin_kind="material",
-            origin_ref=f"material:20261002-k{n}",
-            origin_evidence_id="secondary:material",
-            quote=claim,
-            source_text=SOURCE,
-            subject_symbols=["2303"],
-            theme_ids=["foundry-utilization"],
-            first_seen_at=f"2026-10-{n + 1:02d}T00:00:00Z",
-        )["narrative_id"]
-    nl.append_event(
-        db,
-        ids["R7"],
-        kind="status",
-        to_status="partially_verified",
-        decided_by="rule",
-        at="2026-10-12T00:00:00Z",
-        basis={},
-    )
-    nl.append_event(
-        db,
-        ids["R5"],
-        kind="corroborated",
-        to_status="unverified",
-        decided_by="rule",
-        at="2026-10-15T00:00:00Z",
-        basis={},
-    )
-    db.close()
-    return path, ids
-
-
-def narrative(ids):
-    n = tr.good_narrative()
-    n["narrative_checks"] = [
-        {
-            "narrative_id": ids[rule],
-            "verdict": c[3],
-            "claim_indices": c[4],
-            "why": "測試",
-            **({"supported_part": PART, "open_part": "未說明主動性。"} if c[3] == "partially_verifies" else {}),
-        }
-        for rule, c in CASES.items()
-    ]
-    return n
-
-
-def run(env, mode=None):
-    path, ids = seed(env)
-    t = FakeJev([narrative(ids)])
-    assert env["run"](t, *(["--narrative-apply", mode] if mode else [])) == 0
-    run_json = json.loads((env["run_dir"] / "run.json").read_text())
-    assert run_json["status"] == "completed", run_json["reasons"]
-    rev = json.loads((env["run_dir"] / "revision.json").read_text())
-    return path, ids, t, run_json, rev
-
-
-def ledger_rows(path, rev_id):
-    db = sqlite3.connect(path)
-    db.row_factory = sqlite3.Row
-    checks = {
-        r["narrative_id"]: dict(r)
-        for r in db.execute("SELECT * FROM narrative_checks WHERE revision_id = ?", (rev_id,))
-    }
-    events = {}
-    for r in db.execute("SELECT * FROM narrative_events ORDER BY narrative_id, seq"):
-        events.setdefault(r["narrative_id"], []).append(dict(r))
-    db.close()
-    return checks, events
 
 
 # ------------------------------------------------------------------------------------------------ the rule table
@@ -354,7 +234,7 @@ def test_r3_takes_a_supported_part_of_the_record_the_cited_claims_back(env, monk
         "in_record": ("supports", votes),
         "backed": ("supports", votes),
     }
-    result, _ = narrative_check.apply_decision(
+    result, _ = narrative_decisions.apply_decision(
         path,
         {
             "decision_id": "20261030-d1",
@@ -431,11 +311,11 @@ def test_on_writes_one_event_per_rule_row(env):
     assert basis == {
         "revision_id": rev["identity"]["revision_id"],
         "claim_indices": [0],
-        "evidence_ids": [tr.DOC_ID],
+        "evidence_ids": [tk.DOC_ID],
         "quotes": ["Revenue was NT$68.73 billion for the quarter"],
         "tiers": ["company release"],
     }
-    assert jev["label"] == "supports" and jev["model"] == runner.JEV_MODEL
+    assert jev["label"] == "supports" and jev["model"] == jev_client.JEV_MODEL
     r5 = next(e for e in events[ids["R5"]] if e["rule"] == "R5")
     assert r5["at"] == "2026-10-15T00:00:00Z"  # max(evidence available_at, the record's last event at)
     votes = narrative_check.JEV_VOTES
@@ -464,34 +344,8 @@ def test_off_by_default_writes_checks_but_no_events(env):
     owner = table[table.index("### 待 owner 判斷") :]
     for rule in ("R6", "R7", "R9"):
         assert f"`{ids[rule]}`" in owner and f"（{rule}）" in owner
-    done = json.loads(tr.bridge_calls(env, "done")[0]["stdin"])
+    done = json.loads(tk.bridge_calls(env, "done")[0]["stdin"])
     assert "## 敘事變化" in done["report_md"]
-
-
-def refrozen(rev, n=2, raw_files=None, excerpts=None):
-    """rev as a later run under a new revision id with its agenda document frozen again, as run 20261030-m99 re-froze
-    the Micron remarks of 20261029-m94: a new evidence id, an issuer and one excerpt more (so the item's content_sha256
-    changes), the same raw files. raw_files (and excerpts) make it a different document."""
-    later = json.loads(json.dumps(rev))
-    later["identity"]["revision_id"] = str(uuid.uuid4())
-    new_id = f"{tr.DOC_ID}-r{n}"
-    for e in later["manifest_payload"]["evidence"]:
-        if e["id"] == tr.DOC_ID:
-            p = e["payload"]
-            p["excerpts"] = excerpts or [*p["excerpts"], {"locator": "line 999", "text": "Guidance follows."}]
-            p["issuer"] = "2303"
-            p["raw_files"] = raw_files or p["raw_files"]
-            e.update(id=new_id, content_sha256=nl.content_sha256(p))
-    for c in later["research"]["claims"]:
-        c["evidence_ids"] = [new_id if x == tr.DOC_ID else x for x in c["evidence_ids"]]
-    return later
-
-
-def apply_later(env, later, mode):
-    cfg = json.loads((env["run_dir"] / "config.json").read_text())
-    jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
-    out = narrative_check.apply(env["state"] / "ledger.sqlite", later, later["manifest_payload"], cfg, jev, mode=mode)
-    return {x["narrative_id"]: x for x in out["records"]}
 
 
 def test_the_same_document_frozen_again_corroborates_a_record_once(env):
@@ -516,7 +370,7 @@ def test_rerun_of_the_same_revision_calls_no_jev_and_writes_nothing(env):
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
     before = ledger_rows(path, rev["identity"]["revision_id"])
     t = FakeJev([])
-    jev = runner.Jev(JEV_KEY, transport=t)
+    jev = jev_client.Jev(JEV_KEY, transport=t)
     again = narrative_check.apply(path, rev, payload, cfg, jev, mode="on")
     assert t.jev_calls == [] and ledger_rows(path, rev["identity"]["revision_id"]) == before
     assert [x["outcome"] for x in again["records"]] == [x["outcome"] for x in rev["narrative_results"]["records"]]
@@ -534,7 +388,7 @@ def test_rerun_of_the_same_revision_calls_no_jev_and_writes_nothing(env):
 
 
 def test_truncated_sweep_is_recorded(env, monkeypatch):
-    monkeypatch.setattr(runner.Jev, "SOURCE_CAP", 80)
+    monkeypatch.setattr(jev_client.Jev, "SOURCE_CAP", 80)
     path, _, t, _, rev = run(env)
     checks, _ = ledger_rows(path, rev["identity"]["revision_id"])
     assert {c["sweep_truncated"] for c in checks.values()} == {1}
@@ -559,7 +413,7 @@ def test_sweep_source_keeps_official_excerpts_in_order():
 
 
 def test_run_without_a_snapshot_has_no_narrative_step(env):
-    t = tr.FakeOpenRouter([tr.good_narrative()])
+    t = tk.FakeOpenRouter([tk.good_narrative()])
     assert env["run"](t) == 0
     rev = json.loads((env["run_dir"] / "revision.json").read_text())
     assert "narrative_results" not in rev and len(t.jev_calls) == 2
@@ -567,7 +421,7 @@ def test_run_without_a_snapshot_has_no_narrative_step(env):
 
 # ------------------------------------------------------------------------------------------------ claim_theme_links
 def tagged_narrative():
-    n = tr.good_narrative()
+    n = tk.good_narrative()
     n["claims"][0].update(theme_ids=["foundry-utilization"], about_symbols=["NYSE:UMC", "2303"])
     n["claims"][2].update(theme_ids=["foundry-utilization"], about_symbols=["2303"])
     n["narrative_checks"] = []
@@ -584,7 +438,7 @@ def links(path):
 
 def run_tagged(env):
     """A theme member with no open record: the snapshot carries the theme list only, the drafter tags two claims."""
-    path, db = snap_t.ledger(env["tmp"])
+    path, db = tk.ledger(env["tmp"])
     db.close()
     t = FakeJev([tagged_narrative()])
     assert env["run"](t) == 0
@@ -618,7 +472,7 @@ def link_keys(rows):
 
 def test_tagged_claims_are_linked_once_with_narrative_apply_off(env):
     path, t, run_json, rev = run_tagged(env)
-    assert rev["narrative_results"] == {"narrative_apply": "off", "jev_model": runner.JEV_MODEL, "records": []}
+    assert rev["narrative_results"] == {"narrative_apply": "off", "jev_model": jev_client.JEV_MODEL, "records": []}
     assert "narrative_error" not in run_json and len(t.jev_calls) == 2  # the fact claims only: no record to judge
     rows = links(path)
     assert link_keys(rows) == expected_links(rev)
@@ -646,7 +500,7 @@ def test_rerun_writes_no_link_twice(env):
     before = links(path)
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
     t = FakeJev([])
-    narrative_check.apply(path, rev, rev["manifest_payload"], cfg, runner.Jev(JEV_KEY, transport=t), mode="on")
+    narrative_check.apply(path, rev, rev["manifest_payload"], cfg, jev_client.Jev(JEV_KEY, transport=t), mode="on")
     assert links(path) == before and t.jev_calls == []
 
 
@@ -660,7 +514,7 @@ def test_links_lost_to_a_crash_are_written_by_the_next_apply(env, monkeypatch):
     assert rev["identity"]["status"] == "completed"
     monkeypatch.undo()
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
-    jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
+    jev = jev_client.Jev(JEV_KEY, transport=FakeJev([]))
     narrative_check.apply(path, rev, rev["manifest_payload"], cfg, jev, mode="off")
     assert link_keys(links(path)) == expected_links(rev)
 
@@ -674,7 +528,7 @@ def test_no_snapshot_writes_no_links(env):
     payload = dict(rev["manifest_payload"])
     payload["evidence"] = [e for e in payload["evidence"] if e["kind"] != "narrative_snapshot"]
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
-    jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
+    jev = jev_client.Jev(JEV_KEY, transport=FakeJev([]))
     assert narrative_check.apply(path, rev, payload, cfg, jev, mode="on") is None
     assert links(path) == []
 
@@ -711,7 +565,7 @@ def records(path):
 
 
 def test_revision_narrative_proposals_become_records_in_every_mode(env):
-    path, db = snap_t.ledger(env["tmp"])
+    path, db = tk.ledger(env["tmp"])
     db.close()
     n = tagged_narrative()
     n["narrative_proposals"] = PROPOSALS
@@ -729,8 +583,8 @@ def test_revision_narrative_proposals_become_records_in_every_mode(env):
         "revision",
         f"revision:{rev_id}#claims[0]",
     )
-    assert official["attributed_to"] == (by_id[tr.DOC_ID]["payload"].get("publisher") or tr.DOC_ID)
-    assert official["origin_evidence_id"] == tr.DOC_ID and official["quote"] == n["claims"][0]["quote"]
+    assert official["attributed_to"] == (by_id[tk.DOC_ID]["payload"].get("publisher") or tk.DOC_ID)
+    assert official["origin_evidence_id"] == tk.DOC_ID and official["quote"] == n["claims"][0]["quote"]
     assert (ours["source_tier"], ours["attributed_to"], ours["origin_evidence_id"]) == (
         "our-inference",
         "本系統推論",
@@ -750,7 +604,7 @@ def test_revision_narrative_proposals_become_records_in_every_mode(env):
     assert f"`{official['narrative_id']}`" in section and section.count("已寫入") == 2
     # a rerun of the same revision writes nothing twice
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
-    jev = runner.Jev(JEV_KEY, transport=FakeJev([]))
+    jev = jev_client.Jev(JEV_KEY, transport=FakeJev([]))
     again = narrative_check.apply(path, rev, rev["manifest_payload"], cfg, jev, mode="on")
     assert again["narrative_proposals"] == out and records(path) == (rows, events, held)
 
@@ -759,8 +613,8 @@ def test_a_fact_on_non_official_evidence_is_no_record_and_a_pending_member_holds
     """§6.1: only official evidence makes an official record. A subject that is no member of the record's theme waits in
     held_records for a member proposal into that theme and is written once the owner accepts it; a theme proposal
     that names the subject for another theme does not count (acceptance phase 2a)."""
-    path, db = snap_t.ledger(env["tmp"])
-    member = nl.add_member_proposal(
+    path, db = tk.ledger(env["tmp"])
+    member = narrative_proposals.add_member_proposal(
         db,
         theme_id="foundry-utilization",
         symbol="NASDAQ:INTC",
@@ -794,7 +648,7 @@ def test_a_fact_on_non_official_evidence_is_no_record_and_a_pending_member_holds
     ]
     cfg = json.loads((env["run_dir"] / "config.json").read_text())
     res = narrative_check.apply(
-        path, rev, rev["manifest_payload"], cfg, runner.Jev(JEV_KEY, transport=FakeJev([])), mode="off"
+        path, rev, rev["manifest_payload"], cfg, jev_client.Jev(JEV_KEY, transport=FakeJev([])), mode="off"
     )
     unfit, waiting, other = res["narrative_proposals"]
     assert unfit["status"] == "unfit" and "不全是官方文件" in unfit["reason"]
@@ -805,7 +659,7 @@ def test_a_fact_on_non_official_evidence_is_no_record_and_a_pending_member_holds
     rows, _, held = records(path)
     assert unfit["narrative_id"] not in rows and waiting["narrative_id"] not in rows
     assert [h["narrative_id"] for h in held] == [waiting["narrative_id"]]
-    decide = lambda n, action, target, **kw: narrative_check.apply_decision(  # noqa: E731
+    decide = lambda n, action, target, **kw: narrative_decisions.apply_decision(  # noqa: E731
         path,
         {
             "decision_id": f"20261020-d{n}",
@@ -827,8 +681,8 @@ def test_a_fact_on_non_official_evidence_is_no_record_and_a_pending_member_holds
 
 def test_keyword_hits_on_untagged_claims_are_listed_never_linked(env):
     """§5.3: a theme keyword in a claim the drafter did not tag with that theme is an untagged_hit for the owner."""
-    path, db = snap_t.ledger(env["tmp"])
-    nl.add_theme_keywords(db, "foundry-utilization", ["營收", "毛利率"], "cli:owner", at=snap_t.APPROVED)
+    path, db = tk.ledger(env["tmp"])
+    nl.add_theme_keywords(db, "foundry-utilization", ["營收", "毛利率"], "cli:owner", at=tk.APPROVED)
     db.close()
     assert env["run"](FakeJev([tagged_narrative()])) == 0  # claims 0 and 2 tagged, claim 1 (毛利率) not
     rev = json.loads((env["run_dir"] / "revision.json").read_text())

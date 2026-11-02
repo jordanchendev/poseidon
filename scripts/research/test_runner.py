@@ -9,82 +9,40 @@ Run from the Poseidon repo root:
 
 import datetime
 import json
-import sqlite3
 import sys
 from pathlib import Path
 
 import pytest
 
 HERE = Path(__file__).resolve().parent
-WORKTREE = HERE.parents[1]
-sys.path.insert(0, str(HERE))
 
 import assemble  # noqa: E402
+import bridge  # noqa: E402
 import draft  # noqa: E402
+import jev_client  # noqa: E402
+import live_keys  # noqa: E402
 import runner  # noqa: E402
-
-AGENDA_ID = "20261021-3"
-DOC_ID = f"fundamental:agenda-{AGENDA_ID}"
-AS_OF = datetime.datetime(2026, 10, 21, 4, 20, tzinfo=datetime.UTC)
-DRAFT_KEY = "sk-or-test-draft-0000"
-JEV_KEY = "sk-or-test-jev-1111"
-RETURNED_MODEL = "deepseek/deepseek-v4.1-flash-1017"
-HTML = """<html><body>
-<p>UMC Reports Third Quarter 2026 Results. Revenue was NT$68.73 billion for the quarter, up 12.6% quarter over quarter.</p>
-
-<p>Gross margin was 32.5% for the quarter and capacity utilization rate was 85% across the fabs this quarter.</p>
-
-<p>The company expects wafer shipments to increase by high-single digit in the fourth quarter of 2026, per its outlook.</p>
-</body></html>
-"""
-
-ROW = {
-    "id": AGENDA_ID,
-    "topic": "UMC 3Q26 results",
-    "symbols": ["2303"],
-    "event_date": "2026-10-06",
-    "event_type": "earnings",
-    "primary_source_url": "https://ir.example.test/umc-3q26.htm",
-    "mirror_url": None,
-    "why_now": "results published",
-    "status": "accepted",
-}
+from refusal import ResearchRefusal  # noqa: E402
+from testkit import (  # noqa: E402
+    AGENDA_ID,
+    AS_OF,
+    DOC_ID,
+    DRAFT_KEY,
+    JEV_KEY,
+    RETURNED_MODEL,
+    ROW,
+    FakeOpenRouter,
+    bridge_calls,
+    chat_response,
+    good_narrative,
+    ledger_row,
+    no_key_leak,
+)
 
 
-def good_narrative():
-    return {
-        "tl_dr": "聯電第三季營收與毛利率穩健，股價走勢仍待法說確認。",
-        "thesis": "聯電第三季營收 NT$68.73 billion，毛利率 32.5%。",
-        "stance": "watch",
-        "change_summary": "首版。",
-        "next_review_at": "2026-10-28T09:00:00Z 法說會後補版",
-        "catalysts": [
-            {"date": "2026-10-28", "type": "earnings_call", "expected_signal": "第四季指引", "source": DOC_ID}
-        ],
-        "risks": ["證據只有新聞稿。"],
-        "invalidation_conditions": ["第四季出貨衰退。"],
-        "unknowns": ["第四季毛利率。"],
-        "claims": [
-            {
-                "kind": "fact",
-                "text": "聯電第三季營收為 NT$68.73 billion。",
-                "evidence_ids": [DOC_ID],
-                "quote": "Revenue was NT$68.73 billion for the quarter",
-            },
-            {
-                "kind": "fact",
-                "text": "聯電第三季毛利率為 32.5%。",
-                "evidence_ids": [DOC_ID],
-                "quote": "Gross margin was 32.5% for the quarter",
-            },
-            {
-                "kind": "inference",
-                "text": "依 2303 的價格事實判斷，股價反應仍待事件後追蹤。",
-                "evidence_ids": ["ohlcv:2303", "price_facts:2303"],
-                "quote": "2303 price facts (algorithm price-facts-v2",
-            },
-        ],
-    }
+@pytest.fixture()
+def env(runner_env):
+    return runner_env
 
 
 def bad_number_narrative():
@@ -94,187 +52,6 @@ def bad_number_narrative():
 
 
 # ------------------------------------------------------------------------------------------------ fakes
-def fake_bars(symbol, start, end):
-    base = {"2303": 150.0, "0050": 110.0}[symbol]
-    out, d, i = [], datetime.date(2026, 7, 1), 0
-    while d <= end.date():
-        if d.weekday() < 5:
-            ts = datetime.datetime(d.year, d.month, d.day, 5, 30, tzinfo=datetime.UTC)
-            if ts <= end:
-                c = base + (i % 7) - 3 + i * 0.1
-                out.append((ts.isoformat(), c - 0.5, c + 1, c - 1, c, 1000.0 + i))
-                i += 1
-        d += datetime.timedelta(days=1)
-    return out
-
-
-def fake_twse():
-    rows = [
-        {
-            "出表日期": "1151012",
-            "資料年月": "11509",
-            "公司代號": "2303",
-            "公司名稱": "聯電",
-            "營業收入-當月營收": "25350431",
-            "營業收入-上月營收": "23180000",
-            "營業收入-去年當月營收": "19925000",
-            "營業收入-上月比較增減(%)": "9.36",
-            "營業收入-去年同月增減(%)": "27.22",
-        },
-        {"出表日期": "1151012", "資料年月": "11509", "公司代號": "2330", "營業收入-當月營收": "1"},
-    ]
-    return rows, "https://openapi.twse.com.tw/v1/opendata/t187ap05_L", "2026-10-21T04:00:00Z"
-
-
-class FakeOpenRouter:
-    """Routes chat completions to a queue of draft responses and JEV calls to a label function."""
-
-    def __init__(self, drafts, jev_label=lambda claim: "supports"):
-        self.drafts = list(drafts)
-        self.jev_label = jev_label
-        self.chat_calls, self.jev_calls, self.headers_seen = [], [], []
-
-    def __call__(self, url, headers, body, timeout):
-        self.headers_seen.append(headers)
-        req = json.loads(body)
-        if url.endswith("/chat/completions"):
-            self.chat_calls.append(req)
-            item = self.drafts.pop(0)
-            if isinstance(item, tuple):  # (status, raw body)
-                return item
-            if isinstance(item, dict) and "choices" in item:
-                return 200, json.dumps(item).encode()
-            return 200, json.dumps(chat_response(json.dumps(item, ensure_ascii=False))).encode()
-        self.jev_calls.append(req)
-        label = self.jev_label(req["state"]["claim"])
-        return 200, json.dumps(jev_answer(label, 0.97, 0.0001)).encode()
-
-
-def jev_answer(label, p, cost):
-    """A JEV response body: `label` at probability p, the rest split over the other two labels."""
-    probs = {k: p if k == label else round((1 - p) / 2, 4) for k in ("supports", "contradicts", "says_nothing")}
-    return {
-        "answers": {"citation_relation": {"choice": label, "confidence": p, "probabilities": probs}},
-        "usage": {"cost": cost},
-    }
-
-
-def chat_response(content, finish="stop"):
-    return {
-        "id": "gen-test",
-        "model": RETURNED_MODEL,
-        "choices": [{"finish_reason": finish, "message": {"role": "assistant", "content": content}}],
-        "usage": {"prompt_tokens": 1200, "completion_tokens": 800, "cost": 0.0021},
-    }
-
-
-BRIDGE_SCRIPT = r"""
-import json, sys
-state_path, args = sys.argv[1], sys.argv[2:]
-st = json.load(open(state_path))
-st.setdefault("calls", []).append({"args": args, "stdin": sys.stdin.read() if args[0] != "pending" else ""})
-json.dump(st, open(state_path, "w"), ensure_ascii=False)
-if st.get("refuse", {}).get(args[0]):
-    sys.stderr.write("refused: " + st["refuse"][args[0]])
-    sys.exit(2)
-if args[0] == "pending":
-    print(json.dumps(st["rows"], ensure_ascii=False))
-if args[0] in ("material-pending", "narrative-pending"):
-    print(json.dumps(st.get(args[0], []), ensure_ascii=False))
-"""
-
-
-@pytest.fixture()
-def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("PYTHONPATH", str(WORKTREE / "src"))
-    src = tmp_path / "web"
-    src.mkdir()
-    (src / "umc-3q26.htm").write_text(HTML, encoding="utf-8")
-    secrets = tmp_path / "secrets"
-    secrets.mkdir()
-    draft_env, jev_env = secrets / "draft.env", secrets / "jev.env"
-    draft_env.write_text(f"{draft.DRAFT_KEY_VAR}={DRAFT_KEY}\n")
-    jev_env.write_text(f'export {runner.JEV_KEY_VAR}="{JEV_KEY}"\n')
-    draft_env.chmod(0o600)
-    jev_env.chmod(0o600)
-    bridge_py = tmp_path / "bridge.py"
-    bridge_py.write_text(BRIDGE_SCRIPT)
-    bridge_state = tmp_path / "bridge.json"
-    bridge_state.write_text(json.dumps({"rows": [ROW]}))
-    calls = {"fetch": []}
-
-    def fetch(url, **kw):
-        calls["fetch"].append(url)
-        if "missing" in url:
-            raise assemble.AssembleError(f"source fetch failed for {url}: HTTP 404")
-        doc, stats = assemble.fetch_document((src / url.rsplit("/", 1)[-1]).as_uri(), **kw)
-        doc["source_uri"] = url
-        return doc, stats
-
-    assemble_kw = {
-        "fetch": fetch,
-        "fetch_bars": fake_bars,
-        "fetch_rows": fake_twse,
-        "thalassa_base_url": "http://thalassa.test:8001",
-    }
-    state = tmp_path / "state"
-
-    def argv(*extra, draft_env_path=draft_env):
-        return [
-            "--state-dir",
-            str(state),
-            "--draft-env",
-            str(draft_env_path),
-            "--jev-env",
-            str(jev_env),
-            "--bridge",
-            f"{sys.executable} {bridge_py} {bridge_state}",
-            *extra,
-        ]
-
-    def run(transport, *extra, kw=None, **akw):
-        return runner.main(argv(*extra, **akw), transport=transport, assemble_kw=kw or assemble_kw, as_of=AS_OF)
-
-    def bridge():
-        return json.loads(bridge_state.read_text())
-
-    def set_bridge(**upd):
-        st = bridge()
-        st.update(upd)
-        bridge_state.write_text(json.dumps(st))
-
-    return dict(
-        bridge_cmd=f"{sys.executable} {bridge_py} {bridge_state}",
-        tmp=tmp_path,
-        state=state,
-        run=run,
-        bridge=bridge,
-        set_bridge=set_bridge,
-        assemble_kw=assemble_kw,
-        calls=calls,
-        draft_env=draft_env,
-        run_dir=state / "runs" / AGENDA_ID,
-    )
-
-
-def ledger_row(env):
-    db = sqlite3.connect(env["state"] / "ledger.sqlite")
-    db.row_factory = sqlite3.Row
-    r = db.execute("SELECT * FROM runner_runs WHERE agenda_id = ?", (AGENDA_ID,)).fetchone()
-    revs = [dict(x) for x in db.execute("SELECT id, status FROM research_revisions")]
-    db.close()
-    return (dict(r) if r else None), revs
-
-
-def bridge_calls(env, verb):
-    return [c for c in env["bridge"]().get("calls", []) if c["args"][0] == verb]
-
-
-def no_key_leak(env):
-    for p in env["state"].rglob("*"):
-        if p.is_file() and p.suffix != ".sqlite":
-            text = p.read_text(encoding="utf-8", errors="replace")
-            assert DRAFT_KEY not in text and JEV_KEY not in text, p
 
 
 # ------------------------------------------------------------------------------------------------ pipeline
@@ -290,7 +67,7 @@ def test_happy_path_completes_and_reports_done(env):
     assert run["models"] == {
         "draft_configured": draft.DEFAULT_MODEL,
         "draft_returned": [RETURNED_MODEL],
-        "jev": runner.JEV_MODEL,
+        "jev": jev_client.JEV_MODEL,
     }
     assert run["costs"]["draft_usd"] == 0.0021 and run["costs"]["jev_usd"] == pytest.approx(0.0002)
     assert run["draft_calls"][0]["prompt_sha256"] == draft.sha256_json(
@@ -427,20 +204,20 @@ def judge_facts(doc, quote):
     claim = {"kind": "fact", "text": "Micron claim", "evidence_ids": [doc["id"]], "quote": quote}
     t = FakeOpenRouter([])
     payload = {"evidence": [doc], "as_of": "2026-10-30T04:20:00Z"}
-    res = runner.jev_check({"claims": [claim]}, payload, {"symbol": "MU"}, runner.Jev(JEV_KEY, transport=t))
+    res = runner.jev_check({"claims": [claim]}, payload, {"symbol": "MU"}, jev_client.Jev(JEV_KEY, transport=t))
     (call,), (per,) = t.jev_calls, res["per_claim"]
     src = call["state"]["source_context"]["text"]
-    assert runner.Jev.source_text(claim, [doc]) == src  # narrative_check's call sees the same text
+    assert jev_client.Jev.source_text(claim, [doc]) == src  # narrative_check's call sees the same text
     return src, per
 
 
 def test_jev_source_past_the_cap_keeps_the_quoted_excerpt_its_neighbours_and_the_opening():
     doc = mu_doc(30)
     texts = draft.evidence_texts(doc)
-    assert len("\n".join(texts)) > runner.JEV_SOURCE_CAP  # in document order the guidance sits past the cap
+    assert len("\n".join(texts)) > jev_client.JEV_SOURCE_CAP  # in document order the guidance sits past the cap
     quote = "with a more moderate rate of price increases"
     src, per = judge_facts(doc, quote)
-    assert per["source_truncated"] == 1 and len(src) <= runner.JEV_SOURCE_CAP
+    assert per["source_truncated"] == 1 and len(src) <= jev_client.JEV_SOURCE_CAP
     # the opening basis statement still comes first, in document order
     assert src.startswith(f"Quoted: {quote}\n\n[{MU_DOC}]\n{MU_BASIS}\n")
     # the quoted excerpt whole, with the excerpt before and after it
@@ -461,7 +238,7 @@ def test_jev_source_without_the_quote_in_a_long_document_is_the_document_order_c
     doc = mu_doc(30)
     src, per = judge_facts(doc, "a quote no excerpt holds")
     full = "Quoted: a quote no excerpt holds\n\n[{}]\n{}".format(MU_DOC, "\n".join(draft.evidence_texts(doc)))
-    assert src == full[: runner.JEV_SOURCE_CAP - 1] + "…" and per["source_truncated"] == 1
+    assert src == full[: jev_client.JEV_SOURCE_CAP - 1] + "…" and per["source_truncated"] == 1
 
 
 @pytest.mark.parametrize(
@@ -485,13 +262,13 @@ def test_draft_failures_need_review(env, response, needle):
 def test_missing_or_unsafe_draft_key_is_a_named_error(env, capsys):
     t = FakeOpenRouter([good_narrative()])
     empty = env["tmp"] / "secrets" / "empty.env"
-    empty.write_text(f"{draft.DRAFT_KEY_VAR}=\nOTHER_KEY=abc\n")
+    empty.write_text(f"{live_keys.DRAFT_KEY_VAR}=\nOTHER_KEY=abc\n")
     empty.chmod(0o600)
     assert env["run"](t, draft_env_path=empty) == runner.EXIT_KEY
-    assert f"{draft.DRAFT_KEY_VAR} missing or empty" in capsys.readouterr().err
+    assert f"{live_keys.DRAFT_KEY_VAR} missing or empty" in capsys.readouterr().err
     assert env["run"](t, draft_env_path=env["tmp"] / "nope.env") == runner.EXIT_KEY
     loose = env["tmp"] / "secrets" / "loose.env"
-    loose.write_text(f"{draft.DRAFT_KEY_VAR}=x\n")
+    loose.write_text(f"{live_keys.DRAFT_KEY_VAR}=x\n")
     loose.chmod(0o644)
     assert env["run"](t, draft_env_path=loose) == runner.EXIT_KEY
     assert "want 600" in capsys.readouterr().err
@@ -499,14 +276,14 @@ def test_missing_or_unsafe_draft_key_is_a_named_error(env, capsys):
 
 
 def test_load_key_never_reads_process_env(tmp_path, monkeypatch):
-    monkeypatch.setenv(draft.DRAFT_KEY_VAR, "from-env")
+    monkeypatch.setenv(live_keys.DRAFT_KEY_VAR, "from-env")
     f = tmp_path / "k.env"
     f.write_text("# comment\nexport OTHER=1\n")
     f.chmod(0o600)
-    with pytest.raises(draft.MissingKeyError):
-        draft.load_key(f, draft.DRAFT_KEY_VAR)
-    f.write_text(f"{draft.DRAFT_KEY_VAR}='quoted-value'\n")
-    assert draft.load_key(f, draft.DRAFT_KEY_VAR) == "quoted-value"
+    with pytest.raises(live_keys.MissingKeyError):
+        live_keys.load_key(f, live_keys.DRAFT_KEY_VAR)
+    f.write_text(f"{live_keys.DRAFT_KEY_VAR}='quoted-value'\n")
+    assert live_keys.load_key(f, live_keys.DRAFT_KEY_VAR) == "quoted-value"
 
 
 def test_idempotent_rerun_reports_again_without_new_work(env):
@@ -624,10 +401,10 @@ def test_lock_busy_exits_quietly(env):
 
 
 def test_malformed_ids_never_reach_the_bridge(env):
-    b = runner.Bridge(f"{sys.executable} -c pass")
-    with pytest.raises(runner.BridgeError):
+    b = bridge.Bridge(f"{sys.executable} -c pass")
+    with pytest.raises(bridge.BridgeError):
         b.done("2026-10-21", "not-a-uuid", "x")
-    with pytest.raises(runner.BridgeError):
+    with pytest.raises(bridge.BridgeError):
         b.needs_review("20261021-3; rm -rf /", "x")
 
 
@@ -845,13 +622,13 @@ def test_umc_derivation_recorded_and_scale_still_refused():
     s = dict(claim, text="由第一季 1.29 元與第二季 3.39 元推算，上半年每股盈餘約為 4.68 元。")
     ev_q = [dict(ev[0], payload={"excerpts": [{"text": "第一季每股盈餘 1.29 元，第二季每股盈餘 3.39 元。"}]})]
     assert research_theme.precheck_claims({"claims": [s]}, ev_q)[0]["derived"][0]["how"] == "A+B"
-    with pytest.raises(SystemExit, match="numeric mismatch"):
+    with pytest.raises(ResearchRefusal, match="numeric mismatch"):
         research_theme.precheck_claims({"claims": [dict(s, kind="fact")]}, ev_q)
-    with pytest.raises(SystemExit, match="non-atomic"):
+    with pytest.raises(ResearchRefusal, match="non-atomic"):
         research_theme.precheck_claims({"claims": [dict(claim, kind="fact")]}, ev)
     # a scale slip in a derivation still refuses
     bad = dict(claim, text="由上半年累計 4.68 元與第二季 3.39 元推算，第一季每股盈餘約為 12.9 元。")
-    with pytest.raises(SystemExit, match="scale"):
+    with pytest.raises(ResearchRefusal, match="scale"):
         research_theme.precheck_claims({"claims": [bad]}, ev)
 
 

@@ -18,8 +18,9 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+import narrative_export  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
+import narrative_proposals  # noqa: E402
 
 SCRIPTS = Path(os.environ.get("NEXUS_VAULT_SCRIPTS") or "/nonexistent")
 THEME_PAGES = SCRIPTS / "_kb" / "ops" / "compile" / "theme_pages.py"
@@ -277,7 +278,7 @@ def build_ledger(path):
 def export(tmp_path):
     ids = build_ledger(tmp_path / "ledger.sqlite")
     db = nl.connect(tmp_path / "ledger.sqlite")
-    path = nl.write_export(db, AS_OF, tmp_path / "narrative_export.json")
+    path = narrative_export.write_export(db, AS_OF, tmp_path / "narrative_export.json")
     db.close()
     return path, ids
 
@@ -309,7 +310,7 @@ def test_cross_company_signals_are_computed_from_the_ledger(tmp_path):
 
 
 def official_signals(db, as_of=AS_OF):
-    doc = json.loads(nl.export(db, as_of))
+    doc = json.loads(narrative_export.export(db, as_of))
     return {
         s["theme_id"]: [c["symbol"] for c in s["companies"]]
         for s in doc["cross_company_signals"]
@@ -380,8 +381,8 @@ def test_a_link_whose_evidence_names_no_issuer_is_no_official_hit(tmp_path):
 def test_signals_are_point_in_time(tmp_path):
     build_ledger(tmp_path / "ledger.sqlite")
     db = nl.connect(tmp_path / "ledger.sqlite")
-    before_asml = json.loads(nl.export(db, "2026-10-14T00:00:00Z"))["cross_company_signals"]
-    much_later = json.loads(nl.export(db, "2027-06-01T00:00:00Z"))["cross_company_signals"]
+    before_asml = json.loads(narrative_export.export(db, "2026-10-14T00:00:00Z"))["cross_company_signals"]
+    much_later = json.loads(narrative_export.export(db, "2027-06-01T00:00:00Z"))["cross_company_signals"]
     db.close()
     assert [s["theme_id"] for s in before_asml if s["level"] == "official"] == []  # ASML's claim is not out yet
     assert much_later == []  # everything slid out of the window
@@ -401,7 +402,7 @@ def fab_theme(db):
     nl.add_theme(db, FAB, "晶圓廠擴建", "demand_driver", [], "telegram:T-fab", at=APPROVED)
     nl.add_member(db, FAB, "NASDAQ:MU", "customer", "telegram:M-fab-mu", at=APPROVED)
     nl.add_member(db, FAB, "2404", "beneficiary", "telegram:M-fab-2404", at=APPROVED)
-    return nl.add_member_proposal(
+    return narrative_proposals.add_member_proposal(
         db,
         theme_id=FAB,
         symbol="NASDAQ:ASML",
@@ -413,7 +414,7 @@ def fab_theme(db):
 
 
 def reject(db, proposal_id):
-    nl.reject_proposal(db, proposal_id, decision_ref="telegram:20261029-r1", decided_at=REJECTED_AT)
+    narrative_proposals.reject_proposal(db, proposal_id, decision_ref="telegram:20261029-r1", decided_at=REJECTED_AT)
 
 
 def fab_links(db, created="2026-10-28T00:00:00Z"):
@@ -482,7 +483,7 @@ def test_the_export_leaves_a_rejected_member_out_of_that_theme(tmp_path):
     fab_links(db)
     link(db, REV_MU, 1, FAB, ["2404", "NASDAQ:ASML"], kind="inference")
     reject(db, proposal)
-    doc = json.loads(nl.export(db, AS_OF))
+    doc = json.loads(narrative_export.export(db, AS_OF))
     links = {(x["theme_id"], x["revision_id"], x["claim_index"]): x for x in doc["claim_theme_links"]}
     assert {k[1:]: json.loads(x["about_symbols_json"]) for k, x in links.items() if k[0] == FAB} == {
         (REV_MU, 0): ["NASDAQ:MU"],
@@ -532,7 +533,7 @@ def test_a_record_under_two_themes_is_no_relayed_hit_where_its_subject_was_rejec
     db = nl.connect(tmp_path / "ledger.sqlite")
     reject(db, fab_theme(db))
     asml, mu = two_theme_records(db)
-    doc = json.loads(nl.export(db, AS_OF))
+    doc = json.loads(narrative_export.export(db, AS_OF))
     assert [s for s in doc["cross_company_signals"] if s["theme_id"] == FAB] == []
     records = {r["narrative_id"]: r for r in doc["records"]}
     assert (records[asml]["theme_ids"], records[mu]["theme_ids"]) == (["cleanroom-capacity"], [FAB])
@@ -741,7 +742,7 @@ def test_an_official_endorsement_is_not_a_status_change_on_the_timeline(vault, t
         rule="R4",
         basis={"revision_id": REV_ASML, "claim_indices": [0], "approval_ref": "telegram:20261030-d9"},
     )
-    nl.write_export(db, AS_OF, vault["export"])
+    narrative_export.write_export(db, AS_OF, vault["export"])
     db.close()
     theme_pages(vault)
     block = block_of((vault["v"] / "_kb/wiki/themes/cleanroom-capacity.md").read_text())
@@ -761,7 +762,7 @@ def test_a_theme_page_omits_a_company_the_owner_rejected_from_the_theme(vault, t
     reject(db, fab_theme(db))
     fab_links(db, created=AFTER_REJECTION)
     asml, mu = two_theme_records(db)
-    nl.write_export(db, AS_OF, vault["export"])
+    narrative_export.write_export(db, AS_OF, vault["export"])
     db.close()
     theme_pages(vault)
     themes = vault["v"] / "_kb/wiki/themes"

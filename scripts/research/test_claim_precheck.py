@@ -1,11 +1,6 @@
 """Orchestrator-added cases for claim_precheck.py (2026-10-21, UMC 2303 dry run): size descriptors and bare table digits."""
 
-import sys
-from pathlib import Path
-
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from claim_precheck import check_numbers, extract_quantities, lint_atomic
 
 TABLE = (

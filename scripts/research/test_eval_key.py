@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 
 import jev_eval_control_set  # noqa: E402
 import narrative_eval_control_set  # noqa: E402

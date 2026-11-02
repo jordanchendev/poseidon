@@ -20,15 +20,15 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import jev_client  # noqa: E402
 import jev_eval_control_set  # noqa: E402
 import narrative_check  # noqa: E402
-import runner  # noqa: E402
 
 LABELS = narrative_check.LABELS
 
 
 class Recording:
-    """runner.Jev that keeps each raw answer of the current case, for the report."""
+    """jev_client.Jev that keeps each raw answer of the current case, for the report."""
 
     def __init__(self, jev):
         self.jev, self.answers = jev, []
@@ -47,7 +47,7 @@ def main():
     a = ap.parse_args()
 
     cs = json.loads(Path(a.control_set).read_text(encoding="utf-8"))
-    jev = runner.Jev(jev_eval_control_set.eval_key_or_exit(a.env_file))
+    jev = jev_client.Jev(jev_eval_control_set.eval_key_or_exit(a.env_file))
     rec = Recording(jev)
     rows = []
     for c in cs["cases"]:

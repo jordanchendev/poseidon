@@ -1,18 +1,16 @@
 """Design 2026-10-29 §9 step 7: the narrative JEV control set is runnable as frozen evidence.
 
 Every excerpt is a verbatim substring of its committed source file, each file still has the sha256 recorded for it,
-and jev_eval_control_set.build_request sends only the claim, excerpt, locator and symbol of each case, never its label
+and jev_client.build_request sends only the claim, excerpt, locator and symbol of each case, never its label
 or note. No network.
   PYTHONPATH=src python -m pytest -q -p no:cacheprovider scripts/research/test_narrative_control_set.py
 """
 
 import hashlib
 import json
-import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 
 from jev_eval_control_set import LABELS, build_request  # noqa: E402
 
