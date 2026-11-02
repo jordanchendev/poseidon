@@ -41,6 +41,7 @@ import assemble as assemble_mod  # noqa: E402
 import draft as draft_mod  # noqa: E402
 import guidance  # noqa: E402
 import narrative_check  # noqa: E402
+import narrative_decisions  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 import narrative_proposals  # noqa: E402
 import record_rules  # noqa: E402
@@ -643,7 +644,7 @@ def notice(m, plan, dropped, out):
             ]
         if out["members"]:
             lines.append("成員提案：")
-            lines += [f"- {narrative_check.member_line(p)}" for p in out["members"]]
+            lines += [f"- {narrative_decisions.member_line(p)}" for p in out["members"]]
         dups = [p for p in plan["proposals"] if p["duplicate_of"]]
         dups += [
             {"title": f"{p['symbol']} 加入 {p['theme_id']}", "duplicate_of": p["duplicate_of"]}

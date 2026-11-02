@@ -64,6 +64,7 @@ import assemble as assemble_mod  # noqa: E402
 import draft as draft_mod  # noqa: E402
 import intake as intake_mod  # noqa: E402
 import narrative_check  # noqa: E402
+import narrative_decisions  # noqa: E402
 import narrative_export  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 from claim_precheck import has_inference_basis  # noqa: E402
@@ -77,7 +78,7 @@ JEV_SOURCE_CAP = 12000
 REPORT_CAP = 400_000  # chars of rendered Markdown attached to the done report
 AGENDA_ID = re.compile(r"^\d{8}-m?\d{1,3}$")
 MATERIAL_ID = intake_mod.MATERIAL_ID
-DECISION_ID = narrative_check.DECISION_ID
+DECISION_ID = narrative_decisions.DECISION_ID
 NOTICE_CAP = 1000  # narrative-ack message; the bridge keeps 1000 characters
 REVISION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 REASON_CAP = 580
@@ -830,7 +831,7 @@ def run_decisions(bridge, rows, ledger_path):
         if not DECISION_ID.match(did):
             log.error("skipping decision row with malformed id %r", did)
             continue
-        result, message = narrative_check.apply_decision(ledger_path, d)
+        result, message = narrative_decisions.apply_decision(ledger_path, d)
         log.info("decision %s %s: %s", did, result, message)
         try:
             bridge.narrative_ack(did, result, message)

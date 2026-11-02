@@ -15,6 +15,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 
 import narrative_check  # noqa: E402
+import narrative_decisions  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 import narrative_suggestions  # noqa: E402
 import runner  # noqa: E402
@@ -184,15 +185,15 @@ def test_a_confirm_killed_before_its_row_is_written_writes_nothing_and_applies_o
     monkeypatch.setattr(nl, "_update", killed_once)
     d = decision(1, "confirm", sid, "確認敘事 " + sid)
     with pytest.raises(RuntimeError, match="killed"):
-        narrative_check.apply_decision(path, d)
+        narrative_decisions.apply_decision(path, d)
     assert confirm_events(path, rev_id, nid, sid) == [] and suggestions(path)[nid]["status"] == "suggested"
-    result, message = narrative_check.apply_decision(path, d)
+    result, message = narrative_decisions.apply_decision(path, d)
     assert result == "applied" and message.startswith(f"敘事建議 {sid} 已確認") and "先前已套用" not in message
     [ev] = confirm_events(path, rev_id, nid, sid)
     s = suggestions(path)[nid]
     assert (s["status"], s["event_seq"], s["decision_ref"]) == ("confirmed", ev["seq"], "telegram:20261022-d1")
     before = tk.ledger_rows(path, rev_id), suggestions(path)
-    result, message = narrative_check.apply_decision(path, d)
+    result, message = narrative_decisions.apply_decision(path, d)
     assert result == "applied" and message.endswith("（先前已套用，未重複寫入）")
     assert (tk.ledger_rows(path, rev_id), suggestions(path)) == before
 
@@ -222,7 +223,7 @@ def test_a_ledger_left_with_the_event_and_a_suggested_row_is_finished_without_a_
     )
     db.close()
     [ev] = confirm_events(path, rev_id, nid, sid)
-    result, message = narrative_check.apply_decision(path, decision(1, "confirm", sid, "確認敘事 " + sid))
+    result, message = narrative_decisions.apply_decision(path, decision(1, "confirm", sid, "確認敘事 " + sid))
     assert result == "applied" and message.endswith("（先前已套用，未重複寫入）"), message
     assert confirm_events(path, rev_id, nid, sid) == [ev]
     s = suggestions(path)[nid]
@@ -357,5 +358,5 @@ def test_decision_rows_are_parsed_at_the_boundary(tmp_path):
         ({**decision(1, "confirm", "ns-01234567", "  ")}, "owner_text"),
         ({**decision(1, "confirm", "ns-01234567", "x"), "decision_id": "x; rm"}, "malformed decision id"),
     ]:
-        result, message = narrative_check.apply_decision(path, bad)
+        result, message = narrative_decisions.apply_decision(path, bad)
         assert result == "refused" and needle in message, (needle, message)

@@ -17,6 +17,7 @@ HERE = Path(__file__).resolve().parent
 
 import intake  # noqa: E402
 import narrative_check  # noqa: E402
+import narrative_decisions  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 import narrative_proposals  # noqa: E402
 import runner  # noqa: E402
@@ -534,7 +535,7 @@ def test_decision_rows_for_proposals_are_parsed_at_the_boundary(tmp_path):
         (decision(1, "theme-reject", "T20261021-1", " "), "owner_text"),
         (decision(1, "member-accept", "M20261021-9", "x"), "no proposal M20261021-9"),
     ]:
-        result, message = narrative_check.apply_decision(path, bad)
+        result, message = narrative_decisions.apply_decision(path, bad)
         assert result == "refused" and needle in message, (needle, message)
 
 

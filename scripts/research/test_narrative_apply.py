@@ -16,6 +16,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 
 import narrative_check  # noqa: E402
+import narrative_decisions  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 import narrative_proposals  # noqa: E402
 import runner  # noqa: E402
@@ -232,7 +233,7 @@ def test_r3_takes_a_supported_part_of_the_record_the_cited_claims_back(env, monk
         "in_record": ("supports", votes),
         "backed": ("supports", votes),
     }
-    result, _ = narrative_check.apply_decision(
+    result, _ = narrative_decisions.apply_decision(
         path,
         {
             "decision_id": "20261030-d1",
@@ -657,7 +658,7 @@ def test_a_fact_on_non_official_evidence_is_no_record_and_a_pending_member_holds
     rows, _, held = records(path)
     assert unfit["narrative_id"] not in rows and waiting["narrative_id"] not in rows
     assert [h["narrative_id"] for h in held] == [waiting["narrative_id"]]
-    decide = lambda n, action, target, **kw: narrative_check.apply_decision(  # noqa: E731
+    decide = lambda n, action, target, **kw: narrative_decisions.apply_decision(  # noqa: E731
         path,
         {
             "decision_id": f"20261020-d{n}",
