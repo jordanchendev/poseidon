@@ -8,8 +8,9 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from poseidon.decision_loop.manifest import content_sha256, iso_time
-from poseidon.decision_loop.reconciliation import ReconciliationConflictError, ReconciliationService, _utc
+from poseidon.core.canonical import content_sha256
+from poseidon.core.timeutil import as_utc, iso_time
+from poseidon.decision_loop.reconciliation import ReconciliationConflictError, ReconciliationService
 from poseidon.models.fill_allocation import FillAllocation
 from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
@@ -96,7 +97,7 @@ class FillProjectionService:
                 "intent_sha256": order.intent_sha256,
                 "quantity": float(quantity),
                 "price": float(price),
-                "fill_time": iso_time(_utc(fill.fill_time), "fill_time"),
+                "fill_time": iso_time(as_utc(fill.fill_time), "fill_time"),
             }
         )
         cost = {
@@ -123,7 +124,7 @@ class FillProjectionService:
             or lot.opening_decision_id != opening_order.decision_id
             or _number(lot.original_quantity) != quantity
             or lot.cost_basis_json != cost
-            or _utc(lot.opened_at) != _utc(opening_fill.fill_time)
+            or as_utc(lot.opened_at) != as_utc(opening_fill.fill_time)
             or any(getattr(opening_order, field) != value for field, value in identity.items())
         ):
             raise FillProjectionConflictError("opening lot identity or economics changed")
@@ -235,17 +236,17 @@ class FillProjectionService:
                 .order_by(OrderFillRecord.fill_time, OrderFillRecord.id)
                 .with_for_update()
             ).all()
-        fill_key = (_utc(fill.fill_time), fill.id)
+        fill_key = (as_utc(fill.fill_time), fill.id)
         if any(
             row.id != fill.id
             and row.projection_status == "projection_pending"
-            and (_utc(row.fill_time), row.id) < fill_key
+            and (as_utc(row.fill_time), row.id) < fill_key
             for row in fills_by_order[order.id]
         ):
             raise FillProjectionConflictError("earlier legacy fill projection is pending")
 
         def generation_key(legacy_order):
-            return _utc(legacy_order.created_at), legacy_order.id
+            return as_utc(legacy_order.created_at), legacy_order.id
 
         by_id = {row.id: row for row in legacy_orders}
         child_by_parent = {}
@@ -355,7 +356,7 @@ class FillProjectionService:
             row.shares = float(balances[row.id])
             row.closed = balances[row.id] == 0
             if previous_balances[row.id] > 0 and row.closed:
-                row.close_date = _utc(fill.fill_time)
+                row.close_date = as_utc(fill.fill_time)
             elif not row.closed:
                 row.close_date = None
             row.updated_at = now
@@ -472,10 +473,10 @@ class FillProjectionService:
                 open_quantity=float(quantity),
                 reserved_close_quantity=0,
                 cost_basis_json=cost,
-                opened_at=_utc(fill.fill_time),
+                opened_at=as_utc(fill.fill_time),
             )
             lots.append(lot)
-            lots.sort(key=lambda row: (_utc(row.opened_at), row.id))
+            lots.sort(key=lambda row: (as_utc(row.opened_at), row.id))
             changes[lot.id] = quantity
             projected_lots.append(lot)
         else:

@@ -14,10 +14,10 @@ from sqlalchemy.exc import IntegrityError
 
 from poseidon.broker.base import BrokerAdapter, BrokerCapabilities, BrokerCapabilityError, BrokerOrderSnapshot
 from poseidon.broker.paper_adapter import PaperBrokerAdapter, _ensure_legacy_baselines
+from poseidon.core.canonical import content_sha256
 from poseidon.core.config import settings
 from poseidon.decision_loop.decisions import DecisionService
 from poseidon.decision_loop.execution import ExecutionConflictError, ProtectiveExecutionService
-from poseidon.decision_loop.manifest import content_sha256
 from poseidon.decision_loop.reconciliation import (
     ReconciliationConflictError,
     ReconciliationService,

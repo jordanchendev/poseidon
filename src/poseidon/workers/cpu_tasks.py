@@ -102,8 +102,8 @@ def _configured_protective_route(market):
 def _run_durable_protective(*, origin, market, triggered, source_holding_ids_by_identity=None):
     """Commit protective intents per lot identity, then enqueue UUID-only submission."""
     from poseidon.api.auth import AuthPrincipal
+    from poseidon.core.canonical import content_sha256
     from poseidon.decision_loop.execution import ProtectiveExecutionService
-    from poseidon.decision_loop.manifest import content_sha256
 
     scope = settings.decision_loop_approved_account_scope
     generation = settings.decision_loop_approved_account_generation
@@ -400,8 +400,8 @@ def _record_shadow_parity(market, orders):
     """Audit frozen target parity only; never claim, materialize, or submit."""
     from sqlalchemy import select
 
+    from poseidon.core.canonical import content_sha256
     from poseidon.decision_loop.execution import DecisionExecutionService, ExecutionConflictError
-    from poseidon.decision_loop.manifest import content_sha256
     from poseidon.models.decision_event import DecisionEvent
 
     if settings.decision_loop_approved_market != market:
@@ -770,7 +770,7 @@ def _loop_market_skip(market: str) -> dict | None:
 
 
 def _loop_as_of(value: str | None) -> str:
-    from poseidon.decision_loop.manifest import iso_time
+    from poseidon.core.timeutil import iso_time
 
     if value is None:
         value = datetime.now(UTC).replace(second=0, microsecond=0)
@@ -790,8 +790,9 @@ def _decision_worker_principal():
 def _frozen_ohlcv_evidence(market: str, interval: str, symbol: str, as_of: str) -> dict | None:
     from urllib.parse import urlencode
 
+    from poseidon.core.canonical import content_sha256
+    from poseidon.core.timeutil import iso_time, timestamp
     from poseidon.data.remote_repository import RemoteDataRepository
-    from poseidon.decision_loop.manifest import content_sha256, iso_time, timestamp
     from poseidon.decision_loop.producer import interval_delta
 
     cutoff = timestamp(as_of, "as_of")
@@ -842,7 +843,7 @@ def _stale_required_evidence(required: dict, evidence: list[dict], as_of: str) -
     raised loop task marks the soak day red. Missing evidence is not stale and still fails
     closed inside ``ManifestService.freeze``.
     """
-    from poseidon.decision_loop.manifest import timestamp
+    from poseidon.core.timeutil import timestamp
 
     cutoff = timestamp(as_of, "as_of")
     newest: dict[str, object] = {}
@@ -869,8 +870,9 @@ def freeze_market_manifest(market: str, interval: str, as_of: str | None = None)
         return skipped
     from pydantic import ValidationError as PydanticValidationError
 
+    from poseidon.core.canonical import canonical_json
     from poseidon.decision_loop.decisions import DecisionPolicy
-    from poseidon.decision_loop.manifest import ManifestService, canonical_json
+    from poseidon.decision_loop.manifest import ManifestService
     from poseidon.decision_loop.producer import ProducerService, executable_config
 
     as_of = _loop_as_of(as_of)
@@ -965,7 +967,7 @@ def _runs_on_day(session, version_ids: list, as_of: str) -> list:
     """Evaluation runs (any status) for ``version_ids`` whose ``decision_as_of`` is on the UTC day of ``as_of``."""
     from sqlalchemy import select
 
-    from poseidon.decision_loop.manifest import timestamp
+    from poseidon.core.timeutil import timestamp
     from poseidon.models.evaluation_run import EvaluationRun
 
     if not version_ids:
@@ -1017,16 +1019,13 @@ def _in_flight_manifest_on_day(session, market: str, interval: str, account_scop
     """Latest same-day manifest for this market/interval/scope with no run of ``version_ids``, if still in flight."""
     from sqlalchemy import select
 
-    from poseidon.decision_loop.manifest import timestamp
+    from poseidon.core.timeutil import as_utc, timestamp
     from poseidon.models.data_manifest import DataManifest
     from poseidon.models.evaluation_run import EvaluationRun
 
     if not version_ids:
         return None
     cutoff = timestamp(as_of, "as_of")
-
-    def utc(value):
-        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
     manifests = session.scalars(
         select(DataManifest)
@@ -1037,9 +1036,9 @@ def _in_flight_manifest_on_day(session, market: str, interval: str, account_scop
     latest = None
     for manifest in manifests:
         payload = manifest.payload_json if isinstance(manifest.payload_json, dict) else {}
-        if utc(manifest.as_of).date() != cutoff.date() or payload.get("account_scope") != account_scope:
+        if as_utc(manifest.as_of).date() != cutoff.date() or payload.get("account_scope") != account_scope:
             continue
-        if latest is None or utc(manifest.created_at) > utc(latest.created_at):
+        if latest is None or as_utc(manifest.created_at) > as_utc(latest.created_at):
             latest = manifest
     if latest is None:
         return None
@@ -1050,7 +1049,7 @@ def _in_flight_manifest_on_day(session, market: str, interval: str, account_scop
     ).first()
     if has_run is not None:
         return None
-    if (cutoff - utc(latest.created_at)).total_seconds() > PRODUCER_IN_FLIGHT_SECONDS:
+    if (cutoff - as_utc(latest.created_at)).total_seconds() > PRODUCER_IN_FLIGHT_SECONDS:
         return None
     return str(latest.id)
 
@@ -1138,7 +1137,7 @@ def _is_outcome_manifest(manifest) -> bool:
 def _latest_outcome_as_of(session, now) -> str | None:
     from sqlalchemy import select
 
-    from poseidon.decision_loop.manifest import iso_time
+    from poseidon.core.timeutil import iso_time
     from poseidon.models.data_manifest import DataManifest
 
     manifests = session.scalars(
@@ -1154,7 +1153,8 @@ def _mature_outcome_batches(session, as_of: str, label_definition_version: str):
     """Group unlabeled snapshots with a mature horizon by their frozen outcome manifest."""
     from sqlalchemy import select
 
-    from poseidon.decision_loop.manifest import ValidationError, timestamp
+    from poseidon.core.errors import ValidationError
+    from poseidon.core.timeutil import timestamp
     from poseidon.decision_loop.outcomes import _horizon_time, _manifest_facts, validate_outcome_label_contract
     from poseidon.models.data_manifest import DataManifest
     from poseidon.models.decision_record import DecisionRecord
@@ -1289,8 +1289,8 @@ OUTCOME_CALENDAR_PATH = "config/calendars/xtai_1d_sessions.json"
 
 def _outcome_bars(symbol: str, as_of: str) -> list[dict]:
     """Finite tw_stock 1d closes at or before as_of, fetched like `_frozen_ohlcv_evidence`."""
+    from poseidon.core.timeutil import iso_time, timestamp
     from poseidon.data.remote_repository import RemoteDataRepository
-    from poseidon.decision_loop.manifest import iso_time, timestamp
 
     cutoff = timestamp(as_of, "as_of")
     start = cutoff - timedelta(days=OUTCOME_PRICE_LOOKBACK_DAYS)
@@ -1313,8 +1313,8 @@ def _outcome_targets(session, scope: str, cutoff: datetime) -> dict:
     from pydantic import ValidationError as PydanticValidationError
     from sqlalchemy import select
 
+    from poseidon.core.timeutil import timestamp
     from poseidon.decision_loop.decisions import DecisionPolicy
-    from poseidon.decision_loop.manifest import timestamp
     from poseidon.decision_loop.producer import ProducerService, executable_config
     from poseidon.models.evaluation_run import EvaluationRun
 
@@ -1362,7 +1362,9 @@ def freeze_outcome_manifests(as_of: str | None = None) -> dict:
         return {"skipped": "label_definition_version_unset"}
     from sqlalchemy import select
 
-    from poseidon.decision_loop.manifest import ManifestService, ValidationError, timestamp, validate_manifest
+    from poseidon.core.errors import ValidationError
+    from poseidon.core.timeutil import timestamp
+    from poseidon.decision_loop.manifest import ManifestService, validate_manifest
     from poseidon.decision_loop.outcome_manifest import build_outcome_manifest_request, load_session_calendar
     from poseidon.decision_loop.outcomes import validate_outcome_label_contract
     from poseidon.models.outcome import OutcomeLabelContract
@@ -1419,7 +1421,7 @@ def freeze_outcome_manifests(as_of: str | None = None) -> dict:
 
 def _holdout_manifest_ids(session, campaign, holdout_identity: dict) -> list:
     """Metadata-only preflight; holdout payloads are read only after consumption commits."""
-    from poseidon.decision_loop.manifest import canonical_json
+    from poseidon.core.canonical import canonical_json
     from poseidon.models.data_manifest import DataManifest
 
     contract = campaign.contract_json if isinstance(campaign.contract_json, dict) else {}

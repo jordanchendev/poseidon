@@ -14,7 +14,8 @@ from decimal import Decimal
 
 from sqlalchemy.exc import IntegrityError
 
-from poseidon.decision_loop.manifest import canonical_json
+from poseidon.core.canonical import canonical_json
+from poseidon.core.timeutil import as_utc
 from poseidon.models.experiment import ExperimentRecord
 from poseidon.models.experiment_campaign import ExperimentCampaign
 from poseidon.models.strategy_version import StrategyVersion
@@ -46,13 +47,6 @@ def _timestamp(value, field: str) -> datetime:
 
 
 def _trial_equal(row: ExperimentRecord, values: dict) -> bool:
-    def normalized_time(value):
-        if value is None:
-            return None
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=UTC)
-        return value.astimezone(UTC)
-
     for name in (
         "study_name",
         "config_json",
@@ -78,7 +72,7 @@ def _trial_equal(row: ExperimentRecord, values: dict) -> bool:
         stored = getattr(row, name)
         expected = values[name]
         if name in {"started_at", "completed_at"}:
-            stored = normalized_time(stored)
+            stored = None if stored is None else as_utc(stored)
         elif name in {"composite_score", "wfe_score"} and stored is not None and expected is not None:
             stored, expected = Decimal(str(stored)), Decimal(str(expected))
         if stored != expected:

@@ -7,17 +7,19 @@ from datetime import UTC, datetime
 from decimal import ROUND_FLOOR, Decimal
 
 from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy import Float, func, select, text
+from sqlalchemy import Float, func, select
 
 from poseidon.api.auth import AuthPrincipal
+from poseidon.core.canonical import canonical_json, content_sha256
+from poseidon.core.errors import ValidationError
+from poseidon.core.locks import lock_account
+from poseidon.core.timeutil import as_utc, stored_iso_time, stored_timestamp, timestamp
 from poseidon.decision_loop.decisions import (
     DecisionPolicy,
-    _stored_time,
     _validate_order_intents,
     _validate_selection,
 )
 from poseidon.decision_loop.evaluation import verify_complete_run
-from poseidon.decision_loop.manifest import ValidationError, canonical_json, content_sha256, iso_time, timestamp
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
@@ -45,10 +47,6 @@ def _finite_positive(value, field):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
         raise ExecutionConflictError(f"{field} must be finite and positive")
     return float(value)
-
-
-def _aware(value):
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
 def _floor_step(value, step):
@@ -86,7 +84,7 @@ def internal_state_watermark(session, account_scope, account_generation):
         for column in row.__table__.columns:
             value = getattr(row, column.key)
             if isinstance(value, datetime):
-                value = iso_time(_aware(value), column.key)
+                value = stored_iso_time(value, column.key)
             elif isinstance(value, uuid.UUID):
                 value = str(value)
             elif isinstance(column.type, Float) and isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -104,16 +102,6 @@ class DecisionExecutionService:
 
     def __init__(self, session):
         self.session = session
-
-    def _advisory_lock(self, account_scope, account_generation):
-        if self.session.get_bind().dialect.name != "postgresql":
-            return
-        lock_key = int(
-            content_sha256({"account_scope": account_scope, "account_generation": account_generation})[:16], 16
-        )
-        if lock_key >= 2**63:
-            lock_key -= 2**64
-        self.session.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key})
 
     def _response(self, decision, orders):
         return {
@@ -215,7 +203,7 @@ class DecisionExecutionService:
 
     def _lock_account(self, decision, policy):
         reconciliation = policy.reconciliation
-        self._advisory_lock(decision.account_scope, reconciliation.account_generation)
+        lock_account(self.session, decision.account_scope, reconciliation.account_generation)
         account = (
             self.session.query(PaperBrokerAccount)
             .filter_by(
@@ -319,7 +307,7 @@ class DecisionExecutionService:
             raise ExecutionConflictError("account reconciliation is unresolved")
         if latest.policy_sha256 != decision.policy_sha256:
             raise ExecutionConflictError("account reconciliation policy changed")
-        as_of = _aware(latest.as_of)
+        as_of = as_utc(latest.as_of)
         if as_of > now or (now - as_of).total_seconds() > reconciliation_policy.max_reconciliation_age_seconds:
             raise ExecutionConflictError("account reconciliation is stale")
         if latest.broker_state_watermark != f"broker:{account.state_version}":
@@ -372,7 +360,7 @@ class DecisionExecutionService:
                 PaperCashMovement.created_at > latest.as_of,
             ),
         )
-        if _aware(account.updated_at) > as_of or any(
+        if as_utc(account.updated_at) > as_of or any(
             self.session.scalar(statement.limit(1)) is not None for statement in newer_state
         ):
             raise ExecutionConflictError("account reconciliation predates outstanding state")
@@ -550,7 +538,7 @@ class DecisionExecutionService:
             return {"decision_id": str(decision.id), "status": "risk_blocked", "order_ids": []}
         if decision.status != "execution_claimed" or decision.execution_key is None:
             raise ExecutionConflictError("decision is not execution_claimed")
-        if current_time >= _stored_time(decision.valid_until, "valid_until"):
+        if current_time >= stored_timestamp(decision.valid_until, "valid_until"):
             raise ExecutionConflictError("decision has expired")
 
         failures = self._risk_failures(decision, policy, intents)
@@ -1447,7 +1435,7 @@ class ProtectiveExecutionService(DecisionExecutionService):
             raise ExecutionConflictError("protective identity is invalid")
         current_time = None if now is None else timestamp(now, "now")
         current_price = _finite_positive(price, "protective price")
-        self._advisory_lock(account_scope, account_generation)
+        lock_account(self.session, account_scope, account_generation)
         if current_time is None:
             current_time = timestamp(datetime.now(UTC), "now")
         account = self.session.scalar(

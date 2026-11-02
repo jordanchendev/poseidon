@@ -1,47 +1,18 @@
 """Validate and freeze point-in-time evidence without fetching external data."""
 
-import hashlib
 import json
 import math
-from datetime import UTC, datetime
 
 from sqlalchemy.exc import IntegrityError
 
+from poseidon.core.canonical import canonical_json, content_sha256
+from poseidon.core.errors import ValidationError
+from poseidon.core.timeutil import iso_time, stored_timestamp, timestamp
 from poseidon.models.data_manifest import DataManifest
-
-
-class ValidationError(ValueError):
-    """A frozen-input contract was violated."""
-
 
 # Attribution tiers (SEED-002 B3). Absent tiers keep the pre-v21 contract.
 SOURCE_TIERS = frozenset({"official-prepared", "official-qa", "third-party-transcript", "secondary", "derived"})
 NON_FACT_TIERS = frozenset({"third-party-transcript", "secondary"})
-
-
-def canonical_json(value) -> str:
-    try:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
-    except (TypeError, ValueError) as error:
-        raise ValidationError("payload must be finite JSON") from error
-
-
-def content_sha256(value) -> str:
-    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
-
-
-def timestamp(value, field: str) -> datetime:
-    try:
-        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise ValueError("timezone required")
-        return parsed.astimezone(UTC)
-    except (AttributeError, TypeError, ValueError) as error:
-        raise ValidationError(f"{field} must be a timezone-aware ISO timestamp") from error
-
-
-def iso_time(value, field: str) -> str:
-    return timestamp(value, field).isoformat().replace("+00:00", "Z")
 
 
 def required_text(value, field: str) -> str:
@@ -167,16 +138,12 @@ def verify_manifest(manifest: DataManifest) -> dict:
     if manifest is None:
         raise ValidationError("manifest does not exist")
     payload = validate_manifest(manifest.payload_json)
-    stored_as_of = manifest.as_of
-    if isinstance(stored_as_of, datetime) and stored_as_of.tzinfo is None:
-        # SQLite drops timezone metadata on reload; persisted Phase 96 times are UTC.
-        stored_as_of = stored_as_of.replace(tzinfo=UTC)
     if content_sha256(payload) != manifest.content_sha256:
         raise ValidationError("frozen manifest content hash mismatch")
     if (
         manifest.market != payload["market"]
         or manifest.interval != payload["interval"]
-        or timestamp(stored_as_of, "manifest.as_of") != timestamp(payload["as_of"], "payload.as_of")
+        or stored_timestamp(manifest.as_of, "manifest.as_of") != timestamp(payload["as_of"], "payload.as_of")
         or manifest.capability_json != payload["capability_json"]
         or manifest.sources_json != payload.get("sources_json", [])
     ):

@@ -6,7 +6,6 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
-
 pytestmark = pytest.mark.postgresql
 
 
@@ -22,10 +21,20 @@ def _assert_sqlstate(session, expected, statement, **params):
 
 
 def _seed_release_graph(session):
-    ids = {name: uuid.uuid4() for name in (
-        "strategy", "other_strategy", "version", "other_version", "campaign", "holdout", "review",
-        "reconciliation", "event",
-    )}
+    ids = {
+        name: uuid.uuid4()
+        for name in (
+            "strategy",
+            "other_strategy",
+            "version",
+            "other_version",
+            "campaign",
+            "holdout",
+            "review",
+            "reconciliation",
+            "event",
+        )
+    }
     session.execute(
         text(
             "INSERT INTO strategies (id,name,strategy_type,config,symbol,market,interval,active) VALUES "
@@ -101,12 +110,11 @@ def test_release_event_is_append_only_and_guard_allows_exact_same_transaction_up
     with phase99_session_factory() as session:
         ids = _seed_release_graph(session)
         _insert_release_event(session, ids)
-        session.execute(text("SELECT set_config('poseidon.release_event_id', :event, true)"), {"event": str(ids["event"])})
         session.execute(
-            text(
-                "UPDATE strategies SET active_version_id = :version,release_revision = 1 "
-                "WHERE id = :strategy"
-            ),
+            text("SELECT set_config('poseidon.release_event_id', :event, true)"), {"event": str(ids["event"])}
+        )
+        session.execute(
+            text("UPDATE strategies SET active_version_id = :version,release_revision = 1 WHERE id = :strategy"),
             ids,
         )
         assert session.execute(

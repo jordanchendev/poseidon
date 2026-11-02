@@ -19,7 +19,8 @@ from sqlalchemy.orm import Session, object_session
 
 from poseidon.api.auth import AuthPrincipal, get_auth_principal
 from poseidon.core.database import get_db
-from poseidon.decision_loop.manifest import ManifestService, ValidationError
+from poseidon.core.errors import ValidationError
+from poseidon.decision_loop.manifest import ManifestService
 from poseidon.decision_loop.research import ResearchService, superseded_by
 from poseidon.models.data_manifest import DataManifest
 from poseidon.models.research_revision import ResearchRevision

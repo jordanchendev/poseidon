@@ -1,7 +1,5 @@
 """Immutable executable version of a strategy identity."""
 
-import hashlib
-import json
 import uuid
 from datetime import datetime
 
@@ -9,19 +7,12 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConst
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from poseidon.core.canonical import content_sha256
 from poseidon.models.base import Base
 
 
 def strategy_version_digest(config_json: dict, policy_json: dict, artifact_json: dict) -> str:
-    payload = {"artifact_json": artifact_json, "config_json": config_json, "policy_json": policy_json}
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return content_sha256({"artifact_json": artifact_json, "config_json": config_json, "policy_json": policy_json})
 
 
 class StrategyVersion(Base):

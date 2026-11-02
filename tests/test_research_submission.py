@@ -7,9 +7,12 @@ import pytest
 from fastapi import HTTPException
 
 from poseidon.api.auth import AuthPrincipal
+from poseidon.core.canonical import content_sha256
+from poseidon.core.errors import ValidationError
+from poseidon.core.timeutil import timestamp
 from poseidon.decision_loop import evaluation
 from poseidon.decision_loop.evaluation import EvaluationService
-from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256, timestamp
+from poseidon.decision_loop.manifest import ManifestService
 from poseidon.decision_loop.producer import ProducerService
 from poseidon.decision_loop.research import ResearchService, is_superseded, superseded_by
 from poseidon.models.research_revision import ResearchRevision

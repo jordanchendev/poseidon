@@ -11,9 +11,10 @@ import pytest
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import sessionmaker
 
+from poseidon.core.canonical import content_sha256
 from poseidon.decision_loop.decisions import DecisionService
 from poseidon.decision_loop.evaluation import EvaluationService
-from poseidon.decision_loop.manifest import ManifestService, content_sha256
+from poseidon.decision_loop.manifest import ManifestService
 from poseidon.decision_loop.recovery import RecoverySelector
 from poseidon.models.data_manifest import DataManifest
 from poseidon.models.decision_event import DecisionEvent

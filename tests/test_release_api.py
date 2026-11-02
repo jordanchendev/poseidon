@@ -14,8 +14,8 @@ from fastapi.testclient import TestClient
 from poseidon.api import capabilities as capabilities_api
 from poseidon.core.config import settings
 from poseidon.core.database import get_db
+from poseidon.core.errors import ValidationError
 from poseidon.decision_loop.decisions import DecisionConflictError
-from poseidon.decision_loop.manifest import ValidationError
 from poseidon.decision_loop.releases import (
     ReleaseGateRejected,
     ReleaseGateResult,
@@ -998,7 +998,7 @@ def test_real_release_state_identities_feed_gate_release_and_pause(monkeypatch, 
 
 @pytest.mark.postgresql
 def test_real_release_state_labels_foreign_and_denied_holdouts_like_gate(monkeypatch, phase99_session_factory):
-    from poseidon.decision_loop.manifest import content_sha256
+    from poseidon.core.canonical import content_sha256
     from poseidon.models.experiment import ExperimentRecord
     from poseidon.models.experiment_campaign import CampaignReview, ExperimentCampaign
     from poseidon.research.campaign import CampaignService, build_review_input_identity

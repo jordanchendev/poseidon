@@ -9,10 +9,10 @@ import uuid
 from datetime import UTC, date, datetime, time
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from poseidon.decision_loop.manifest import canonical_json, content_sha256
+from poseidon.core.canonical import canonical_json, content_sha256
+from poseidon.core.locks import lock_digest
 from poseidon.models.experiment import ExperimentRecord
 from poseidon.models.experiment_campaign import (
     CampaignEvent,
@@ -184,14 +184,8 @@ def _canonical_panel_scalar(value, *, missing: bool) -> dict:
     raise CampaignContractValidationError(f"holdout panel contains unsupported scalar {type(value).__name__}")
 
 
-def _advisory_keys(domain: str, identity: str) -> tuple[int, int]:
-    digest = hashlib.sha256(f"{domain}{identity}".encode()).digest()
-    return int.from_bytes(digest[:4], "big", signed=True), int.from_bytes(digest[4:8], "big", signed=True)
-
-
 def _lock(session, domain: str, identity: str) -> None:
-    key1, key2 = _advisory_keys(domain, identity)
-    session.execute(text("SELECT pg_advisory_xact_lock(:key1, :key2)"), {"key1": key1, "key2": key2})
+    lock_digest(session, hashlib.sha256(f"{domain}{identity}".encode()).hexdigest())
 
 
 def _validate_complete_contract(value: dict) -> dict:
@@ -502,14 +496,10 @@ def build_review_input_identity(
                 "holdout_identity_sha256": holdout_digest,
                 "terminal_trials": ordered_trials,
                 "paired_sample_sha256": (
-                    membership_digests[0]
-                    if len(membership_digests) == 1
-                    else content_sha256(membership_digests)
+                    membership_digests[0] if len(membership_digests) == 1 else content_sha256(membership_digests)
                 ),
                 "panel_sha256": panel_digest,
-                "review_estimator_inputs": {
-                    field: contract.get(field) for field in _REVIEW_ESTIMATOR_FIELDS
-                },
+                "review_estimator_inputs": {field: contract.get(field) for field in _REVIEW_ESTIMATOR_FIELDS},
             }
         )
     )

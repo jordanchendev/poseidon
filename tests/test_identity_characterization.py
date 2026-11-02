@@ -7,16 +7,17 @@ stored timestamp format, or an advisory-lock key changed derivation: fix the cod
 
 import uuid
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from poseidon.broker import paper_adapter
-from poseidon.decision_loop import evaluation, outcome_accounting, outcomes, reconciliation, releases
+from poseidon.core.canonical import canonical_json, content_sha256
+from poseidon.core.errors import ValidationError
+from poseidon.core.locks import digest_lock_keys, lock_account
+from poseidon.core.timeutil import as_utc, iso_time, stored_iso_time, stored_timestamp, timestamp
 from poseidon.decision_loop.decisions import DecisionService
-from poseidon.decision_loop.decisions import _stored_time as decisions_stored_time
-from poseidon.decision_loop.execution import DecisionExecutionService
-from poseidon.decision_loop.manifest import ValidationError, canonical_json, content_sha256, iso_time, timestamp
 from poseidon.decision_loop.outcomes import OutcomeService
 from poseidon.decision_loop.research import ResearchService
 from poseidon.models.experiment_campaign import experiment_campaign_contract_sha256
@@ -118,9 +119,7 @@ CASES = {
         "PAPER", SimpleNamespace(intent_sha256=DIGEST_A), "PX-" + DIGEST_B
     ),
     # PostgreSQL advisory-lock keys.
-    "lock_execution_account": lambda: _locks(
-        lambda session: DecisionExecutionService(session)._advisory_lock("paper:golden", "generation-1")
-    ),
+    "lock_execution_account": lambda: _locks(lambda session: lock_account(session, "paper:golden", "generation-1")),
     "lock_decision_scope": lambda: _locks(
         lambda session: DecisionService(session)._lock_scope("paper:golden", VERSION_A)
     ),
@@ -128,7 +127,7 @@ CASES = {
         lambda session: ResearchService(session)._lock_scope("2330:thesis", "paper:golden")
     ),
     "lock_outcome_digests": lambda: _locks(lambda session: OutcomeService(session)._lock_digests([DIGEST_B, DIGEST_A])),
-    "lock_fill_cost": lambda: outcome_accounting._advisory_keys(DIGEST_B),
+    "lock_fill_cost": lambda: digest_lock_keys(DIGEST_B),
     "lock_campaign": lambda: _locks(lambda session: campaign._lock(session, "phase99:campaign:", DIGEST_A)),
     "lock_campaign_review": lambda: _locks(
         lambda session: campaign._lock(session, "phase99:review:", f"{VERSION_A}:{DIGEST_B}")
@@ -136,13 +135,11 @@ CASES = {
     # Stored timestamps: naive values read back from the DB are UTC; aware values are converted.
     "timestamp_text": lambda: timestamp("2026-01-02T11:04:05.678901+08:00", "t").isoformat(),
     "iso_time_aware": lambda: iso_time(TAIPEI, "t"),
-    "stored_paper_adapter": lambda: [paper_adapter._utc(value).isoformat() for value in (NAIVE, TAIPEI)],
-    "stored_reconciliation": lambda: [reconciliation._utc(value).isoformat() for value in (NAIVE, TAIPEI)],
-    "stored_releases": lambda: [releases._stored_time(value).isoformat() for value in (NAIVE, TAIPEI)],
-    "stored_decisions": lambda: [decisions_stored_time(value, "t").isoformat() for value in (NAIVE, TAIPEI)],
-    "stored_evaluation": lambda: [evaluation._stored_time(value, "t").isoformat() for value in (NAIVE, TAIPEI)],
-    "stored_outcomes_iso": lambda: [outcomes._iso(value) for value in (NAIVE, TAIPEI)],
-    "stored_outcome_accounting_iso": lambda: [outcome_accounting._iso(value) for value in (NAIVE, TAIPEI)],
+    # One helper now replaces the copies in paper_adapter, reconciliation, releases, decisions, evaluation,
+    # outcomes, outcome_accounting, traces, execution, cpu_tasks, and experiment_tracker.
+    "stored_as_utc": lambda: [as_utc(value).isoformat() for value in (NAIVE, TAIPEI)],
+    "stored_timestamp": lambda: [stored_timestamp(value, "t").isoformat() for value in (NAIVE, TAIPEI)],
+    "stored_iso_time": lambda: [stored_iso_time(value, "t") for value in (NAIVE, TAIPEI)],
 }
 
 AT_UTC = ["2026-01-02T03:04:05.678901+00:00", "2026-01-02T03:04:05.678901+00:00"]
@@ -179,13 +176,9 @@ GOLDEN = {
     "lock_campaign_review": [{"key1": -12821798, "key2": 1107977199}],
     "timestamp_text": "2026-01-02T03:04:05.678901+00:00",
     "iso_time_aware": "2026-01-02T03:04:05.678901Z",
-    "stored_paper_adapter": AT_UTC,
-    "stored_reconciliation": AT_UTC,
-    "stored_releases": AT_UTC,
-    "stored_decisions": AT_UTC,
-    "stored_evaluation": AT_UTC,
-    "stored_outcomes_iso": AT_Z,
-    "stored_outcome_accounting_iso": AT_Z,
+    "stored_as_utc": AT_UTC,
+    "stored_timestamp": AT_UTC,
+    "stored_iso_time": AT_Z,
 }
 
 
@@ -211,5 +204,26 @@ def test_timestamp_requires_an_aware_time(value):
 
 
 def test_stored_time_keeps_utc_instant():
-    assert paper_adapter._utc(TAIPEI) == TAIPEI
-    assert paper_adapter._utc(TAIPEI).tzinfo == UTC
+    assert as_utc(TAIPEI) == TAIPEI
+    assert as_utc(TAIPEI).tzinfo == UTC
+
+
+def test_lock_and_canonical_json_derivations_live_only_in_core():
+    """New copies of the lock-key or canonical-JSON derivation must use poseidon.core instead."""
+    src = Path(__file__).resolve().parents[1] / "src" / "poseidon"
+    owners = {
+        "pg_advisory_xact_lock": {"core/locks.py"},
+        'separators=(",", ":")': {"core/canonical.py"},
+    }
+    # The strategy pipeline is converged in its own wave.
+    offenders = {
+        needle: sorted(
+            relative
+            for path in src.rglob("*.py")
+            if not (relative := path.relative_to(src).as_posix()).startswith("pipeline/")
+            and relative not in allowed
+            and needle in path.read_text(encoding="utf-8")
+        )
+        for needle, allowed in owners.items()
+    }
+    assert offenders == {needle: [] for needle in owners}

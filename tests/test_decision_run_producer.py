@@ -15,9 +15,10 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal
+from poseidon.core.canonical import content_sha256
 from poseidon.decision_loop.decisions import DecisionPolicy
 from poseidon.decision_loop.evaluation import EvaluationService, snapshot_payload
-from poseidon.decision_loop.manifest import ManifestService, content_sha256, validate_manifest
+from poseidon.decision_loop.manifest import ManifestService, validate_manifest
 from poseidon.decision_loop.producer import (
     CANDIDATE_STATUS,
     ProducerService,
@@ -887,7 +888,7 @@ def test_freeze_task_freezes_fresh_required_evidence(monkeypatch, db):
 
 
 def test_freeze_task_still_fails_closed_without_any_evidence(monkeypatch, db):
-    from poseidon.decision_loop.manifest import ValidationError
+    from poseidon.core.errors import ValidationError
     from poseidon.workers import cpu_tasks
 
     _activate(db, make_version(db))

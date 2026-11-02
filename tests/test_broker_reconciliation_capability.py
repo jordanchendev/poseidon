@@ -22,7 +22,7 @@ from poseidon.broker.ccxt_adapter import CCXTBrokerAdapter
 from poseidon.broker.paper_adapter import PaperBrokerAdapter
 from poseidon.broker.perp_paper_adapter import PerpPaperAdapter
 from poseidon.broker.shioaji_adapter import ShioajiBrokerAdapter
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.models.base import Base
 from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.paper_broker_fill import PaperBrokerFill

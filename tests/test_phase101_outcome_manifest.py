@@ -8,7 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from poseidon.decision_loop.manifest import ValidationError, content_sha256, validate_manifest
+from poseidon.core.canonical import content_sha256
+from poseidon.core.errors import ValidationError
+from poseidon.decision_loop.manifest import validate_manifest
 from poseidon.decision_loop.outcome_manifest import (
     OUTCOME_PRICE_MAX_AGE_SECONDS,
     build_outcome_manifest_request,

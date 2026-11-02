@@ -14,8 +14,8 @@ from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal, get_auth_principal
 from poseidon.core.database import get_db
+from poseidon.core.errors import ValidationError
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionNotFoundError, DecisionService
-from poseidon.decision_loop.manifest import ValidationError
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.order import OrderRecord
 

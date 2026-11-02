@@ -21,8 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints,
 from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal, get_auth_principal
+from poseidon.core.canonical import content_sha256
 from poseidon.core.database import get_db
-from poseidon.decision_loop.manifest import content_sha256
 from poseidon.pipeline.models import DRAFTERS
 from poseidon.pipeline.service import (
     PipelineConflict,

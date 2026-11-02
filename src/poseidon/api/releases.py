@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal, get_auth_principal
 from poseidon.core.database import get_db
+from poseidon.core.errors import ValidationError
 from poseidon.decision_loop.decisions import DecisionConflictError
-from poseidon.decision_loop.manifest import ValidationError
 from poseidon.decision_loop.releases import ReleaseGateRejected, ReleaseService
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.strategy import StrategyRecord

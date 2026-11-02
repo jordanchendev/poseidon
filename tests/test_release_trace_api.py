@@ -10,10 +10,11 @@ from fastapi.testclient import TestClient
 
 from poseidon.api.auth import AuthPrincipal, get_auth_principal
 from poseidon.api.traces import TraceService
+from poseidon.core.canonical import content_sha256
 from poseidon.core.database import get_db
 from poseidon.decision_loop.decisions import DecisionService
 from poseidon.decision_loop.evaluation import EvaluationService
-from poseidon.decision_loop.manifest import ManifestService, content_sha256
+from poseidon.decision_loop.manifest import ManifestService
 from poseidon.decision_loop.releases import ReleaseService
 from poseidon.main import app
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot

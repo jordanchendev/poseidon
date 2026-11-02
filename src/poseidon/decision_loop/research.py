@@ -4,22 +4,16 @@ import json
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.orm import aliased
 
 from poseidon.api.auth import AuthPrincipal
+from poseidon.core.canonical import canonical_json, content_sha256
+from poseidon.core.errors import ValidationError
+from poseidon.core.locks import lock_identity
+from poseidon.core.timeutil import timestamp
 from poseidon.decision_loop.claim_lint import check_numbers, lint_atomic
-from poseidon.decision_loop.manifest import (
-    NON_FACT_TIERS,
-    ValidationError,
-    canonical_json,
-    content_sha256,
-    insert_once,
-    required_text,
-    source_tier,
-    timestamp,
-    verify_manifest,
-)
+from poseidon.decision_loop.manifest import NON_FACT_TIERS, insert_once, required_text, source_tier, verify_manifest
 from poseidon.models.data_manifest import DataManifest
 from poseidon.models.research_revision import CORRECTION_REASONS, ResearchRevision
 
@@ -275,12 +269,8 @@ class ResearchService:
         self.session = session
 
     def _lock_scope(self, scope_key, account_scope):
-        if self.session.get_bind().dialect.name == "postgresql":
-            # Serialize a scope through commit so concurrent completions cannot change its predecessor unseen.
-            lock_key = int(content_sha256({"scope_key": scope_key, "account_scope": account_scope})[:16], 16)
-            if lock_key >= 2**63:
-                lock_key -= 2**64
-            self.session.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key})
+        # Serialize a scope through commit so concurrent completions cannot change its predecessor unseen.
+        lock_identity(self.session, {"scope_key": scope_key, "account_scope": account_scope})
 
     def _manifest(self, manifest_id):
         manifest = self.session.get(DataManifest, manifest_id)

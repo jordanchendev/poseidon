@@ -9,7 +9,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
-from poseidon.decision_loop.manifest import ValidationError
+from poseidon.core.errors import ValidationError
 from poseidon.decision_loop.outcome_accounting import FillCostService, OutcomeAccounting
 from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
@@ -171,7 +171,7 @@ def test_cross_currency_cost_requires_complete_frozen_fx(cost_session):
         native_currency="EUR",
         reporting_currency="USD",
     )
-    with pytest.raises(ValidationError, match="fx_source|FX"):
+    with pytest.raises(ValidationError, match=r"fx_source|FX"):
         FillCostService(cost_session).append_revision(
             order_fill_id=fill.id,
             reporting_currency="USD",

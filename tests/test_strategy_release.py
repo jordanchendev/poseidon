@@ -15,8 +15,8 @@ from sqlalchemy import func, text
 from poseidon.api.auth import AuthPrincipal
 from poseidon.backtest.experiment_tracker import ExperimentTracker
 from poseidon.backtest.voting_strategy_factory import _build_config_from_params
+from poseidon.core.canonical import content_sha256
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionPolicy
-from poseidon.decision_loop.manifest import content_sha256
 from poseidon.decision_loop.releases import (
     ExecutableStrategyConfig,
     ReleaseGateRejected,

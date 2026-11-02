@@ -11,11 +11,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from poseidon.api import decisions as decisions_api
+from poseidon.core.canonical import content_sha256
 from poseidon.core.config import settings
 from poseidon.core.database import get_db
+from poseidon.core.errors import ValidationError
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionNotFoundError
 from poseidon.decision_loop.evaluation import EvaluationService
-from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256
+from poseidon.decision_loop.manifest import ManifestService
 from poseidon.main import app as poseidon_app
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord

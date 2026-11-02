@@ -13,9 +13,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal
+from poseidon.core.canonical import content_sha256
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionService
 from poseidon.decision_loop.evaluation import EvaluationService
-from poseidon.decision_loop.manifest import ManifestService, content_sha256
+from poseidon.decision_loop.manifest import ManifestService
 from poseidon.models.data_manifest import DataManifest
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord

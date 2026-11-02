@@ -17,6 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from poseidon.core.canonical import content_sha256
 from poseidon.models.base import Base
 
 
@@ -31,11 +32,6 @@ def experiment_campaign_contract_sha256(
     contract_json: dict,
 ) -> str:
     """Return the canonical identity of every frozen campaign field."""
-
-    # Import lazily so ``decision_loop.manifest`` can import model metadata
-    # without cycling back through ``poseidon.models.__init__`` at module load.
-    from poseidon.decision_loop.manifest import content_sha256
-
     return content_sha256(
         {
             "incumbent_strategy_version_id": str(incumbent_strategy_version_id),
