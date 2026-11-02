@@ -8,7 +8,9 @@ line each:
 
   narrative_id  origin_kind  origin_ref  status  tags  messages
 
-followed by a summary line on stderr. The owner decides what to do with a flagged record; this script never does.
+Records still held for a pending proposal (held_records, status held) are checked the same way and printed with
+origin_kind `held`: add_record runs these rules on them when they are released.
+A summary line follows on stderr. The owner decides what to do with a flagged record; this script never does.
 Run it against a COPY of the runner ledger, never the live file:
 
   cp ~/research-runner/state/ledger.sqlite /tmp/ledger-copy.sqlite
@@ -18,6 +20,7 @@ Run it against a COPY of the runner ledger, never the live file:
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -55,6 +58,33 @@ def flagged(db: sqlite3.Connection, origin: str | None = None) -> list[dict]:
     return out
 
 
+def flagged_held(db: sqlite3.Connection) -> list[dict]:
+    """The held records (status held) that add_record would refuse on release, in flagged()'s shape."""
+    out = []
+    for r in db.execute(
+        "SELECT narrative_id, record_json FROM held_records WHERE status = 'held' ORDER BY narrative_id"
+    ):
+        rec = json.loads(r["record_json"])
+        problems = record_rules.record_problems(
+            rec.get("claim") or "",
+            rec.get("quote") or "",
+            rec.get("claim_type"),
+            rec.get("resolves_on"),
+            check_period=False,
+        )
+        if problems:
+            out.append(
+                {
+                    "narrative_id": r["narrative_id"],
+                    "origin_kind": "held",
+                    "origin_ref": rec.get("origin_ref"),
+                    "status": "held",
+                    "problems": problems,
+                }
+            )
+    return out
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description="Flag ledger narrative records that break today's record rules (read-only)."
@@ -73,9 +103,11 @@ def main(argv=None) -> int:
             (a.origin,) if a.origin else (),
         ).fetchone()[0]
         rows = flagged(db, a.origin)
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        held = flagged_held(db) if a.origin is None and "held_records" in tables else []
     finally:
         db.close()
-    for x in rows:
+    for x in rows + held:
         tags = ",".join(sorted({p.tag for p in x["problems"]}))
         messages = " | ".join(p.message for p in x["problems"])
         print(
@@ -83,7 +115,10 @@ def main(argv=None) -> int:
                 str(v) for v in (x["narrative_id"], x["origin_kind"], x["origin_ref"], x["status"], tags, messages)
             )
         )
-    print(f"{len(rows)} of {total} records flagged (read-only; nothing changed)", file=sys.stderr)
+    print(
+        f"{len(rows)} of {total} records and {len(held)} held records flagged (read-only; nothing changed)",
+        file=sys.stderr,
+    )
     return 0
 
 

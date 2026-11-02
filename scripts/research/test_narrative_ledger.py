@@ -15,6 +15,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 import narrative_export  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
+import narrative_proposals  # noqa: E402
 
 from poseidon.decision_loop.manifest import content_sha256  # noqa: E402
 
@@ -613,15 +614,31 @@ def test_revalidate_flags_records_filed_before_a_rule_and_writes_nothing(db, tmp
     with db:
         nl._insert(db, "narrative_records", old)
     db.commit()
+    # an intake record held for a pending proposal, which add_record will gate when it is released
+    held = dict(
+        claim="感測器資料帶動自駕車記憶體需求",
+        claim_type="state",
+        attributed_to="a",
+        source_tier="kol",
+        origin_kind="material",
+        origin_ref="material:20261020-k9",
+        origin_evidence_id="secondary:material-20261020-k9",
+        quote=QUOTE,
+        subject_symbols=["NASDAQ:MU"],
+        theme_ids=["T20261020-1"],
+        first_seen_at=SEEN,
+    )
+    held_id = narrative_proposals.hold_record(db, held, SOURCE, ["T20261020-1"], SEEN)["narrative_id"]
     path = tmp_path / "ledger.sqlite"
     before = path.read_bytes()
     assert revalidate_records.main(["--ledger", str(path)]) == 0
     out, err = capsys.readouterr()
-    (line,) = out.splitlines()
+    line, held_line = out.splitlines()
     nid, origin_kind, origin_ref, status, tags, messages = line.split("\t")
     assert (nid, origin_kind, origin_ref, status, tags) == ("nr-legacy0001", "owner", "owner:test-0", "None", "atomic")
     assert "links a cause to an effect (帶動)" in messages
-    assert "1 of 2 records flagged" in err
+    assert held_line.split("\t")[:5] == [held_id, "held", "material:20261020-k9", "held", "atomic"]
+    assert "1 of 2 records and 1 held records flagged" in err
     assert path.read_bytes() == before
     assert revalidate_records.main(["--ledger", str(path), "--origin", "revision"]) == 0
     assert capsys.readouterr().out == ""
