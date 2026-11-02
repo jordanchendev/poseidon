@@ -45,6 +45,8 @@ ALLOWED_DSH_ARTIFACTS = {
     # The strategy pipeline's JEV evaluator, merged to main in B4 (2026-11-01).
     "scripts/research/jev_eval_control_set.py",
     "tests/pipeline/jev_support.py",
+    # The research runner's single JEV client (research runner W1, 2026-11-02); a script, no production path.
+    "scripts/research/jev_client.py",
 }
 # Sanctioned production uses of the JEV/DeepSeek names: the strategy pipeline's JEV evaluator (B4 merge) and the
 # shared evaluation-key reader. DSH itself still has no production path; pyproject.toml keeps its dependency check.
