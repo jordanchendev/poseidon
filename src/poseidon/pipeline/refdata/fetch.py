@@ -5,15 +5,26 @@ One :class:`PoliteFetcher` per host keeps a minimum spacing between requests
 backoff, and raises :class:`SourceBlockedError` - never retries past it - when
 the host answers in a way that means "stop" (403/429 after backoff, or a body
 the caller's ``validate`` rejects every time).
+
+:class:`RawSource` keeps the exact bytes of a JSON GET in ``<dataset>/raw/`` of the refdata store, and
+:func:`thalassa_fetcher` is the one fetcher for Thalassa (the key rides in its client's headers, never in a
+URL or a stored record).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+from urllib.parse import urlencode
 
 import httpx
+
+if TYPE_CHECKING:
+    from poseidon.pipeline.refdata.store import RefdataStore, SourceRecord
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +32,8 @@ USER_AGENT = "Mozilla/5.0 (poseidon-refdata; daily reference data; low rate)"
 TAIFEX_MIN_INTERVAL = 1.5
 TWSE_MIN_INTERVAL = 3.0
 CBOE_MIN_INTERVAL = 3.0
+THALASSA_MIN_INTERVAL = 0.5  # Thalassa is on the LAN
+THALASSA_TIMEOUT = 300.0
 
 
 class SourceError(RuntimeError):
@@ -100,3 +113,38 @@ class PoliteFetcher:
         if refused == self.retries:
             raise SourceBlockedError(f"{url}: {last_error} on every attempt; stopping")
         raise SourceError(f"{url}: {last_error} after {self.retries} attempts")
+
+
+def thalassa_fetcher(api_key: str, client: httpx.Client | None = None) -> PoliteFetcher:
+    """The fetcher for the Thalassa REST API (GET only): ``api_key`` rides in the ``X-API-Key`` header of
+    the client, never in a URL or a stored record. ``client`` replaces the HTTP client (tests)."""
+
+    client = client or httpx.Client(timeout=THALASSA_TIMEOUT, headers={"X-API-Key": api_key})
+    return PoliteFetcher(THALASSA_MIN_INTERVAL, client=client)
+
+
+def is_json(body: bytes) -> bool:
+    """A throttled public client gets an HTML page instead of JSON."""
+    try:
+        json.loads(body)
+    except ValueError:
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class RawSource:
+    """GET JSON once: the bytes and their :class:`SourceRecord` live in ``<dataset>/raw/<name>``
+    and a rerun reads them back, unless ``refresh`` asks for a new copy (the store keeps the old
+    record when the bytes did not change)."""
+
+    store: RefdataStore
+    dataset: str
+    fetcher: PoliteFetcher
+
+    def get(self, name: str, url: str, params: dict, *, refresh: bool = False) -> tuple[object, SourceRecord]:
+        record = None if refresh else self.store.raw_record(self.dataset, name)
+        if record is None:
+            body = self.fetcher.fetch(f"{url}?{urlencode(params)}" if params else url, validate=is_json)
+            record, _ = self.store.put_raw(self.dataset, name, body, url=url, params=params)
+        return json.loads(self.store.raw_bytes(self.dataset, name)), record

@@ -1,293 +1,195 @@
-"""Corporate actions: parsers on real TWSE payloads, factors, adjusted series across the 0050
-split and a cash dividend, the price-limit cross-check, raw fetching and the shared store."""
+"""tw_corporate_actions: Thalassa rows -> dataset rows, and how the engine books them (no network)."""
 
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
+from poseidon.pipeline.engine.data import stock_bars
 from poseidon.pipeline.refdata import tw_corporate_actions as ca
-from poseidon.pipeline.refdata.fetch import PoliteFetcher, SourceBlockedError
-from poseidon.pipeline.refdata.store import RefdataStore
+from poseidon.pipeline.refdata.store import RefdataStore, month_partitions
+from poseidon.pipeline.refdata.tw_stocks import thalassa_bars
 
 FIXTURES = Path(__file__).parent / "fixtures" / "tw_corporate_actions"
 SPLIT_0050 = date(2025, 6, 18)
 DIVIDEND_0050 = date(2025, 7, 21)
 
 
-def payload(name: str) -> dict:
+def thalassa_row(**fields) -> dict:
+    """One row as Thalassa's /api/v1/tw/corporate-actions returns it."""
+    row = {
+        "date": "2026-07-15",
+        "market": "twse",
+        "symbol": "2330",
+        "kind": "ex_rights",
+        "prev_close": 100.0,
+        "ref_price": 98.0,
+        "detail": "息",
+        "cash_dividend": 2.0,
+        "ingested_at": None,
+    }
+    row.update(fields)
+    row["factor"] = row["ref_price"] / row["prev_close"]
+    return row
+
+
+def payload(name: str):
     return json.loads((FIXTURES / f"{name}.json").read_text())
 
 
-def bars_0050() -> pd.DataFrame:
-    """Thalassa 0050 1d, 2025-05-26 .. 2025-07-31 (raw close; adj_close as Thalassa stores it)."""
-    return ca.thalassa_bars(payload("thalassa_0050_1d_2025"))
+# --- the action_type mapping -----------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("market", "kind", "detail", "prev_close", "ref_price", "expected"),
+    [
+        ("twse", "ex_rights", "息", 100.0, 98.0, "cash_dividend"),
+        ("twse", "ex_rights", "權", 100.0, 90.9, "ex_rights"),
+        ("twse", "ex_rights", "權息", 100.0, 88.0, "ex_rights"),
+        ("tpex", "ex_rights", "除息", 50.0, 49.0, "cash_dividend"),
+        ("tpex", "ex_rights", "除權", 50.0, 45.5, "ex_rights"),
+        ("tpex", "ex_rights", "除權息", 50.0, 44.0, "ex_rights"),
+        ("twse", "capital_reduction", "彌補虧損", 20.0, 33.3, "capital_reduction"),
+        ("twse", "capital_reduction", "退還股款", 40.0, 44.0, "capital_reduction"),
+        ("tpex", "capital_reduction", "現金減資", 30.0, 33.0, "capital_reduction"),
+        ("twse", "par_value_change", "換股率 10", 1000.0, 100.0, "par_value_change"),
+        ("tpex", "par_value_change", "換股率 4", 400.0, 100.0, "par_value_change"),
+        ("twse", "split", "分割 1:4", 188.65, 47.16, "split"),
+        ("twse", "split", "反分割 7:1", 10.0, 70.0, "reverse_split"),
+    ],
+)
+def test_every_thalassa_kind_and_label_maps_to_one_action_type(market, kind, detail, prev_close, ref_price, expected):
+    row = thalassa_row(market=market, kind=kind, detail=detail, prev_close=prev_close, ref_price=ref_price)
+    [action] = ca.actions_frame([row]).to_dict("records")
+    assert action["action_type"] == expected
+    assert action["factor"] == pytest.approx(ref_price / prev_close)
+    assert (action["market"], action["source"]) == (market, f"thalassa:{market}:{kind}")
 
 
-def tai50() -> pd.DataFrame:
-    return pd.DataFrame(ca.parse_tai50(payload("tai50i_202506")) + ca.parse_tai50(payload("tai50i_202507"))).set_index(
-        "date"
-    )
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"market": "twse", "detail": "除息"}, "unknown ex_rights detail"),  # a TPEx label on a TWSE row
+        ({"market": "tpex", "detail": "息"}, "unknown ex_rights detail"),
+        ({"detail": None}, "unknown ex_rights detail"),
+        ({"kind": "merger"}, "unknown Thalassa corporate-action kind"),
+        ({"market": "otc"}, "unknown market"),
+        ({"prev_close": 0.0}, "prev_close"),
+        ({"ref_price": None}, "ref_price"),
+        ({"cash_dividend": -1.0}, "cash_dividend"),
+        ({"date": "115/07/15"}, "not an ISO date"),
+    ],
+)
+def test_an_event_outside_the_mapping_stops_the_update(fields, message):
+    row = {**thalassa_row(), **fields}
+    with pytest.raises(ca.CorporateActionsError, match=message):
+        ca.actions_frame([row])
 
 
-def actions_0050() -> pd.DataFrame:
-    rows = ca.parse_ex_rights(payload("twt49u_2025_excerpt")) + ca.parse_etf_split(payload("twtcau"))
-    frame = ca.actions_frame(rows)
-    return frame[frame["symbol"] == "0050"]
+def test_a_row_without_a_field_or_listed_twice_stops_the_update():
+    row = thalassa_row()
+    del row["cash_dividend"]
+    with pytest.raises(ca.CorporateActionsError, match="lacks"):
+        ca.actions_frame([row])
+    with pytest.raises(ca.CorporateActionsError, match="twice"):
+        ca.actions_frame([thalassa_row(), thalassa_row(ref_price=97.0)])
 
 
-# --- parsers -----------------------------------------------------------------------------------
-def test_cash_dividend_row_gives_reference_over_prev_close():
-    rows = {(r["symbol"], r["date"]): r for r in ca.parse_ex_rights(payload("twt49u_2025_excerpt"))}
-    row = rows[("0050", DIVIDEND_0050)]
-    assert row["action_type"] == "cash_dividend"
-    assert (row["prev_close"], row["reference_price"], row["cash_dividend"]) == (51.45, 51.09, 0.36)
-    assert row["factor"] == pytest.approx(51.09 / 51.45)
-    assert (row["open_reference"], row["limit_up"], row["limit_down"]) == (51.10, 56.15, 45.99)
-
-
-def test_ex_rights_rows_stay_unclassified_until_the_detail_is_read():
-    kinds = {r["symbol"]: r for r in ca.parse_ex_rights(payload("twt49u_2010_excerpt"))}
-    assert kinds["1715"]["action_type"] == "cash_dividend"
-    assert kinds["3058"]["action_type"] == "ex_rights"
-    assert kinds["3058"]["cash_dividend"] == 0.0
-    assert kinds["6271"]["action_type"] == "ex_rights"
-    assert kinds["6271"]["cash_dividend"] is None  # the 2010 layout states only 權值+息值
-    assert kinds["6271"]["factor"] == pytest.approx(110.95 / 116.00)
-
-
-def test_detail_separates_a_rights_offering_from_a_stock_dividend():
-    cathay = ca.parse_ex_rights(payload("twt49u_2022_excerpt"))[0]
-    typed = ca.classify_ex_rights(cathay, ca.parse_ex_rights_detail(payload("twt49udetail_2882_20221205")))
-    assert typed["action_type"] == "rights_offering"  # 81.6 new shares per 1,000 at NT$35
-    assert (typed["rights_per_1000"], typed["rights_price"], typed["stock_per_1000"]) == (81.61871609, 35.0, 0.0)
-    assert typed["formula_reference"] == pytest.approx(cathay["reference_price"], rel=0.005)
-    first = ca.parse_ex_rights(payload("twt49u_2015_excerpt"))[0]
-    both = ca.classify_ex_rights(first, ca.parse_ex_rights_detail(payload("twt49udetail_2892_20150731")))
-    assert both["action_type"] == "stock_dividend_and_rights_offering"
-    assert (both["cash_dividend"], both["stock_per_1000"]) == (0.7, 65.0)
-    assert both["formula_reference"] == pytest.approx(first["reference_price"], rel=0.005)
-    assert ca.parse_ex_rights_detail(payload("twt49udetail_2885_20250723")) is None
-
-
-def test_old_layout_reads_cash_from_its_own_column():
-    rows = {r["symbol"]: r for r in ca.parse_ex_rights(payload("twt49u_2004_excerpt"))}
-    tsmc = rows["2330"]  # 2004-06-14: 權值 6.57 + 息值 0.6037
-    assert tsmc["action_type"] == "ex_rights"
-    assert tsmc["cash_dividend"] == pytest.approx(0.6037)
-    assert tsmc["factor"] == pytest.approx(43.33 / 50.50)
-
-
-def test_etf_split_type_comes_from_the_price_ratio_even_without_a_label():
-    rows = {r["symbol"]: r for r in ca.parse_etf_split(payload("twtcau"))}
-    assert rows["0050"]["action_type"] == "split"
-    assert rows["0050"]["factor"] == pytest.approx(47.16 / 188.65)
-    assert 1 / rows["0050"]["factor"] == pytest.approx(4.0, rel=1e-3)
-    assert rows["00631L"]["action_type"] == "split"  # 分割 column is blank on this row
-    assert 1 / rows["00631L"]["factor"] == pytest.approx(22.0, rel=1e-3)
-    assert rows["00632R"]["action_type"] == "reverse_split"
-    assert rows["00632R"]["factor"] == pytest.approx(22.96 / 3.28)
-
-
-def test_capital_reduction_with_cash_returned_raises_the_factor_above_one():
-    rows = {r["symbol"]: r for r in ca.parse_capital_reduction(payload("twtauu_2011_excerpt"))}
-    cht = rows["2412"]
-    assert cht["action_type"] == "capital_reduction"
-    assert cht["detail"] == "退還股款"
-    assert cht["factor"] == pytest.approx(88.87 / 73.10)
-
-
-def test_par_value_change_rows():
-    rows = ca.parse_par_value_change(payload("twtb8u"))
-    first = next(r for r in rows if r["symbol"] == "8070")
-    assert first["date"] == date(2020, 8, 17)
-    assert first["factor"] == pytest.approx(19.0 / 190.0)
-
-
-def test_no_data_answer_is_empty_and_layout_changes_raise():
-    assert ca.parse_ex_rights({"stat": "很抱歉，沒有符合條件的資料!"}) == []
-    with pytest.raises(ca.TwseParseError):
-        ca.parse_ex_rights({"stat": "查詢開始日期小於92年5月5日，請重新查詢!"})
-    broken = payload("twt49u_2025_excerpt")
-    broken["fields"] = [f.replace("除權息參考價", "參考價") for f in broken["fields"]]
-    with pytest.raises(ca.TwseParseError, match="除權息參考價"):
-        ca.parse_ex_rights(broken)
-
-
-def test_tai50_rows_are_the_session_calendar():
-    frame = tai50()
-    assert date(2025, 6, 2) in frame.index
-    assert date(2025, 6, 1) not in frame.index  # Sunday
-    assert frame.loc[date(2025, 6, 2), "tai50_tr"] == pytest.approx(39334.51)
-
-
-def test_published_limit_prices_match_the_limit_rule():
-    rows = ca.parse_ex_rights(payload("twt49u_2025_excerpt")) + ca.parse_etf_split(payload("twtcau"))
-    findings = ca.check_action_limits(ca.actions_frame(rows))
-    assert [f for f in findings if f.severity == "error"] == []
-    assert {f.symbol for f in findings if f.kind == "no_price_limit"} == {"00673R", "00706L", "00715L", "00674R"}
-    pricey = ca.actions_frame(rows)  # 2059 trades above NT$10,000: its limits are real prices
-    columns = ["prev_close", "reference_price", "open_reference", "dividend_reference", "limit_up", "limit_down"]
-    pricey.loc[pricey["symbol"] == "2454", columns] *= 10
-    assert [f for f in ca.check_action_limits(pricey) if f.symbol == "2454"] == []
-    wrong = ca.actions_frame(rows)
-    wrong.loc[wrong["symbol"] == "00631L", "limit_up"] = 22.15  # a 10% band on a 2x ETF
-    assert {(f.kind, f.symbol) for f in ca.check_action_limits(wrong) if f.severity == "error"} == {
-        ("limit_rule_mismatch", "00631L")
-    }
-    assert ca.price_limits("00631L", date(2026, 3, 31)) == pytest.approx((0.20, 0.20))
-    assert ca.price_limits("2330", date(2015, 5, 29)) == pytest.approx((0.07, 0.07))
-    assert ca.price_limits("0050", date(2008, 10, 24)) == pytest.approx((0.07, 0.035))
-
-
-# --- adjustment --------------------------------------------------------------------------------
-def test_adjusted_series_has_no_split_crash_and_tracks_the_total_return_index():
-    bars = bars_0050()
-    adjusted = ca.adjust_prices(bars, actions_0050())
-    before, after = date(2025, 6, 10), SPLIT_0050  # halted 06-11 .. 06-17
-    raw = bars.loc[after, "close"] / bars.loc[before, "close"] - 1
-    ours = adjusted.loc[after, "adj_close"] / adjusted.loc[before, "adj_close"] - 1
-    index = tai50()["tai50_tr"]
-    bench = index.loc[after] / index.loc[before] - 1
-    assert raw < -0.7  # the fake crash
-    assert abs(ours - bench) < 0.005
-    assert adjusted["adj_close"].iloc[-1] == bars["close"].iloc[-1]  # latest price unchanged
-
-
-def test_cash_dividend_day_return_is_measured_from_the_reference_price():
-    bars = bars_0050()
-    adjusted = ca.adjust_prices(bars, actions_0050())
-    eve = max(d for d in bars.index if d < DIVIDEND_0050)
-    ours = adjusted.loc[DIVIDEND_0050, "adj_close"] / adjusted.loc[eve, "adj_close"] - 1
-    assert ours == pytest.approx(bars.loc[DIVIDEND_0050, "close"] / 51.09 - 1)
-    assert adjusted.loc[eve, "adj_factor"] == pytest.approx(51.09 / 51.45)
-    assert adjusted.loc[date(2025, 6, 10), "adj_factor"] == pytest.approx(51.09 / 51.45 * 47.16 / 188.65)
-
-
-def test_an_action_without_prices_is_refused():
-    actions = actions_0050().copy()
-    actions.loc[actions.index[0], "factor"] = None
-    with pytest.raises(ValueError, match="without a factor"):
-        ca.adjust_prices(bars_0050(), actions)
-
-
-# --- cross-check -------------------------------------------------------------------------------
-def sessions() -> set[date]:
-    return set(tai50().index)
-
-
-def test_real_window_with_its_actions_is_clean():
-    findings = ca.cross_check("0050", bars_0050(), actions_0050(), sessions())
-    assert [f for f in findings if f.severity == "error"] == []
-    halted = [f for f in findings if f.kind == "missing_sessions"]
-    assert halted == []  # the 06-11 .. 06-17 halt is explained by the split
-
-
-def test_a_dropped_split_is_an_unexplained_limit_breach():
-    actions = actions_0050()
-    findings = ca.cross_check("0050", bars_0050(), actions[actions["action_type"] != "split"], sessions())
-    breaches = [f for f in findings if f.kind == "unexplained_limit_breach"]
-    assert {f.date for f in breaches} == {SPLIT_0050}
-    assert all(f.severity == "error" for f in breaches)
-
-
-def synthetic(closes: list[float], start: date = date(2025, 6, 2)) -> pd.DataFrame:
-    days = sorted(d for d in sessions() if d >= start)[: len(closes)]
-    return pd.DataFrame({"open": closes, "high": closes, "low": closes, "close": closes}, index=pd.Index(days))
-
-
-EMPTY = ca.actions_frame([])
-
-
-def test_synthetic_unexplained_jump_is_flagged():
-    findings = ca.cross_check("2330", synthetic([100, 101, 116, 117]), EMPTY, sessions())
-    assert [(f.kind, f.detail["column"]) for f in findings if f.severity == "error"] == [
-        ("unexplained_limit_breach", "close"),
-        ("unexplained_limit_breach", "high"),
-        ("unexplained_limit_breach", "low"),
+def test_the_same_symbol_on_both_markets_or_two_kinds_on_one_day_are_two_events():
+    rows = [
+        thalassa_row(),
+        thalassa_row(market="tpex", detail="除息"),
+        thalassa_row(kind="capital_reduction", detail="退還股款", ref_price=110.0, cash_dividend=None),
     ]
+    frame = ca.actions_frame(rows)
+    assert len(frame) == 3 and list(frame.columns) == ca.ACTION_COLUMNS
 
 
-def test_leveraged_etf_band_is_twice_as_wide():
-    assert ca.cross_check("00631L", synthetic([100, 115, 98]), EMPTY, sessions()) == []
-    flagged = ca.cross_check("00631L", synthetic([100, 121]), EMPTY, sessions())
-    assert {f.kind for f in flagged} == {"unexplained_limit_breach"}
+# --- cash_dividend: Thalassa's value, never a default --------------------------------------------------
+def test_a_null_cash_stays_null_and_the_factor_comes_from_the_prices():
+    rows = [
+        thalassa_row(date="2004-07-20", detail="權息", prev_close=50.0, ref_price=44.0, cash_dividend=None),
+        thalassa_row(date="2026-07-20", detail="權息", prev_close=50.0, ref_price=44.0, cash_dividend=1.5),
+        thalassa_row(date="2026-08-20", detail="權", prev_close=50.0, ref_price=45.5, cash_dividend=0.0),
+    ]
+    frame = ca.actions_frame(rows)
+    assert frame["action_type"].tolist() == ["ex_rights"] * 3
+    assert frame["cash_dividend"].isna().tolist() == [True, False, False]
+    assert frame["cash_dividend"].iloc[1:].tolist() == [1.5, 0.0]
+    assert frame["factor"].tolist() == pytest.approx([44 / 50, 44 / 50, 45.5 / 50])
 
 
-def test_missing_sessions_widen_the_band_and_are_reported():
-    frame = synthetic([100, 101, 102, 103])
-    gapped = frame.drop(frame.index[1:3]).copy()
-    gapped.iloc[-1] = 118  # +18% over three sessions: inside 1.1**3 - 1
-    findings = ca.cross_check("2330", gapped, EMPTY, sessions())
-    assert [(f.severity, f.kind, f.detail["count"]) for f in findings] == [("warning", "missing_sessions", 2)]
+def test_the_engine_books_a_null_ex_rights_cash_in_units_and_a_null_cash_dividend_as_the_price_step():
+    days = pd.bdate_range("2026-07-13", periods=6)
+    bars = pd.DataFrame({"date": days, "open": 50.0, "high": 50.0, "low": 50.0, "close": 50.0})
+    rows = [
+        thalassa_row(date="2026-07-14", detail="權息", prev_close=50.0, ref_price=40.0, cash_dividend=None),
+        thalassa_row(date="2026-07-16", detail="息", prev_close=50.0, ref_price=48.0, cash_dividend=None),
+        thalassa_row(date="2026-07-17", detail="權息", prev_close=50.0, ref_price=40.0, cash_dividend=2.0),
+    ]
+    booked = stock_bars(bars, ca.actions_frame(rows)).set_index("date")
+    null_rights, null_cash, known = (booked.loc[pd.Timestamp(d)] for d in ("2026-07-14", "2026-07-16", "2026-07-17"))
+    assert (null_rights["cash_per_share"], null_rights["unit_ratio"]) == pytest.approx((0.0, 50 / 40))
+    assert (null_cash["cash_per_share"], null_cash["unit_ratio"]) == pytest.approx((2.0, 1.0))
+    assert (known["cash_per_share"], known["unit_ratio"]) == pytest.approx((2.0, 48 / 40))
+    for day in (null_rights, null_cash, known):  # the position's value at the reference price is kept
+        reference = 50.0 * day["factor"]
+        assert day["unit_ratio"] * reference + day["cash_per_share"] == pytest.approx(50.0)
 
 
-def test_bar_on_a_non_session_is_an_error():
-    frame = synthetic([100, 101])
-    extra = pd.DataFrame({c: [101.0] for c in frame.columns}, index=pd.Index([date(2025, 6, 1)]))
-    findings = ca.cross_check("2330", pd.concat([frame, extra]), EMPTY, sessions())
-    assert [(f.kind, f.date) for f in findings] == [("non_session_bar", date(2025, 6, 1))]
+# --- 0050 2025 with Thalassa's own rows ------------------------------------------------------------------
+def tai50_total_return() -> pd.Series:
+    """TWSE 臺灣50報酬指數 for June-July 2025 (TAI50I files kept from the TWSE build, ROC dates)."""
+    values = {}
+    for month in ("202506", "202507"):
+        for day, _price, total_return in payload(f"tai50i_{month}")["data"]:
+            year, mm, dd = (int(part) for part in re.findall(r"\d+", day))
+            values[date(year + 1911, mm, dd)] = float(total_return.replace(",", ""))
+    return pd.Series(values).sort_index()
 
 
-def test_prev_close_disagreeing_with_the_stored_close_is_an_error():
-    bars = bars_0050().copy()
-    eve = max(d for d in bars.index if d < DIVIDEND_0050)
-    bars.loc[eve, ["open", "high", "low", "close"]] = bars.loc[eve, "close"] * 1.02
-    findings = ca.cross_check("0050", bars, actions_0050(), sessions())
-    assert ("prev_close_mismatch", DIVIDEND_0050) in {(f.kind, f.date) for f in findings}
+def booked_0050() -> pd.DataFrame:
+    bars = thalassa_bars(payload("thalassa_0050_1d_2025")).reset_index()
+    actions = ca.actions_frame(payload("thalassa_corporate_actions_0050_2025"))
+    return stock_bars(bars, actions).set_index("date")
 
 
-# --- fetching and the store ---------------------------------------------------------------------
-class FakeResponse:
-    def __init__(self, status: int, body: bytes):
-        self.status_code, self.content = status, body
+def test_thalassa_rows_book_the_0050_split_and_dividend():
+    actions = ca.actions_frame(payload("thalassa_corporate_actions_0050_2025"))
+    assert actions["action_type"].tolist() == ["split", "cash_dividend"]
+    assert actions["cash_dividend"].isna().tolist() == [True, False] and actions["cash_dividend"].iloc[1] == 0.36
+    booked = booked_0050()
+    split, dividend = booked.loc[pd.Timestamp(SPLIT_0050)], booked.loc[pd.Timestamp(DIVIDEND_0050)]
+    assert split["unit_ratio"] == pytest.approx(188.65 / 47.16) and split["cash_per_share"] == 0.0
+    assert dividend["cash_per_share"] == pytest.approx(0.36) and dividend["unit_ratio"] == pytest.approx(1.0)
 
 
-class FakeClient:
-    def __init__(self, answers):
-        self.answers, self.urls = list(answers), []
-
-    def get(self, url):
-        self.urls.append(url)
-        return self.answers.pop(0)
-
-
-def raw_source(tmp_path, answers, dataset=ca.DATASET):
-    client = FakeClient(answers)
-    fetcher = PoliteFetcher(0.0, client=client, sleep=lambda _: None)
-    return ca.RawSource(RefdataStore(tmp_path), dataset, fetcher), client
-
-
-def test_raw_source_keeps_the_bytes_and_replays_them(tmp_path):
-    body = json.dumps(payload("twtcau"), ensure_ascii=False).encode()
-    source, client = raw_source(tmp_path, [FakeResponse(200, body)])
-    params = {"startDate": "20030505", "endDate": "20261024", "response": "json"}
-    first, record = source.get("TWTCAU.json", ca.ETF_SPLIT_URL, params)
-    again, same = source.get("TWTCAU.json", ca.ETF_SPLIT_URL, params)
-    assert len(client.urls) == 1 and client.urls[0].startswith(ca.ETF_SPLIT_URL + "?startDate=20030505")
-    assert first == again and record == same
-    assert record.url == ca.ETF_SPLIT_URL and record.params == params
-    assert (tmp_path / ca.DATASET / "raw" / "TWTCAU.json").read_bytes() == body
+def test_buy_and_hold_0050_across_the_split_tracks_the_total_return_index():
+    booked = booked_0050()
+    units, cash, value = 1.0, 0.0, {}
+    for day, bar in booked.iterrows():
+        cash += units * bar["cash_per_share"]
+        units *= bar["unit_ratio"]
+        value[day.date()] = units * bar["close"] + cash
+    ours = pd.Series(value)
+    index = tai50_total_return()
+    before, after = date(2025, 6, 10), SPLIT_0050  # halted 06-11 .. 06-17
+    raw = booked.loc[pd.Timestamp(after), "close"] / booked.loc[pd.Timestamp(before), "close"] - 1
+    assert raw < -0.7  # the raw price falls to a quarter
+    assert abs((ours[after] / ours[before] - 1) - (index[after] / index[before] - 1)) < 0.005
+    end = max(d for d in ours.index if d in index.index)
+    assert abs((ours[end] / ours[before] - 1) - (index[end] / index[before] - 1)) < 0.01  # through the dividend
 
 
-def test_a_throttle_page_instead_of_json_stops_the_run(tmp_path):
-    html = FakeResponse(200, b"<html>please wait</html>")
-    source, client = raw_source(tmp_path, [html] * 4)
-    with pytest.raises(SourceBlockedError):
-        source.get("TWT49U_2025.json", ca.EX_RIGHTS_URL, {})
-    assert len(client.urls) == 4
-    assert not (tmp_path / ca.DATASET / "raw" / "TWT49U_2025.json").exists()
-
-
+# --- the store round trip ---------------------------------------------------------------------------------
 def test_actions_round_trip_through_month_partitions(tmp_path):
     store = RefdataStore(tmp_path)
-    actions = actions_0050()
-    partitions = ca.month_partitions(actions, "date")
-    assert sorted(partitions) == ["2025-01", "2025-06", "2025-07"]
+    actions = ca.actions_frame(payload("thalassa_corporate_actions_0050_2025"))
+    partitions = month_partitions(actions, "date")
+    assert sorted(partitions) == ["2025-06", "2025-07"]
 
     def commit():
         return store.commit(
@@ -303,20 +205,6 @@ def test_actions_round_trip_through_month_partitions(tmp_path):
     assert commit().changed
     assert not commit().changed  # same rows: the manifest is left as it was
     loaded = ca.load_actions(store, "0050")
-    assert loaded["date"].tolist() == actions["date"].tolist()
+    assert loaded["date"].tolist() == [SPLIT_0050, DIVIDEND_0050]
     assert loaded["factor"].tolist() == pytest.approx(actions["factor"].tolist())
-
-
-def test_a_zero_index_value_is_a_hole_not_a_price():
-    hole = {
-        "stat": "OK",
-        "fields": ["日期", "臺灣50指數", "臺灣50報酬指數"],
-        "data": [["92/11/26", "4,524.83", "0.00"]],
-    }
-    assert ca.parse_tai50(hole) == [{"date": date(2003, 11, 26), "tai50": 4524.83, "tai50_tr": None}]
-
-
-def test_typhoon_carry_over_days_are_not_sessions():
-    frame = ca.mark_sessions(pd.DataFrame(ca.parse_tai50(payload("tai50i_201609"))))
-    closed = set(frame.loc[~frame["session"], "date"])
-    assert closed == {date(2016, 9, 27), date(2016, 9, 28)}  # Typhoon Megi
+    assert loaded["cash_dividend"].isna().tolist() == [True, False]

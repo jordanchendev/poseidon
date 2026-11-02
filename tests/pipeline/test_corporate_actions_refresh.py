@@ -8,6 +8,7 @@ import logging
 import shutil
 from datetime import date
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import numpy as np
 import pandas as pd
@@ -19,7 +20,7 @@ from poseidon.pipeline import shadow_paper_daily as spd
 from poseidon.pipeline.refdata import daily, taifex_options, tw_stocks
 from poseidon.pipeline.refdata import tw_corporate_actions as ca
 from poseidon.pipeline.refdata.datasets import TAIEX, TAIEX_TR
-from poseidon.pipeline.refdata.fetch import PoliteFetcher
+from poseidon.pipeline.refdata.fetch import PoliteFetcher, SourceError
 from poseidon.pipeline.refdata.store import RefdataError, RefdataStore
 from poseidon.pipeline.refdata.tw_corporate_actions import ACTION_COLUMNS
 from poseidon.pipeline.refdata.tw_stocks import COLUMNS
@@ -36,7 +37,6 @@ from tests.pipeline.daily_paper_support import (
 )
 from tests.pipeline.test_daily_stages_stocks import stock_strategy
 
-FIXTURES = Path(__file__).parent / "fixtures" / "tw_corporate_actions"
 DAYS = trading_days(last="2026-10-21")
 SPLIT_DAY = pd.Timestamp("2026-03-31")
 SNAPSHOT_DAY = pd.Timestamp("2026-03-30")  # the last day the stale actions snapshot is complete through
@@ -61,8 +61,8 @@ def _action(day, symbol, kind, prev_close, reference_price):
     action = dict.fromkeys(ACTION_COLUMNS)
     action.update(
         date=day,
+        market="twse",
         symbol=symbol,
-        name="x",
         action_type=kind,
         prev_close=prev_close,
         reference_price=reference_price,
@@ -114,7 +114,7 @@ class StaleActions(AsOf):
 
 
 def refresh(store, through):
-    """What the updater does once TWSE has published the split."""
+    """What the updater does once Thalassa has the split."""
 
     _commit(
         store,
@@ -238,63 +238,71 @@ def test_without_the_actions_dataset_the_stock_paper_waits_instead_of_booking_ra
 
 
 class Reply:
-    def __init__(self, body):
-        self.status_code, self.content = 200, body if isinstance(body, bytes) else json.dumps(body).encode()
+    def __init__(self, body, status=200):
+        self.status_code, self.content = status, body if isinstance(body, bytes) else json.dumps(body).encode()
 
 
-class Routed:
-    """TWSE and Thalassa in one fake client: routes on the URL, counts every GET."""
+class FakeThalassa:
+    """Thalassa's two corporate-action endpoints: ``events`` (Thalassa rows) and its complete-through day."""
 
-    NO_DATA = {"stat": "很抱歉，沒有符合條件的資料!"}
-
-    def __init__(self, twt49u_2026):
+    def __init__(self, events: list[dict], through: str, last_error: str | None = None):
+        self.events, self.through, self.last_error = events, through, last_error
+        self.down = False
         self.urls: list[str] = []
-        self.twt49u_2026 = twt49u_2026
 
     def get(self, url):
         self.urls.append(url)
-        if "TWT49U?" in url:
-            year = url.split("startDate=")[1][:4]
-            if year == "2025":
-                return Reply((FIXTURES / "twt49u_2025_excerpt.json").read_bytes())
-            return Reply(self.twt49u_2026 if year == "2026" else self.NO_DATA)
-        if "TAI50I" in url:
-            month = url.split("date=")[1][:6]
-            path = FIXTURES / f"tai50i_{month}.json"
-            return Reply(path.read_bytes() if path.exists() else self.NO_DATA)
-        if url.endswith("/api/v1/coverage"):
-            return Reply([{"symbol": "0050", "market": "tw_stock", "interval": "1d"}])
-        if "/api/v1/ohlcv" in url:
-            return Reply((FIXTURES / "thalassa_0050_1d_2025.json").read_bytes())
-        return Reply(self.NO_DATA)
+        if self.down:
+            import httpx
 
-    def count(self, needle):
-        return sum(needle in url for url in self.urls)
+            raise httpx.ConnectError("connection refused")
+        parts = urlsplit(url)
+        if parts.path == ca.COMPLETE_THROUGH_PATH:
+            stamp = f"{self.through}T09:20:11+00:00"
+            return Reply({"complete_through": self.through, "last_successful_ts": stamp, "last_error": self.last_error})
+        if parts.path == ca.ACTIONS_PATH:
+            query = {k: v[0] for k, v in parse_qs(parts.query).items()}
+            return Reply([e for e in self.events if query["start"] <= e["date"] <= query["end"]])
+        return Reply({"detail": "Not Found"}, status=404)
 
 
-def twt49u_2026(rows):
-    base = json.loads((FIXTURES / "twt49u_2025_excerpt.json").read_text())
-    template = next(r for r in base["data"] if r[1] == "0050")
-    data = []
-    for day in rows:
-        row = list(template)
-        row[0] = f"115年{day.month:02d}月{day.day:02d}日"
-        data.append(row)
-    return {**base, "data": data}
+def event(day: str, symbol="0050", kind="ex_rights", detail="息", prev_close=100.0, ref_price=99.5, cash=0.5):
+    return {
+        "date": day,
+        "market": "twse",
+        "symbol": symbol,
+        "kind": kind,
+        "prev_close": prev_close,
+        "ref_price": ref_price,
+        "detail": detail,
+        "cash_dividend": cash,
+        "ingested_at": None,
+        "factor": ref_price / prev_close,
+    }
+
+
+EVENTS = [
+    event("2026-01-15"),
+    event("2026-03-31", symbol="00631L", kind="split", detail="分割 1:4", prev_close=40.0, ref_price=10.0, cash=None),
+]
 
 
 @pytest.fixture
-def updater(tmp_path, monkeypatch):
-    store = RefdataStore(tmp_path / "refdata")
-    client = Routed(twt49u_2026([]))
-    fetcher = PoliteFetcher(0.0, client=client, sleep=lambda _: None)
-    monkeypatch.setattr(ca, "public_fetcher", lambda *a, **k: fetcher)
-    monkeypatch.setattr(
-        ca, "thalassa_source", lambda s, base, key, c=None: (ca.RawSource(s, ca.CROSSCHECK_DATASET, fetcher), base)
-    )
-    monkeypatch.setattr(settings, "thalassa_base_url", "http://thalassa")
+def updater(world, monkeypatch):
+    """``world`` (bars, the market calendar, a stale snapshot) and a configured Thalassa address."""
+
+    thalassa = FakeThalassa(list(EVENTS), "2026-10-21")
+    fetchers = []
+
+    def fake_fetcher(api_key, client=None):
+        assert api_key == "k"
+        fetchers.append(PoliteFetcher(0.0, client=thalassa, sleep=lambda _: None))
+        return fetchers[-1]
+
+    monkeypatch.setattr(ca, "thalassa_fetcher", fake_fetcher)
+    monkeypatch.setattr(settings, "thalassa_base_url", "http://thalassa/")
     monkeypatch.setattr(settings, "thalassa_api_key", "k")
-    return store, client
+    return world, thalassa
 
 
 def run(store, today):
@@ -302,27 +310,69 @@ def run(store, today):
 
 
 def test_the_update_is_idempotent_and_picks_up_a_late_action(updater):
-    store, client = updater
-    first = run(store, date(2026, 10, 23))
-    assert set(first) == {ca.DATASET, ca.TAI50_DATASET, ca.CROSSCHECK_DATASET} and first[ca.DATASET].changed
-    assert store.manifest(ca.DATASET)["meta"] == {ca.COMPLETE_THROUGH: "2026-10-23"}
-    assert ca.actions_complete_through(store) == date(2026, 10, 23)
+    store, thalassa = updater
+    first = run(store, date(2026, 10, 21))
+    assert set(first) == {ca.DATASET} and first[ca.DATASET].changed and first[ca.DATASET].rows == 2
+    manifest = store.manifest(ca.DATASET)
+    assert manifest["schema_version"] == 2 and manifest["meta"] == {
+        ca.COMPLETE_THROUGH: "2026-10-21",
+        ca.CASH_UNKNOWN: 0,
+    }
+    assert {source["name"] for source in manifest["sources"]} == {ca.ACTIONS_RAW, ca.COMPLETE_THROUGH_RAW}
+    assert thalassa.urls[-1] == "http://thalassa/api/v1/tw/corporate-actions?start=2003-05-05&end=2026-10-21"
+    assert ca.actions_complete_through(store) == date(2026, 10, 21)
     sha = store.content_sha256(ca.DATASET)
 
-    again = run(store, date(2026, 10, 23))
-    assert not any(report.changed for report in again.values()) and store.content_sha256(ca.DATASET) == sha
+    again = run(store, date(2026, 10, 21))
+    assert not again[ca.DATASET].changed and store.content_sha256(ca.DATASET) == sha
 
-    old_2025 = client.count("TWT49U?startDate=20250101")
-    client.twt49u_2026 = twt49u_2026([date(2026, 10, 26)])
-    later = run(store, date(2026, 10, 27))
-    assert later[ca.DATASET].changed and later[ca.DATASET].coverage["end"] == "2026-10-26"
-    assert store.manifest(ca.DATASET)["meta"][ca.COMPLETE_THROUGH] == "2026-10-27"
-    assert client.count("TWT49U?startDate=20250101") == old_2025  # a past year is read from raw, not fetched again
-    assert ca.load_actions(store, "0050")["date"].max() == date(2026, 10, 26)
+    thalassa.events.append(event("2026-10-22", symbol="2330", detail="權息", ref_price=90.0, cash=None))
+    thalassa.through = "2026-10-22"
+    later = run(store, date(2026, 10, 22))
+    assert later[ca.DATASET].changed and later[ca.DATASET].coverage["end"] == "2026-10-22"
+    assert store.manifest(ca.DATASET)["meta"] == {ca.COMPLETE_THROUGH: "2026-10-22", ca.CASH_UNKNOWN: 1}
+    assert ca.load_actions(store, "2330")["date"].tolist() == [date(2026, 10, 22)]
 
-    quiet = run(store, date(2026, 10, 28))  # no new action: only the complete-through day moves
-    assert not quiet[ca.DATASET].changed
-    assert ca.actions_complete_through(store) == date(2026, 10, 28)
+    thalassa.through = "2026-10-25"  # Sunday: Thalassa runs every day, nothing new
+    quiet = run(store, date(2026, 10, 25))
+    assert not quiet[ca.DATASET].changed and ca.actions_complete_through(store) == date(2026, 10, 25)
+
+
+def test_thalassa_short_of_the_session_fails_and_keeps_the_snapshot(updater):
+    store, thalassa = updater
+    run(store, date(2026, 10, 21))
+    before = store.manifest(ca.DATASET)
+    thalassa.through, thalassa.last_error = "2026-10-21", "TwPublicParseError: TWT49U layout"
+    with pytest.raises(ca.CorporateActionsError, match="complete through 2026-10-21, before the 2026-10-22 session"):
+        run(store, date(2026, 10, 22))  # Thursday 17:40: its own 09:20Z run did not succeed
+    assert store.manifest(ca.DATASET) == before and ca.actions_complete_through(store) == date(2026, 10, 21)
+    assert urlsplit(thalassa.urls[-1]).path == ca.COMPLETE_THROUGH_PATH  # the event list is not even read
+
+
+def test_saturday_needs_fridays_session_only(updater):
+    store, thalassa = updater
+    thalassa.through = "2026-10-22"  # Thursday; Friday 10-23 is on the official schedule
+    with pytest.raises(ca.CorporateActionsError, match="before the 2026-10-23 session"):
+        run(store, date(2026, 10, 24))
+    thalassa.through = "2026-10-23"
+    assert ca.expected_session(store, date(2026, 10, 24)) == date(2026, 10, 23)
+    assert run(store, date(2026, 10, 24))[ca.DATASET].changed
+
+
+def test_an_unreachable_thalassa_is_a_job_error_not_a_skip(updater):
+    store, thalassa = updater
+    thalassa.down = True
+    with pytest.raises(SourceError, match="ConnectError"):
+        run(store, date(2026, 10, 21))
+    assert ca.actions_complete_through(store) == SNAPSHOT_DAY.date()  # world's stale snapshot, untouched
+
+
+def test_an_event_thalassa_cannot_type_fails_the_update(updater):
+    store, thalassa = updater
+    thalassa.events.append(event("2026-10-20", detail="除息"))  # a TPEx label on a TWSE row
+    with pytest.raises(ca.CorporateActionsError, match="unknown ex_rights detail"):
+        run(store, date(2026, 10, 21))
+    assert ca.actions_complete_through(store) == SNAPSHOT_DAY.date()
 
 
 def job_store(store):
@@ -336,12 +386,12 @@ def stock_updaters():
     return [tw_stocks.DAILY_UPDATER, ca.DAILY_UPDATER]
 
 
-def test_without_a_thalassa_address_the_job_reports_an_error_and_stale_stock_data(world, updater, monkeypatch, caplog):
-    store, _client = updater  # the same root as world: its bars through 2026-10-21, the stale actions snapshot
+def test_without_a_thalassa_address_the_job_reports_an_error_and_stale_stock_data(updater, monkeypatch, caplog):
+    store, _thalassa = updater  # world: its bars through 2026-10-21, the stale actions snapshot
     job_store(store)
     monkeypatch.setattr(settings, "thalassa_base_url", "")
     monkeypatch.setattr(daily, "update_all", lambda *a, **k: [])
-    now = pd.Timestamp("2026-10-22 09:00", tz="UTC").to_pydatetime()  # 17:00 Taipei, a day after the last bar
+    now = pd.Timestamp("2026-10-22 09:40", tz="UTC").to_pydatetime()  # 17:40 Taipei, a day after the last bar
     with caplog.at_level(logging.WARNING):
         result = daily.run_daily(store, now=now, fetchers={}, code_version="t", updaters=stock_updaters())
     assert [(e["group"], e["kind"]) for e in result["errors"]] == [
@@ -357,26 +407,40 @@ def test_without_a_thalassa_address_the_job_reports_an_error_and_stale_stock_dat
     assert record.levelno == logging.WARNING and "unconfigured" in record.getMessage()
 
 
-def test_a_dataset_the_store_lacks_is_stale_not_left_out(updater):
-    store, _client = updater
+def test_a_stale_thalassa_is_a_job_error_and_the_actions_stay_stale(updater, monkeypatch):
+    store, thalassa = updater
+    job_store(store)
+    thalassa.through = "2026-10-20"
+    monkeypatch.setattr(daily, "update_all", lambda *a, **k: [])
+    monkeypatch.setattr(daily, "PRODUCTS", ("TX",))
+    bars = dataclasses.replace(tw_stocks.DAILY_UPDATER, update=lambda _store, **_kw: [])  # world's bars, no Thalassa
+    now = pd.Timestamp("2026-10-21 09:40", tz="UTC").to_pydatetime()
+    result = daily.run_daily(store, now=now, fetchers={}, code_version="t", updaters=[bars, ca.DAILY_UPDATER])
+    [error] = result["errors"]
+    assert (error["group"], error["kind"]) == (ca.DATASET, "CorporateActionsError")
+    assert "complete through 2026-10-20" in error["error"]
+    assert result["freshness"]["stale"] == [ca.DATASET]
+    assert result["freshness"]["datasets"][ca.DATASET]["last"] == "2026-03-30"
+
+
+def test_a_dataset_the_store_lacks_is_stale_not_left_out(tmp_path):
+    store = RefdataStore(tmp_path / "empty")
     since = pd.Timestamp("2026-09-01")
     assert tw_stocks.DAILY_UPDATER.last_days(store, since) == {STOCKS: None}
     assert ca.DAILY_UPDATER.last_days(store, since) == {ca.DATASET: None}
     assert taifex_options.DAILY_UPDATER.last_days(store, since) == {taifex_options.DAILY_DATASET: None}
 
 
-def test_on_a_configured_runner_the_job_updates_the_actions_without_errors_and_reports_them_fresh(
-    world, updater, monkeypatch
-):
-    store, _client = updater
+def test_on_a_configured_runner_the_job_updates_the_actions_without_errors_and_reports_them_fresh(updater, monkeypatch):
+    store, _thalassa = updater
     job_store(store)
     monkeypatch.setattr(daily, "update_all", lambda *a, **k: [])
     monkeypatch.setattr(daily, "PRODUCTS", ("TX",))  # world's futures are TX only
     bars = dataclasses.replace(tw_stocks.DAILY_UPDATER, update=lambda _store, **_kw: [])  # world's bars, no Thalassa
-    now = pd.Timestamp("2026-10-21 09:00", tz="UTC").to_pydatetime()  # 17:00 Taipei on the last bar's day
+    now = pd.Timestamp("2026-10-21 09:40", tz="UTC").to_pydatetime()  # 17:40 Taipei on the last bar's day
     result = daily.run_daily(store, now=now, fetchers={}, code_version="t", updaters=[bars, ca.DAILY_UPDATER])
     assert result["errors"] == []
-    assert {u["dataset"] for u in result["updates"]} == {ca.DATASET, ca.TAI50_DATASET, ca.CROSSCHECK_DATASET}
+    assert {u["dataset"] for u in result["updates"]} == {ca.DATASET} and result["changed"] == [ca.DATASET]
     assert ca.actions_complete_through(store) == date(2026, 10, 21)
     fresh = result["freshness"]
     assert fresh["status"] == "fresh" and fresh["stale"] == []
@@ -399,7 +463,7 @@ def test_the_runner_task_runs_the_stock_actions_and_txo_updaters(monkeypatch):
 
 
 def test_one_failing_updater_is_reported_and_does_not_stop_the_other(updater, monkeypatch):
-    store, _client = updater
+    store, _thalassa = updater
 
     def boom(_store, *, today, code_version):
         raise RuntimeError("thalassa down")
@@ -407,8 +471,8 @@ def test_one_failing_updater_is_reported_and_does_not_stop_the_other(updater, mo
     monkeypatch.setattr(daily, "update_all", lambda *a, **k: [])
     monkeypatch.setattr(daily, "freshness", lambda *a, **k: {"status": "fresh"})
     failing = dataclasses.replace(tw_stocks.DAILY_UPDATER, update=boom)
-    now = pd.Timestamp("2026-10-23 09:00", tz="UTC").to_pydatetime()
+    now = pd.Timestamp("2026-10-21 09:40", tz="UTC").to_pydatetime()
     result = daily.run_daily(store, now=now, fetchers={}, code_version="t", updaters=[failing, ca.DAILY_UPDATER])
     assert result["errors"] == [{"group": STOCKS, "kind": "RuntimeError", "error": "thalassa down"}]
-    assert {u["dataset"] for u in result["updates"]} == {ca.DATASET, ca.TAI50_DATASET, ca.CROSSCHECK_DATASET}
+    assert {u["dataset"] for u in result["updates"]} == {ca.DATASET}
     assert ca.DATASET in result["changed"]

@@ -1,0 +1,26 @@
+[
+ {
+  "date": "2025-06-18",
+  "market": "twse",
+  "symbol": "0050",
+  "kind": "split",
+  "prev_close": 188.65,
+  "ref_price": 47.16,
+  "detail": "分割 1:4",
+  "cash_dividend": null,
+  "ingested_at": null,
+  "factor": 0.2499867479459316
+ },
+ {
+  "date": "2025-07-21",
+  "market": "twse",
+  "symbol": "0050",
+  "kind": "ex_rights",
+  "prev_close": 51.45,
+  "ref_price": 51.09,
+  "detail": "息",
+  "cash_dividend": 0.36,
+  "ingested_at": null,
+  "factor": 0.993002915451895
+ }
+]

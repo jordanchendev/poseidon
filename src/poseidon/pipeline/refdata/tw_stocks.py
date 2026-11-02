@@ -7,9 +7,11 @@ read time from ``tw_corporate_actions`` (design 2026-10-25, Thalassa is the sing
 prices, actions are the single source of adjustments).
 
 Thalassa's history carries rows on days the market was closed (weekend and holiday bars from its
-earlier sources: 0050 has 24 such rows). The TWSE TAI50 session calendar (``twse_tai50``,
-``session`` flag) decides which days are sessions up to its last day; later days follow the
-official schedule (``twse_market_calendar``). A day both say is closed is dropped.
+earlier sources: 0050 has 24 such rows). TWSE's TAIEX daily history (``twse_taiex_daily``, a row on
+every day the market traded; typhoon closures have none) decides which days are sessions up to its
+last day; later days follow the official schedule (``twse_market_calendar``). A day both say is
+closed is dropped. (Until 2026-11 the calendar was the TAI50 index file ``twse_tai50``; its session
+days equal the TAIEX dates over its whole range, 2002-10-18 on, and every stock bar is later.)
 
 ``build`` fetches every symbol's full history (one GET per symbol, Thalassa is on the LAN) and
 commits month partitions; unchanged months are left as they are, so the daily job (``update``,
@@ -28,11 +30,10 @@ from datetime import date
 
 import pandas as pd
 
-from poseidon.pipeline.refdata.datasets import MARKET_CALENDAR, DailyUpdater, UpdateReport, UpdaterUnconfigured
-from poseidon.pipeline.refdata.fetch import PoliteFetcher
-from poseidon.pipeline.refdata.store import CommitResult, RefdataStore, SourceRecord
+from poseidon.pipeline.refdata.datasets import MARKET_CALENDAR, TAIEX, DailyUpdater, UpdateReport, UpdaterUnconfigured
+from poseidon.pipeline.refdata.fetch import RawSource, thalassa_fetcher
+from poseidon.pipeline.refdata.store import CommitResult, RefdataStore, SourceRecord, month_partitions
 from poseidon.pipeline.refdata.taifex import MarketSchedule
-from poseidon.pipeline.refdata.tw_corporate_actions import TAI50_DATASET, RawSource, month_partitions, thalassa_bars
 from poseidon.pipeline.v3.instruments import STOCK_PRICE_DATASET, stocks
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,6 @@ logger = logging.getLogger(__name__)
 DATASET = STOCK_PRICE_DATASET
 SCHEMA_VERSION = 1
 COLUMNS = ["trade_date", "symbol", "open", "high", "low", "close", "volume"]
-THALASSA_MIN_INTERVAL = 0.5
 HISTORY_START = "2000-01-01T00:00:00Z"
 
 
@@ -52,19 +52,18 @@ def symbols() -> list[str]:
 
 
 def sessions(store: RefdataStore) -> tuple[set[date], date, MarketSchedule]:
-    """(TAI50 session days, the last TAI50 day, the official schedule for the days after it)."""
+    """(TWSE trading days = the TAIEX daily dates, the last of them, the official schedule for the days after it)."""
 
-    tai50 = store.read(TAI50_DATASET)
-    days = pd.to_datetime(tai50["trade_date"]).dt.date
+    days = pd.to_datetime(store.read(TAIEX)["trade_date"]).dt.date
     market = store.read(MARKET_CALENDAR) if store.exists(MARKET_CALENDAR) else None
-    return set(days[tai50["session"].astype(bool)]), days.max(), MarketSchedule.from_frame(market)
+    return set(days), days.max(), MarketSchedule.from_frame(market)
 
 
 def keep_sessions(
     frame: pd.DataFrame, open_days: set[date], last_known: date, schedule: MarketSchedule
 ) -> pd.DataFrame:
-    """Rows of ``frame`` (``trade_date`` column) dated on a session: a TAI50 session day, or a
-    scheduled open day after the TAI50 history ends."""
+    """Rows of ``frame`` (``trade_date`` column) dated on a session: a TAIEX trading day, or a
+    scheduled open day after the TAIEX history ends."""
 
     days = pd.to_datetime(frame["trade_date"]).dt.date
     keep = [d in open_days or (d > last_known and schedule.is_open(pd.Timestamp(d))) for d in days]
@@ -74,10 +73,15 @@ def keep_sessions(
 # --------------------------------------------------------------------------- fetch and build
 
 
-def thalassa_client(api_key: str):
-    import httpx
+def thalassa_bars(payload: dict) -> pd.DataFrame:
+    """Thalassa /api/v1/ohlcv answer -> frame indexed by Taipei session date."""
 
-    return httpx.Client(timeout=300, headers={"X-API-Key": api_key})
+    frame = pd.DataFrame(payload["data"])
+    if frame.empty:
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume", "adj_close"])
+    stamps = pd.to_datetime(frame.pop("time"), utc=True).dt.tz_convert("Asia/Taipei")
+    frame.index = pd.Index(stamps.dt.date, name="date")
+    return frame.sort_index()
 
 
 def fetch(
@@ -126,8 +130,7 @@ def build(
 ) -> CommitResult:
     """Fetch every symbol from Thalassa and commit the dataset (full rebuild, unchanged months kept)."""
 
-    fetcher = PoliteFetcher(THALASSA_MIN_INTERVAL, client=client or thalassa_client(api_key))
-    source = RawSource(store, DATASET, fetcher)
+    source = RawSource(store, DATASET, thalassa_fetcher(api_key, client))
     bars, records = fetch(
         source, thalassa_url.rstrip("/"), list(names) if names is not None else symbols(), refresh=refresh
     )

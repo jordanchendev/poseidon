@@ -182,8 +182,9 @@ def stock_bars(bars: pd.DataFrame, actions: pd.DataFrame | None = None) -> pd.Da
     value at the reference price: ``unit_ratio = (prev_close - cash) / reference_price`` with the
     cash paid out, so a cash dividend leaves the units alone, a split multiplies them, and a
     rights offering or cash capital reduction is booked as its total-return equivalent (the
-    adjusted series makes the same assumption). A cash dividend row without an amount
-    (old TWSE layouts) pays ``prev_close - reference_price``; other untyped rows pay nothing.
+    adjusted series makes the same assumption). A ``cash_dividend`` row without an amount pays
+    ``prev_close - reference_price``; any other row without one (TWSE 權息 rows before 2005-06-02, which
+    the exchange never split into cash and stock) books the whole step in units and pays nothing.
     """
 
     out = bars.copy()

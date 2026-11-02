@@ -61,8 +61,8 @@ def add_etfs(store) -> None:
         action = dict.fromkeys(ACTION_COLUMNS)
         action.update(
             date=pd.Timestamp(split_day),
+            market="twse",
             symbol=symbol,
-            name="x",
             action_type="split",
             prev_close=prev,
             reference_price=prev / ratio_split,

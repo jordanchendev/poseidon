@@ -14,9 +14,10 @@ from pytest import approx
 from poseidon.pipeline.refdata import tw_stocks
 from poseidon.pipeline.refdata.datasets import FUTURES, MARKET_CALENDAR, TAIEX, TAIEX_TR, UpdaterUnconfigured
 from poseidon.pipeline.refdata.engine_input import MAX_STOCK_GAP_DAYS, StockDataGap, align_stock_bars
+from poseidon.pipeline.refdata.fetch import PoliteFetcher
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.refdata.taifex import MarketSchedule
-from poseidon.pipeline.refdata.tw_corporate_actions import ACTION_COLUMNS, TAI50_DATASET
+from poseidon.pipeline.refdata.tw_corporate_actions import ACTION_COLUMNS
 from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
 from poseidon.pipeline.v3.compiler import NotCompilable, compile_spec
 from poseidon.pipeline.v3.config import REFDATA_DATASETS, STOCK_REFDATA_DATASETS, refdata_datasets, series_first_days
@@ -32,15 +33,12 @@ def commit(store: RefdataStore, dataset: str, frame: pd.DataFrame, column: str) 
     store.commit(dataset, schema_version=1, date_column=column, partitions=parts, sources=[], code_version="test")
 
 
-def tai50_frame(days: pd.DatetimeIndex, closures: list[pd.Timestamp] = ()) -> pd.DataFrame:
-    """TAI50 rows on ``days``; ``closures`` carry the previous level (session False)."""
+def taiex_frame(days: pd.DatetimeIndex, closures: list[pd.Timestamp] = ()) -> pd.DataFrame:
+    """TAIEX daily rows on ``days`` except ``closures`` (TWSE prints no row on a day the market was shut)."""
 
-    level = pd.Series(np.linspace(100.0, 110.0, len(days)), index=days)
-    for day in closures:
-        level[day] = level[:day].iloc[-2]
-    return pd.DataFrame({"trade_date": days, "tai50": level.to_numpy(), "tai50_tr": level.to_numpy() * 2}).assign(
-        session=lambda f: f["tai50"].diff().ne(0)
-    )
+    open_days = days[~days.isin(closures)]
+    level = np.linspace(100.0, 110.0, len(open_days))
+    return pd.DataFrame({"trade_date": open_days, "open": level, "high": level, "low": level, "close": level})
 
 
 def thalassa_payload(symbol: str, days, closes) -> bytes:
@@ -79,9 +77,9 @@ class FakeClient:
 # ----------------------------------------------------------------------------- sessions
 
 
-def test_keep_sessions_drops_closed_days_and_follows_the_schedule_after_tai50():
-    tai50_days = pd.bdate_range("2026-01-05", "2026-01-16")
-    open_days = set(tai50_days.date) - {date(2026, 1, 8)}
+def test_keep_sessions_drops_closed_days_and_follows_the_schedule_after_taiex():
+    taiex_days = pd.bdate_range("2026-01-05", "2026-01-16")
+    open_days = set(taiex_days.date) - {date(2026, 1, 8)}
     schedule = MarketSchedule.from_frame(pd.DataFrame({"date": [pd.Timestamp("2026-01-21")], "closed": [True]}))
     frame = pd.DataFrame(
         {
@@ -111,11 +109,11 @@ def test_rows_frame_orders_columns_and_drops_bad_rows():
 
 @pytest.fixture
 def world(tmp_path):
-    """TAI50 sessions on 2026-01-05..02-27 with one closure, the schedule closing 2026-03-02, two symbols."""
+    """TAIEX sessions on 2026-01-05..02-27 with one closure, the schedule closing 2026-03-02, two symbols."""
 
     store = RefdataStore(tmp_path)
     days = pd.bdate_range("2026-01-05", "2026-02-27")
-    commit(store, TAI50_DATASET, tai50_frame(days, closures=[pd.Timestamp("2026-01-20")]), "trade_date")
+    commit(store, TAIEX, taiex_frame(days, closures=[pd.Timestamp("2026-01-20")]), "trade_date")
     commit(store, MARKET_CALENDAR, pd.DataFrame({"date": [pd.Timestamp("2026-03-02")], "closed": [True]}), "date")
     thalassa_days = [*days, pd.Timestamp("2026-01-24"), pd.Timestamp("2026-03-02"), pd.Timestamp("2026-03-03")]
     answers = {
@@ -134,10 +132,10 @@ def test_build_commits_session_rows_and_is_idempotent(world):
     rows = store.read(STOCKS)
     assert set(rows["symbol"]) == {"0050", "00631L"} and list(rows.columns) == tw_stocks.COLUMNS
     sessions = rows[rows["symbol"] == "0050"]["trade_date"]
-    assert pd.Timestamp("2026-01-20") not in set(sessions)  # TAI50 closure
+    assert pd.Timestamp("2026-01-20") not in set(sessions)  # closure: no TAIEX row
     assert pd.Timestamp("2026-01-24") not in set(sessions)  # Saturday
-    assert pd.Timestamp("2026-03-02") not in set(sessions)  # scheduled holiday after the TAI50 history
-    assert pd.Timestamp("2026-03-03") in set(sessions)  # scheduled open day after the TAI50 history
+    assert pd.Timestamp("2026-03-02") not in set(sessions)  # scheduled holiday after the TAIEX history
+    assert pd.Timestamp("2026-03-03") in set(sessions)  # scheduled open day after the TAIEX history
     assert len(sessions) == len(days) - 1 + 1
 
     bars = tw_stocks.read_bars(store, "00631L", start="2026-01-12", end="2026-01-16")
@@ -162,7 +160,7 @@ def test_update_hook_refuses_without_thalassa_settings_and_reports_otherwise(wor
     assert not store.exists(STOCKS)
     monkeypatch.setattr(settings, "thalassa_base_url", "http://thalassa")
     monkeypatch.setattr(settings, "thalassa_api_key", "k")
-    monkeypatch.setattr(tw_stocks, "thalassa_client", lambda _key: client)
+    monkeypatch.setattr(tw_stocks, "thalassa_fetcher", lambda key, _client=None: PoliteFetcher(0.0, client=client))
     monkeypatch.setattr(tw_stocks, "symbols", lambda: ["0050", "00631L"])
     [report] = tw_stocks.update(store, today=date(2026, 3, 3), code_version="t")
     assert (report.dataset, report.changed, report.rows) == (STOCKS, True, 40 + 35)
@@ -229,8 +227,8 @@ def stock_store(tmp_path_factory):
     action = {column: None for column in ACTION_COLUMNS}
     action.update(
         date=split_day,
+        market="twse",
         symbol="00631L",
-        name="x",
         action_type="split",
         prev_close=prev,
         reference_price=prev / 4,

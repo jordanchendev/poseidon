@@ -81,8 +81,8 @@ def stock_store(tmp_path_factory):
     action = dict.fromkeys(ACTION_COLUMNS)
     action.update(
         date=SPLIT_DAY,
+        market="twse",
         symbol="00631L",
-        name="x",
         action_type="split",
         prev_close=prev,
         reference_price=prev / SPLIT_RATIO,

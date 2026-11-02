@@ -149,6 +149,14 @@ def frame_sha256(frame: pd.DataFrame) -> str:
     return sha256_bytes((header + "\n" + body).encode("utf-8"))
 
 
+def month_partitions(frame: pd.DataFrame, column: str) -> dict[str, pd.DataFrame]:
+    """``frame`` split by calendar month of ``column`` (converted to datetime64), keyed ``YYYY-MM``."""
+
+    stored = frame.assign(**{column: pd.to_datetime(frame[column])})
+    keys = stored[column].dt.strftime("%Y-%m")
+    return {key: part.reset_index(drop=True) for key, part in stored.groupby(keys, sort=True)}
+
+
 def _atomic_write(path: Path, data: bytes) -> None:
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     temporary.write_bytes(data)
