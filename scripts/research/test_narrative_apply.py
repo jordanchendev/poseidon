@@ -17,6 +17,7 @@ HERE = Path(__file__).resolve().parent
 
 import narrative_check  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
+import narrative_proposals  # noqa: E402
 import runner  # noqa: E402
 import testkit as tk  # noqa: E402
 from testkit import CASES, JEV_KEY, PART, PART_LABELS, FakeJev, apply_later, ledger_rows, refrozen, run  # noqa: E402
@@ -611,7 +612,7 @@ def test_a_fact_on_non_official_evidence_is_no_record_and_a_pending_member_holds
     held_records for a member proposal into that theme and is written once the owner accepts it; a theme proposal
     that names the subject for another theme does not count (acceptance phase 2a)."""
     path, db = tk.ledger(env["tmp"])
-    member = nl.add_member_proposal(
+    member = narrative_proposals.add_member_proposal(
         db,
         theme_id="foundry-utilization",
         symbol="NASDAQ:INTC",

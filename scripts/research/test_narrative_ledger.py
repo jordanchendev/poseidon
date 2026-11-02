@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
+import narrative_export  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 
 from poseidon.decision_loop.manifest import content_sha256  # noqa: E402
@@ -392,7 +393,7 @@ def test_export_clips_quotes_to_120_chars(db):
         theme_ids=["physical-ai-demand"],
         first_seen_at=SEEN,
     )
-    quote = json.loads(nl.export(db, "2026-11-01T00:00:00Z"))["records"][0]["quote"]
+    quote = json.loads(narrative_export.export(db, "2026-11-01T00:00:00Z"))["records"][0]["quote"]
     assert len(quote) == 120 and quote.endswith("…")
 
 
@@ -408,7 +409,7 @@ def test_seed_file_loads_into_a_trial_ledger(tmp_path):
             assert m["role"] in nl.MEMBER_ROLES and m["why_unconfirmed"]
     for e in seed["edges"]:
         nl.add_edge(db, e["from"], e["to"], e["relation"], "cli:seed-test")
-    doc = json.loads(nl.export(db, "2100-01-01T00:00:00Z"))
+    doc = json.loads(narrative_export.export(db, "2100-01-01T00:00:00Z"))
     assert len(doc["themes"]) == 10
     exported = {(t["theme_id"], m["symbol"]) for t in doc["themes"] for m in t["members"]}
     candidates = {(t["theme_id"], m["symbol"]) for t in seed["themes"] for m in t["members"]["candidate"]}
@@ -596,7 +597,7 @@ def test_link_add_tags_an_untagged_claim_with_an_approval(tmp_path, db):
     assert db.execute("SELECT count(*) FROM claim_link_approvals").fetchone()[0] == 1
     p = cli(path, "link-add", "--revision", REV, "--claim", "0", "--theme", "cleanroom-capacity", *at)
     assert p.returncode == 0 and "claims[0] cleanroom-capacity ['NASDAQ:MU']" in p.stdout, p.stderr
-    links = json.loads(nl.export(db, "2026-10-31T00:00:00Z"))["claim_theme_links"]
+    links = json.loads(narrative_export.export(db, "2026-10-31T00:00:00Z"))["claim_theme_links"]
     assert [(x["claim_index"], x["source"]) for x in links] == [(0, "owner"), (1, "owner")]
 
 

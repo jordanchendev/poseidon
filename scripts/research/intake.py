@@ -42,6 +42,7 @@ import draft as draft_mod  # noqa: E402
 import guidance  # noqa: E402
 import narrative_check  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
+import narrative_proposals  # noqa: E402
 import record_rules  # noqa: E402
 from refusal import ResearchRefusal  # noqa: E402
 
@@ -360,7 +361,7 @@ def gates(out, m, payload, duplicate, member_duplicate=_no_member_duplicate):
     repeats or None); member_duplicate(theme_id, symbol) -> duplicate_of. A record may name a theme proposal filed here
     by its suggested_id, and a subject that a proposal filed here (or the open one it repeats) names into one of the
     record's themes; it then waits for the owner (held_records). A subject must belong to one of the record's own themes
-    (nl.record_waits): a member of another theme does not qualify. A proposal the owner rejected admits nothing."""
+    (narrative_proposals.record_waits): a member of another theme does not qualify. A proposal the owner rejected admits nothing."""
     text = m["text"]
     snap = narrative_check.snapshot_of(payload)
     themes = snap["payload"]["themes"] if snap else []
@@ -546,7 +547,7 @@ def write(db, m, plan, kept, as_of, evidence_id):
     for p in plan["proposals"]:
         dup = p["duplicate_of"]
         if dup is None:
-            row = nl.add_theme_proposal(
+            row = narrative_proposals.add_theme_proposal(
                 db,
                 suggested_id=p["suggested_id"],
                 title=p["title"],
@@ -564,7 +565,7 @@ def write(db, m, plan, kept, as_of, evidence_id):
     members = []
     for p in plan.get("member_proposals", []):
         if p["duplicate_of"] is None:
-            row = nl.add_member_proposal(
+            row = narrative_proposals.add_member_proposal(
                 db,
                 theme_id=p["theme_id"],
                 symbol=p["symbol"],
@@ -591,13 +592,13 @@ def write(db, m, plan, kept, as_of, evidence_id):
             "resolves_on": r["resolves_on"],
             "decided_by": "rule",
         }
-        themes, waits, missing, needs = nl.record_waits(db, record["theme_ids"], r["subject_symbols"])
+        themes, waits, missing, needs = narrative_proposals.record_waits(db, record["theme_ids"], r["subject_symbols"])
         nid = nl.narrative_id(record["origin_ref"], r["quote"], r["claim"])
         if missing:
             unfit.append({**r, "narrative_id": nid, "reason": "；".join(missing)})
         elif waits:
-            nl.hold_record(db, record, r["paragraph"], waits, as_of)
-            held.append({**r, "narrative_id": nid, "waits": waits, "waits_text": nl.waits_text(needs)})
+            narrative_proposals.hold_record(db, record, r["paragraph"], waits, as_of)
+            held.append({**r, "narrative_id": nid, "waits": waits, "waits_text": narrative_proposals.waits_text(needs)})
         else:
             row = nl.add_record(db, **{**record, "theme_ids": themes}, source_text=m["text"])
             written.append({**r, "narrative_id": row["narrative_id"], "theme_ids": themes})
@@ -676,7 +677,7 @@ def _duplicate_fn(ledger_path):
     def duplicate(suggested_id, title):
         db = nl.connect(ledger_path)
         try:
-            dup = nl.theme_duplicate(db, suggested_id, title)
+            dup = narrative_proposals.theme_duplicate(db, suggested_id, title)
             members = None
             if dup and dup.startswith("proposal:"):
                 row = nl._one(db, "SELECT proposed_members_json FROM theme_proposals WHERE proposal_id = ?", dup[9:])
@@ -688,7 +689,7 @@ def _duplicate_fn(ledger_path):
     def member_duplicate(theme_id, symbol):
         db = nl.connect(ledger_path)
         try:
-            return nl.member_duplicate(db, theme_id, symbol)
+            return narrative_proposals.member_duplicate(db, theme_id, symbol)
         finally:
             db.close()
 

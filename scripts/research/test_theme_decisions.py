@@ -18,6 +18,7 @@ HERE = Path(__file__).resolve().parent
 import intake  # noqa: E402
 import narrative_check  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
+import narrative_proposals  # noqa: E402
 import runner  # noqa: E402
 import testkit as tk  # noqa: E402
 from testkit import JEV_KEY  # noqa: E402
@@ -186,7 +187,7 @@ def test_member_reject_drops_held_records_with_the_reason(env):
     acks = decide(env, decision(2, "member-accept", "M20261021-1", "接受成員 M20261021-1"))
     assert acks["20261022-d2"][0] == "refused" and "was rejected (telegram:20261022-d1)" in acks["20261022-d2"][1]
     db = nl.connect(ledger(env))
-    assert nl.member_duplicate(db, "cleanroom-capacity", "NASDAQ:ASML") == "rejected:M20261021-1"
+    assert narrative_proposals.member_duplicate(db, "cleanroom-capacity", "NASDAQ:ASML") == "rejected:M20261021-1"
     db.close()
     m = intake.parse_row(tk.material_row("2"))
     _dup, member_dup = intake._duplicate_fn(ledger(env))
@@ -265,8 +266,8 @@ def test_theme_accept_releases_records_held_on_it(env):
 
 def test_waits_text_says_or_within_a_need_and_between_needs():
     """Acceptance 2026-10-30 §6.11: 「等 M…、T…」 read as both. Every need must be met; one approval meets a need."""
-    assert nl.waits_text([["M20261029-1", "T20261029-1"]]) == "M20261029-1 或 T20261029-1"
-    assert nl.waits_text([["T1"], ["M1", "T2"]]) == "T1，以及 M1 或 T2"
+    assert narrative_proposals.waits_text([["M20261029-1", "T20261029-1"]]) == "M20261029-1 或 T20261029-1"
+    assert narrative_proposals.waits_text([["T1"], ["M1", "T2"]]) == "T1，以及 M1 或 T2"
 
 
 def test_a_record_any_of_whose_proposals_releases_it_says_or(env):
@@ -498,8 +499,8 @@ def test_rejected_theme_is_not_proposed_again(rev_env):
     assert len(tk.db_rows(env, "SELECT * FROM theme_proposals")) == 1
     # a material proposing it again: listed as a duplicate, not filed, and its suggested id admits no record
     db = nl.connect(path)
-    assert nl.theme_duplicate(db, "foundry-pricing", "別的標題") == "rejected:T20261021-1"
-    assert nl.theme_duplicate(db, "another-id", "晶圓代工 漲價") == "rejected:T20261021-1"
+    assert narrative_proposals.theme_duplicate(db, "foundry-pricing", "別的標題") == "rejected:T20261021-1"
+    assert narrative_proposals.theme_duplicate(db, "another-id", "晶圓代工 漲價") == "rejected:T20261021-1"
     db.close()
 
 

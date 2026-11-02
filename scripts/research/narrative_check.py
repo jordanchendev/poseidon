@@ -60,9 +60,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import narrative_ledger as nl
+import narrative_proposals
+import narrative_suggestions
 import record_rules
 from claim_precheck import (
     OFFICIAL_TIERS,
+    best_evidence,
     check_periods,
     evidence_tier,
     has_inference_basis,
@@ -239,8 +242,6 @@ def gates(narrative, payload, cfg):
 ANY = "*"
 LABELS = ("supports", "contradicts", "says_nothing")
 SETTLED = ("verified", "partially_verified")
-# claim_theme_links.evidence_tier is the highest tier a claim cites (design §2.5), ranked in this order
-TIER_ORDER = (*OFFICIAL_TIERS, "exchange feed", "derived", "sell-side", "media", "kol")
 # Design §4.5 rule table. Key: (claim_type, drafter verdict, label, basis_ok, before_resolution, settled).
 #   label: the judgement JEV label, or the sweep label for an untouched record. For a state partially_verifies it is
 #     part_label(): supports only when JEV finds supported_part both in the record's claim and in the cited source
@@ -436,16 +437,6 @@ def _result(row, rule, to_status, reason, judged=None):
     }
 
 
-def _tier_rank(tier):
-    return next((n for n, t in enumerate(TIER_ORDER) if tier.startswith(t)), len(TIER_ORDER))
-
-
-def best_evidence(c, by_id):
-    """The claim's highest-tier cited evidence (the latest of equals): claim_theme_links' evidence_tier and event_time."""
-    cited = [by_id[e] for e in c["evidence_ids"] if e in by_id]
-    return max(cited, key=lambda e: (-_tier_rank(evidence_tier(e)), e["event_time"]))
-
-
 def untagged_hits(db, revision, snap_payload):
     """§5.3 recall: a claim whose text hits a keyword of a theme in the snapshot's closed list that the drafter did not
     tag -> [{claim_index, theme_id, keyword}] for the owner. A keyword never makes a link (project_vault.keyword_hit,
@@ -523,14 +514,14 @@ def file_theme_proposals(db, revision, by_id, cfg, at):
         own = nl._one(
             db, "SELECT proposal_id FROM theme_proposals WHERE source_ref = ? AND suggested_id = ?", source_ref, sid
         )
-        dup = None if own else nl.theme_duplicate(db, sid, title)
+        dup = None if own else narrative_proposals.theme_duplicate(db, sid, title)
         if dup and not dup.startswith("proposal:"):
             out.append({"id": None, "status": "duplicate", "duplicate_of": dup, "title": title})
             continue
         if dup:
             pid = dup.split(":", 1)[1]
         else:
-            pid = nl.add_theme_proposal(
+            pid = narrative_proposals.add_theme_proposal(
                 db,
                 suggested_id=sid,
                 title=title,
@@ -543,7 +534,7 @@ def file_theme_proposals(db, revision, by_id, cfg, at):
             )["proposal_id"]
         for i in idx:
             best = best_evidence(claims[i], by_id)
-            nl.add_proposal_claim(
+            narrative_proposals.add_proposal_claim(
                 db,
                 {
                     "proposal_id": pid,
@@ -613,12 +604,14 @@ def write_narrative_proposals(db, revision, by_id, at):
         nid = nl.narrative_id(record["origin_ref"], record["quote"], record["claim"])
         row = {"index": k, "narrative_id": nid, "claim": record["claim"], "waits": [], "reason": reason}
         if reason is None:
-            themes, waits, missing, needs = nl.record_waits(db, record["theme_ids"], record["subject_symbols"])
+            themes, waits, missing, needs = narrative_proposals.record_waits(
+                db, record["theme_ids"], record["subject_symbols"]
+            )
             if missing:
                 reason = "；".join(missing)
             elif waits:
-                nl.hold_record(db, record, text, waits, at)
-                row.update(status="held", waits=waits, waits_text=nl.waits_text(needs))
+                narrative_proposals.hold_record(db, record, text, waits, at)
+                row.update(status="held", waits=waits, waits_text=narrative_proposals.waits_text(needs))
             else:
                 try:
                     nl.add_record(db, **{**record, "theme_ids": themes}, source_text=text)
@@ -690,7 +683,7 @@ def corroborated_before(db, nid, rev_id, cited):
 
     new = {evidence_sha256(e) for e in cited}
     covered, first = set(), None
-    for name, basis in nl.corroborations(db, nid, rev_id):
+    for name, basis in narrative_suggestions.corroborations(db, nid, rev_id):
         if "evidence_sha256" in basis:
             hit = new & set(basis["evidence_sha256"])
         else:
@@ -737,7 +730,7 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
             if done:
                 ev = [e for e in nl.events_of(db, nid) if e["seq"] == done["event_seq"]]
                 res = _result(dict(done), ev[0]["rule"] if ev else None, ev[0]["to_status"] if ev else None, "")
-                sid = nl.suggestion_id(rev_id, nid)
+                sid = narrative_suggestions.suggestion_id(rev_id, nid)
                 s = nl._one(db, "SELECT * FROM narrative_suggestions WHERE suggestion_id = ?", sid)
                 if mode == "confirm" and s:
                     rec = nl._one(db, "SELECT * FROM narrative_records WHERE narrative_id = ?", nid)
@@ -820,15 +813,15 @@ def apply(ledger_path, revision, payload, cfg, jev, *, mode):
                     elif not dup:
                         seq = nl.append_event(db, nid, decided_by="rule", **event)["seq"]
                 else:
-                    gone = nl.rejected_suggestion(db, nid, event["kind"], event["to_status"])
+                    gone = narrative_suggestions.rejected_suggestion(db, nid, event["kind"], event["to_status"])
                     if gone:
                         suggestion = {"id": None, "status": "suppressed", "suppressed_by": gone["suggestion_id"]}
                     elif dup:
                         suggestion = {"id": None, "status": "suppressed", "duplicate_of": dup}
                     else:
-                        sid = nl.add_suggestion(db, revision_id=rev_id, nid=nid, from_status=status, **event)[
-                            "suggestion_id"
-                        ]
+                        sid = narrative_suggestions.add_suggestion(
+                            db, revision_id=rev_id, nid=nid, from_status=status, **event
+                        )["suggestion_id"]
                         suggestion = _suggestion(db, sid, rec, claims)
             row = nl.add_check(
                 db,
@@ -877,10 +870,10 @@ TARGETS = {
     "confirm": (SUGGESTION_ID, "a suggestion id ns-xxxxxxxx"),
     "reject": (SUGGESTION_ID, "a suggestion id ns-xxxxxxxx"),
     "set": (NARRATIVE_ID, "a narrative id nr-xxxxxxxxxx"),
-    "theme-accept": (nl.THEME_PROPOSAL_ID, "a theme proposal id T<YYYYMMDD>-n"),
-    "theme-reject": (nl.THEME_PROPOSAL_ID, "a theme proposal id T<YYYYMMDD>-n"),
-    "member-accept": (nl.MEMBER_PROPOSAL_ID, "a member proposal id M<YYYYMMDD>-n"),
-    "member-reject": (nl.MEMBER_PROPOSAL_ID, "a member proposal id M<YYYYMMDD>-n"),
+    "theme-accept": (narrative_proposals.THEME_PROPOSAL_ID, "a theme proposal id T<YYYYMMDD>-n"),
+    "theme-reject": (narrative_proposals.THEME_PROPOSAL_ID, "a theme proposal id T<YYYYMMDD>-n"),
+    "member-accept": (narrative_proposals.MEMBER_PROPOSAL_ID, "a member proposal id M<YYYYMMDD>-n"),
+    "member-reject": (narrative_proposals.MEMBER_PROPOSAL_ID, "a member proposal id M<YYYYMMDD>-n"),
 }
 
 
@@ -924,14 +917,16 @@ def member_line(p):
 def _suggestion_decision(db, dec, ref):
     target, decided_at = dec["target"], dec["decided_at"]
     if dec["action"] == "confirm":
-        row, again = nl.confirm_suggestion(db, target, decision_ref=ref, decided_at=decided_at, note=dec["owner_text"])
+        row, again = narrative_suggestions.confirm_suggestion(
+            db, target, decision_ref=ref, decided_at=decided_at, note=dec["owner_text"]
+        )
         change = (
             f"改為 {STATUS_WORDS[row['to_status']]}"
             if row["kind"] == "status"
             else f"記一筆官方背書（狀態維持 {STATUS_WORDS[row['to_status']]}）"
         )
         return f"敘事建議 {target} 已確認：{row['narrative_id']} {change}", again
-    row, again = nl.reject_suggestion(db, target, decision_ref=ref, decided_at=decided_at)
+    row, again = narrative_suggestions.reject_suggestion(db, target, decision_ref=ref, decided_at=decided_at)
     return f"敘事建議 {target} 已駁回：{row['narrative_id']} 狀態不變，同一個變化之後不再建議", again
 
 
@@ -950,9 +945,9 @@ def _set_decision(db, dec, ref):
 def _theme_decision(db, dec, ref):
     pid = dec["target"]
     if dec["action"] == "theme-reject":
-        _row, again = nl.reject_proposal(db, pid, decision_ref=ref, decided_at=dec["decided_at"])
+        _row, again = narrative_proposals.reject_proposal(db, pid, decision_ref=ref, decided_at=dec["decided_at"])
         return f"主題提案 {pid} 已略過，之後不再提出", again
-    theme, again, members = nl.accept_theme_proposal(
+    theme, again, members = narrative_proposals.accept_theme_proposal(
         db, pid, dec["theme_id"], decision_ref=ref, decided_at=dec["decided_at"]
     )
     links = db.execute("SELECT COUNT(*) FROM theme_proposal_claims WHERE proposal_id = ?", (pid,)).fetchone()[0]
@@ -963,9 +958,9 @@ def _theme_decision(db, dec, ref):
 def _member_decision(db, dec, ref):
     pid = dec["target"]
     if dec["action"] == "member-reject":
-        row, again = nl.reject_proposal(db, pid, decision_ref=ref, decided_at=dec["decided_at"])
+        row, again = narrative_proposals.reject_proposal(db, pid, decision_ref=ref, decided_at=dec["decided_at"])
         return f"成員提案 {pid} 已略過：{row['symbol']} 不加入 {row['theme_id']}，之後不再提出", again
-    member, again = nl.accept_member_proposal(db, pid, decision_ref=ref, decided_at=dec["decided_at"])
+    member, again = narrative_proposals.accept_member_proposal(db, pid, decision_ref=ref, decided_at=dec["decided_at"])
     return f"成員提案 {pid} 已接受：{member['symbol']} 加入 {member['theme_id']}（{member['role']}）", again
 
 
@@ -997,7 +992,7 @@ def released_text(outcomes):
 def apply_decision(ledger_path, d):
     """One owner decision from Telegram -> ("applied" | "refused", zh-TW message for the owner). A decision applied
     before is applied again as a no-op, so a delivery repeated after a lost ack writes nothing twice. After a theme or
-    member decision the held intake records are re-gated (nl.release_held) and the message says what moved."""
+    member decision the held intake records are re-gated (narrative_proposals.release_held) and the message says what moved."""
     try:
         dec = parse_decision(d)
     except (ValueError, nl.LedgerError) as e:
@@ -1008,7 +1003,7 @@ def apply_decision(ledger_path, d):
     try:
         done, again = HANDLERS[action](db, dec, ref)
         if action in RELEASES:
-            done += released_text(nl.release_held(db, dec["decided_at"]))
+            done += released_text(narrative_proposals.release_held(db, dec["decided_at"]))
         return "applied", done + ("（先前已套用，未重複寫入）" if again else "")
     except nl.LedgerError as e:
         return "refused", f"敘事決定 {did}（{action} {target}）未套用：{e}"

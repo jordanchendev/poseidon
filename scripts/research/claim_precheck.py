@@ -578,6 +578,20 @@ def evidence_tier(e: dict) -> str:
     return "company release"
 
 
+# claim_theme_links.evidence_tier is the highest tier a claim cites (design §2.5), ranked in this order
+TIER_ORDER = (*OFFICIAL_TIERS, "exchange feed", "derived", "sell-side", "media", "kol")
+
+
+def _tier_rank(tier):
+    return next((n for n, t in enumerate(TIER_ORDER) if tier.startswith(t)), len(TIER_ORDER))
+
+
+def best_evidence(c, by_id):
+    """The claim's highest-tier cited evidence (the latest of equals): claim_theme_links' evidence_tier and event_time."""
+    cited = [by_id[e] for e in c["evidence_ids"] if e in by_id]
+    return max(cited, key=lambda e: (-_tier_rank(evidence_tier(e)), e["event_time"]))
+
+
 def precheck(claim: str, excerpt: str | None) -> dict:
     """Both checks; `excerpt=None` skips the numeric check."""
     num = check_numbers(claim, excerpt) if excerpt is not None else {"status": "skipped"}

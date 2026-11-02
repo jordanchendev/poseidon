@@ -16,6 +16,7 @@ HERE = Path(__file__).resolve().parent
 
 import narrative_check  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
+import narrative_suggestions  # noqa: E402
 import runner  # noqa: E402
 import testkit as tk  # noqa: E402
 from testkit import JEV_KEY  # noqa: E402
@@ -62,7 +63,9 @@ def test_confirm_writes_suggestions_not_events(env):
         s, x = sugg[ids[rule]], res[ids[rule]]
         assert (s["rule"], s["status"], s["from_status"]) == (rule, "suggested", "unverified"), rule
         assert (
-            x["suggestion"]["id"] == s["suggestion_id"] == nl.suggestion_id(rev["identity"]["revision_id"], ids[rule])
+            x["suggestion"]["id"]
+            == s["suggestion_id"]
+            == narrative_suggestions.suggestion_id(rev["identity"]["revision_id"], ids[rule])
         )
         assert f"回覆「確認敘事 {s['suggestion_id']}」或「駁回敘事 {s['suggestion_id']}」" in x["suggestion"]["line"]
     assert (sugg[ids["R3"]]["kind"], sugg[ids["R3"]]["to_status"]) == ("status", "partially_verified")
@@ -105,7 +108,7 @@ def test_on_and_off_results_carry_no_suggestion(env):
 
 def test_owner_decisions_are_applied_once_and_acked(env):
     path, ids, _t, _run_json, rev = tk.run(env, "confirm")
-    sid = {r: nl.suggestion_id(rev["identity"]["revision_id"], ids[r]) for r in SUGGESTED}
+    sid = {r: narrative_suggestions.suggestion_id(rev["identity"]["revision_id"], ids[r]) for r in SUGGESTED}
     pending = [
         decision(1, "confirm", sid["R3"], "確認敘事 " + sid["R3"]),
         decision(2, "reject", sid["R1"], "駁回敘事 " + sid["R1"]),
@@ -169,7 +172,7 @@ def test_a_confirm_killed_before_its_row_is_written_writes_nothing_and_applies_o
     re-send of the un-acked decision applies it once, and a re-send after that is a no-op."""
     path, ids, _t, _run_json, rev = tk.run(env, "confirm")
     rev_id = rev["identity"]["revision_id"]
-    nid, sid = ids[rule], nl.suggestion_id(rev_id, ids[rule])
+    nid, sid = ids[rule], narrative_suggestions.suggestion_id(rev_id, ids[rule])
     real, crashed = nl._update, []
 
     def killed_once(*a, **k):
@@ -201,7 +204,7 @@ def test_a_ledger_left_with_the_event_and_a_suggested_row_is_finished_without_a_
     not refused as a move from its own status, a corroboration is not written twice."""
     path, ids, _t, _run_json, rev = tk.run(env, "confirm")
     rev_id = rev["identity"]["revision_id"]
-    nid, sid = ids[rule], nl.suggestion_id(rev_id, ids[rule])
+    nid, sid = ids[rule], narrative_suggestions.suggestion_id(rev_id, ids[rule])
     db = nl.connect(path)
     s = nl._one(db, "SELECT * FROM narrative_suggestions WHERE suggestion_id = ?", sid)
     nl.append_event(  # what the old confirm_suggestion had committed when it crashed
@@ -229,8 +232,8 @@ def test_a_ledger_left_with_the_event_and_a_suggested_row_is_finished_without_a_
 def test_a_rejected_change_is_not_suggested_again(env):
     path, ids, _t, _run_json, rev = tk.run(env, "confirm")
     db = nl.connect(path)
-    rejected = nl.suggestion_id(rev["identity"]["revision_id"], ids["R1"])
-    nl.reject_suggestion(db, rejected, decision_ref="telegram:20261022-d1", decided_at=DECIDED_AT)
+    rejected = narrative_suggestions.suggestion_id(rev["identity"]["revision_id"], ids["R1"])
+    narrative_suggestions.reject_suggestion(db, rejected, decision_ref="telegram:20261022-d1", decided_at=DECIDED_AT)
     db.close()
     later = json.loads(json.dumps(rev))
     later["identity"]["revision_id"] = str(uuid.uuid4())
@@ -262,7 +265,7 @@ def test_the_same_document_frozen_again_is_not_suggested_again(env):
     and evidence id is suppressed while the first suggestion is pending and after it is confirmed; the check row is
     written and the report says which suggestion it repeats."""
     path, ids, _t, _run_json, rev = tk.run(env, "confirm")
-    first = nl.suggestion_id(rev["identity"]["revision_id"], ids["R4"])
+    first = narrative_suggestions.suggestion_id(rev["identity"]["revision_id"], ids["R4"])
     later = tk.refrozen(rev)
     res = tk.apply_later(env, later, "confirm")
     assert res[ids["R4"]]["suggestion"] == {"id": None, "status": "suppressed", "duplicate_of": first}
@@ -270,7 +273,9 @@ def test_the_same_document_frozen_again_is_not_suggested_again(env):
     checks, _ = tk.ledger_rows(path, later["identity"]["revision_id"])
     assert (checks[ids["R4"]]["outcome"], checks[ids["R4"]]["event_seq"]) == ("corroborated", None)
     db = nl.connect(path)
-    nl.confirm_suggestion(db, first, decision_ref="telegram:20261022-d1", decided_at=DECIDED_AT, note="確認敘事")
+    narrative_suggestions.confirm_suggestion(
+        db, first, decision_ref="telegram:20261022-d1", decided_at=DECIDED_AT, note="確認敘事"
+    )
     db.close()
     again = tk.apply_later(env, tk.refrozen(rev, n=3), "confirm")
     assert again[ids["R4"]]["suggestion"] == {"id": None, "status": "suppressed", "duplicate_of": first}
@@ -289,10 +294,10 @@ def test_a_different_document_corroborates_again(env):
     """Corroboration by other evidence still counts: a different document (other raw files) backing the same record is
     a new suggestion, and that document frozen again repeats it, not the first."""
     path, ids, _t, _run_json, rev = tk.run(env, "confirm")
-    first = nl.suggestion_id(rev["identity"]["revision_id"], ids["R4"])
+    first = narrative_suggestions.suggestion_id(rev["identity"]["revision_id"], ids["R4"])
     other = tk.refrozen(rev, raw_files={"other.htm": "0" * 64})
     res = tk.apply_later(env, other, "confirm")
-    second = nl.suggestion_id(other["identity"]["revision_id"], ids["R4"])
+    second = narrative_suggestions.suggestion_id(other["identity"]["revision_id"], ids["R4"])
     assert (res[ids["R4"]]["suggestion"]["id"], res[ids["R4"]]["suggestion"]["status"]) == (second, "suggested")
     assert [s["suggestion_id"] for s in corroborations_of(path, ids["R4"])] == [first, second]
     again = tk.refrozen(rev, n=3, raw_files={"other.htm": "0" * 64})
@@ -307,7 +312,7 @@ def test_a_corroboration_stored_without_evidence_sha256_is_compared_by_its_quote
     """A suggestion written before basis carried evidence_sha256 (the trial ledger's ns-48c45f58, ns-3aa4b89b) is the
     same evidence when every quote it stored is in the newly cited document; a document without them is new."""
     path, ids, _t, _run_json, rev = tk.run(env, "confirm")
-    first = nl.suggestion_id(rev["identity"]["revision_id"], ids["R4"])
+    first = narrative_suggestions.suggestion_id(rev["identity"]["revision_id"], ids["R4"])
     db = nl.connect(path)
     s = nl._one(db, "SELECT basis_json FROM narrative_suggestions WHERE suggestion_id = ?", first)
     basis = json.loads(s["basis_json"])
@@ -325,9 +330,9 @@ def test_a_rejected_endorsement_is_still_not_suggested_again(env):
     """The rejection rule is unchanged: after the owner rejects an R4 suggestion the same document frozen again is
     suppressed by that rejection (not reported as a repeat), and nothing is written."""
     path, ids, _t, _run_json, rev = tk.run(env, "confirm")
-    rejected = nl.suggestion_id(rev["identity"]["revision_id"], ids["R4"])
+    rejected = narrative_suggestions.suggestion_id(rev["identity"]["revision_id"], ids["R4"])
     db = nl.connect(path)
-    nl.reject_suggestion(db, rejected, decision_ref="telegram:20261022-d1", decided_at=DECIDED_AT)
+    narrative_suggestions.reject_suggestion(db, rejected, decision_ref="telegram:20261022-d1", decided_at=DECIDED_AT)
     db.close()
     res = tk.apply_later(env, tk.refrozen(rev), "confirm")
     assert res[ids["R4"]]["suggestion"] == {"id": None, "status": "suppressed", "suppressed_by": rejected}

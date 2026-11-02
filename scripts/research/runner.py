@@ -30,7 +30,7 @@ through the same narrative-pending feed and release the intake records held for 
 Any failure -> the revision stays prepared, bridge `needs-review <agenda_id>` with a short reason on stdin.
 No escalation to another model.
 
-After every invocation but a dry run, narrative_export.json (narrative_ledger.export as of now, written tmp + rename)
+After every invocation but a dry run, narrative_export.json (narrative_export.export as of now, written tmp + rename)
 is refreshed next to the ledger for the MacBook's nexus_pull.py (design §3.4); a failure there is logged only.
 State (all under --state-dir): ledger.sqlite (research_theme tables + runner_runs), runs/<agenda_id>/{config.json,
 narrative.json, revision.json, run.json, bars.csv, sources/}, runs/material-<id>/{sources/material.txt,
@@ -64,6 +64,7 @@ import assemble as assemble_mod  # noqa: E402
 import draft as draft_mod  # noqa: E402
 import intake as intake_mod  # noqa: E402
 import narrative_check  # noqa: E402
+import narrative_export  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 from claim_precheck import has_inference_basis  # noqa: E402
 from refusal import ResearchRefusal  # noqa: E402
@@ -962,7 +963,7 @@ def refresh_export(state):
     try:
         db = nl.connect(state / "ledger.sqlite")
         try:
-            nl.write_export(db, nl.now(), state / NARRATIVE_EXPORT)
+            narrative_export.write_export(db, nl.now(), state / NARRATIVE_EXPORT)
         finally:
             db.close()
     except (nl.LedgerError, sqlite3.Error, OSError, ValueError):
