@@ -27,7 +27,7 @@ from poseidon.pipeline.state import Verdict
 from poseidon.strategies.dsl.v2 import validate_v2
 from poseidon.strategies.dsl.v2.examples import tx_orb30_day
 
-KEY = "sk-or-v1-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"
+KEY = "test-openrouter-spec-key-not-real"
 LABEL = "sk-or-v1-012...bcd"
 ENV = {KEY_ENV: KEY}
 MODEL_ECHO = "deepseek/deepseek-v4.1-flash-1017"

@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "strategy_scout"))
 import scout
 
-KEY = "sk-or-v1-SECRETSECRETSECRET"
+KEY = "test-openrouter-scout-key-not-real"
 PIN = "sk-or-v1-1ed...a5d"
 NOW = dt.datetime(2026, 10, 23, 7, 30, tzinfo=scout.TZ)
 

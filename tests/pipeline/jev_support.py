@@ -14,7 +14,7 @@ from poseidon.pipeline.faithfulness import SpecFaithfulnessStage
 from poseidon.pipeline.jev import transport_client_factory
 from poseidon.pipeline.spec_llm import KEY_ENV
 
-KEY = "sk-or-v1-feedface0123456789abcdef0123456789abcdef0123456789abcdef01234567"
+KEY = "test-openrouter-key-not-real"
 LABEL = "sk-or-v1-fee...567"
 ENV = {KEY_ENV: KEY}
 COST = 0.00004
