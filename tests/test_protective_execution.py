@@ -443,6 +443,24 @@ def test_protective_intent_cannot_increase_exposure(seed, action):
         _materialize(seed, action=action)
 
 
+def test_protective_identity_is_px_plus_the_dedupe_digest(seed):
+    """Characterization: the client order ref, execution key, and order id all derive from one digest."""
+    lot, _ = _opening(seed, quantity=3)
+    result = _materialize(seed)
+    digest = content_sha256(
+        {
+            "account_scope": seed.account,
+            "account_generation": "generation-1",
+            "origin": "stop_loss",
+            "source_lot_ids": [str(lot)],
+            "trigger_generation": "price:80",
+        }
+    )
+    assert result["client_order_refs"] == [f"PX-{digest}"]
+    assert result["execution_key"] == str(uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:execution:{digest}"))
+    assert result["order_ids"] == [str(uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:order:{digest}"))]
+
+
 def test_dedupe_maps_all_source_lots_and_replays_one_order(seed):
     first_lot, first_decision = _opening(seed, quantity=3)
     second_lot, second_decision = _opening(seed, quantity=2, time=NOW.replace(minute=1))
