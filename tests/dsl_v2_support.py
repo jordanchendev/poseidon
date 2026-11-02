@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from poseidon.backtest.cost_model import COST_MODELS
-from poseidon.backtest.portfolio import SizingConfig
+from poseidon.backtest.portfolio import SizingConfig, SizingMode
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.data.feature_engine import FeatureEngine
 from poseidon.risk.engine import RiskEngine
@@ -72,7 +72,8 @@ def make_runner(
         feature_engine=FeatureEngine(),
         risk_engine=risk_engine or RiskEngine(),
         cost_model=COST_MODELS[cost_model],
-        sizing_config=sizing_config,
+        # the pipeline's sizing: a notional fraction of the default 1M account buys no TX contract (~4.6M each)
+        sizing_config=sizing_config or SizingConfig(mode=SizingMode.FIXED_CONTRACTS, contracts=1),
         **kwargs,
     )
 

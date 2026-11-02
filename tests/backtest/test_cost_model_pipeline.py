@@ -7,11 +7,12 @@ import pytest
 
 from poseidon.backtest.cost_model import COST_MODELS
 from poseidon.backtest.pending_orders import FillEvent
-from poseidon.backtest.portfolio import BacktestPortfolio
+from poseidon.backtest.portfolio import BacktestPortfolio, SizingConfig, SizingMode
 from poseidon.signals.schemas import InstrumentType, OrderType, Signal, SignalAction
 
 TAX = 0.00002
 PV = 200.0
+ONE_CONTRACT = SizingConfig(mode=SizingMode.FIXED_CONTRACTS, contracts=1)  # as the pipeline sizes TX
 
 
 def _sig(action: SignalAction, *, pct: float = 0.03, price: float | None = None) -> Signal:
@@ -47,7 +48,7 @@ def test_pipeline_model_values():
 
 @pytest.mark.parametrize("side", [SignalAction.LONG, SignalAction.SHORT])
 def test_round_trip_fees_both_legs(side):
-    pf = BacktestPortfolio(1_000_000.0, COST_MODELS["tw_futures_pipeline"])
+    pf = BacktestPortfolio(1_000_000.0, COST_MODELS["tw_futures_pipeline"], ONE_CONTRACT)
     start = pf.cash
     entry = pf.execute_fill(_sig(side), _bar(23000.0))
     assert entry.quantity == 1
@@ -65,7 +66,7 @@ def test_round_trip_fees_both_legs(side):
 
 
 def test_stop_exit_and_limit_entry_charge_per_contract_and_entry_tax():
-    pf = BacktestPortfolio(1_000_000.0, COST_MODELS["tw_futures_pipeline"])
+    pf = BacktestPortfolio(1_000_000.0, COST_MODELS["tw_futures_pipeline"], ONE_CONTRACT)
     sig = _sig(SignalAction.LONG, price=23000.0)
     entry = pf.execute_limit_fill(FillEvent(signal=sig, fill_price=23000.0, fill_bar_index=1), _bar(23000.0))
     assert entry.fees == pytest.approx(23000.0 * PV * TAX + 50.0)
@@ -76,7 +77,7 @@ def test_stop_exit_and_limit_entry_charge_per_contract_and_entry_tax():
 
 
 def test_legacy_tw_futures_unchanged():
-    pf = BacktestPortfolio(1_000_000.0, COST_MODELS["tw_futures"])
+    pf = BacktestPortfolio(1_000_000.0, COST_MODELS["tw_futures"], ONE_CONTRACT)
     entry = pf.execute_fill(_sig(SignalAction.LONG), _bar(23000.0))
     assert entry.fees == 0.0
     close = pf.execute_fill(_sig(SignalAction.CLOSE), _bar(23100.0, "2026-09-07 01:05"))

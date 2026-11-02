@@ -7,6 +7,7 @@ import pytest
 
 from poseidon.backtest.cost_model import COST_MODELS
 from poseidon.backtest.optimizer import BayesianOptimizer, GridSearchOptimizer
+from poseidon.backtest.portfolio import SizingConfig, SizingMode
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.backtest.walk_forward import WalkForwardAnalyzer
 from poseidon.data.feature_engine import FeatureEngine
@@ -55,6 +56,7 @@ def _exit(action, stop, target, rows, gap: bool):
         feature_engine=FeatureEngine(),
         risk_engine=RiskEngine(),
         cost_model=COST_MODELS["tw_futures"],
+        sizing_config=SizingConfig(mode=SizingMode.FIXED_CONTRACTS, contracts=1),
         gap_aware_stops=gap,
     )
     result = runner.run(_bars(rows), feature_specs=[])
