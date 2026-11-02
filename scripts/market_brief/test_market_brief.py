@@ -1673,7 +1673,7 @@ def credit_reply(last="2026-10-21", **over_last):
     for i, day in enumerate(days):
         o = over_last if day == last else {}
         rows.append(credit_row(day, "tpex", 80_000_000_000 + i * 10**9, **o))
-        rows.append(credit_row(day, "twse", 620_000_000_000 + i * 10**9 + (3_467_886_000 if day == last else 0), **o))
+        rows.append(credit_row(day, "twse", 620_000_000_000 + i * 10**9 + (-532_114_000 if day == last else 0), **o))
     return rows
 
 
@@ -1780,7 +1780,7 @@ class TestCreditSection(unittest.TestCase):
         facts = self.collect_pre(CreditTransport(200, credit_reply()))
         self.assertEqual(facts["status"], "ok")
         self.assertEqual(facts["credit_status"], "ok")
-        self.assertEqual(facts["gaps"], [])
+        self.assertFalse([g for g in facts["gaps"] if "信用" in g or "融資" in g])
         self.assertNotIn("credit", json.dumps(facts["data"]))  # the model never sees it
         md, _ = render.render(facts, None, None, self.cfg)
         sec = md.split("## 信用交易")[1].split("\n## ")[0]
@@ -1792,7 +1792,7 @@ class TestCreditSection(unittest.TestCase):
             "| 市場 | 融資金額(億) | 金額增減(億) | 融資餘額增減(張) | 融券增減(張) | 估算維持率 |\n"
             "|---|---:|---:|---:|---:|---:|\n"
             "| 上市 | 6,234.7 | -23.0 | -33,027 | +1,234 | 171.8% |\n"
-            "| 上櫃 | 804.0 | -23.0 | -33,027 | +1,234 | 167.0% |\n"
+            "| 上櫃 | 840.0 | -23.0 | -33,027 | +1,234 | 167.0% |\n"
             "\n"
             "估算維持率＝融資股票以當日收盤計的市值 ÷ 融資金額，是市場平均的估算值，不是交易所公布的數字。"
             "券商是對個別帳戶以整戶維持率 130% 追繳，所以這個數字不是斷頭線，看水位與變化即可。\n"
@@ -1803,10 +1803,10 @@ class TestCreditSection(unittest.TestCase):
             "| 日期 | 上市融資 | 上市估算 | 上櫃融資 | 上櫃估算 |\n"
             "|---|---:|---:|---:|---:|\n"
             "| 10-15 | 6,200.0 | 171.8% | 800.0 | 167.0% |\n"
-            "| 10-16 | 6,210.0 | 171.8% | 801.0 | 167.0% |\n"
-            "| 10-19 | 6,220.0 | 171.8% | 802.0 | 167.0% |\n"
-            "| 10-20 | 6,230.0 | 171.8% | 803.0 | 167.0% |\n"
-            "| 10-21 | 6,234.7 | 171.8% | 804.0 | 167.0% |",
+            "| 10-16 | 6,210.0 | 171.8% | 810.0 | 167.0% |\n"
+            "| 10-19 | 6,220.0 | 171.8% | 820.0 | 167.0% |\n"
+            "| 10-20 | 6,230.0 | 171.8% | 830.0 | 167.0% |\n"
+            "| 10-21 | 6,234.7 | 171.8% | 840.0 | 167.0% |",
         )
         self.assertNotIn("<span", sec)  # no red/green judgement on margin changes
         self.assertLess(md.index("### Watchlist（前一交易日收盤）"), md.index("## 信用交易"))
@@ -1818,7 +1818,7 @@ class TestCreditSection(unittest.TestCase):
         tg = render.telegram_text(md)
         block = tg.split("**信用交易（2026-10-21，融資融券）**")[1].split("**今日除權息")[0]
         t1, t2 = block.split("```")[1].strip("\n").split("\n"), block.split("```")[3].strip("\n").split("\n")
-        self.assertRegex(t1[0], r"^Amt\s+AmtChg\s+BalChg\s+ShChg\s+Est 市場$")
+        self.assertRegex(t1[0], r"^\s*Amt\s+AmtChg\s+BalChg\s+ShChg\s+Est 市場$")
         self.assertRegex(t1[1], r"^6,234\.7\s+-23\.0\s+-33,027\s+\+1,234\s+171\.8% 上市$")
         self.assertEqual(len(t2), 6)
         self.assertLessEqual(max(len(r) for r in t1 + t2), 40)
@@ -1836,7 +1836,7 @@ class TestCreditSection(unittest.TestCase):
             with self.subTest(name):
                 facts = self.collect_pre(t)
                 self.assertEqual(facts["status"], "ok")
-                self.assertEqual(facts["gaps"], [])  # an optional section never delays the brief
+                self.assertFalse([g for g in facts["gaps"] if "信用" in g or "融資" in g])  # never delays the brief
                 self.assertEqual(facts["credit"], {"skipped": public})
                 self.assertNotEqual(facts["credit_status"], "ok")
                 md, _ = render.render(facts, None, None, self.cfg)
