@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import news
 import tw
+import tw_credit
 import tw_groups
 import us
 from netio import FetchError
@@ -476,6 +477,9 @@ class Collector:
         except (tw.NotReady, FetchError) as e:
             self.log(f"TWT48U unavailable: {e}")
             self.gap("除權息預告（TWT48U）未取得")
+        credit, credit_status, credit_skip = tw_credit.fetch(
+            self.f, self.cfg, prev_d or self.cal.prev_open("tw", d) or d - dt.timedelta(days=1), self.log
+        )
         watch_keys = [w["symbol"] for w in self.watchlist.get("us", [])]
         data = {
             "session_date": d.isoformat(),
@@ -495,6 +499,9 @@ class Collector:
             "data": data,
             "headlines": self.headlines("tw"),
             "as_of": f"美股 {us_date} 收盤；台指期夜盤；{self.now.astimezone(TPE):%Y-%m-%d %H:%M} Asia/Taipei",
+            # Kept out of "data" like the group ranking: the model never sees it and the number check does not cover it.
+            "credit": credit if credit else ({"skipped": credit_skip} if credit_skip else None),
+            "credit_status": credit_status,
         }
 
     def us_premarket(self, d):
@@ -616,6 +623,8 @@ def collect(kind, d, collector):
         "retry_gaps": collector.retry_gaps,
         "group_ranking": res.get("group_ranking"),
         "group_ranking_status": res.get("group_ranking_status"),
+        "credit": res.get("credit"),
+        "credit_status": res.get("credit_status"),
         "must_missing": collector.must_missing,
         "generated_at": collector.now.astimezone(TPE).isoformat(timespec="seconds"),
     }

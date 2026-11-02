@@ -31,6 +31,7 @@ import render  # noqa: E402
 import run  # noqa: E402
 import tradingcal  # noqa: E402
 import tw  # noqa: E402
+import tw_credit  # noqa: E402
 import tw_groups  # noqa: E402
 import us  # noqa: E402
 from netio import Fetcher, FetchError  # noqa: E402
@@ -1648,6 +1649,240 @@ class TestGroupRanking(unittest.TestCase):
             fetcher(routes), self.cfg, WATCH, calendar(), dt.datetime(2026, 10, 22, 8, 30, tzinfo=dt.UTC)
         )
         collect.collect("tw-premarket", D22, c)
+        self.assertEqual(t.calls, [])
+
+
+# ================================================================================================ credit (信用交易)
+CREDIT_KEY = "tg-credit-key-0123456789abcdef"
+
+
+def credit_row(day, market, amount, **over):
+    r = {
+        "date": day, "market": market, "margin_balance": 9555729, "margin_balance_change": -33027,
+        "margin_amount": amount, "margin_amount_change": -2_300_000_000, "short_balance": 700000,
+        "short_balance_change": 1234, "margin_market_value": amount * 1.7175, "priced_lot_share": 0.99999,
+        "maintenance_ratio_estimate_pct": 171.75 if market == "twse" else 167.0,
+    }  # fmt: skip
+    r.update(over)
+    return r
+
+
+def credit_reply(last="2026-10-21", **over_last):
+    days = ["2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", last]
+    rows = []
+    for i, day in enumerate(days):
+        o = over_last if day == last else {}
+        rows.append(credit_row(day, "tpex", 80_000_000_000 + i * 10**9, **o))
+        rows.append(credit_row(day, "twse", 620_000_000_000 + i * 10**9 + (-532_114_000 if day == last else 0), **o))
+    return rows
+
+
+class CreditTransport:
+    def __init__(self, status=200, body=None):
+        self.status, self.body, self.calls = status, body, []
+
+    def __call__(self, method, url, headers, body, timeout):
+        self.calls.append((method, url, dict(headers)))
+        if "/api/v1/tw/credit/market" in url:
+            raw = self.body if isinstance(self.body, bytes) else json.dumps(self.body).encode()
+            return self.status, raw
+        return 404, b"not found"
+
+
+class TestCreditSection(unittest.TestCase):
+    SKIP = "信用交易：本期未取得"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.keyfile = Path(self.tmp.name) / "thalassa.env"
+        self.keyfile.write_text(f"export MARKET_BRIEF_THALASSA_API_KEY={CREDIT_KEY}\n")
+        os.chmod(self.keyfile, 0o600)
+        self.cfg = cfg()
+        self.cfg["thalassa"]["key_file"] = str(self.keyfile)
+        self.logs = []
+
+    def fetch(self, transport):
+        f = Fetcher(transport=transport, sleep=lambda s: None)
+        out = tw_credit.fetch(f, self.cfg, D21, self.logs.append)
+        self.assertNotIn(CREDIT_KEY, json.dumps(f.log) + "\n".join(self.logs))
+        return out
+
+    def collect_pre(self, transport):
+        routes = [("credit/market", lambda url, body: transport("GET", url, {}, body, 1)), *TW_ROUTES_21]
+        c = collect.Collector(
+            fetcher(routes), self.cfg, WATCH, calendar(), dt.datetime(2026, 10, 22, 8, 30, tzinfo=dt.UTC),
+            log=self.logs.append,
+        )  # fmt: skip
+        return collect.collect("tw-premarket", D22, c)
+
+    def test_fetch_ok_requests_a_range_with_the_key_and_shapes_units(self):
+        t = CreditTransport(200, credit_reply())
+        data, status, public = self.fetch(t)
+        self.assertEqual((status, public), ("ok", None))
+        ((method, url, headers),) = t.calls
+        self.assertEqual(method, "GET")
+        self.assertEqual(url, "http://192.168.31.241:8001/api/v1/tw/credit/market?start=2026-10-07&end=2026-10-21")
+        self.assertEqual(headers["X-API-Key"], CREDIT_KEY)
+        self.assertEqual(data["date"], "2026-10-21")
+        self.assertEqual(
+            data["latest"]["twse"],
+            {"amount_yi": 6234.7, "amount_chg_yi": -23.0, "balance_chg": -33027, "short_chg": 1234, "ratio": 171.8},
+        )
+        self.assertEqual(data["latest"]["tpex"]["ratio"], 167.0)
+        self.assertEqual(
+            [r["date"] for r in data["trend"]],
+            ["2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21"],
+        )
+
+    def test_every_failure_gives_one_public_reason_and_a_logged_detail(self):
+        stale = credit_reply("2026-10-20")
+        one_market = [r for r in credit_reply() if not (r["date"] == "2026-10-21" and r["market"] == "tpex")]
+        no_ratio = credit_reply(maintenance_ratio_estimate_pct=None)
+        no_field = credit_reply()
+        del no_field[-1]["short_balance_change"]
+        string_amt = credit_reply(margin_amount="623467886000")
+        cases = {
+            "no key file": (lambda: self.keyfile.unlink(), CreditTransport(200, credit_reply()), "金鑰未就緒"),
+            "http 500": (None, CreditTransport(500, b"boom"), "Thalassa 讀取失敗"),
+            "http 401": (None, CreditTransport(401, b'{"detail":"Invalid API key"}'), "Thalassa 讀取失敗"),
+            "not deployed (404)": (None, CreditTransport(404, b'{"detail":"Not Found"}'), "端點尚未上線"),
+            "not json": (None, CreditTransport(200, b"<html>"), "Thalassa 讀取失敗"),
+            "empty": (None, CreditTransport(200, []), "無資料"),
+            "not a list": (None, CreditTransport(200, {"rows": []}), "回應格式異常"),
+            "stale": (None, CreditTransport(200, stale), "資料尚未更新（最新 2026-10-20）"),
+            "one market missing": (None, CreditTransport(200, one_market), "欄位缺漏"),
+            "estimate null": (None, CreditTransport(200, no_ratio), "欄位缺漏"),
+            "missing field": (None, CreditTransport(200, no_field), "欄位缺漏"),
+            "string amount": (None, CreditTransport(200, string_amt), "欄位缺漏"),
+            "junk row": (None, CreditTransport(200, ["oops"]), "回應格式異常"),
+        }
+        for name, (prep, transport, public_want) in cases.items():
+            self.setUp()
+            if prep:
+                prep()
+            with self.subTest(name):
+                data, status, public = self.fetch(transport)
+                self.assertIsNone(data)
+                self.assertNotEqual(status, "ok")
+                self.assertEqual(public, public_want)
+                self.assertTrue(any("section skipped" in m for m in self.logs), self.logs)
+
+    def test_no_fallback_to_environment(self):
+        self.keyfile.unlink()
+        t = CreditTransport(200, credit_reply())
+        with mock.patch.dict(os.environ, {"MARKET_BRIEF_THALASSA_API_KEY": "from-env"}):
+            data, _, _ = self.fetch(t)
+        self.assertIsNone(data)
+        self.assertEqual(t.calls, [])
+
+    def test_golden_render_md_and_telegram(self):
+        facts = self.collect_pre(CreditTransport(200, credit_reply()))
+        self.assertEqual(facts["status"], "ok")
+        self.assertEqual(facts["credit_status"], "ok")
+        self.assertFalse([g for g in facts["gaps"] if "信用" in g or "融資" in g])
+        self.assertNotIn("credit", json.dumps(facts["data"]))  # the model never sees it
+        md, _ = render.render(facts, None, None, self.cfg)
+        sec = md.split("## 信用交易")[1].split("\n## ")[0]
+        self.assertEqual(
+            sec.rstrip("\n"),
+            "（2026-10-21，融資融券）\n"
+            "\n"
+            "<!-- tg: 融資金額(億)=Amt; 金額增減(億)=AmtChg; 融資餘額增減(張)=BalChg; 融券增減(張)=ShChg; 估算維持率=Est; 市場 -->\n"
+            "| 市場 | 融資金額(億) | 金額增減(億) | 融資餘額增減(張) | 融券增減(張) | 估算維持率 |\n"
+            "|---|---:|---:|---:|---:|---:|\n"
+            "| 上市 | 6,234.7 | -23.0 | -33,027 | +1,234 | 171.8% |\n"
+            "| 上櫃 | 840.0 | -23.0 | -33,027 | +1,234 | 167.0% |\n"
+            "\n"
+            "估算維持率＝融資股票以當日收盤計的市值 ÷ 融資金額，是市場平均的估算值，不是交易所公布的數字。"
+            "券商是對個別帳戶以整戶維持率 130% 追繳，所以這個數字不是斷頭線，看水位與變化即可。\n"
+            "\n"
+            "近 5 個交易日（融資金額單位：億元）\n"
+            "\n"
+            "<!-- tg: 上市融資=TWSE; 上市估算=TWEst; 上櫃融資=TPEx; 上櫃估算=TPEst; 日期 -->\n"
+            "| 日期 | 上市融資 | 上市估算 | 上櫃融資 | 上櫃估算 |\n"
+            "|---|---:|---:|---:|---:|\n"
+            "| 10-15 | 6,200.0 | 171.8% | 800.0 | 167.0% |\n"
+            "| 10-16 | 6,210.0 | 171.8% | 810.0 | 167.0% |\n"
+            "| 10-19 | 6,220.0 | 171.8% | 820.0 | 167.0% |\n"
+            "| 10-20 | 6,230.0 | 171.8% | 830.0 | 167.0% |\n"
+            "| 10-21 | 6,234.7 | 171.8% | 840.0 | 167.0% |",
+        )
+        self.assertNotIn("<span", sec)  # no red/green judgement on margin changes
+        self.assertLess(md.index("### Watchlist（前一交易日收盤）"), md.index("## 信用交易"))
+        self.assertLess(md.index("## 信用交易"), md.index("## 今日除權息"))
+        for secret in (CREDIT_KEY, str(self.keyfile), "192.168.31.241"):
+            self.assertNotIn(secret, md)
+        for pat in NEXUS_SENSITIVE_CI:
+            self.assertIsNone(re.search(pat, md, re.I | re.M), pat)
+        tg = render.telegram_text(md)
+        block = tg.split("**信用交易（2026-10-21，融資融券）**")[1].split("**今日除權息")[0]
+        t1, t2 = block.split("```")[1].strip("\n").split("\n"), block.split("```")[3].strip("\n").split("\n")
+        self.assertRegex(t1[0], r"^\s*Amt\s+AmtChg\s+BalChg\s+ShChg\s+Est 市場$")
+        self.assertRegex(t1[1], r"^6,234\.7\s+-23\.0\s+-33,027\s+\+1,234\s+171\.8% 上市$")
+        self.assertEqual(len(t2), 6)
+        self.assertLessEqual(max(len(r) for r in t1 + t2), 40)
+        self.assertIn("不是斷頭線", block)
+
+    def test_failure_paths_still_render_the_brief_with_one_line(self):
+        cases = {
+            "http 500": (CreditTransport(500, b"boom"), "Thalassa 讀取失敗"),
+            "not deployed": (CreditTransport(404, b'{"detail":"Not Found"}'), "端點尚未上線"),
+            "stale": (CreditTransport(200, credit_reply("2026-10-20")), "資料尚未更新（最新 2026-10-20）"),
+            "missing field": (CreditTransport(200, [credit_row("2026-10-21", "twse", 1)]), "欄位缺漏"),
+        }
+        for name, (t, public) in cases.items():
+            self.setUp()
+            with self.subTest(name):
+                facts = self.collect_pre(t)
+                self.assertEqual(facts["status"], "ok")
+                self.assertFalse([g for g in facts["gaps"] if "信用" in g or "融資" in g])  # never delays the brief
+                self.assertEqual(facts["credit"], {"skipped": public})
+                self.assertNotEqual(facts["credit_status"], "ok")
+                md, _ = render.render(facts, None, None, self.cfg)
+                self.assertIn(f"{self.SKIP}（{public}）", md)
+                self.assertNotIn("## 信用交易", md)
+                self.assertIn(f"{self.SKIP}（{public}）", render.telegram_text(md))
+                self.assertIn("## 今日除權息", md)
+                self.assertIn("## 前一交易日台股", md)
+                for secret in (CREDIT_KEY, str(self.keyfile), "192.168.31.241", "HTTP 5", "HTTP 4"):
+                    self.assertNotIn(secret, md)
+                self.assertIn(facts["credit_status"], json.dumps(run.run_record(facts, None, Fetcher())))
+
+    def test_unreadable_key_file_still_sends_the_brief(self):
+        real = Path.read_text
+
+        def deny(path, *a, **kw):
+            if path == self.keyfile:
+                raise PermissionError(13, "Permission denied", str(path))
+            return real(path, *a, **kw)
+
+        with mock.patch.object(Path, "read_text", deny):
+            facts = self.collect_pre(CreditTransport(200, credit_reply()))
+        self.assertEqual(facts["status"], "ok")
+        self.assertEqual(facts["credit"], {"skipped": "回應格式異常"})
+
+    def test_no_thalassa_config_shows_nothing(self):
+        del self.cfg["thalassa"]
+        facts = self.collect_pre(CreditTransport(200, credit_reply()))
+        self.assertIsNone(facts["credit"])
+        md, _ = render.render(facts, None, None, self.cfg)
+        self.assertNotIn("信用交易", md)
+
+    def test_a_single_session_has_no_trend_table(self):
+        one = [r for r in credit_reply() if r["date"] == "2026-10-21"]
+        facts = self.collect_pre(CreditTransport(200, one))
+        md, _ = render.render(facts, None, None, self.cfg)
+        self.assertIn("## 信用交易", md)
+        self.assertNotIn("近 1 個交易日", md)
+
+    def test_other_slots_do_not_call_the_credit_endpoint(self):
+        t = CreditTransport(200, credit_reply())
+        routes = [("credit/market", lambda url, body: t("GET", url, {}, body, 1)), *TW_ROUTES_21]
+        c = collect.Collector(
+            fetcher(routes), self.cfg, WATCH, calendar(), dt.datetime(2026, 10, 22, 8, 30, tzinfo=dt.UTC)
+        )
+        collect.collect("tw-postmarket", D21, c)
         self.assertEqual(t.calls, [])
 
 
