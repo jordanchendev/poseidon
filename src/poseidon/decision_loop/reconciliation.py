@@ -18,6 +18,9 @@ from poseidon.broker.base import (
     BrokerFillSnapshot,
     BrokerOrderSnapshot,
 )
+from poseidon.core.canonical import canonical_json, content_sha256
+from poseidon.core.locks import lock_account
+from poseidon.core.timeutil import as_utc, iso_time, timestamp
 from poseidon.decision_loop.decisions import DecisionPolicy
 from poseidon.decision_loop.execution import (
     PROTECTIVE_ORIGINS,
@@ -26,7 +29,6 @@ from poseidon.decision_loop.execution import (
     ProtectiveExecutionService,
     internal_state_watermark,
 )
-from poseidon.decision_loop.manifest import canonical_json, content_sha256, iso_time, timestamp
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
@@ -139,10 +141,6 @@ def _number(value) -> Decimal:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ReconciliationConflictError("broker economics must be finite")
     return Decimal(str(value))
-
-
-def _utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _order_dto(record: OrderRecord) -> Order:
@@ -292,7 +290,7 @@ class ReconciliationService:
         if probe is None or not probe.account_scope or not probe.account_generation:
             raise ReconciliationConflictError("decision order has incomplete account identity")
         identity = (probe.account_scope, probe.account_generation)
-        DecisionExecutionService(self.session)._advisory_lock(*identity)
+        lock_account(self.session, *identity)
         account = self.session.scalar(
             select(PaperBrokerAccount)
             .where(
@@ -530,9 +528,9 @@ class ReconciliationService:
                     OrderFillRecord.broker_fill_id == fill.broker_fill_id,
                 )
             )
-            economics = (_number(fill.fill_price), _number(fill.fill_quantity), _utc(fill.fill_time))
+            economics = (_number(fill.fill_price), _number(fill.fill_quantity), as_utc(fill.fill_time))
             if existing is not None:
-                stored = (_number(existing.fill_price), _number(existing.fill_quantity), _utc(existing.fill_time))
+                stored = (_number(existing.fill_price), _number(existing.fill_quantity), as_utc(existing.fill_time))
                 if stored != economics:
                     raise ReconciliationConflictError("fill identity changed economics")
                 if existing.projection_status not in {"projection_pending", "applied"}:
@@ -547,7 +545,7 @@ class ReconciliationService:
                     order_id=order.id,
                     fill_price=fill.fill_price,
                     fill_quantity=fill.fill_quantity,
-                    fill_time=_utc(fill.fill_time),
+                    fill_time=as_utc(fill.fill_time),
                     broker_fill_id=fill.broker_fill_id,
                     projection_status="projection_pending",
                     created_at=imported_at,
@@ -631,7 +629,7 @@ class ReconciliationService:
             raise ReconciliationConflictError("paper account does not exist")
         scope, generation = probe.account_scope, probe.account_generation
         execution = DecisionExecutionService(self.session)
-        execution._advisory_lock(scope, generation)
+        lock_account(self.session, scope, generation)
         account = self.session.scalar(
             select(PaperBrokerAccount)
             .where(PaperBrokerAccount.id == account_id)
@@ -763,7 +761,7 @@ class ReconciliationService:
                 "side": order.side,
                 "quantity": float(_number(row.fill_quantity)),
                 "price": float(_number(row.fill_price)),
-                "fill_time": iso_time(_utc(row.fill_time), "fill_time"),
+                "fill_time": iso_time(as_utc(row.fill_time), "fill_time"),
             }
 
         for rows, output in ((broker_orders, broker), (orders, internal)):
@@ -814,9 +812,9 @@ class ReconciliationService:
                 account.state_version,
             ):
                 raise ReconciliationConflictError("broker snapshot identity/watermark changed")
-            if _utc(snapshot.as_of) > as_of or (
+            if as_utc(snapshot.as_of) > as_of or (
                 policy is not None
-                and (as_of - _utc(snapshot.as_of)).total_seconds() > policy.max_reconciliation_age_seconds
+                and (as_of - as_utc(snapshot.as_of)).total_seconds() > policy.max_reconciliation_age_seconds
             ):
                 raise ReconciliationConflictError("broker snapshot is future or stale")
             if broker["cash"] != {snapshot.currency: float(_number(snapshot.cash))}:
@@ -921,7 +919,7 @@ class ReconciliationService:
                                 )
                             internal_cash += (Decimal("2") * entry_notional - price * amount) * multiplier
                             continue
-                        short_groups.setdefault((identity, _utc(fill.fill_time)), []).append((is_open, amount, price))
+                        short_groups.setdefault((identity, as_utc(fill.fill_time)), []).append((is_open, amount, price))
                 inventory = {}
                 for (identity, _), group in sorted(short_groups.items()):
                     if len({row[0] for row in group}) != 1:

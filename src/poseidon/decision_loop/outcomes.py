@@ -4,21 +4,18 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from poseidon.core.canonical import canonical_json, content_sha256
+from poseidon.core.errors import ValidationError
+from poseidon.core.locks import lock_digest
+from poseidon.core.timeutil import stored_iso_time, stored_timestamp
 from poseidon.decision_loop.evaluation import snapshot_payload
-from poseidon.decision_loop.manifest import (
-    ValidationError,
-    canonical_json,
-    content_sha256,
-    required_text,
-    timestamp,
-    verify_manifest,
-)
+from poseidon.decision_loop.manifest import required_text, verify_manifest
 from poseidon.models.data_manifest import DataManifest
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_run import EvaluationRun
@@ -28,12 +25,6 @@ from poseidon.models.research_revision import ResearchRevision
 
 _CAPABILITIES = frozenset({"price", "benchmark", "fx", "calendar", "research"})
 _QUANTUM = Decimal("0.000000000000000001")
-
-
-def _stored_time(value, field):
-    if isinstance(value, datetime) and value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return timestamp(value, field)
 
 
 def _decimal(value, field):
@@ -154,13 +145,13 @@ def _snapshot_body(snapshot):
         )
     }
     if fields["valid_until"] is not None:
-        fields["valid_until"] = _stored_time(fields["valid_until"], "valid_until")
+        fields["valid_until"] = stored_timestamp(fields["valid_until"], "valid_until")
     return snapshot_payload(fields)
 
 
 def _manifest_facts(manifest, contract, as_of):
     payload = verify_manifest(manifest)
-    if _stored_time(payload["as_of"], "manifest.as_of") != as_of:
+    if stored_timestamp(payload["as_of"], "manifest.as_of") != as_of:
         raise ValidationError("outcome manifest cutoff must equal as_of")
     capabilities = payload.get("capability_json")
     if not isinstance(capabilities, dict) or any(capabilities.get(kind) is not True for kind in _CAPABILITIES):
@@ -184,7 +175,7 @@ def _manifest_facts(manifest, contract, as_of):
     raw_sessions = calendar.get("sessions")
     if not isinstance(raw_sessions, list) or not raw_sessions:
         raise ValidationError("frozen calendar sessions are missing")
-    sessions = [_stored_time(value, "calendar.session") for value in raw_sessions]
+    sessions = [stored_timestamp(value, "calendar.session") for value in raw_sessions]
     if sessions != sorted(set(sessions)):
         raise ValidationError("frozen calendar sessions must be ordered and unique")
 
@@ -213,11 +204,6 @@ def _horizon_time(anchor, horizon, sessions):
     return eligible[offset - 1]
 
 
-def _advisory_keys(digest):
-    raw = bytes.fromhex(digest)
-    return int.from_bytes(raw[:4], "big", signed=True), int.from_bytes(raw[4:8], "big", signed=True)
-
-
 class OutcomeService:
     """Validate, add, and flush outcomes while the caller owns the transaction."""
 
@@ -225,20 +211,12 @@ class OutcomeService:
         self.session = session
 
     def _lock_digests(self, logical_digests):
-        if self.session.get_bind().dialect.name != "postgresql":
-            return
         for digest in sorted(logical_digests):
-            key1, key2 = _advisory_keys(digest)
-            self.session.execute(
-                text("SELECT pg_advisory_xact_lock(:key1, :key2)"),
-                {"key1": key1, "key2": key2},
-            )
+            lock_digest(self.session, digest)
 
     def _contract(self, version):
         required_text(version, "label_definition_version")
-        rows = self.session.scalars(
-            select(OutcomeLabelContract).where(OutcomeLabelContract.version == version)
-        ).all()
+        rows = self.session.scalars(select(OutcomeLabelContract).where(OutcomeLabelContract.version == version)).all()
         if len(rows) != 1:
             raise ValidationError("label contract version must resolve exactly once")
         contract = rows[0]
@@ -258,16 +236,16 @@ class OutcomeService:
 
     def _decisions(self, snapshot, run):
         snapshot_id = str(snapshot.id)
-        decisions = self.session.scalars(
-            select(DecisionRecord).where(DecisionRecord.evaluation_run_id == run.id)
-        ).all()
+        decisions = self.session.scalars(select(DecisionRecord).where(DecisionRecord.evaluation_run_id == run.id)).all()
         matched = []
         for decision in decisions:
             final = decision.final_json
             intents = final.get("order_intents") if isinstance(final, dict) else None
             if not isinstance(intents, list):
                 continue
-            if any(isinstance(intent, dict) and intent.get("evaluation_snapshot_id") == snapshot_id for intent in intents):
+            if any(
+                isinstance(intent, dict) and intent.get("evaluation_snapshot_id") == snapshot_id for intent in intents
+            ):
                 matched.append(decision)
         return matched
 
@@ -277,7 +255,7 @@ class OutcomeService:
             .where(ResearchAssessment.evaluation_snapshot_id == snapshot.id)
             .order_by(ResearchAssessment.assessment_at.desc(), ResearchAssessment.id.desc())
         ).all()
-        eligible = [row for row in rows if _stored_time(row.assessment_at, "assessment_at") <= as_of]
+        eligible = [row for row in rows if stored_timestamp(row.assessment_at, "assessment_at") <= as_of]
         return eligible[0] if eligible else None
 
     def _validate_references(self, candidates):
@@ -313,10 +291,8 @@ class OutcomeService:
                     AccountReconciliation,
                     _uuid(account_id, "account_reconciliation_id"),
                 )
-                if (
-                    reconciliation is None
-                    or _account_reconciliation_sha256(reconciliation)
-                    != references.get("account_reconciliation_sha256")
+                if reconciliation is None or _account_reconciliation_sha256(reconciliation) != references.get(
+                    "account_reconciliation_sha256"
                 ):
                     raise ValidationError("account reconciliation hash drift")
             assessment_id = references.get("assessment_id")
@@ -325,9 +301,7 @@ class OutcomeService:
                     ResearchAssessment,
                     _uuid(assessment_id, "research_assessment_id"),
                 )
-                if assessment is None or assessment.content_sha256 != references.get(
-                    "assessment_content_sha256"
-                ):
+                if assessment is None or assessment.content_sha256 != references.get("assessment_content_sha256"):
                     raise ValidationError("research assessment hash drift")
 
     @staticmethod
@@ -335,14 +309,18 @@ class OutcomeService:
         price_items = [item for item in by_id.values() if item.get("kind") == "price"]
         benchmark_item = by_id[contract["benchmark"]["evidence_id"]]
         if len(price_items) != 1:
-            return "unavailable", "price_missing", {"actual": {"status": "unavailable", "reason": "price_missing"}, "counterfactual": []}
+            return (
+                "unavailable",
+                "price_missing",
+                {"actual": {"status": "unavailable", "reason": "price_missing"}, "counterfactual": []},
+            )
         price_payload = price_items[0].get("payload")
         benchmark_payload = benchmark_item.get("payload")
         if not isinstance(price_payload, dict) or price_payload.get("symbol") != snapshot.symbol:
             raise ValidationError("frozen price identity drift")
         price_values = price_payload.get("values")
         benchmark_values = benchmark_payload.get("values") if isinstance(benchmark_payload, dict) else None
-        anchor_key, maturity_key = _iso(anchor), _iso(maturity)
+        anchor_key, maturity_key = stored_iso_time(anchor, "timestamp"), stored_iso_time(maturity, "timestamp")
         if (
             not isinstance(price_values, dict)
             or not isinstance(benchmark_values, dict)
@@ -351,7 +329,11 @@ class OutcomeService:
             or anchor_key not in benchmark_values
             or maturity_key not in benchmark_values
         ):
-            return "unavailable", "price_missing", {"actual": {"status": "unavailable", "reason": "price_missing"}, "counterfactual": []}
+            return (
+                "unavailable",
+                "price_missing",
+                {"actual": {"status": "unavailable", "reason": "price_missing"}, "counterfactual": []},
+            )
         anchor_price = _decimal(price_values[anchor_key], "price.anchor")
         target_price = _decimal(price_values[maturity_key], "price.horizon")
         benchmark_anchor = _decimal(benchmark_values[anchor_key], "benchmark.anchor")
@@ -361,9 +343,13 @@ class OutcomeService:
         path = []
         for session in sessions:
             if anchor <= session <= maturity:
-                key = _iso(session)
+                key = stored_iso_time(session, "timestamp")
                 if key not in price_values:
-                    return "unavailable", "price_missing", {"actual": {"status": "unavailable", "reason": "price_missing"}, "counterfactual": []}
+                    return (
+                        "unavailable",
+                        "price_missing",
+                        {"actual": {"status": "unavailable", "reason": "price_missing"}, "counterfactual": []},
+                    )
                 path.append(_decimal(price_values[key], "price.path") / anchor_price - 1)
         forward = target_price / anchor_price - 1
         benchmark = benchmark_target / benchmark_anchor - 1
@@ -417,7 +403,10 @@ class OutcomeService:
             return (
                 "unavailable",
                 "research_assessment_unavailable",
-                {"actual": {"status": "unavailable", "reason": "research_assessment_unavailable"}, "counterfactual": []},
+                {
+                    "actual": {"status": "unavailable", "reason": "research_assessment_unavailable"},
+                    "counterfactual": [],
+                },
                 {"assessment_id": str(assessment.id), "assessment_content_sha256": assessment.content_sha256},
             )
         reason = "research_confirmed" if assessment.status == "confirmed" else "research_not_confirmed"
@@ -452,7 +441,13 @@ class OutcomeService:
             "previous_revision_no": None if previous is None else previous.revision_no,
         }
         content = {
-            key: (str(value) if isinstance(value, uuid.UUID) else _iso(value) if isinstance(value, datetime) else value)
+            key: (
+                str(value)
+                if isinstance(value, uuid.UUID)
+                else stored_iso_time(value, "timestamp")
+                if isinstance(value, datetime)
+                else value
+            )
             for key, value in fields.items()
             if key != "content_sha256"
         }
@@ -479,7 +474,7 @@ class OutcomeService:
     ):
         if not isinstance(evaluation_snapshot_ids, (list, tuple)) or not evaluation_snapshot_ids:
             raise ValidationError("evaluation_snapshot_ids must be a non-empty bounded list")
-        as_of = _stored_time(as_of, "as_of")
+        as_of = stored_timestamp(as_of, "as_of")
         contract_row = self._contract(label_definition_version)
         contract = validate_outcome_label_contract(contract_row)
         manifest = self.session.get(DataManifest, _uuid(outcome_manifest_id, "outcome_manifest_id"))
@@ -490,14 +485,14 @@ class OutcomeService:
         candidates = []
         for snapshot_id in evaluation_snapshot_ids:
             snapshot, run = self._snapshot(snapshot_id)
-            anchor = _stored_time(run.decision_as_of, "decision_as_of")
+            anchor = stored_timestamp(run.decision_as_of, "decision_as_of")
             assessment = self._research_assessment(snapshot, as_of)
             decisions = self._decisions(snapshot, run)
             for kind in ("signal", "trade", "research"):
                 for horizon in contract["horizons"][kind]:
                     maturity = _horizon_time(anchor, horizon, sessions)
                     if kind == "research" and assessment is not None:
-                        maturity = min(maturity, _stored_time(assessment.assessment_at, "assessment_at"))
+                        maturity = min(maturity, stored_timestamp(assessment.assessment_at, "assessment_at"))
                     if as_of < maturity:
                         continue
                     subjects = decisions if kind == "trade" else [None]
@@ -564,10 +559,6 @@ class OutcomeService:
             self._snapshot(snapshot_id)
         self._validate_references(candidates)
         return [self._append(item) for item in candidates]
-
-
-def _iso(value):
-    return _stored_time(value, "timestamp").isoformat().replace("+00:00", "Z")
 
 
 def label_mature_outcomes(session_factory, **kwargs):

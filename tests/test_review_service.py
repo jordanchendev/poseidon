@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from poseidon.backtest.experiment_tracker import ExperimentTracker
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.models.experiment import ExperimentRecord
 from poseidon.models.experiment_campaign import CampaignEvent, CampaignReview
 from poseidon.research import paired_review

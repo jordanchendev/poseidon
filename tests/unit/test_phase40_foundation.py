@@ -5,8 +5,7 @@ the foundation context:
 
 - migration 023 (``data_gaps`` table) + DataGap ORM model
 - migration 024 (``ohlcv_1d_cagg`` continuous aggregate) shape
-- Settings fields (``freshness_sla``, ``uptime_kuma_push_url``,
-  ``cagg_1d_markets``) + DataGapResponse / DataFreshnessResponse schemas
+- DataGapResponse / DataFreshnessResponse schemas (the freshness settings moved to Thalassa)
 
 The unit suite runs against an in-memory SQLite harness that uses the
 Postgres-only types via the same ``@compiles`` shims as
@@ -178,58 +177,8 @@ def test_migration_024_downgrade_removes_policy_and_view():
 
 
 # ---------------------------------------------------------------------------
-# Settings + schemas
+# Schemas
 # ---------------------------------------------------------------------------
-
-
-def test_settings_freshness_sla_defaults():
-    """Settings.freshness_sla must default to the locked foundation
-    SLA values, keyed as ``"market:interval"`` -> seconds."""
-    from poseidon.core.config import Settings
-
-    s = Settings()
-    assert isinstance(s.freshness_sla, dict)
-    assert s.freshness_sla  # non-empty
-    # crypto_perp/4h -> 5h (18000s)
-    assert s.freshness_sla["crypto_perp:4h"] == 18000
-    # crypto_spot/1h -> 2h (7200s)
-    assert s.freshness_sla["crypto_spot:1h"] == 7200
-    # crypto_spot/1d -> 30h (108000s)
-    assert s.freshness_sla["crypto_spot:1d"] == 108000
-    # tw_stock/1d -> 30h (covers weekends+holidays)
-    assert s.freshness_sla["tw_stock:1d"] == 108000
-    # tw_futures/1d -> 30h
-    assert s.freshness_sla["tw_futures:1d"] == 108000
-    # us_stock/1d -> 30h
-    assert s.freshness_sla["us_stock:1d"] == 108000
-
-
-def test_settings_uptime_kuma_push_url_default_empty():
-    """uptime_kuma_push_url defaults to empty string (no-op for
-    local/dev) and reads UPTIME_KUMA_PUSH_URL (unprefixed env var)."""
-    from poseidon.core.config import Settings
-
-    s = Settings()
-    assert s.uptime_kuma_push_url == ""
-
-
-def test_settings_uptime_kuma_push_url_env_override(monkeypatch):
-    """The UPTIME_KUMA_PUSH_URL validation_alias must pick up an
-    unprefixed env var (the watchdog runbook sets exactly this name)."""
-    from poseidon.core.config import Settings
-
-    monkeypatch.setenv("UPTIME_KUMA_PUSH_URL", "http://localhost:3001/api/push/fake-token")
-    s = Settings()
-    assert s.uptime_kuma_push_url == "http://localhost:3001/api/push/fake-token"
-
-
-def test_settings_cagg_1d_markets_default():
-    """cagg_1d_markets defaults to crypto_perp and crypto_spot only
-    (the only markets with sub-daily raw data today)."""
-    from poseidon.core.config import Settings
-
-    s = Settings()
-    assert s.cagg_1d_markets == ["crypto_perp", "crypto_spot"]
 
 
 def test_data_gap_response_schema_instantiates():

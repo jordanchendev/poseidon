@@ -9,9 +9,11 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
+from poseidon.core.canonical import content_sha256
+from poseidon.core.errors import ValidationError
 from poseidon.decision_loop import evaluation
 from poseidon.decision_loop.evaluation import EvaluationService
-from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256
+from poseidon.decision_loop.manifest import ManifestService
 from poseidon.models.base import Base
 from poseidon.models.research_revision import ResearchRevision
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest

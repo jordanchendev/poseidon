@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
@@ -308,8 +309,8 @@ def _indexes(engine):
     return {row[0] for row in rows}
 
 
-def _assert_047_applied(engine):
-    assert _version(engine) == "047"
+def _assert_047_applied(engine, version="047"):
+    assert _version(engine) == version
     constraints = _constraints(engine)
     assert set(constraints) == set(CONSTRAINT_NAMES)
     assert all(constraints.values()), constraints
@@ -347,7 +348,7 @@ def test_047_constraint_and_index_literals_are_well_formed():
 def test_047_empty_upgrade_head_validates_every_constraint_and_index(hardening_database):
     config, engine = hardening_database
     command.upgrade(config, "head")
-    _assert_047_applied(engine)
+    _assert_047_applied(engine, version=ScriptDirectory.from_config(config).get_current_head())
 
 
 def test_047_seeded_046_upgrade_accepts_legacy_and_loop_rows(hardening_database):

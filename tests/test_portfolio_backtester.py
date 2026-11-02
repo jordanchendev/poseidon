@@ -607,8 +607,8 @@ class TestPortfolioBacktester:
         price = backtester._get_adj_close_price(ohlcv, date(2023, 1, 2))
         assert price == pytest.approx(100.0)
 
-    def test_execute_orders_uses_close_not_adj_close(self, cost_model):
-        """Order fills should use close price, not adj_close."""
+    def test_execute_orders_fill_at_adj_close(self, cost_model):
+        """Order fills use adj_close like every other price lookup (a274efa unified them)."""
         dates = pd.to_datetime(["2023-01-02"])
         ohlcv = pd.DataFrame(
             {
@@ -635,8 +635,7 @@ class TestPortfolioBacktester:
         assert result.status == "completed"
         buy_trades = [t for t in result.trades if t["action"] == "buy"]
         assert len(buy_trades) == 1
-        # Fill price should be close (100), not adj_close (200)
-        assert buy_trades[0]["price"] == pytest.approx(100.0)
+        assert buy_trades[0]["price"] == pytest.approx(200.0)
 
     def test_stop_loss_uses_adj_close(self, cost_model):
         """Stop loss check should use adj_close, not close."""

@@ -244,7 +244,10 @@ class PortfolioBacktester:
                 [nav for _, nav in equity_curve],
                 index=pd.DatetimeIndex([pd.Timestamp(d) for d, _ in equity_curve]),
             )
-            metrics = compute_metrics(equity_series, trades=trades, bars_per_year=252)
+            # ``trades`` are execution dicts without a per-trade pnl, so the trade-level metrics stay
+            # equity-only; compute_metrics reads TradeRecord attributes and raised on these dicts.
+            metrics = compute_metrics(equity_series, trades=[], bars_per_year=252)
+            metrics["trade_count"] = len(trades)
         else:
             metrics = {}
 
@@ -274,25 +277,6 @@ class PortfolioBacktester:
             if price is not None:
                 nav += h.shares * price
         return nav
-
-    def _get_close_price(self, df: pd.DataFrame, d: date) -> float | None:
-        """Get close price for a date from an OHLCV DataFrame.
-
-        Handles both Timestamp and date indices.
-        Used for order execution fill prices (close for fills).
-        """
-        # Try direct lookup with Timestamp
-        ts = pd.Timestamp(d)
-        if ts in df.index:
-            return float(df.loc[ts, "close"])
-
-        # Try date lookup (for date-indexed DataFrames)
-        for idx in df.index:
-            idx_date = idx.date() if isinstance(idx, (pd.Timestamp, datetime)) else idx
-            if idx_date == d:
-                return float(df.loc[idx, "close"])
-
-        return None
 
     def _get_adj_close_price(self, df: pd.DataFrame, d: date) -> float | None:
         """Get adj_close for return calculation, falling back to close.

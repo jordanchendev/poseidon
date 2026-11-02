@@ -3,20 +3,13 @@
 import json
 import uuid
 from collections import Counter
-from datetime import UTC
 
 from sqlalchemy.exc import IntegrityError
 
-from poseidon.decision_loop.manifest import (
-    ValidationError,
-    canonical_json,
-    content_sha256,
-    iso_time,
-    required_text,
-    timestamp,
-    validate_manifest,
-    verify_manifest,
-)
+from poseidon.core.canonical import canonical_json, content_sha256
+from poseidon.core.errors import ValidationError
+from poseidon.core.timeutil import iso_time, stored_timestamp, timestamp
+from poseidon.decision_loop.manifest import required_text, validate_manifest, verify_manifest
 from poseidon.decision_loop.research import validate_research
 from poseidon.models.data_manifest import DataManifest
 from poseidon.models.evaluation_run import EvaluationRun
@@ -64,13 +57,6 @@ def snapshot_payload(snapshot):
     return json.loads(canonical_json(payload))
 
 
-def _stored_time(value, field):
-    if value is not None and value.tzinfo is None:
-        # SQLite strips timezone metadata; production DateTime(timezone=True) preserves it.
-        value = value.replace(tzinfo=UTC)
-    return timestamp(value, field)
-
-
 def _snapshot_row_payload(row):
     fields = {
         field: getattr(row, field)
@@ -87,7 +73,7 @@ def _snapshot_row_payload(row):
         )
     }
     if fields["valid_until"] is not None:
-        fields["valid_until"] = _stored_time(fields["valid_until"], "valid_until")
+        fields["valid_until"] = stored_timestamp(fields["valid_until"], "valid_until")
     return snapshot_payload(fields)
 
 
@@ -128,7 +114,7 @@ def verify_complete_run(session, run_id):
     except (TypeError, ValueError) as error:
         raise ValidationError("strategy version content hash mismatch") from error
     manifest_payload = verify_manifest(manifest)
-    cutoff = _stored_time(run.decision_as_of, "run.decision_as_of")
+    cutoff = stored_timestamp(run.decision_as_of, "run.decision_as_of")
     validate_manifest(dict(manifest_payload, as_of=iso_time(cutoff, "decision_as_of")))
 
     if not isinstance(run.universe_json, list) or not run.universe_json:

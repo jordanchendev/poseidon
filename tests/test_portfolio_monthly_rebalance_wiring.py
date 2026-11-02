@@ -391,7 +391,7 @@ def test_decision_preflight_failure_never_claims_or_submits(cutover_account, mon
 
             from sqlalchemy import update
 
-            from poseidon.decision_loop.manifest import content_sha256
+            from poseidon.core.canonical import content_sha256
             from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 
             version = session.get(StrategyVersion, cutover_account.version_id)

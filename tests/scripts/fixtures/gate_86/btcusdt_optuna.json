@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0.0",
+  "phase": "85",
+  "symbol": "BTCUSDT",
+  "interval": "1m",
+  "study_name": "phase85_btcusdt_seed42",
+  "storage_url_redacted": "postgresql://poseidon:***@host.docker.internal:5433/poseidon?options=-csearch_path%3Doptuna",
+  "n_trials_target": 100,
+  "n_trials_completed": 100,
+  "n_trials_failed": 0,
+  "best_params": {
+    "lookback_bars": 5623,
+    "cooldown_bars": 850,
+    "wick_ratio_min": 0.05213789948313337,
+    "breakout_distance_min": 0.2485771420533918,
+    "oi_buildup_min": 1.3326057631552972,
+    "fib_level": 0.4285154350163666,
+    "atr_multiplier_low": 2.886759029971116,
+    "atr_multiplier_mid": 3.2763260016257734,
+    "atr_multiplier_high": 5.428197214307623
+  },
+  "factory_params_resolved": {
+    "lookback_bars": 5623,
+    "wick_ratio_min": 0.05213789948313337,
+    "breakout_distance_min": 0.2485771420533918,
+    "oi_buildup_min": 1.3326057631552972,
+    "confirmation_threshold": 0.5,
+    "w_oi_drop": 0.4,
+    "w_volume": 0.3,
+    "w_funding": 0.3,
+    "fib_level": 0.4285154350163666,
+    "atr_mult_regime_0": 2.886759029971116,
+    "atr_mult_regime_1": 3.2763260016257734,
+    "atr_mult_regime_2": 5.428197214307623,
+    "atr_mult_regime_3": 2.0,
+    "cooldown_bars": 850,
+    "trailing_activation_r": 1.0,
+    "trail_atr_multiplier": 2.0
+  },
+  "best_value_is_sharpe": 2.133745100846463,
+  "bars_per_year": 525600,
+  "seed": 42,
+  "data_window": {
+    "start": "2025-07-31T00:00:00+00:00",
+    "end": "2026-04-26T00:00:00+00:00"
+  },
+  "budget_summary": {
+    "total_seconds": 184.54993014410138,
+    "optuna_seconds": 0.5592347600031644,
+    "wfe_seconds": 127.22306563705206,
+    "peak_rss_mb": 268.61328125
+  },
+  "frozen_gate_anchor": "5a1ecc9",
+  "verdict_inputs": {
+    "n_trials_completed": 100,
+    "n_trials_failed": 0,
+    "best_value_is_sharpe": 2.133745100846463
+  },
+  "generated_at": "2026-04-28T07:18:24Z"
+}

@@ -4,12 +4,14 @@ import uuid
 from datetime import timedelta
 
 import pytest
-from fastapi import HTTPException
 
-from poseidon.api.auth import AuthPrincipal
+from poseidon.core.authz import AuthorizationError, AuthPrincipal
+from poseidon.core.canonical import content_sha256
+from poseidon.core.errors import ValidationError
+from poseidon.core.timeutil import timestamp
 from poseidon.decision_loop import evaluation
 from poseidon.decision_loop.evaluation import EvaluationService
-from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256, timestamp
+from poseidon.decision_loop.manifest import ManifestService
 from poseidon.decision_loop.producer import ProducerService
 from poseidon.decision_loop.research import ResearchService, is_superseded, superseded_by
 from poseidon.models.research_revision import ResearchRevision
@@ -170,7 +172,7 @@ def test_completion_rejects_missing_role_worker_and_cross_account(db, principal,
     manifest = ManifestService(db).freeze(manifest_request())
     service = ResearchService(db)
     revision = prepare(service, manifest)
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(AuthorizationError):
         service.complete_human_research(
             revision.id,
             narrative(manifest),
@@ -178,7 +180,6 @@ def test_completion_rejects_missing_role_worker_and_cross_account(db, principal,
             account_scope=account_scope,
             request_sha256=revision.request_sha256,
         )
-    assert error.value.status_code == 403
 
 
 def excerpt_manifest(db, fundamental_tier=None, ohlcv_tier=None):

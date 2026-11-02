@@ -12,16 +12,16 @@ import pandas as pd
 import pytest
 from sqlalchemy import delete, select, text, update
 
-from poseidon.api.auth import AuthPrincipal
 from poseidon.broker.base import BrokerCapabilityError
 from poseidon.broker.paper_adapter import PaperBrokerAdapter
+from poseidon.core.authz import AuthPrincipal
+from poseidon.core.canonical import content_sha256
 from poseidon.decision_loop.execution import (
     DecisionExecutionService,
     ExecutionConflictError,
     ProtectiveExecutionService,
     internal_state_watermark,
 )
-from poseidon.decision_loop.manifest import content_sha256
 from poseidon.decision_loop.reconciliation import ReconciliationService, submit_or_reconcile_order
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_record import DecisionRecord

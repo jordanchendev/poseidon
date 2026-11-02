@@ -7,12 +7,18 @@ isolated PostgreSQL URL supplied by the Phase 91 executor.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 from contextlib import contextmanager
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("rdagent") is None,
+    reason="requires the qlib-research RD-Agent image",
+)
 
 
 @pytest.fixture

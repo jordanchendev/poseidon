@@ -35,10 +35,10 @@ def test_autoresearch_request_accepts_voting():
     assert req.strategy_type == "voting"
 
 
-def test_autoresearch_request_accepts_liquidity_sweep():
-    """AutoResearchRequest accepts strategy_type='liquidity_sweep'."""
-    req = _make_request(strategy_type="liquidity_sweep")
-    assert req.strategy_type == "liquidity_sweep"
+def test_autoresearch_request_rejects_archived_liquidity_sweep():
+    """strategy_type='liquidity_sweep' is rejected: LiquiditySweepStrategy was archived in 2d4ca38."""
+    with pytest.raises(pydantic.ValidationError):
+        _make_request(strategy_type="liquidity_sweep")
 
 
 def test_autoresearch_request_accepts_rule():

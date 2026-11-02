@@ -49,7 +49,6 @@ class TestCompositeScore:
             "sharpe_ratio": 2.0,
         }
         # dd_penalty = max(0, 0.10 - 0.15) * 0.05 = 0.0
-        # turnover: no avg_trade_value -> turnover_ratio=0 -> penalty=0
         # score = 2.0 * sqrt(min(60/50, 1.0)) - 0.0 - 0.0 = 2.0
         assert compute_composite_score(metrics) == pytest.approx(2.0)
 
@@ -75,45 +74,15 @@ class TestCompositeScore:
         }
         assert compute_composite_score(metrics) == pytest.approx(2.0)
 
-    def test_turnover_ratio_below_500_no_penalty(self):
-        """turnover_ratio < 500 -> turnover_penalty=0.0."""
-        metrics = {
-            "trade_count": 100,
-            "max_drawdown": 0.10,
-            "total_return": 0.5,
-            "sharpe_ratio": 2.0,
-            "avg_trade_value": 1000.0,
-            "initial_capital": 100000.0,
-        }
-        # turnover_ratio = 100 * 1000 / 100000 = 1.0 (well under 500)
-        # turnover_penalty = max(0, 1.0 - 500) * 0.001 = 0.0
+    def test_optimal_trade_zone_has_no_trade_penalty(self):
+        """50-200 trades -> trade_factor 1.0 (the turnover penalty was replaced by this zone in b4756d9)."""
+        metrics = {"trade_count": 200, "max_drawdown": 0.10, "total_return": 0.5, "sharpe_ratio": 2.0}
         assert compute_composite_score(metrics) == pytest.approx(2.0)
 
-    def test_turnover_ratio_above_500_has_penalty(self):
-        """turnover_ratio > 500 -> turnover_penalty > 0."""
-        metrics = {
-            "trade_count": 10000,
-            "max_drawdown": 0.10,
-            "total_return": 0.5,
-            "sharpe_ratio": 2.0,
-            "avg_trade_value": 10000.0,
-            "initial_capital": 100000.0,
-        }
-        # turnover_ratio = 10000 * 10000 / 100000 = 1000
-        # turnover_penalty = max(0, 1000 - 500) * 0.001 = 0.5
-        expected = 2.0 * 1.0 - 0.0 - 0.5
-        assert compute_composite_score(metrics) == pytest.approx(expected)
-
-    def test_no_avg_trade_value_defaults_zero_turnover(self):
-        """Without avg_trade_value, turnover_ratio=0, penalty=0."""
-        metrics = {
-            "trade_count": 100,
-            "max_drawdown": 0.10,
-            "total_return": 0.5,
-            "sharpe_ratio": 2.0,
-        }
-        # No avg_trade_value -> defaults to 0.0 -> ratio=0 -> penalty=0
-        assert compute_composite_score(metrics) == pytest.approx(2.0)
+    def test_overtrading_decays_the_score(self):
+        """>200 trades -> trade_factor = 1/sqrt(trades/200); 3200 trades -> 0.25."""
+        metrics = {"trade_count": 3200, "max_drawdown": 0.10, "total_return": 0.5, "sharpe_ratio": 2.0}
+        assert compute_composite_score(metrics) == pytest.approx(2.0 * 0.25)
 
     def test_low_trade_count_penalty(self):
         """trade_count=25 (below 50) -> trade_factor = sqrt(25/50) penalizes score."""
@@ -123,12 +92,12 @@ class TestCompositeScore:
             "total_return": 0.5,
             "sharpe_ratio": 2.0,
         }
-        # dd_penalty = 0 (under 15%), turnover = 0 (no avg_trade_value)
+        # dd_penalty = 0 (under 15%)
         expected = 2.0 * math.sqrt(0.5) - 0.0 - 0.0
         assert compute_composite_score(metrics) == pytest.approx(expected)
 
     def test_zero_sharpe(self):
-        """sharpe=0.0 -> score is 0 (no dd or turnover penalty when below thresholds)."""
+        """sharpe=0.0 -> score is 0 (no dd penalty below the threshold)."""
         metrics = {
             "trade_count": 100,
             "max_drawdown": 0.10,

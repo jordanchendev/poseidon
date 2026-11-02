@@ -6,9 +6,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from poseidon.api.auth import AuthPrincipal, verify_api_key
+from poseidon.api.auth import verify_api_key
 from poseidon.api.capabilities import router as capabilities_router
 from poseidon.capabilities.registry import ComponentCapability
+from poseidon.core.authz import AuthPrincipal
 
 # --------------- Test app setup ---------------
 

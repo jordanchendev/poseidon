@@ -9,8 +9,9 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
+from poseidon.core.canonical import content_sha256
 from poseidon.decision_loop.evaluation import snapshot_payload
-from poseidon.decision_loop.manifest import ManifestService, content_sha256
+from poseidon.decision_loop.manifest import ManifestService
 from poseidon.decision_loop.outcomes import OutcomeService
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_run import EvaluationRun
@@ -189,11 +190,14 @@ def test_concurrent_same_input_returns_one_identical_outcome(
         results = [future.result(timeout=20) for future in futures]
     assert results[0] == results[1]
     with phase99_session_factory() as session:
-        assert session.scalar(
-            select(func.count()).select_from(OutcomeRecord).where(
-                OutcomeRecord.logical_key_sha256 == item["logical_key_sha256"]
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(OutcomeRecord)
+                .where(OutcomeRecord.logical_key_sha256 == item["logical_key_sha256"])
             )
-        ) == 1
+            == 1
+        )
 
 
 def test_concurrent_outcome_corrections_form_one_unbranched_chain(
@@ -222,12 +226,15 @@ def test_concurrent_outcome_corrections_form_one_unbranched_chain(
         ).all()
         assert [row.revision_no for row in rows] == [1, 2, 3]
         assert [row.previous_outcome_id for row in rows] == [None, rows[0].id, rows[1].id]
-        assert session.execute(
-            select(OutcomeRecord.previous_outcome_id, func.count())
-            .where(OutcomeRecord.previous_outcome_id.is_not(None))
-            .group_by(OutcomeRecord.previous_outcome_id)
-            .having(func.count() > 1)
-        ).all() == []
+        assert (
+            session.execute(
+                select(OutcomeRecord.previous_outcome_id, func.count())
+                .where(OutcomeRecord.previous_outcome_id.is_not(None))
+                .group_by(OutcomeRecord.previous_outcome_id)
+                .having(func.count() > 1)
+            ).all()
+            == []
+        )
 
     replayed = []
     with phase99_session_factory() as session, session.begin():

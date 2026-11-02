@@ -2,13 +2,17 @@
 
 import asyncio
 import hashlib
+import importlib
 import json
+import pkgutil
 
 import pytest
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from poseidon.api.auth import get_auth_principal, verify_api_key
+import poseidon.api
+from poseidon.api.auth import AuthorizedRoute, get_auth_principal, verify_api_key
+from poseidon.core.authz import AuthorizationError
 from poseidon.core.config import settings
 
 
@@ -53,18 +57,16 @@ def test_wrong_role_and_cross_account_are_forbidden():
         (principal.require_role, "release_manager"),
         (principal.require_account_scope, "paper:other"),
     ):
-        with pytest.raises(HTTPException) as error:
+        with pytest.raises(AuthorizationError):
             check(value)
-        assert error.value.status_code == 403
 
 
 def test_worker_cannot_submit_research_approve_or_release():
     configure(actor_id="service:decision-worker", roles=["decision-worker"])
     principal = resolve()
     for role in ("researcher", "portfolio_manager", "release_manager"):
-        with pytest.raises(HTTPException) as error:
+        with pytest.raises(AuthorizationError):
             principal.require_role(role)
-        assert error.value.status_code == 403
 
 
 def test_principal_kind_and_capabilities_are_derived_from_roles():
@@ -90,7 +92,7 @@ def test_legacy_key_keeps_secured_endpoint_access_without_authority():
     assert principal.actor_id == "legacy-api-key"
     assert not principal.roles and not principal.account_scopes
     for role in ("portfolio_manager", "release_manager"):
-        with pytest.raises(HTTPException):
+        with pytest.raises(AuthorizationError):
             principal.require_role(role)
 
 
@@ -136,3 +138,30 @@ def test_unmapped_key_is_rejected():
     with pytest.raises(HTTPException) as error:
         resolve("unknown-secret")
     assert error.value.status_code == 401
+
+
+def test_authorized_route_answers_domain_denial_with_403_in_any_app():
+    """Routers built with AuthorizedRoute need no app-level handler (main, pipeline service, tests)."""
+    configure()
+    router = APIRouter(route_class=AuthorizedRoute)
+
+    @router.get("/release")
+    def release(principal=Depends(get_auth_principal)):
+        principal.require_role("release_manager")
+        return {"ok": True}
+
+    app = FastAPI()
+    app.include_router(router)
+    response = TestClient(app).get("/release", headers={"X-API-Key": "human-secret"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Role not authorized"
+
+
+def test_every_principal_aware_router_uses_authorized_route():
+    """A router that resolves principals must turn AuthorizationError into 403, not a 500."""
+    for module_info in pkgutil.iter_modules(poseidon.api.__path__):
+        module = importlib.import_module(f"poseidon.api.{module_info.name}")
+        router = getattr(module, "router", None)
+        if router is None or "get_auth_principal" not in vars(module):
+            continue
+        assert router.route_class is AuthorizedRoute, module.__name__

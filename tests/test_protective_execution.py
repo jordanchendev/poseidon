@@ -14,10 +14,10 @@ from sqlalchemy.exc import IntegrityError
 
 from poseidon.broker.base import BrokerAdapter, BrokerCapabilities, BrokerCapabilityError, BrokerOrderSnapshot
 from poseidon.broker.paper_adapter import PaperBrokerAdapter, _ensure_legacy_baselines
+from poseidon.core.canonical import content_sha256
 from poseidon.core.config import settings
 from poseidon.decision_loop.decisions import DecisionService
 from poseidon.decision_loop.execution import ExecutionConflictError, ProtectiveExecutionService
-from poseidon.decision_loop.manifest import content_sha256
 from poseidon.decision_loop.reconciliation import (
     ReconciliationConflictError,
     ReconciliationService,
@@ -441,6 +441,24 @@ def test_protective_intent_cannot_increase_exposure(seed, action):
 
     with pytest.raises(ExecutionConflictError, match="reduction-only"):
         _materialize(seed, action=action)
+
+
+def test_protective_identity_is_px_plus_the_dedupe_digest(seed):
+    """Characterization: the client order ref, execution key, and order id all derive from one digest."""
+    lot, _ = _opening(seed, quantity=3)
+    result = _materialize(seed)
+    digest = content_sha256(
+        {
+            "account_scope": seed.account,
+            "account_generation": "generation-1",
+            "origin": "stop_loss",
+            "source_lot_ids": [str(lot)],
+            "trigger_generation": "price:80",
+        }
+    )
+    assert result["client_order_refs"] == [f"PX-{digest}"]
+    assert result["execution_key"] == str(uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:execution:{digest}"))
+    assert result["order_ids"] == [str(uuid.uuid5(uuid.NAMESPACE_URL, f"poseidon:protective:order:{digest}"))]
 
 
 def test_dedupe_maps_all_source_lots_and_replays_one_order(seed):

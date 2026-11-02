@@ -5,11 +5,10 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import create_engine, update
 from sqlalchemy.orm import Session
 
-from poseidon.api.auth import AuthPrincipal
+from poseidon.core.authz import AuthorizationError, AuthPrincipal
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionService
 from poseidon.models.base import Base
 from poseidon.models.decision_event import DecisionEvent
@@ -98,14 +97,13 @@ def test_claim_requires_worker_role_and_exact_account_scope(db):
     )
 
     for principal in principals:
-        with pytest.raises(HTTPException) as error:
+        with pytest.raises(AuthorizationError):
             DecisionService(db).claim_execution(
                 decision.id,
                 2,
                 principal=principal,
                 now=CLAIM_TIME,
             )
-        assert error.value.status_code == 403
 
     assert decision.execution_key is None
     assert db.query(DecisionEvent).filter_by(decision_id=decision.id, event_type="execution_claimed").count() == 0
@@ -208,13 +206,12 @@ def test_claim_next_selects_only_the_authorized_account(db):
     )["decision_id"] == str(decision.id)
     assert decision.execution_key is not None
 
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(AuthorizationError):
         DecisionService(db).claim_next_approved(
             "paper:other",
             principal=worker(),
             now=CLAIM_TIME,
         )
-    assert error.value.status_code == 403
 
 
 @pytest.mark.parametrize("claim_next", [False, True])

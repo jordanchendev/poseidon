@@ -15,6 +15,7 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 
 # --- SQLite compatibility: register before any model import ---
@@ -115,8 +116,6 @@ class TestBacktestRunRequestSchema:
 
     def test_fill_model_invalid_rejected(self):
         """Invalid fill_model value is rejected by pattern validation."""
-        from pydantic import ValidationError
-
         from poseidon.api.backtests import BacktestRunRequest
 
         with pytest.raises(ValidationError):
@@ -147,8 +146,6 @@ class TestBacktestRunRequestSchema:
 
     def test_sizing_mode_invalid_rejected(self):
         """Invalid sizing_mode is rejected."""
-        from pydantic import ValidationError
-
         from poseidon.api.backtests import BacktestRunRequest
 
         with pytest.raises(ValidationError):
@@ -202,15 +199,15 @@ class TestBacktestRunRequestSchema:
 class TestAutoResearchRequestSchema:
     """Test AutoResearchRequest Pydantic schema with strategy_type field."""
 
-    def test_accepts_strategy_type_liquidity_sweep(self):
-        """strategy_type='liquidity_sweep' is accepted."""
+    def test_rejects_archived_strategy_type_liquidity_sweep(self):
+        """strategy_type='liquidity_sweep' is rejected: LiquiditySweepStrategy was archived in 2d4ca38."""
         from poseidon.api.autoresearch import AutoResearchRequest
 
-        req = AutoResearchRequest(
-            markets=[{"symbol": "BTCUSDT", "market": "crypto_spot", "interval": "1h"}],
-            strategy_type="liquidity_sweep",
-        )
-        assert req.strategy_type == "liquidity_sweep"
+        with pytest.raises(ValidationError):
+            AutoResearchRequest(
+                markets=[{"symbol": "BTCUSDT", "market": "crypto_spot", "interval": "1h"}],
+                strategy_type="liquidity_sweep",
+            )
 
     def test_accepts_strategy_type_voting(self):
         """strategy_type='voting' is accepted."""
@@ -224,8 +221,6 @@ class TestAutoResearchRequestSchema:
 
     def test_strategy_type_invalid_rejected(self):
         """Invalid strategy_type is rejected."""
-        from pydantic import ValidationError
-
         from poseidon.api.autoresearch import AutoResearchRequest
 
         with pytest.raises(ValidationError):
@@ -344,21 +339,21 @@ class TestAutoResearchEndpointWiring:
 
     @patch("poseidon.api.autoresearch.autoresearch_run")
     def test_strategy_type_in_search_config(self, mock_task):
-        """strategy_type='liquidity_sweep' is included in search_config dict."""
+        """strategy_type='rule' is included in search_config dict."""
         mock_task.delay.return_value = MagicMock(id="task-456")
 
         resp = client.post(
             "/api/autoresearch/run",
             json={
                 "markets": [{"symbol": "BTCUSDT", "market": "crypto_spot", "interval": "1h"}],
-                "strategy_type": "liquidity_sweep",
+                "strategy_type": "rule",
             },
             headers=API_KEY_HEADER,
         )
         assert resp.status_code == 202
         call_args = mock_task.delay.call_args
         search_config = call_args.args[0]
-        assert search_config["strategy_type"] == "liquidity_sweep"
+        assert search_config["strategy_type"] == "rule"
 
     @patch("poseidon.api.autoresearch.autoresearch_run")
     def test_strategy_type_default_voting_in_search_config(self, mock_task):
@@ -424,8 +419,6 @@ class TestDualModeRequestSchema:
 
     def test_sizing_mode_invalid_rejected(self):
         """Invalid sizing_mode is rejected."""
-        from pydantic import ValidationError
-
         from poseidon.api.backtests import DualModeRequest
 
         with pytest.raises(ValidationError):

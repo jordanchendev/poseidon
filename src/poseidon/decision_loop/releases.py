@@ -8,20 +8,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import func, select, text
 
-from poseidon.api.auth import AuthPrincipal
+from poseidon.core.authz import AuthorizationError, AuthPrincipal
+from poseidon.core.canonical import canonical_json, content_sha256
+from poseidon.core.errors import ValidationError
+from poseidon.core.locks import lock_account
+from poseidon.core.timeutil import as_utc, timestamp
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionPolicy
-from poseidon.decision_loop.manifest import (
-    ValidationError,
-    canonical_json,
-    content_sha256,
-    required_text,
-    timestamp,
-)
+from poseidon.decision_loop.manifest import required_text
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.experiment import ExperimentRecord
@@ -488,10 +485,6 @@ class ReleaseGateRejected(DecisionConflictError):
         self.result = result
         failed = ", ".join(predicate.code for predicate in result.predicates if predicate.state != "passed")
         super().__init__(f"{operation} gate did not pass: {failed}")
-
-
-def _stored_time(value: datetime) -> datetime:
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _predicate(code: str, state: PredicateState, reason: str, **evidence) -> ReleasePredicate:
@@ -1006,7 +999,7 @@ class ReleaseService:
         if reconciliation is None:
             return _predicate("reconciliation", "unavailable", "account reconciliation does not exist", **evidence)
         current_time = timestamp(now if now is not None else datetime.now(UTC), "now")
-        age = (current_time - _stored_time(reconciliation.as_of)).total_seconds()
+        age = (current_time - as_utc(reconciliation.as_of)).total_seconds()
         if (
             reconciliation.account_scope != policy.account_scope
             or reconciliation.account_generation != policy.reconciliation.account_generation
@@ -1043,7 +1036,7 @@ class ReleaseService:
         try:
             principal.require_role("release_manager")
             principal.require_account_scope(policy.account_scope)
-        except HTTPException:
+        except AuthorizationError:
             return _predicate("release_authority", "blocked", "principal lacks human release authority", **evidence)
         return _predicate("release_authority", "passed", "human release manager covers account scope", **evidence)
 
@@ -1161,12 +1154,7 @@ class ReleaseService:
     def _lock_reconciliation_authority(self, policy):
         if policy.reconciliation is None:
             return
-        from poseidon.decision_loop.execution import DecisionExecutionService
-
-        DecisionExecutionService(self.session)._advisory_lock(
-            policy.account_scope,
-            policy.reconciliation.account_generation,
-        )
+        lock_account(self.session, policy.account_scope, policy.reconciliation.account_generation)
 
     @staticmethod
     def _account_identity(policy):

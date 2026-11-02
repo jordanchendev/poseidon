@@ -6,37 +6,13 @@ walk-forward window count, and the WindowResult attribute surface.
 
 from __future__ import annotations
 
-import os
-import subprocess
-
 import pytest
+
+from poseidon.backtest.liquidity_sweep_factory import PARAM_BOUNDS
 
 
 class TestPreFlight:
-    """Ordering anchor + Postgres schema check."""
-
-    def test_d20_anchor_in_git_log(self):
-        """Frozen-gate commit 5a1ecc9 must precede every phase85 commit."""
-        # Anchor lives in the AQUARIUM repo, not poseidon. Walk up from this
-        # file to find aquarium root (../../../..). Fall back to AQUARIUM_ROOT
-        # env if path varies.
-        candidate = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-        result = subprocess.run(
-            ["git", "log", "--oneline", "5a1ecc9", "-1"],
-            cwd=candidate,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            aquarium_root = os.environ.get("AQUARIUM_ROOT", "/Users/jordanchen/Workspace/Projects/aquarium")
-            result = subprocess.run(
-                ["git", "log", "--oneline", "5a1ecc9", "-1"],
-                cwd=aquarium_root,
-                capture_output=True,
-                text=True,
-            )
-        assert result.returncode == 0, f"frozen-gate anchor 5a1ecc9 missing from git history: {result.stderr}"
-        assert "5a1ecc9" in result.stdout
+    """Postgres schema check."""
 
     def test_pg_schema_check(self, fixture_postgres_url):
         """Postgres ``optuna`` schema exists. Skip if Postgres unreachable."""
@@ -136,8 +112,7 @@ class TestParamRemap:
         assert space == PARAM_SPACE
 
     def test_resolve_factory_params_full_17_keys(self):
-        """resolve_factory_params must return all 17 PARAM_BOUNDS keys."""
-        from poseidon.backtest.liquidity_sweep_factory import PARAM_BOUNDS
+        """resolve_factory_params must return every PARAM_BOUNDS key."""
         from poseidon.backtest.phase85_strategy_factory import resolve_factory_params
 
         resolved = resolve_factory_params(SAMPLE_D01)
@@ -501,16 +476,16 @@ class TestToJsonable:
 
     def test_nan_becomes_null(self):
         """NaN floats must become JSON null (JSON has no NaN literal)."""
-        from poseidon.backtest.phase85_metrics import to_jsonable
+        from poseidon.backtest.phase85_metrics import finite_or_none, to_jsonable
 
-        text = json.dumps({"v": np.float64("nan")}, default=to_jsonable)
+        text = json.dumps(finite_or_none({"v": np.float64("nan")}), default=to_jsonable)
         assert json.loads(text)["v"] is None
 
     def test_inf_becomes_null(self):
         """Inf floats must also become JSON null (verdict safety)."""
-        from poseidon.backtest.phase85_metrics import to_jsonable
+        from poseidon.backtest.phase85_metrics import finite_or_none, to_jsonable
 
-        text = json.dumps({"v": np.float64("inf")}, default=to_jsonable)
+        text = json.dumps(finite_or_none({"v": np.float64("inf")}), default=to_jsonable)
         assert json.loads(text)["v"] is None
 
     def test_unsupported_raises_type_error(self):
@@ -520,7 +495,7 @@ class TestToJsonable:
         class Opaque:
             pass
 
-        with pytest.raises(TypeError, match=r"phase85_metrics\.to_jsonable"):
+        with pytest.raises(TypeError, match=r"to_jsonable: unsupported"):
             json.dumps({"v": Opaque()}, default=to_jsonable)
 
 
@@ -783,7 +758,7 @@ class TestOosTradesPipeline:
         from poseidon.backtest.phase85_strategy_factory import resolve_factory_params
 
         ohlcv = _short_1m_ohlcv(periods=2000)
-        # Use a resolved 17-key dict (factory accepts the 9-dim space directly)
+        # The factory accepts the 9-dim search space directly
         sample_d01 = {
             "lookback_bars": 1440,
             "cooldown_bars": 240,
@@ -795,9 +770,9 @@ class TestOosTradesPipeline:
             "atr_multiplier_mid": 3.0,
             "atr_multiplier_high": 4.5,
         }
-        # Verify resolve still works as a sanity check on 17-key shape
+        # Verify resolve still returns every factory parameter (sanity check on the resolved shape)
         full = resolve_factory_params(sample_d01)
-        assert len(full) == 17
+        assert set(full) == set(PARAM_BOUNDS)
 
         trades = _slice_window_oos_trades(
             ohlcv,

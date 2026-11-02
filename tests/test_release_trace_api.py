@@ -8,12 +8,14 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from poseidon.api.auth import AuthPrincipal, get_auth_principal
+from poseidon.api.auth import get_auth_principal
 from poseidon.api.traces import TraceService
+from poseidon.core.authz import AuthorizationError, AuthPrincipal
+from poseidon.core.canonical import content_sha256
 from poseidon.core.database import get_db
 from poseidon.decision_loop.decisions import DecisionService
 from poseidon.decision_loop.evaluation import EvaluationService
-from poseidon.decision_loop.manifest import ManifestService, content_sha256
+from poseidon.decision_loop.manifest import ManifestService
 from poseidon.decision_loop.releases import ReleaseService
 from poseidon.main import app
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
@@ -272,12 +274,11 @@ def test_no_trade_trace_keeps_campaign_holdout_review_and_release_history(phase9
         assert [row.state for row in release.rows] == ["Released", "Paused", "Rolled back"]
         assert all(row.identities for row in campaign.rows + release.rows)
 
-        with pytest.raises(HTTPException) as denied:
+        with pytest.raises(AuthorizationError):
             TraceService(session).by_evaluation(
                 snapshot.id,
                 principal=release_manager("paper:other"),
             )
-        assert denied.value.status_code == 403
         session.rollback()
 
 
@@ -327,7 +328,6 @@ def test_signal_trace_uses_explicit_identity_and_legacy_signal_stays_unresolved(
         assert linked_trace.stages[0].rows[0].identities == {"signal_id": str(linked.id)}
         assert legacy_trace.stages[0].state == "Legacy unresolved"
         assert len(legacy_trace.stages) == 9
-        with pytest.raises(HTTPException) as denied:
+        with pytest.raises(AuthorizationError):
             TraceService(session).by_signal(linked.id, principal=release_manager("paper:other"))
-        assert denied.value.status_code == 403
         session.rollback()

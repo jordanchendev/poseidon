@@ -20,7 +20,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
 
 from poseidon.api import releases as releases_api
-from poseidon.api.auth import AuthPrincipal
+from poseidon.core.authz import AuthPrincipal
 from poseidon.core.config import settings
 from poseidon.core.database import get_db
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionPolicy

@@ -11,15 +11,14 @@ import pytest
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
+from poseidon.core.locks import lock_account
 from poseidon.decision_loop.decisions import DecisionConflictError
-from poseidon.decision_loop.execution import DecisionExecutionService
 from poseidon.decision_loop.releases import ReleaseService
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
-from tests.test_strategy_release import NOW, _seed_gate_graph, release_manager
 from tests.test_decision_service import synthetic_reconciliation_policy
-
+from tests.test_strategy_release import NOW, _seed_gate_graph, release_manager
 
 DATABASE_URL = os.environ["POSEIDON_DATABASE_URL"]
 ENGINE = create_engine(DATABASE_URL)
@@ -29,16 +28,15 @@ if ENGINE.dialect.name != "postgresql":
 
 @pytest.fixture
 def graph():
-    with Session(ENGINE) as session:
-        with session.begin():
-            value = _seed_gate_graph(
-                session,
-                policy_changes={
-                    "reconciliation": synthetic_reconciliation_policy(
-                        account_generation=f"phase100-concurrency-{uuid.uuid4().hex}",
-                    )
-                },
-            )
+    with Session(ENGINE) as session, session.begin():
+        value = _seed_gate_graph(
+            session,
+            policy_changes={
+                "reconciliation": synthetic_reconciliation_policy(
+                    account_generation=f"phase100-concurrency-{uuid.uuid4().hex}",
+                )
+            },
+        )
     return value
 
 
@@ -76,7 +74,8 @@ def _concurrent(call_a, call_b):
 
 
 def test_same_key_same_release_replays_one_retained_response(graph):
-    call = lambda session: _release(session, graph, key="same-release-race")
+    def call(session):
+        return _release(session, graph, key="same-release-race")
 
     results = _concurrent(call, call)
 
@@ -151,9 +150,7 @@ def test_pause_waits_for_ordinary_strategy_lock_holder(graph):
 
     def hold_strategy_lock():
         with Session(ENGINE) as session, session.begin():
-            session.scalar(
-                select(StrategyRecord).where(StrategyRecord.id == graph.strategy_id).with_for_update()
-            )
+            session.scalar(select(StrategyRecord).where(StrategyRecord.id == graph.strategy_id).with_for_update())
             holder_ready.set()
             assert pause_started.wait(timeout=10)
             assert release_holder.wait(timeout=10)
@@ -227,20 +224,14 @@ def test_release_transition_waits_for_current_account_reconciliation(graph, oper
         if not connection.info.get("phase100_reconciliation_waiter"):
             return
         normalized = " ".join(statement.lower().split())
-        if (
-            "from account_reconciliations" in normalized
-            and "order by account_reconciliations.as_of desc" in normalized
-        ):
+        if "from account_reconciliations" in normalized and "order by account_reconciliations.as_of desc" in normalized:
             progress.put("stale_read")
 
     def append_newer_reconciliation():
         observed = None
         with Session(ENGINE) as session, session.begin():
             current = session.get(AccountReconciliation, graph.reconciliation_id)
-            DecisionExecutionService(session)._advisory_lock(
-                current.account_scope,
-                current.account_generation,
-            )
+            lock_account(session, current.account_scope, current.account_generation)
             session.add(
                 AccountReconciliation(
                     account_scope=current.account_scope,

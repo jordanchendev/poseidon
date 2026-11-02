@@ -124,4 +124,3 @@ def test_concurrent_fill_cost_corrections_form_one_immediate_predecessor_chain(
             )
             replayed.append((row.id, row.content_sha256, row.input_sha256))
     assert set(replayed) == set(inserted)
-

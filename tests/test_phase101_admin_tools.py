@@ -16,9 +16,9 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import func, select
 
+from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.core.config import settings
 from poseidon.decision_loop import admin
-from poseidon.decision_loop.manifest import canonical_json, content_sha256
 from poseidon.models.outcome import OutcomeLabelContract, outcome_label_contract_sha256
 from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.strategy import StrategyRecord

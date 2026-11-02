@@ -18,7 +18,8 @@ from poseidon.broker.base import (
     BrokerOrderSnapshot,
     BrokerPositionSnapshot,
 )
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
+from poseidon.core.timeutil import as_utc
 from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.paper_broker_fill import PaperBrokerFill
 from poseidon.models.paper_broker_order import PaperBrokerOrder
@@ -42,10 +43,6 @@ LEGACY_ATTRIBUTION_REF_PREFIX = "LEGACY-ALLOC-"
 LEGACY_ATTRIBUTION_BROKER_PREFIX = "PAPER-ALLOC"
 
 
-def _utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
-
-
 def _order_snapshot(record: PaperBrokerOrder) -> BrokerOrderSnapshot:
     return BrokerOrderSnapshot(
         broker_order_id=record.broker_order_id,
@@ -61,7 +58,7 @@ def _order_snapshot(record: PaperBrokerOrder) -> BrokerOrderSnapshot:
         quantity=record.quantity,
         price=record.price,
         status=record.status,
-        accepted_at=_utc(record.accepted_at),
+        accepted_at=as_utc(record.accepted_at),
         state_version=record.state_version,
     )
 
@@ -78,7 +75,7 @@ def _fill_snapshot(record: PaperBrokerFill, broker_order_id: str) -> BrokerFillS
         side=record.side,
         fill_price=record.fill_price,
         fill_quantity=record.fill_quantity,
-        fill_time=_utc(record.fill_time),
+        fill_time=as_utc(record.fill_time),
         state_version=record.state_version,
     )
 
@@ -312,7 +309,7 @@ def _validated_attributions(
             or execution is None
             or baseline is None
             or row.state_version != execution.state_version
-            or _utc(row.accepted_at) != _utc(execution.accepted_at)
+            or as_utc(row.accepted_at) != as_utc(execution.accepted_at)
             or any(
                 getattr(row, field) != getattr(execution, field)
                 for field in ("account_scope", "account_generation", "market", "symbol", "instrument", "side")

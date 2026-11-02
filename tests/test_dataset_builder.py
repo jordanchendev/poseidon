@@ -38,14 +38,14 @@ class TestBuildWithoutFeatureSpecs:
 
     def test_returns_standard_qlib_columns(self, mock_session, sample_ohlcv):
         builder = DatasetBuilder(session=mock_session, market="tw_stock", interval="1d")
-        with patch("poseidon.qlib.dataset_builder.read_ohlcv", return_value=sample_ohlcv):
+        with patch("poseidon.qlib.dataset_builder.RemoteDataRepository.read_ohlcv", return_value=sample_ohlcv):
             result = builder.build(symbols=["2330"])
         expected_cols = {"$open", "$high", "$low", "$close", "$volume", "$vwap"}
         assert set(result.columns) == expected_cols
 
     def test_empty_feature_specs_same_as_none(self, mock_session, sample_ohlcv):
         builder = DatasetBuilder(session=mock_session, market="tw_stock", interval="1d")
-        with patch("poseidon.qlib.dataset_builder.read_ohlcv", return_value=sample_ohlcv):
+        with patch("poseidon.qlib.dataset_builder.RemoteDataRepository.read_ohlcv", return_value=sample_ohlcv):
             result_none = builder.build(symbols=["2330"], feature_specs=None)
             result_empty = builder.build(symbols=["2330"], feature_specs=[])
         assert set(result_none.columns) == set(result_empty.columns)
@@ -63,7 +63,7 @@ class TestBuildWithFeatureSpecs:
         mock_feature_df["roa"] = 0.08
 
         with (
-            patch("poseidon.qlib.dataset_builder.read_ohlcv", return_value=sample_ohlcv),
+            patch("poseidon.qlib.dataset_builder.RemoteDataRepository.read_ohlcv", return_value=sample_ohlcv),
             patch("poseidon.qlib.dataset_builder.FeatureEngine") as MockEngine,
         ):
             mock_engine_instance = MockEngine.return_value
@@ -85,7 +85,7 @@ class TestBuildWithFeatureSpecs:
         mock_feature_df["roe"] = 0.15
 
         with (
-            patch("poseidon.qlib.dataset_builder.read_ohlcv", return_value=sample_ohlcv),
+            patch("poseidon.qlib.dataset_builder.RemoteDataRepository.read_ohlcv", return_value=sample_ohlcv),
             patch("poseidon.qlib.dataset_builder.FeatureEngine") as MockEngine,
         ):
             mock_engine_instance = MockEngine.return_value
@@ -128,14 +128,14 @@ class TestBuildWithFeatureSpecs:
         feat_b = ohlcv_b.copy()
         feat_b["roe"] = 0.25
 
-        def mock_read_ohlcv(session, symbol, *args, **kwargs):
+        def mock_read_ohlcv(symbol, *args, **kwargs):
             return ohlcv_a if symbol == "A" else ohlcv_b
 
         def mock_compute(ohlcv, symbol, *args, **kwargs):
             return feat_a if symbol == "A" else feat_b
 
         with (
-            patch("poseidon.qlib.dataset_builder.read_ohlcv", side_effect=mock_read_ohlcv),
+            patch("poseidon.qlib.dataset_builder.RemoteDataRepository.read_ohlcv", side_effect=mock_read_ohlcv),
             patch("poseidon.qlib.dataset_builder.FeatureEngine") as MockEngine,
         ):
             mock_engine_instance = MockEngine.return_value
@@ -158,7 +158,7 @@ class TestBuildBackwardCompatible:
     def test_no_feature_specs_no_feature_engine(self, mock_session, sample_ohlcv):
         builder = DatasetBuilder(session=mock_session, market="tw_stock", interval="1d")
         with (
-            patch("poseidon.qlib.dataset_builder.read_ohlcv", return_value=sample_ohlcv),
+            patch("poseidon.qlib.dataset_builder.RemoteDataRepository.read_ohlcv", return_value=sample_ohlcv),
             patch("poseidon.qlib.dataset_builder.FeatureEngine") as MockEngine,
         ):
             builder.build(symbols=["2330"])

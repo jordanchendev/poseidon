@@ -29,8 +29,9 @@ from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from poseidon.core.canonical import canonical_json, content_sha256
+from poseidon.core.errors import ValidationError
 from poseidon.decision_loop.decisions import DecisionPolicy
-from poseidon.decision_loop.manifest import ValidationError, canonical_json, content_sha256
 from poseidon.decision_loop.outcomes import validate_outcome_label_contract
 from poseidon.decision_loop.releases import (
     ExecutableStrategyConfig,

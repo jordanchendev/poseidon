@@ -96,10 +96,11 @@ class TestImmutabilityEnforcement:
     """AUTO-06: Protected classes raise ImmutabilityViolationError."""
 
     def test_immutability_enforcement_feature_engine(self):
-        from poseidon.data.feature_engine import FeatureEngine
+        """AutoResearchRunner guards the orchestrator by wrapping the class at run time (038a5a2)."""
+        from poseidon.data.feature_engine import FeatureOrchestrator
 
         with autoresearch_context():
-            fe = FeatureEngine()
+            fe = autoresearch_guard(FeatureOrchestrator)()
             with pytest.raises(ImmutabilityViolationError):
                 fe.some_attr = "forbidden"
 

@@ -34,6 +34,7 @@ from pathlib import Path
 from poseidon.backtest.phase85_metrics import (
     BARS_PER_YEAR_1M,
     compute_max_consecutive_losses,
+    finite_or_none,
     oos_aggregate_sharpe_trade_weighted,
     to_jsonable,
     wfe_degradation_excluding_is_negative,
@@ -342,11 +343,11 @@ def build_wfe_payload(
 
 
 def _write_json(path: Path, payload: dict) -> None:
-    """Write payload as JSON. ``allow_nan=False`` fails loudly on stray NaN
-    (defense in depth alongside ``to_jsonable`` upstream)."""
+    """Write payload as JSON with NaN/Inf as null; ``allow_nan=False`` fails loudly on any
+    non-finite value that survives (e.g. inside a numpy array)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(
-        payload,
+        finite_or_none(payload),
         default=to_jsonable,
         indent=2,
         sort_keys=False,

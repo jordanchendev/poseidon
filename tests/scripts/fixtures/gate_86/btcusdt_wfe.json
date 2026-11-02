@@ -1,0 +1,243 @@
+{
+  "schema_version": "1.0.0",
+  "phase": "85",
+  "symbol": "BTCUSDT",
+  "interval": "1m",
+  "study_name": "phase85_btcusdt_seed42",
+  "best_params": {
+    "lookback_bars": 5623,
+    "cooldown_bars": 850,
+    "wick_ratio_min": 0.05213789948313337,
+    "breakout_distance_min": 0.2485771420533918,
+    "oi_buildup_min": 1.3326057631552972,
+    "fib_level": 0.4285154350163666,
+    "atr_multiplier_low": 2.886759029971116,
+    "atr_multiplier_mid": 3.2763260016257734,
+    "atr_multiplier_high": 5.428197214307623
+  },
+  "wf_config": {
+    "train_days": 90,
+    "test_days": 90,
+    "step_days": 30,
+    "min_trades_per_oos": 25,
+    "bars_per_year": 525600
+  },
+  "per_window": [
+    {
+      "window_index": 0,
+      "is_metrics": {
+        "total_return": 9.149154283694116e-05,
+        "annualized_return": 1.7789210038365866e-07,
+        "sharpe_ratio": 0.005660739067132416,
+        "max_drawdown": 0.16665877129022819,
+        "calmar_ratio": 1.0674031676008709e-06,
+        "win_rate": 1.0,
+        "profit_factor": 0.0,
+        "avg_win": 9.149154283705869,
+        "avg_loss": 0.0,
+        "trade_count": 2,
+        "closed_trade_count": 1,
+        "avg_holding_period": 0.009722222222222222
+      },
+      "oos_metrics": {
+        "total_return": 0.0004022227928555111,
+        "annualized_return": 7.819429337363459e-07,
+        "sharpe_ratio": 0.03477113550862008,
+        "max_drawdown": 0.0003237114089154198,
+        "calmar_ratio": 0.002415555683861158,
+        "win_rate": 1.0,
+        "profit_factor": 0.0,
+        "avg_win": 40.22227928553953,
+        "avg_loss": 0.0,
+        "trade_count": 2,
+        "closed_trade_count": 1,
+        "avg_holding_period": 0.00625
+      },
+      "is_trade_count": 2,
+      "oos_trade_count": 2,
+      "oos_trades": [
+        {
+          "symbol": "BTCUSDT",
+          "action": "long",
+          "entry_time": "2025-11-04T14:32:00+00:00",
+          "exit_time": null,
+          "entry_price": 103146.33791015139,
+          "exit_price": null,
+          "quantity": 0.0969496368228874,
+          "fees": 2.0,
+          "pnl": null
+        },
+        {
+          "symbol": "BTCUSDT",
+          "action": "close_tp",
+          "entry_time": "2025-11-04T14:32:00+00:00",
+          "exit_time": "2025-11-04T14:41:00+00:00",
+          "entry_price": 103146.33791015139,
+          "exit_price": 103633.66208984861,
+          "quantity": 0.0969496368228874,
+          "fees": 7.0236229511183295,
+          "pnl": 40.22227928553953
+        }
+      ],
+      "test_start_idx": 129600,
+      "test_end_idx": 259200,
+      "train_start_idx": 0,
+      "train_end_idx": 129600
+    },
+    {
+      "window_index": 1,
+      "is_metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "sharpe_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "calmar_ratio": 0.0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": 0.0,
+        "trade_count": 0,
+        "closed_trade_count": 0,
+        "avg_holding_period": 0.0
+      },
+      "oos_metrics": {
+        "total_return": 0.00026473813288929726,
+        "annualized_return": 5.147005968098028e-07,
+        "sharpe_ratio": 0.005689764803602167,
+        "max_drawdown": 0.16662184231573748,
+        "calmar_ratio": 3.0890343646211696e-06,
+        "win_rate": 1.0,
+        "profit_factor": 0.0,
+        "avg_win": 26.47381328893357,
+        "avg_loss": 0.0,
+        "trade_count": 2,
+        "closed_trade_count": 1,
+        "avg_holding_period": 0.011111111111111112
+      },
+      "is_trade_count": 0,
+      "oos_trade_count": 2,
+      "oos_trades": [
+        {
+          "symbol": "BTCUSDT",
+          "action": "short",
+          "entry_time": "2025-12-03T01:50:00+00:00",
+          "exit_time": null,
+          "entry_price": 92592.89441576989,
+          "exit_price": null,
+          "quantity": 0.10799964795459356,
+          "fees": 2.0,
+          "pnl": null
+        },
+        {
+          "symbol": "BTCUSDT",
+          "action": "close_tp",
+          "entry_time": "2025-12-03T01:50:00+00:00",
+          "exit_time": "2025-12-03T02:06:00+00:00",
+          "entry_price": 92592.89441576989,
+          "exit_price": 92283.10558423011,
+          "quantity": 0.10799964795459356,
+          "fees": 6.98327145762672,
+          "pnl": 26.47381328893357
+        }
+      ],
+      "test_start_idx": 172800,
+      "test_end_idx": 302400,
+      "train_start_idx": 43200,
+      "train_end_idx": 172800
+    },
+    {
+      "window_index": 2,
+      "is_metrics": {
+        "total_return": -0.00016969366497976424,
+        "annualized_return": -3.299878489348984e-07,
+        "sharpe_ratio": 0.005618917241851749,
+        "max_drawdown": 0.16687499259369318,
+        "calmar_ratio": -1.9774553622803867e-06,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": -16.969366497970064,
+        "trade_count": 2,
+        "closed_trade_count": 1,
+        "avg_holding_period": 0.009027777777777777
+      },
+      "oos_metrics": {
+        "total_return": 0.00046723576267360123,
+        "annualized_return": 9.083022165512489e-07,
+        "sharpe_ratio": 0.08077440274571972,
+        "max_drawdown": 4.955517576846106e-05,
+        "calmar_ratio": 0.01832910896724797,
+        "win_rate": 1.0,
+        "profit_factor": 0.0,
+        "avg_win": 46.72357626734877,
+        "avg_loss": 0.0,
+        "trade_count": 2,
+        "closed_trade_count": 1,
+        "avg_holding_period": 0.015277777777777777
+      },
+      "is_trade_count": 2,
+      "oos_trade_count": 2,
+      "oos_trades": [
+        {
+          "symbol": "BTCUSDT",
+          "action": "long",
+          "entry_time": "2026-03-22T21:05:00+00:00",
+          "exit_time": null,
+          "entry_price": 67370.9689999363,
+          "exit_price": null,
+          "quantity": 0.148431886143859,
+          "fees": 2.0,
+          "pnl": null
+        },
+        {
+          "symbol": "BTCUSDT",
+          "action": "close_tp",
+          "entry_time": "2026-03-22T21:05:00+00:00",
+          "exit_time": "2026-03-22T21:27:00+00:00",
+          "entry_price": 67370.9689999363,
+          "exit_price": 67733.0910000637,
+          "quantity": 0.148431886143859,
+          "fees": 7.026875225746548,
+          "pnl": 46.72357626734877
+        }
+      ],
+      "test_start_idx": 216000,
+      "test_end_idx": 345600,
+      "train_start_idx": 86400,
+      "train_end_idx": 216000
+    }
+  ],
+  "aggregate_oos_metrics": {
+    "total_return": 0.0003780655628061365,
+    "annualized_return": 7.349819156991325e-07,
+    "sharpe_ratio": 0.040411767685980655,
+    "max_drawdown": 0.05566503630014045,
+    "calmar_ratio": 0.006915917895157916,
+    "win_rate": 1.0,
+    "profit_factor": 0.0,
+    "avg_win": 37.80655628060729,
+    "avg_loss": 0.0,
+    "trade_count": 2.0,
+    "closed_trade_count": 1.0,
+    "avg_holding_period": 0.01087962962962963
+  },
+  "flags": [
+    "wfe_below_threshold",
+    "too_many_insufficient_windows_3/3_ratio=1.00_max=0.3"
+  ],
+  "budget_summary": {
+    "total_seconds": 184.54993014410138,
+    "optuna_seconds": 0.5592347600031644,
+    "wfe_seconds": 127.22306563705206,
+    "peak_rss_mb": 268.61328125
+  },
+  "frozen_gate_anchor": "5a1ecc9",
+  "verdict_inputs": {
+    "oos_total_trades": 6,
+    "oos_aggregate_sharpe": 0.040411767685980655,
+    "wfe_degradation": 10.25897360576444,
+    "max_consecutive_losses": 0,
+    "n_oos_windows": 3
+  },
+  "generated_at": "2026-04-28T07:18:24Z"
+}

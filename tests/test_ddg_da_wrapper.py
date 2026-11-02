@@ -100,7 +100,7 @@ class TestPoseidonDDGDA:
                 segments=_default_segments(),
             )
 
-    def test_run_does_not_enter_autoresearch_context(self, tmp_path: Path) -> None:
+    def test_run_does_not_enter_autoresearch_context(self, tmp_path: Path, monkeypatch) -> None:
         """Invariant: PoseidonDDGDA.run() asserts _AUTORESEARCH_ACTIVE False at entry.
 
         Patches qlib.contrib.rolling.ddgda.DDGDA via the deferred-import attribute
@@ -142,18 +142,14 @@ class TestPoseidonDDGDA:
         # PoseidonDDGDA.run() now calls qlib.init() before instantiating DDGDA
         # (qlib's Rolling explicitly ignores qlib_init YAML section, see
         # qlib/contrib/rolling/base.py:115). Provide a no-op init for the fake.
+        # monkeypatch restores every injected module, so later tests never see a stub qlib.
         for parent in ("qlib", "qlib.contrib", "qlib.contrib.rolling"):
             if parent not in sys.modules:
-                sys.modules[parent] = types.ModuleType(parent)
+                monkeypatch.setitem(sys.modules, parent, types.ModuleType(parent))
         if not hasattr(sys.modules["qlib"], "init"):
-            sys.modules["qlib"].init = lambda *args, **kwargs: None  # type: ignore[attr-defined]
-        sys.modules["qlib.contrib.rolling.ddgda"] = fake_ddgda_mod
-        try:
-            result = wrapper.run()
-        finally:
-            # Clean up only what we injected — leave qlib stubs around if other
-            # tests already set them up.
-            sys.modules.pop("qlib.contrib.rolling.ddgda", None)
+            monkeypatch.setattr(sys.modules["qlib"], "init", lambda *args, **kwargs: None, raising=False)
+        monkeypatch.setitem(sys.modules, "qlib.contrib.rolling.ddgda", fake_ddgda_mod)
+        result = wrapper.run()
 
         # Invariant: ContextVar was False at every observation point.
         assert active_during_run, "fake DDGDA was never instantiated"
@@ -183,7 +179,7 @@ class TestPoseidonDDGDA:
     def test_path_traversal_blocked(self, tmp_path: Path) -> None:
         """working_dir outside allowed prefixes raises ValueError."""
         # /etc is not in _ALLOWED_WORKING_DIR_PREFIXES.
-        with pytest.raises(ValueError, match="T-92-02"):
+        with pytest.raises(ValueError, match="path-traversal mitigation"):
             PoseidonDDGDA(
                 working_dir=Path("/etc/poseidon_evil"),
                 handler_class="Alpha158Handler",

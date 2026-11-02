@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,8 +13,11 @@ from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from poseidon.api.auth import AuthPrincipal, get_auth_principal
+from poseidon.api.auth import AuthorizedRoute, get_auth_principal
+from poseidon.core.authz import AuthPrincipal
+from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.core.database import get_db
+from poseidon.core.timeutil import stored_iso_time
 from poseidon.decision_loop.decisions import (
     TRACE_STAGE_NAMES,
     DecisionNotFoundError,
@@ -29,14 +32,13 @@ from poseidon.decision_loop.decisions import (
     project_outcome_rows as _project_outcome_rows,
 )
 from poseidon.decision_loop.evaluation import verify_complete_run
-from poseidon.decision_loop.manifest import canonical_json, content_sha256, iso_time
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
 from poseidon.models.research_revision import ResearchRevision
 from poseidon.models.signal import SignalRecord
 from poseidon.signals.schemas import SignalTraceMetadata
 
-router = APIRouter()
+router = APIRouter(route_class=AuthorizedRoute)
 TraceAnchor = Literal["decision", "signal", "evaluation"]
 TraceState = Literal[
     "Available",
@@ -120,11 +122,7 @@ def project_outcome_rows(outcomes) -> list[TraceRow]:
 
 
 def _stored_time(value):
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return iso_time(value, "trace.timestamp")
+    return None if value is None else stored_iso_time(value, "trace.timestamp")
 
 
 def _evaluation_rows(session, snapshots):

@@ -5,7 +5,6 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
-from fastapi import HTTPException
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -17,19 +16,15 @@ from pydantic import (
 from pydantic import (
     ValidationError as PydanticValidationError,
 )
-from sqlalchemy import and_, or_, select, text
+from sqlalchemy import and_, or_, select
 
-from poseidon.api.auth import AuthPrincipal
+from poseidon.core.authz import AuthorizationError, AuthPrincipal
+from poseidon.core.canonical import canonical_json, content_sha256
+from poseidon.core.errors import ValidationError
+from poseidon.core.locks import lock_identity
+from poseidon.core.timeutil import iso_time, stored_timestamp, timestamp
 from poseidon.decision_loop.evaluation import TERMINAL_STATUSES, verify_complete_run
-from poseidon.decision_loop.manifest import (
-    ValidationError,
-    canonical_json,
-    content_sha256,
-    iso_time,
-    required_text,
-    timestamp,
-    validate_manifest,
-)
+from poseidon.decision_loop.manifest import required_text, validate_manifest
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
@@ -119,7 +114,7 @@ def project_trace_signal(signal, metadata=None):
     return _trace_row(
         "Signal",
         "Available",
-        timestamp_value=iso_time(_stored_time(signal.signal_time, "signal.signal_time"), "signal.signal_time"),
+        timestamp_value=iso_time(stored_timestamp(signal.signal_time, "signal.signal_time"), "signal.signal_time"),
         identities={"signal_id": str(signal.id)},
         values=values,
     )
@@ -323,7 +318,9 @@ def load_trace_evidence(session, *, version, snapshots, account_scope, decision_
                 "declared_difference_json": json.loads(canonical_json(campaign.declared_difference_json)),
                 "contract_json": json.loads(canonical_json(campaign.contract_json)),
                 "created_by": campaign.created_by,
-                "created_at": iso_time(_stored_time(campaign.created_at, "campaign.created_at"), "campaign.created_at"),
+                "created_at": iso_time(
+                    stored_timestamp(campaign.created_at, "campaign.created_at"), "campaign.created_at"
+                ),
             }
             for campaign in campaigns
         ],
@@ -342,7 +339,7 @@ def load_trace_evidence(session, *, version, snapshots, account_scope, decision_
                 "terminal_reason_json": json.loads(canonical_json(trial.terminal_reason_json or {})),
                 "metrics_json": json.loads(canonical_json(trial.metrics_json or {})),
                 "completed_at": (
-                    iso_time(_stored_time(trial.completed_at, "trial.completed_at"), "trial.completed_at")
+                    iso_time(stored_timestamp(trial.completed_at, "trial.completed_at"), "trial.completed_at")
                     if trial.completed_at is not None
                     else None
                 ),
@@ -357,7 +354,7 @@ def load_trace_evidence(session, *, version, snapshots, account_scope, decision_
                 "payload_json": json.loads(canonical_json(event.payload_json)),
                 "idempotency_sha256": event.idempotency_sha256,
                 "created_at": iso_time(
-                    _stored_time(event.created_at, "campaign_event.created_at"), "campaign_event.created_at"
+                    stored_timestamp(event.created_at, "campaign_event.created_at"), "campaign_event.created_at"
                 ),
             }
             for event in campaign_events
@@ -370,7 +367,7 @@ def load_trace_evidence(session, *, version, snapshots, account_scope, decision_
                 "campaign_contract_sha256": holdout.campaign_contract_sha256,
                 "audit_json": json.loads(canonical_json(holdout.audit_json)),
                 "consumed_at": iso_time(
-                    _stored_time(holdout.consumed_at, "holdout.consumed_at"), "holdout.consumed_at"
+                    stored_timestamp(holdout.consumed_at, "holdout.consumed_at"), "holdout.consumed_at"
                 ),
             }
             for holdout in holdouts
@@ -385,7 +382,7 @@ def load_trace_evidence(session, *, version, snapshots, account_scope, decision_
                 "holdout_use_id": None if review.holdout_use_id is None else str(review.holdout_use_id),
                 "input_identity_json": json.loads(canonical_json(review.input_identity_json or {})),
                 "result_json": json.loads(canonical_json(review.result_json)),
-                "created_at": iso_time(_stored_time(review.created_at, "review.created_at"), "review.created_at"),
+                "created_at": iso_time(stored_timestamp(review.created_at, "review.created_at"), "review.created_at"),
             }
             for review in reviews
         ],
@@ -410,7 +407,7 @@ def load_trace_evidence(session, *, version, snapshots, account_scope, decision_
                 "reason": event.reason,
                 "gate_json": json.loads(canonical_json(event.gate_json)),
                 "resulting_revision": event.resulting_revision,
-                "created_at": iso_time(_stored_time(event.created_at, "release.created_at"), "release.created_at"),
+                "created_at": iso_time(stored_timestamp(event.created_at, "release.created_at"), "release.created_at"),
             }
             for event in release_events
         ],
@@ -1180,12 +1177,6 @@ def _validate_order_intents(selected, final_json, policy):
     )
 
 
-def _stored_time(value, field):
-    if isinstance(value, datetime) and value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return timestamp(value, field)
-
-
 def _decision_response(decision):
     return {
         "id": str(decision.id),
@@ -1193,7 +1184,7 @@ def _decision_response(decision):
         "revision": decision.revision,
         "creation_sha256": decision.creation_sha256,
         "policy_sha256": decision.policy_sha256,
-        "valid_until": iso_time(_stored_time(decision.valid_until, "valid_until"), "valid_until"),
+        "valid_until": iso_time(stored_timestamp(decision.valid_until, "valid_until"), "valid_until"),
         "final_json": json.loads(canonical_json(decision.final_json)),
     }
 
@@ -1203,14 +1194,7 @@ class DecisionService:
         self.session = session
 
     def _lock_scope(self, account_scope, strategy_version_id):
-        if self.session.get_bind().dialect.name == "postgresql":
-            lock_key = int(
-                content_sha256({"account_scope": account_scope, "strategy_version_id": str(strategy_version_id)})[:16],
-                16,
-            )
-            if lock_key >= 2**63:
-                lock_key -= 2**64
-            self.session.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key})
+        lock_identity(self.session, {"account_scope": account_scope, "strategy_version_id": str(strategy_version_id)})
 
     def _append_event(
         self,
@@ -1319,7 +1303,7 @@ class DecisionService:
             raise DecisionConflictError("decision is not pending approval")
         if decision.revision != body.expected_revision:
             raise DecisionConflictError("decision revision changed")
-        if current_time >= _stored_time(decision.valid_until, "valid_until"):
+        if current_time >= stored_timestamp(decision.valid_until, "valid_until"):
             raise DecisionConflictError("decision has expired")
         if not self._policy_is_current(decision):
             raise DecisionConflictError("decision policy changed")
@@ -1418,7 +1402,7 @@ class DecisionService:
         validate_manifest(
             dict(
                 manifest_payload,
-                as_of=iso_time(_stored_time(run.decision_as_of, "decision_as_of"), "decision_as_of"),
+                as_of=iso_time(stored_timestamp(run.decision_as_of, "decision_as_of"), "decision_as_of"),
                 required_data={kind: rule.model_dump() for kind, rule in policy.required_data.items()},
             )
         )
@@ -1447,10 +1431,10 @@ class DecisionService:
         if final_action not in allowed_actions:
             raise ValidationError("final_action is not allowed by frozen risk")
 
-        decision_as_of = _stored_time(run.decision_as_of, "decision_as_of")
+        decision_as_of = stored_timestamp(run.decision_as_of, "decision_as_of")
         expiry_candidates = [decision_as_of + timedelta(seconds=policy.decision_ttl_seconds)]
         expiry_candidates.extend(
-            _stored_time(row.valid_until, "snapshot.valid_until") for row in selected if row.valid_until is not None
+            stored_timestamp(row.valid_until, "snapshot.valid_until") for row in selected if row.valid_until is not None
         )
         valid_until = min(expiry_candidates)
         if valid_until <= decision_as_of:
@@ -1561,7 +1545,7 @@ class DecisionService:
 
     def list_pending(self, *, principal, now=None):
         if not principal.account_scopes:
-            raise HTTPException(status_code=403, detail="Account scope not authorized")
+            raise AuthorizationError("Account scope not authorized")
         current_time = timestamp(now if now is not None else datetime.now(UTC), "now")
         return (
             self.session.query(DecisionRecord)
@@ -1604,7 +1588,7 @@ class DecisionService:
                     "technical_json": json.loads(canonical_json(snapshot.technical_json)),
                     "reason_codes": list(snapshot.reason_codes),
                     "valid_until": (
-                        iso_time(_stored_time(snapshot.valid_until, "snapshot.valid_until"), "snapshot.valid_until")
+                        iso_time(stored_timestamp(snapshot.valid_until, "snapshot.valid_until"), "snapshot.valid_until")
                         if snapshot.valid_until is not None
                         else None
                     ),
@@ -1709,7 +1693,9 @@ class DecisionService:
                 "evaluation_run_id": str(decision.evaluation_run_id),
                 "strategy_version_id": str(decision.strategy_version_id),
                 "account_scope": decision.account_scope,
-                "decision_as_of": iso_time(_stored_time(decision.decision_as_of, "decision_as_of"), "decision_as_of"),
+                "decision_as_of": iso_time(
+                    stored_timestamp(decision.decision_as_of, "decision_as_of"), "decision_as_of"
+                ),
                 "original_json": json.loads(canonical_json(decision.original_json)),
                 "portfolio_snapshot_json": json.loads(canonical_json(decision.portfolio_snapshot_json)),
                 "risk_snapshot_json": json.loads(canonical_json(decision.risk_snapshot_json)),
@@ -1721,7 +1707,7 @@ class DecisionService:
                     "strategy_version_id": str(decision.strategy_version_id),
                     "account_scope": decision.account_scope,
                     "decision_as_of": iso_time(
-                        _stored_time(decision.decision_as_of, "decision_as_of"), "decision_as_of"
+                        stored_timestamp(decision.decision_as_of, "decision_as_of"), "decision_as_of"
                     ),
                 }
             ],
@@ -1734,13 +1720,13 @@ class DecisionService:
                 "id": str(run.id),
                 "input_sha256": run.input_sha256,
                 "coverage_json": json.loads(canonical_json(run.coverage_json)),
-                "decision_as_of": iso_time(_stored_time(run.decision_as_of, "decision_as_of"), "decision_as_of"),
+                "decision_as_of": iso_time(stored_timestamp(run.decision_as_of, "decision_as_of"), "decision_as_of"),
             },
             "manifest": {
                 "id": str(manifest.id),
                 "content_sha256": manifest.content_sha256,
                 "created_at": (
-                    iso_time(_stored_time(manifest.created_at, "manifest.created_at"), "manifest.created_at")
+                    iso_time(stored_timestamp(manifest.created_at, "manifest.created_at"), "manifest.created_at")
                     if manifest.created_at is not None
                     else None
                 ),
@@ -1774,7 +1760,9 @@ class DecisionService:
                     "reservation_status": order.reservation_status,
                     "reserved_quantity": order.reserved_quantity,
                     "submit_attempted_at": (
-                        iso_time(_stored_time(order.submit_attempted_at, "submit_attempted_at"), "submit_attempted_at")
+                        iso_time(
+                            stored_timestamp(order.submit_attempted_at, "submit_attempted_at"), "submit_attempted_at"
+                        )
                         if order.submit_attempted_at is not None
                         else None
                     ),
@@ -1793,7 +1781,7 @@ class DecisionService:
                     "broker_fill_id": fill.broker_fill_id,
                     "fill_quantity": fill.fill_quantity,
                     "fill_price": fill.fill_price,
-                    "fill_time": iso_time(_stored_time(fill.fill_time, "fill_time"), "fill_time"),
+                    "fill_time": iso_time(stored_timestamp(fill.fill_time, "fill_time"), "fill_time"),
                     "projection_status": fill.projection_status,
                 }
                 for fill in fills
@@ -1807,7 +1795,7 @@ class DecisionService:
                     "open_quantity": lot.open_quantity,
                     "reserved_close_quantity": lot.reserved_close_quantity,
                     "cost_basis_sha256": content_sha256(lot.cost_basis_json),
-                    "opened_at": iso_time(_stored_time(lot.opened_at, "lot.opened_at"), "lot.opened_at"),
+                    "opened_at": iso_time(stored_timestamp(lot.opened_at, "lot.opened_at"), "lot.opened_at"),
                 }
                 for lot in lots
             ],
@@ -1820,7 +1808,7 @@ class DecisionService:
                     "quantity": allocation.quantity,
                     "realized_cost_sha256": content_sha256(allocation.realized_cost_json),
                     "created_at": iso_time(
-                        _stored_time(allocation.created_at, "allocation.created_at"),
+                        stored_timestamp(allocation.created_at, "allocation.created_at"),
                         "allocation.created_at",
                     ),
                 }
@@ -1834,7 +1822,7 @@ class DecisionService:
                     "broker_state_watermark": row.broker_state_watermark,
                     "internal_state_watermark": row.internal_state_watermark,
                     "broker_snapshot_sha256": row.broker_snapshot_sha256,
-                    "as_of": iso_time(_stored_time(row.as_of, "reconciliation.as_of"), "reconciliation.as_of"),
+                    "as_of": iso_time(stored_timestamp(row.as_of, "reconciliation.as_of"), "reconciliation.as_of"),
                 }
                 for row in reconciliations
             ],
@@ -1848,7 +1836,7 @@ class DecisionService:
                     "request_sha256": event.request_sha256,
                     "payload_json": json.loads(canonical_json(event.payload_json)),
                     "created_at": (
-                        iso_time(_stored_time(event.created_at, "event.created_at"), "event.created_at")
+                        iso_time(stored_timestamp(event.created_at, "event.created_at"), "event.created_at")
                         if event.created_at is not None
                         else None
                     ),
@@ -1866,7 +1854,7 @@ class DecisionService:
             raise DecisionConflictError("decision is not approved")
         if decision.revision != expected_revision:
             raise DecisionConflictError("decision revision changed")
-        if _stored_time(decision.valid_until, "valid_until") <= timestamp(as_of, "as_of"):
+        if stored_timestamp(decision.valid_until, "valid_until") <= timestamp(as_of, "as_of"):
             raise DecisionConflictError("decision has expired")
         if not self._policy_is_current(decision):
             raise DecisionConflictError("decision policy changed")
@@ -1902,7 +1890,7 @@ class DecisionService:
             "execution_key": str(decision.execution_key),
             "status": decision.status,
             "revision": decision.revision,
-            "claimed_at": iso_time(_stored_time(decision.claimed_at, "claimed_at"), "claimed_at"),
+            "claimed_at": iso_time(stored_timestamp(decision.claimed_at, "claimed_at"), "claimed_at"),
         }
 
     def _claim_locked(self, decision, expected_revision, *, principal, as_of):

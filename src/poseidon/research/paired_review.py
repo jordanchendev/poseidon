@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from poseidon.decision_loop.manifest import canonical_json, content_sha256
+from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.research.ic_analysis import compute_cross_sectional_rank_ic, compute_time_series_rank_ic
 
 ARMS = ("fundamental_only", "technical_only", "combined")

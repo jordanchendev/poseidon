@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -74,7 +75,8 @@ def test_run_prediction_loads_model_and_generates_signals(
     from poseidon.workers.gpu_tasks import run_prediction
 
     version_id = str(uuid4())
-    result = run_prediction(None, version_id, "BTCUSDT", "crypto_spot", "1d")
+    # Bound Celery task: calling it directly supplies ``self``.
+    result = run_prediction(version_id, "BTCUSDT", "crypto_spot", "1d")
 
     # Only the high-confidence signal passes threshold 0.6
     assert result["signals_generated"] == 1
@@ -101,12 +103,12 @@ def test_run_prediction_model_not_found(mock_manager_cls, mock_session_local):
     from poseidon.workers.gpu_tasks import run_prediction
 
     with pytest.raises(ValueError, match="not found"):
-        run_prediction(None, str(uuid4()), "BTCUSDT", "crypto_spot")
+        run_prediction(str(uuid4()), "BTCUSDT", "crypto_spot")
 
 
-@patch("poseidon.workers.gpu_tasks.torch", create=True)
-def test_gpu_health_probe_with_torch(mock_torch):
-    """gpu_health_probe reports torch/CUDA info when torch is available."""
+def test_gpu_health_probe_with_torch():
+    """gpu_health_probe reports torch/CUDA info when torch is available (it imports torch at call time)."""
+    mock_torch = MagicMock()
     mock_torch.__version__ = "2.1.0"
     mock_torch.cuda.is_available.return_value = True
     mock_torch.cuda.get_device_name.return_value = "RTX 4070 Ti SUPER"
@@ -114,7 +116,8 @@ def test_gpu_health_probe_with_torch(mock_torch):
 
     from poseidon.workers.gpu_tasks import gpu_health_probe
 
-    result = gpu_health_probe()
+    with patch.dict(sys.modules, {"torch": mock_torch}):
+        result = gpu_health_probe()
 
     assert result["torch_version"] == mock_torch.__version__
     assert result["cuda_available"] is True

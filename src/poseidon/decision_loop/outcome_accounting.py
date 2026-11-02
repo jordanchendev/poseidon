@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from poseidon.decision_loop.manifest import ValidationError, content_sha256, required_text
+from poseidon.core.canonical import content_sha256
+from poseidon.core.errors import ValidationError
+from poseidon.core.locks import lock_digest
+from poseidon.core.timeutil import stored_iso_time
+from poseidon.decision_loop.manifest import required_text
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.fill_allocation import FillAllocation
 from poseidon.models.order import OrderRecord
@@ -49,13 +53,7 @@ def _uuid(value, field):
 def _iso(value):
     if not isinstance(value, datetime):
         raise ValidationError("timestamp must be a datetime")
-    value = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
-    return value.isoformat().replace("+00:00", "Z")
-
-
-def _advisory_keys(digest):
-    raw = bytes.fromhex(digest)
-    return int.from_bytes(raw[:4], "big", signed=True), int.from_bytes(raw[4:8], "big", signed=True)
+    return stored_iso_time(value, "timestamp")
 
 
 def _account_reconciliation_sha256(row):
@@ -194,12 +192,7 @@ class FillCostService:
         existing = self.session.scalar(replay_query)
         if existing is not None:
             return existing
-        if self.session.get_bind().dialect.name == "postgresql":
-            key1, key2 = _advisory_keys(fill_key)
-            self.session.execute(
-                text("SELECT pg_advisory_xact_lock(:key1, :key2)"),
-                {"key1": key1, "key2": key2},
-            )
+        lock_digest(self.session, fill_key)
         existing = self.session.scalar(replay_query)
         if existing is not None:
             return existing
@@ -253,7 +246,9 @@ class FillCostService:
                             cost_model_version=item["cost_model_version"],
                             fx_source=item["fx_source"],
                             fx_rate=item["fx_rate"],
-                            fx_as_of=None if item["fx_as_of"] is None else datetime.fromisoformat(item["fx_as_of"].replace("Z", "+00:00")),
+                            fx_as_of=None
+                            if item["fx_as_of"] is None
+                            else datetime.fromisoformat(item["fx_as_of"].replace("Z", "+00:00")),
                             reason=item["reason"],
                         )
                     )
@@ -339,10 +334,7 @@ class OutcomeAccounting:
     def compute_trade(self, *, evaluation_snapshot_id, decision, label_contract, counterfactuals):
         snapshot_id = str(_uuid(evaluation_snapshot_id, "evaluation_snapshot_id"))
         allowed = set(label_contract["counterfactual_assumption_versions"])
-        if any(
-            not isinstance(item, dict) or item.get("assumption_version") not in allowed
-            for item in counterfactuals
-        ):
+        if any(not isinstance(item, dict) or item.get("assumption_version") not in allowed for item in counterfactuals):
             raise ValidationError("unsupported counterfactual assumption version")
         orders = self.session.scalars(select(OrderRecord).where(OrderRecord.decision_id == decision.id)).all()
         exact_orders = [order for order in orders if self._order_matches(order, snapshot_id)]

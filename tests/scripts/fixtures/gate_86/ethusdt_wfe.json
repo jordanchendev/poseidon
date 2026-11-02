@@ -1,0 +1,175 @@
+{
+  "schema_version": "1.0.0",
+  "phase": "85",
+  "symbol": "ETHUSDT",
+  "interval": "1m",
+  "study_name": "phase85_ethusdt_seed42",
+  "best_params": {
+    "lookback_bars": 10079,
+    "cooldown_bars": 478,
+    "wick_ratio_min": 0.2683259446773983,
+    "breakout_distance_min": 0.16143760215227146,
+    "oi_buildup_min": 0.6170770342130214,
+    "fib_level": 0.6057134073574875,
+    "atr_multiplier_low": 2.6495987818097047,
+    "atr_multiplier_mid": 1.568208657641005,
+    "atr_multiplier_high": 3.384109213554907
+  },
+  "wf_config": {
+    "train_days": 90,
+    "test_days": 90,
+    "step_days": 30,
+    "min_trades_per_oos": 25,
+    "bars_per_year": 525600
+  },
+  "per_window": [
+    {
+      "window_index": 0,
+      "is_metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "sharpe_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "calmar_ratio": 0.0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": 0.0,
+        "trade_count": 0,
+        "closed_trade_count": 0,
+        "avg_holding_period": 0.0
+      },
+      "oos_metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "sharpe_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "calmar_ratio": 0.0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": 0.0,
+        "trade_count": 0,
+        "closed_trade_count": 0,
+        "avg_holding_period": 0.0
+      },
+      "is_trade_count": 0,
+      "oos_trade_count": 0,
+      "oos_trades": [],
+      "test_start_idx": 129600,
+      "test_end_idx": 259200,
+      "train_start_idx": 0,
+      "train_end_idx": 129600
+    },
+    {
+      "window_index": 1,
+      "is_metrics": {
+        "total_return": -0.00016676783504021575,
+        "annualized_return": -3.242977797413005e-07,
+        "sharpe_ratio": 0.00560678536193742,
+        "max_drawdown": 0.16643512459404394,
+        "calmar_ratio": -1.948493627966472e-06,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": -16.67678350402245,
+        "trade_count": 2,
+        "closed_trade_count": 1,
+        "avg_holding_period": 0.0020833333333333333
+      },
+      "oos_metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "sharpe_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "calmar_ratio": 0.0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": 0.0,
+        "trade_count": 0,
+        "closed_trade_count": 0,
+        "avg_holding_period": 0.0
+      },
+      "is_trade_count": 2,
+      "oos_trade_count": 0,
+      "oos_trades": [],
+      "test_start_idx": 172800,
+      "test_end_idx": 302400,
+      "train_start_idx": 43200,
+      "train_end_idx": 172800
+    },
+    {
+      "window_index": 2,
+      "is_metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "sharpe_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "calmar_ratio": 0.0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": 0.0,
+        "trade_count": 0,
+        "closed_trade_count": 0,
+        "avg_holding_period": 0.0
+      },
+      "oos_metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "sharpe_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "calmar_ratio": 0.0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": 0.0,
+        "trade_count": 0,
+        "closed_trade_count": 0,
+        "avg_holding_period": 0.0
+      },
+      "is_trade_count": 0,
+      "oos_trade_count": 0,
+      "oos_trades": [],
+      "test_start_idx": 216000,
+      "test_end_idx": 345600,
+      "train_start_idx": 86400,
+      "train_end_idx": 216000
+    }
+  ],
+  "aggregate_oos_metrics": {
+    "total_return": 0.0,
+    "annualized_return": 0.0,
+    "sharpe_ratio": 0.0,
+    "max_drawdown": 0.0,
+    "calmar_ratio": 0.0,
+    "win_rate": 0.0,
+    "profit_factor": 0.0,
+    "avg_win": 0.0,
+    "avg_loss": 0.0,
+    "trade_count": 0.0,
+    "closed_trade_count": 0.0,
+    "avg_holding_period": 0.0
+  },
+  "flags": [
+    "wfe_below_threshold",
+    "too_many_insufficient_windows_3/3_ratio=1.00_max=0.3",
+    "zero_oos_trades"
+  ],
+  "budget_summary": {
+    "total_seconds": 178.55047416384332,
+    "optuna_seconds": 0.3216770850121975,
+    "wfe_seconds": 123.77499431790784,
+    "peak_rss_mb": 263.89453125
+  },
+  "frozen_gate_anchor": "5a1ecc9",
+  "verdict_inputs": {
+    "oos_total_trades": 0,
+    "oos_aggregate_sharpe": 0.0,
+    "wfe_degradation": 0.0,
+    "max_consecutive_losses": null,
+    "n_oos_windows": 3
+  },
+  "generated_at": "2026-04-28T07:21:36Z"
+}
