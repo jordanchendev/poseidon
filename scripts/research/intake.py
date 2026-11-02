@@ -42,6 +42,7 @@ import draft as draft_mod  # noqa: E402
 import narrative_check  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 from claim_precheck import _CAUSAL, check_numbers, lint_atomic  # noqa: E402
+from refusal import ResearchRefusal  # noqa: E402
 
 MATERIAL_ID = re.compile(r"^\d{8}-k\d{1,4}$")
 MAX_RECORDS = 10  # D11
@@ -185,14 +186,15 @@ def freeze(ledger_path, as_of, doc, snap):
     data_manifests table only."""
     import research_theme as rt
     from sqlalchemy import create_engine
+    from sqlalchemy.exc import SQLAlchemyError
     from sqlalchemy.orm import Session
 
-    from poseidon.decision_loop.manifest import ManifestService
+    from poseidon.decision_loop.manifest import ManifestService, ValidationError
     from poseidon.models.base import Base
 
     try:
         evidence = [rt.document_evidence(doc, as_of)]
-    except SystemExit as e:
+    except ResearchRefusal as e:
         raise IntakeError("freeze", str(e)) from None
     if snap:
         evidence.append(rt.snapshot_evidence(snap, as_of))
@@ -212,7 +214,7 @@ def freeze(ledger_path, as_of, doc, snap):
             manifest = ManifestService(session).freeze(request)
             session.commit()
             return manifest.content_sha256, manifest.payload_json
-    except Exception as e:  # ValidationError and SQL errors
+    except (ValidationError, SQLAlchemyError) as e:
         raise IntakeError("freeze", f"{type(e).__name__}: {e}") from None
     finally:
         engine.dispose()

@@ -49,8 +49,14 @@ import urllib.error
 import urllib.parse
 from pathlib import Path
 
+import httpx
+import tenacity
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fetch_source
+from refusal import ResearchRefusal
+
+from poseidon.core.circuit_breaker import CircuitBreakerOpenError
 
 MAX_EXCERPTS = 40
 FALLBACK_MIN_CHARS = 20  # notices are short; generic fallback keeps shorter paragraphs than the template default (80)
@@ -280,7 +286,7 @@ def fetch_document(url, *, doc_id, title, publisher, event_time, out_dir, templa
             template=template,
             keep="all",
         )
-    except SystemExit as e:  # fetch_source exits on a Cloudflare challenge page
+    except ResearchRefusal as e:  # a Cloudflare challenge page
         raise AssembleError(f"source fetch refused for {url}: {e}") from None
     except urllib.error.HTTPError as e:
         raise AssembleError(f"source fetch failed for {url}: HTTP {e.code}") from None
@@ -429,6 +435,10 @@ def thalassa_daily_bars(symbol, start, end):
     return out
 
 
+# What a Thalassa read raises: HTTP status / transport (httpx), the open breaker, retries exhausted, a malformed body.
+THALASSA_ERRORS = (httpx.HTTPError, CircuitBreakerOpenError, tenacity.RetryError, OSError, ValueError, KeyError)
+
+
 def write_bars(symbols, as_of_dt, csv_path, fetch_bars=thalassa_daily_bars):
     start = as_of_dt - datetime.timedelta(days=LOOKBACK_DAYS)
     lines = []
@@ -437,7 +447,7 @@ def write_bars(symbols, as_of_dt, csv_path, fetch_bars=thalassa_daily_bars):
             bars = fetch_bars(sym, start, as_of_dt)
         except AssembleError:
             raise
-        except Exception as e:  # httpx / circuit breaker / parse errors; never includes the API key
+        except THALASSA_ERRORS as e:  # never includes the API key
             raise AssembleError(f"Thalassa OHLCV fetch failed for {sym}: {type(e).__name__}: {e}") from None
         if len(bars) < 21:
             raise AssembleError(
@@ -464,7 +474,7 @@ def kpi_inputs(symbols, as_of, out_path, fetch_rows=twse_rows):
         return [], ["kpi_series: no TWSE numeric symbol"]
     try:
         rows, uri, fetched = fetch_rows()
-    except Exception as e:
+    except (OSError, ValueError, KeyError) as e:  # network, timeout, a body that is not the rows
         return [], [f"kpi_series skipped: TWSE t187ap05_L fetch failed ({type(e).__name__}: {e})"]
     keep = [r for r in rows if str(r.get("公司代號", "")).strip() in cands]
     usable = [s for s in cands if research_theme.kpi_series_evidence(s, keep, uri, fetched, as_of) is not None]

@@ -29,6 +29,8 @@ from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 
+from refusal import ResearchRefusal
+
 UA_SEC = os.environ.get("SEC_USER_AGENT", "jordan.chen.dev@gmail.com research-tool")
 UA_BROWSER = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36"
@@ -93,7 +95,7 @@ def fetch(url, dest):
         ctype = r.headers.get("Content-Type", "")
     head = body[:4096].decode("utf-8", "replace").lower()
     if "just a moment" in head or "cf-chl" in head or "attention required" in head:
-        sys.exit("blocked by a Cloudflare challenge page: %s" % url)
+        raise ResearchRefusal("blocked by a Cloudflare challenge page: %s" % url)
     Path(dest).write_bytes(body)
     return ctype
 
@@ -201,7 +203,7 @@ def build_document(url, *, doc_id, title, publisher, event_time, out_dir, templa
     """Fetch `url` into out_dir, convert to text and build a research_theme.py `documents[]` entry.
 
     keep: None (no excerpts), "all" (every verified proposal) or a list of 1-based proposal indexes.
-    Returns (document, proposals, content_type). Raises SystemExit on a Cloudflare challenge page and lets
+    Returns (document, proposals, content_type). Raises ResearchRefusal on a Cloudflare challenge page and lets
     urllib / subprocess errors propagate (callers that must not die catch them).
     """
     out = Path(out_dir)
@@ -278,4 +280,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ResearchRefusal as e:
+        sys.exit(str(e))

@@ -66,6 +66,7 @@ import intake as intake_mod  # noqa: E402
 import narrative_check  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 from claim_precheck import has_inference_basis  # noqa: E402
+from refusal import ResearchRefusal  # noqa: E402
 
 JEV_KEY_VAR = "JEV_RESEARCH_OPENROUTER_KEY"
 JEV_MODEL = "typesafe/jev-1.13"
@@ -300,6 +301,11 @@ def research_theme(config_path, cfg, ledger_path, narrative_path=None, out_path=
 
 # ------------------------------------------------------------------------------------------------ gates
 NARRATIVE_LISTS = ("risks", "invalidation_conditions", "unknowns")
+# What a validator raises on a drafted narrative of the wrong shape (a list where an object belongs, a missing key):
+# a gate reason the repair round can fix, not a runner failure.
+MALFORMED = (TypeError, KeyError, AttributeError, ValueError)
+# What a research_theme.py subprocess call raises: its refusal (RuntimeError with stderr), a timeout, unreadable output.
+SUBPROCESS_FAILED = (RuntimeError, subprocess.TimeoutExpired, OSError, ValueError)
 NARRATIVE_TEXTS = ("tl_dr", "thesis", "stance", "change_summary", "next_review_at")
 
 
@@ -317,6 +323,7 @@ def run_gates(narrative, payload, cfg):
     """All local checks; returns (reasons, report). An empty reasons list means the narrative may be completed."""
     import research_theme as rt
 
+    from poseidon.decision_loop.manifest import ValidationError
     from poseidon.decision_loop.research import validate_research
 
     reasons, report = [], {}
@@ -339,7 +346,7 @@ def run_gates(narrative, payload, cfg):
         body["symbol"] = cfg["symbol"]
     try:
         validate_research(body, types.SimpleNamespace(scope_key=cfg["scope_key"]), payload)
-    except Exception as e:  # ValidationError and malformed shapes
+    except (ValidationError, *MALFORMED) as e:
         reasons.append(f"[schema] {e}")
     for fn in (
         lambda: rt.validate_narrative_extras(narrative, payload["as_of"]),
@@ -347,9 +354,9 @@ def run_gates(narrative, payload, cfg):
     ):
         try:
             fn()
-        except SystemExit as e:
+        except ResearchRefusal as e:
             reasons.append(f"[schema] {e}")
-        except Exception as e:
+        except MALFORMED as e:
             reasons.append(f"[schema] {type(e).__name__}: {e}")
     # quote-in-cited-evidence (the document excerpts themselves were verified against the source text at freeze)
     by_id = {e["id"]: e for e in payload["evidence"]}
@@ -388,12 +395,11 @@ def run_gates(narrative, payload, cfg):
     # claim_precheck strict (numbers: fact any mismatch, inference scale/sign), lint_atomic, GAAP basis
     try:
         report["claim_precheck"] = rt.precheck_claims(narrative, payload["evidence"])
-    except SystemExit as e:
-        for line in str(e).splitlines()[1:]:
-            line = line.strip()
+    except ResearchRefusal as e:
+        for line in e.problems:
             tag = "atomic" if "non-atomic" in line else "gaap_basis" if "GAAP" in line else "precheck"
             reasons.append(f"[{tag}] {line}")
-    except Exception as e:
+    except MALFORMED as e:
         reasons.append(f"[precheck] {type(e).__name__}: {e}")
     return reasons, report
 
@@ -608,7 +614,7 @@ def process_row(row, *, state_dir, ledger, keys, opts):
             try:
                 info = research_theme(config_path, cfg, ledger_path)
                 payload = ledger.manifest_payload(info["manifest_sha256"])
-            except Exception as e:
+            except SUBPROCESS_FAILED as e:
                 raise StageError("prepare", f"freeze/prepare refused: {e}") from None
         revision = {"identity": info, "research": None, "manifest_payload": payload}
         run.data.update(revision_id=info["revision_id"], manifest_sha256=info["manifest_sha256"])
@@ -671,7 +677,7 @@ def process_row(row, *, state_dir, ledger, keys, opts):
         with run.stage("complete"):
             try:
                 research_theme(config_path, cfg, ledger_path, run_dir / "narrative.json", run_dir / "revision.json")
-            except Exception as e:
+            except SUBPROCESS_FAILED as e:
                 raise StageError("complete", f"research_theme refused completion: {e}") from None
         revision = json.loads((run_dir / "revision.json").read_text(encoding="utf-8"))
         revision["jev_results"] = jev
@@ -682,7 +688,7 @@ def process_row(row, *, state_dir, ledger, keys, opts):
             mode = opts.get("narrative_apply", "off")
             try:
                 results = narrative_check.apply(ledger_path, revision, payload, cfg, narr_jev, mode=mode)
-            except Exception as e:
+            except Exception as e:  # crash barrier: the revision is completed, so this stage may only be recorded
                 log.exception("narrative_apply failed for %s", row.get("id"))
                 run.data["narrative_error"] = f"{type(e).__name__}: {cap(str(e), 300)}"
                 results = None
@@ -701,7 +707,7 @@ def process_row(row, *, state_dir, ledger, keys, opts):
         run.data["failed_stage"] = e.stage
         run.data["reasons"] = [e.reason, *e.details]
         return run
-    except Exception as e:  # a bug must not leave the topic silently half-done
+    except Exception as e:  # crash barrier: a bug must not leave the topic silently half-done
         log.exception("internal error while processing %s", row.get("id"))
         run.data["status"] = "needs_review"
         run.data["failed_stage"] = "internal"
@@ -870,7 +876,7 @@ def process_material_row(row, run_dir, ledger_path, keys, opts):
         data["status"] = "intaken"
     except intake_mod.IntakeError as e:
         data.update(status="needs_review", failed_stage=e.stage, reasons=[e.reason, *e.details])
-    except Exception as e:  # a bug must not leave the material silently half-done
+    except Exception as e:  # crash barrier: a bug must not leave the material silently half-done
         log.exception("internal error while taking in material %s", row.get("id"))
         data.update(status="needs_review", failed_stage="internal", reasons=[f"{type(e).__name__}: {e}"])
     finally:
@@ -959,7 +965,7 @@ def refresh_export(state):
             nl.write_export(db, nl.now(), state / NARRATIVE_EXPORT)
         finally:
             db.close()
-    except Exception:
+    except (nl.LedgerError, sqlite3.Error, OSError, ValueError):
         log.exception("narrative export failed")
 
 

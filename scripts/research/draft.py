@@ -46,7 +46,7 @@ RETRY_SLEEP_S = 2
 _KEY_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
 
 
-class MissingKeyError(SystemExit):
+class MissingKeyError(Exception):
     """Named fail-closed error for an absent/empty/unsafe key file; carries no key material."""
 
 
@@ -522,7 +522,10 @@ def main():
     if a.print_prompt:
         print(json.dumps(build_messages(cfg, payload), ensure_ascii=False, indent=1))
         return
-    key = load_key(a.env_file, DRAFT_KEY_VAR)
+    try:
+        key = load_key(a.env_file, DRAFT_KEY_VAR)
+    except MissingKeyError as e:
+        sys.exit(f"key error: {e}")
     try:
         res = draft(cfg, payload, key)
     except DraftError as e:

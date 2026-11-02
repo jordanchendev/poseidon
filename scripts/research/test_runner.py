@@ -15,11 +15,11 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-WORKTREE = HERE.parents[1]
 
 import assemble  # noqa: E402
 import draft  # noqa: E402
 import runner  # noqa: E402
+from refusal import ResearchRefusal  # noqa: E402
 from testkit import (  # noqa: E402
     AGENDA_ID,
     AS_OF,
@@ -619,13 +619,13 @@ def test_umc_derivation_recorded_and_scale_still_refused():
     s = dict(claim, text="由第一季 1.29 元與第二季 3.39 元推算，上半年每股盈餘約為 4.68 元。")
     ev_q = [dict(ev[0], payload={"excerpts": [{"text": "第一季每股盈餘 1.29 元，第二季每股盈餘 3.39 元。"}]})]
     assert research_theme.precheck_claims({"claims": [s]}, ev_q)[0]["derived"][0]["how"] == "A+B"
-    with pytest.raises(SystemExit, match="numeric mismatch"):
+    with pytest.raises(ResearchRefusal, match="numeric mismatch"):
         research_theme.precheck_claims({"claims": [dict(s, kind="fact")]}, ev_q)
-    with pytest.raises(SystemExit, match="non-atomic"):
+    with pytest.raises(ResearchRefusal, match="non-atomic"):
         research_theme.precheck_claims({"claims": [dict(claim, kind="fact")]}, ev)
     # a scale slip in a derivation still refuses
     bad = dict(claim, text="由上半年累計 4.68 元與第二季 3.39 元推算，第一季每股盈餘約為 12.9 元。")
-    with pytest.raises(SystemExit, match="scale"):
+    with pytest.raises(ResearchRefusal, match="scale"):
         research_theme.precheck_claims({"claims": [bad]}, ev)
 
 

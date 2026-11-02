@@ -74,13 +74,14 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from claim_precheck import check_numbers, extract_quantities, lint_atomic
+from refusal import ResearchRefusal
 from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
 from poseidon.api.auth import AuthPrincipal
-from poseidon.decision_loop.manifest import ManifestService, content_sha256, iso_time
+from poseidon.decision_loop.manifest import ManifestService, ValidationError, content_sha256, iso_time
 from poseidon.decision_loop.research import ResearchService
 from poseidon.models.base import Base
 
@@ -148,19 +149,19 @@ def verify_excerpts(item):
     """
     raw_text_path = item.get("raw_text_path")
     if not raw_text_path:
-        raise SystemExit("document %s has no raw_text_path to verify excerpts against" % item["id"])
+        raise ResearchRefusal("document %s has no raw_text_path to verify excerpts against" % item["id"])
     raw = _normalize(Path(raw_text_path).read_text(encoding="utf-8", errors="replace"))
     for ex in item["excerpts"]:
         text = _normalize(ex["text"])
         if not text or text not in raw:
-            raise SystemExit(
+            raise ResearchRefusal(
                 "excerpt %s of %s is not a substring of %s; refusing to freeze"
                 % (ex.get("locator"), item["id"], raw_text_path)
             )
     digest = hashlib.sha256(Path(raw_text_path).read_bytes()).hexdigest()
     declared = item.get("raw_files", {})
     if digest not in declared.values():
-        raise SystemExit("raw_text_path sha256 %s is not declared in raw_files of %s" % (digest[:12], item["id"]))
+        raise ResearchRefusal("raw_text_path sha256 %s is not declared in raw_files of %s" % (digest[:12], item["id"]))
 
 
 def document_evidence(item, as_of):
@@ -175,16 +176,16 @@ def document_evidence(item, as_of):
         payload["actuals"] = item["actuals"]
     if item.get("issuer"):  # the company that issued the document (assemble.issuer_of); the §5.2 official tier
         if not isinstance(item["issuer"], str) or not item["issuer"].strip():
-            raise SystemExit("document %s issuer must be a symbol" % item["id"])
+            raise ResearchRefusal("document %s issuer must be a symbol" % item["id"])
         payload["issuer"] = item["issuer"]
     if item.get("source_tier"):
         if item["source_tier"] not in SOURCE_TIERS:
-            raise SystemExit("document %s source_tier must be one of %s" % (item["id"], "|".join(SOURCE_TIERS)))
+            raise ResearchRefusal("document %s source_tier must be one of %s" % (item["id"], "|".join(SOURCE_TIERS)))
         payload["source_tier"] = item["source_tier"]
     if item["kind"] == "secondary" and payload.get("source_tier") not in SECONDARY_TIERS:
-        raise SystemExit("secondary document %s needs source_tier %s" % (item["id"], "|".join(SECONDARY_TIERS)))
+        raise ResearchRefusal("secondary document %s needs source_tier %s" % (item["id"], "|".join(SECONDARY_TIERS)))
     if item["kind"] not in ("fundamental", "secondary"):
-        raise SystemExit("document %s kind must be fundamental or secondary" % item["id"])
+        raise ResearchRefusal("document %s kind must be fundamental or secondary" % item["id"])
     return {
         "id": item["id"],
         "kind": item["kind"],
@@ -286,45 +287,45 @@ def stats(df, since, bench=None):
 
 
 def validate_narrative_extras(narrative, as_of):
-    """Offline shape checks for optional narrative fields; raises SystemExit with a clear message."""
+    """Offline shape checks for optional narrative fields; raises ResearchRefusal with a clear message."""
     if "tl_dr" in narrative and not (isinstance(narrative["tl_dr"], str) and narrative["tl_dr"].strip()):
-        raise SystemExit("tl_dr must be a non-empty string")
+        raise ResearchRefusal("tl_dr must be a non-empty string")
     status = narrative.get("event_status")
     if status is not None and status not in EVENT_STATUSES:
-        raise SystemExit("event_status must be one of %s, got %r" % ("|".join(EVENT_STATUSES), status))
+        raise ResearchRefusal("event_status must be one of %s, got %r" % ("|".join(EVENT_STATUSES), status))
     if narrative.get("event_date") is not None:
         try:
             datetime.date.fromisoformat(str(narrative["event_date"]))
         except ValueError:
-            raise SystemExit("event_date must be an ISO date YYYY-MM-DD, got %r" % narrative["event_date"])
+            raise ResearchRefusal("event_date must be an ISO date YYYY-MM-DD, got %r" % narrative["event_date"])
     cats = narrative.get("catalysts")
     if status == "pre_event" and not (isinstance(cats, list) and cats):
-        raise SystemExit("event_status pre_event requires a non-empty catalysts list (include the event date)")
+        raise ResearchRefusal("event_status pre_event requires a non-empty catalysts list (include the event date)")
     if cats is None:
         return
     if not isinstance(cats, list) or not cats:
-        raise SystemExit("catalysts must be a non-empty list when present")
+        raise ResearchRefusal("catalysts must be a non-empty list when present")
     for n, c in enumerate(cats):
         if not isinstance(c, dict):
-            raise SystemExit("catalysts[%d] must be an object" % n)
+            raise ResearchRefusal("catalysts[%d] must be an object" % n)
         try:
             datetime.date.fromisoformat(c.get("date", ""))
         except (TypeError, ValueError):
-            raise SystemExit("catalysts[%d].date must be an ISO date YYYY-MM-DD, got %r" % (n, c.get("date")))
+            raise ResearchRefusal("catalysts[%d].date must be an ISO date YYYY-MM-DD, got %r" % (n, c.get("date")))
         if c.get("type") not in CATALYST_TYPES:
-            raise SystemExit(
+            raise ResearchRefusal(
                 "catalysts[%d].type must be one of %s, got %r" % (n, "|".join(CATALYST_TYPES), c.get("type"))
             )
         for k in ("expected_signal", "source"):
             if not isinstance(c.get(k), str) or not c[k].strip():
-                raise SystemExit("catalysts[%d].%s must be a non-empty string" % (n, k))
+                raise ResearchRefusal("catalysts[%d].%s must be a non-empty string" % (n, k))
     today = as_of[:10]
     future = sorted(c["date"] for c in cats if c["date"] >= today)
     if not future:
         print("note: no catalyst on/after as_of date %s; next_review_at not cross-checked" % today, file=sys.stderr)
         return
     if not str(narrative.get("next_review_at", "")).startswith(future[0]):
-        raise SystemExit(
+        raise ResearchRefusal(
             "next_review_at %r must start with the earliest future catalyst date %s"
             % (narrative.get("next_review_at"), future[0])
         )
@@ -358,12 +359,12 @@ SNAPSHOT_KEYS = ("id", "kind", "source_uri", "event_time", "available_at", "payl
 def snapshot_evidence(snap, as_of):
     """cfg narrative_snapshot -> frozen evidence item. The selection and fold are assemble.py's; this checks the shape."""
     if sorted(snap) != sorted(SNAPSHOT_KEYS) or snap["id"] != "narrative_snapshot" or snap["kind"] != snap["id"]:
-        raise SystemExit(
+        raise ResearchRefusal(
             "narrative_snapshot must be {%s} with id and kind narrative_snapshot" % ", ".join(SNAPSHOT_KEYS)
         )
     p = snap["payload"]
     if sorted(p) != ["algorithm", "not_shown", "records", "themes"] or not (p["records"] or p["themes"]):
-        raise SystemExit(
+        raise ResearchRefusal(
             "narrative_snapshot payload needs algorithm, themes, records and not_shown, and a theme or record"
         )
     return {**snap, "recorded_at": as_of, "content_sha256": content_sha256(p)}
@@ -401,7 +402,7 @@ def quantity_text(value, unit):
 def _excerpt_by_locator(item, locator, what):
     hits = [ex["text"] for ex in item["excerpts"] if ex.get("locator") == locator]
     if not hits:
-        raise SystemExit("%s cites excerpt_locator %r which is not an excerpt of %s" % (what, locator, item["id"]))
+        raise ResearchRefusal("%s cites excerpt_locator %r which is not an excerpt of %s" % (what, locator, item["id"]))
     return hits[0]
 
 
@@ -430,7 +431,7 @@ def _numbers_in_excerpt(texts, excerpt, what, strict):
         kinds = sorted({u["kind"] for u in r["unmatched"]}) or [r["status"]]
         msg = "%s: %r not found in the cited excerpt (%s)" % (what, t, ", ".join(kinds))
         if strict or {"scale", "sign"} & set(kinds):
-            raise SystemExit("refusing to freeze: " + msg)
+            raise ResearchRefusal("refusing to freeze: " + msg)
         print("warning: " + msg, file=sys.stderr)
         status = "warn"
     return status
@@ -441,28 +442,30 @@ def validate_guidance(item):
     Every number must appear in the referenced excerpt (claim_precheck.check_numbers): refuse on scale/sign mismatch,
     warn otherwise. Writes no state; the guidance list is hashed as part of the document payload."""
     if not isinstance(item["guidance"], list):
-        raise SystemExit("document %s guidance must be a list" % item["id"])
+        raise ResearchRefusal("document %s guidance must be a list" % item["id"])
     for n, g in enumerate(item["guidance"]):
         what = "%s guidance[%d]" % (item["id"], n)
         for k in ("metric", "period", "unit", "excerpt_locator"):
             if not isinstance(g.get(k), str) or not g[k].strip():
-                raise SystemExit("%s.%s must be a non-empty string" % (what, k))
+                raise ResearchRefusal("%s.%s must be a non-empty string" % (what, k))
         if g.get("basis") not in GUIDANCE_BASES:
-            raise SystemExit("%s.basis must be one of %s, got %r" % (what, "|".join(GUIDANCE_BASES), g.get("basis")))
+            raise ResearchRefusal(
+                "%s.basis must be one of %s, got %r" % (what, "|".join(GUIDANCE_BASES), g.get("basis"))
+            )
         has_range, has_value = "low" in g or "high" in g, "value" in g
         if has_range == has_value or (has_range and not ("low" in g and "high" in g)):
-            raise SystemExit("%s needs either low and high, or value" % what)
+            raise ResearchRefusal("%s needs either low and high, or value" % what)
         nums = [g[k] for k in ("low", "high", "value") if k in g]
         if any(isinstance(x, bool) or not isinstance(x, (int, float)) for x in nums):
-            raise SystemExit("%s low/high/value must be numbers" % what)
+            raise ResearchRefusal("%s low/high/value must be numbers" % what)
         if has_range and g["low"] > g["high"]:
-            raise SystemExit("%s low > high" % what)
+            raise ResearchRefusal("%s low > high" % what)
         excerpt = _excerpt_by_locator(item, g["excerpt_locator"], what)
         texts = [quantity_text(x, g["unit"]) for x in nums]
         fx = g.get("fx_assumption")
         if fx is not None:
             if not isinstance(fx, str) or not fx.strip():
-                raise SystemExit("%s.fx_assumption must be a non-empty string when present" % what)
+                raise ResearchRefusal("%s.fx_assumption must be a non-empty string when present" % what)
             texts.append(fx)
         _numbers_in_excerpt(texts, excerpt, what, strict=False)
 
@@ -474,9 +477,9 @@ def validate_actuals(item):
         what = "actuals for %s [%d]" % (item["id"], n)
         for k in ("metric", "period", "unit", "excerpt_locator"):
             if not isinstance(a.get(k), str) or not a[k].strip():
-                raise SystemExit("%s.%s must be a non-empty string" % (what, k))
+                raise ResearchRefusal("%s.%s must be a non-empty string" % (what, k))
         if isinstance(a.get("value"), bool) or not isinstance(a.get("value"), (int, float)):
-            raise SystemExit("%s.value must be a number" % what)
+            raise ResearchRefusal("%s.value must be a number" % what)
         _numbers_in_excerpt(
             [quantity_text(a["value"], a["unit"])],
             _excerpt_by_locator(item, a["excerpt_locator"], what),
@@ -490,7 +493,7 @@ def attach_actuals(documents, actuals):
     by_id = {d["id"]: dict(d) for d in documents}
     for n, a in enumerate(actuals or []):
         if a.get("evidence_id") not in by_id:
-            raise SystemExit(
+            raise ResearchRefusal(
                 "actuals[%d].evidence_id %r is not a config document; an actual must cite a document excerpt"
                 % (n, a.get("evidence_id"))
             )
@@ -513,14 +516,14 @@ def narrative_actuals(narrative):
             continue
         what = "claims[%d].actual" % n
         if c.get("kind") != "fact":
-            raise SystemExit("%s is only allowed on fact claims" % what)
+            raise ResearchRefusal("%s is only allowed on fact claims" % what)
         if (
             not isinstance(a, dict)
             or any(not isinstance(a.get(k), str) or not a[k].strip() for k in ("metric", "period", "unit"))
             or isinstance(a.get("value"), bool)
             or not isinstance(a.get("value"), (int, float))
         ):
-            raise SystemExit("%s must be {metric, period, value (number), unit}" % what)
+            raise ResearchRefusal("%s must be {metric, period, value (number), unit}" % what)
         _numbers_in_excerpt([quantity_text(a["value"], a["unit"])], c["text"], what + " vs its claim text", strict=True)
         out.append(dict(a, source="claims[%d]" % n, evidence_ids=c.get("evidence_ids", [])))
     return out
@@ -781,35 +784,35 @@ def _is_num(x):
 
 def validate_consensus_items(items, what):
     if not isinstance(items, list) or not items:
-        raise SystemExit("%s.items must be a non-empty list" % what)
+        raise ResearchRefusal("%s.items must be a non-empty list" % what)
     out = []
     for n, it in enumerate(items):
         w = "%s.items[%d]" % (what, n)
         if not isinstance(it, dict):
-            raise SystemExit("%s must be an object" % w)
+            raise ResearchRefusal("%s must be an object" % w)
         for k in ("metric", "period", "unit", "basis"):
             if not isinstance(it.get(k), str) or not it[k].strip():
-                raise SystemExit("%s.%s must be a non-empty string" % (w, k))
+                raise ResearchRefusal("%s.%s must be a non-empty string" % (w, k))
         if it["basis"] not in GUIDANCE_BASES:
-            raise SystemExit("%s.basis must be one of %s, got %r" % (w, "|".join(GUIDANCE_BASES), it["basis"]))
+            raise ResearchRefusal("%s.basis must be one of %s, got %r" % (w, "|".join(GUIDANCE_BASES), it["basis"]))
         period = norm_period(it["period"])
         if not _PERIOD_OK.match(period):
-            raise SystemExit("%s.period %r does not normalise to 3Q26 / 1H26 / FY26" % (w, it["period"]))
+            raise ResearchRefusal("%s.period %r does not normalise to 3Q26 / 1H26 / FY26" % (w, it["period"]))
         for k in ("mean", "low", "high"):
             if not _is_num(it.get(k)):
-                raise SystemExit("%s.%s must be a number" % (w, k))
+                raise ResearchRefusal("%s.%s must be a number" % (w, k))
         if "median" in it and it["median"] is not None and not _is_num(it["median"]):
-            raise SystemExit("%s.median must be a number when present" % w)
+            raise ResearchRefusal("%s.median must be a number when present" % w)
         if not it["low"] <= it["mean"] <= it["high"]:
-            raise SystemExit("%s needs low <= mean <= high" % w)
+            raise ResearchRefusal("%s needs low <= mean <= high" % w)
         if isinstance(it.get("n_analysts"), bool) or not isinstance(it.get("n_analysts"), int) or it["n_analysts"] < 1:
-            raise SystemExit("%s.n_analysts must be an integer >= 1" % w)
+            raise ResearchRefusal("%s.n_analysts must be an integer >= 1" % w)
         cls, _ = unit_base(it["unit"])
         cur = it.get("currency")
         if cls.startswith("money:") and cur != cls[6:]:
-            raise SystemExit("%s.currency %r does not match unit %r" % (w, cur, it["unit"]))
+            raise ResearchRefusal("%s.currency %r does not match unit %r" % (w, cur, it["unit"]))
         if not cls.startswith("money:") and cur not in (None, ""):
-            raise SystemExit("%s.currency must be null for a non-money unit %r" % (w, it["unit"]))
+            raise ResearchRefusal("%s.currency must be null for a non-money unit %r" % (w, it["unit"]))
         out.append(dict(it, period=period, currency=cur or None))
     return out
 
@@ -821,13 +824,13 @@ def consensus_evidence(data, as_of, source="consensus-json"):
     what = "%s %s" % (source, data.get("symbol"))
     for k in ("symbol", "provider", "as_of", "source_uri", "raw_sha256", "fetched_at"):
         if not isinstance(data.get(k), str) or not data[k].strip():
-            raise SystemExit("%s: %s must be a non-empty string" % (what, k))
+            raise ResearchRefusal("%s: %s must be a non-empty string" % (what, k))
     raw = data.get("raw_path")
     if not raw or not Path(raw).is_file():
-        raise SystemExit("%s: raw_path must point at the captured raw file (got %r)" % (what, raw))
+        raise ResearchRefusal("%s: raw_path must point at the captured raw file (got %r)" % (what, raw))
     digest = hashlib.sha256(Path(raw).read_bytes()).hexdigest()
     if digest != data["raw_sha256"]:
-        raise SystemExit(
+        raise ResearchRefusal(
             "%s: raw_path sha256 %s != declared raw_sha256 %s; refusing to freeze"
             % (what, digest[:12], data["raw_sha256"][:12])
         )
@@ -871,6 +874,7 @@ _UA = "aquarium-research/1.0 (offline research tooling)"
 
 
 def _http_get(url, opener, timeout=20):
+    import http.client
     import urllib.error
     import urllib.request
 
@@ -880,7 +884,7 @@ def _http_get(url, opener, timeout=20):
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         return e.code, e.read()
-    except Exception as e:  # network down, TLS, timeout
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:  # network down, TLS, timeout
         return None, repr(e).encode()
 
 
@@ -1235,22 +1239,22 @@ def validate_variant_perception(narrative, evidence):
     if vp is None:
         return
     if not isinstance(vp, list) or not vp:
-        raise SystemExit("variant_perception must be a non-empty list when present")
+        raise ResearchRefusal("variant_perception must be a non-empty list when present")
     by_id = {e["id"]: e for e in evidence}
     for n, v in enumerate(vp):
         w = "variant_perception[%d]" % n
         if not isinstance(v, dict):
-            raise SystemExit("%s must be an object" % w)
+            raise ResearchRefusal("%s must be an object" % w)
         for k in ("metric", "period", "consensus_ref", "why"):
             if not isinstance(v.get(k), str) or not v[k].strip():
-                raise SystemExit("%s.%s must be a non-empty string" % (w, k))
+                raise ResearchRefusal("%s.%s must be a non-empty string" % (w, k))
         if v.get("direction") not in VP_DIRECTIONS:
-            raise SystemExit(
+            raise ResearchRefusal(
                 "%s.direction must be one of %s, got %r" % (w, "|".join(VP_DIRECTIONS), v.get("direction"))
             )
         ref = by_id.get(v["consensus_ref"])
         if ref is None or ref["kind"] != "consensus":
-            raise SystemExit("%s.consensus_ref %r is not a frozen consensus evidence" % (w, v["consensus_ref"]))
+            raise ResearchRefusal("%s.consensus_ref %r is not a frozen consensus evidence" % (w, v["consensus_ref"]))
         v["period"] = norm_period(v["period"])  # stored normalised so the renderer matches it to the consensus item
         it = next(
             (
@@ -1261,19 +1265,19 @@ def validate_variant_perception(narrative, evidence):
             None,
         )
         if it is None:
-            raise SystemExit("%s: %s has no %s %s item" % (w, v["consensus_ref"], v["metric"], v["period"]))
+            raise ResearchRefusal("%s: %s has no %s %s item" % (w, v["consensus_ref"], v["metric"], v["period"]))
         ov = v.get("our_view")
         if _is_num(ov):
             ok = {"above": ov > it["mean"], "below": ov < it["mean"], "in_line": it["low"] <= ov <= it["high"]}[
                 v["direction"]
             ]
             if not ok:
-                raise SystemExit(
+                raise ResearchRefusal(
                     "%s: our_view %s is inconsistent with direction %r vs consensus mean %s (range %s–%s)"
                     % (w, ov, v["direction"], it["mean"], it["low"], it["high"])
                 )
         elif not isinstance(ov, str) or not ov.strip():
-            raise SystemExit("%s.our_view must be a number or a non-empty string" % w)
+            raise ResearchRefusal("%s.our_view must be a number or a non-empty string" % w)
 
 
 def pilot_disclosure(cfg):
@@ -1283,9 +1287,9 @@ def pilot_disclosure(cfg):
         return None
     pp = {"position": pp} if isinstance(pp, str) else pp
     if not isinstance(pp, dict) or pp.get("position") not in PILOT_POSITIONS:
-        raise SystemExit("pilot_position must be one of %s (or {position, size_note})" % "|".join(PILOT_POSITIONS))
+        raise ResearchRefusal("pilot_position must be one of %s (or {position, size_note})" % "|".join(PILOT_POSITIONS))
     if "size_note" in pp and (not isinstance(pp["size_note"], str) or not pp["size_note"].strip()):
-        raise SystemExit("pilot_position.size_note must be a non-empty string when present")
+        raise ResearchRefusal("pilot_position.size_note must be a non-empty string when present")
     return {
         "pilot_position": pp["position"],
         **({"size_note": pp["size_note"]} if pp.get("size_note") else {}),
@@ -1306,15 +1310,15 @@ def validate_supersedes(db, narrative):
     try:
         u = uuid.UUID(str(sid))
     except ValueError:
-        raise SystemExit("supersedes_revision_id %r is not a revision id" % sid)
+        raise ResearchRefusal("supersedes_revision_id %r is not a revision id" % sid)
     prev = db.get(ResearchRevision, u)
     if prev is None or prev.status != "completed":
-        raise SystemExit("supersedes_revision_id %s is not a completed revision in this ledger" % sid)
+        raise ResearchRefusal("supersedes_revision_id %s is not a completed revision in this ledger" % sid)
     return str(u)
 
 
 def precheck_claims(narrative, evidence):
-    """Numeric + atomic precheck for every claim; raises SystemExit listing every problem. Returns per-claim results."""
+    """Numeric + atomic precheck for every claim; raises ResearchRefusal listing every problem. Returns per-claim results."""
     by_id = {e["id"]: e for e in evidence}
     problems, results = [], []
     for n, claim in enumerate(narrative.get("claims", [])):
@@ -1374,7 +1378,7 @@ def precheck_claims(narrative, evidence):
         if not atom["ok"]:
             problems.append("claims[%d] is non-atomic (%s): split into %s" % (n, atom["reason"], atom["clauses"]))
     if problems:
-        raise SystemExit("claim precheck refused completion:\n  " + "\n  ".join(problems))
+        raise ResearchRefusal("claim precheck refused completion:", problems)
     return results
 
 
@@ -1404,7 +1408,7 @@ def main():
     as_of = cfg["as_of"]
     bars = load_bars(a.csv)
     if "read_across" in cfg:
-        raise SystemExit(
+        raise ResearchRefusal(
             "config read_across is no longer accepted; name the companies a claim is about in that claim's "
             "about_symbols instead (design 2026-10-29 §2.7)"
         )
@@ -1428,7 +1432,7 @@ def main():
             else:
                 kpi_items.append(item)
         if not kpi_items:
-            raise SystemExit("kpi_series requested but no symbol has a monthly revenue row visible at as_of")
+            raise ResearchRefusal("kpi_series requested but no symbol has a monthly revenue row visible at as_of")
     narrative = json.load(open(a.narrative)) if a.narrative else None
     narrative_acts = narrative_actuals(narrative) if narrative else []
     # consensus (B1): manual files first, then the optional live probe; a failed probe is recorded, never fatal
@@ -1611,7 +1615,7 @@ def main():
         disc = pilot_disclosure(cfg)
         if disc:
             if narrative.get("disclosure") not in (None, disc):
-                raise SystemExit("narrative.disclosure and config pilot_position both set; keep one")
+                raise ResearchRefusal("narrative.disclosure and config pilot_position both set; keep one")
             narrative["disclosure"] = disc
         info["claim_precheck"] = precheck_claims(narrative, evidence)
         principal = AuthPrincipal(
@@ -1635,9 +1639,10 @@ def main():
                 account_scope=cfg["account_scope"],
                 request_sha256=rev.request_sha256,
             )
-            raise SystemExit("immutability check FAILED")
-        except Exception as e:
+        except ValidationError as e:
             immut = type(e).__name__ + ": " + str(e)
+        else:
+            raise ResearchRefusal("immutability check FAILED")
         db.rollback()
         info.update(
             {
@@ -1674,4 +1679,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ResearchRefusal as e:
+        sys.exit(str(e))
