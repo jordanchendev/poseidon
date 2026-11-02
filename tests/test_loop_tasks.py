@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.orm import Session
 
+from poseidon.core.canonical import content_sha256
+from poseidon.core.timeutil import iso_time
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.research.campaign import HoldoutReuseDenied
 from poseidon.workers import cpu_tasks
@@ -105,7 +107,6 @@ def test_label_decision_outcomes_requires_a_label_contract_version(monkeypatch):
 
 
 def _seed_outcome_inputs(session_factory, cutoff):
-    from poseidon.core.canonical import content_sha256
     from poseidon.decision_loop.evaluation import snapshot_payload
     from poseidon.decision_loop.manifest import ManifestService
     from poseidon.models.evaluation_run import EvaluationRun
@@ -185,7 +186,6 @@ def _seed_outcome_inputs(session_factory, cutoff):
 
 @pytest.mark.postgresql
 def test_label_decision_outcomes_never_labels_before_maturity(monkeypatch, phase99_session_factory):
-    from poseidon.core.timeutil import iso_time
     from poseidon.models.outcome import OutcomeRecord
     from tests.test_outcomes import ANCHOR
 
@@ -202,7 +202,6 @@ def test_label_decision_outcomes_never_labels_before_maturity(monkeypatch, phase
 
 @pytest.mark.postgresql
 def test_label_decision_outcomes_labels_only_mature_horizons_once(monkeypatch, phase99_session_factory):
-    from poseidon.core.timeutil import iso_time
     from poseidon.models.outcome import OutcomeRecord
     from tests.test_outcomes import MONDAY
 

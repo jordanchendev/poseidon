@@ -15,6 +15,7 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 
 # --- SQLite compatibility: register before any model import ---
@@ -115,8 +116,6 @@ class TestBacktestRunRequestSchema:
 
     def test_fill_model_invalid_rejected(self):
         """Invalid fill_model value is rejected by pattern validation."""
-        from pydantic import ValidationError
-
         from poseidon.api.backtests import BacktestRunRequest
 
         with pytest.raises(ValidationError):
@@ -147,8 +146,6 @@ class TestBacktestRunRequestSchema:
 
     def test_sizing_mode_invalid_rejected(self):
         """Invalid sizing_mode is rejected."""
-        from pydantic import ValidationError
-
         from poseidon.api.backtests import BacktestRunRequest
 
         with pytest.raises(ValidationError):
@@ -204,8 +201,6 @@ class TestAutoResearchRequestSchema:
 
     def test_rejects_archived_strategy_type_liquidity_sweep(self):
         """strategy_type='liquidity_sweep' is rejected: LiquiditySweepStrategy was archived in 2d4ca38."""
-        from pydantic import ValidationError
-
         from poseidon.api.autoresearch import AutoResearchRequest
 
         with pytest.raises(ValidationError):
@@ -226,8 +221,6 @@ class TestAutoResearchRequestSchema:
 
     def test_strategy_type_invalid_rejected(self):
         """Invalid strategy_type is rejected."""
-        from pydantic import ValidationError
-
         from poseidon.api.autoresearch import AutoResearchRequest
 
         with pytest.raises(ValidationError):
@@ -426,8 +419,6 @@ class TestDualModeRequestSchema:
 
     def test_sizing_mode_invalid_rejected(self):
         """Invalid sizing_mode is rejected."""
-        from pydantic import ValidationError
-
         from poseidon.api.backtests import DualModeRequest
 
         with pytest.raises(ValidationError):

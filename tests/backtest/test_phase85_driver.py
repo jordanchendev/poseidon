@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pytest
 
+from poseidon.backtest.liquidity_sweep_factory import PARAM_BOUNDS
+
 
 class TestPreFlight:
     """Postgres schema check."""
@@ -111,7 +113,6 @@ class TestParamRemap:
 
     def test_resolve_factory_params_full_17_keys(self):
         """resolve_factory_params must return every PARAM_BOUNDS key."""
-        from poseidon.backtest.liquidity_sweep_factory import PARAM_BOUNDS
         from poseidon.backtest.phase85_strategy_factory import resolve_factory_params
 
         resolved = resolve_factory_params(SAMPLE_D01)
@@ -752,7 +753,6 @@ class TestOosTradesPipeline:
 
     def test_slice_window_oos_trades_returns_list_of_dicts(self, fixture_feature_engine, fixture_risk_engine):
         from poseidon.backtest.cost_model import COST_MODELS
-        from poseidon.backtest.liquidity_sweep_factory import PARAM_BOUNDS
         from poseidon.backtest.pending_orders import FillModel
         from poseidon.backtest.phase85_driver import _slice_window_oos_trades
         from poseidon.backtest.phase85_strategy_factory import resolve_factory_params

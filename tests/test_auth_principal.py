@@ -2,12 +2,15 @@
 
 import asyncio
 import hashlib
+import importlib
 import json
+import pkgutil
 
 import pytest
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+import poseidon.api
 from poseidon.api.auth import AuthorizedRoute, get_auth_principal, verify_api_key
 from poseidon.core.authz import AuthorizationError
 from poseidon.core.config import settings
@@ -156,11 +159,6 @@ def test_authorized_route_answers_domain_denial_with_403_in_any_app():
 
 def test_every_principal_aware_router_uses_authorized_route():
     """A router that resolves principals must turn AuthorizationError into 403, not a 500."""
-    import importlib
-    import pkgutil
-
-    import poseidon.api
-
     for module_info in pkgutil.iter_modules(poseidon.api.__path__):
         module = importlib.import_module(f"poseidon.api.{module_info.name}")
         router = getattr(module, "router", None)
