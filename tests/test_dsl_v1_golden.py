@@ -2,7 +2,10 @@
 
 The fixture ``tests/fixtures/dsl_v1_golden_trades.json`` was captured at
 490f55a (before any DSL v2 change). Regenerate only on purpose with
-``DSL_V1_GOLDEN_WRITE=1 pytest tests/test_dsl_v1_golden.py``.
+``DSL_V1_GOLDEN_WRITE=1 pytest tests/test_dsl_v1_golden.py``. The TX scenario was
+regenerated once when notional sizing started to count point_value (2026-11): the
+same signals, entry/exit times and prices, on a 50M account so a 10-20 % slice
+still buys whole contracts; quantities, fees and PnL changed, crypto did not.
 """
 
 from __future__ import annotations
@@ -84,7 +87,14 @@ RULES = [
 
 SCENARIOS = {
     "crypto_spot_1h": {"market": "crypto_spot", "symbol": "BTCUSDT", "interval": "1h", "base": 50000.0, "seed": 7},
-    "tw_futures_5m": {"market": "tw_futures", "symbol": "TX", "interval": "5m", "base": 23000.0, "seed": 11},
+    "tw_futures_5m": {
+        "market": "tw_futures",
+        "symbol": "TX",
+        "interval": "5m",
+        "base": 23000.0,
+        "seed": 11,
+        "capital": 50_000_000.0,  # one TX contract is ~4.6M TWD of notional
+    },
 }
 
 
@@ -116,6 +126,7 @@ def _run(name: str) -> list[dict]:
         feature_engine=FeatureEngine(),
         risk_engine=RiskEngine(),
         cost_model=COST_MODELS[sc["market"]],
+        initial_capital=sc.get("capital", 1_000_000.0),
         sizing_config=SizingConfig(mode=SizingMode.FIXED_PCT, quantity_pct=0.3),
     )
     freq = "h" if sc["interval"] == "1h" else "5min"

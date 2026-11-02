@@ -593,7 +593,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 4,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -602,9 +602,9 @@
    "entry_time": "2025-06-02T02:00:00+00:00",
    "exit_price": 22793.814415,
    "exit_time": "2025-06-02T02:05:00+00:00",
-   "fees": 364.701031,
-   "pnl": 87534.396994,
-   "quantity": 4,
+   "fees": 91.175258,
+   "pnl": 21883.599249,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -615,7 +615,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 4,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -626,7 +626,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 9,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -637,7 +637,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 9,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -648,7 +648,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 9,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -659,7 +659,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 9,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -668,9 +668,9 @@
    "entry_time": "2025-06-02T05:50:00+00:00",
    "exit_price": 22961.162387,
    "exit_time": "2025-06-02T06:10:00+00:00",
-   "fees": 826.601846,
-   "pnl": 564913.653192,
-   "quantity": 9,
+   "fees": 183.689299,
+   "pnl": 125536.367376,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -681,7 +681,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 14,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -692,7 +692,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 7,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -703,7 +703,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 14,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -714,7 +714,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 14,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -725,7 +725,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 13,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -734,9 +734,9 @@
    "entry_time": "2025-06-02T11:20:00+00:00",
    "exit_price": 23376.465847,
    "exit_time": "2025-06-02T12:10:00+00:00",
-   "fees": 1215.576224,
-   "pnl": -641641.913914,
-   "quantity": 13,
+   "fees": 187.011727,
+   "pnl": -98714.140602,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -747,7 +747,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 4,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -758,7 +758,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 8,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -769,7 +769,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 4,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -778,9 +778,9 @@
    "entry_time": "2025-06-02T13:05:00+00:00",
    "exit_price": 24069.807055,
    "exit_time": "2025-06-02T13:10:00+00:00",
-   "fees": 385.116913,
-   "pnl": -244896.824732,
-   "quantity": 4,
+   "fees": 96.279228,
+   "pnl": -61224.206183,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -791,7 +791,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 6,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -800,9 +800,9 @@
    "entry_time": "2025-06-02T17:05:00+00:00",
    "exit_price": 23815.919573,
    "exit_time": "2025-06-02T17:30:00+00:00",
-   "fees": 571.58207,
-   "pnl": 328989.598154,
-   "quantity": 6,
+   "fees": 190.527357,
+   "pnl": 109663.199385,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -813,7 +813,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 4,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -824,7 +824,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 9,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -833,9 +833,9 @@
    "entry_time": "2025-06-02T20:35:00+00:00",
    "exit_price": 23875.774215,
    "exit_time": "2025-06-02T21:15:00+00:00",
-   "fees": 859.527872,
-   "pnl": 1349521.940689,
-   "quantity": 9,
+   "fees": 191.006194,
+   "pnl": 299893.764598,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -846,7 +846,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 20,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -855,9 +855,9 @@
    "entry_time": "2025-06-02T23:20:00+00:00",
    "exit_price": 24306.85265,
    "exit_time": "2025-06-02T23:55:00+00:00",
-   "fees": 1944.548212,
-   "pnl": 610814.719437,
-   "quantity": 20,
+   "fees": 194.454821,
+   "pnl": 61081.471944,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -868,7 +868,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 25,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -877,9 +877,9 @@
    "entry_time": "2025-06-03T00:35:00+00:00",
    "exit_price": 23802.47495,
    "exit_time": "2025-06-03T00:55:00+00:00",
-   "fees": 2380.247495,
-   "pnl": -1954669.287462,
-   "quantity": 25,
+   "fees": 190.4198,
+   "pnl": -156373.542997,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -890,7 +890,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 9,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -901,7 +901,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 9,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -912,7 +912,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 9,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -923,7 +923,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 4,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -934,7 +934,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 9,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -943,9 +943,9 @@
    "entry_time": "2025-06-03T02:00:00+00:00",
    "exit_price": 24473.935363,
    "exit_time": "2025-06-03T03:00:00+00:00",
-   "fees": 881.061673,
-   "pnl": 948557.161911,
-   "quantity": 9,
+   "fees": 195.791483,
+   "pnl": 210790.480425,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -956,7 +956,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 16,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -967,7 +967,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 8,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -978,7 +978,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 16,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -989,7 +989,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 16,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -998,9 +998,9 @@
    "entry_time": "2025-06-03T06:50:00+00:00",
    "exit_price": 25452.699228,
    "exit_time": "2025-06-03T07:40:00+00:00",
-   "fees": 1628.972751,
-   "pnl": 1410880.933258,
-   "quantity": 16,
+   "fees": 203.621594,
+   "pnl": 176360.116657,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -1011,7 +1011,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 13,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -1020,9 +1020,9 @@
    "entry_time": "2025-06-03T08:35:00+00:00",
    "exit_price": 25024.09291,
    "exit_time": "2025-06-03T08:55:00+00:00",
-   "fees": 1301.252831,
-   "pnl": 57656.759359,
-   "quantity": 13,
+   "fees": 100.096372,
+   "pnl": 4435.135335,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -1033,7 +1033,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 27,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -1042,9 +1042,9 @@
    "entry_time": "2025-06-03T09:05:00+00:00",
    "exit_price": 25855.616752,
    "exit_time": "2025-06-03T10:20:00+00:00",
-   "fees": 2792.406609,
-   "pnl": 2920575.06748,
-   "quantity": 27,
+   "fees": 206.844934,
+   "pnl": 216338.893887,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -1055,7 +1055,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 26,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -1066,7 +1066,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 51,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -1075,9 +1075,9 @@
    "entry_time": "2025-06-03T13:45:00+00:00",
    "exit_price": 25323.735283,
    "exit_time": "2025-06-03T14:05:00+00:00",
-   "fees": 5166.041998,
-   "pnl": 3552635.846492,
-   "quantity": 51,
+   "fees": 202.589882,
+   "pnl": 139319.052804,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -1088,7 +1088,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 39,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -1097,9 +1097,9 @@
    "entry_time": "2025-06-03T14:10:00+00:00",
    "exit_price": 25036.188738,
    "exit_time": "2025-06-03T14:15:00+00:00",
-   "fees": 3905.645443,
-   "pnl": 1878.153242,
-   "quantity": 39,
+   "fees": 100.144755,
+   "pnl": 48.157775,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -1110,7 +1110,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 79,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -1121,7 +1121,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 80,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -1130,9 +1130,9 @@
    "entry_time": "2025-06-03T18:25:00+00:00",
    "exit_price": 25192.690875,
    "exit_time": "2025-06-03T19:05:00+00:00",
-   "fees": 8061.66108,
-   "pnl": 4832630.153575,
-   "quantity": 80,
+   "fees": 201.541527,
+   "pnl": 120815.753839,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -1143,7 +1143,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 118,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -1152,9 +1152,9 @@
    "entry_time": "2025-06-03T20:20:00+00:00",
    "exit_price": 24830.616308,
    "exit_time": "2025-06-03T20:30:00+00:00",
-   "fees": 11720.050897,
-   "pnl": -6654024.179037,
-   "quantity": 118,
+   "fees": 198.64493,
+   "pnl": -112780.070831,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -1165,7 +1165,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 65,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -1176,7 +1176,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 65,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -1185,9 +1185,9 @@
    "entry_time": "2025-06-03T21:35:00+00:00",
    "exit_price": 25270.344028,
    "exit_time": "2025-06-03T22:25:00+00:00",
-   "fees": 6570.289447,
-   "pnl": 3496649.699065,
-   "quantity": 65,
+   "fees": 202.162752,
+   "pnl": 107589.22151,
+   "quantity": 2,
    "symbol": "TX"
   },
   {
@@ -1198,7 +1198,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 47,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -1209,7 +1209,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 48,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -1220,7 +1220,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 49,
+   "quantity": 1,
    "symbol": "TX"
   }
  ]

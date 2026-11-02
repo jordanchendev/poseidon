@@ -9,6 +9,7 @@ from poseidon.api.autoresearch import AutoResearchRequest
 from poseidon.backtest.cost_model import COST_MODELS
 from poseidon.backtest.dsl_v2_factory import DslV2StrategyFactory
 from poseidon.backtest.optimizer import BayesianOptimizer
+from poseidon.backtest.portfolio import SizingConfig, SizingMode
 from poseidon.backtest.walk_forward import WalkForwardAnalyzer, WalkForwardConfig
 from poseidon.data.feature_engine import FeatureEngine
 from poseidon.risk.engine import RiskEngine
@@ -107,7 +108,13 @@ def test_walk_forward_with_dsl_v2_factory():
     factory = DslV2StrategyFactory(spec=_template())
     days = [f"2026-09-{d:02d}" for d in (7, 8, 9, 10, 11, 14, 15, 16)]
     ohlcv = random_walk_bars(days, seed=33)
-    analyzer = WalkForwardAnalyzer(FeatureEngine(), RiskEngine(), COST_MODELS["tw_futures"], strategy_factory=factory)
+    analyzer = WalkForwardAnalyzer(
+        FeatureEngine(),
+        RiskEngine(),
+        COST_MODELS["tw_futures"],
+        sizing_config=SizingConfig(mode=SizingMode.FIXED_CONTRACTS, contracts=1),  # a TX contract is ~4.6M TWD
+        strategy_factory=factory,
+    )
     cfg = WalkForwardConfig(train_days=700, validate_days=0, test_days=400, step_days=400, min_trades_per_oos=0)
     result = analyzer.analyze(factory.build({"or_min": 15, "tp_r": 2.0}), ohlcv, cfg)
     assert len(result.per_window) >= 2
