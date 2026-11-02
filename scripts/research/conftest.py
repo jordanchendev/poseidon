@@ -1,5 +1,6 @@
 """Fixtures shared by the research runner tests (helpers: testkit.py)."""
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -8,7 +9,23 @@ import assemble
 import draft
 import pytest
 import runner
-from testkit import AGENDA_ID, AS_OF, BRIDGE_SCRIPT, DRAFT_KEY, HTML, JEV_KEY, ROW, fake_bars, fake_twse
+from testkit import (
+    AGENDA_ID,
+    AS_OF,
+    BRIDGE_SCRIPT,
+    DRAFT_KEY,
+    EVENT_IDX,
+    HTML,
+    JEV_KEY,
+    ROW,
+    N,
+    aaa,
+    bbb,
+    ccc,
+    day,
+    fake_bars,
+    fake_twse,
+)
 
 WORKTREE = Path(__file__).resolve().parents[2]
 
@@ -84,3 +101,80 @@ def runner_env(tmp_path, monkeypatch):
         draft_env=draft_env,
         run_dir=state / "runs" / AGENDA_ID,
     )
+
+
+@pytest.fixture()
+def theme_env(tmp_path):
+    csv_path = tmp_path / "bars.csv"
+    rows = []
+    for sym, f in (("AAA", aaa), ("BBB", bbb), ("CCC", ccc)):
+        for i in range(N):
+            c = f(i)
+            rows.append(f"{day(i)}T00:00:00Z,{sym},{c - 0.5},{c + 1},{c - 1},{c},{1000 + i}")
+    csv_path.write_text("\n".join(rows) + "\n")
+    raw = tmp_path / "raw.txt"
+    text = "Company announced record revenue of 100 units for the quarter, up 20% year over year."
+    raw.write_text(text + "\n")
+    cfg = {
+        "scope_key": "tw_stock:spot:AAA",
+        "symbol": "AAA",
+        "as_of": f"{day(N - 1)}T09:00:00Z",
+        "event_time": f"{day(EVENT_IDX)}T10:00:00Z",
+        "account_scope": "paper:test",
+        "universe_id": "u-test",
+        "thalassa_base_url": "http://127.0.0.1:1",
+        "symbols": ["AAA", "BBB"],
+        "benchmark": "BBB",
+        "required_data": {"fundamental": {"max_age_seconds": 2592000}, "ohlcv": {"max_age_seconds": 172800}},
+        "policy_version": "test/v0",
+        "provider": "test",
+        "model": "test",
+        "documents": [
+            {
+                "id": "fundamental:doc1",
+                "kind": "fundamental",
+                "title": "Doc",
+                "publisher": "Pub",
+                "source_uri": "https://example.com/doc1",
+                "event_time": f"{day(EVENT_IDX)}T10:00:00Z",
+                "available_at": f"{day(EVENT_IDX)}T10:00:00Z",
+                "raw_text_path": str(raw),
+                "raw_files": {"raw.txt": hashlib.sha256(raw.read_bytes()).hexdigest()},
+                "excerpts": [{"locator": "line 1", "text": text}],
+            }
+        ],
+    }
+    narrative = {
+        "thesis": "Test thesis.",
+        "stance": "watch",
+        "change_summary": "First version.",
+        "next_review_at": "2026-10-05T01:00:00Z review the October revenue",
+        "tl_dr": "AAA beat and outperformed the benchmark.",
+        "risks": ["r"],
+        "invalidation_conditions": ["i"],
+        "unknowns": ["u"],
+        "claims": [
+            {"kind": "fact", "text": "Revenue was 100 units.", "evidence_ids": ["fundamental:doc1"]},
+            {
+                "kind": "fact",
+                "text": "AAA outperformed BBB after the event.",
+                "evidence_ids": ["price_facts:AAA", "ohlcv:AAA"],
+            },
+            {
+                "kind": "inference",
+                "text": "The move is probably not fully priced in.",
+                "evidence_ids": ["price_facts:AAA"],
+            },
+        ],
+        "catalysts": [
+            {"date": "2026-09-10", "type": "other", "expected_signal": "past, ignored", "source": "s"},
+            {
+                "date": "2026-10-05",
+                "type": "monthly_revenue",
+                "expected_signal": "revenue stays above 100",
+                "source": "MOPS",
+            },
+            {"date": "2026-11-12", "type": "earnings_call", "expected_signal": "guidance", "source": "IR"},
+        ],
+    }
+    return dict(tmp=tmp_path, csv=csv_path, cfg=cfg, narrative=narrative)

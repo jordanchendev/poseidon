@@ -2,11 +2,16 @@
 TWSE, the theme ledger seeds, the rule-table run of test_narrative_apply and the §7 material-intake cases (股癌 posts,
 expected records). Fixtures live in conftest.py."""
 
+import copy
 import datetime
 import hashlib
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import uuid
+from datetime import date, timedelta
 from pathlib import Path
 
 import intake
@@ -15,6 +20,8 @@ import narrative_ledger as nl
 import runner
 
 HERE = Path(__file__).resolve().parent
+WORKTREE = HERE.parents[1]  # Poseidon repo root (src/ on PYTHONPATH)
+PY = sys.executable
 
 AGENDA_ID = "20261021-3"
 DOC_ID = f"fundamental:agenda-{AGENDA_ID}"
@@ -667,3 +674,84 @@ def material_done(env):
 def snapshot_payload(path, as_of="2026-10-21T04:20:00Z"):
     snap = intake.intake_snapshot(path, as_of)
     return {"as_of": as_of, "evidence": [snap]}
+
+
+# ------------------------------------------------------------------------------------------------ offline tooling: research_theme.py on synthetic bars
+def _sessions_dir():
+    if os.environ.get("RESEARCH_SESSIONS_DIR"):
+        return Path(os.environ["RESEARCH_SESSIONS_DIR"])
+    for parent in HERE.parents:
+        if (parent / "local_dev" / "sessions").is_dir():
+            return parent / "local_dev" / "sessions"
+    return HERE / "_no_sessions_"
+
+
+SESSIONS = _sessions_dir()
+N, EVENT_IDX = 30, 19  # base = close of bar 19; T+1 = bar 20; T+5 = bar 24
+START = date(2026, 9, 1)
+
+
+def day(i):
+    return (START + timedelta(days=i)).isoformat()
+
+
+def aaa(i):
+    return 100.0 + 2.0 * i
+
+
+def bbb(i):
+    return 50.0 + 0.5 * i
+
+
+def ccc(i):
+    return 20.0 + 0.1 * i
+
+
+def run_script(args, **kw):
+    env = dict(os.environ, PYTHONPATH=str(WORKTREE / "src"))
+    return subprocess.run([PY, *args], cwd=WORKTREE, env=env, capture_output=True, text=True, **kw)
+
+
+def pct(x):
+    return round(x * 100, 2)
+
+
+def go(env, name, cfg=None, narrative=None, ledger=None, extra=()):
+    d = env["tmp"] / name
+    d.mkdir(exist_ok=True)
+    (d / "cfg.json").write_text(json.dumps(cfg or env["cfg"]))
+    args = [
+        str(HERE / "research_theme.py"),
+        "--config",
+        str(d / "cfg.json"),
+        "--csv",
+        str(env["csv"]),
+        "--ledger",
+        str(ledger or d / "ledger.sqlite"),
+        *extra,
+    ]
+    if narrative is not None:
+        (d / "narr.json").write_text(json.dumps(narrative))
+        args += ["--narrative", str(d / "narr.json"), "--out", str(d / "rev.json")]
+    return run_script(args), d
+
+
+ACTUAL_Q4 = "Fourth quarter revenue was US$53.1 billion and gross margin was 61.2%. For the first quarter, revenue is expected to be between US$55 billion and US$57 billion."
+
+
+def render(path):
+    return subprocess.run([sys.executable, str(HERE / "render_theme.py"), str(path)], capture_output=True, text=True)
+
+
+def doc_with(env, name, extra_text, **doc_keys):
+    """Copy of fundamental:doc1 whose raw file also carries `extra_text` as a second excerpt ('line 2')."""
+    base = env["cfg"]["documents"][0]
+    raw = env["tmp"] / f"{name}.txt"
+    raw.write_text(base["excerpts"][0]["text"] + "\n" + extra_text + "\n")
+    return dict(
+        copy.deepcopy(base),
+        raw_text_path=str(raw),
+        raw_files={raw.name: hashlib.sha256(raw.read_bytes()).hexdigest()},
+        excerpts=[base["excerpts"][0], {"locator": "line 2", "text": extra_text}],
+        **doc_keys,
+    )
