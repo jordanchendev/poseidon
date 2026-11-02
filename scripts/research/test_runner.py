@@ -17,6 +17,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 
 import assemble  # noqa: E402
+import bridge  # noqa: E402
 import draft  # noqa: E402
 import jev_client  # noqa: E402
 import live_keys  # noqa: E402
@@ -400,10 +401,10 @@ def test_lock_busy_exits_quietly(env):
 
 
 def test_malformed_ids_never_reach_the_bridge(env):
-    b = runner.Bridge(f"{sys.executable} -c pass")
-    with pytest.raises(runner.BridgeError):
+    b = bridge.Bridge(f"{sys.executable} -c pass")
+    with pytest.raises(bridge.BridgeError):
         b.done("2026-10-21", "not-a-uuid", "x")
-    with pytest.raises(runner.BridgeError):
+    with pytest.raises(bridge.BridgeError):
         b.needs_review("20261021-3; rm -rf /", "x")
 
 
