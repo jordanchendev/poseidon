@@ -190,7 +190,8 @@ def freeze(ledger_path, as_of, doc, snap):
     from sqlalchemy.exc import SQLAlchemyError
     from sqlalchemy.orm import Session
 
-    from poseidon.decision_loop.manifest import ManifestService, ValidationError
+    from poseidon.core.errors import ValidationError
+    from poseidon.decision_loop.manifest import ManifestService
     from poseidon.models.base import Base
 
     try:

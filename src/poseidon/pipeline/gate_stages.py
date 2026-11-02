@@ -37,7 +37,7 @@ from typing import ClassVar
 import numpy as np
 import pandas as pd
 
-from poseidon.decision_loop.manifest import canonical_json, content_sha256
+from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.pipeline import gates
 from poseidon.pipeline.gates import benchmark, cost_stress, dsr, holdout, param_stability, regime_split, wfe
 from poseidon.pipeline.gates.base import CostBreakdown, GateResult, ResultSummary, Trade, failed, invalid

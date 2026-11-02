@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 import pytest
 from sqlalchemy import text
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline.models import PipelineRun, PipelineTrial
 from poseidon.pipeline.service import PipelineConflict, PipelineService, family_trial_count
 from poseidon.pipeline.stages import (

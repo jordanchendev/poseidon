@@ -58,7 +58,7 @@ from datetime import date, datetime, time, timedelta
 import numpy as np
 import pandas as pd
 
-from poseidon.decision_loop.manifest import canonical_json
+from poseidon.core.canonical import canonical_json
 from poseidon.pipeline.engine import (
     ContractSpec,
     EngineConfig,

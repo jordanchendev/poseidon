@@ -7,7 +7,7 @@ import json
 
 import narrative_ledger as nl
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 
 
 # ---------------------------------------------------------------- narrative_apply confirm mode

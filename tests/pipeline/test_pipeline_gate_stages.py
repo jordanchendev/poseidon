@@ -11,7 +11,7 @@ from datetime import UTC, date, datetime, timedelta
 import pandas as pd
 import pytest
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import artifacts
 from poseidon.pipeline.family import HOLDOUT_EVALUATED, MemoryFamily
 from poseidon.pipeline.gate_stages import (

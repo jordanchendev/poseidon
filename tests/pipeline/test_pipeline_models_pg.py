@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline.models import PipelineBase, PipelineEvent, PipelineRun, PipelineTrial, StageRun
 
 pytestmark = pytest.mark.postgresql

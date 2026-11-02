@@ -294,7 +294,7 @@ def test_drafted_idea_keeps_the_original_beside_the_draft(api, pipeline_sessions
 
 
 def test_create_without_an_original_hashes_the_request_as_before(api, pipeline_sessions):
-    from poseidon.decision_loop.manifest import content_sha256
+    from poseidon.core.canonical import content_sha256
 
     created = _create(api).json()
     before_p004 = {

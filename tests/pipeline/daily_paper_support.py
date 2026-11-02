@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import artifacts
 from poseidon.pipeline.engine import BookView, ContractSpec, Decision, EngineConfig, MarketView
 from poseidon.pipeline.plan import GATE_STAGES, SPEC_V3_CONFIG_VERSION, default_config

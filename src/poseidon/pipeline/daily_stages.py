@@ -36,7 +36,7 @@ from typing import Any, ClassVar
 import numpy as np
 import pandas as pd
 
-from poseidon.decision_loop.manifest import canonical_json, content_sha256
+from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.pipeline import optimization as opt
 from poseidon.pipeline.engine import ContractSpec, EngineResult, OptionSpec
 from poseidon.pipeline.engine.data import stock_bars

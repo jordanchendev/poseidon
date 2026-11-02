@@ -37,7 +37,7 @@ from typing import Any
 
 import httpx
 
-from poseidon.decision_loop.manifest import canonical_json
+from poseidon.core.canonical import canonical_json
 from poseidon.pipeline.spec_llm import (
     KEY_ENV,
     MAX_TEXT,

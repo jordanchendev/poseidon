@@ -15,7 +15,7 @@ import pandas as pd
 import pytest
 from pytest import approx
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import shadow_paper_daily as spd
 from poseidon.pipeline.daily_stages import (
     STOCK_UNDERLYING,

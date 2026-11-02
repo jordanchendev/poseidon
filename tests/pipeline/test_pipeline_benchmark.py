@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from poseidon.decision_loop.manifest import canonical_json, content_sha256
+from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.pipeline.gate_stages import (
     BENCHMARK_CONFIG_MISSING,
     BenchmarkStage,

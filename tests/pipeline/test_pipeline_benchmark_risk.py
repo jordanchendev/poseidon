@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from poseidon.decision_loop.manifest import canonical_json
+from poseidon.core.canonical import canonical_json
 from poseidon.pipeline.daily_stages import DailyBenchmarkStage, beta_matched_run, beta_matched_spec, underlying_daily
 from poseidon.pipeline.gates import benchmark
 from poseidon.pipeline.gates.daily import DailyResult, underlying_returns

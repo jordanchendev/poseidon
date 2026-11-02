@@ -45,7 +45,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from poseidon.decision_loop.manifest import canonical_json
+from poseidon.core.canonical import canonical_json
 from poseidon.pipeline.backtesting import BacktestFailed, BacktestOutcome, run_backtest
 from poseidon.pipeline.trials import TRIAL_COMPLETE, TRIAL_FAIL, TRIAL_PRUNED, make_record
 

@@ -40,7 +40,7 @@ from typing import Any
 
 import httpx
 
-from poseidon.decision_loop.manifest import canonical_json, content_sha256
+from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.pipeline.spec_validation import param_count_errors
 from poseidon.pipeline.state import Verdict
 from poseidon.strategies.dsl.v2 import DslUnsupportedError, DslValidationError, dsl_v2_json_schema, validate_v2

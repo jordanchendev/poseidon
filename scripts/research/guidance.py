@@ -10,7 +10,7 @@ import sys
 from claim_precheck import check_numbers, extract_quantities
 from refusal import ResearchRefusal
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 
 # ------------------------------------------------------------------------------------------------ guidance (gap B2)
 SOURCE_TIERS = ("primary filing", "company release", "exchange feed", "derived", "sell-side", "media", "kol")

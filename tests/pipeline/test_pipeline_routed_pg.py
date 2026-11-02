@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import spec_llm
 from poseidon.pipeline.plan import V3_ROUTED_DAILY_STAGE_PLAN
 from poseidon.pipeline.service import PipelineRequestInvalid, PipelineService

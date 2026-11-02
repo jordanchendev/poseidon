@@ -85,8 +85,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from poseidon.core.canonical import content_sha256
 from poseidon.core.config import settings
-from poseidon.decision_loop.manifest import content_sha256
 
 MANIFEST = "manifest.json"
 PARTITIONS = "partitions"

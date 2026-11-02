@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 
 TRIAL_COMPLETE = "complete"
 TRIAL_PRUNED = "pruned"  # ran, but produced no Sharpe (no trades / zero-variance daily PnL)

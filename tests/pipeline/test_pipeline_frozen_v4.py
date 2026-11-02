@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline.dispatcher import select_next_stage, upstream_names
 from poseidon.pipeline.gates import benchmark, holdout
 from poseidon.pipeline.gates.base import ResultSummary

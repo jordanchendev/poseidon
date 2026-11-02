@@ -37,7 +37,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import date
 from typing import Any
 
-from poseidon.decision_loop.manifest import canonical_json, content_sha256
+from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.pipeline import spec_llm
 from poseidon.pipeline.spec_llm import (
     KEY_ENV,

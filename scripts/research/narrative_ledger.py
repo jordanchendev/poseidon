@@ -45,7 +45,7 @@ from assemble import TW_SYMBOL
 from claim_precheck import best_evidence, evidence_tier
 from record_rules import CLAIM_TYPES
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 
 THEME_KINDS = ("bottleneck", "tech_transition", "demand_driver", "policy")
 MEMBER_ROLES = ("constrained", "supplier", "beneficiary", "customer", "competitor")

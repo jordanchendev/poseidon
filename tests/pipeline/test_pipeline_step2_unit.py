@@ -10,7 +10,7 @@ from datetime import UTC, date, datetime
 import pandas as pd
 import pytest
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import artifacts
 from poseidon.pipeline.data import OhlcvCache, load_bars
 from poseidon.pipeline.plan import default_config

@@ -28,7 +28,7 @@ from typing import Protocol
 import numpy as np
 import pandas as pd
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline.window import DataWindow, Part, require_part
 
 logger = logging.getLogger(__name__)

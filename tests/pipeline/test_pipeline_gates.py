@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from poseidon.decision_loop.manifest import canonical_json
+from poseidon.core.canonical import canonical_json
 from poseidon.pipeline.gates import (
     GATES,
     cost_stress,

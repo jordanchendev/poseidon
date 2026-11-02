@@ -80,7 +80,7 @@ from typing import TYPE_CHECKING, ClassVar
 import numpy as np
 import pandas as pd
 
-from poseidon.decision_loop.manifest import canonical_json, content_sha256
+from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.pipeline.gate_stages import _gates_config_missing, read_upstream_file
 from poseidon.pipeline.plan import GATE_STAGES, SHADOW_PAPER_CONFIG_VERSION
 from poseidon.pipeline.spec_validation import V2_REQUIRED

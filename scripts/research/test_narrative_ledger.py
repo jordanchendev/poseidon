@@ -17,7 +17,7 @@ import narrative_export  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 import narrative_proposals  # noqa: E402
 
-from poseidon.decision_loop.manifest import content_sha256  # noqa: E402
+from poseidon.core.canonical import content_sha256  # noqa: E402
 
 STATUSES = ("unverified", "partially_verified", "verified", "refuted", "stale")
 # Design §2.4 state machine: (from, to) -> who may make the change. Every other (from, to, who) must be refused.

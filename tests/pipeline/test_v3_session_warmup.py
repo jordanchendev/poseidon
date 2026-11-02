@@ -19,7 +19,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline.daily_stages import DailyBacktestStage, WindowStore, compile_strategy, instrument_kinds
 from poseidon.pipeline.dispatcher import upstream_names
 from poseidon.pipeline.gates.daily import choose_walk_forward

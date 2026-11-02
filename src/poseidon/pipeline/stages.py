@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import ClassVar, Protocol
 
-from poseidon.decision_loop.manifest import canonical_json, content_sha256
+from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.pipeline.plan import (
     CANONICAL_ORDER,
     V1_STAGE_PLAN,

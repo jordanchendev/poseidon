@@ -14,7 +14,8 @@ import pandas as pd
 from guidance import _UNIT_RE, GUIDANCE_BASES, _num_text, quantity_text
 from refusal import ResearchRefusal
 
-from poseidon.decision_loop.manifest import content_sha256, iso_time
+from poseidon.core.canonical import content_sha256
+from poseidon.core.timeutil import iso_time
 
 # ------------------------------------------------------------------------------------------------ consensus + surprise (gap B1)
 CONSENSUS_TIER = "third-party aggregate"

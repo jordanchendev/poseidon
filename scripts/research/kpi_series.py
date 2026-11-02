@@ -11,7 +11,8 @@ from pathlib import Path
 import pandas as pd
 from guidance import _num_text
 
-from poseidon.decision_loop.manifest import content_sha256, iso_time
+from poseidon.core.canonical import content_sha256
+from poseidon.core.timeutil import iso_time
 
 # ------------------------------------------------------------------------------------------------ KPI series (gap B3)
 TWSE_REVENUE_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"

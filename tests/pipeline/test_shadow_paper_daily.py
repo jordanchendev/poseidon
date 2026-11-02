@@ -12,7 +12,7 @@ import json
 import pandas as pd
 import pytest
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import shadow_paper_daily as spd
 from poseidon.pipeline.engine import run
 from poseidon.pipeline.plan import default_config

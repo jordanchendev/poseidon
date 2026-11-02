@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 from sqlalchemy import text
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline.plan import (
     CANONICAL_ORDER,
     DAILY_GATES,

@@ -11,7 +11,7 @@ from datetime import date
 
 import pytest
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import faithfulness, jev, spec_llm
 from poseidon.pipeline.clause_precheck import extract_quantities, precheck
 from poseidon.pipeline.faithfulness import (

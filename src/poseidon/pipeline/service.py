@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from poseidon.decision_loop.manifest import canonical_json, content_sha256
+from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.pipeline.dispatcher import add_event, latest_attempts, run_config, select_next_stage
 from poseidon.pipeline.models import PipelineEvent, PipelineRun, PipelineTrial, StageRun
 from poseidon.pipeline.plan import (

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 
-from poseidon.decision_loop.manifest import content_sha256
+from poseidon.core.canonical import content_sha256
 from poseidon.pipeline.sandbox.client import CUSTOM_ENABLED_ENV, custom_enabled
 from poseidon.pipeline.sandbox.static_check import check_source
 from poseidon.pipeline.stages import BaseStage, StageResult

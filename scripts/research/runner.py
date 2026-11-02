@@ -196,7 +196,7 @@ def run_gates(narrative: dict, payload: dict, cfg: dict) -> tuple[list[str], dic
     """All local checks; returns (reasons, report). An empty reasons list means the narrative may be completed."""
     import research_theme as rt
 
-    from poseidon.decision_loop.manifest import ValidationError
+    from poseidon.core.errors import ValidationError
     from poseidon.decision_loop.research import validate_research
 
     reasons, report = [], {}

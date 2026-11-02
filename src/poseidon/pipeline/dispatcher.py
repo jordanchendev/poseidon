@@ -27,8 +27,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from poseidon.core.canonical import content_sha256
 from poseidon.core.config import settings
-from poseidon.decision_loop.manifest import content_sha256
 from poseidon.pipeline import artifacts
 from poseidon.pipeline.family import DbFamily
 from poseidon.pipeline.models import PipelineEvent, PipelineRun, StageRun
