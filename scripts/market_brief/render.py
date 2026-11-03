@@ -9,6 +9,10 @@ emphasis, so they become **bold** lines; GFM tables become <pre> blocks where CJ
 table becomes our own fenced code block with ASCII-padded columns and the CJK label last) and chunks the rendered
 HTML at 4000 characters. Its IR chunker re-renders each chunk, so a split inside a code block yields two valid <pre>
 blocks, not broken markup; tables are kept short so that rarely happens.
+
+The md is the complete record (Nexus archive and the file attached after the text). The phone text is the slim
+version of the same md: tables trimmed per their tg options (see TG_* below), only the headlines the 解讀 cites as [n]
+(numbers unchanged), no 資料來源, no `<!-- md-only -->` lines.
 """
 
 from __future__ import annotations
@@ -20,6 +24,16 @@ from numfmt import fmt, fmt_pct, fmt_price, fmt_signed, fmt_signed_price
 
 DISCLAIMER = "_本報告由程式彙整公開資料自動產生；數字皆來自資料源，解讀段落由模型依資料撰寫，非投資建議。_"
 EXT_LABEL = {"PRE_MKT": "盤前", "POST_MKT": "盤後", "POST_MKT_PREV": "盤後"}
+
+# Phone (Telegram) slimming. The archive md stays complete; each table's `<!-- tg: ... -->` comment may carry options after
+# the column spec: `@head=N` first N rows, `@edge=N` first and last N rows, `@only=a,b` only those rows (by the label
+# column, in that order), `@title=text` replaces the heading above the table. Lines prefixed `<!-- md-only -->` never
+# reach the phone.
+TG_EDGE = 5
+TG_TOP = 10
+TG_MOVERS = 3
+TG_HEAD3 = "; @head=3"
+MD_ONLY = "<!-- md-only -->"
 
 
 def filename(kind, date):
@@ -115,8 +129,15 @@ def _quote_rows(rows, label_note=True):
 QUOTE_TG = "最新=Last; 漲跌=Chg!; 漲跌%=Chg%; 項目"
 
 
-def _quote_table(rows, first="項目", last_header="最新"):
-    tg = f"{last_header}=Last; 漲跌=Chg!; 漲跌%=Chg%; {first}"
+def _edge_tg(n, name, unit):
+    """Phone options for a table sorted by change: top and bottom TG_EDGE rows, heading says so (only when it trims)."""
+    if n <= 2 * TG_EDGE:
+        return ""
+    return f"; @edge={TG_EDGE}; @title={name}（{n} {unit}，漲跌前後各 {TG_EDGE}）"
+
+
+def _quote_table(rows, first="項目", last_header="最新", tg_opts=""):
+    tg = f"{last_header}=Last; 漲跌=Chg!; 漲跌%=Chg%; {first}{tg_opts}"
     return _table([first, last_header, "漲跌", "漲跌%"], ["l", "r", "r", "r"], _quote_rows(rows), tg=tg)
 
 
@@ -206,7 +227,7 @@ def _movers_table(items):
         ["代號", "名稱", "漲跌%", "成交值(億)"],
         ["l", "l", "r", "r"],
         body,
-        tg="代號=Code; 漲跌%=Chg%!; 成交值(億)=Amt; 名稱",
+        tg=f"代號=Code; 漲跌%=Chg%!; 成交值(億)=Amt; 名稱; @head={TG_MOVERS}",
     )
 
 
@@ -250,8 +271,9 @@ def _group_section(g):
         "",
         f"## 族群強弱（{len(g['groups'])} 族群，等權、已還原除權息）",
         "",
-        f"加權指數 20 日 {fmt_pct(t['ret20'], 1)}、60 日 {fmt_pct(t['ret60'], 1)}。"
-        "名次由 20 日、60 日相對加權指數的名次，加上成交占比變化的名次合計。",
+        f"加權指數 20 日 {fmt_pct(t['ret20'], 1)}、60 日 {fmt_pct(t['ret60'], 1)}。",
+        "",
+        MD_ONLY + "名次由 20 日、60 日相對加權指數的名次，加上成交占比變化的名次合計。",
         "",
     ]
     rows = [
@@ -272,7 +294,7 @@ def _group_section(g):
         rows,
         tg="#=#; 20日=R20!; 60日=R60; 占比%=Shr; 占比變化=ShrChg; 族群",
     )
-    out += ["", "占比＝族群近 20 日平均成交值占全市場普通股的比重；占比變化＝相對近 60 日平均。"]
+    out += ["", MD_ONLY + "占比＝族群近 20 日平均成交值占全市場普通股的比重；占比變化＝相對近 60 日平均。"]
     missing = [f"{x['name']} {'、'.join(x['missing'])}" for x in g["groups"] if x["missing"]]
     if missing:
         out += ["", "個股資料缺漏（未計入該族群）：" + "；".join(missing)]
@@ -309,8 +331,9 @@ def _credit_section(c):
     )
     out += [
         "",
-        "估算維持率＝融資股票以當日收盤計的市值 ÷ 融資金額，是市場平均的估算值，不是交易所公布的數字。"
-        "券商是對個別帳戶以整戶維持率 130% 追繳，所以這個數字不是斷頭線，看水位與變化即可。",
+        "估算維持率＝融資股票以當日收盤計的市值 ÷ 融資金額，是市場平均的估算值，不是交易所公布的數字。",
+        "",
+        MD_ONLY + "券商是對個別帳戶以整戶維持率 130% 追繳，所以這個數字不是斷頭線，看水位與變化即可。",
     ]
     if len(c["trend"]) > 1:
         t = [
@@ -377,7 +400,10 @@ def _body_tw_post(d, cfg_tw, groups=None, groups_expected=False):
     out = ["## 大盤", ""]
     rows = [[i["name"], fmt(i["close"]), chg_cell(i["chg"]), pct_cell(i["pct"])] for i in d["indices"]]
     out += _table(
-        ["指數", "收盤", "漲跌", "漲跌%"], ["l", "r", "r", "r"], rows, tg="收盤=Close; 漲跌=Chg; 漲跌%=Chg%!; 指數"
+        ["指數", "收盤", "漲跌", "漲跌%"],
+        ["l", "r", "r", "r"],
+        rows,
+        tg="收盤=Close; 漲跌=Chg; 漲跌%=Chg%!; 指數; @only=加權指數,櫃買指數,臺灣50",
     )
     t = d["turnover"]
     rows = [["一般股票", fmt(t["stocks_yi"])], ["集中市場總計", fmt(t["total_yi"])]]
@@ -425,7 +451,7 @@ def _body_tw_post(d, cfg_tw, groups=None, groups_expected=False):
         ["類股", "收盤", "漲跌%"],
         ["l", "r", "r"],
         [[x["name"], fmt(x["close"]), pct_cell(x["pct"])] for x in secs],
-        tg="漲跌%=Chg%!; 類股",
+        tg="漲跌%=Chg%!; 類股" + _edge_tg(len(secs), "類股表現", "類"),
     )
     if groups:
         out += _group_section(groups)
@@ -446,7 +472,7 @@ def _body_tw_post(d, cfg_tw, groups=None, groups_expected=False):
         ["#", "代號", "名稱", "成交值(億)", "收盤", "漲跌", "漲跌%"],
         ["r", "l", "l", "r", "r", "r", "r"],
         rows,
-        tg="#=#; 代號=Code; 成交值(億)=Amt; 漲跌%=Chg%!; 名稱",
+        tg=f"#=#; 代號=Code; 成交值(億)=Amt; 漲跌%=Chg%!; 名稱; @head={TG_TOP}; @title=成交金額前 {TG_TOP} 大（上市普通股）",
     )
     m = d["movers"]
     out += ["", "## 焦點個股", ""]
@@ -461,7 +487,7 @@ def _body_tw_post(d, cfg_tw, groups=None, groups_expected=False):
 
 
 def _body_tw_pre(d, credit=None):
-    out = [f"## 美股收盤（{d['us_session_date']}）", "", *_quote_table(d["us_indices"], "指數", "收盤")]
+    out = [f"## 美股收盤（{d['us_session_date']}）", "", *_quote_table(d["us_indices"], "指數", "收盤", TG_HEAD3)]
     out += ["", "## 利率、匯率與商品（產出時最新報價）", "", *_quote_table(d["rates_fx"])]
     out += ["", "## 台積電 ADR", ""]
     a = d.get("adr")
@@ -532,7 +558,7 @@ def _body_tw_pre(d, credit=None):
 
 def _body_us_pre(d):
     rows = list(d["futures"]) + [dict(r, label="VIX（最新）") for r in d["vix_prev"]]
-    out = ["## 指數期貨與 VIX", "", *_quote_table(rows, "項目", "最新")]
+    out = ["## 指數期貨與 VIX", "", *_quote_table(rows, "項目", "最新", TG_HEAD3)]
     out += ["", "## 利率、匯率與商品（產出時最新報價）", "", *_quote_table(d["rates_fx"])]
     out += ["", "## 亞股收盤", "", *_quote_table(d["asia"], "指數", "收盤")]
     tw = d.get("tw_today")
@@ -544,7 +570,7 @@ def _body_us_pre(d):
 
 
 def _body_us_post(d):
-    out = ["## 指數", "", *_quote_table(d["indices"], "指數", "收盤")]
+    out = ["## 指數", "", *_quote_table(d["indices"], "指數", "收盤", TG_HEAD3)]
     out += ["", "## 利率、匯率與商品（產出時最新報價）", "", *_quote_table(d["rates_fx"])]
     out += ["", "## 類股 ETF（依漲跌排序）", ""]
     rows = [[r["key"], r["label"], fmt(r["last"]), chg_cell(r["chg"]), pct_cell(r["pct"])] for r in d["sectors"]]
@@ -552,7 +578,7 @@ def _body_us_post(d):
         ["ETF", "類股", "收盤", "漲跌", "漲跌%"],
         ["l", "l", "r", "r", "r"],
         rows,
-        tg="ETF=ETF; 漲跌%=Chg%!; 收盤=Close; 類股",
+        tg="ETF=ETF; 漲跌%=Chg%!; 收盤=Close; 類股" + _edge_tg(len(rows), "類股 ETF", "檔"),
     )
     out += ["", "## Watchlist（收盤與盤後）", "", *_us_watch_table(d["watchlist"], "盤後")]
     a = d.get("adr")
@@ -656,12 +682,39 @@ def _tg_spec(text):
     out = []
     for item in text.split(";"):
         item = item.strip()
-        if item:
+        if item and not item.startswith("@"):
             h, _, label = item.partition("=")
             label = (label or h).strip()
             primary = label.endswith("!")
             out.append((h.strip(), label.rstrip("!"), primary))
     return out
+
+
+def _tg_opts(text):
+    """'a=A; @head=3; @title=x' -> {'head': '3', 'title': 'x'}: the slimming options of a tg comment."""
+    out = {}
+    for item in text.split(";"):
+        item = item.strip()
+        if item.startswith("@"):
+            k, _, v = item[1:].partition("=")
+            out[k.strip()] = v.strip()
+    return out
+
+
+def _trim_rows(rows, label_col, opts):
+    """Apply @only / @head / @edge to data rows -> (rows, gap) where gap = (position, omitted) for @edge."""
+    only = opts.get("only")
+    if only:
+        by = {(r[label_col] if label_col < len(r) else "").strip(): r for r in rows}
+        picked = [by[n.strip()] for n in only.split(",") if n.strip() in by]
+        if picked:
+            return picked, None
+    if opts.get("head", "").isdigit() and len(rows) > int(opts["head"]):
+        return rows[: int(opts["head"])], None
+    n = int(opts["edge"]) if opts.get("edge", "").isdigit() else 0
+    if n and len(rows) > 2 * n:
+        return rows[:n] + rows[-n:], (n, len(rows) - 2 * n)
+    return rows, None
 
 
 _NUMERIC_CELL = re.compile(r"^(?:[+-]?[\d,]*\.?\d+(?:%| bp)?|-|--)$")
@@ -673,7 +726,7 @@ def _ascii_cell(c):
     return c or "-"
 
 
-def code_table(header, rows, spec, max_width=34):
+def code_table(header, rows, spec, max_width=34, opts=None):
     """A GFM table as a fenced code block for Telegram (OpenClaw renders tables as <pre> anyway, where CJK breaks
     alignment): only the spec's columns, ASCII cells padded (numbers right-aligned), the CJK column last and unpadded."""
     spec = [x if len(x) == 3 else (x[0], x[1], False) for x in spec]
@@ -681,9 +734,10 @@ def code_table(header, rows, spec, max_width=34):
     prim = next((header.index(h) for h, _l, p in spec if p and h in header), None)
     if len(cols) < 2:
         return None
+    rows, gap = _trim_rows(rows, cols[-1][0], opts or {})
     body = [[r[i] if i < len(r) else "" for i, _ in cols] for r in rows]
     fixed = [[label for _, label in cols[:-1]]] + [[_ascii_cell(c) for c in r[:-1]] for r in body]
-    last = [cols[-1][1]] + [r[-1].replace("▲", "+").replace("▼", "").strip() or "-" for r in body]
+    last = [cols[-1][1]] + [r[-1].replace("▲", "").replace("▼", "").strip() or "-" for r in body]
     if all(_NUMERIC_CELL.match(x.replace("—", "-").replace("−", "-").strip()) for x in last[1:]):
         last = [last[0]] + [_ascii_cell(x) for x in last[1:]]  # an all-numeric last column (e.g. AH%) stays ASCII
     n = len(cols) - 1
@@ -695,12 +749,22 @@ def code_table(header, rows, spec, max_width=34):
     for r, tail, mark in zip(fixed, last, marks, strict=True):
         cells = [r[j].rjust(widths[j]) if right[j] else r[j].ljust(widths[j]) for j in range(n)]
         lines.append((sep.join(cells) + " " + tail).rstrip() + mark)
+    if gap:
+        lines.insert(1 + gap[0], f"... {gap[1]} omitted")
     return ["```", *lines, "```"]
 
 
 def _row_mark(cell):
     """' 🔴' for ▲ (up), ' 🟢' for ▼ (down), '' otherwise; appended at the very end so alignment is unchanged."""
     return " 🔴" if "▲" in cell else " 🟢" if "▼" in cell else ""
+
+
+_CITE = re.compile(r"\[(\d{1,3})\](?!\()")
+
+
+def _cited(lines):
+    """Headline numbers the report text refers to as [n] (outside tables and the news list itself)."""
+    return {int(n) for x in lines if not x.startswith("|") and not _NEWS.match(x) for n in _CITE.findall(x)}
 
 
 def telegram_text(md):
@@ -710,7 +774,8 @@ def telegram_text(md):
     Everything else (banner, 一句話, 解讀, 觀察重點) is kept verbatim."""
     m = re.match(r"---\n.*?\n---\n?", md, re.S)
     lines = _SPAN.sub(r"\1", md[m.end() :] if m else md).splitlines()
-    out, skipping, spec, i = [], False, None, 0
+    cited = _cited(lines)
+    out, skipping, spec, opts, i, news_head = [], False, None, {}, 0, None
     while i < len(lines):
         line = lines[i].rstrip()
         i += 1
@@ -719,6 +784,7 @@ def telegram_text(md):
             skipping = h.group(1).startswith("資料來源")
             if not skipping:
                 out.append(f"**{h.group(1).strip()}**")
+            news_head = len(out) - 1 if h.group(1).startswith("新聞標題") else news_head
             continue
         if skipping:
             if not line.startswith("_本報告"):
@@ -726,7 +792,12 @@ def telegram_text(md):
             skipping = False
         tgm = re.match(r"^<!--\s*tg:\s*(.*?)\s*-->$", line)
         if tgm:
-            spec = _tg_spec(tgm.group(1))
+            spec, opts = _tg_spec(tgm.group(1)), _tg_opts(tgm.group(1))
+            title = opts.get("title")
+            if title:
+                k = next((j for j in range(len(out) - 1, -1, -1) if out[j].startswith("**")), None)
+                if k is not None:
+                    out[k] = f"**{title}**"
             continue
         if line.startswith("<!--"):
             continue
@@ -737,23 +808,28 @@ def telegram_text(md):
                 i += 1
             header = _cells(block[0])
             rows = [_cells(b) for b in block[1:] if not all(set(c) <= set("-:") for c in _cells(b))]
-            rendered = code_table(header, rows, spec) if spec else None
+            rendered = code_table(header, rows, spec, opts=opts) if spec else None
             if rendered:
                 out += rendered
             else:
+                rows = _trim_rows(rows, len(header) - 1, opts)[0]
                 out += [_LONE_STAR.sub(r"\\*", _table_row_line(header, r)) for r in rows]
-            spec = None
+            spec, opts = None, {}
             continue
         if line.startswith("> "):
             line = line[2:]
         n = _NEWS.match(line)
         if n:
+            if int(n.group(1)) not in cited:
+                continue
             title = n.group(2).replace("[", "［").replace("]", "］")
             out.append(f"{n.group(1)}. [{title}]({n.group(3)}) — {n.group(4)}")
             continue
         if "**" not in line:
             line = _LONE_STAR.sub(r"\\*", line)
         out.append(line)
+    if news_head is not None and not any(_NEWS.match(x) for x in out):
+        del out[news_head]  # no headline is cited: the heading goes too
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip() + "\n"
     if len(text) > TELEGRAM_TEXT_CAP:
         text = text[: TELEGRAM_TEXT_CAP - 40].rstrip() + "\n…（內容過長已截斷，完整內容見 md 附件）\n"

@@ -528,7 +528,7 @@ class TestCollectRender(unittest.TestCase):
             f"| 2330 | 台積電 | 2,420 | {U('+15')} | {U('+0.62%')} | 655.16 | Phase 101 pilot |",
             "| 上市股票 | 600 | 380 | 101 | 24 | 1 |",
             "|---|---:|---:|---:|",
-            "<!-- tg: 收盤=Close; 漲跌=Chg; 漲跌%=Chg%!; 指數 -->",
+            "<!-- tg: 收盤=Close; 漲跌=Chg; 漲跌%=Chg%!; 指數; @only=加權指數,櫃買指數,臺灣50 -->",
             "### 上櫃跌幅（成交 ≥ 5 億）",
         ):
             self.assertIn(needle, md)
@@ -603,7 +603,7 @@ class TestCollectRender(unittest.TestCase):
         self.assertEqual(next(ln for ln in tg.split("\n") if ln.startswith("NVDA")).split(), ["NVDA", "-", "-", "-"])
         self.assertIn("Sym", tg)
         self.assertIn("\n**資料未齊**：", tg)
-        self.assertIn("**類股 ETF（依漲跌排序）**", tg)
+        self.assertIn("**類股 ETF（依漲跌排序）**", tg)  # 10 ETFs <= 2 x 5: shown in full, heading unchanged
         long_md = "---\na: b\n---\n" + "x" * 30000
         self.assertLessEqual(len(render.telegram_text(long_md)), render.TELEGRAM_TEXT_CAP)
 
@@ -1168,6 +1168,81 @@ class TestLLMContentRules(unittest.TestCase):
             lines,
             ["```", "Code  Close    Chg% 名稱", "2330  2,420  +0.62% 台積電", "0050      -       - 元大台灣50", "```"],
         )
+
+    def test_code_table_ascii_last_column_has_no_double_sign(self):
+        lines = render.code_table(
+            ["代號", "收盤", "盤後%"],
+            [["TSM", "398.63", "▲+0.53%"], ["AAPL", "338.32", "▼-2.58%"]],
+            render._tg_spec("代號=Sym; 收盤=Close; 盤後%=AH%"),
+        )
+        self.assertEqual(lines[1:-1], ["Sym    Close AH%", "TSM   398.63 +0.53%", "AAPL  338.32 -2.58%"])
+
+
+def _slim_md(extra_tg="", rows=12):
+    body = "\n".join(f"| 項{n:02d} | {100 - n}.00 | {'▲+' if n < 3 else '▼-'}{n}.00% |" for n in range(rows))
+    return (
+        "# T\n\n## 一句話\n甲 [3]\n\n## 類股表現（12 類，依漲跌排序）\n\n"
+        f"<!-- tg: 收盤=Close; 漲跌%=Chg%!; 名稱{extra_tg} -->\n| 名稱 | 收盤 | 漲跌% |\n|---|---:|---:|\n{body}\n\n"
+        f"{render.MD_ONLY}只給 md 看的說明。\n\n## 解讀（非投資建議）\n乙 [1][1]，丙 [2](https://x.test)。\n\n"
+        "## 新聞標題（解讀引用編號）\n"
+        "1. [一](https://n.test/1) — 甲報\n2. [二](https://n.test/2) — 乙報\n3. [三](https://n.test/3) — 丙報\n"
+        "4. [四](https://n.test/4) — 丁報\n\n## 資料來源\n- [S](https://s.test)\n\n" + render.DISCLAIMER + "\n"
+    )
+
+
+class TestPhoneSlimming(unittest.TestCase):
+    def test_edge_head_only_and_title(self):
+        tg = render.telegram_text(_slim_md("; @edge=3; @title=類股表現（漲跌前後各 3）"))
+        self.assertIn("**類股表現（漲跌前後各 3）**", tg)
+        self.assertNotIn("依漲跌排序", tg)
+        block = tg.split("```")[1].strip("\n").split("\n")
+        self.assertEqual(len(block), 1 + 3 + 1 + 3)  # header, top 3, gap marker, bottom 3
+        self.assertIn("... 6 omitted", block[4])
+        self.assertTrue(block[1].endswith("項00 🔴") and block[-1].endswith("項11 🟢"))
+        head = render.telegram_text(_slim_md("; @head=4")).split("```")[1].strip("\n").split("\n")
+        self.assertEqual([r.split()[-2] for r in head[1:]], ["項00", "項01", "項02", "項03"])
+        only = render.telegram_text(_slim_md("; @only=項05,項02,不存在")).split("```")[1].strip("\n").split("\n")
+        self.assertEqual([r.split()[-2] for r in only[1:]], ["項05", "項02"])  # in the order given
+        self.assertEqual(len(render.telegram_text(_slim_md()).split("```")[1].strip("\n").split("\n")), 13)  # no opts
+
+    def test_unmatched_only_keeps_all_rows(self):
+        tg = render.telegram_text(_slim_md("; @only=沒有"))
+        self.assertEqual(len(tg.split("```")[1].strip("\n").split("\n")), 13)
+
+    def test_md_only_lines_and_sources_stay_off_the_phone(self):
+        md = _slim_md()
+        self.assertIn("只給 md 看的說明", md)
+        self.assertIn("## 資料來源", md)
+        tg = render.telegram_text(md)
+        self.assertNotIn("只給 md 看的說明", tg)
+        self.assertNotIn("資料來源", tg)
+        self.assertNotIn("s.test", tg)
+
+    def test_news_limited_to_cited_headlines_with_stable_numbers(self):
+        md = _slim_md()
+        tg = render.telegram_text(md)
+        self.assertEqual(
+            re.findall(r"^(\d+)\. \[", tg, re.M), ["1", "3"]
+        )  # [3] from 一句話, [1] from 解讀; [2](url) is a link
+        self.assertIn("1. [一](https://n.test/1) — 甲報", tg)
+        self.assertNotIn("https://n.test/2", tg)
+        self.assertEqual(len(re.findall(r"^\d+\. \[", md, re.M)), 4)  # the md keeps every headline
+
+    def test_no_citation_drops_the_news_section_from_the_phone_only(self):
+        md = _slim_md().replace("[3]", "").replace("[1][1]", "")
+        tg = render.telegram_text(md)
+        self.assertNotIn("新聞標題", tg)
+        self.assertNotIn("n.test", tg)
+        self.assertIn("## 新聞標題", md)
+
+    def test_llm_prompt_asks_for_the_short_form(self):
+        facts = {"kind": "k", "date": "d", "title": "t", "as_of": "a", "gaps": [], "data": {}, "headlines": []}
+        msgs = llm.build_messages(facts)
+        self.assertIn("<= 350 characters", msgs[0]["content"])
+        self.assertIn("Cite sparingly", msgs[0]["content"])
+        long = {"one_liner": "x", "interpretation": "字" * 701, "watch_points": ["y"]}
+        _sec, reasons = llm.validate(long, {"headlines": [], "data": {}, "date": "d"})
+        self.assertTrue(any("longer than 700" in r for r in reasons))
 
 
 class TestBridgeNexus(unittest.TestCase):
@@ -1794,8 +1869,9 @@ class TestCreditSection(unittest.TestCase):
             "| 上市 | 6,234.7 | -23.0 | -33,027 | +1,234 | 171.8% |\n"
             "| 上櫃 | 840.0 | -23.0 | -33,027 | +1,234 | 167.0% |\n"
             "\n"
-            "估算維持率＝融資股票以當日收盤計的市值 ÷ 融資金額，是市場平均的估算值，不是交易所公布的數字。"
-            "券商是對個別帳戶以整戶維持率 130% 追繳，所以這個數字不是斷頭線，看水位與變化即可。\n"
+            "估算維持率＝融資股票以當日收盤計的市值 ÷ 融資金額，是市場平均的估算值，不是交易所公布的數字。\n"
+            "\n"
+            "<!-- md-only -->券商是對個別帳戶以整戶維持率 130% 追繳，所以這個數字不是斷頭線，看水位與變化即可。\n"
             "\n"
             "近 5 個交易日（融資金額單位：億元）\n"
             "\n"
@@ -1822,7 +1898,8 @@ class TestCreditSection(unittest.TestCase):
         self.assertRegex(t1[1], r"^6,234\.7\s+-23\.0\s+-33,027\s+\+1,234\s+171\.8% 上市$")
         self.assertEqual(len(t2), 6)
         self.assertLessEqual(max(len(r) for r in t1 + t2), 40)
-        self.assertIn("不是斷頭線", block)
+        self.assertIn("不是交易所公布的數字", block)
+        self.assertNotIn("不是斷頭線", tg)  # the md keeps the full caution, the phone the one-line definition
 
     def test_failure_paths_still_render_the_brief_with_one_line(self):
         cases = {
