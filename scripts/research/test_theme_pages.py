@@ -21,6 +21,7 @@ HERE = Path(__file__).resolve().parent
 import narrative_export  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 import narrative_proposals  # noqa: E402
+from testkit import insert_revision  # noqa: E402
 
 SCRIPTS = Path(os.environ.get("NEXUS_VAULT_SCRIPTS") or "/nonexistent")
 THEME_PAGES = SCRIPTS / "_kb" / "ops" / "compile" / "theme_pages.py"
@@ -190,13 +191,8 @@ def add_revision(db, rev, scope, claims, doc):
         "payload": {"publisher": publisher, **({"issuer": issuer} if issuer else {})},
     }
     manifest_id = rev.replace("-", "")[::-1]
-    db.execute("INSERT INTO data_manifests VALUES (?, ?)", (manifest_id, json.dumps({"evidence": [evidence]})))
     research = {"claims": [{**c, "evidence_ids": [doc_id]} for c in claims]}
-    db.execute(
-        "INSERT INTO research_revisions VALUES (?, ?, 'completed', ?, ?)",
-        (rev.replace("-", ""), scope, json.dumps(research, ensure_ascii=False), manifest_id),
-    )
-    db.commit()
+    insert_revision(db, rev.replace("-", ""), scope, research, manifest_id, {"evidence": [evidence]})
 
 
 def link(
@@ -234,11 +230,6 @@ def build_ledger(path):
         for sym, role in members:
             nl.add_member(db, tid, sym, role, f"telegram:M-{tid}-{sym}", at=APPROVED)
     nl.add_edge(db, "cleanroom-capacity", "memory-supply-tightness", "related", "telegram:E-1", at=APPROVED)
-    db.execute("CREATE TABLE data_manifests (id CHAR(32), payload_json TEXT)")
-    db.execute(
-        "CREATE TABLE research_revisions "
-        "(id CHAR(32), scope_key TEXT, status TEXT, research_json TEXT, manifest_id CHAR(32))"
-    )
     for rev, (scope, claims) in CLAIMS.items():
         add_revision(db, rev, scope, claims, DOCS[rev])
     for rev, idx, theme, about, kind, tier, at in LINKS:

@@ -16,6 +16,7 @@ HERE = Path(__file__).resolve().parent
 import narrative_export  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
 import narrative_proposals  # noqa: E402
+from testkit import insert_revision  # noqa: E402
 
 from poseidon.core.canonical import content_sha256  # noqa: E402
 
@@ -481,38 +482,6 @@ def test_theme_keywords_need_an_approval_and_rehash_the_theme(tmp_path, db):
     assert db.execute("SELECT count(*) FROM theme_keyword_approvals").fetchone()[0] == 2
 
 
-def test_a_ledger_from_before_keywords_gets_the_column_and_valid_hashes(tmp_path):
-    path = tmp_path / "old.sqlite"
-    old = sqlite3.connect(path)
-    old.execute(
-        "CREATE TABLE theme_proposals (proposal_id TEXT PRIMARY KEY, suggested_id TEXT NOT NULL, title TEXT NOT NULL, "
-        "kind TEXT NOT NULL, why TEXT NOT NULL, source_ref TEXT NOT NULL, proposed_members_json TEXT NOT NULL, "
-        "status TEXT NOT NULL, decided_at TEXT, decided_ref TEXT, created_at TEXT NOT NULL, "
-        "content_sha256 TEXT NOT NULL)"
-    )
-    row = {
-        "proposal_id": "T20261020-1",
-        "suggested_id": "x",
-        "title": "X",
-        "kind": "policy",
-        "why": "w",
-        "source_ref": "material:20261020-k1#p1",
-        "proposed_members_json": "[]",
-        "status": "proposed",
-        "decided_at": None,
-        "decided_ref": None,
-        "created_at": "2026-10-20T00:00:00Z",
-    }
-    old.execute("INSERT INTO theme_proposals VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [*row.values(), content_sha256(row)])
-    old.commit()
-    old.close()
-    db = nl.connect(path)
-    (r,) = [dict(x) for x in db.execute("SELECT * FROM theme_proposals")]
-    assert r.pop("keywords_json") == "[]" and r.pop("content_sha256") == content_sha256({**row, "keywords_json": "[]"})
-    nl.connect(path).close()  # the migration runs once
-    db.close()
-
-
 # ---------------------------------------------------------------- owner links (§5.3)
 REV = "ffc27f0e-f684-4f0e-8b32-4756029c755a"
 DOC = {
@@ -526,16 +495,9 @@ DOC = {
 
 def completed_revision(db, claims):
     """A completed revision and its manifest as research_theme.py stores them (ids without dashes)."""
-    db.execute("CREATE TABLE data_manifests (id CHAR(32), payload_json TEXT)")
-    db.execute(
-        "CREATE TABLE research_revisions (id CHAR(32), scope_key TEXT, status TEXT, research_json TEXT, manifest_id TEXT)"
+    insert_revision(
+        db, REV.replace("-", ""), "tw_stock:basket:2344-2408", {"claims": claims}, "m94", {"evidence": [DOC]}
     )
-    db.execute("INSERT INTO data_manifests VALUES ('m94', ?)", (json.dumps({"evidence": [DOC]}),))
-    db.execute(
-        "INSERT INTO research_revisions VALUES (?, 'tw_stock:basket:2344-2408', 'completed', ?, 'm94')",
-        (REV.replace("-", ""), json.dumps({"claims": claims}, ensure_ascii=False)),
-    )
-    db.commit()
 
 
 def test_link_add_tags_an_untagged_claim_with_an_approval(tmp_path, db):

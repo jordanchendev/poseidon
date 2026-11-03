@@ -24,13 +24,13 @@ import argparse
 import datetime
 import json
 import re
-import sqlite3
 import sys
 from pathlib import Path
 
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ledger_schema
 from research_theme import _event_returns, content_sha256, load_bars
 
 SETTLE_ALGO = "settle-v1"
@@ -84,15 +84,6 @@ COLUMNS = (
 )
 # Added 2026-10-21; omitted from the row hash while NULL so rows written before them keep their content_sha256.
 SUPERSEDE_COLUMNS = ("outcome_before_supersede", "superseded_by")
-DDL = """CREATE TABLE IF NOT EXISTS research_settlements (
-  revision_id TEXT PRIMARY KEY, scope_key TEXT NOT NULL, symbol TEXT, benchmark TEXT, stance TEXT, direction INTEGER,
-  decided_as_of TEXT NOT NULL, horizon_time TEXT, horizon_bar_time TEXT, settle_as_of TEXT, settled_at TEXT,
-  settle_algorithm TEXT NOT NULL, bars_sha256 TEXT, abs_return_pct REAL, bench_return_pct REAL, rel_return_pct REAL,
-  outcome TEXT NOT NULL CHECK (outcome IN ('hit','miss','flat','unsettled','superseded')), detail TEXT,
-  invalidation_flag INTEGER NOT NULL DEFAULT 0, note TEXT, flagged_at TEXT,
-  outcome_before_supersede TEXT CHECK (outcome_before_supersede IS NULL OR outcome_before_supersede IN ('hit','miss','flat','unsettled')),
-  superseded_by TEXT, content_sha256 TEXT NOT NULL)"""
-
 _ISO_PREFIX = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)(Z|[+-]\d{2}:?\d{2})?)?")
 
 
@@ -136,22 +127,7 @@ def classify(direction, rel_pct, band=FLAT_BAND_PP):
 
 # ---------------------------------------------------------------- ledger access
 def connect(path):
-    """Opens the ledger; a settle-v1 table from before the supersede columns is rebuilt in place (SQLite cannot alter the
-    outcome CHECK) with every existing row copied unchanged."""
-    db = sqlite3.connect(path)
-    db.row_factory = sqlite3.Row
-    cols = [r[1] for r in db.execute("PRAGMA table_info(research_settlements)")]
-    if cols and "superseded_by" not in cols:
-        db.execute("ALTER TABLE research_settlements RENAME TO research_settlements_pre_supersede")
-        db.execute(DDL)
-        db.execute(
-            "INSERT INTO research_settlements (%s) SELECT %s FROM research_settlements_pre_supersede"
-            % (",".join(cols), ",".join(cols))
-        )
-        db.execute("DROP TABLE research_settlements_pre_supersede")
-    db.execute(DDL)
-    db.commit()
-    return db
+    return ledger_schema.connect(path)
 
 
 def _rid(x):

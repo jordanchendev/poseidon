@@ -179,6 +179,21 @@ if args[0] in ("material-pending", "narrative-pending"):
 """
 
 
+def insert_revision(db, rev_id, scope_key, research, manifest_id, manifest_payload, status="completed"):
+    """A manifest and a revision as research_theme.py stores them (ids without dashes), filled for the ledger's real tables."""
+    key = hashlib.sha256(f"{rev_id}{manifest_id}".encode()).hexdigest()
+    db.execute(
+        "INSERT INTO data_manifests (id, content_sha256, market, interval, as_of, payload_json) VALUES (?, ?, 'tw_stock', '1d', ?, ?)",
+        (manifest_id, key, "2026-10-21T00:00:00Z", json.dumps(manifest_payload)),
+    )
+    db.execute(
+        "INSERT INTO research_revisions (id, scope_key, manifest_id, request_sha256, policy_version, provider, model, "
+        "runtime_digest, status, research_json) VALUES (?, ?, ?, ?, 'p', 'x', 'm', 'script:0', ?, ?)",
+        (rev_id, scope_key, manifest_id, key, status, json.dumps(research, ensure_ascii=False)),
+    )
+    db.commit()
+
+
 def ledger_row(env):
     db = sqlite3.connect(env["state"] / "ledger.sqlite")
     db.row_factory = sqlite3.Row

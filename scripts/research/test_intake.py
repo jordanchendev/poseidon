@@ -184,7 +184,7 @@ def test_post8_records_are_written_with_the_material_tier_and_first_seen_at(env)
     assert [e["kind"] for e in payload["evidence"]] == ["secondary", "narrative_snapshot"]
     assert payload["evidence"][0]["payload"]["source_tier"] == "kol"
     assert len(payload["evidence"][1]["payload"]["themes"]) == 6 and payload["evidence"][1]["payload"]["records"] == []
-    assert db_rows(env, "SELECT name FROM sqlite_master WHERE name = 'research_revisions'") == []  # never a revision
+    assert db_rows(env, "SELECT id FROM research_revisions") == []  # never a revision
     # prompt: the closed theme list and the material lines; JEV judged each record against its own line, 3 votes
     system, user = (m["content"] for m in t.chat_calls[0]["messages"])
     assert "先參考就好" in system and "- memory-supply-tightness | 記憶體供給吃緊 | bottleneck |" in user

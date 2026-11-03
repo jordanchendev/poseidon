@@ -404,26 +404,3 @@ def test_supersede_map_ignores_backward_pointer():
     ]
     # a was created before b (backward pointer, ignored); c ties with b (same second, allowed); first successor wins; unknown ignored
     assert settle_theme.supersede_map(revs) == {"b": "c"}
-
-
-def test_pre_supersede_table_migrates_with_hashes_intact(world):
-    settle(world["ledger"], world["csv"])
-    before = rows(world["ledger"])
-    db = sqlite3.connect(world["ledger"])
-    old_cols = [c for c in settle_theme.COLUMNS if c not in settle_theme.SUPERSEDE_COLUMNS]
-    db.execute("ALTER TABLE research_settlements RENAME TO tmp_s")
-    db.execute(
-        settle_theme.DDL.replace(",'superseded'", "")
-        .split("outcome_before_supersede TEXT")[0]
-        .rstrip()
-        .rstrip(",")
-        .replace("flagged_at TEXT", "flagged_at TEXT, content_sha256 TEXT NOT NULL")
-        + ")"
-    )
-    db.execute("INSERT INTO research_settlements SELECT %s FROM tmp_s" % ",".join(old_cols))
-    db.execute("DROP TABLE tmp_s")
-    db.commit()
-    assert "superseded_by" not in [r[1] for r in db.execute("PRAGMA table_info(research_settlements)")]
-    settle_theme.connect(world["ledger"]).close()
-    after = rows(world["ledger"])
-    assert after == before and all(r["content_sha256"] == settle_theme.row_hash(r) for r in after.values())

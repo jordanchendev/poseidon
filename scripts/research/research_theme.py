@@ -73,6 +73,7 @@ from urllib.parse import urlencode
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ledger_schema
 from claim_precheck import check_numbers, lint_atomic
 from consensus import (
     _actual_inputs,
@@ -111,7 +112,6 @@ from poseidon.core.errors import ValidationError
 from poseidon.core.timeutil import iso_time
 from poseidon.decision_loop.manifest import ManifestService
 from poseidon.decision_loop.research import ResearchService
-from poseidon.models.base import Base
 
 
 @compiles(JSONB, "sqlite")
@@ -669,8 +669,8 @@ def main():
         ),
         "evidence": evidence,
     }
+    ledger_schema.connect(a.ledger).close()
     engine = create_engine(f"sqlite:///{a.ledger}")
-    Base.metadata.create_all(engine, tables=[Base.metadata.tables[n] for n in ("data_manifests", "research_revisions")])
     runtime_digest = (
         "script:" + hashlib.sha256(b"".join((HERE / name).read_bytes() for name in RUNTIME_FILES)).hexdigest()[:16]
     )

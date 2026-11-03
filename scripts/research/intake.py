@@ -40,6 +40,7 @@ sys.path.insert(0, str(HERE))
 import assemble as assemble_mod  # noqa: E402
 import draft as draft_mod  # noqa: E402
 import guidance  # noqa: E402
+import ledger_schema  # noqa: E402
 import narrative_check  # noqa: E402
 import narrative_decisions  # noqa: E402
 import narrative_ledger as nl  # noqa: E402
@@ -192,7 +193,6 @@ def freeze(ledger_path, as_of, doc, snap):
 
     from poseidon.core.errors import ValidationError
     from poseidon.decision_loop.manifest import ManifestService
-    from poseidon.models.base import Base
 
     try:
         evidence = [rt.document_evidence(doc, as_of)]
@@ -209,8 +209,8 @@ def freeze(ledger_path, as_of, doc, snap):
         "sources_json": [{"source": "research-material", "material_id": doc["id"].split("material-", 1)[1]}],
         "evidence": evidence,
     }
+    ledger_schema.connect(ledger_path).close()
     engine = create_engine(f"sqlite:///{ledger_path}")
-    Base.metadata.create_all(engine, tables=[Base.metadata.tables["data_manifests"]])
     try:
         with Session(engine) as session:
             manifest = ManifestService(session).freeze(request)

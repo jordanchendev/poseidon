@@ -34,12 +34,12 @@ import argparse
 import datetime
 import json
 import re
-import sqlite3
 import sys
 import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ledger_schema
 import record_rules
 from assemble import TW_SYMBOL
 from claim_precheck import best_evidence, evidence_tier
@@ -88,95 +88,6 @@ THEME_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MAX_KEYWORD_CHARS = 40
 FOREIGN_SYMBOL = re.compile(r"^[A-Z]{2,8}:[A-Z0-9][A-Z0-9.\-]*$")
 
-DDL = """
-CREATE TABLE IF NOT EXISTS themes (
-  theme_id TEXT PRIMARY KEY, title TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('bottleneck','tech_transition','demand_driver','policy')),
-  keywords_json TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('active','retired')),
-  approved_by TEXT NOT NULL, approved_at TEXT NOT NULL, approval_ref TEXT NOT NULL CHECK (approval_ref <> ''),
-  proposal_id TEXT, content_sha256 TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS theme_members (
-  theme_id TEXT NOT NULL REFERENCES themes, symbol TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('constrained','supplier','beneficiary','customer','competitor')),
-  tw_listed INTEGER NOT NULL CHECK (tw_listed IN (0,1)),
-  approved_by TEXT NOT NULL, approved_at TEXT NOT NULL, approval_ref TEXT NOT NULL CHECK (approval_ref <> ''),
-  content_sha256 TEXT NOT NULL, PRIMARY KEY (theme_id, symbol));
-CREATE TABLE IF NOT EXISTS theme_edges (
-  from_theme TEXT NOT NULL REFERENCES themes, to_theme TEXT NOT NULL REFERENCES themes,
-  relation TEXT NOT NULL CHECK (relation IN ('related','part_of')),
-  approved_by TEXT NOT NULL, approved_at TEXT NOT NULL, approval_ref TEXT NOT NULL CHECK (approval_ref <> ''),
-  content_sha256 TEXT NOT NULL, PRIMARY KEY (from_theme, to_theme, relation), CHECK (from_theme <> to_theme));
-CREATE TABLE IF NOT EXISTS theme_proposals (
-  proposal_id TEXT PRIMARY KEY, suggested_id TEXT NOT NULL, title TEXT NOT NULL, kind TEXT NOT NULL, why TEXT NOT NULL,
-  source_ref TEXT NOT NULL, proposed_members_json TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('proposed','accepted','rejected')),
-  decided_at TEXT, decided_ref TEXT, created_at TEXT NOT NULL, content_sha256 TEXT NOT NULL,
-  keywords_json TEXT NOT NULL DEFAULT '[]');
-CREATE TABLE IF NOT EXISTS theme_keyword_approvals (
-  theme_id TEXT NOT NULL REFERENCES themes, keyword TEXT NOT NULL,
-  approved_by TEXT NOT NULL, approved_at TEXT NOT NULL, approval_ref TEXT NOT NULL CHECK (approval_ref <> ''),
-  content_sha256 TEXT NOT NULL, PRIMARY KEY (theme_id, keyword));
-CREATE TABLE IF NOT EXISTS materials (
-  material_id TEXT PRIMARY KEY, received_at TEXT NOT NULL,
-  source_tier TEXT NOT NULL CHECK (source_tier IN ('sell-side','media','kol')),
-  author TEXT NOT NULL, url TEXT, text_sha256 TEXT NOT NULL, raw_path TEXT NOT NULL, manifest_sha256 TEXT,
-  status TEXT NOT NULL CHECK (status IN ('received','intaken','needs_review')), note TEXT,
-  content_sha256 TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS narrative_records (
-  narrative_id TEXT PRIMARY KEY, claim TEXT NOT NULL,
-  claim_type TEXT NOT NULL CHECK (claim_type IN ('state','forecast')), resolves_on TEXT,
-  resolves_on_default INTEGER NOT NULL DEFAULT 0, attributed_to TEXT NOT NULL,
-  source_tier TEXT NOT NULL CHECK (source_tier IN ('official','sell-side','media','kol','our-inference')),
-  origin_kind TEXT NOT NULL CHECK (origin_kind IN ('material','revision','owner')), origin_ref TEXT NOT NULL,
-  origin_evidence_id TEXT NOT NULL, quote TEXT NOT NULL, subject_symbols_json TEXT NOT NULL,
-  theme_ids_json TEXT NOT NULL, first_seen_at TEXT NOT NULL, review_by TEXT NOT NULL, created_at TEXT NOT NULL,
-  content_sha256 TEXT NOT NULL, CHECK (claim_type = 'state' OR resolves_on IS NOT NULL));
-CREATE TABLE IF NOT EXISTS narrative_events (
-  narrative_id TEXT NOT NULL REFERENCES narrative_records, seq INTEGER NOT NULL, at TEXT NOT NULL,
-  recorded_at TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('created','status','corroborated','override')),
-  from_status TEXT, to_status TEXT NOT NULL, rule TEXT, basis_json TEXT NOT NULL, jev_json TEXT, drafter_verdict TEXT,
-  decided_by TEXT NOT NULL CHECK (decided_by IN ('rule','owner','sweep')), note TEXT, content_sha256 TEXT NOT NULL,
-  PRIMARY KEY (narrative_id, seq));
-CREATE TABLE IF NOT EXISTS narrative_checks (
-  revision_id TEXT NOT NULL, narrative_id TEXT NOT NULL REFERENCES narrative_records, status_before TEXT NOT NULL,
-  drafter_verdict TEXT NOT NULL CHECK (drafter_verdict IN ('verifies','refutes','partially_verifies','untouched')),
-  claim_indices_json TEXT NOT NULL, jev_label TEXT, sweep_label TEXT, sweep_truncated INTEGER NOT NULL,
-  outcome TEXT NOT NULL CHECK (outcome IN ('status_change','corroborated','no_change','disputed','missed')),
-  event_seq INTEGER, checked_at TEXT NOT NULL, content_sha256 TEXT NOT NULL, PRIMARY KEY (revision_id, narrative_id));
-CREATE TABLE IF NOT EXISTS claim_theme_links (
-  revision_id TEXT NOT NULL, claim_index INTEGER NOT NULL, theme_id TEXT NOT NULL REFERENCES themes,
-  about_symbols_json TEXT NOT NULL, claim_kind TEXT NOT NULL CHECK (claim_kind IN ('fact','inference')),
-  evidence_tier TEXT NOT NULL, event_time TEXT NOT NULL, source TEXT NOT NULL CHECK (source IN ('drafter','owner')),
-  created_at TEXT NOT NULL, content_sha256 TEXT NOT NULL, PRIMARY KEY (revision_id, claim_index, theme_id));
-CREATE TABLE IF NOT EXISTS narrative_suggestions (
-  suggestion_id TEXT PRIMARY KEY, revision_id TEXT NOT NULL,
-  narrative_id TEXT NOT NULL REFERENCES narrative_records,
-  kind TEXT NOT NULL CHECK (kind IN ('status','corroborated')), from_status TEXT NOT NULL, to_status TEXT NOT NULL,
-  rule TEXT NOT NULL, at TEXT NOT NULL, basis_json TEXT NOT NULL, jev_json TEXT NOT NULL, drafter_verdict TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('suggested','confirmed','rejected')), created_at TEXT NOT NULL,
-  decided_at TEXT, decision_ref TEXT, event_seq INTEGER, content_sha256 TEXT NOT NULL,
-  UNIQUE (revision_id, narrative_id));
-CREATE TABLE IF NOT EXISTS member_proposals (
-  proposal_id TEXT PRIMARY KEY, theme_id TEXT NOT NULL REFERENCES themes, symbol TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('constrained','supplier','beneficiary','customer','competitor')),
-  why TEXT NOT NULL, source_ref TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('proposed','accepted','rejected')),
-  decided_at TEXT, decided_ref TEXT, created_at TEXT NOT NULL, content_sha256 TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS theme_proposal_claims (
-  proposal_id TEXT NOT NULL REFERENCES theme_proposals, revision_id TEXT NOT NULL, claim_index INTEGER NOT NULL,
-  about_symbols_json TEXT NOT NULL, claim_kind TEXT NOT NULL CHECK (claim_kind IN ('fact','inference')),
-  evidence_tier TEXT NOT NULL, event_time TEXT NOT NULL, created_at TEXT NOT NULL, content_sha256 TEXT NOT NULL,
-  PRIMARY KEY (proposal_id, revision_id, claim_index));
-CREATE TABLE IF NOT EXISTS claim_link_approvals (
-  revision_id TEXT NOT NULL, claim_index INTEGER NOT NULL, theme_id TEXT NOT NULL REFERENCES themes,
-  approved_by TEXT NOT NULL, approved_at TEXT NOT NULL, approval_ref TEXT NOT NULL CHECK (approval_ref <> ''),
-  content_sha256 TEXT NOT NULL, PRIMARY KEY (revision_id, claim_index, theme_id));
-CREATE TABLE IF NOT EXISTS held_records (
-  narrative_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, source_text TEXT NOT NULL, waits_json TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('held','written','dropped')), reason TEXT, decided_at TEXT,
-  created_at TEXT NOT NULL, content_sha256 TEXT NOT NULL);
-"""
-
 
 class LedgerError(Exception):
     """A write the ledger's rules refuse."""
@@ -198,27 +109,7 @@ def now():
 
 
 def connect(path):
-    db = sqlite3.connect(path)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA foreign_keys = ON")
-    db.executescript(DDL)
-    _migrate(db)
-    return db
-
-
-def _migrate(db):
-    """A ledger made before theme proposals carried keywords gets the column, and its proposal rows are rehashed so
-    every content_sha256 still covers all other columns."""
-    if "keywords_json" in {r[1] for r in db.execute("PRAGMA table_info(theme_proposals)")}:
-        return
-    with db:
-        db.execute("ALTER TABLE theme_proposals ADD COLUMN keywords_json TEXT NOT NULL DEFAULT '[]'")
-        for r in db.execute("SELECT * FROM theme_proposals").fetchall():
-            row = {k: v for k, v in dict(r).items() if k != "content_sha256"}
-            db.execute(
-                "UPDATE theme_proposals SET content_sha256 = ? WHERE proposal_id = ?",
-                (content_sha256(row), r["proposal_id"]),
-            )
+    return ledger_schema.connect(path)
 
 
 def _insert(db, table, row):

@@ -62,6 +62,7 @@ sys.path.insert(0, str(HERE))
 import assemble as assemble_mod  # noqa: E402
 import draft as draft_mod  # noqa: E402
 import intake as intake_mod  # noqa: E402
+import ledger_schema  # noqa: E402
 import live_keys  # noqa: E402
 import narrative_check  # noqa: E402
 import narrative_decisions  # noqa: E402
@@ -91,18 +92,10 @@ log = logging.getLogger("research-runner")
 
 
 # ------------------------------------------------------------------------------------------------ runner ledger
-RUNS_DDL = """CREATE TABLE IF NOT EXISTS runner_runs (
-  agenda_id TEXT PRIMARY KEY, status TEXT NOT NULL, revision_id TEXT, scope_key TEXT, reason TEXT,
-  summary TEXT, reported INTEGER NOT NULL DEFAULT 0, run_dir TEXT, started_at TEXT, updated_at TEXT)"""
-
-
 class Ledger:
     def __init__(self, path):
         self.path = Path(path)
-        self.db = sqlite3.connect(self.path)
-        self.db.row_factory = sqlite3.Row
-        self.db.execute(RUNS_DDL)
-        self.db.commit()
+        self.db = ledger_schema.connect(self.path)
 
     def get(self, agenda_id):
         r = self.db.execute("SELECT * FROM runner_runs WHERE agenda_id = ?", (agenda_id,)).fetchone()
