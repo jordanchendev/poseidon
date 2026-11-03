@@ -31,11 +31,10 @@ import numpy as np
 import pandas as pd
 
 from poseidon.pipeline.engine import ContractSpec, FuturesInput
-from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, MARKET_CALENDAR, TAIEX
+from poseidon.pipeline.refdata.datasets import FUTURES, MARKET_CALENDAR, TAIEX
 from poseidon.pipeline.refdata.taifex import MarketSchedule, official_last_trading_day
 
 MONTHLY = r"\d{6}"
-CALENDAR_HORIZON_DAYS = 120
 MAX_STOCK_GAP_DAYS = 10  # sessions a stock may miss (carried forward) before its data counts as ended
 UNSCHEDULED_CLOSURE = "臨時休市"  # a scheduled day the market did not open (typhoon); refdata does not say why
 CLOSURE_LOOKBACK_DAYS = 31  # futures rows read before the last session to find the closures after it
@@ -152,26 +151,6 @@ def align_stock_bars(bars: pd.DataFrame, days: pd.DatetimeIndex, name: str) -> p
         out["volume"] = out["volume"].where(present, 0.0)
     out["traded"] = present.to_numpy()
     return out.rename_axis("date").reset_index()
-
-
-def aux_frame(frame: pd.DataFrame, date_column: str = "trade_date") -> pd.DataFrame:
-    """A refdata daily series as an engine aux frame: DatetimeIndex, numeric columns only."""
-
-    indexed = frame.set_index(pd.DatetimeIndex(pd.to_datetime(frame[date_column])).normalize())
-    numeric = indexed.drop(columns=[date_column]).select_dtypes("number")
-    return numeric.sort_index().astype(float)
-
-
-def read_schedule(reader: RefdataReader) -> MarketSchedule:
-    return MarketSchedule.from_frame(reader.read(MARKET_CALENDAR))
-
-
-def read_quotes(reader: RefdataReader, start) -> pd.DataFrame:
-    return reader.read(FUTURES, start=start)
-
-
-def read_calendar(reader: RefdataReader) -> pd.DataFrame:
-    return reader.read(CALENDAR)
 
 
 def last_day_session(quotes: pd.DataFrame, products: Mapping[str, str] | list[str]) -> dict[str, pd.Timestamp | None]:

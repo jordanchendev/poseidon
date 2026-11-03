@@ -114,7 +114,6 @@ REQUIRED = frozenset(name for name in HEADER.values() if name not in {"taifex_ex
 SESSIONS = {"一般": "day", "盤後": "night"}
 CALL_PUT = {"買權": "C", "賣權": "P"}
 PRICE_COLUMNS = ("open", "high", "low", "close", "settlement", "best_bid", "best_ask")
-COUNT_COLUMNS = ("volume", "open_interest")
 KEY = ["trade_date", "session", "contract_month", "strike", "cp"]
 
 DAILY_COLUMNS = [

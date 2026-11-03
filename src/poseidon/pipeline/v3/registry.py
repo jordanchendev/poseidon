@@ -366,10 +366,6 @@ def register(cls: type[Component]) -> type[Component]:
     return cls
 
 
-def get_component(name: str) -> Component | None:
-    return REGISTRY.get(name)
-
-
 def components_for(slot: str) -> list[Component]:
     return [component for component in REGISTRY.values() if component.slot == slot]
 

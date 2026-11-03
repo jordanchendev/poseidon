@@ -280,10 +280,6 @@ class HedgeBook:
     pending: HedgeOrder | None = None
 
     @property
-    def value_points(self) -> float:
-        return self.units * self.mark if self.units else 0.0
-
-    @property
     def take_profit_hit(self) -> bool:
         multiple = self.policy.take_profit
         return multiple is not None and self.units > 0 and self.mark >= multiple * self.cost

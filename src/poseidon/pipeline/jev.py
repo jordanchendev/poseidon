@@ -81,7 +81,6 @@ SLOT_CRITERIA: dict[str, str] = {
     "not offer).",
     "not_strategy": "Not a trading rule: background, opinion, a claim about past performance, or a request.",
 }
-ESCAPE_SLOTS = frozenset({"other", "not_strategy"})
 # JEV slot -> registry slot whose components the component question offers ("instrument" has none:
 # the product is checked by the faithfulness question).
 REGISTRY_SLOT: dict[str, str] = {
