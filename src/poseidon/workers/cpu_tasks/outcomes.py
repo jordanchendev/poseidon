@@ -222,7 +222,7 @@ def _outcome_targets(session, scope: str, cutoff: datetime) -> dict:
     from pydantic import ValidationError as PydanticValidationError
     from sqlalchemy import select
 
-    from poseidon.decision_loop.decisions import DecisionPolicy
+    from poseidon.decision_loop.policy import DecisionPolicy
     from poseidon.decision_loop.producer import ProducerService, executable_config
     from poseidon.models.evaluation_run import EvaluationRun
 

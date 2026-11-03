@@ -104,8 +104,8 @@ def freeze_market_manifest(market: str, interval: str, as_of: str | None = None)
         return skipped
     from pydantic import ValidationError as PydanticValidationError
 
-    from poseidon.decision_loop.decisions import DecisionPolicy
     from poseidon.decision_loop.manifest import ManifestService
+    from poseidon.decision_loop.policy import DecisionPolicy
     from poseidon.decision_loop.producer import ProducerService, executable_config
 
     as_of = _loop_as_of(as_of)

@@ -18,20 +18,12 @@ from poseidon.core.authz import AuthPrincipal
 from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.core.database import get_db
 from poseidon.core.timeutil import stored_iso_time
-from poseidon.decision_loop.decisions import (
-    TRACE_STAGE_NAMES,
-    DecisionNotFoundError,
-    DecisionPolicy,
-    DecisionService,
-    build_trace_stages,
-    load_trace_evidence,
-    load_trace_signals,
-    project_trace_signal,
-)
-from poseidon.decision_loop.decisions import (
-    project_outcome_rows as _project_outcome_rows,
-)
+from poseidon.decision_loop.decisions import DecisionNotFoundError
 from poseidon.decision_loop.evaluation import verify_complete_run
+from poseidon.decision_loop.policy import DecisionPolicy
+from poseidon.decision_loop.trace import decision_trace, load_trace_evidence, load_trace_signals, project_trace_signal
+from poseidon.decision_loop.trace import project_outcome_rows as _project_outcome_rows
+from poseidon.decision_loop.trace_stages import TRACE_STAGE_NAMES, build_trace_stages
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
 from poseidon.models.research_revision import ResearchRevision
@@ -188,7 +180,7 @@ class TraceService:
         )
 
     def by_decision(self, decision_id, *, principal):
-        raw = DecisionService(self.session).trace(decision_id, principal=principal)
+        raw = decision_trace(self.session, decision_id, principal=principal)
         return self._response("decision", decision_id, raw["decision"]["account_scope"], raw)
 
     def by_evaluation(self, snapshot_id, *, principal):
@@ -217,7 +209,7 @@ class TraceService:
             if str(snapshot.id) in {str(value) for value in decision.original_json.get("selected_evaluation_ids", [])}
         ]
         if linked:
-            traces = [DecisionService(self.session).trace(decision.id, principal=principal) for decision in linked]
+            traces = [decision_trace(self.session, decision.id, principal=principal) for decision in linked]
             decision_rows = [trace["decision"] for trace in traces]
             raw = traces[0]
             raw["decision"] = traces[0]["decision"] if len(traces) == 1 else None

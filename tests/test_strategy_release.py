@@ -15,14 +15,16 @@ from poseidon.backtest.experiment_tracker import ExperimentTracker
 from poseidon.backtest.voting_strategy_factory import _build_config_from_params
 from poseidon.core.authz import AuthorizationError, AuthPrincipal
 from poseidon.core.canonical import content_sha256
-from poseidon.decision_loop.decisions import DecisionConflictError, DecisionPolicy
-from poseidon.decision_loop.releases import (
-    ExecutableStrategyConfig,
+from poseidon.decision_loop.decisions import DecisionConflictError
+from poseidon.decision_loop.policy import DecisionPolicy
+from poseidon.decision_loop.release_gate import (
+    ReleaseGateEvaluator,
     ReleaseGateRejected,
     ReleaseGateResult,
     ReleasePredicate,
-    ReleaseService,
 )
+from poseidon.decision_loop.releases import ReleaseService
+from poseidon.decision_loop.strategy_config import ExecutableStrategyConfig
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.data_manifest import DataManifest
 from poseidon.models.decision_record import DecisionRecord
@@ -299,7 +301,7 @@ def _evaluate(session, graph, *, principal=None, now=NOW, **changes):
         "reconciliation_id": graph.reconciliation_id,
     }
     values.update(changes)
-    return ReleaseService(session).evaluate_gate(
+    return ReleaseGateEvaluator(session).evaluate(
         values["strategy_id"],
         values["candidate_version_id"],
         values["campaign_id"],
@@ -327,7 +329,7 @@ def test_gate_retains_every_missing_predicate_in_stable_order(phase99_session_fa
     missing = {name: uuid.uuid4() for name in ("strategy", "candidate", "campaign", "review", "reconciliation")}
 
     with phase99_session_factory() as session:
-        result = ReleaseService(session).evaluate_gate(
+        result = ReleaseGateEvaluator(session).evaluate(
             missing["strategy"],
             missing["candidate"],
             missing["campaign"],

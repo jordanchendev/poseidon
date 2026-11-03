@@ -27,13 +27,14 @@ from poseidon.broker.base import (
 )
 from poseidon.broker.paper_adapter import PAPER_RECONCILIATION_CAPABILITIES, PaperBrokerAdapter
 from poseidon.decision_loop.decisions import DecisionService
-from poseidon.decision_loop.execution import ExecutionConflictError, internal_state_watermark
+from poseidon.decision_loop.execution import internal_state_watermark
 from poseidon.decision_loop.reconciliation import (
     ReconciliationConflictError,
     ReconciliationService,
     submit_or_reconcile_order,
 )
 from poseidon.decision_loop.recovery import RecoverySelector
+from poseidon.decision_loop.reservations import ExecutionConflictError
 from poseidon.decision_loop.transactions import materialize_order_intents
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.base import Base

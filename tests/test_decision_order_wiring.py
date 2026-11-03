@@ -9,11 +9,8 @@ from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.orm import sessionmaker
 
 from poseidon.decision_loop.decisions import DecisionService
-from poseidon.decision_loop.execution import (
-    DecisionExecutionService,
-    ExecutionConflictError,
-    internal_state_watermark,
-)
+from poseidon.decision_loop.execution import DecisionExecutionService, internal_state_watermark
+from poseidon.decision_loop.reservations import ExecutionConflictError, outstanding_reservation
 from poseidon.decision_loop.transactions import materialize_order_intents
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.base import Base
@@ -1037,7 +1034,7 @@ def test_outstanding_reservation_fails_closed(sessions, corruption):
         else:
             order.reserved_cash_json = {"currency": "USD", "amount": 100}
         with pytest.raises(ExecutionConflictError):
-            DecisionExecutionService(session)._outstanding_reservation(order, "TWD")
+            outstanding_reservation(session, order, "TWD")
 
 
 def test_planned_cash_fails_closed_before_partial_intents(sessions):

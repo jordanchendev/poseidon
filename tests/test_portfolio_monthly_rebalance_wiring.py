@@ -542,7 +542,8 @@ def test_shadow_task_cannot_submit_legacy_after_release_authority(patched_monthl
 def test_race_after_claim_materialization_freshness_prevents_submission(cutover_account, monkeypatch):
     from sqlalchemy import select
 
-    from poseidon.decision_loop.execution import DecisionExecutionService, ExecutionConflictError
+    from poseidon.decision_loop.execution import DecisionExecutionService
+    from poseidon.decision_loop.reservations import ExecutionConflictError
     from poseidon.models.paper_broker_account import PaperBrokerAccount
     from poseidon.workers.cpu_tasks import execution as cpu_execution
     from poseidon.workers.cpu_tasks import portfolio as cpu_portfolio

@@ -22,11 +22,12 @@ from poseidon.core.authz import AuthPrincipal
 from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.core.errors import ValidationError
 from poseidon.core.timeutil import iso_time, timestamp
-from poseidon.decision_loop.decisions import DecisionPolicy, DecisionService
+from poseidon.decision_loop.decisions import DecisionService
 from poseidon.decision_loop.evaluation import EvaluationService
 from poseidon.decision_loop.manifest import verify_manifest
-from poseidon.decision_loop.releases import ExecutableStrategyConfig
+from poseidon.decision_loop.policy import DecisionPolicy
 from poseidon.decision_loop.research import superseded_revision_ids
+from poseidon.decision_loop.strategy_config import ExecutableStrategyConfig
 from poseidon.models.data_manifest import DataManifest
 from poseidon.models.evaluation_snapshot import EvaluationSnapshot
 from poseidon.models.position_lot import PositionLot

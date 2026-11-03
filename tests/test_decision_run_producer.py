@@ -15,9 +15,9 @@ from sqlalchemy.orm import Session
 
 from poseidon.core.authz import AuthorizationError, AuthPrincipal
 from poseidon.core.canonical import content_sha256
-from poseidon.decision_loop.decisions import DecisionPolicy
 from poseidon.decision_loop.evaluation import EvaluationService, snapshot_payload
 from poseidon.decision_loop.manifest import ManifestService, validate_manifest
+from poseidon.decision_loop.policy import DecisionPolicy
 from poseidon.decision_loop.producer import (
     CANDIDATE_STATUS,
     ProducerService,

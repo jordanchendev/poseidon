@@ -30,7 +30,7 @@ def evaluate_active_strategies(
     Returns:
         Dict with evaluation summary.
     """
-    from poseidon.decision_loop.releases import ExecutableStrategyConfig
+    from poseidon.decision_loop.strategy_config import ExecutableStrategyConfig
     from poseidon.models.strategy_version import StrategyVersion
     from poseidon.risk.pipeline import SignalPipeline
     from poseidon.signals.schemas import InstrumentType

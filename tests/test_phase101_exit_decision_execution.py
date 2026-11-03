@@ -22,10 +22,11 @@ from sqlalchemy.orm import Session
 from poseidon.core.authz import AuthPrincipal
 from poseidon.core.canonical import content_sha256
 from poseidon.decision_loop.decisions import DecisionService
-from poseidon.decision_loop.execution import DecisionExecutionService, ExecutionConflictError
+from poseidon.decision_loop.execution import DecisionExecutionService
 from poseidon.decision_loop.manifest import ManifestService
 from poseidon.decision_loop.producer import ProducerService
 from poseidon.decision_loop.releases import ReleaseService
+from poseidon.decision_loop.reservations import ExecutionConflictError
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord

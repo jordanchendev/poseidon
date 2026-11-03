@@ -16,13 +16,11 @@ from poseidon.api.traces import TraceService
 from poseidon.core.authz import AuthorizationError, AuthPrincipal
 from poseidon.core.canonical import content_sha256
 from poseidon.core.errors import ValidationError
-from poseidon.decision_loop.decisions import (
-    DecisionConflictError,
-    DecisionPolicy,
-    DecisionService,
-)
+from poseidon.decision_loop.decisions import DecisionConflictError, DecisionService
 from poseidon.decision_loop.evaluation import EvaluationService
 from poseidon.decision_loop.manifest import ManifestService
+from poseidon.decision_loop.policy import DecisionPolicy
+from poseidon.decision_loop.trace import decision_trace
 from poseidon.models.base import Base
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.decision_record import DecisionRecord
@@ -567,7 +565,7 @@ def test_selected_uuid_formats_share_identity_and_trace_selection(db, uuid_forma
     assert first.id == replay.id
     assert first.original_json["selected_evaluation_ids"] == [snapshot_ids[0]]
     assert original["selected_evaluation_ids"] == [selected_id]
-    trace = DecisionService(db).trace(first.id, principal=manager())
+    trace = decision_trace(db, first.id, principal=manager())
     assert [row["id"] for row in trace["evaluations"] if row["selected"]] == [snapshot_ids[0]]
     assert db.query(DecisionRecord).count() == 1
     assert db.query(DecisionEvent).filter_by(decision_id=first.id).count() == 1
@@ -657,7 +655,7 @@ def test_legacy_executable_decision_remains_traceable_but_validator_reports_miss
     decision.revision = 2
     decision.final_json = {"selected_evaluation_ids": [snapshot_ids[0]], "final_action": "enter"}
 
-    trace = DecisionService(db).trace(decision.id, principal=manager())
+    trace = decision_trace(db, decision.id, principal=manager())
     assert trace["decision"]["final_json"]["final_action"] == "enter"
     with pytest.raises(DecisionConflictError, match="requires order_intents"):
         DecisionService(db).validate_execution(
@@ -916,7 +914,7 @@ def test_get_pending_and_trace_are_account_scoped_and_frozen(db):
     assert [
         row.id for row in service.list_pending(principal=principal, now=datetime(2026, 9, 26, 12, 30, tzinfo=UTC))
     ] == [decision.id]
-    trace = service.trace(decision.id, principal=principal)
+    trace = decision_trace(db, decision.id, principal=principal)
 
     assert trace["decision"]["id"] == str(decision.id)
     assert trace["evaluation_run"]["id"] == str(run.id)
@@ -949,7 +947,7 @@ def test_get_pending_and_trace_are_account_scoped_and_frozen(db):
     assert trace["stages"][6]["state"] == "Unavailable"
 
     with pytest.raises(AuthorizationError):
-        service.trace(decision.id, principal=manager(scope="paper:other"))
+        decision_trace(db, decision.id, principal=manager(scope="paper:other"))
 
 
 def test_evaluation_trace_uses_only_the_anchor_snapshot_for_stage_truth(db):
@@ -972,7 +970,7 @@ def test_selected_no_trade_snapshot_keeps_exact_identity_with_a_decision(db):
         risk_snapshot_json={"hard_failures": [], "allowed_actions": ["hold"]},
     )
 
-    trace = DecisionService(db).trace(decision.id, principal=manager())
+    trace = decision_trace(db, decision.id, principal=manager())
     stage = trace["stages"][0]
 
     assert stage["state"] == "No trade"
@@ -1024,7 +1022,7 @@ def test_executable_decision_without_order_is_not_reported_not_required(
             now=datetime(2026, 9, 26, 12, 30, tzinfo=UTC),
         )
 
-    trace = service.trace(decision.id, principal=manager())
+    trace = decision_trace(db, decision.id, principal=manager())
 
     assert trace["stages"][4]["state"] == decision_state
     assert trace["stages"][5]["state"] == execution_state
@@ -1183,8 +1181,8 @@ def test_shared_snapshot_dual_id_signals_stay_with_their_decision_and_aggregate_
     db.add_all(signals)
     db.flush()
 
-    first_trace = DecisionService(db).trace(first.id, principal=manager())
-    second_trace = DecisionService(db).trace(second.id, principal=manager())
+    first_trace = decision_trace(db, first.id, principal=manager())
+    second_trace = decision_trace(db, second.id, principal=manager())
     evaluation = TraceService(db).by_evaluation(uuid.UUID(snapshot_ids[0]), principal=manager())
 
     assert [row["identities"]["signal_id"] for row in first_trace["signals"]] == [str(signals[0].id)]
@@ -1254,7 +1252,7 @@ def test_decision_trace_rejects_cross_account_signal_metadata(db):
     db.flush()
 
     with pytest.raises(ValidationError, match="account scope"):
-        DecisionService(db).trace(decision.id, principal=manager())
+        decision_trace(db, decision.id, principal=manager())
 
 
 def test_evaluation_trace_rejects_malformed_signal_metadata(db):
@@ -1379,7 +1377,7 @@ def test_execution_stage_uses_stored_pre_materialization_decision_status(db, dec
     decision.status = decision_status
     db.flush()
 
-    execution = DecisionService(db).trace(decision.id, principal=manager())["stages"][5]
+    execution = decision_trace(db, decision.id, principal=manager())["stages"][5]
 
     assert execution["state"] == expected_state
 
@@ -1442,7 +1440,7 @@ def test_execution_stage_aggregates_all_order_lifecycle_states(
         )
     db.flush()
 
-    execution = DecisionService(db).trace(decision.id, principal=manager())["stages"][5]
+    execution = decision_trace(db, decision.id, principal=manager())["stages"][5]
     order_rows = [row for row in execution["rows"] if row["label"] == "Order"]
 
     assert execution["state"] == expected_state
@@ -1478,7 +1476,7 @@ def test_decision_trace_outcomes_exclude_unselected_snapshots(db):
     db.add_all([selected, unselected])
     db.flush()
 
-    rows = DecisionService(db).trace(decision.id, principal=manager())["stages"][6]["rows"]
+    rows = decision_trace(db, decision.id, principal=manager())["stages"][6]["rows"]
 
     assert [row["identities"]["outcome_id"] for row in rows] == [str(selected.id)]
     assert rows[0]["values"]["marker"] == "selected"
@@ -1510,7 +1508,7 @@ def test_decision_trace_trade_outcomes_require_the_anchor_decision(db):
     db.add_all([first_outcome, second_outcome])
     db.flush()
 
-    rows = DecisionService(db).trace(first.id, principal=manager())["stages"][6]["rows"]
+    rows = decision_trace(db, first.id, principal=manager())["stages"][6]["rows"]
 
     assert [row["identities"]["outcome_id"] for row in rows] == [str(first_outcome.id)]
     assert rows[0]["values"]["marker"] == "first-decision"

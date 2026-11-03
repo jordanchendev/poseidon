@@ -16,7 +16,8 @@ from poseidon.core.authz import AuthPrincipal
 from poseidon.core.database import get_db
 from poseidon.core.errors import ValidationError
 from poseidon.decision_loop.decisions import DecisionConflictError
-from poseidon.decision_loop.releases import ReleaseGateRejected, ReleaseService
+from poseidon.decision_loop.release_gate import ReleaseGateEvaluator, ReleaseGateRejected
+from poseidon.decision_loop.releases import ReleaseService
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
@@ -424,7 +425,7 @@ def get_release_gate(
 ) -> ReleaseGateResponse:
     strategy = _strategy(db, strategy_id)
     _version_scope(db, strategy, candidate_version_id, principal)
-    result = ReleaseService(db).evaluate_gate(
+    result = ReleaseGateEvaluator(db).evaluate(
         strategy_id,
         candidate_version_id,
         campaign_id,
@@ -508,6 +509,7 @@ def list_rollback_targets(
     if not events:
         return []
     service = ReleaseService(db)
+    evaluator = ReleaseGateEvaluator(db)
     authority_version = service._current_or_paused_authority_version(strategy)
     source_policy = service._policy_for_version(authority_version, strategy, principal)
     reconciliation = db.get(AccountReconciliation, reconciliation_id)
@@ -518,7 +520,7 @@ def list_rollback_targets(
             continue
         version = _version_scope(db, strategy, event.to_version_id, principal)
         seen.add(event.to_version_id)
-        gate, source, _policy = service._rollback_gate(
+        gate, source, _policy = evaluator.rollback_gate(
             strategy,
             version,
             reconciliation,

@@ -6,7 +6,7 @@ import math
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from poseidon.decision_loop.releases import ExecutableStrategyConfig, ProtectiveExitConfig
+from poseidon.decision_loop.strategy_config import ExecutableStrategyConfig, ProtectiveExitConfig
 from poseidon.workers.cpu_tasks import execution as cpu_execution
 from tests.cpu_tasks_support import patch_cpu_tasks
 from tests.test_protective_execution import _exact_settings, _opening, _set_owner_protection

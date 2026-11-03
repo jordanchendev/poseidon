@@ -17,6 +17,7 @@ from poseidon.core.authz import AuthPrincipal
 from poseidon.core.database import get_db
 from poseidon.core.errors import ValidationError
 from poseidon.decision_loop.decisions import DecisionConflictError, DecisionNotFoundError, DecisionService
+from poseidon.decision_loop.trace import decision_trace
 from poseidon.models.decision_event import DecisionEvent
 from poseidon.models.order import OrderRecord
 
@@ -395,6 +396,6 @@ def get_decision_trace(
     db: Session = Depends(get_db),
 ):
     try:
-        return DecisionService(db).trace(decision_id, principal=principal)
+        return decision_trace(db, decision_id, principal=principal)
     except Exception as error:
         _raise_api_error(error)

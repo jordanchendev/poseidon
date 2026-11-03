@@ -30,7 +30,7 @@ from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 
-from poseidon.decision_loop.decisions import DecisionPolicy
+from poseidon.decision_loop.policy import DecisionPolicy
 from poseidon.decision_loop.producer import _evidence_reasons
 from poseidon.workers.celery_app import celery_app
 from tests.test_decision_service import synthetic_policy

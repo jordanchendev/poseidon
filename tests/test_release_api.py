@@ -16,11 +16,7 @@ from poseidon.core.config import settings
 from poseidon.core.database import get_db
 from poseidon.core.errors import ValidationError
 from poseidon.decision_loop.decisions import DecisionConflictError
-from poseidon.decision_loop.releases import (
-    ReleaseGateRejected,
-    ReleaseGateResult,
-    ReleasePredicate,
-)
+from poseidon.decision_loop.release_gate import ReleaseGateRejected, ReleaseGateResult, ReleasePredicate
 from poseidon.decision_loop.releases import (
     ReleaseService as DomainReleaseService,
 )
@@ -31,7 +27,7 @@ from poseidon.models.strategy_version import StrategyVersion
 try:
     releases_api = importlib.import_module("poseidon.api.releases")
 except ModuleNotFoundError:
-    releases_api = SimpleNamespace(router=APIRouter(), ReleaseService=None)
+    releases_api = SimpleNamespace(router=APIRouter(), ReleaseService=None, ReleaseGateEvaluator=None)
 
 
 ACCOUNT = "paper:pilot"
@@ -115,7 +111,7 @@ class StubReleaseService:
         self.gate_allowed = True
         self.replays = {}
 
-    def evaluate_gate(self, *args, principal, **kwargs):
+    def evaluate(self, *args, principal, **kwargs):
         self.calls.append(("gate", args, principal, kwargs))
         principal.require_account_scope(ACCOUNT)
         state = "passed" if self.gate_allowed else "blocked"
@@ -169,7 +165,7 @@ class StubReleaseService:
             reconciliation=SimpleNamespace(account_generation="pilot-generation"),
         )
 
-    def _rollback_gate(self, _strategy, target, _reconciliation, _policy, principal, _now):
+    def rollback_gate(self, _strategy, target, _reconciliation, _policy, principal, _now):
         principal.require_account_scope(ACCOUNT)
         eligible = target.content_sha256 == "a" * 64
         predicate = SimpleNamespace(
@@ -229,6 +225,7 @@ def api(monkeypatch):
     service = StubReleaseService(strategy)
     service.strategy_session = session
     monkeypatch.setattr(releases_api, "ReleaseService", lambda _db: service)
+    monkeypatch.setattr(releases_api, "ReleaseGateEvaluator", lambda _db: service)
     app = FastAPI()
     app.include_router(capabilities_api.router, prefix="/api/v1")
     app.include_router(releases_api.router, prefix="/api/v1/strategies")

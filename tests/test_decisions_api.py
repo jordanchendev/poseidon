@@ -194,6 +194,11 @@ def api(monkeypatch):
     session = TrackingSession()
     service = StubDecisionService()
     monkeypatch.setattr(decisions_api, "DecisionService", lambda _db: service)
+    monkeypatch.setattr(
+        decisions_api,
+        "decision_trace",
+        lambda _db, decision_id, *, principal: service.trace(decision_id, principal=principal),
+    )
     app = FastAPI()
     app.include_router(decisions_api.router, prefix="/api/v1/decisions")
     app.dependency_overrides[get_db] = lambda: session
@@ -206,6 +211,11 @@ def real_api(monkeypatch):
     session = TrackingSession()
     service = StubDecisionService()
     monkeypatch.setattr(decisions_api, "DecisionService", lambda _db: service)
+    monkeypatch.setattr(
+        decisions_api,
+        "decision_trace",
+        lambda _db, decision_id, *, principal: service.trace(decision_id, principal=principal),
+    )
     poseidon_app.dependency_overrides[get_db] = lambda: session
     try:
         yield TestClient(poseidon_app, raise_server_exceptions=False), session, service

@@ -16,8 +16,7 @@ from poseidon.broker.base import BrokerAdapter, BrokerCapabilities, BrokerCapabi
 from poseidon.broker.paper_adapter import PaperBrokerAdapter, _ensure_legacy_baselines
 from poseidon.core.canonical import content_sha256
 from poseidon.core.config import settings
-from poseidon.decision_loop.decisions import DecisionService
-from poseidon.decision_loop.execution import ExecutionConflictError, ProtectiveExecutionService
+from poseidon.decision_loop.protective_execution import ProtectiveExecutionService
 from poseidon.decision_loop.reconciliation import (
     ReconciliationConflictError,
     ReconciliationService,
@@ -25,6 +24,8 @@ from poseidon.decision_loop.reconciliation import (
     submit_or_reconcile_order,
 )
 from poseidon.decision_loop.recovery import RecoverySelector
+from poseidon.decision_loop.reservations import ExecutionConflictError
+from poseidon.decision_loop.trace import decision_trace
 from poseidon.decision_loop.transactions import materialize_order_intents
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_event import DecisionEvent
@@ -595,7 +596,7 @@ def test_protective_materialize_reads_implicit_time_after_account_lock(monkeypat
         if "pg_advisory_xact_lock" in " ".join(statement.lower().split()):
             events.append("account")
 
-    monkeypatch.setattr("poseidon.decision_loop.execution.datetime", ObservedTime)
+    monkeypatch.setattr("poseidon.decision_loop.protective_execution.datetime", ObservedTime)
     with seed.sessions() as session:
         engine = session.get_bind()
     event.listen(engine, "before_cursor_execute", observe_lock)
@@ -2166,7 +2167,7 @@ def test_trace_adds_fill_allocation_lots_and_reconciliation_without_snapshots(se
     with seed.sessions() as session:
         anchor_decision = session.get(OrderRecord, order_id).decision_id
         non_anchor_decision = second_decision if anchor_decision == first_decision else first_decision
-        trace = DecisionService(session).trace(non_anchor_decision, principal=worker(seed.account))
+        trace = decision_trace(session, non_anchor_decision, principal=worker(seed.account))
 
     assert trace["execution_key"] is not None
     assert set(trace["execution_keys"]) == {trace["execution_key"], result["execution_key"]}

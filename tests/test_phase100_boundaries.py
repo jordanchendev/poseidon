@@ -73,8 +73,15 @@ FORBIDDEN_AUTHORITY_MODULES = (
     "poseidon.api.risk",
     "poseidon.api.strategy_releases",
     "poseidon.decision_loop.releases",
+    "poseidon.decision_loop.release_gate",
+    "poseidon.decision_loop.strategy_config",
     "poseidon.decision_loop.decisions",
+    "poseidon.decision_loop.policy",
+    "poseidon.decision_loop.trace",
+    "poseidon.decision_loop.trace_stages",
     "poseidon.decision_loop.execution",
+    "poseidon.decision_loop.protective_execution",
+    "poseidon.decision_loop.reservations",
     "poseidon.decision_loop.transactions",
     "poseidon.orders.manager",
     "poseidon.research.campaign",
@@ -110,6 +117,8 @@ FORBIDDEN_AUTHORITY_NAMES = (
 )
 RELEASE_POINTER_MODULES = (
     "poseidon.decision_loop.releases",
+    "poseidon.decision_loop.release_gate",
+    "poseidon.decision_loop.strategy_config",
     "poseidon.models.strategy",
     "poseidon.models.strategy_release_event",
 )
@@ -375,9 +384,13 @@ LOOP_WRITER_MODULES = (
     "poseidon.api.risk",
     "poseidon.api.strategy_releases",
     "poseidon.decision_loop.execution",
+    "poseidon.decision_loop.protective_execution",
+    "poseidon.decision_loop.reservations",
     "poseidon.decision_loop.releases",
+    "poseidon.decision_loop.release_gate",
     "poseidon.decision_loop.transactions",
     "poseidon.decision_loop.reconciliation",
+    "poseidon.decision_loop.account_reconciliation",
     "poseidon.orders",
     "poseidon.broker",
     "poseidon.positions",
@@ -388,8 +401,6 @@ LOOP_WRITER_MODULES = (
     "poseidon.models.strategy_release",
     "poseidon.models.strategy_release_event",
 )
-# Read-only configuration parsing shared with evaluate_active_strategies.
-LOOP_ALLOWED_IMPORTS = frozenset({"poseidon.decision_loop.releases.ExecutableStrategyConfig"})
 LOOP_WRITER_NAMES = (
     "ReleaseService",
     "StrategyReleaseEvent",
@@ -434,7 +445,7 @@ def _loop_writer_issues(label: str, text: str) -> list[str]:
         if value is not None
     }
     issues = [f"loop writer name {name}: {label}" for name in LOOP_WRITER_NAMES if name in referenced]
-    for imported in _imports(text, label) - LOOP_ALLOWED_IMPORTS:
+    for imported in _imports(text, label):
         if any(imported == module or imported.startswith(f"{module}.") for module in LOOP_WRITER_MODULES):
             issues.append(f"loop writer import {imported}: {label}")
     for node in ast.walk(tree):
@@ -618,7 +629,7 @@ class Phase100DshBoundaryTests(unittest.TestCase):
                 "src/poseidon/api/research_loop.py": "from poseidon.api.releases import router\n",
                 "src/poseidon/api/campaigns.py": "def promote(strategy, version):\n    strategy.active_version_id = version\n",
                 "src/poseidon/decision_loop/producer.py": (
-                    "from poseidon.decision_loop.releases import ExecutableStrategyConfig\n"
+                    "from poseidon.decision_loop.strategy_config import ExecutableStrategyConfig\n"
                     "from poseidon.decision_loop.releases import ReleaseService\n"
                     "def read(strategy):\n    return strategy.active_version_id\n"
                 ),

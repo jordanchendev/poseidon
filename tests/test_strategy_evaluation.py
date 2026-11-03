@@ -481,7 +481,8 @@ def test_released_executable_envelope_drives_scheduled_evaluation(phase99_sessio
 
 @pytest.mark.postgresql
 def test_release_rejects_incomplete_executable_config_before_pointer_mutation(phase99_session_factory):
-    from poseidon.decision_loop.releases import ReleaseGateRejected, ReleaseService
+    from poseidon.decision_loop.release_gate import ReleaseGateRejected
+    from poseidon.decision_loop.releases import ReleaseService
     from poseidon.models.strategy import StrategyRecord
     from poseidon.models.strategy_release_event import StrategyReleaseEvent
     from tests.test_strategy_release import _release, _seed_gate_graph

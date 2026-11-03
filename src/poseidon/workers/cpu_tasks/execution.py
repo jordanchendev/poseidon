@@ -26,7 +26,7 @@ def _decision_paper_adapter(market):
 
 
 def _decision_liquidation_nav(snapshot, policy, prices, ledger, *, position_economics=None):
-    from poseidon.decision_loop.reconciliation import paper_liquidation_nav
+    from poseidon.decision_loop.account_reconciliation import paper_liquidation_nav
 
     return paper_liquidation_nav(
         snapshot,
@@ -81,7 +81,7 @@ def _configured_protective_route(market):
 
 def _run_durable_protective(*, origin, market, triggered, source_holding_ids_by_identity=None):
     """Commit protective intents per lot identity, then enqueue UUID-only submission."""
-    from poseidon.decision_loop.execution import ProtectiveExecutionService
+    from poseidon.decision_loop.protective_execution import ProtectiveExecutionService
 
     scope = settings.decision_loop_approved_account_scope
     generation = settings.decision_loop_approved_account_generation
@@ -181,7 +181,8 @@ def _durable_protective_triggers(market):
 
     from sqlalchemy import select
 
-    from poseidon.decision_loop.execution import ExecutionConflictError, ProtectiveExecutionService
+    from poseidon.decision_loop.protective_execution import ProtectiveExecutionService
+    from poseidon.decision_loop.reservations import ExecutionConflictError
     from poseidon.models.position_lot import PositionLot
     from poseidon.models.strategy_version import StrategyVersion
 
@@ -337,7 +338,8 @@ def _execute_approved_decision(market):
 
     from poseidon.broker.config import BrokerConfig
     from poseidon.decision_loop.decisions import DecisionConflictError, DecisionService
-    from poseidon.decision_loop.execution import DecisionExecutionService, ExecutionConflictError
+    from poseidon.decision_loop.execution import DecisionExecutionService
+    from poseidon.decision_loop.reservations import ExecutionConflictError
 
     scope = settings.decision_loop_approved_account_scope
     generation = settings.decision_loop_approved_account_generation
@@ -377,7 +379,8 @@ def _record_shadow_parity(market, orders):
     """Audit frozen target parity only; never claim, materialize, or submit."""
     from sqlalchemy import select
 
-    from poseidon.decision_loop.execution import DecisionExecutionService, ExecutionConflictError
+    from poseidon.decision_loop.execution import DecisionExecutionService
+    from poseidon.decision_loop.reservations import ExecutionConflictError
     from poseidon.models.decision_event import DecisionEvent
 
     if settings.decision_loop_approved_market != market:
@@ -617,7 +620,7 @@ def reconcile_paper_account(account_id: str) -> dict:
     persisted_id = uuid.UUID(account_id)
     from sqlalchemy import select
 
-    from poseidon.decision_loop.reconciliation import reconcile_account
+    from poseidon.decision_loop.account_reconciliation import reconcile_account
     from poseidon.models.decision_record import DecisionRecord
     from poseidon.models.paper_broker_account import PaperBrokerAccount
     from poseidon.models.paper_broker_order import PaperBrokerOrder

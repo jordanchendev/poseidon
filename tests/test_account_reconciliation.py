@@ -16,13 +16,11 @@ from poseidon.broker.base import BrokerCapabilityError
 from poseidon.broker.paper_adapter import PaperBrokerAdapter
 from poseidon.core.authz import AuthPrincipal
 from poseidon.core.canonical import content_sha256
-from poseidon.decision_loop.execution import (
-    DecisionExecutionService,
-    ExecutionConflictError,
-    ProtectiveExecutionService,
-    internal_state_watermark,
-)
+from poseidon.decision_loop.account_reconciliation import AccountReconciliationService
+from poseidon.decision_loop.execution import DecisionExecutionService, internal_state_watermark
+from poseidon.decision_loop.protective_execution import ProtectiveExecutionService
 from poseidon.decision_loop.reconciliation import ReconciliationService, submit_or_reconcile_order
+from poseidon.decision_loop.reservations import ExecutionConflictError
 from poseidon.models.account_reconciliation import AccountReconciliation
 from poseidon.models.decision_record import DecisionRecord
 from poseidon.models.fill_allocation import FillAllocation
@@ -82,7 +80,7 @@ def account():
 
 
 def reconcile(account, **kwargs):
-    from poseidon.decision_loop.reconciliation import reconcile_account
+    from poseidon.decision_loop.account_reconciliation import reconcile_account
 
     kwargs.setdefault("prices", {("tw_stock", "2330", "spot"): 100.0})
     return reconcile_account(account.sessions, account.id, account.adapter, now=NOW, **kwargs)
@@ -487,7 +485,7 @@ def test_malformed_legacy_attribution_is_never_excluded_from_reconciliation(monk
     with pytest.raises(BrokerCapabilityError):
         account.adapter.query_account_snapshot(account.scope, "generation-1")
     with account.sessions() as session, session.begin():
-        result = ReconciliationService(session).reconcile_account(
+        result = AccountReconciliationService(session).reconcile_account(
             account.id,
             snapshot,
             now=NOW,
@@ -536,7 +534,7 @@ def test_malformed_legacy_baseline_is_never_excluded_from_reconciliation(monkeyp
                 )
             )
     with account.sessions() as session, session.begin():
-        result = ReconciliationService(session).reconcile_account(
+        result = AccountReconciliationService(session).reconcile_account(
             account.id,
             snapshot,
             now=NOW,
@@ -920,7 +918,7 @@ def test_freshness_owner_max_age_and_policy_digest_block_exposure(account):
 
 
 def test_account_worker_uuid_only_loads_current_marks_server_side(account, monkeypatch):
-    from poseidon.decision_loop import reconciliation
+    from poseidon.decision_loop import account_reconciliation
     from poseidon.workers.cpu_tasks import execution as cpu_execution
 
     trade(account)
@@ -933,7 +931,7 @@ def test_account_worker_uuid_only_loads_current_marks_server_side(account, monke
         captured.update(account_id=account_id, prices=kwargs.get("prices"))
         return {"status": "received"}
 
-    monkeypatch.setattr(reconciliation, "reconcile_account", receive)
+    monkeypatch.setattr(account_reconciliation, "reconcile_account", receive)
     assert cpu_execution.reconcile_paper_account.run(str(account.id)) == {"status": "received"}
     assert captured == {"account_id": account.id, "prices": {("tw_stock", "2330", "spot"): 123.0}}
 
