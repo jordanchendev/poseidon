@@ -12,7 +12,7 @@ from datetime import date
 import pytest
 
 from poseidon.core.canonical import content_sha256
-from poseidon.pipeline import faithfulness, jev, spec_llm
+from poseidon.pipeline import faithfulness, jev, openrouter
 from poseidon.pipeline.clause_precheck import extract_quantities, precheck
 from poseidon.pipeline.faithfulness import (
     FaithfulnessReviewer,
@@ -44,9 +44,9 @@ AS_OF = date(2026, 10, 22)
 
 @pytest.fixture(autouse=True)
 def _fresh_identity_cache():
-    spec_llm.reset_identity_cache()
+    openrouter.reset_identity_cache()
     yield
-    spec_llm.reset_identity_cache()
+    openrouter.reset_identity_cache()
 
 
 def acceptance() -> dict:
@@ -359,7 +359,7 @@ def test_review_hook_returns_validator_style_items():
             "做多 3 倍槓桿，跌破 200 日均線降到 0.5 倍，用 2 倍槓桿，買 put 保護", clauses, tmf_dynamic_leverage_3x()
         )
     assert all(set(item) == {"path", "msg"} and isinstance(item["msg"], str) for item in items)
-    assert all(len(item["msg"]) <= spec_llm.MAX_TEXT for item in items)
+    assert all(len(item["msg"]) <= openrouter.MAX_TEXT for item in items)
     assert [item["path"] for item in items] == [
         "clauses.2.slot",  # JEV: leverage
         "clauses.2.component",

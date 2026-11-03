@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from poseidon.core.canonical import content_sha256
-from poseidon.pipeline import spec_llm
+from poseidon.pipeline import openrouter, spec_llm
 from poseidon.pipeline.plan import V3_ROUTED_DAILY_STAGE_PLAN
 from poseidon.pipeline.service import PipelineRequestInvalid, PipelineService
 from poseidon.pipeline.spec_llm_v3 import EXAMPLE_IDEA
@@ -52,10 +52,10 @@ def store(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _llm_env(monkeypatch):
-    monkeypatch.setenv(spec_llm.KEY_ENV, KEY)
-    spec_llm.reset_identity_cache()
+    monkeypatch.setenv(openrouter.KEY_ENV, KEY)
+    openrouter.reset_identity_cache()
     yield
-    spec_llm.reset_identity_cache()
+    openrouter.reset_identity_cache()
 
 
 def generating(registry, client, store):

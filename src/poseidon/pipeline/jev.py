@@ -10,11 +10,11 @@ statement and of each sentence of the owner's original.
 
 Key discipline (the pipeline's own traffic, same purpose as spec_generate; owner 2026-10-24):
 
-- The key is ``spec_llm.KEY_ENV`` (``STRATEGY_PIPELINE_OPENROUTER_KEY``) and nothing else: there is no
+- The key is ``openrouter.KEY_ENV`` (``STRATEGY_PIPELINE_OPENROUTER_KEY``) and nothing else: there is no
   fallback to the research keys (``JEV_RESEARCH_OPENROUTER_KEY``, ``JEV_EVAL_OPENROUTER_KEY``) or any
   other variable.
 - Before the first question the key's identity is checked fail-closed with
-  ``spec_llm.verify_key_identity`` against the same pin ``POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL``.
+  ``openrouter.OpenRouterSession`` against the same pin ``POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL``.
   A missing key, a missing pin, a mismatch or a failed check raises :class:`JevUnavailable`, which the
   stage turns into verdict ``error`` (rerunnable); nothing is skipped silently.
 - The key value is never logged, stored or echoed: request bodies never contain it, and every
@@ -29,7 +29,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -38,13 +37,14 @@ from typing import Any
 import httpx
 
 from poseidon.core.canonical import canonical_json
-from poseidon.pipeline.spec_llm import (
+from poseidon.pipeline.openrouter import (
     KEY_ENV,
     MAX_TEXT,
     PIN_ENV,
     OpenRouterClient,
     OpenRouterError,
-    verify_key_identity,
+    OpenRouterSession,
+    SessionUnavailable,
 )
 from poseidon.pipeline.v3 import components as _components  # noqa: F401  (registers the components)
 from poseidon.pipeline.v3.registry import REGISTRY
@@ -290,46 +290,37 @@ class JevSession:
         clock: Callable[[], float] = time.monotonic,
     ):
         self.config = config
-        self._key_var = key_var
-        self._pin_var = pin_var
-        self._pin = pin
-        self._environ = os.environ if environ is None else environ
-        self._factory = client_factory or _default_client_factory
         self._clock = clock
-        self._key = ""
-        self._client = None
-        self.key_identity: dict | None = None
+        self._session = OpenRouterSession(
+            key_var=key_var,
+            pin_var=pin_var,
+            pin=pin,
+            environ=environ,
+            client_factory=client_factory or _default_client_factory,
+            timeout=float(config["request_timeout_seconds"]),
+            max_cost_usd=float(config["max_cost_usd_per_attempt"]),
+            clock=clock,
+            subject="JEV key",
+            callee="JEV",
+            missing_key_suffix="; refusing to call JEV",
+        )
         self.calls: list[dict] = []
         self.cost_usd = 0.0
+
+    @property
+    def key_identity(self) -> dict | None:
+        return self._session.identity
 
     # ---- lifecycle
 
     def open(self) -> dict:
-        key = (self._environ.get(self._key_var) or "").strip()
-        if not key:
-            raise JevUnavailable(f"JEV key {self._key_var} is not set in this process; refusing to call JEV")
-        if not self._pin:
-            raise JevUnavailable(f"{self._pin_var} is not pinned; refusing to call JEV")
-        self._key = key
-        self._client = self._factory(key, float(self.config["request_timeout_seconds"]))
         try:
-            self.key_identity = verify_key_identity(
-                self._client, key=key, pin=self._pin, pin_var=self._pin_var, clock=self._clock
-            )
-        except OpenRouterError as error:
-            self.key_identity = {"checked": "failed"}
-            self.close()
-            raise JevUnavailable(self.scrub_text(f"key identity check failed: {error}")[:MAX_TEXT]) from None
-        remaining = self.key_identity.get("limit_remaining")
-        if isinstance(remaining, int | float) and remaining < float(self.config["max_cost_usd_per_attempt"]):
-            self.close()
-            raise JevUnavailable("key limit_remaining is below the per-attempt cost cap; refusing to call JEV")
-        return self.key_identity
+            return self._session.open()
+        except SessionUnavailable as error:
+            raise JevUnavailable(str(error)) from None
 
     def close(self) -> None:
-        if self._client is not None:
-            self._client.close()
-            self._client = None
+        self._session.close()
 
     def __enter__(self) -> JevSession:
         self.open()
@@ -341,7 +332,8 @@ class JevSession:
     # ---- questions
 
     def ask(self, question: Question, state: dict) -> Answer:
-        if self._client is None:
+        client = self._session.client
+        if client is None:
             raise JevError("JEV session is not open")
         config = self.config
         estimate = float(config["estimate_usd_per_call"])
@@ -355,7 +347,7 @@ class JevSession:
         self.calls.append(record)
         started = self._clock()
         try:
-            response = self._client.decide(payload)
+            response = client.decide(payload)
         except OpenRouterError as error:
             # The provider may still bill a request that failed client-side: book the estimate.
             record.update({"error": self.scrub_text(str(error))[:MAX_TEXT], "cost_usd": estimate})
@@ -388,12 +380,12 @@ class JevSession:
     # ---- artifacts
 
     def scrub_text(self, text: str) -> str:
-        return text.replace(self._key, "<key>") if self._key else text
+        return self._session.scrub_text(text)
 
     def scrub(self, value: Any) -> Any:
         """``value`` (JSON-able) with every occurrence of the key replaced."""
 
-        if not self._key:
+        if not self._session.has_key:
             return value
         return json.loads(self.scrub_text(json.dumps(value, ensure_ascii=False)))
 

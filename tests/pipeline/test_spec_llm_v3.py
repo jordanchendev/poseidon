@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from poseidon.core.canonical import content_sha256
-from poseidon.pipeline import spec_llm
+from poseidon.pipeline import openrouter, spec_llm
 from poseidon.pipeline.plan import (
     DEFAULT_SPEC_GENERATE,
     DEFAULT_SPEC_GENERATE_V3,
@@ -61,9 +61,9 @@ AMBIGUOUS_IDEA = (
 
 @pytest.fixture(autouse=True)
 def _fresh_identity_cache():
-    spec_llm.reset_identity_cache()
+    openrouter.reset_identity_cache()
     yield
-    spec_llm.reset_identity_cache()
+    openrouter.reset_identity_cache()
 
 
 def v3_config(**overrides) -> dict:
@@ -685,7 +685,7 @@ def first_days_store(root):
 
 
 def test_stage_routes_a_routed_run_through_v3_and_hashes_both_prompts(monkeypatch, tmp_path):
-    monkeypatch.setenv(spec_llm.KEY_ENV, KEY)
+    monkeypatch.setenv(openrouter.KEY_ENV, KEY)
     client = FakeClient([reply(ok_reply())])
     seen = []
     store = first_days_store(tmp_path)
@@ -708,7 +708,7 @@ def test_stage_routes_a_routed_run_through_v3_and_hashes_both_prompts(monkeypatc
 def test_stage_errors_before_any_llm_call_when_refdata_is_unreadable(monkeypatch, tmp_path):
     from poseidon.pipeline.refdata.store import RefdataStore
 
-    monkeypatch.setenv(spec_llm.KEY_ENV, KEY)
+    monkeypatch.setenv(openrouter.KEY_ENV, KEY)
     stage = SpecGenerateStage(
         client_factory=lambda *_: pytest.fail("no LLM call without the series first days"),
         pin_provider=lambda: LABEL,

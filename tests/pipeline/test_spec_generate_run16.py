@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from poseidon.pipeline import spec_llm
+from poseidon.pipeline import openrouter
 from poseidon.pipeline.spec_llm_v3 import generate_routed
 from poseidon.pipeline.state import Verdict
 from tests.pipeline.jev_support import FakeOpenRouter
@@ -29,9 +29,9 @@ MONTHLY = "時段：日線，每月最後一個交易日收盤判斷，隔日開
 
 @pytest.fixture(autouse=True)
 def _fresh_identity_cache():
-    spec_llm.reset_identity_cache()
+    openrouter.reset_identity_cache()
     yield
-    spec_llm.reset_identity_cache()
+    openrouter.reset_identity_cache()
 
 
 def _replayed_jev() -> tuple[FakeOpenRouter, list[dict]]:

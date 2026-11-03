@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -39,21 +38,26 @@ from typing import Any
 
 from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.pipeline import spec_llm
-from poseidon.pipeline.spec_llm import (
+from poseidon.pipeline.openrouter import (
     KEY_ENV,
-    MAX_ERRORS_PER_ROUND,
     MAX_TEXT,
+    PIN_ENV,
+    ClientFactory,
     OpenRouterError,
+    OpenRouterSession,
+    SessionUnavailable,
+    default_client_factory,
+)
+from poseidon.pipeline.spec_llm import (
+    MAX_ERRORS_PER_ROUND,
     SpecGenerationOutcome,
     _chat_payload,
     _err,
-    _scrub,
     _strings,
     _usage_summary,
     build_user_message,
     normalize_capability,
     round_cost,
-    verify_key_identity,
     worst_case_cost,
 )
 from poseidon.pipeline.state import Verdict
@@ -506,7 +510,7 @@ def generate_spec_v3(
     data_end: date | None = None,
     warmup: SessionWarmup | None = None,
     environ: Mapping[str, str] | None = None,
-    client_factory: spec_llm.ClientFactory | None = None,
+    client_factory: ClientFactory | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> SpecGenerationOutcome:
     """One spec_generate v3 attempt. A PASS carries ``report["route"]``; ``report["status"] == "intraday"``
@@ -546,26 +550,24 @@ def generate_spec_v3(
         return stop(Verdict.FAIL, "idea text is empty")
     if len(idea_text) > int(config["max_idea_chars"]):
         return stop(Verdict.FAIL, f"idea text exceeds {config['max_idea_chars']} characters")
-    environ = os.environ if environ is None else environ
-    key = (environ.get(KEY_ENV) or "").strip()
-    if not key:
-        return stop(Verdict.ERROR, f"llm key {KEY_ENV} is not set in this process")
-    if not pin:
-        return stop(Verdict.ERROR, "POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL is not pinned; refusing to call the LLM")
-
-    client = (client_factory or spec_llm._default_client_factory)(key, float(config["request_timeout_seconds"]))
+    session = OpenRouterSession(
+        key_var=KEY_ENV,
+        pin_var=PIN_ENV,
+        pin=pin,
+        environ=environ,
+        client_factory=client_factory or default_client_factory,
+        timeout=float(config["request_timeout_seconds"]),
+        max_cost_usd=report["max_cost_usd_per_attempt"],
+        clock=clock,
+    )
     transcript: list[dict] = []
     try:
         try:
-            report["key_identity"] = verify_key_identity(client, key=key, pin=pin, clock=clock)
-        except OpenRouterError as error:
-            report["key_identity"] = {"checked": "failed"}
-            return stop(Verdict.ERROR, _scrub(f"key identity check failed: {error}", key)[:MAX_TEXT])
-        remaining = report["key_identity"].get("limit_remaining")
-        if isinstance(remaining, int | float) and remaining < report["max_cost_usd_per_attempt"]:
-            return stop(
-                Verdict.ERROR, "key limit_remaining is below the per-attempt cost cap; refusing to call the LLM"
-            )
+            report["key_identity"] = session.open()
+        except SessionUnavailable as error:
+            if session.identity is not None:
+                report["key_identity"] = session.identity
+            return stop(Verdict.ERROR, str(error))
         feasibility = (
             FeasibilityContext(end=data_end, series_since=series_since, choose_start=True, warmup=warmup)
             if series_since is not None
@@ -575,12 +577,12 @@ def generate_spec_v3(
             idea_text, config, report, transcript, allowed_classes, dict(unavailable or {}), review, feasibility
         )
         try:
-            verdict, reason = run.loop(client)
+            verdict, reason = run.loop(session.client)
         except _Stop as error:
-            verdict, reason = error.verdict, _scrub(error.reason, key)
+            verdict, reason = error.verdict, session.scrub_text(error.reason)
         return _finish(verdict, reason, report, transcript)
     finally:
-        client.close()
+        session.close()
 
 
 _MARK = {Verdict.PASS: "✅", Verdict.FAIL: "❌", Verdict.UNSUPPORTED: "⛔", Verdict.ERROR: "⚠️"}
@@ -901,7 +903,7 @@ def generate_routed(
     series_since: Mapping[str, date] | None = None,
     warmup: SessionWarmup | None = None,
     environ: Mapping[str, str] | None = None,
-    client_factory: spec_llm.ClientFactory | None = None,
+    client_factory: ClientFactory | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> SpecGenerationOutcome:
     """spec_generate of a routed run (CONFIG_VERSION 7): v3 first; an intraday route runs the DSL v2 generation

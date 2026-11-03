@@ -12,7 +12,7 @@ import httpx
 
 from poseidon.pipeline.faithfulness import SpecFaithfulnessStage
 from poseidon.pipeline.jev import transport_client_factory
-from poseidon.pipeline.spec_llm import KEY_ENV
+from poseidon.pipeline.openrouter import KEY_ENV
 
 KEY = "test-openrouter-key-not-real"
 LABEL = "sk-or-v1-fee...567"

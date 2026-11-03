@@ -1,18 +1,10 @@
 """Step 4: LLM spec generation (idea text -> DSL v2 JSON) for ``spec_generate``.
 
-Key discipline (one key, one purpose):
-
-- The only variable read is ``STRATEGY_PIPELINE_OPENROUTER_KEY``; there is no
-  fallback to any other OpenRouter variable. It is mounted into the pipeline
-  worker only.
-- Before the first LLM call of every stage attempt the key's identity is
-  checked fail-closed: OpenRouter ``GET /key`` must return ``data.label``
-  exactly equal to the pinned, non-secret
-  ``POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL`` (no prefix matching). A missing
-  key, a missing pin, a mismatch, or any check failure ends the attempt with
-  verdict ``error`` and no LLM call. Successful checks are cached per process
-  for at most :data:`IDENTITY_CACHE_SECONDS`.
-- The key value is never logged, stored in a report, or echoed in an error.
+Key discipline (one key, one purpose) lives in :mod:`poseidon.pipeline.openrouter`: the only variable read is
+``STRATEGY_PIPELINE_OPENROUTER_KEY``, its identity is checked fail-closed against the pinned
+``POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL`` before the first call, and the key never reaches a log, a report or an
+error. A missing key, a missing pin, a mismatch or a failed check ends the attempt with verdict ``error`` and no
+LLM call.
 
 Cost: every attempt has a hard cap (``max_cost_usd_per_attempt``). Before each
 call the worst case (estimated prompt tokens + ``max_tokens``) must fit under
@@ -30,17 +22,23 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
 import re
-import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
-
 from poseidon.core.canonical import canonical_json, content_sha256
+from poseidon.pipeline.openrouter import (
+    KEY_ENV,
+    MAX_TEXT,
+    PIN_ENV,
+    ClientFactory,
+    OpenRouterError,
+    OpenRouterSession,
+    SessionUnavailable,
+    default_client_factory,
+)
 from poseidon.pipeline.spec_validation import param_count_errors
 from poseidon.pipeline.state import Verdict
 from poseidon.strategies.dsl.v2 import DslUnsupportedError, DslValidationError, dsl_v2_json_schema, validate_v2
@@ -54,15 +52,12 @@ from poseidon.strategies.dsl.v2.schema import (
 )
 from poseidon.strategies.dsl.v2.validate import merge_risk, walk_model
 
-KEY_ENV = "STRATEGY_PIPELINE_OPENROUTER_KEY"
-PIN_ENV = "POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL"  # the pinned label of KEY_ENV
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-IDENTITY_CACHE_SECONDS = 600.0
 PROMPT_VERSION = 6  # 5: DSL v2.1 (smoothed indicator, rolling channel, b_mult); 6: grids bracket
 # plausible values with the default near the middle (optimize extends an edge best, 2026-10-23)
 
 MAX_ERRORS_PER_ROUND = 20
-MAX_TEXT = 300
+
+
 MAX_LIST_ITEMS = 20
 PROMPT_CHARS_PER_TOKEN = 3.0  # conservative (JSON-heavy prompts run ~3.5-4 chars/token)
 
@@ -219,106 +214,7 @@ def build_repair_message(errors: list[dict]) -> str:
 # --------------------------------------------------------------------------- OpenRouter client
 
 
-class OpenRouterError(Exception):
-    """A request to OpenRouter failed (message never contains the key)."""
-
-
-class OpenRouterClient:
-    def __init__(self, key: str, *, timeout: float, transport: httpx.BaseTransport | None = None):
-        self._key = key
-        self._http = httpx.Client(
-            base_url=OPENROUTER_BASE_URL,
-            timeout=timeout,
-            transport=transport,
-            headers={"Authorization": f"Bearer {key}", "X-Title": "poseidon-strategy-pipeline"},
-        )
-
-    def close(self) -> None:
-        self._http.close()
-
-    def _request(self, method: str, path: str, **kwargs) -> dict:
-        try:
-            response = self._http.request(method, path, **kwargs)
-        except httpx.HTTPError as error:
-            raise OpenRouterError(_scrub(f"{type(error).__name__}: {error}", self._key)) from None
-        if response.status_code != 200:
-            detail = ""
-            try:
-                body = response.json()
-                detail = str((body.get("error") or {}).get("message") or "")
-            except (ValueError, AttributeError):
-                pass
-            # Scrub before truncating so a cut can never leave part of the key behind.
-            raise OpenRouterError(_scrub(f"HTTP {response.status_code} {detail}".strip(), self._key)[:MAX_TEXT])
-        try:
-            body = response.json()
-        except ValueError:
-            raise OpenRouterError("response is not JSON") from None
-        if not isinstance(body, dict):
-            raise OpenRouterError("response is not a JSON object")
-        return body
-
-    def key_info(self) -> dict:
-        data = self._request("GET", "/key").get("data")
-        if not isinstance(data, dict):
-            raise OpenRouterError("key info has no data object")
-        return data
-
-    def chat(self, payload: dict) -> dict:
-        return self._request("POST", "/chat/completions", json=payload)
-
-
-def _scrub(text: str, key: str) -> str:
-    return text.replace(key, "<key>") if key else text
-
-
 # --------------------------------------------------------------------------- key identity
-
-
-_identity_lock = threading.Lock()
-_identity_cache: dict[str, float] = {}  # in-memory fingerprint(pin, key) -> monotonic time of the last good check
-
-
-def _fingerprint(pin: str, key: str) -> str:
-    return hashlib.sha256(f"{pin}\0{key}".encode()).hexdigest()
-
-
-def reset_identity_cache() -> None:
-    with _identity_lock:
-        _identity_cache.clear()
-
-
-def verify_key_identity(
-    client: OpenRouterClient,
-    *,
-    key: str,
-    pin: str,
-    pin_var: str = PIN_ENV,
-    clock: Callable[[], float] = time.monotonic,
-) -> dict:
-    """Return ``{"checked": "live"|"cached", ...}``; raise ``OpenRouterError`` on mismatch or failure.
-
-    ``pin_var`` names the variable ``pin`` was read from (the pipeline's, or the eval key's on the
-    control-set path), for the mismatch message only."""
-
-    fingerprint = _fingerprint(pin, key)
-    now = clock()
-    with _identity_lock:
-        checked_at = _identity_cache.get(fingerprint)
-    if checked_at is not None and 0 <= now - checked_at < IDENTITY_CACHE_SECONDS:
-        return {"checked": "cached", "age_seconds": round(now - checked_at, 1)}
-    data = client.key_info()
-    label = data.get("label")
-    if not isinstance(label, str) or label != pin:
-        raise OpenRouterError(f"key label does not match {pin_var}")
-    with _identity_lock:
-        _identity_cache[fingerprint] = now
-    result = {"checked": "live"}
-    for name in ("limit", "limit_remaining", "usage"):
-        value = data.get(name)
-        if value is None or (isinstance(value, int | float) and not isinstance(value, bool)):
-            result[name] = value
-    return result
 
 
 # --------------------------------------------------------------------------- reply contract + validation
@@ -497,13 +393,6 @@ def _usage_summary(usage: Any) -> dict:
 # --------------------------------------------------------------------------- generation
 
 
-ClientFactory = Callable[[str, float], OpenRouterClient]
-
-
-def _default_client_factory(key: str, timeout: float) -> OpenRouterClient:
-    return OpenRouterClient(key, timeout=timeout)
-
-
 def _chat_payload(messages: list[dict], config: dict) -> dict:
     payload = {
         "model": config["model"],
@@ -550,37 +439,30 @@ def generate_spec(
     if len(idea_text) > int(config["max_idea_chars"]):
         return SpecGenerationOutcome(Verdict.FAIL, f"idea text exceeds {config['max_idea_chars']} characters", report)
 
-    environ = os.environ if environ is None else environ
-    key = (environ.get(KEY_ENV) or "").strip()
-    if not key:
-        return SpecGenerationOutcome(Verdict.ERROR, f"llm key {KEY_ENV} is not set in this process", report)
-    if not pin:
-        return SpecGenerationOutcome(
-            Verdict.ERROR, "POSEIDON_PIPELINE_OPENROUTER_KEY_LABEL is not pinned; refusing to call the LLM", report
-        )
-
-    factory = client_factory or _default_client_factory
-    client = factory(key, float(config["request_timeout_seconds"]))
+    session = OpenRouterSession(
+        key_var=KEY_ENV,
+        pin_var=PIN_ENV,
+        pin=pin,
+        environ=environ,
+        client_factory=client_factory or default_client_factory,
+        timeout=float(config["request_timeout_seconds"]),
+        max_cost_usd=report["max_cost_usd_per_attempt"],
+        clock=clock,
+    )
     transcript: list[dict] = []
     try:
         try:
-            report["key_identity"] = verify_key_identity(client, key=key, pin=pin, clock=clock)
-        except OpenRouterError as error:
-            report["key_identity"] = {"checked": "failed"}
-            return SpecGenerationOutcome(
-                Verdict.ERROR, _scrub(f"key identity check failed: {error}", key)[:MAX_TEXT], report
-            )
-        remaining = report["key_identity"].get("limit_remaining")
-        if isinstance(remaining, int | float) and remaining < report["max_cost_usd_per_attempt"]:
-            return SpecGenerationOutcome(
-                Verdict.ERROR, "key limit_remaining is below the per-attempt cost cap; refusing to call the LLM", report
-            )
+            report["key_identity"] = session.open()
+        except SessionUnavailable as error:
+            if session.identity is not None:
+                report["key_identity"] = session.identity
+            return SpecGenerationOutcome(Verdict.ERROR, str(error), report)
         try:
-            return _rounds(client, idea_text, config, report, transcript)
+            return _rounds(session.client, idea_text, config, report, transcript)
         except _StopAttempt as stop:
-            return _finish(stop.verdict, _scrub(stop.reason, key), report, transcript)
+            return _finish(stop.verdict, session.scrub_text(stop.reason), report, transcript)
     finally:
-        client.close()
+        session.close()
 
 
 def _finish(verdict: Verdict, reason: str | None, report: dict, transcript: list[dict]) -> SpecGenerationOutcome:

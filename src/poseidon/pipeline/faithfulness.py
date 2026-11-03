@@ -38,7 +38,8 @@ from typing import Any, ClassVar
 from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import jev
 from poseidon.pipeline.clause_precheck import PRECHECK_VERSION, precheck
-from poseidon.pipeline.spec_llm import MAX_TEXT, _err
+from poseidon.pipeline.openrouter import MAX_TEXT
+from poseidon.pipeline.spec_llm import _err
 from poseidon.pipeline.stage_api import BaseStage, StageResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.v3.describe import describe_spec

@@ -112,7 +112,7 @@ def test_pipeline_control_set_stops_before_any_request_without_the_eval_key(tmp_
 
 
 def test_a_label_mismatch_names_the_pin_variable_of_the_path_that_read_it():
-    from poseidon.pipeline.spec_llm import PIN_ENV, reset_identity_cache
+    from poseidon.pipeline.openrouter import PIN_ENV, reset_identity_cache
 
     config = {**DEFAULT_SPEC_FAITHFULNESS}
     reset_identity_cache()

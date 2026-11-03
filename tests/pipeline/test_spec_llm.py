@@ -12,16 +12,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-from poseidon.pipeline import spec_llm
+from poseidon.pipeline import openrouter, spec_llm
+from poseidon.pipeline.openrouter import KEY_ENV, OpenRouterClient
 from poseidon.pipeline.plan import DEFAULT_SPEC_GENERATE, default_config
-from poseidon.pipeline.spec_llm import (
-    KEY_ENV,
-    PROMPT_SHA256,
-    SYSTEM_PROMPT,
-    OpenRouterClient,
-    build_user_message,
-    generate_spec,
-)
+from poseidon.pipeline.spec_llm import PROMPT_SHA256, SYSTEM_PROMPT, build_user_message, generate_spec
 from poseidon.pipeline.stage_api import StageContext
 from poseidon.pipeline.stages import SpecGenerateStage
 from poseidon.pipeline.state import Verdict
@@ -36,9 +30,9 @@ MODEL_ECHO = "deepseek/deepseek-v4.1-flash-1017"
 
 @pytest.fixture(autouse=True)
 def _fresh_identity_cache():
-    spec_llm.reset_identity_cache()
+    openrouter.reset_identity_cache()
     yield
-    spec_llm.reset_identity_cache()
+    openrouter.reset_identity_cache()
 
 
 def config(**overrides) -> dict:
