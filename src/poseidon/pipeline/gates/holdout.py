@@ -33,7 +33,6 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from poseidon.pipeline.gates import benchmark
 from poseidon.pipeline.gates.base import (
     GateResult,
     ResultSummary,
@@ -45,8 +44,16 @@ from poseidon.pipeline.gates.base import (
     passed,
     pct,
 )
+from poseidon.pipeline.gates.benchmark import (
+    RULE_ALPHA_OR_RISK,
+    MatchedRun,
+    RiskKeys,
+    phrase_daily,
+    phrase_risk,
+    risk_route,
+)
+from poseidon.pipeline.gates.benchmark import RULE_KEY as BENCHMARK_RULE_KEY
 from poseidon.pipeline.gates.benchmark import phrase as benchmark_phrase
-from poseidon.pipeline.gates.benchmark import phrase_daily
 from poseidon.pipeline.gates.daily import Basis, DailyResult, sharpe
 
 GATE = "holdout"
@@ -213,7 +220,7 @@ def evaluate(inputs: HoldoutInputs, thresholds: Mapping) -> GateResult:
 RULE_KEY = "holdout_benchmark_rule"
 BLOCK_KEY = "holdout_risk_block_days"
 CONFIDENCE_KEY = "holdout_risk_confidence"
-RISK_KEYS = benchmark.RiskKeys(rule=RULE_KEY, block_days=BLOCK_KEY, confidence=CONFIDENCE_KEY)
+RISK_KEYS = RiskKeys(rule=RULE_KEY, block_days=BLOCK_KEY, confidence=CONFIDENCE_KEY)
 
 
 @dataclass(frozen=True)
@@ -222,7 +229,7 @@ class HoldoutDailyInputs:
     holdout: DailyResult
     basis: Basis
     benchmark: Mapping | None = None  # benchmark.regress_daily on the holdout days (None: not computed)
-    matched: benchmark.MatchedRun | None = None  # the holdout's beta-matched run; read only under RULE_KEY
+    matched: MatchedRun | None = None  # the holdout's beta-matched run; read only under RULE_KEY
 
 
 def evaluate_daily(inputs: HoldoutDailyInputs, thresholds: Mapping) -> GateResult:
@@ -232,11 +239,11 @@ def evaluate_daily(inputs: HoldoutDailyInputs, thresholds: Mapping) -> GateResul
     z = thresholds.get("holdout_se_z")  # missing -> criterion (b) off
     require_alpha = bool(thresholds.get("holdout_alpha_positive", False))
     rule = thresholds.get(RULE_KEY)  # missing: holdout alpha alone (every run frozen before 2026-10-29)
-    if rule is not None and (rule, thresholds.get(benchmark.RULE_KEY)) != (benchmark.RULE_ALPHA_OR_RISK,) * 2:
+    if rule is not None and (rule, thresholds.get(BENCHMARK_RULE_KEY)) != (RULE_ALPHA_OR_RISK,) * 2:
         return invalid(
             GATE,
-            f"{RULE_KEY} {rule!r}: defined only as {benchmark.RULE_ALPHA_OR_RISK!r}, next to {benchmark.RULE_KEY} "
-            f"= {benchmark.RULE_ALPHA_OR_RISK!r} (frozen {benchmark.RULE_KEY}: {thresholds.get(benchmark.RULE_KEY)!r})",
+            f"{RULE_KEY} {rule!r}: defined only as {RULE_ALPHA_OR_RISK!r}, next to {BENCHMARK_RULE_KEY} "
+            f"= {RULE_ALPHA_OR_RISK!r} (frozen {BENCHMARK_RULE_KEY}: {thresholds.get(BENCHMARK_RULE_KEY)!r})",
         )
     stats = dict(inputs.benchmark) if inputs.benchmark is not None else None
     alpha = (stats or {}).get("alpha_per_day")
@@ -378,7 +385,7 @@ def _alpha_or_risk(
     """The last check under ``holdout_benchmark_rule``: holdout alpha > 0 or the risk route on the holdout."""
 
     alpha = stats["alpha_per_day"]
-    risk = benchmark.risk_route(inputs.holdout, inputs.basis, stats["beta"], inputs.matched, thresholds, RISK_KEYS)
+    risk = risk_route(inputs.holdout, inputs.basis, stats["beta"], inputs.matched, thresholds, RISK_KEYS)
     if risk["status"] == "invalid":
         return invalid(GATE, f"risk route: {risk['reason']}", {**report, "rule": rule, "risk_route": risk})
     routes = [name for name, ok in (("alpha", alpha > 0), ("risk", risk["status"] == "pass")) if ok]
@@ -389,7 +396,7 @@ def _alpha_or_risk(
         "risk_route": risk,
         "passed_routes": routes,
     }
-    risk_phrase = benchmark.phrase_risk(risk)
+    risk_phrase = phrase_risk(risk)
     if not routes:
         return failed(
             GATE,
