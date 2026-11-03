@@ -32,14 +32,9 @@ from poseidon.pipeline.plan import (
     default_config,
     validate_stage_plan,
 )
-from poseidon.pipeline.stages import (
-    STAGE_REGISTRY,
-    BacktestStage,
-    OptimizeStage,
-    SpecValidateStage,
-    StageContext,
-    UpstreamResult,
-)
+from poseidon.pipeline.registry import STAGE_REGISTRY
+from poseidon.pipeline.stage_api import StageContext, UpstreamResult
+from poseidon.pipeline.stages import BacktestStage, OptimizeStage, SpecValidateStage
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.trials import make_record
 from poseidon.pipeline.window import MARKET_TZ
@@ -369,7 +364,8 @@ def test_holdout_records_the_look_and_counts_other_runs(tmp_path, chain):
 
 def test_trade_from_makes_the_warmup_flat(tmp_path):
     from poseidon.backtest.dsl_v2_factory import DslV2StrategyFactory
-    from poseidon.pipeline.backtesting import run_backtest, trading_days
+    from poseidon.pipeline.backtesting import run_backtest
+    from poseidon.pipeline.calendar import trading_days
 
     bars = SyntheticTxSource().fetch(
         "TX", "tw_futures", "5m", datetime(2026, 1, 1, tzinfo=UTC), datetime(2027, 1, 1, tzinfo=UTC)

@@ -18,8 +18,8 @@ from poseidon.pipeline.plan import (
     default_config,
     validate_stage_plan,
 )
+from poseidon.pipeline.registry import STAGE_REGISTRY
 from poseidon.pipeline.spec_validation import DslV1Validator, get_spec_validator
-from poseidon.pipeline.stages import STAGE_REGISTRY
 from poseidon.pipeline.state import (
     IllegalTransition,
     RunStatus,

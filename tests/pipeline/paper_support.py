@@ -11,10 +11,11 @@ import pandas as pd
 
 from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import artifacts
-from poseidon.pipeline.backtesting import daily_csv, trading_days
+from poseidon.pipeline.backtesting import daily_csv
+from poseidon.pipeline.calendar import trading_days
 from poseidon.pipeline.plan import GATE_STAGES, default_config
 from poseidon.pipeline.shadow_paper import ShadowPaperStage
-from poseidon.pipeline.stages import StageContext, UpstreamResult
+from poseidon.pipeline.stage_api import StageContext, UpstreamResult
 from poseidon.pipeline.window import MARKET_TZ
 from poseidon.strategies.dsl.v2.examples import tx_orb30_day
 from tests.dsl_v2_support import bars_from_close, random_walk_bars

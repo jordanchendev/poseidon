@@ -1,6 +1,6 @@
 """Contract specs the engine needs, the instrument-kind table, and the per-leg cost arithmetic.
 
-The engine does not own an instrument table: ``ContractSpec.from_instrument`` builds one from a
+The engine does not own an instrument table: ``v3.instruments.contract_spec`` builds one from a
 row of ``pipeline.v3.instruments.INSTRUMENTS`` (its ``CostModel``, margin ratios, listing and
 proxy). Sizing is not here either: the v3 sizing components are the one formula, the engine only
 clips what a strategy asks for.
@@ -23,10 +23,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import date
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from poseidon.pipeline.v3.instruments import Instrument
 
 ROUNDING_EPS = 1e-9  # keeps exact ratios such as 3e6 / 2e5 from flooring to 14 on float noise
 
@@ -87,35 +83,6 @@ class ContractSpec:
     @property
     def policy(self) -> KindPolicy:
         return KIND_POLICIES[self.kind]
-
-    @classmethod
-    def from_instrument(cls, instrument: Instrument) -> ContractSpec:
-        """The engine's view of an instrument-table row. One engine unit is ``instrument.lot`` shares or
-        one contract, so an odd-lot sleeve passes a row with ``lot = 1``."""
-
-        cost = instrument.cost_model
-        if instrument.kind not in KIND_POLICIES:
-            raise ValueError(f"{instrument.symbol}: the daily engine has no ledger for {instrument.kind}")
-        if instrument.kind == "future" and not cost.tax_on_entry:
-            raise ValueError(f"{cost.market}: the engine charges futures tax on every leg; use a tax_on_entry model")
-        if cost.sell_commission_rate != cost.buy_commission_rate:
-            raise ValueError(f"{cost.market}: the engine has one commission rate for both sides")
-        return cls(
-            symbol=instrument.symbol,
-            point_value=instrument.point_value_twd * instrument.lot,
-            tick_size=instrument.tick_size,
-            commission_per_unit=cost.commission_per_contract * instrument.lot,
-            tax_rate=cost.tax_rate,
-            slippage_ticks=cost.slippage_ticks,
-            initial_margin_ratio=instrument.initial_margin_ratio,
-            maintenance_margin_ratio=instrument.maintenance_margin_ratio,
-            listed_since=instrument.listed_since,
-            price_proxy=instrument.price_proxy,
-            kind=instrument.kind,
-            commission_rate=cost.buy_commission_rate,
-            tax_on_buy=cost.tax_on_entry,
-            tick_ladder=instrument.tick_ladder,
-        )
 
     def tick(self, price: float) -> float:
         if self.tick_ladder is None:

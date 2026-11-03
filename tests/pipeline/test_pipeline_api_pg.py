@@ -272,7 +272,7 @@ def _input_hashes(pipeline_sessions, run_id):
 
 
 def test_drafted_idea_keeps_the_original_beside_the_draft(api, pipeline_sessions):
-    from poseidon.pipeline.stages import IdeaOriginal
+    from poseidon.pipeline.stage_api import IdeaOriginal
 
     registry = api.harness.dispatcher.registry
     recorder = registry["spec_generate"] = _SeesOriginal(registry["spec_generate"])

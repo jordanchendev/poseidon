@@ -31,8 +31,9 @@ from poseidon.pipeline.plan import (
     default_config,
     validate_stage_plan,
 )
+from poseidon.pipeline.registry import STAGE_REGISTRY
 from poseidon.pipeline.shadow_paper import PAPER_VERSION
-from poseidon.pipeline.stages import STAGE_REGISTRY, StageContext, UpstreamResult
+from poseidon.pipeline.stage_api import StageContext, UpstreamResult
 from poseidon.pipeline.state import Verdict
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "run6_frozen_v4.json").read_text())

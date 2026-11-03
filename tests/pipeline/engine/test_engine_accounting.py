@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from poseidon.pipeline.engine import ContractSpec, EngineConfig, run
-from poseidon.pipeline.v3.instruments import INSTRUMENTS
+from poseidon.pipeline.engine import EngineConfig, run
+from poseidon.pipeline.v3.instruments import INSTRUMENTS, contract_spec
 
 from .support import FAR, TMF, TMF_PLAIN, Scripted, bars, day, flat_bars, tmf
 
@@ -27,7 +27,7 @@ def approx(x):
 
 
 def test_contract_spec_comes_from_the_instrument_table():
-    tx = ContractSpec.from_instrument(INSTRUMENTS["TX"])
+    tx = contract_spec(INSTRUMENTS["TX"])
     assert (tx.point_value, tx.tick_size, tx.commission_per_unit, tx.tax_rate, tx.slippage_ticks) == (
         200.0,
         1.0,
@@ -42,14 +42,14 @@ def test_contract_spec_comes_from_the_instrument_table():
         "2024-07-29",
     )
     assert (TMF.initial_margin_ratio, TMF.maintenance_margin_ratio) == (0.07, 0.054)
-    assert ContractSpec.from_instrument(INSTRUMENTS["MTX"]).commission_per_unit == 25.0
+    assert contract_spec(INSTRUMENTS["MTX"]).commission_per_unit == 25.0
     with pytest.raises(ValueError, match="no ledger for option"):
-        ContractSpec.from_instrument(INSTRUMENTS["TXO"])
+        contract_spec(INSTRUMENTS["TXO"])
     tax_on_exit_only = dataclasses.replace(
         INSTRUMENTS["TX"], cost_model=dataclasses.replace(INSTRUMENTS["TX"].cost_model, tax_on_entry=False)
     )
     with pytest.raises(ValueError, match="tax_on_entry"):
-        ContractSpec.from_instrument(tax_on_exit_only)
+        contract_spec(tax_on_exit_only)
     assert TMF.fill_price(15, 20000) == 20001 and TMF.fill_price(-15, 20000) == 19999
     tax, commission = TMF.leg_fees(15, 20001)
     assert tax == approx(2e-5 * 15 * 20001 * 10) and commission == 300.0

@@ -24,6 +24,7 @@ from poseidon.pipeline.plan import (
     effective_config,
     validate_stage_plan,
 )
+from poseidon.pipeline.registry import STAGE_REGISTRY
 from poseidon.pipeline.spec_llm_v3 import (
     EXAMPLE_IDEA,
     PROMPT_SHA256_V3,
@@ -35,7 +36,8 @@ from poseidon.pipeline.spec_llm_v3 import (
     series_errors,
     split_sentences,
 )
-from poseidon.pipeline.stages import STAGE_REGISTRY, SpecGenerateStage, StageContext
+from poseidon.pipeline.stage_api import StageContext
+from poseidon.pipeline.stages import SpecGenerateStage
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.v3.config import (
     REFDATA_DATASETS,

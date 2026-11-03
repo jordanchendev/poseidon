@@ -20,7 +20,8 @@ from poseidon.pipeline import backtesting
 from poseidon.pipeline.backtesting import BacktestFailed, dsl_engine, run_backtest, stressed_cost_model
 from poseidon.pipeline.dsl_parity import compare_trades, run_parity
 from poseidon.pipeline.plan import DEFAULT_BACKTEST
-from poseidon.pipeline.stages import BacktestStage, StageStopped
+from poseidon.pipeline.stage_api import StageStopped
+from poseidon.pipeline.stages import BacktestStage
 from poseidon.strategies.dsl.v2.examples import tx_atr_squeeze_breakout, tx_orb30_day
 from tests.dsl_v2_support import random_walk_bars, real_tx_fixture
 

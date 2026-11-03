@@ -28,7 +28,7 @@ from poseidon.pipeline.shadow_paper_daily import (
     CompiledStrategy,
     PaperInstrument,
 )
-from poseidon.pipeline.stages import StageContext, UpstreamResult
+from poseidon.pipeline.stage_api import StageContext, UpstreamResult
 from poseidon.pipeline.v3.components import round_units
 from poseidon.pipeline.window import MARKET_TZ
 

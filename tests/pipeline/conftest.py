@@ -117,7 +117,7 @@ class SyntheticTxSource:
 
 
 def synthetic_registry(source=None, **stages):
-    from poseidon.pipeline.stages import build_default_registry
+    from poseidon.pipeline.registry import build_default_registry
 
     registry = build_default_registry(data_source=source or SyntheticTxSource())
     registry.update(stages)

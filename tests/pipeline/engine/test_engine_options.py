@@ -16,16 +16,15 @@ from poseidon.pipeline.engine import (
     EngineConfig,
     HedgePolicy,
     OptionInput,
-    OptionSpec,
     hedge_coverage,
     run,
     truncation_audit,
 )
-from poseidon.pipeline.v3.instruments import INSTRUMENTS
+from poseidon.pipeline.v3.instruments import INSTRUMENTS, option_spec
 
 from .support import Scripted, day, flat_bars, tmf
 
-TXO = OptionSpec.from_instrument(INSTRUMENTS["TXO"])
+TXO = option_spec(INSTRUMENTS["TXO"])
 E0 = 1_000_000.0
 PUT = HedgePolicy(name="TMF.put", underlying="TMF", chain="TXO", moneyness=0.05, roll_days=2, cover_ratio=1.0)
 

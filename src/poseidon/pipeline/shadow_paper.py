@@ -74,26 +74,41 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 import pandas as pd
 
 from poseidon.core.canonical import canonical_json, content_sha256
+from poseidon.pipeline.calendar import (
+    NEXT_WEEKDAY,
+    closure_report,
+    closure_text,
+    day_sessions,
+    last_complete_weekday,
+    latest_boundary,
+    next_wake,
+    night_session_rule,
+    paper_start_for,
+    settled_cutoff,
+    trading_day,
+    trading_day_labels,
+    trading_days,
+    trading_days_after,
+)
 from poseidon.pipeline.gate_stages import _gates_config_missing, read_upstream_file
 from poseidon.pipeline.plan import GATE_STAGES, SHADOW_PAPER_CONFIG_VERSION
 from poseidon.pipeline.spec_validation import V2_REQUIRED
-from poseidon.pipeline.stages import BaseStage, StageResult, _DataStage
+from poseidon.pipeline.stage_api import BaseStage, StageResult, _DataStage
 from poseidon.pipeline.state import Verdict, utcnow
-from poseidon.pipeline.window import MARKET_TZ
 
 if TYPE_CHECKING:
     from poseidon.pipeline.refdata.engine_input import TaifexCalendar
 
 PAPER_VERSION = 1  # part of the input hash and of every artifact; a resume needs the same version
-BOUNDARY_LOCAL = time(15, 0)  # a TX trading day starts with the night session at 15:00
-DAY_CLOSE_BAR_LOCAL = time(13, 40)  # open label of the last regular day-session 5m bar
+
+
 SHADOW_CONFIG_MISSING = "run config predates Step 7 (no frozen shadow_paper settings); create a new run"
 AWAITING_RELEASE_REASON = "passed shadow paper; awaiting human release (Step 9, after the soak gate)"
 MISMATCH_REPORT_LIMIT = 50
@@ -106,147 +121,6 @@ REPLAY_TRADES_FILE = "replay_trades.csv"
 REPLAY_DAILY_FILE = "replay_daily_pnl.csv"
 COMPARISON_FILE = "comparison.json"
 CARRIED_FILES = (PAPER_TRADES_FILE, REPLAY_TRADES_FILE, REPLAY_DAILY_FILE, COMPARISON_FILE)
-
-
-# ----------------------------------------------------------------- calendar
-
-
-def _boundary_on(day: date) -> datetime:
-    return datetime.combine(day, BOUNDARY_LOCAL, tzinfo=MARKET_TZ).astimezone(UTC)
-
-
-def paper_start_for(started_at: datetime) -> datetime:
-    """First trading-day boundary (15:00 Asia/Taipei) at or after ``started_at``."""
-
-    candidate = _boundary_on(started_at.astimezone(MARKET_TZ).date())
-    if candidate < started_at:
-        candidate = _boundary_on(started_at.astimezone(MARKET_TZ).date() + timedelta(days=1))
-    return candidate
-
-
-def latest_boundary(now: datetime) -> datetime:
-    """Latest trading-day boundary at or before ``now``."""
-
-    candidate = _boundary_on(now.astimezone(MARKET_TZ).date())
-    if candidate > now:
-        candidate = _boundary_on(now.astimezone(MARKET_TZ).date() - timedelta(days=1))
-    return candidate
-
-
-def settled_cutoff(
-    last_bar: datetime | None, paper_start: datetime, upper: datetime, session_days: set[date] | None = None
-) -> datetime:
-    """Latest boundary in ``(paper_start, upper]`` whose day session's closing bar has arrived.
-
-    Bars arrive in time order, so every trading day before that boundary is
-    complete. ``paper_start`` when none is. With ``session_days`` (runs frozen
-    with ``next_day_session``) only a day with a day session ends a trading
-    day: the night before a closure belongs to the next session, so a boundary
-    on the closed day would book that night before its trading day is complete.
-    """
-
-    if last_bar is None:
-        return paper_start
-    boundary = upper
-    while boundary > paper_start:
-        local_day = boundary.astimezone(MARKET_TZ).date()
-        close_bar = datetime.combine(local_day, DAY_CLOSE_BAR_LOCAL, tzinfo=MARKET_TZ).astimezone(UTC)
-        if last_bar >= close_bar and (session_days is None or local_day in session_days):
-            return boundary
-        boundary = _boundary_on(local_day - timedelta(days=1))
-    return paper_start
-
-
-def next_wake(now: datetime, settings: dict) -> datetime:
-    """Next ``wake_local_time`` (Asia/Taipei) strictly after ``now`` on a ``wake_weekdays`` day."""
-
-    hour, minute = (int(part) for part in settings["wake_local_time"].split(":"))
-    weekdays = set(settings["wake_weekdays"])
-    if not weekdays:
-        raise ValueError("shadow_paper.wake_weekdays is empty")
-    local_day = now.astimezone(MARKET_TZ).date()
-    for offset in range(8):
-        day = local_day + timedelta(days=offset)
-        candidate = datetime.combine(day, time(hour, minute), tzinfo=MARKET_TZ).astimezone(UTC)
-        if candidate > now and day.weekday() in weekdays:
-            return candidate
-    raise AssertionError("unreachable: a weekday recurs within 8 days")
-
-
-def trading_day(moment) -> date:
-    from poseidon.pipeline.backtesting import trading_days
-
-    stamp = pd.Timestamp(moment)
-    stamp = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
-    return trading_days(pd.DatetimeIndex([stamp]))[0].date()
-
-
-def trading_day_labels(moments, bars_index: pd.DatetimeIndex, night_session: str | None = None) -> dict:
-    """``{moment: trading-day date}``. Under ``next_day_session`` a night bar belongs to the next day with a day
-    session in ``bars_index`` (the rule :func:`day_hashes` and the backtest use); otherwise the weekday label."""
-
-    from poseidon.pipeline.backtesting import NEXT_WEEKDAY, trading_days
-
-    if night_session in (None, NEXT_WEEKDAY):
-        return {moment: trading_day(moment) for moment in moments}
-    stamps = {}
-    for moment in moments:
-        stamp = pd.Timestamp(moment)
-        stamps[moment] = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
-    bars = pd.DatetimeIndex(bars_index)
-    bars = bars.tz_localize("UTC") if bars.tz is None else bars.tz_convert("UTC")
-    nanos = np.union1d(bars.asi8, [stamp.value for stamp in stamps.values()])
-    index = pd.DatetimeIndex(nanos.astype("datetime64[ns]")).tz_localize("UTC")
-    label_of = dict(zip(nanos.tolist(), trading_days(index, night_session), strict=True))
-    return {moment: label_of[stamp.value].date() for moment, stamp in stamps.items()}
-
-
-def last_complete_weekday(upper: datetime) -> date:
-    """The trading day that ends at boundary ``upper`` (rolled back to Friday on weekends)."""
-
-    day = upper.astimezone(MARKET_TZ).date()
-    while day.weekday() >= 5:
-        day -= timedelta(days=1)
-    return day
-
-
-def weekdays_after(after: date, through: date) -> int:
-    """Weekdays ``d`` with ``after < d <= through``."""
-
-    if through <= after:
-        return 0
-    return int(np.busday_count(after + timedelta(days=1), through + timedelta(days=1)))
-
-
-def trading_days_after(after: date, through: date, calendar: TaifexCalendar | None) -> int:
-    """TAIFEX trading days ``d`` with ``after < d <= through``; weekdays without a calendar."""
-
-    if calendar is None:
-        return weekdays_after(after, through)
-    return len(calendar.open_days(pd.Timestamp(after), pd.Timestamp(through))) if through > after else 0
-
-
-def closure_report(calendar: TaifexCalendar, cutoff: datetime) -> dict:
-    """The next session after the trading day ending at ``cutoff`` and the closed weekdays before it."""
-
-    day = pd.Timestamp(cutoff.astimezone(MARKET_TZ).date())
-    next_session = calendar.after(day, 1)[0]
-    return {
-        "closed": [
-            {"date": closed.date().isoformat(), "reason": why}
-            for closed, why in calendar.closed_between(day, next_session)
-        ],
-        "next_session": next_session.date().isoformat(),
-    }
-
-
-def closure_text(report: dict) -> str:
-    """`` · 休市：10-23 臨時休市、10-26 補假 · 下一交易日 10-27``, or "" when no day was closed."""
-
-    if not report.get("closed"):
-        return ""
-    days = "、".join(f"{row['date'][5:]} {row['reason']}" for row in report["closed"])
-    return f" · 休市：{days} · 下一交易日 {report['next_session'][5:]}"
 
 
 # ----------------------------------------------------------------- data
@@ -274,8 +148,6 @@ def frame_sha256(frame: pd.DataFrame) -> str:
 
 def day_hashes(frame: pd.DataFrame, night_session: str | None = None) -> dict[str, str]:
     """sha256 of each trading day's bars (night session -> next trading day, under ``night_session``)."""
-
-    from poseidon.pipeline.backtesting import NEXT_WEEKDAY, trading_days
 
     if not len(frame):
         return {}
@@ -766,14 +638,7 @@ class ShadowPaperStage(_DataStage):
         """Advance the ledger to the settled cutoff (mutates ``ledger``)."""
 
         from poseidon.backtest.cost_model import get_cost_model
-        from poseidon.pipeline.backtesting import (
-            NEXT_WEEKDAY,
-            daily_csv,
-            day_sessions,
-            night_session_rule,
-            run_backtest,
-            trades_csv,
-        )
+        from poseidon.pipeline.backtesting import daily_csv, run_backtest, trades_csv
 
         rule = night_session_rule(ctx.config["backtest"])
         sessions = None if rule == NEXT_WEEKDAY else {day.date() for day in day_sessions(frame.index)}

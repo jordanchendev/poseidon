@@ -20,7 +20,7 @@ from poseidon.pipeline.refdata.datasets import FUTURES, TAIEX
 from poseidon.pipeline.refdata.engine_input import futures_bars
 from poseidon.pipeline.refdata.store import RefdataError
 from poseidon.pipeline.shadow_paper import PAPER_VERSION, ShadowPaperStage
-from poseidon.pipeline.stages import StageContext
+from poseidon.pipeline.stage_api import StageContext
 from poseidon.pipeline.state import Verdict
 from tests.pipeline.daily_paper_support import (
     SCHEDULE,

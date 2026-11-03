@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from poseidon.pipeline.engine import ContractSpec
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, TAIEX, TAIEX_TR
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
@@ -25,7 +24,7 @@ from poseidon.pipeline.v3.compiler import (
     resolve,
 )
 from poseidon.pipeline.v3.examples import PROTECTIVE_PUT, tmf_dynamic_leverage_3x
-from poseidon.pipeline.v3.instruments import INSTRUMENTS
+from poseidon.pipeline.v3.instruments import INSTRUMENTS, contract_spec
 from poseidon.pipeline.v3.runtime import Conventions
 
 from .engine.support import synthetic_contracts
@@ -108,7 +107,7 @@ def test_futures_bars_merge_the_after_hours_session_into_the_next_trading_day():
 def test_compile_wires_the_spec_and_refdata_into_engine_inputs(store):
     compiled = compile_spec(spec(days_before=2), start=START, store=store)
     fut = compiled.futures["core"]
-    assert fut.spec == ContractSpec.from_instrument(INSTRUMENTS["TMF"])
+    assert fut.spec == contract_spec(INSTRUMENTS["TMF"])
     assert fut.roll_days_before == 2
     assert set(fut.bars["contract"]) <= set(fut.expiries) and all(len(c) == 6 for c in fut.bars["contract"])
     assert (fut.bars["close"] != 1.0).all()  # TX rows only (TMF is priced from TX), MTX ignored

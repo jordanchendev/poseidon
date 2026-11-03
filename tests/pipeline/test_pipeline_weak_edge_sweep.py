@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from poseidon.pipeline.plan import GATE_STAGES, V1_STAGE_PLAN
-from poseidon.pipeline.stages import build_default_registry
+from poseidon.pipeline.registry import build_default_registry
 from tests.pipeline.conftest import Clock, Harness
 from tests.pipeline.gate_support import PlantedOrbSource, diagnose, gate_margins, planted_orb_spec
 from tests.pipeline.test_pipeline_gate_controls import CONTROL_CLOCK

@@ -37,6 +37,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from poseidon.pipeline.calendar import NEXT_WEEKDAY, trading_days
 from poseidon.pipeline.engine.records import EVENT_COLUMNS, FILL_COLUMNS, _frame
 from poseidon.pipeline.engine.simulator import Decision, TargetStrategy, _check_targets
 from poseidon.pipeline.engine.specs import ContractSpec
@@ -73,8 +74,6 @@ def r1_contracts(index: pd.DatetimeIndex, expiries: Mapping[str, Any], night_ses
     contract whose last trading day is after D, or is D itself when the bar opens before
     :data:`SETTLEMENT_SWITCH`.
     """
-
-    from poseidon.pipeline.backtesting import NEXT_WEEKDAY, trading_days
 
     if not len(index):
         return np.array([], dtype=object)

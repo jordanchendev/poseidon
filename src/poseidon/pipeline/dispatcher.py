@@ -40,8 +40,8 @@ from poseidon.pipeline.plan import (
     is_routed,
     requires_for,
 )
-from poseidon.pipeline.stages import (
-    STAGE_REGISTRY,
+from poseidon.pipeline.registry import STAGE_REGISTRY
+from poseidon.pipeline.stage_api import (
     IdeaOriginal,
     StageContext,
     StageResult,

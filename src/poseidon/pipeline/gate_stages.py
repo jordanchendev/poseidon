@@ -39,11 +39,12 @@ import pandas as pd
 
 from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.pipeline import gates
+from poseidon.pipeline.calendar import NEXT_WEEKDAY, night_session_rule, trading_days
 from poseidon.pipeline.gates import benchmark, cost_stress, dsr, holdout, param_stability, regime_split, wfe
 from poseidon.pipeline.gates.base import CostBreakdown, GateResult, ResultSummary, Trade, failed, invalid
 from poseidon.pipeline.plan import GATE_STAGES, GATES_CONFIG_VERSION
 from poseidon.pipeline.spec_validation import V2_REQUIRED
-from poseidon.pipeline.stages import StageResult, _DataStage, _step2_config_missing
+from poseidon.pipeline.stage_api import StageResult, _DataStage, _step2_config_missing
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.window import MARKET_TZ, SPLIT_LOCAL_TIME, DataWindow
 
@@ -152,8 +153,6 @@ def daily_bars(frame: pd.DataFrame, night_session: str | None = None) -> pd.Data
     its day-session close.
     """
 
-    from poseidon.pipeline.backtesting import NEXT_WEEKDAY, trading_days
-
     grouped = frame.groupby(trading_days(frame.index, night_session or NEXT_WEEKDAY))
     daily = pd.DataFrame(
         {
@@ -241,7 +240,6 @@ def benchmark_series(ctx, frame: pd.DataFrame, daily: pd.DataFrame, trades: list
     """
 
     from poseidon.backtest.cost_model import get_cost_model
-    from poseidon.pipeline.backtesting import night_session_rule
 
     backtest = ctx.config["backtest"]
     point_value = float(get_cost_model(backtest["cost_model"]).point_value)
@@ -289,8 +287,6 @@ def benchmark_stats(ctx, frame, daily, trades, *, from_day=None) -> tuple[dict, 
 
 
 def trading_day_dates(index: pd.DatetimeIndex, night_session: str | None = None) -> np.ndarray:
-    from poseidon.pipeline.backtesting import NEXT_WEEKDAY, trading_days
-
     return np.array([stamp.date() for stamp in trading_days(index, night_session or NEXT_WEEKDAY)])
 
 
@@ -515,7 +511,7 @@ class RegimeSplitStage(GateStage):
     name = "regime_split"
 
     def evaluate(self, ctx, optimize):
-        from poseidon.pipeline.backtesting import night_session_rule, trades_csv
+        from poseidon.pipeline.backtesting import trades_csv
 
         thresholds = ctx.config["thresholds"]
         bars = self.bars(ctx, "train")
@@ -799,7 +795,6 @@ class HoldoutStage(GateStage):
         frame = pd.concat([train.frame[train.frame.index >= holdout_from - warmup], held.frame])
         outcome = self.backtest_spec(ctx, optimize["best_spec"], frame, trade_from=holdout_from)
         base_metrics = optimize["best"].get("metrics") or {}
-        from poseidon.pipeline.backtesting import trading_days
 
         first_day = trading_days(pd.DatetimeIndex([pd.Timestamp(holdout_from)]))[0].date()
         stats, provenance = benchmark_stats(

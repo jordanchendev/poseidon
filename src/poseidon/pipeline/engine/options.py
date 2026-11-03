@@ -52,13 +52,10 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 import numpy as np
 import pandas as pd
-
-if TYPE_CHECKING:
-    from poseidon.pipeline.v3.instruments import Instrument
 
 OPTION_QUOTE_COLUMNS = ("date", "contract_month", "strike", "cp", "settlement")
 HEDGE_UNAVAILABLE = "hedge_unavailable"
@@ -86,21 +83,6 @@ class OptionSpec:
             raise ValueError(f"{self.symbol}: point_value must be positive and the tick ladder non-empty")
         if min(self.commission_per_unit, self.tax_rate, self.slippage_ticks, self.slippage_pct) < 0:
             raise ValueError(f"{self.symbol}: costs must be non-negative")
-
-    @classmethod
-    def from_instrument(cls, instrument: Instrument) -> OptionSpec:
-        cost = instrument.cost_model
-        if instrument.kind != "option":
-            raise ValueError(f"{instrument.symbol} is a {instrument.kind}, not an option")
-        return cls(
-            symbol=instrument.symbol,
-            point_value=instrument.point_value_twd * instrument.lot,
-            commission_per_unit=cost.commission_per_contract,
-            tax_rate=cost.tax_rate,
-            tick_ladder=instrument.tick_ladder,
-            slippage_ticks=cost.slippage_ticks,
-            slippage_pct=cost.slippage_pct,
-        )
 
     def tick(self, premium: float) -> float:
         for below, tick in self.tick_ladder:

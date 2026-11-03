@@ -26,7 +26,8 @@ from poseidon.pipeline.gates.daily import choose_walk_forward
 from poseidon.pipeline.plan import effective_config
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
-from poseidon.pipeline.stages import STAGE_REGISTRY, StageContext, UpstreamResult
+from poseidon.pipeline.registry import STAGE_REGISTRY
+from poseidon.pipeline.stage_api import StageContext, UpstreamResult
 from poseidon.pipeline.v3.compiler import NotCompilable, compile_spec
 from poseidon.pipeline.v3.config import (
     daily_run_config,

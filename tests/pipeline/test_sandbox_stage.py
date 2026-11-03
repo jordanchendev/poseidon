@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from poseidon.pipeline.sandbox.stage import CustomCheckStage, find_custom_blocks
-from poseidon.pipeline.stages import StageContext, UpstreamResult
+from poseidon.pipeline.stage_api import StageContext, UpstreamResult
 from poseidon.pipeline.state import Verdict
 
 GOOD_CODE = "class Strategy:\n    def on_bar(self, view, ctx):\n        return 0.0\n"

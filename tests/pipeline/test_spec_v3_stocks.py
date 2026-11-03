@@ -9,12 +9,12 @@ import pandas as pd
 import pytest
 from pytest import approx
 
-from poseidon.pipeline.engine import ContractSpec, run
+from poseidon.pipeline.engine import run
 from poseidon.pipeline.engine.data import stock_input
 from poseidon.pipeline.v3.compiler import engine_config, plan, strategy_factory
 from poseidon.pipeline.v3.describe import narrative
 from poseidon.pipeline.v3.examples import etf_rotation_00631l_0050, tmf_dynamic_leverage_3x
-from poseidon.pipeline.v3.instruments import INSTRUMENTS, declared
+from poseidon.pipeline.v3.instruments import INSTRUMENTS, contract_spec, declared
 from poseidon.pipeline.v3.registry import REGISTRY, CheckContext, DescribeContext
 from poseidon.pipeline.v3.runtime import AllocationView, Conventions, Series
 from poseidon.pipeline.v3.spec import strategy_class, substitute
@@ -62,7 +62,7 @@ def test_declared_odd_lot_counts_single_shares():
     odd = declared({"symbol": "2330", "unit": "odd_lot"})
     assert (board.lot, odd.lot, board.symbol) == (1000, 1, "2330")
     assert board.notional_twd(2385) == 2_385_000 and odd.notional_twd(2385) == 2385
-    assert ContractSpec.from_instrument(odd).point_value == 1.0
+    assert contract_spec(odd).point_value == 1.0
     assert declared({"symbol": "TMF"}) is INSTRUMENTS["TMF"]
 
 
@@ -304,7 +304,7 @@ def test_plan_accepts_stock_instruments_and_the_allocation_warm_up():
 
 
 def _stock(symbol: str, closes: list[float], dates: pd.DatetimeIndex):
-    spec = ContractSpec.from_instrument(INSTRUMENTS[symbol])
+    spec = contract_spec(INSTRUMENTS[symbol])
     frame = pd.DataFrame({"date": dates, "open": closes, "high": closes, "low": closes, "close": closes})
     return stock_input(spec, frame)
 

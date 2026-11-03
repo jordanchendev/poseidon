@@ -59,6 +59,7 @@ import numpy as np
 import pandas as pd
 
 from poseidon.core.canonical import canonical_json
+from poseidon.pipeline.calendar import next_wake
 from poseidon.pipeline.engine import (
     ContractSpec,
     EngineConfig,
@@ -92,7 +93,7 @@ from poseidon.pipeline.refdata.tw_corporate_actions import COMPLETE_THROUGH, act
 from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
 from poseidon.pipeline.refdata.tw_stocks import read_bars
-from poseidon.pipeline.stages import StageResult
+from poseidon.pipeline.stage_api import StageResult
 from poseidon.pipeline.state import Verdict, utcnow
 from poseidon.pipeline.v3.instruments import align_signal_frame, complete_through
 from poseidon.pipeline.window import MARKET_TZ
@@ -183,12 +184,6 @@ def paper_start_day(started_at: datetime, schedule: MarketSchedule) -> date:
     if not (schedule.is_open(day) and local.time() <= DECISION_LOCAL):
         day = schedule.next_open(day + pd.Timedelta(days=1))
     return day.date()
-
-
-def next_wake(now: datetime, settings: dict) -> datetime:
-    from poseidon.pipeline.shadow_paper import next_wake as wake
-
-    return wake(now, settings)
 
 
 # ----------------------------------------------------------------- data

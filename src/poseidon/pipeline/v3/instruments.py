@@ -32,7 +32,8 @@ from typing import Any, Literal
 import pandas as pd
 
 from poseidon.backtest.cost_model import COST_MODELS, CostModel
-from poseidon.pipeline.engine.specs import TickLadder
+from poseidon.pipeline.engine.options import OptionSpec
+from poseidon.pipeline.engine.specs import KIND_POLICIES, ContractSpec, TickLadder
 
 InstrumentKind = Literal["future", "option", "stock"]
 
@@ -453,3 +454,47 @@ def complete_through(name: str, aux: pd.DataFrame) -> pd.Timestamp | None:
     if SIGNAL_INDICES[name].lag_days and last.dayofweek >= 5:
         last = last + pd.Timedelta(days=7 - last.dayofweek)
     return last
+
+
+def contract_spec(instrument: Instrument) -> ContractSpec:
+    """The engine's view of an instrument-table row. One engine unit is ``instrument.lot`` shares or
+    one contract, so an odd-lot sleeve passes a row with ``lot = 1``."""
+
+    cost = instrument.cost_model
+    if instrument.kind not in KIND_POLICIES:
+        raise ValueError(f"{instrument.symbol}: the daily engine has no ledger for {instrument.kind}")
+    if instrument.kind == "future" and not cost.tax_on_entry:
+        raise ValueError(f"{cost.market}: the engine charges futures tax on every leg; use a tax_on_entry model")
+    if cost.sell_commission_rate != cost.buy_commission_rate:
+        raise ValueError(f"{cost.market}: the engine has one commission rate for both sides")
+    return ContractSpec(
+        symbol=instrument.symbol,
+        point_value=instrument.point_value_twd * instrument.lot,
+        tick_size=instrument.tick_size,
+        commission_per_unit=cost.commission_per_contract * instrument.lot,
+        tax_rate=cost.tax_rate,
+        slippage_ticks=cost.slippage_ticks,
+        initial_margin_ratio=instrument.initial_margin_ratio,
+        maintenance_margin_ratio=instrument.maintenance_margin_ratio,
+        listed_since=instrument.listed_since,
+        price_proxy=instrument.price_proxy,
+        kind=instrument.kind,
+        commission_rate=cost.buy_commission_rate,
+        tax_on_buy=cost.tax_on_entry,
+        tick_ladder=instrument.tick_ladder,
+    )
+
+
+def option_spec(instrument: Instrument) -> OptionSpec:
+    cost = instrument.cost_model
+    if instrument.kind != "option":
+        raise ValueError(f"{instrument.symbol} is a {instrument.kind}, not an option")
+    return OptionSpec(
+        symbol=instrument.symbol,
+        point_value=instrument.point_value_twd * instrument.lot,
+        commission_per_unit=cost.commission_per_contract,
+        tax_rate=cost.tax_rate,
+        tick_ladder=instrument.tick_ladder,
+        slippage_ticks=cost.slippage_ticks,
+        slippage_pct=cost.slippage_pct,
+    )

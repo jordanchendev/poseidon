@@ -22,13 +22,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from poseidon.pipeline.engine import BookView, ContractSpec, Decision, EngineConfig, MarketView, run
+from poseidon.pipeline.engine import BookView, Decision, EngineConfig, MarketView, run
 from poseidon.pipeline.engine.data import stock_input
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.refdata.tw_corporate_actions import load_actions
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
 from poseidon.pipeline.refdata.tw_stocks import read_bars
-from poseidon.pipeline.v3.instruments import declared
+from poseidon.pipeline.v3.instruments import contract_spec, declared
 
 ROOT = os.environ.get("PV2_PAPER_REFDATA")
 OUT = os.environ.get("POSEIDON_V3_STOCKS_OUT")
@@ -115,7 +115,7 @@ class FullyInvested:
 def buy_and_hold(store, symbol: str) -> tuple[pd.Series, pd.DataFrame]:
     bars = read_bars(store, symbol, start=DATA_FROM[symbol])
     instrument = declared({"symbol": symbol, "unit": "odd_lot"})
-    etf = stock_input(ContractSpec.from_instrument(instrument), bars, load_actions(store, symbol))
+    etf = stock_input(contract_spec(instrument), bars, load_actions(store, symbol))
     calendar = pd.DatetimeIndex(pd.to_datetime(bars["date"]))
     config = EngineConfig(initial_capital=CAPITAL, execution="next_open", start=calendar[1])
     result = run(FullyInvested(), {"etf": etf}, config, calendar=calendar)

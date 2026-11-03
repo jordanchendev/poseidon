@@ -23,7 +23,7 @@ from poseidon.pipeline.gate_stages import (
 from poseidon.pipeline.gates import benchmark, summary_line
 from poseidon.pipeline.gates.base import Trade
 from poseidon.pipeline.plan import default_config
-from poseidon.pipeline.stages import StageContext, UpstreamResult
+from poseidon.pipeline.stage_api import StageContext, UpstreamResult
 from poseidon.pipeline.state import Verdict
 from tests.pipeline.conftest import SyntheticTxSource
 

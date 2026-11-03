@@ -22,7 +22,7 @@ from poseidon.pipeline.gate_stages import ParamStabilityStage
 from poseidon.pipeline.gates import param_stability as gate
 from poseidon.pipeline.plan import DAILY_THRESHOLDS, class_settings, effective_config
 from poseidon.pipeline.refdata.store import RefdataStore
-from poseidon.pipeline.stages import StageContext
+from poseidon.pipeline.stage_api import StageContext
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.trials import MemoryTrialLedger
 from poseidon.pipeline.v3.validation import validate_spec_v3

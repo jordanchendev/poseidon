@@ -26,7 +26,7 @@ import pandas as pd
 from poseidon.backtest.dsl_v2_factory import DslV2StrategyFactory
 from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import artifacts
-from poseidon.pipeline.stages import StageContext, UpstreamResult
+from poseidon.pipeline.stage_api import StageContext, UpstreamResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.window import MARKET_TZ
 from poseidon.strategies.dsl.v2.examples import tx_orb30_day
@@ -338,7 +338,7 @@ class StageChain:
 def passing(name: str, requires: tuple[str, ...]):
     """A stub stage that always passes with a summary line."""
 
-    from poseidon.pipeline.stages import BaseStage, StageResult
+    from poseidon.pipeline.stage_api import BaseStage, StageResult
 
     stage_class = type(
         f"Pass{name.title().replace('_', '')}",

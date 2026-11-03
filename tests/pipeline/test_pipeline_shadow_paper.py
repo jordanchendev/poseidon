@@ -13,10 +13,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from poseidon.pipeline import calendar as cal
 from poseidon.pipeline import shadow_paper as sp
 from poseidon.pipeline.plan import DEFAULT_SHADOW_PAPER, default_config
 from poseidon.pipeline.shadow_paper import SHADOW_CONFIG_MISSING
 from poseidon.pipeline.state import Verdict
+from poseidon.pipeline.window import MARKET_TZ
 from tests.pipeline.gate_support import RandomEntryFactory, random_entry_spec
 from tests.pipeline.paper_support import (
     AS_OF,
@@ -46,15 +48,15 @@ def _ledger_view(ledger: dict) -> dict:
 
 
 def test_paper_starts_at_the_next_trading_day_boundary():
-    assert sp.paper_start_for(STAGE_START) == PAPER_START  # Thu 10:00 -> Thu 15:00
-    assert sp.paper_start_for(local(2026, 10, 22, 15, 0)) == PAPER_START
-    assert sp.paper_start_for(local(2026, 10, 22, 15, 1)) == local(2026, 10, 23, 15, 0)
-    assert sp.latest_boundary(local(2026, 10, 23, 9, 30)) == PAPER_START
-    assert sp.latest_boundary(local(2026, 10, 23, 15, 0)) == local(2026, 10, 23, 15, 0)
+    assert cal.paper_start_for(STAGE_START) == PAPER_START  # Thu 10:00 -> Thu 15:00
+    assert cal.paper_start_for(local(2026, 10, 22, 15, 0)) == PAPER_START
+    assert cal.paper_start_for(local(2026, 10, 22, 15, 1)) == local(2026, 10, 23, 15, 0)
+    assert cal.latest_boundary(local(2026, 10, 23, 9, 30)) == PAPER_START
+    assert cal.latest_boundary(local(2026, 10, 23, 15, 0)) == local(2026, 10, 23, 15, 0)
     # the boundary is where backtesting.trading_days starts the next trading day
-    assert sp.trading_day(PAPER_START - timedelta(minutes=5)).isoformat() == "2026-10-22"
-    assert sp.trading_day(PAPER_START).isoformat() == "2026-10-23"
-    assert sp.trading_day(local(2026, 10, 23, 15, 0)).isoformat() == "2026-10-26"  # Fri night -> Monday
+    assert cal.trading_day(PAPER_START - timedelta(minutes=5)).isoformat() == "2026-10-22"
+    assert cal.trading_day(PAPER_START).isoformat() == "2026-10-23"
+    assert cal.trading_day(local(2026, 10, 23, 15, 0)).isoformat() == "2026-10-26"  # Fri night -> Monday
 
 
 @pytest.mark.parametrize(
@@ -68,14 +70,14 @@ def test_paper_starts_at_the_next_trading_day_boundary():
     ],
 )
 def test_next_wake_is_the_next_0930_taipei(now, expected):
-    assert sp.next_wake(now, SETTINGS) == expected
+    assert cal.next_wake(now, SETTINGS) == expected
 
 
 def test_next_wake_honours_the_weekday_list():
     tue_to_sat = {**SETTINGS, "wake_weekdays": [1, 2, 3, 4, 5]}
-    assert sp.next_wake(local(2026, 10, 24, 10, 0), tue_to_sat) == local(2026, 10, 27, 9, 30)  # Sat -> Tue
+    assert cal.next_wake(local(2026, 10, 24, 10, 0), tue_to_sat) == local(2026, 10, 27, 9, 30)  # Sat -> Tue
     with pytest.raises(ValueError):
-        sp.next_wake(local(2026, 10, 24, 10, 0), {**SETTINGS, "wake_weekdays": []})
+        cal.next_wake(local(2026, 10, 24, 10, 0), {**SETTINGS, "wake_weekdays": []})
 
 
 @pytest.mark.parametrize(
@@ -97,14 +99,14 @@ def test_next_wake_honours_the_weekday_list():
     ],
 )
 def test_settled_cutoff_only_counts_complete_trading_days(last_bar, upper, expected):
-    assert sp.settled_cutoff(last_bar, PAPER_START, upper) == expected
+    assert cal.settled_cutoff(last_bar, PAPER_START, upper) == expected
 
 
 def test_weekday_gap_and_last_complete_weekday():
-    assert sp.last_complete_weekday(local(2026, 11, 1, 15, 0)).isoformat() == "2026-10-30"  # Sun -> Fri
-    assert sp.weekdays_after(datetime(2026, 10, 23).date(), datetime(2026, 10, 30).date()) == 5
-    assert sp.weekdays_after(datetime(2026, 10, 30).date(), datetime(2026, 10, 30).date()) == 0
-    assert sp.weekdays_after(datetime(2026, 10, 30).date(), datetime(2026, 11, 2).date()) == 1
+    assert cal.last_complete_weekday(local(2026, 11, 1, 15, 0)).isoformat() == "2026-10-30"  # Sun -> Fri
+    assert cal.weekdays_after(datetime(2026, 10, 23).date(), datetime(2026, 10, 30).date()) == 5
+    assert cal.weekdays_after(datetime(2026, 10, 30).date(), datetime(2026, 10, 30).date()) == 0
+    assert cal.weekdays_after(datetime(2026, 10, 30).date(), datetime(2026, 11, 2).date()) == 1
 
 
 def test_trade_comparison_and_drawdown():
@@ -149,7 +151,7 @@ def test_day_night_weekend_and_holiday_wakes(tmp_path):
     for now in wake_times("2026-10-23", "2026-10-31"):
         result = driver.wake(now)
         assert result.is_waiting and result.wait_until == now + timedelta(days=1)
-        cutoffs[now.astimezone(sp.MARKET_TZ).strftime("%a %d")] = result.report["cutoff_utc"]
+        cutoffs[now.astimezone(MARKET_TZ).strftime("%a %d")] = result.report["cutoff_utc"]
     expect = {
         "Fri 23": None,  # Thalassa holds up to Fri 05:00: Friday's trading day is not complete
         "Sat 24": local(2026, 10, 23, 15, 0).isoformat(),  # Fri complete (night Thu + day Fri)
@@ -211,7 +213,7 @@ def test_a_data_revision_is_reported_and_shows_up_as_a_mismatch(tmp_path):
     driver.wake(local(2026, 10, 31, 9, 30))  # books Fri 10-23 .. Fri 10-30
     booked = driver.ledger()
     revised_day = next(t for t in booked["trades"] if t["entry_time"] >= local(2026, 10, 27).isoformat())
-    day = sp.trading_day(revised_day["entry_time"]).isoformat()
+    day = cal.trading_day(revised_day["entry_time"]).isoformat()
     source.revise(day)  # Thalassa back-fills / edits that day afterwards
     result = driver.wake(local(2026, 11, 1, 9, 30))
     revisions = result.report["revisions"]["recent"]
@@ -418,11 +420,11 @@ def test_revised_day_labels_follow_the_night_session_rule_of_the_config():
     night = local(2026, 10, 22, 20, 0).isoformat()
     day = local(2026, 10, 27, 9, 0).isoformat()
     moments = {night, day}
-    weekday = sp.trading_day_labels(moments, _closure_bars(), None)
-    assert weekday == {night: sp.trading_day(night), day: sp.trading_day(day)}  # absent key: the old label
-    assert weekday == sp.trading_day_labels(moments, _closure_bars(), "next_weekday")
+    weekday = cal.trading_day_labels(moments, _closure_bars(), None)
+    assert weekday == {night: cal.trading_day(night), day: cal.trading_day(day)}  # absent key: the old label
+    assert weekday == cal.trading_day_labels(moments, _closure_bars(), "next_weekday")
     assert weekday[night].isoformat() == "2026-10-23"  # the pseudo day of a closed Friday
-    booked = sp.trading_day_labels(moments, _closure_bars(), "next_day_session")
+    booked = cal.trading_day_labels(moments, _closure_bars(), "next_day_session")
     assert booked[night].isoformat() == "2026-10-27" and booked[day].isoformat() == "2026-10-27"
 
 
@@ -432,7 +434,7 @@ def test_a_run_frozen_without_night_session_reports_revised_days_exactly_as_befo
         driver = PaperDriver(root, source, config=config)
         driver.wake(local(2026, 10, 31, 9, 30))
         revised = next(t for t in driver.ledger()["trades"] if t["entry_time"] >= local(2026, 10, 27).isoformat())
-        source.revise(sp.trading_day(revised["entry_time"]).isoformat())
+        source.revise(cal.trading_day(revised["entry_time"]).isoformat())
         return driver.wake(local(2026, 11, 1, 9, 30)).report["consistency"]["mismatches"]
 
     legacy = paper_config()

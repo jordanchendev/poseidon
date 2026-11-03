@@ -35,7 +35,8 @@ from poseidon.pipeline.refdata import taifex
 from poseidon.pipeline.refdata.datasets import MARKET_CALENDAR, TAIEX, TAIEX_TR
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.refdata.taifex import official_last_trading_day
-from poseidon.pipeline.stages import StageResult, build_default_registry
+from poseidon.pipeline.registry import build_default_registry
+from poseidon.pipeline.stage_api import StageResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.v3.validation import SESSION_CALENDAR
 from tests.pipeline.daily_paper_support import SCHEDULE, _by_month, market_calendar_frame, trading_days, write_futures

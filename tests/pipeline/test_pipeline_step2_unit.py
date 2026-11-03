@@ -15,14 +15,8 @@ from poseidon.pipeline import artifacts
 from poseidon.pipeline.data import OhlcvCache, load_bars
 from poseidon.pipeline.plan import default_config
 from poseidon.pipeline.spec_validation import V2_REQUIRED, DslV2Validator
-from poseidon.pipeline.stages import (
-    BacktestStage,
-    OptimizeStage,
-    SpecValidateStage,
-    StageContext,
-    StageStopped,
-    UpstreamResult,
-)
+from poseidon.pipeline.stage_api import StageContext, StageStopped, UpstreamResult
+from poseidon.pipeline.stages import BacktestStage, OptimizeStage, SpecValidateStage
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.trials import MemoryTrialLedger
 from poseidon.pipeline.window import MARKET_TZ, HoldoutLockedError, holdout_split, require_part

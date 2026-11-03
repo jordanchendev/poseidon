@@ -9,10 +9,10 @@ import numpy as np
 import pandas as pd
 
 from poseidon.pipeline.engine import BookView, ContractSpec, Decision, FuturesInput, MarketView
-from poseidon.pipeline.v3.instruments import INSTRUMENTS
+from poseidon.pipeline.v3.instruments import INSTRUMENTS, contract_spec
 
 # The instrument-table row: 10 TWD/pt, 20 TWD/side, tax 2/100000 per side, 1 tick slippage, 7.0% / 5.4% margin.
-TMF = ContractSpec.from_instrument(INSTRUMENTS["TMF"])
+TMF = contract_spec(INSTRUMENTS["TMF"])
 # The same contract without the listing date and TX price proxy (rows never flagged proxy).
 TMF_PLAIN = dataclasses.replace(TMF, listed_since=None, price_proxy=None)
 

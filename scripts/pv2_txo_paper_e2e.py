@@ -32,7 +32,7 @@ from poseidon.pipeline.engine import run
 from poseidon.pipeline.plan import effective_config
 from poseidon.pipeline.refdata import daily, taifex_options
 from poseidon.pipeline.refdata.store import RefdataStore
-from poseidon.pipeline.stages import StageContext, UpstreamResult
+from poseidon.pipeline.stage_api import StageContext, UpstreamResult
 from poseidon.pipeline.v3.config import option_chain_record
 from tests.pipeline.daily_paper_support import DailyDriver, local, morning_after
 

@@ -29,7 +29,8 @@ from poseidon.pipeline.plan import (
     StagePlanError,
     validate_stage_plan,
 )
-from poseidon.pipeline.stages import STAGE_REGISTRY, IdeaOriginal, StageContext, UpstreamResult
+from poseidon.pipeline.registry import STAGE_REGISTRY
+from poseidon.pipeline.stage_api import IdeaOriginal, StageContext, UpstreamResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.v3.config import REFDATA_DATASETS, daily_run_config
 from poseidon.pipeline.v3.describe import describe_spec

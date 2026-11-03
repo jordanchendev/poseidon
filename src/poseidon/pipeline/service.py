@@ -31,7 +31,7 @@ from poseidon.pipeline.plan import (
     strategy_class_of,
     validate_stage_plan,
 )
-from poseidon.pipeline.stages import STAGE_REGISTRY
+from poseidon.pipeline.registry import STAGE_REGISTRY
 from poseidon.pipeline.state import (
     RUN_ABORTABLE,
     RUN_RERUNNABLE,

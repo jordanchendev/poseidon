@@ -11,14 +11,14 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from poseidon.pipeline.engine import ContractSpec, EngineConfig, FuturesInput, run, truncation_audit
+from poseidon.pipeline.engine import EngineConfig, FuturesInput, run, truncation_audit
 from poseidon.pipeline.engine.data import stock_input
 from poseidon.pipeline.refdata.engine_input import trading_calendar
 from poseidon.pipeline.refdata.taifex import MarketSchedule
 from poseidon.pipeline.v3.compiler import engine_config, plan, strategy_factory
 from poseidon.pipeline.v3.describe import narrative
 from poseidon.pipeline.v3.examples import etf_rotation_00631l_0050
-from poseidon.pipeline.v3.instruments import INSTRUMENTS
+from poseidon.pipeline.v3.instruments import INSTRUMENTS, contract_spec
 from poseidon.pipeline.v3.registry import REGISTRY, DescribeContext
 from poseidon.pipeline.v3.runtime import Conventions, RebalanceContext
 from poseidon.pipeline.v3.spec import substitute
@@ -174,7 +174,7 @@ START = T("2026-02-02")  # 20 sessions of warm-up before it
 
 def stock(symbol: str, closes, actions: pd.DataFrame | None = None):
     frame = pd.DataFrame({"date": DATES, "open": closes, "high": closes, "low": closes, "close": closes})
-    return stock_input(ContractSpec.from_instrument(INSTRUMENTS[symbol]), frame, actions)
+    return stock_input(contract_spec(INSTRUMENTS[symbol]), frame, actions)
 
 
 def index_dropping_on(drop: str | None) -> pd.DataFrame:

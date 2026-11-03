@@ -26,7 +26,7 @@ from poseidon.pipeline.daily_stages import (
     underlying_daily,
     underlying_product,
 )
-from poseidon.pipeline.engine import BookView, ContractSpec, Decision, EngineConfig, MarketView
+from poseidon.pipeline.engine import BookView, Decision, EngineConfig, MarketView
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, MARKET_CALENDAR, TAIEX
 from poseidon.pipeline.refdata.store import RefdataStore, frame_sha256
 from poseidon.pipeline.refdata.tw_corporate_actions import ACTION_COLUMNS
@@ -34,11 +34,11 @@ from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
 from poseidon.pipeline.refdata.tw_stocks import COLUMNS
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
 from poseidon.pipeline.shadow_paper_daily import CompiledStrategy, PaperInstrument
-from poseidon.pipeline.stages import UpstreamResult
+from poseidon.pipeline.stage_api import UpstreamResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.v3.compiler import NotCompilable
 from poseidon.pipeline.v3.examples import etf_rotation_00631l_0050, tmf_dynamic_leverage_3x
-from poseidon.pipeline.v3.instruments import INSTRUMENTS
+from poseidon.pipeline.v3.instruments import INSTRUMENTS, contract_spec
 from tests.pipeline.daily_paper_support import AsOf, DailyDriver, _by_month, build_store, morning_after, trading_days
 
 DAYS = trading_days(last="2026-10-21")
@@ -125,7 +125,7 @@ def test_price_points_of_a_stock_are_its_own_first_and_max_close(stock_store):
 
 
 def test_scaled_costs_scale_the_stock_commission_rate_too():
-    spec = ContractSpec.from_instrument(INSTRUMENTS["0050"])
+    spec = contract_spec(INSTRUMENTS["0050"])
     doubled = scaled_costs(spec, 2.0)
     assert (doubled.commission_rate, doubled.tax_rate, doubled.slippage_ticks) == approx(
         (2 * spec.commission_rate, 2 * spec.tax_rate, 2 * spec.slippage_ticks)
@@ -202,7 +202,7 @@ def stock_strategy(aux=None) -> CompiledStrategy:
     return CompiledStrategy(
         factory=HoldBoth,
         instruments={
-            alias: PaperInstrument(symbol, ContractSpec.from_instrument(INSTRUMENTS[symbol]), roll_days_before=0)
+            alias: PaperInstrument(symbol, contract_spec(INSTRUMENTS[symbol]), roll_days_before=0)
             for alias, symbol in (("lev", "00631L"), ("base", "0050"))
         },
         engine=EngineConfig(initial_capital=1_000_000.0, execution="next_open", start=pd.Timestamp("2025-04-01")),

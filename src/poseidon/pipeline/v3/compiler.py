@@ -53,13 +53,11 @@ from typing import Any
 import pandas as pd
 
 from poseidon.pipeline.engine import (
-    ContractSpec,
     EngineConfig,
     EngineResult,
     FuturesInput,
     HedgePolicy,
     OptionInput,
-    OptionSpec,
     TruncationAuditReport,
     hedge_coverage,
     run,
@@ -82,7 +80,9 @@ from poseidon.pipeline.v3.instruments import (
     SIGNAL_INDICES,
     Instrument,
     align_signal_frame,
+    contract_spec,
     declared,
+    option_spec,
     signal_index,
 )
 from poseidon.pipeline.v3.registry import REGISTRY
@@ -435,7 +435,7 @@ def compile_spec(
                 "(taifex_settlement_calendar status active)"
             )
         futures[alias] = FuturesInput(
-            spec=ContractSpec.from_instrument(instrument),
+            spec=contract_spec(instrument),
             bars=bars,
             expiries={c: calendar_rows.at[c, "last_trading_day"] for c in contracts},
             roll_days_before=spec_plan.rolls[alias],
@@ -473,7 +473,7 @@ def compile_spec(
             raise NotCompilable(str(error)) from error
         try:
             actions = require_actions(store, instrument.symbol)
-            futures[alias] = stock_input(ContractSpec.from_instrument(instrument), aligned, actions)
+            futures[alias] = stock_input(contract_spec(instrument), aligned, actions)
         except (DatasetMissingError, ValueError) as error:
             raise NotCompilable(f"{alias}: {error}") from error
         carried = int((~aligned["traded"]).sum())
@@ -581,7 +581,7 @@ def option_chain(symbol: str, quotes: pd.DataFrame, final: pd.DataFrame) -> Opti
 
     final = final[final["expiry_kind"] == "monthly"]
     return OptionInput(
-        spec=OptionSpec.from_instrument(INSTRUMENTS[symbol]),
+        spec=option_spec(INSTRUMENTS[symbol]),
         quotes=quotes.rename(columns={"trade_date": "date"}),
         expiries=dict(quotes.groupby("contract_month")["expiry_date"].first()),
         final_settlement={

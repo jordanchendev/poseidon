@@ -47,19 +47,11 @@ from poseidon.backtest.cost_model import CostModel, get_cost_model
 from poseidon.backtest.portfolio import SizingConfig, SizingMode, TradeRecord
 from poseidon.backtest.runner import BacktestRunner
 from poseidon.data.feature_engine import FeatureEngine
+from poseidon.pipeline.calendar import NEXT_WEEKDAY, NIGHT_SESSION_DAY, night_session_rule, trading_days
 from poseidon.risk.engine import RiskEngine
 from poseidon.signals.schemas import SignalAction
 from poseidon.strategies.dsl.v2.evaluator import DEFAULT_BAR_LABEL
 
-MARKET_TZ = "Asia/Taipei"
-TRADING_DAY_SHIFT = pd.Timedelta(hours=9)
-DAY_SESSION_HOURS = (pd.Timedelta(hours=8), pd.Timedelta(hours=15))  # local open labels of day-session bars
-NEXT_WEEKDAY = "next_weekday"
-NEXT_DAY_SESSION = "next_day_session"
-NIGHT_SESSION_DAY = {
-    NEXT_WEEKDAY: "night session -> next trading day; Asia/Taipei + 9h, weekend rolled to Monday",
-    NEXT_DAY_SESSION: "night session -> the next day with a day session in the bars, the day TAIFEX books it to",
-}
 EXIT_REASONS = {"close_sl": "stop_loss", "close_tp": "take_profit"}
 SHARPE_CONVENTION = (
     "daily mark-to-market PnL per trading day ({night}), all trading days with bars incl. flat days; "
@@ -120,50 +112,6 @@ def build_runner(
         sizing_config=SizingConfig(mode=SizingMode.FIXED_CONTRACTS, contracts=int(sizing["contracts"])),
         gap_aware_stops=bool(backtest_config["gap_aware_stops"]),
         stop_slippage_ticks=float(stop_slippage_ticks),
-    )
-
-
-def night_session_rule(backtest_config: Mapping) -> str:
-    """The run's frozen ``backtest.night_session``; :data:`NEXT_WEEKDAY` for a run frozen without it."""
-
-    rule = backtest_config.get("night_session", NEXT_WEEKDAY)
-    if rule not in NIGHT_SESSION_DAY:
-        raise ValueError(f"unknown backtest.night_session {rule!r}")
-    return rule
-
-
-def trading_days(index: pd.DatetimeIndex, night_session: str = NEXT_WEEKDAY) -> pd.DatetimeIndex:
-    """Trading-day label (midnight, naive) of each UTC bar timestamp.
-
-    A day-session bar belongs to its own date. A night-session bar (15:00-05:00 Asia/Taipei) belongs to the
-    next trading day: ``next_weekday`` takes the next weekday, so the night before a weekday closure is a
-    night-only day of its own; ``next_day_session`` takes the next day with a day session in ``index``, as
-    TAIFEX does (Thu 2026-10-22's night -> Tue 10-27 after the 10-23 typhoon closure and the 10-26 holiday).
-    A night after the last day session in ``index`` keeps the next weekday.
-    """
-
-    local = index.tz_convert(MARKET_TZ).tz_localize(None)
-    days = (local + TRADING_DAY_SHIFT).normalize()
-    weekday = days.weekday
-    roll = np.where(weekday == 5, 2, np.where(weekday == 6, 1, 0))
-    labels = days + pd.to_timedelta(roll, unit="D")
-    if night_session == NEXT_WEEKDAY:
-        return labels
-    sessions = day_sessions(index)
-    if not len(sessions):
-        return labels
-    position = sessions.searchsorted(days)
-    inside = position < len(sessions)
-    return pd.DatetimeIndex(np.where(inside, sessions.values[np.minimum(position, len(sessions) - 1)], labels.values))
-
-
-def day_sessions(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
-    """Dates (midnight, naive) with a day-session bar in ``index`` (UTC bar timestamps)."""
-
-    local = index.tz_convert(MARKET_TZ).tz_localize(None)
-    clock = local - local.normalize()
-    return pd.DatetimeIndex(
-        np.unique(local.normalize()[(clock >= DAY_SESSION_HOURS[0]) & (clock < DAY_SESSION_HOURS[1])])
     )
 
 
@@ -357,7 +305,7 @@ def run_backtest(
     runner = build_runner(strategy, backtest_config, cost_model=cost_model, stop_slippage_ticks=stop_slippage_ticks)
     result = runner.run(bars)
     if should_stop():
-        from poseidon.pipeline.stages import StageStopped
+        from poseidon.pipeline.stage_api import StageStopped
 
         raise StageStopped("stage stopped during a backtest")
     if result.status != "completed":
@@ -463,7 +411,7 @@ def run_target_engine(
         result = run_intraday(target, sleeve.alias, data, config)
     except Exception as error:
         if should_stop():
-            from poseidon.pipeline.stages import StageStopped
+            from poseidon.pipeline.stage_api import StageStopped
 
             raise StageStopped("stage stopped during a backtest") from error
         raise BacktestFailed(f"{type(error).__name__}: {error}") from error

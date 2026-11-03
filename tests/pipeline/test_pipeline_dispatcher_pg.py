@@ -16,13 +16,9 @@ from sqlalchemy import text
 
 from poseidon.core.canonical import content_sha256
 from poseidon.pipeline.models import PipelineRun, PipelineTrial
+from poseidon.pipeline.registry import STAGE_REGISTRY
 from poseidon.pipeline.service import PipelineConflict, PipelineService, family_trial_count
-from poseidon.pipeline.stages import (
-    STAGE_REGISTRY,
-    BaseStage,
-    StageResult,
-    TransientStageError,
-)
+from poseidon.pipeline.stage_api import BaseStage, StageResult, TransientStageError
 from tests.pipeline.conftest import STEP1_PLAN, Harness, synthetic_registry, tx_spec, tx_v1_spec
 
 pytestmark = pytest.mark.postgresql

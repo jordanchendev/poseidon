@@ -9,15 +9,15 @@ import pandas as pd
 import pytest
 from pytest import approx
 
-from poseidon.pipeline.engine import ContractSpec, Decision, EngineConfig, FuturesInput, run
+from poseidon.pipeline.engine import Decision, EngineConfig, FuturesInput, run
 from poseidon.pipeline.engine.data import FOREVER, stock_bars, stock_input
 from poseidon.pipeline.engine.specs import KIND_POLICIES
-from poseidon.pipeline.v3.instruments import ETF_TICKS, INSTRUMENTS, STOCK_TICKS
+from poseidon.pipeline.v3.instruments import ETF_TICKS, INSTRUMENTS, STOCK_TICKS, contract_spec
 from tests.pipeline.engine.support import FAR, TMF_PLAIN, Scripted, day, flat_bars
 
-ETF = ContractSpec.from_instrument(INSTRUMENTS["0050"])  # one unit = a board lot of 1,000 shares
-ODD = ContractSpec.from_instrument(dataclasses.replace(INSTRUMENTS["0050"], lot=1))
-STOCK = ContractSpec.from_instrument(INSTRUMENTS["2330"])
+ETF = contract_spec(INSTRUMENTS["0050"])  # one unit = a board lot of 1,000 shares
+ODD = contract_spec(dataclasses.replace(INSTRUMENTS["0050"], lot=1))
+STOCK = contract_spec(INSTRUMENTS["2330"])
 RATE = 0.001425
 
 

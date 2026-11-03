@@ -18,7 +18,7 @@ import re
 from poseidon.core.canonical import content_sha256
 from poseidon.pipeline.sandbox.client import CUSTOM_ENABLED_ENV, custom_enabled
 from poseidon.pipeline.sandbox.static_check import check_source
-from poseidon.pipeline.stages import BaseStage, StageResult
+from poseidon.pipeline.stage_api import BaseStage, StageResult
 from poseidon.pipeline.state import Verdict
 
 CUSTOM_COMPONENTS = {"direction.custom": "direction", "leverage.custom": "leverage"}

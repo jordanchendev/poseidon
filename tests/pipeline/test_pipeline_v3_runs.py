@@ -30,9 +30,9 @@ from poseidon.pipeline.plan import (
     validate_stage_plan,
 )
 from poseidon.pipeline.refdata.datasets import TAIEX
+from poseidon.pipeline.registry import STAGE_REGISTRY, EngineRouted
 from poseidon.pipeline.service import PipelineRequestInvalid
 from poseidon.pipeline.shadow_paper_daily import DAILY_PAPER_THRESHOLDS, DEFAULT_DAILY_SHADOW_PAPER
-from poseidon.pipeline.stages import STAGE_REGISTRY, EngineRouted
 from poseidon.pipeline.v3.config import (
     ENGINE,
     REFDATA_DATASETS,

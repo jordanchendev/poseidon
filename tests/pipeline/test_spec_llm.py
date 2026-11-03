@@ -22,7 +22,8 @@ from poseidon.pipeline.spec_llm import (
     build_user_message,
     generate_spec,
 )
-from poseidon.pipeline.stages import SpecGenerateStage, StageContext
+from poseidon.pipeline.stage_api import StageContext
+from poseidon.pipeline.stages import SpecGenerateStage
 from poseidon.pipeline.state import Verdict
 from poseidon.strategies.dsl.v2 import validate_v2
 from poseidon.strategies.dsl.v2.examples import tx_orb30_day

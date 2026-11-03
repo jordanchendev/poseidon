@@ -64,11 +64,12 @@ from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
 from poseidon.pipeline.refdata.tw_corporate_actions import require_actions
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
 from poseidon.pipeline.refdata.tw_stocks import read_bars
-from poseidon.pipeline.stages import BaseStage, StageResult
+from poseidon.pipeline.stage_api import BaseStage, StageResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.trials import TRIAL_COMPLETE, TRIAL_FAIL, TRIAL_PRUNED, MemoryTrialLedger
 from poseidon.pipeline.v3.compiler import OPTION_DATASETS, ROW_FILTERS, NotCompilable, compile_spec, hedged
 from poseidon.pipeline.v3.config import ENGINE, SPEC_VALIDATOR, session_warmup, used_index_datasets
+from poseidon.pipeline.v3.instruments import contract_spec
 from poseidon.pipeline.v3.runtime import Conventions
 from poseidon.pipeline.v3.spec import substitute
 from poseidon.pipeline.v3.validation import FeasibilityContext, SessionWarmup, validate_spec_v3
@@ -1366,7 +1367,7 @@ def compile_strategy(ctx):
     instruments = {
         alias: PaperInstrument(
             product=row.price_proxy or row.symbol,
-            spec=ContractSpec.from_instrument(row),
+            spec=contract_spec(row),
             roll_days_before=spec_plan.rolls.get(alias, 0),
         )
         for alias, row in spec_plan.instruments.items()

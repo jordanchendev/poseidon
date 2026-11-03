@@ -39,7 +39,7 @@ from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import jev
 from poseidon.pipeline.clause_precheck import PRECHECK_VERSION, precheck
 from poseidon.pipeline.spec_llm import MAX_TEXT, _err
-from poseidon.pipeline.stages import BaseStage, StageResult
+from poseidon.pipeline.stage_api import BaseStage, StageResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.v3.describe import describe_spec
 from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
