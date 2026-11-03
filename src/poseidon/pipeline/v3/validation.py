@@ -37,7 +37,6 @@ from pydantic import ValidationError
 
 from poseidon.pipeline.engine.specs import KIND_POLICIES
 from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_PRICE_DATASET
-from poseidon.pipeline.v3 import components as _components  # noqa: F401  (registers the components)
 from poseidon.pipeline.v3.dsl_bridge import DSL_MARKETS
 from poseidon.pipeline.v3.instruments import (
     INSTRUMENTS,
@@ -1013,42 +1012,3 @@ def validate_spec_v3(doc: Any, *, feasibility: FeasibilityContext | None = None)
         strategy_class=strategy_class(resolved),
         window=window,
     )
-
-
-class SpecV3Validator:
-    """``config_json["spec_validator"] == "spec_v3"`` (CONFIG_VERSION 6). No run freezes it before step 4."""
-
-    name = "spec_v3"
-
-    def validate_spec(self, spec: dict):
-        from poseidon.pipeline.spec_validation import SpecValidation
-
-        result = validate_spec_v3(spec)
-        return SpecValidation(
-            result.ok,
-            tuple(issue.text() for issue in result.errors),
-            tuple(issue.text() for issue in result.unsupported),
-        )
-
-    def resolve(self, spec: dict) -> dict:
-        """``{"spec", "template", "params", "notes", "strategy_class"}`` for a spec that passed."""
-
-        result = validate_spec_v3(spec)
-        if not result.ok:
-            raise ValueError("resolve() needs a spec that passed validate_spec()")
-        return {
-            "spec": result.resolved,
-            "template": result.template,
-            "params": {
-                name: {
-                    "type": p.type,
-                    "low": p.cast(p.low),
-                    "high": p.cast(p.high),
-                    "step": p.step,
-                    "default": p.cast(p.default),
-                }
-                for name, p in sorted(result.params.items())
-            },
-            "notes": list(result.notes),
-            "strategy_class": result.strategy_class,
-        }

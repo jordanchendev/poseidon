@@ -255,21 +255,46 @@ def param_count_errors(validated) -> list[dict]:
 class SpecV3Validator:
     """Spec v3 (CONFIG_VERSION 6, design 2026-10-24 §3.7); see :mod:`poseidon.pipeline.v3.validation`.
 
-    Registered so a v3 run can freeze ``spec_validator: "spec_v3"``; no run does
-    before step 4. Imported lazily: the registry pulls in the DSL and cost models.
+    ``config_json["spec_validator"] == "spec_v3"``. Imported lazily: ``v3.validation`` pulls in the DSL, the
+    component registry and the cost models.
     """
 
     name = "spec_v3"
 
     def validate_spec(self, spec: dict) -> SpecValidation:
-        from poseidon.pipeline.v3.validation import SpecV3Validator as Impl
+        from poseidon.pipeline.v3.validation import validate_spec_v3
 
-        return Impl().validate_spec(spec)
+        result = validate_spec_v3(spec)
+        return SpecValidation(
+            result.ok,
+            tuple(issue.text() for issue in result.errors),
+            tuple(issue.text() for issue in result.unsupported),
+        )
 
     def resolve(self, spec: dict) -> dict:
-        from poseidon.pipeline.v3.validation import SpecV3Validator as Impl
+        """``{"spec", "template", "params", "notes", "strategy_class"}`` for a spec that passed."""
 
-        return Impl().resolve(spec)
+        from poseidon.pipeline.v3.validation import validate_spec_v3
+
+        result = validate_spec_v3(spec)
+        if not result.ok:
+            raise ValueError("resolve() needs a spec that passed validate_spec()")
+        return {
+            "spec": result.resolved,
+            "template": result.template,
+            "params": {
+                name: {
+                    "type": p.type,
+                    "low": p.cast(p.low),
+                    "high": p.cast(p.high),
+                    "step": p.step,
+                    "default": p.cast(p.default),
+                }
+                for name, p in sorted(result.params.items())
+            },
+            "notes": list(result.notes),
+            "strategy_class": result.strategy_class,
+        }
 
 
 register_spec_validator(DslV1Validator())
