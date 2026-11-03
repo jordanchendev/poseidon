@@ -188,7 +188,16 @@ celery_app.conf.update(
     # to inside the task body so adding them here is safe (PATTERNS.md
     # §Deferred Qlib Import).
     imports=[
-        "poseidon.workers.cpu_tasks",
+        "poseidon.workers.cpu_tasks.backtests",
+        "poseidon.workers.cpu_tasks.decision_runs",
+        "poseidon.workers.cpu_tasks.execution",
+        "poseidon.workers.cpu_tasks.outcomes",
+        "poseidon.workers.cpu_tasks.perp",
+        "poseidon.workers.cpu_tasks.portfolio",
+        "poseidon.workers.cpu_tasks.research",
+        "poseidon.workers.cpu_tasks.review",
+        "poseidon.workers.cpu_tasks.risk",
+        "poseidon.workers.cpu_tasks.signals",
         "poseidon.workers.gpu_tasks",
         "poseidon.workers.qlib_tasks",
         "poseidon.workers.qlib_rl_tasks",

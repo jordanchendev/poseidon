@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from poseidon.core.schemas import MessageResponse
 from poseidon.models.base import get_db
 from poseidon.workers.celery_app import celery_app
-from poseidon.workers.cpu_tasks import autoresearch_run
+from poseidon.workers.cpu_tasks.research import autoresearch_run
 
 router = APIRouter()
 

@@ -7,7 +7,7 @@ resulting Order objects with signal_id and order_origin="signal".
 These are unit-style integration tests: external dependencies (DB, broker,
 data repository, position tracker, protections) are monkeypatched. The
 RED step (pre-implementation) MUST fail because perp_rebalance currently
-instantiates CryptoTrendStrategy inline (cpu_tasks.py:1986) and never
+instantiates CryptoTrendStrategy inline (``workers/cpu_tasks/perp.py``) and never
 consults SignalRepository.latest_passed.
 
 Test inventory (per 89-02-PLAN Task 1):
@@ -28,6 +28,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from poseidon.orders.schemas import Order
+from tests.cpu_tasks_support import patch_cpu_tasks
 
 
 def _make_signal_record(
@@ -81,7 +82,6 @@ def patched_perp_env(monkeypatch):
         - 'mark_prices': dict[symbol, price]
         - 'protection_locked': bool — toggle portfolio-level lock
     """
-    from poseidon.workers import cpu_tasks
 
     state: dict = {
         "signals": [],
@@ -94,16 +94,16 @@ def patched_perp_env(monkeypatch):
     fake_tracker = MagicMock()
     fake_tracker.current_holdings.return_value = {}
     fake_tracker.apply_orders.return_value = None
-    monkeypatch.setattr(cpu_tasks, "_build_position_tracker", lambda: fake_tracker)
+    patch_cpu_tasks(monkeypatch, "_build_position_tracker", lambda: fake_tracker)
 
     # 2. Perp adapter — empty positions
     fake_adapter = MagicMock()
     fake_adapter._positions = {}
-    monkeypatch.setattr(cpu_tasks, "_build_perp_adapter_from_db", lambda: fake_adapter)
+    patch_cpu_tasks(monkeypatch, "_build_perp_adapter_from_db", lambda: fake_adapter)
 
     # 3. Mark prices
-    monkeypatch.setattr(
-        cpu_tasks, "_get_perp_mark_prices", lambda syms: {s: state["mark_prices"].get(s, 1000.0) for s in syms}
+    patch_cpu_tasks(
+        monkeypatch, "_get_perp_mark_prices", lambda syms: {s: state["mark_prices"].get(s, 1000.0) for s in syms}
     )
 
     # 4. db_session — context manager returning a mocked session whose
@@ -139,7 +139,7 @@ def patched_perp_env(monkeypatch):
         def __exit__(self, *a):
             return False
 
-    monkeypatch.setattr(cpu_tasks, "db_session", lambda: _FakeDbSession())
+    patch_cpu_tasks(monkeypatch, "db_session", lambda: _FakeDbSession())
 
     # 5. Protection manager — non-locking by default
     from poseidon.protections import manager as pm_mod
@@ -151,7 +151,7 @@ def patched_perp_env(monkeypatch):
 
     # 6. SessionLocal — never actually invoked once db_session is mocked, but
     # OrderManager constructor needs *something* callable.
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: _FakeSession())
+    patch_cpu_tasks(monkeypatch, "SessionLocal", lambda: _FakeSession())
 
     # 7. Capture execute_rebalance kwargs at the OrderManager class.
     from poseidon.orders.manager import OrderManager
@@ -203,26 +203,26 @@ class TestPerpRebalanceWiring:
 
     def test_perp_rebalance_rejects_fresh_legacy_signals(self, patched_perp_env):
         """Fresh PASSED signals cannot bypass release authority."""
-        from poseidon.workers import cpu_tasks
+        from poseidon.workers.cpu_tasks import perp as cpu_perp
 
         sig_id = uuid.uuid4()
         patched_perp_env["signals"] = [
             _make_signal_record(symbol="ETHUSDT", action="long", quantity_pct=0.5, age_minutes=30, signal_id=sig_id),
         ]
 
-        result = cpu_tasks.perp_rebalance()
+        result = cpu_perp.perp_rebalance()
 
         assert result == {"skipped": "release_authority_required"}
         assert patched_perp_env["captured"] == {}
 
     def test_perp_rebalance_ignores_stale_signals_beyond_8h(self, patched_perp_env):
         """Signals older than 8h must not produce orders."""
-        from poseidon.workers import cpu_tasks
+        from poseidon.workers.cpu_tasks import perp as cpu_perp
 
         # latest_passed should never return signals older than 'since' — but we
         # simulate the contract by returning empty when window is < 9h.
         patched_perp_env["signals"] = []  # latest_passed(since=now-8h) → empty
-        cpu_tasks.perp_rebalance()
+        cpu_perp.perp_rebalance()
 
         captured = patched_perp_env["captured"]
         # Either execute_rebalance was never called OR was called with zero orders.
@@ -232,7 +232,7 @@ class TestPerpRebalanceWiring:
 
     def test_perp_rebalance_rejects_duplicate_legacy_signals(self, patched_perp_env):
         """Duplicate legacy signals remain outside the only ordinary writer."""
-        from poseidon.workers import cpu_tasks
+        from poseidon.workers.cpu_tasks import perp as cpu_perp
 
         newer_id = uuid.uuid4()
         older_id = uuid.uuid4()
@@ -242,17 +242,17 @@ class TestPerpRebalanceWiring:
             _make_signal_record(symbol="ETHUSDT", age_minutes=60, signal_id=older_id),
         ]
 
-        result = cpu_tasks.perp_rebalance()
+        result = cpu_perp.perp_rebalance()
 
         assert result == {"skipped": "release_authority_required"}
         assert patched_perp_env["captured"] == {}
 
     def test_perp_rebalance_zero_recent_signals_returns_no_orders(self, patched_perp_env):
         """Empty fresh window → early return, no execute_rebalance call."""
-        from poseidon.workers import cpu_tasks
+        from poseidon.workers.cpu_tasks import perp as cpu_perp
 
         patched_perp_env["signals"] = []
-        result = cpu_tasks.perp_rebalance()
+        result = cpu_perp.perp_rebalance()
 
         # Implementation should short-circuit and return either zero-orders or skipped state.
         assert result.get("orders", 0) == 0 or "skipped" in result or "reason" in result, (
@@ -261,13 +261,13 @@ class TestPerpRebalanceWiring:
 
     def test_perp_legacy_order_origin_path_is_unreachable(self, patched_perp_env):
         """The retired perp signal writer cannot create an order of any origin."""
-        from poseidon.workers import cpu_tasks
+        from poseidon.workers.cpu_tasks import perp as cpu_perp
 
         patched_perp_env["signals"] = [
             _make_signal_record(symbol="ETHUSDT", action="long", quantity_pct=0.3),
         ]
 
-        result = cpu_tasks.perp_rebalance()
+        result = cpu_perp.perp_rebalance()
 
         assert result == {"skipped": "release_authority_required"}
         assert patched_perp_env["captured"] == {}
@@ -292,7 +292,7 @@ class TestSignalsToTargets:
     """
 
     def test_long_signal_maps_to_positive_target(self):
-        from poseidon.workers.cpu_tasks import _signals_to_targets
+        from poseidon.workers.cpu_tasks.portfolio import _signals_to_targets
 
         sigs = [_make_signal_record(symbol="ETHUSDT", action="long", quantity_pct=0.4)]
         targets, signal_ids = _signals_to_targets(sigs)
@@ -301,7 +301,7 @@ class TestSignalsToTargets:
         assert signal_ids["ETHUSDT"] == sigs[0].id
 
     def test_close_signal_maps_to_zero_target(self):
-        from poseidon.workers.cpu_tasks import _signals_to_targets
+        from poseidon.workers.cpu_tasks.portfolio import _signals_to_targets
 
         sigs = [_make_signal_record(symbol="ETHUSDT", action="close", quantity_pct=0.4)]
         targets, signal_ids = _signals_to_targets(sigs)
@@ -310,7 +310,7 @@ class TestSignalsToTargets:
         assert signal_ids["ETHUSDT"] == sigs[0].id
 
     def test_hold_signal_is_skipped(self):
-        from poseidon.workers.cpu_tasks import _signals_to_targets
+        from poseidon.workers.cpu_tasks.portfolio import _signals_to_targets
 
         sigs = [_make_signal_record(symbol="ETHUSDT", action="hold", quantity_pct=0.4)]
         targets, signal_ids = _signals_to_targets(sigs)
@@ -320,7 +320,7 @@ class TestSignalsToTargets:
 
     def test_dedup_first_wins(self):
         """latest_passed returns DESC; first SignalRecord per symbol must win."""
-        from poseidon.workers.cpu_tasks import _signals_to_targets
+        from poseidon.workers.cpu_tasks.portfolio import _signals_to_targets
 
         newer_id = uuid.uuid4()
         older_id = uuid.uuid4()

@@ -62,9 +62,9 @@ def mock_signal():
     return sig
 
 
-@patch("poseidon.workers.cpu_tasks.db_session")
-@patch("poseidon.workers.cpu_tasks.FeatureEngine")
-@patch("poseidon.workers.cpu_tasks.RuleStrategy")
+@patch("poseidon.workers.cpu_tasks.signals.db_session")
+@patch("poseidon.workers.cpu_tasks.signals.FeatureEngine")
+@patch("poseidon.workers.cpu_tasks.signals.RuleStrategy")
 @patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
 @patch("poseidon.risk.pipeline.SignalPipeline.process")
 def test_evaluate_active_strategies_processes_rule_strategy(
@@ -77,7 +77,7 @@ def test_evaluate_active_strategies_processes_rule_strategy(
     mock_signal,
 ):
     """Rule strategy is evaluated and signals piped through SignalPipeline."""
-    from poseidon.workers.cpu_tasks import evaluate_active_strategies
+    from poseidon.workers.cpu_tasks.signals import evaluate_active_strategies
 
     record, version = mock_strategy_record(strategy_type="rule")
     session = MagicMock()
@@ -112,9 +112,9 @@ def test_evaluate_active_strategies_processes_rule_strategy(
     mock_pipeline_process.assert_called_once_with(mock_signal)
 
 
-@patch("poseidon.workers.cpu_tasks.db_session")
-@patch("poseidon.workers.cpu_tasks.FeatureEngine")
-@patch("poseidon.workers.cpu_tasks.evaluate_active_strategies.__wrapped__", None)
+@patch("poseidon.workers.cpu_tasks.signals.db_session")
+@patch("poseidon.workers.cpu_tasks.signals.FeatureEngine")
+@patch("poseidon.workers.cpu_tasks.signals.evaluate_active_strategies.__wrapped__", None)
 @patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
 @patch("poseidon.risk.pipeline.SignalPipeline.process")
 def test_evaluate_active_strategies_processes_voting_strategy(
@@ -126,7 +126,7 @@ def test_evaluate_active_strategies_processes_voting_strategy(
     mock_signal,
 ):
     """Voting strategy uses only immutable version execution fields."""
-    from poseidon.workers.cpu_tasks import evaluate_active_strategies
+    from poseidon.workers.cpu_tasks.signals import evaluate_active_strategies
 
     record, version = mock_strategy_record(
         strategy_type="voting",
@@ -176,8 +176,8 @@ def test_evaluate_active_strategies_processes_voting_strategy(
         )
 
 
-@patch("poseidon.workers.cpu_tasks.db_session")
-@patch("poseidon.workers.cpu_tasks.FeatureEngine")
+@patch("poseidon.workers.cpu_tasks.signals.db_session")
+@patch("poseidon.workers.cpu_tasks.signals.FeatureEngine")
 @patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
 @patch("poseidon.risk.pipeline.SignalPipeline.process")
 def test_evaluate_active_voting_strategy_uses_frozen_feature_specs(
@@ -187,7 +187,7 @@ def test_evaluate_active_voting_strategy_uses_frozen_feature_specs(
     mock_db_session,
     mock_strategy_record,
 ):
-    from poseidon.workers.cpu_tasks import evaluate_active_strategies
+    from poseidon.workers.cpu_tasks.signals import evaluate_active_strategies
 
     record, version = mock_strategy_record(
         strategy_type="voting",
@@ -263,8 +263,8 @@ def test_evaluate_active_voting_strategy_uses_frozen_feature_specs(
     mock_pipeline_process.assert_called_once()
 
 
-@patch("poseidon.workers.cpu_tasks.db_session")
-@patch("poseidon.workers.cpu_tasks.FeatureEngine")
+@patch("poseidon.workers.cpu_tasks.signals.db_session")
+@patch("poseidon.workers.cpu_tasks.signals.FeatureEngine")
 @patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
 def test_evaluate_active_strategies_filters_by_immutable_version_market_interval(
     mock_pipeline_init,
@@ -272,7 +272,7 @@ def test_evaluate_active_strategies_filters_by_immutable_version_market_interval
     mock_db_session,
 ):
     """Scheduled selection cannot use mutable strategy routing fields."""
-    from poseidon.workers.cpu_tasks import evaluate_active_strategies
+    from poseidon.workers.cpu_tasks.signals import evaluate_active_strategies
 
     session = MagicMock()
     session.query.return_value.join.return_value.filter.return_value.all.return_value = []
@@ -288,8 +288,8 @@ def test_evaluate_active_strategies_filters_by_immutable_version_market_interval
     assert "strategies.interval" not in rendered
 
 
-@patch("poseidon.workers.cpu_tasks.db_session")
-@patch("poseidon.workers.cpu_tasks.FeatureEngine")
+@patch("poseidon.workers.cpu_tasks.signals.db_session")
+@patch("poseidon.workers.cpu_tasks.signals.FeatureEngine")
 @patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
 def test_evaluate_active_strategies_skips_model_type(
     mock_pipeline_init,
@@ -298,7 +298,7 @@ def test_evaluate_active_strategies_skips_model_type(
     mock_strategy_record,
 ):
     """Model-type strategies are skipped (use GPU predict path)."""
-    from poseidon.workers.cpu_tasks import evaluate_active_strategies
+    from poseidon.workers.cpu_tasks.signals import evaluate_active_strategies
 
     record, version = mock_strategy_record(strategy_type="model")
     session = MagicMock()
@@ -317,9 +317,9 @@ def test_evaluate_active_strategies_skips_model_type(
     mock_engine.compute.assert_not_called()
 
 
-@patch("poseidon.workers.cpu_tasks.db_session")
-@patch("poseidon.workers.cpu_tasks.FeatureEngine")
-@patch("poseidon.workers.cpu_tasks.RuleStrategy")
+@patch("poseidon.workers.cpu_tasks.signals.db_session")
+@patch("poseidon.workers.cpu_tasks.signals.FeatureEngine")
+@patch("poseidon.workers.cpu_tasks.signals.RuleStrategy")
 @patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
 @patch("poseidon.risk.pipeline.SignalPipeline.process")
 def test_evaluate_active_strategies_from_fetch_result(
@@ -332,7 +332,7 @@ def test_evaluate_active_strategies_from_fetch_result(
     mock_signal,
 ):
     """market/interval are extracted from fetch_result when not provided directly."""
-    from poseidon.workers.cpu_tasks import evaluate_active_strategies
+    from poseidon.workers.cpu_tasks.signals import evaluate_active_strategies
 
     record, version = mock_strategy_record(strategy_type="rule")
     session = MagicMock()
@@ -356,9 +356,9 @@ def test_evaluate_active_strategies_from_fetch_result(
     assert result["strategies_evaluated"] == 1
 
 
-@patch("poseidon.workers.cpu_tasks.db_session")
-@patch("poseidon.workers.cpu_tasks.FeatureEngine")
-@patch("poseidon.workers.cpu_tasks.RuleStrategy")
+@patch("poseidon.workers.cpu_tasks.signals.db_session")
+@patch("poseidon.workers.cpu_tasks.signals.FeatureEngine")
+@patch("poseidon.workers.cpu_tasks.signals.RuleStrategy")
 @patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None)
 @patch("poseidon.risk.pipeline.SignalPipeline.process")
 def test_evaluate_active_strategies_continues_on_error(
@@ -371,7 +371,7 @@ def test_evaluate_active_strategies_continues_on_error(
     mock_signal,
 ):
     """If one strategy fails, the next still evaluates (errors are isolated)."""
-    from poseidon.workers.cpu_tasks import evaluate_active_strategies
+    from poseidon.workers.cpu_tasks.signals import evaluate_active_strategies
 
     record_fail, version_fail = mock_strategy_record(strategy_type="rule", name="fail-strat")
     record_ok, version_ok = mock_strategy_record(strategy_type="rule", name="ok-strat")
@@ -407,7 +407,7 @@ def test_released_executable_envelope_drives_scheduled_evaluation(phase99_sessio
     from poseidon.decision_loop.releases import ReleaseService
     from poseidon.models.strategy import StrategyRecord
     from poseidon.models.strategy_version import StrategyVersion
-    from poseidon.workers.cpu_tasks import evaluate_active_strategies
+    from poseidon.workers.cpu_tasks.signals import evaluate_active_strategies
     from tests.test_strategy_release import _release, _seed_gate_graph
 
     with phase99_session_factory() as session:
@@ -452,8 +452,8 @@ def test_released_executable_envelope_drives_scheduled_evaluation(phase99_sessio
         engine.compute.return_value = pd.DataFrame({"close": [100.0], "rsi_8": [60.0], "return_1d": [0.02]})
         emitted = []
         with (
-            patch("poseidon.workers.cpu_tasks.db_session", return_value=context),
-            patch("poseidon.workers.cpu_tasks.FeatureEngine", return_value=engine),
+            patch("poseidon.workers.cpu_tasks.signals.db_session", return_value=context),
+            patch("poseidon.workers.cpu_tasks.signals.FeatureEngine", return_value=engine),
             patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None),
             patch("poseidon.risk.pipeline.SignalPipeline.process", side_effect=emitted.append),
         ):
@@ -508,7 +508,7 @@ def test_released_perp_envelope_emits_owner_frozen_instrument(phase99_session_fa
     from poseidon.decision_loop.releases import ReleaseService
     from poseidon.models.strategy import StrategyRecord
     from poseidon.signals.schemas import InstrumentType
-    from poseidon.workers.cpu_tasks import evaluate_active_strategies
+    from poseidon.workers.cpu_tasks.signals import evaluate_active_strategies
     from tests.test_decision_service import synthetic_reconciliation_policy
     from tests.test_strategy_release import _release, _seed_gate_graph
 
@@ -541,8 +541,8 @@ def test_released_perp_envelope_emits_owner_frozen_instrument(phase99_session_fa
         engine.compute.return_value = pd.DataFrame({"close": [250.0]})
         emitted = []
         with (
-            patch("poseidon.workers.cpu_tasks.db_session", return_value=context),
-            patch("poseidon.workers.cpu_tasks.FeatureEngine", return_value=engine),
+            patch("poseidon.workers.cpu_tasks.signals.db_session", return_value=context),
+            patch("poseidon.workers.cpu_tasks.signals.FeatureEngine", return_value=engine),
             patch("poseidon.risk.pipeline.SignalPipeline.__init__", return_value=None),
             patch("poseidon.risk.pipeline.SignalPipeline.process", side_effect=emitted.append),
         ):

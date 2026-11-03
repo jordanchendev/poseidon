@@ -135,7 +135,7 @@ def get_exposure(db: Session = Depends(get_db)):
 @router.post("/stress-test/run", response_model=StressTestTriggerResponse)
 def trigger_stress_test(body: StressTestRequest):
     """Trigger async stress test. Returns task_id for polling."""
-    from poseidon.workers.cpu_tasks import run_stress_test
+    from poseidon.workers.cpu_tasks.risk import run_stress_test
 
     task = run_stress_test.delay(body.scenario_name, body.custom_shocks)
     return StressTestTriggerResponse(task_id=task.id)

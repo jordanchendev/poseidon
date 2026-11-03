@@ -203,37 +203,51 @@ def _autoresearch_worker_source(root: Path) -> str:
     return _worker_closure_source(root, "autoresearch_run")
 
 
+CPU_TASKS_PACKAGE = "src/poseidon/workers/cpu_tasks"
+
+
 def _worker_closure_source(root: Path, entry: str, *, leaves: frozenset[str] = frozenset()) -> str:
-    """Fixed-point source closure of one cpu_tasks entry; ``leaves`` are referenced but not expanded."""
-    path = root / "src/poseidon/workers/cpu_tasks.py"
-    if not path.is_file():
+    """Fixed-point source closure of one CPU task entry across the cpu_tasks modules.
+
+    The modules are read as one namespace (their top-level names are unique), so imports between them are
+    dropped and the definitions they name are followed instead. ``leaves`` are referenced but not expanded.
+    """
+    package = root / CPU_TASKS_PACKAGE
+    if not package.is_dir():
         return ""
-    text = path.read_text(encoding="utf-8")
-    tree = ast.parse(text, filename=str(path))
-    functions = {
-        node.name: node
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name not in leaves
-    }
+    functions: dict[str, tuple[str, ast.AST]] = {}
+    assignments: list[tuple[str, ast.AST]] = []
+    imports: list[tuple[str, ast.AST]] = []
+    for path in sorted(package.glob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for node in ast.parse(text, filename=str(path)).body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name not in leaves:
+                    functions[node.name] = (text, node)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                assignments.append((text, node))
+            elif isinstance(node, ast.Import) or (
+                isinstance(node, ast.ImportFrom) and not (node.module or "").startswith("poseidon.workers.cpu_tasks")
+            ):
+                imports.append((text, node))
     if entry not in functions:
         return ""
-    assignments = [node for node in tree.body if isinstance(node, (ast.Assign, ast.AnnAssign))]
     used_names = {entry}
     included_functions: set[str] = set()
     included_assignments: set[int] = set()
-    nodes: list[ast.AST] = []
+    segments: list[tuple[str, ast.AST]] = []
     changed = True
     while changed:
         changed = False
         for name in sorted(used_names & functions.keys() - included_functions):
-            node = functions[name]
+            text, node = functions[name]
             included_functions.add(name)
-            nodes.append(node)
+            segments.append((text, node))
             used_names.update(
                 child.id for child in ast.walk(node) if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
             )
             changed = True
-        for node in assignments:
+        for text, node in assignments:
             if id(node) in included_assignments:
                 continue
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -241,21 +255,19 @@ def _worker_closure_source(root: Path, entry: str, *, leaves: frozenset[str] = f
             if not bound & used_names:
                 continue
             included_assignments.add(id(node))
-            nodes.append(node)
+            segments.append((text, node))
             used_names.update(
                 child.id for child in ast.walk(node) if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
             )
             changed = True
-    for node in tree.body:
+    for text, node in imports:
         if isinstance(node, ast.Import):
             bound = {alias.asname or alias.name.split(".", 1)[0] for alias in node.names}
-        elif isinstance(node, ast.ImportFrom):
-            bound = {alias.asname or alias.name for alias in node.names}
         else:
-            continue
+            bound = {alias.asname or alias.name for alias in node.names}
         if bound & used_names:
-            nodes.append(node)
-    return "\n".join(filter(None, (ast.get_source_segment(text, node) for node in nodes)))
+            segments.append((text, node))
+    return "\n".join(filter(None, (ast.get_source_segment(text, node) for text, node in segments)))
 
 
 def _root_evidence_issues(aquarium_root: Path) -> list[str]:
@@ -333,7 +345,7 @@ def scan_boundary(root: Path) -> list[str]:
     if not worker:
         issues.append("missing unique autoresearch_run boundary")
     else:
-        issues.extend(_authority_issues("src/poseidon/workers/cpu_tasks.py:autoresearch_run", worker))
+        issues.extend(_authority_issues(f"{CPU_TASKS_PACKAGE}:autoresearch_run", worker))
     return sorted(set(issues))
 
 
@@ -448,7 +460,7 @@ def scan_loop_producers(root: Path) -> list[str]:
         if not source:
             issues.append(f"missing loop producer task: {task}")
             continue
-        issues.extend(_loop_writer_issues(f"src/poseidon/workers/cpu_tasks.py:{task}", source))
+        issues.extend(_loop_writer_issues(f"{CPU_TASKS_PACKAGE}:{task}", source))
     for task, delegate in LOOP_SCHEDULED_DELEGATES.items():
         source = _worker_closure_source(root, task, leaves=frozenset({delegate}))
         if not source:
@@ -456,7 +468,7 @@ def scan_loop_producers(root: Path) -> list[str]:
             continue
         if delegate not in source:
             issues.append(f"loop scheduled task {task} does not delegate to {delegate}")
-        issues.extend(_loop_writer_issues(f"src/poseidon/workers/cpu_tasks.py:{task}", source))
+        issues.extend(_loop_writer_issues(f"{CPU_TASKS_PACKAGE}:{task}", source))
     return sorted(set(issues))
 
 
@@ -565,7 +577,7 @@ class Phase100DshBoundaryTests(unittest.TestCase):
                 "src/poseidon/research/provider.py": "class DeepSeekRuntime:\n    pass\n",
                 "src/poseidon/research/campaign.py": ("from poseidon.decision_loop.releases import ReleaseService\n"),
                 "src/poseidon/autoresearch/new_writer.py": "active_version_id = candidate\n",
-                "src/poseidon/workers/cpu_tasks.py": (
+                "src/poseidon/workers/cpu_tasks/tasks.py": (
                     "from poseidon.api import decisions as decision_api\n"
                     "APPROVE = decision_api.approve_decision\n"
                     "def _promote():\n    return APPROVE(None)\n"
@@ -610,7 +622,7 @@ class Phase100DshBoundaryTests(unittest.TestCase):
                     "from poseidon.decision_loop.releases import ReleaseService\n"
                     "def read(strategy):\n    return strategy.active_version_id\n"
                 ),
-                "src/poseidon/workers/cpu_tasks.py": (
+                "src/poseidon/workers/cpu_tasks/tasks.py": (
                     "from poseidon.decision_loop.decisions import DecisionService\n"
                     "def _approve(session, decision):\n"
                     "    return DecisionService(session).approve(decision, {}, principal=None, idempotency_key='k')\n"
@@ -628,7 +640,7 @@ class Phase100DshBoundaryTests(unittest.TestCase):
             "loop writer import poseidon.api.releases.router: src/poseidon/api/research_loop.py",
             "loop pointer write active_version_id: src/poseidon/api/campaigns.py",
             "loop writer import poseidon.decision_loop.releases.ReleaseService: src/poseidon/decision_loop/producer.py",
-            "loop writer name approve: src/poseidon/workers/cpu_tasks.py:expire_due_decisions",
+            "loop writer name approve: src/poseidon/workers/cpu_tasks:expire_due_decisions",
             "missing loop producer module: src/poseidon/decision_loop/strategy_signals.py",
             "missing loop producer task: run_review_campaign",
             "missing loop scheduled task: scheduled_reconcile_paper_account",
@@ -636,7 +648,7 @@ class Phase100DshBoundaryTests(unittest.TestCase):
             self.assertIn(expected, issues)
         self.assertNotIn("ExecutableStrategyConfig", issues)
         self.assertNotIn("loop pointer write active_version_id: src/poseidon/decision_loop/producer.py", issues)
-        self.assertNotIn("submit_decision_order: src/poseidon/workers/cpu_tasks.py:scheduled_recover", issues)
+        self.assertNotIn("submit_decision_order: src/poseidon/workers/cpu_tasks:scheduled_recover", issues)
 
     def test_domain_layer_does_not_import_the_web_framework(self) -> None:
         self.assertEqual(scan_web_framework_imports(POSEIDON_ROOT), [])

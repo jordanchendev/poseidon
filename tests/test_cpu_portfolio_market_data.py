@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from poseidon.workers.cpu_tasks import _get_latest_prices, _get_perp_mark_prices
+from poseidon.workers.cpu_tasks.market_state import _get_latest_prices, _get_perp_mark_prices
 
 
 @contextmanager
@@ -17,7 +17,7 @@ def _db_session_must_not_run():
 
 
 @patch("poseidon.data.remote_repository.RemoteDataRepository.from_settings")
-@patch("poseidon.workers.cpu_tasks.db_session", side_effect=_db_session_must_not_run)
+@patch("poseidon.workers.cpu_tasks.market_state.db_session", side_effect=_db_session_must_not_run)
 def test_get_latest_prices_uses_remote_repository(_mock_db_session, mock_from_settings):
     mock_repo = MagicMock()
     mock_repo.read_ohlcv.return_value = pd.DataFrame(
@@ -33,7 +33,7 @@ def test_get_latest_prices_uses_remote_repository(_mock_db_session, mock_from_se
 
 
 @patch("poseidon.data.remote_repository.RemoteDataRepository.from_settings")
-@patch("poseidon.workers.cpu_tasks.db_session", side_effect=_db_session_must_not_run)
+@patch("poseidon.workers.cpu_tasks.market_state.db_session", side_effect=_db_session_must_not_run)
 def test_get_perp_mark_prices_uses_remote_repository(_mock_db_session, mock_from_settings):
     mock_repo = MagicMock()
     mock_repo.read_latest_price.return_value = 31250.0

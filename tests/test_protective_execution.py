@@ -42,8 +42,11 @@ from poseidon.models.strategy_version import StrategyVersion, strategy_version_d
 from poseidon.positions.lots import FillProjectionConflictError
 from poseidon.strategies.portfolio.position_tracker import PositionTracker
 from poseidon.strategies.portfolio.schemas import RebalanceOrder
-from poseidon.workers import cpu_tasks
-from poseidon.workers.cpu_tasks import _protective_execution_route
+from poseidon.workers.cpu_tasks import execution as cpu_execution
+from poseidon.workers.cpu_tasks import perp as cpu_perp
+from poseidon.workers.cpu_tasks import portfolio as cpu_portfolio
+from poseidon.workers.cpu_tasks.execution import _protective_execution_route
+from tests.cpu_tasks_support import cpu_task, patch_cpu_tasks
 from tests.test_decision_service import worker
 from tests.test_position_lot_allocation import project
 from tests.test_position_lot_allocation import seed as _position_lot_seed
@@ -517,12 +520,12 @@ def test_tw_approved_legacy_holding_creates_durable_null_decision_order(monkeypa
     holding_id, _account_id = _legacy_holding(seed)
     _exact_settings(monkeypatch, mode=mode, market="tw_stock", scope=seed.account)
     monkeypatch.setattr(settings, "decision_loop_legacy_protective_scopes", (seed.account,))
-    monkeypatch.setattr(cpu_tasks, "datetime", _TradingTime)
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": 80.0})
+    patch_cpu_tasks(monkeypatch, "datetime", _TradingTime)
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda _symbols: {"2330": 80.0})
     queued = []
-    monkeypatch.setattr(cpu_tasks.submit_decision_order, "delay", lambda order_id: queued.append(order_id))
+    monkeypatch.setattr(cpu_execution.submit_decision_order, "delay", lambda order_id: queued.append(order_id))
 
-    result = cpu_tasks.portfolio_stop_loss_monitor.run()
+    result = cpu_portfolio.portfolio_stop_loss_monitor.run()
 
     assert len(result["durable_order_ids"]) == 1
     assert queued == result["durable_order_ids"]
@@ -1498,9 +1501,9 @@ def test_projected_holding_is_not_a_legacy_protective_source(monkeypatch, seed):
     _holding_id, _account_id = _legacy_holding(seed, projected=True)
     _exact_settings(monkeypatch, mode="decision", market="tw_stock", scope=seed.account)
     monkeypatch.setattr(settings, "decision_loop_legacy_protective_scopes", (seed.account,))
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": 1.0})
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda _symbols: {"2330": 1.0})
 
-    result = cpu_tasks._durable_protective_triggers("tw_stock")
+    result = cpu_execution._durable_protective_triggers("tw_stock")
 
     assert result["triggered"] == {}
     assert result.get("legacy_sources", {}) == {}
@@ -1512,9 +1515,9 @@ def test_other_account_projected_marker_is_not_a_legacy_source(monkeypatch, seed
         session.get(PortfolioHoldingRecord, holding_id).strategy_name = f"decision-lots:{uuid.uuid4()}"
     _exact_settings(monkeypatch, mode="decision", market="tw_stock", scope=seed.account)
     monkeypatch.setattr(settings, "decision_loop_legacy_protective_scopes", (seed.account,))
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": 1.0})
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda _symbols: {"2330": 1.0})
 
-    result = cpu_tasks._durable_protective_triggers("tw_stock")
+    result = cpu_execution._durable_protective_triggers("tw_stock")
 
     assert result["triggered"] == {}
     assert result.get("legacy_sources", {}) == {}
@@ -1526,9 +1529,9 @@ def test_invalid_legacy_risk_does_not_suppress_valid_durable_lot_trigger(monkeyp
     _set_owner_protection(seed, decision_id, stop_loss_pct=0.10)
     _exact_settings(monkeypatch, mode="decision", market="tw_stock", scope=seed.account)
     monkeypatch.setattr(settings, "decision_loop_legacy_protective_scopes", (seed.account,))
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": 80.0})
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda _symbols: {"2330": 80.0})
 
-    result = cpu_tasks._durable_protective_triggers("tw_stock")
+    result = cpu_execution._durable_protective_triggers("tw_stock")
 
     assert result["triggered"] == {("tw_stock", "2330", "spot", "long"): 80.0}
     assert result["legacy_sources"] == {}
@@ -1541,12 +1544,12 @@ def test_tw_monitor_splits_durable_lot_and_allowlisted_legacy_holding_sources(mo
     _set_owner_protection(seed, decision_id, stop_loss_pct=0.10)
     _exact_settings(monkeypatch, mode="halted", market="tw_stock", scope=seed.account)
     monkeypatch.setattr(settings, "decision_loop_legacy_protective_scopes", (seed.account,))
-    monkeypatch.setattr(cpu_tasks, "datetime", _TradingTime)
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": 80.0})
+    patch_cpu_tasks(monkeypatch, "datetime", _TradingTime)
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda _symbols: {"2330": 80.0})
     queued = []
-    monkeypatch.setattr(cpu_tasks.submit_decision_order, "delay", lambda order_id: queued.append(order_id))
+    monkeypatch.setattr(cpu_execution.submit_decision_order, "delay", lambda order_id: queued.append(order_id))
 
-    result = cpu_tasks.portfolio_stop_loss_monitor.run()
+    result = cpu_portfolio.portfolio_stop_loss_monitor.run()
 
     assert len(result["durable_order_ids"]) == 2
     assert sorted(queued) == sorted(result["durable_order_ids"])
@@ -2200,9 +2203,9 @@ def test_trace_adds_fill_allocation_lots_and_reconciliation_without_snapshots(se
 def test_durable_trigger_missing_owner_risk_values_fails_closed(monkeypatch, seed):
     _opening(seed)
     _exact_settings(monkeypatch, mode="decision", market="tw_stock", scope=seed.account)
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": 1.0})
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda _symbols: {"2330": 1.0})
 
-    result = cpu_tasks._durable_protective_triggers("tw_stock")
+    result = cpu_execution._durable_protective_triggers("tw_stock")
 
     assert result == {"checked": 1, "triggered": {}, "skipped": "protective_policy_unresolved"}
 
@@ -2213,9 +2216,9 @@ def test_tw_mixed_lots_use_earliest_owner_frozen_stop(monkeypatch, seed):
     _set_owner_protection(seed, first_decision, stop_loss_pct=0.20)
     _set_owner_protection(seed, second_decision, stop_loss_pct=0.05)
     _exact_settings(monkeypatch, mode="decision", market="tw_stock", scope=seed.account)
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": 94.0})
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda _symbols: {"2330": 94.0})
 
-    result = cpu_tasks._durable_protective_triggers("tw_stock")
+    result = cpu_execution._durable_protective_triggers("tw_stock")
 
     assert result["triggered"] == {("tw_stock", "2330", "spot", "long"): 94.0}
 
@@ -2246,9 +2249,9 @@ def test_mixed_cost_lots_evaluate_each_owner_stop_before_identity_merge(
     _set_owner_protection(seed, first_decision, stop_loss_pct=0.20)
     _set_owner_protection(seed, second_decision, stop_loss_pct=0.05)
     _exact_settings(monkeypatch, mode="decision", market="tw_stock", scope=seed.account)
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": mark})
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda _symbols: {"2330": mark})
 
-    result = cpu_tasks._durable_protective_triggers("tw_stock")
+    result = cpu_execution._durable_protective_triggers("tw_stock")
 
     assert result["triggered"] == {("tw_stock", "2330", "spot", side): mark}
 
@@ -2263,9 +2266,9 @@ def test_trigger_identity_does_not_collapse_same_symbol_opposite_side(monkeypatc
     _set_owner_protection(seed, long_decision, stop_loss_pct=0.10)
     _set_owner_protection(seed, short_decision, stop_loss_pct=0.10)
     _exact_settings(monkeypatch, mode="decision", market="tw_stock", scope=seed.account)
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": 80.0})
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda _symbols: {"2330": 80.0})
 
-    result = cpu_tasks._durable_protective_triggers("tw_stock")
+    result = cpu_execution._durable_protective_triggers("tw_stock")
 
     assert result["triggered"] == {("tw_stock", "2330", "spot", "long"): 80.0}
 
@@ -2299,14 +2302,14 @@ def test_tw_decision_monitor_uses_durable_lot_without_legacy_holding(monkeypatch
     _lot, decision_id = _opening(seed)
     _set_owner_protection(seed, decision_id, stop_loss_pct=0.10)
     _exact_settings(monkeypatch, mode="decision", market="tw_stock", scope=seed.account)
-    monkeypatch.setattr(cpu_tasks, "datetime", _TradingTime)
-    monkeypatch.setattr(cpu_tasks, "_build_position_tracker", lambda: pytest.fail("legacy tracker called"))
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": 80.0})
-    monkeypatch.setattr(cpu_tasks, "_build_tw_stock_broker", lambda *_args: pytest.fail("legacy broker called"))
+    patch_cpu_tasks(monkeypatch, "datetime", _TradingTime)
+    patch_cpu_tasks(monkeypatch, "_build_position_tracker", lambda: pytest.fail("legacy tracker called"))
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda _symbols: {"2330": 80.0})
+    patch_cpu_tasks(monkeypatch, "_build_tw_stock_broker", lambda *_args: pytest.fail("legacy broker called"))
     calls = []
-    monkeypatch.setattr(cpu_tasks, "_run_durable_protective", lambda **kwargs: calls.append(kwargs) or ["order-1"])
+    patch_cpu_tasks(monkeypatch, "_run_durable_protective", lambda **kwargs: calls.append(kwargs) or ["order-1"])
 
-    result = cpu_tasks.portfolio_stop_loss_monitor.run()
+    result = cpu_portfolio.portfolio_stop_loss_monitor.run()
 
     assert result["durable_order_ids"] == ["order-1"]
     assert calls[0]["origin"] == "stop_loss"
@@ -2327,13 +2330,13 @@ def test_perp_halted_monitor_uses_durable_lot_without_legacy_adapter(monkeypatch
         decision_id = lot.opening_decision_id
     _set_owner_protection(seed, decision_id, leverage=3.0, margin_ratio_threshold=0.15)
     _exact_settings(monkeypatch, mode="halted", market="crypto_perp", scope=seed.account)
-    monkeypatch.setattr(cpu_tasks, "_build_perp_adapter_from_db", lambda: pytest.fail("legacy adapter called"))
-    monkeypatch.setattr(cpu_tasks, "_get_perp_mark_prices", lambda _symbols: {"BTCUSDT": 10.0})
-    monkeypatch.setattr(cpu_tasks, "_build_position_tracker", lambda: pytest.fail("legacy tracker called"))
+    patch_cpu_tasks(monkeypatch, "_build_perp_adapter_from_db", lambda: pytest.fail("legacy adapter called"))
+    patch_cpu_tasks(monkeypatch, "_get_perp_mark_prices", lambda _symbols: {"BTCUSDT": 10.0})
+    patch_cpu_tasks(monkeypatch, "_build_position_tracker", lambda: pytest.fail("legacy tracker called"))
     calls = []
-    monkeypatch.setattr(cpu_tasks, "_run_durable_protective", lambda **kwargs: calls.append(kwargs) or ["order-2"])
+    patch_cpu_tasks(monkeypatch, "_run_durable_protective", lambda **kwargs: calls.append(kwargs) or ["order-2"])
 
-    result = cpu_tasks.perp_liquidation_monitor.run()
+    result = cpu_perp.perp_liquidation_monitor.run()
 
     assert result["durable_order_ids"] == ["order-2"]
     assert calls[0]["origin"] == "liquidation"
@@ -2342,21 +2345,21 @@ def test_perp_halted_monitor_uses_durable_lot_without_legacy_adapter(monkeypatch
 
 def test_tw_legacy_monitor_does_not_call_durable_service(monkeypatch):
     _exact_settings(monkeypatch, mode="legacy", market="tw_stock")
-    monkeypatch.setattr(cpu_tasks, "datetime", _TradingTime)
-    monkeypatch.setattr(cpu_tasks, "_run_durable_protective", lambda **_kwargs: pytest.fail("durable called"))
+    patch_cpu_tasks(monkeypatch, "datetime", _TradingTime)
+    patch_cpu_tasks(monkeypatch, "_run_durable_protective", lambda **_kwargs: pytest.fail("durable called"))
     tracker = type("EmptyTracker", (), {"current_holdings": lambda _self: {}})()
-    monkeypatch.setattr(cpu_tasks, "_build_position_tracker", lambda: tracker)
+    patch_cpu_tasks(monkeypatch, "_build_position_tracker", lambda: tracker)
 
-    assert cpu_tasks.portfolio_stop_loss_monitor.run() == {"checked": 0, "stopped_out": []}
+    assert cpu_portfolio.portfolio_stop_loss_monitor.run() == {"checked": 0, "stopped_out": []}
 
 
 def test_perp_shadow_monitor_does_not_call_durable_service(monkeypatch):
     _exact_settings(monkeypatch, mode="shadow", market="crypto_perp")
-    monkeypatch.setattr(cpu_tasks, "_run_durable_protective", lambda **_kwargs: pytest.fail("durable called"))
+    patch_cpu_tasks(monkeypatch, "_run_durable_protective", lambda **_kwargs: pytest.fail("durable called"))
     adapter = type("EmptyPerpAdapter", (), {"_positions": {}})()
-    monkeypatch.setattr(cpu_tasks, "_build_perp_adapter_from_db", lambda: adapter)
+    patch_cpu_tasks(monkeypatch, "_build_perp_adapter_from_db", lambda: adapter)
 
-    assert cpu_tasks.perp_liquidation_monitor.run() == {"checked": 0, "closed": []}
+    assert cpu_perp.perp_liquidation_monitor.run() == {"checked": 0, "closed": []}
 
 
 @pytest.mark.parametrize("allowlisted", [False, True])
@@ -2377,13 +2380,13 @@ def test_perp_legacy_fallback_requires_explicit_scope_allowlist(monkeypatch, see
     )
     calls = []
     adapter = type("EmptyPerpAdapter", (), {"_positions": {}})()
-    monkeypatch.setattr(
-        cpu_tasks,
+    patch_cpu_tasks(
+        monkeypatch,
         "_build_perp_adapter_from_db",
         lambda: calls.append("legacy") or adapter,
     )
 
-    result = cpu_tasks.perp_liquidation_monitor.run()
+    result = cpu_perp.perp_liquidation_monitor.run()
 
     assert calls == (["legacy"] if allowlisted else [])
     if not allowlisted:
@@ -2413,10 +2416,10 @@ def test_perp_allowlist_fallback_excludes_durable_lot_identity_from_legacy_close
     )
     _exact_settings(monkeypatch, mode="halted", market="crypto_perp", scope=seed.account)
     monkeypatch.setattr(settings, "decision_loop_legacy_protective_scopes", (seed.account,))
-    monkeypatch.setattr(cpu_tasks, "_get_perp_mark_prices", lambda _symbols: {"BTCUSDT": 10.0, "ETHUSDT": 90.0})
+    patch_cpu_tasks(monkeypatch, "_get_perp_mark_prices", lambda _symbols: {"BTCUSDT": 10.0, "ETHUSDT": 90.0})
     durable_calls = []
-    monkeypatch.setattr(
-        cpu_tasks,
+    patch_cpu_tasks(
+        monkeypatch,
         "_run_durable_protective",
         lambda **kwargs: durable_calls.append(kwargs) or ["durable-order"],
     )
@@ -2441,12 +2444,12 @@ def test_perp_allowlist_fallback_excludes_durable_lot_identity_from_legacy_close
             captured.extend(order.symbol for order in orders)
             return [type("Result", (), {"success": False})() for _order in orders]
 
-    monkeypatch.setattr(cpu_tasks, "_build_perp_adapter_from_db", LegacyAdapter)
-    monkeypatch.setattr(cpu_tasks, "_build_position_tracker", lambda: object())
+    patch_cpu_tasks(monkeypatch, "_build_perp_adapter_from_db", LegacyAdapter)
+    patch_cpu_tasks(monkeypatch, "_build_position_tracker", lambda: object())
     monkeypatch.setattr("poseidon.orders.manager.OrderManager", LegacyManager)
     monkeypatch.setattr("poseidon.broker.perp_paper_adapter.PerpPaperAdapter", LegacyAdapter)
 
-    result = cpu_tasks.perp_liquidation_monitor.run()
+    result = cpu_perp.perp_liquidation_monitor.run()
 
     assert result["durable_order_ids"] == ["durable-order"]
     assert durable_calls[0]["triggered"] == {
@@ -2526,7 +2529,7 @@ def test_recovery_sweep_routes_unlinked_protective_order_by_order_uuid(seed, mon
         order.reconciliation_status = "required"
         order.submit_attempted_at = NOW
 
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", seed.sessions)
+    patch_cpu_tasks(monkeypatch, "SessionLocal", seed.sessions)
     queued = []
     for name in (
         "materialize_execution_claim",
@@ -2535,9 +2538,9 @@ def test_recovery_sweep_routes_unlinked_protective_order_by_order_uuid(seed, mon
         "project_decision_fill",
         "reconcile_paper_account",
     ):
-        monkeypatch.setattr(getattr(cpu_tasks, name), "delay", lambda value, name=name: queued.append((name, value)))
+        monkeypatch.setattr(cpu_task(name), "delay", lambda value, name=name: queued.append((name, value)))
 
-    result = cpu_tasks.recover_decision_execution.run()
+    result = cpu_execution.recover_decision_execution.run()
 
     assert ("submit_decision_order", str(order_id)) in queued
     assert all(name != "reconcile_execution_claim" for name, _value in queued)

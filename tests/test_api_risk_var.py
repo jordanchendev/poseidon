@@ -108,7 +108,7 @@ def test_stress_test_trigger(client):
     mock_task = MagicMock()
     mock_task.id = "abc-123-task"
 
-    with patch("poseidon.workers.cpu_tasks.run_stress_test") as mock_fn:
+    with patch("poseidon.workers.cpu_tasks.risk.run_stress_test") as mock_fn:
         mock_fn.delay.return_value = mock_task
         resp = client.post(
             "/api/risk/stress-test/run",

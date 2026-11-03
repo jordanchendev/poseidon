@@ -18,6 +18,7 @@ from poseidon.decision_loop.outcome_manifest import (
     validate_session_calendar,
 )
 from poseidon.decision_loop.outcomes import _manifest_facts, validate_outcome_label_contract
+from tests.cpu_tasks_support import patch_cpu_tasks
 
 POSEIDON_ROOT = Path(__file__).resolve().parents[1]
 CALENDAR_PATH = POSEIDON_ROOT / "config" / "calendars" / "xtai_1d_sessions.json"
@@ -293,13 +294,13 @@ def task_settings(mode="shadow", **changes):
 
 def _patch_task(monkeypatch, session_factory, repository, **settings_changes):
     from poseidon.data.remote_repository import RemoteDataRepository
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import outcomes as cpu_outcomes
 
-    monkeypatch.setattr(cpu_tasks, "settings", task_settings(**settings_changes))
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", session_factory)
-    monkeypatch.setattr(cpu_tasks, "OUTCOME_CALENDAR_PATH", str(CALENDAR_PATH))
+    patch_cpu_tasks(monkeypatch, "settings", task_settings(**settings_changes))
+    patch_cpu_tasks(monkeypatch, "SessionLocal", session_factory)
+    patch_cpu_tasks(monkeypatch, "OUTCOME_CALENDAR_PATH", str(CALENDAR_PATH))
     monkeypatch.setattr(RemoteDataRepository, "from_settings", staticmethod(lambda: repository))
-    return cpu_tasks
+    return cpu_outcomes
 
 
 @pytest.fixture
@@ -399,11 +400,11 @@ def _bars_through(last_session):
 
 @pytest.mark.parametrize("mode", ["legacy", "halted"])
 def test_task_is_a_write_free_no_op_outside_shadow_and_decision(monkeypatch, mode):
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import outcomes as cpu_outcomes
 
-    monkeypatch.setattr(cpu_tasks, "settings", task_settings(mode))
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: pytest.fail("no-op mode opened a session"))
-    assert cpu_tasks.freeze_outcome_manifests.run(_iso(AS_OF)) == {"skipped": mode}
+    patch_cpu_tasks(monkeypatch, "settings", task_settings(mode))
+    patch_cpu_tasks(monkeypatch, "SessionLocal", lambda: pytest.fail("no-op mode opened a session"))
+    assert cpu_outcomes.freeze_outcome_manifests.run(_iso(AS_OF)) == {"skipped": mode}
 
 
 @pytest.mark.parametrize(
@@ -415,21 +416,21 @@ def test_task_is_a_write_free_no_op_outside_shadow_and_decision(monkeypatch, mod
     ],
 )
 def test_task_gates_before_any_session(monkeypatch, changes, expected):
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import outcomes as cpu_outcomes
 
-    monkeypatch.setattr(cpu_tasks, "settings", task_settings("decision", **changes))
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: pytest.fail(f"{expected} opened a session"))
-    assert cpu_tasks.freeze_outcome_manifests.run(_iso(AS_OF)) == {"skipped": expected}
+    patch_cpu_tasks(monkeypatch, "settings", task_settings("decision", **changes))
+    patch_cpu_tasks(monkeypatch, "SessionLocal", lambda: pytest.fail(f"{expected} opened a session"))
+    assert cpu_outcomes.freeze_outcome_manifests.run(_iso(AS_OF)) == {"skipped": expected}
 
 
 def test_task_never_retries_and_is_registered():
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import outcomes as cpu_outcomes
 
-    task = cpu_tasks.freeze_outcome_manifests
+    task = cpu_outcomes.freeze_outcome_manifests
     assert task.name == "poseidon.workers.cpu_tasks.freeze_outcome_manifests"
     assert task.max_retries == 0
     # The worker resolves the calendar relative to /app (Dockerfile: COPY config/ config/).
-    assert (POSEIDON_ROOT / cpu_tasks.OUTCOME_CALENDAR_PATH).resolve() == CALENDAR_PATH.resolve()
+    assert (POSEIDON_ROOT / cpu_outcomes.OUTCOME_CALENDAR_PATH).resolve() == CALENDAR_PATH.resolve()
     assert "COPY config/ config/" in (POSEIDON_ROOT / "Dockerfile").read_text()
 
 
@@ -448,9 +449,9 @@ def test_contract_version_must_resolve_exactly_once(monkeypatch, sqlite_factory,
             )
         session.commit()
     repository = FakeRepository(_bars_through(SESSION_S1))
-    cpu_tasks = _patch_task(monkeypatch, sqlite_factory, repository)
+    cpu_outcomes = _patch_task(monkeypatch, sqlite_factory, repository)
     with pytest.raises(ValueError, match="must resolve exactly once"):
-        cpu_tasks.freeze_outcome_manifests.run(_iso(AS_OF))
+        cpu_outcomes.freeze_outcome_manifests.run(_iso(AS_OF))
     assert repository.calls == []
 
 
@@ -462,18 +463,18 @@ def test_task_freezes_one_manifest_per_symbol_insert_once(monkeypatch, sqlite_fa
     with sqlite_factory() as session:
         _seed_pilot(session)
     repository = FakeRepository(_bars_through(SESSION_S1))
-    cpu_tasks = _patch_task(monkeypatch, sqlite_factory, repository, mode="decision")
-    first = cpu_tasks.freeze_outcome_manifests.run(_iso(AS_OF))
+    cpu_outcomes = _patch_task(monkeypatch, sqlite_factory, repository, mode="decision")
+    first = cpu_outcomes.freeze_outcome_manifests.run(_iso(AS_OF))
     assert set(first) == {"as_of", "manifests", "skipped_symbols"}
     assert first["as_of"] == _iso(AS_OF)
     assert list(first["manifests"]) == ["2330"]
     assert first["skipped_symbols"] == {}
     assert {call[0] for call in repository.calls} == {"2330", "0050"}
     assert all(call[1:3] == ("tw_stock", "1d") and call[4] == AS_OF for call in repository.calls)
-    second = cpu_tasks.freeze_outcome_manifests.run(_iso(AS_OF))
+    second = cpu_outcomes.freeze_outcome_manifests.run(_iso(AS_OF))
     assert second == first
     with sqlite_factory() as session:
-        outcome_rows = [row for row in session.query(DataManifest) if cpu_tasks._is_outcome_manifest(row)]
+        outcome_rows = [row for row in session.query(DataManifest) if cpu_outcomes._is_outcome_manifest(row)]
         assert [str(row.id) for row in outcome_rows] == [first["manifests"]["2330"]]
         payload = verify_manifest(outcome_rows[0])
         values = {item["kind"]: item for item in payload["evidence"]}["price"]["payload"]["values"]
@@ -489,28 +490,28 @@ def test_weekend_cutoff_skips_symbol_as_price_stale(monkeypatch, sqlite_factory)
 
     with sqlite_factory() as session:
         _seed_pilot(session)
-    cpu_tasks = _patch_task(monkeypatch, sqlite_factory, FakeRepository(_bars_through(FRIDAY)))
-    result = cpu_tasks.freeze_outcome_manifests.run(_iso(SATURDAY_AS_OF))
+    cpu_outcomes = _patch_task(monkeypatch, sqlite_factory, FakeRepository(_bars_through(FRIDAY)))
+    result = cpu_outcomes.freeze_outcome_manifests.run(_iso(SATURDAY_AS_OF))
     assert result == {"as_of": _iso(SATURDAY_AS_OF), "manifests": {}, "skipped_symbols": {"2330": "price_stale"}}
     with sqlite_factory() as session:
-        assert not [row for row in session.query(DataManifest) if cpu_tasks._is_outcome_manifest(row)]
+        assert not [row for row in session.query(DataManifest) if cpu_outcomes._is_outcome_manifest(row)]
 
 
 def test_missing_bars_are_skipped_with_a_reason(monkeypatch, sqlite_factory):
     with sqlite_factory() as session:
         _seed_pilot(session)
-    cpu_tasks = _patch_task(monkeypatch, sqlite_factory, FakeRepository({"2330": daily_bars(SESSION_S1)}))
-    assert cpu_tasks.freeze_outcome_manifests.run(_iso(AS_OF))["skipped_symbols"] == {"2330": "benchmark_missing"}
-    cpu_tasks = _patch_task(monkeypatch, sqlite_factory, FakeRepository({"0050": daily_bars(SESSION_S1)}))
-    assert cpu_tasks.freeze_outcome_manifests.run(_iso(AS_OF))["skipped_symbols"] == {"2330": "price_missing"}
+    cpu_outcomes = _patch_task(monkeypatch, sqlite_factory, FakeRepository({"2330": daily_bars(SESSION_S1)}))
+    assert cpu_outcomes.freeze_outcome_manifests.run(_iso(AS_OF))["skipped_symbols"] == {"2330": "benchmark_missing"}
+    cpu_outcomes = _patch_task(monkeypatch, sqlite_factory, FakeRepository({"0050": daily_bars(SESSION_S1)}))
+    assert cpu_outcomes.freeze_outcome_manifests.run(_iso(AS_OF))["skipped_symbols"] == {"2330": "price_missing"}
 
 
 def test_no_active_pilot_freezes_nothing(monkeypatch, sqlite_factory):
     with sqlite_factory() as session:
         _seed_pilot(session, active=False)
     repository = FakeRepository(_bars_through(SESSION_S1))
-    cpu_tasks = _patch_task(monkeypatch, sqlite_factory, repository)
-    assert cpu_tasks.freeze_outcome_manifests.run(_iso(AS_OF)) == {"skipped": "no_active_strategies"}
+    cpu_outcomes = _patch_task(monkeypatch, sqlite_factory, repository)
+    assert cpu_outcomes.freeze_outcome_manifests.run(_iso(AS_OF)) == {"skipped": "no_active_strategies"}
     assert repository.calls == []
 
 
@@ -643,25 +644,25 @@ def test_frozen_outcome_manifest_feeds_the_labeler(monkeypatch, phase99_session_
         lambda self, market, interval, scope: [self.session.get(StrategyVersion, version_id)],
     )
     repository = FakeRepository({symbol: daily_bars(SESSION_S1), "0050": daily_bars(SESSION_S1, base=200.0)})
-    cpu_tasks = _patch_task(
+    cpu_outcomes = _patch_task(
         monkeypatch,
         phase99_session_factory,
         repository,
         mode="decision",
         decision_loop_label_definition_version=label_version,
     )
-    frozen = cpu_tasks.freeze_outcome_manifests.run(_iso(AS_OF))
+    frozen = cpu_outcomes.freeze_outcome_manifests.run(_iso(AS_OF))
     assert frozen["skipped_symbols"] == {}
     manifest_id = frozen["manifests"][symbol]
 
     with phase99_session_factory() as session:
-        assert cpu_tasks._latest_outcome_as_of(session, AS_OF + timedelta(minutes=10)) == _iso(AS_OF)
-        batches, unlabeled = cpu_tasks._mature_outcome_batches(session, _iso(AS_OF), label_version)
+        assert cpu_outcomes._latest_outcome_as_of(session, AS_OF + timedelta(minutes=10)) == _iso(AS_OF)
+        batches, unlabeled = cpu_outcomes._mature_outcome_batches(session, _iso(AS_OF), label_version)
     assert snapshot_id in batches[uuid.UUID(manifest_id)]
     assert str(snapshot_id) not in unlabeled
 
     # The 07:30Z labeler labels against the 07:20Z cutoff it finds (as_of must equal the manifest cutoff).
-    labeled = cpu_tasks.label_decision_outcomes.run(_iso(AS_OF))
+    labeled = cpu_outcomes.label_decision_outcomes.run(_iso(AS_OF))
     assert labeled["label_definition_version"] == label_version
     with phase99_session_factory() as session:
         rows = session.query(OutcomeRecord).filter_by(evaluation_snapshot_id=snapshot_id).all()

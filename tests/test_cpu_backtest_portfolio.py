@@ -22,11 +22,11 @@ def _make_ohlcv() -> pd.DataFrame:
     )
 
 
-@patch("poseidon.workers.cpu_tasks.BacktestRepository")
+@patch("poseidon.workers.cpu_tasks.backtests.BacktestRepository")
 @patch("poseidon.backtest.portfolio_backtester.PortfolioBacktester")
 @patch("poseidon.strategies.portfolio.registry.get_portfolio_strategy")
 @patch("poseidon.data.remote_repository.RemoteDataRepository")
-@patch("poseidon.workers.cpu_tasks.db_session")
+@patch("poseidon.workers.cpu_tasks.backtests.db_session")
 def test_run_backtest_task_supports_portfolio_strategy(
     mock_db_session,
     mock_remote_repository_cls,
@@ -34,7 +34,7 @@ def test_run_backtest_task_supports_portfolio_strategy(
     mock_portfolio_backtester_cls,
     mock_backtest_repository_cls,
 ):
-    from poseidon.workers.cpu_tasks import run_backtest_task
+    from poseidon.workers.cpu_tasks.backtests import run_backtest_task
 
     strategy_id = uuid.uuid4()
     record = SimpleNamespace(

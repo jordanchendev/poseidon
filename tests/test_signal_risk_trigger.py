@@ -3,10 +3,10 @@
 from unittest.mock import patch
 
 
-@patch("poseidon.workers.cpu_tasks.compute_var_snapshot")
+@patch("poseidon.workers.cpu_tasks.risk.compute_var_snapshot")
 def test_trigger_risk_update_calls_var_snapshot(mock_var_snapshot):
     """trigger_risk_update calls compute_var_snapshot with 'historical'."""
-    from poseidon.workers.cpu_tasks import trigger_risk_update
+    from poseidon.workers.cpu_tasks.risk import trigger_risk_update
 
     mock_var_snapshot.return_value = {"status": "ok", "methods": ["historical"]}
 
@@ -15,10 +15,10 @@ def test_trigger_risk_update_calls_var_snapshot(mock_var_snapshot):
     mock_var_snapshot.assert_called_once_with("historical")
 
 
-@patch("poseidon.workers.cpu_tasks.compute_var_snapshot")
+@patch("poseidon.workers.cpu_tasks.risk.compute_var_snapshot")
 def test_trigger_risk_update_returns_result(mock_var_snapshot):
     """trigger_risk_update returns expected result dict."""
-    from poseidon.workers.cpu_tasks import trigger_risk_update
+    from poseidon.workers.cpu_tasks.risk import trigger_risk_update
 
     mock_var_snapshot.return_value = {"status": "ok"}
 
@@ -29,10 +29,10 @@ def test_trigger_risk_update_returns_result(mock_var_snapshot):
     assert result["trigger"] == "signal_generation"
 
 
-@patch("poseidon.workers.cpu_tasks.compute_var_snapshot")
+@patch("poseidon.workers.cpu_tasks.risk.compute_var_snapshot")
 def test_trigger_risk_update_accepts_eval_result(mock_var_snapshot):
     """trigger_risk_update accepts eval_result for chain compatibility."""
-    from poseidon.workers.cpu_tasks import trigger_risk_update
+    from poseidon.workers.cpu_tasks.risk import trigger_risk_update
 
     mock_var_snapshot.return_value = {"status": "ok"}
 

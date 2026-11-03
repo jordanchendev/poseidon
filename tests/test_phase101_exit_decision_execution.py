@@ -31,6 +31,7 @@ from poseidon.models.order import OrderRecord
 from poseidon.models.order_fill import OrderFillRecord
 from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.position_lot import PositionLot
+from tests.cpu_tasks_support import patch_cpu_tasks
 from tests.test_decision_service import synthetic_reconciliation_policy
 from tests.test_strategy_release import NOW as RELEASE_TIME
 from tests.test_strategy_release import _seed_gate_graph, release_manager
@@ -313,11 +314,11 @@ def test_producer_exit_decision_validates_and_is_approved(exit_seed):
 
 
 def test_ordinary_claimer_selects_the_approved_exit_decision(exit_seed, monkeypatch):
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import execution as cpu_execution
 
     decision_id = _approved_exit(exit_seed)
-    monkeypatch.setattr(
-        cpu_tasks,
+    patch_cpu_tasks(
+        monkeypatch,
         "settings",
         SimpleNamespace(
             decision_loop_approved_account_scope=exit_seed.account,
@@ -325,7 +326,7 @@ def test_ordinary_claimer_selects_the_approved_exit_decision(exit_seed, monkeypa
         ),
     )
     with Session(ENGINE) as session:
-        candidate = cpu_tasks._approved_ordinary_candidate(session, "tw_stock", CANDIDATE_TIME)
+        candidate = cpu_execution._approved_ordinary_candidate(session, "tw_stock", CANDIDATE_TIME)
         assert candidate is not None
         assert candidate.id == decision_id
         assert candidate.final_json["final_action"] == "exit"

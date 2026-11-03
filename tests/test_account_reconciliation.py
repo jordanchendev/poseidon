@@ -37,6 +37,7 @@ from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 from tests import test_position_lot_allocation as lot_tests
+from tests.cpu_tasks_support import patch_cpu_tasks
 
 NOW = lot_tests.NOW + timedelta(days=2)
 
@@ -365,7 +366,7 @@ def test_ordinary_position_survives_legacy_close_and_reconciles(monkeypatch, acc
 
 
 def test_ordinary_materialization_after_legacy_close_uses_compatible_nav(monkeypatch, account):
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import execution as cpu_execution
 
     trade(account, quantity=5, price=100, action="enter", side="long")
     legacy_close(account, monkeypatch, shares=5, entry_price=80, fill_price=80, side="long")
@@ -378,17 +379,17 @@ def test_ordinary_materialization_after_legacy_close_uses_compatible_nav(monkeyp
         decision = session.get(DecisionRecord, account.decision_id)
         decision.valid_until = execution_now + timedelta(hours=1)
 
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", account.sessions)
-    monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", lambda _market: account.adapter)
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": 100.0})
-    monkeypatch.setattr(cpu_tasks.settings, "decision_loop_execution_mode", "decision")
-    monkeypatch.setattr(cpu_tasks.settings, "decision_loop_execution_enabled", True)
-    monkeypatch.setattr(cpu_tasks.settings, "decision_loop_approved_account_scope", account.scope)
-    monkeypatch.setattr(cpu_tasks.settings, "decision_loop_approved_account_generation", "generation-1")
-    monkeypatch.setattr(cpu_tasks.settings, "decision_loop_approved_market", "tw_stock")
+    patch_cpu_tasks(monkeypatch, "SessionLocal", account.sessions)
+    patch_cpu_tasks(monkeypatch, "_decision_paper_adapter", lambda _market: account.adapter)
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda _symbols: {"2330": 100.0})
+    monkeypatch.setattr(cpu_execution.settings, "decision_loop_execution_mode", "decision")
+    monkeypatch.setattr(cpu_execution.settings, "decision_loop_execution_enabled", True)
+    monkeypatch.setattr(cpu_execution.settings, "decision_loop_approved_account_scope", account.scope)
+    monkeypatch.setattr(cpu_execution.settings, "decision_loop_approved_account_generation", "generation-1")
+    monkeypatch.setattr(cpu_execution.settings, "decision_loop_approved_market", "tw_stock")
     monkeypatch.setattr("poseidon.decision_loop.execution.timestamp", lambda _value, _field: execution_now)
 
-    result = cpu_tasks.materialize_execution_claim.run(str(account.decision_id))
+    result = cpu_execution.materialize_execution_claim.run(str(account.decision_id))
 
     assert result["status"] == "pending_submit"
     assert len(result["order_ids"]) == 1
@@ -920,12 +921,12 @@ def test_freshness_owner_max_age_and_policy_digest_block_exposure(account):
 
 def test_account_worker_uuid_only_loads_current_marks_server_side(account, monkeypatch):
     from poseidon.decision_loop import reconciliation
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import execution as cpu_execution
 
     trade(account)
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", account.sessions)
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda symbols: {"2330": 123.0})
-    monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", lambda market: account.adapter)
+    patch_cpu_tasks(monkeypatch, "SessionLocal", account.sessions)
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda symbols: {"2330": 123.0})
+    patch_cpu_tasks(monkeypatch, "_decision_paper_adapter", lambda market: account.adapter)
     captured = {}
 
     def receive(sessions, account_id, adapter, **kwargs):
@@ -933,12 +934,12 @@ def test_account_worker_uuid_only_loads_current_marks_server_side(account, monke
         return {"status": "received"}
 
     monkeypatch.setattr(reconciliation, "reconcile_account", receive)
-    assert cpu_tasks.reconcile_paper_account.run(str(account.id)) == {"status": "received"}
+    assert cpu_execution.reconcile_paper_account.run(str(account.id)) == {"status": "received"}
     assert captured == {"account_id": account.id, "prices": {("tw_stock", "2330", "spot"): 123.0}}
 
 
 def test_account_worker_missing_policy_records_unresolved(account, monkeypatch):
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import execution as cpu_execution
 
     with account.sessions() as session, session.begin():
         decision = session.get(DecisionRecord, account.decision_id)
@@ -946,15 +947,15 @@ def test_account_worker_missing_policy_records_unresolved(account, monkeypatch):
         changed = copy.deepcopy(version.policy_json)
         changed.pop("reconciliation")
         session.execute(update(StrategyVersion).where(StrategyVersion.id == version.id).values(policy_json=changed))
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", account.sessions)
-    original = cpu_tasks._decision_paper_adapter
+    patch_cpu_tasks(monkeypatch, "SessionLocal", account.sessions)
+    original = cpu_execution._decision_paper_adapter
 
     def adapter(market):
         original(market)  # Preserve the real market selection guard.
         return account.adapter
 
-    monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", adapter)
-    result = cpu_tasks.reconcile_paper_account.run(str(account.id))
+    patch_cpu_tasks(monkeypatch, "_decision_paper_adapter", adapter)
+    result = cpu_execution.reconcile_paper_account.run(str(account.id))
     assert result["status"] == "unresolved"
     assert stored(account, result).difference_json["unresolved"]
 

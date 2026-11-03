@@ -4,6 +4,8 @@ After the Beat split, data ingest tasks live in Thalassa.
 No task should run on both services.
 """
 
+from tests.cpu_tasks_support import cpu_task
+
 
 def test_poseidon_beat_has_no_data_ingest_tasks():
     from poseidon.workers.celery_app import celery_app
@@ -68,8 +70,8 @@ def test_poseidon_beat_entry_count():
 
 
 def test_cutover_preserves_redbeat_names_and_recovery_protective_symbols():
-    from poseidon.workers import cpu_tasks
     from poseidon.workers.celery_app import celery_app
+    from poseidon.workers.cpu_tasks import execution as cpu_execution
 
     schedule = celery_app.conf.beat_schedule
     for entry, task in [
@@ -79,10 +81,10 @@ def test_cutover_preserves_redbeat_names_and_recovery_protective_symbols():
         ("perp-liquidation-monitor", "perp_liquidation_monitor"),
     ]:
         assert schedule[entry]["task"] == "poseidon.workers.cpu_tasks." + task
-        assert callable(getattr(cpu_tasks, task).run)
-    assert callable(cpu_tasks.reconcile_execution_claim.run)
-    assert callable(cpu_tasks.reconcile_paper_account.run)
-    assert callable(cpu_tasks.recover_decision_execution.run)
+        assert callable(cpu_task(task).run)
+    assert callable(cpu_execution.reconcile_execution_claim.run)
+    assert callable(cpu_execution.reconcile_paper_account.run)
+    assert callable(cpu_execution.recover_decision_execution.run)
 
 
 def test_portfolio_rebalance_weekday_claim_slot():

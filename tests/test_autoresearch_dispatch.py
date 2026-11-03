@@ -295,7 +295,7 @@ def test_regime_search_run_accepts_market_symbol_interval_kwargs():
 
 def test_factory_registry_voting_returns_none():
     """FACTORY_REGISTRY['voting']() returns None (backward compat with VotingStrategyFactory default)."""
-    # Simulate the FACTORY_REGISTRY construction as in cpu_tasks.py
+    # Simulate the FACTORY_REGISTRY construction as in workers/cpu_tasks/research.py
     from poseidon.backtest.liquidity_sweep_factory import LiquiditySweepStrategyFactory
     from poseidon.backtest.model_strategy_factory import ModelStrategyFactory
     from poseidon.backtest.rule_strategy_factory import RuleStrategyFactory

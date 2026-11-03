@@ -34,6 +34,7 @@ from poseidon.models.position_lot import PositionLot
 from poseidon.models.signal import SignalRecord
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
+from tests.cpu_tasks_support import cpu_task, patch_cpu_tasks
 from tests.test_decision_service import synthetic_policy, synthetic_reconciliation_policy
 
 POSEIDON_ROOT = Path(__file__).resolve().parents[1]
@@ -491,10 +492,8 @@ def test_active_versions_read_only_match_market_interval_and_scope(db):
 def test_market_tasks_are_no_ops_outside_shadow_and_decision(monkeypatch, mode, task_name):
     from types import SimpleNamespace
 
-    from poseidon.workers import cpu_tasks
-
-    monkeypatch.setattr(
-        cpu_tasks,
+    patch_cpu_tasks(
+        monkeypatch,
         "settings",
         SimpleNamespace(
             decision_loop_execution_mode=mode,
@@ -502,28 +501,28 @@ def test_market_tasks_are_no_ops_outside_shadow_and_decision(monkeypatch, mode, 
             decision_loop_approved_account_scope=ACCOUNT,
         ),
     )
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: pytest.fail("legacy mode opened a session"))
-    assert getattr(cpu_tasks, task_name).run("tw_stock", "1d", AS_OF) == {"skipped": mode}
+    patch_cpu_tasks(monkeypatch, "SessionLocal", lambda: pytest.fail("legacy mode opened a session"))
+    assert cpu_task(task_name).run("tw_stock", "1d", AS_OF) == {"skipped": mode}
 
 
 @pytest.mark.parametrize("mode", ["legacy", "halted"])
 def test_produce_task_is_a_no_op_outside_shadow_and_decision(monkeypatch, mode):
     from types import SimpleNamespace
 
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import decision_runs as cpu_decision_runs
 
-    monkeypatch.setattr(cpu_tasks, "settings", SimpleNamespace(decision_loop_execution_mode=mode))
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: pytest.fail("legacy mode opened a session"))
-    assert cpu_tasks.produce_decision_run.run(str(uuid.uuid4()), str(uuid.uuid4()), AS_OF) == {"skipped": mode}
+    patch_cpu_tasks(monkeypatch, "settings", SimpleNamespace(decision_loop_execution_mode=mode))
+    patch_cpu_tasks(monkeypatch, "SessionLocal", lambda: pytest.fail("legacy mode opened a session"))
+    assert cpu_decision_runs.produce_decision_run.run(str(uuid.uuid4()), str(uuid.uuid4()), AS_OF) == {"skipped": mode}
 
 
 def test_market_task_skips_unapproved_market(monkeypatch):
     from types import SimpleNamespace
 
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import decision_runs as cpu_decision_runs
 
-    monkeypatch.setattr(
-        cpu_tasks,
+    patch_cpu_tasks(
+        monkeypatch,
         "settings",
         SimpleNamespace(
             decision_loop_execution_mode="shadow",
@@ -531,8 +530,10 @@ def test_market_task_skips_unapproved_market(monkeypatch):
             decision_loop_approved_account_scope=ACCOUNT,
         ),
     )
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: pytest.fail("unapproved market opened a session"))
-    assert cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", AS_OF) == {"skipped": "market_not_approved"}
+    patch_cpu_tasks(monkeypatch, "SessionLocal", lambda: pytest.fail("unapproved market opened a session"))
+    assert cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", AS_OF) == {
+        "skipped": "market_not_approved"
+    }
 
 
 def test_produce_task_resolves_worker_from_configured_principals(monkeypatch, db):
@@ -541,7 +542,7 @@ def test_produce_task_resolves_worker_from_configured_principals(monkeypatch, db
     from types import SimpleNamespace
 
     from poseidon.core.config import settings as global_settings
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import decision_runs as cpu_decision_runs
 
     version = make_version(db)
     manifest = ManifestService(db).freeze(manifest_request())
@@ -559,8 +560,8 @@ def test_produce_task_resolves_worker_from_configured_principals(monkeypatch, db
             }
         ),
     )
-    monkeypatch.setattr(
-        cpu_tasks,
+    patch_cpu_tasks(
+        monkeypatch,
         "settings",
         SimpleNamespace(
             decision_loop_execution_mode="shadow",
@@ -573,15 +574,15 @@ def test_produce_task_resolves_worker_from_configured_principals(monkeypatch, db
         def __call__(self):
             return Session(db.get_bind())
 
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", _Factory())
+    patch_cpu_tasks(monkeypatch, "SessionLocal", _Factory())
     monkeypatch.setattr("poseidon.decision_loop.strategy_signals.evaluate_strategy_signals", long_signal, raising=True)
-    result = cpu_tasks.produce_decision_run.run(str(version.id), str(manifest.id), AS_OF)
+    result = cpu_decision_runs.produce_decision_run.run(str(version.id), str(manifest.id), AS_OF)
     assert result["mode"] == "shadow"
     assert db.query(EvaluationRun).count() == 1
     assert db.query(DecisionRecord).count() == 0
 
-    monkeypatch.setattr(
-        cpu_tasks,
+    patch_cpu_tasks(
+        monkeypatch,
         "settings",
         SimpleNamespace(
             decision_loop_execution_mode="shadow",
@@ -590,7 +591,7 @@ def test_produce_task_resolves_worker_from_configured_principals(monkeypatch, db
         ),
     )
     with pytest.raises(ValueError, match="exactly one configured principal"):
-        cpu_tasks.produce_decision_run.run(str(version.id), str(manifest.id), AS_OF)
+        cpu_decision_runs.produce_decision_run.run(str(version.id), str(manifest.id), AS_OF)
 
 
 # --- Phase 101-02: ordinary exit path for rule close signals (D-23.11) ---
@@ -850,57 +851,59 @@ def _activate(db, version, name="producer-active"):
 def test_freeze_task_skips_stale_required_evidence_instead_of_raising(monkeypatch, db):
     """Phase 101 D-04: a non-trading day leaves the newest bar past max_age; the beat task skips."""
     from poseidon.models.data_manifest import DataManifest
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import decision_runs as cpu_decision_runs
 
     _activate(db, make_version(db))
-    monkeypatch.setattr(cpu_tasks, "settings", _shadow_market_settings())
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: Session(db.get_bind()))
-    monkeypatch.setattr(cpu_tasks, "_decision_worker_principal", lambda: worker())
+    patch_cpu_tasks(monkeypatch, "settings", _shadow_market_settings())
+    patch_cpu_tasks(monkeypatch, "SessionLocal", lambda: Session(db.get_bind()))
+    patch_cpu_tasks(monkeypatch, "_decision_worker_principal", lambda: worker())
     stale_bar = LAST_BAR - timedelta(days=2)
-    monkeypatch.setattr(
-        cpu_tasks,
+    patch_cpu_tasks(
+        monkeypatch,
         "_frozen_ohlcv_evidence",
         lambda market, interval, symbol, as_of: ohlcv_evidence(symbol, last_bar=stale_bar),
     )
     monkeypatch.setattr(
-        cpu_tasks.produce_decision_run, "delay", lambda *args, **kwargs: pytest.fail("producer queued on stale data")
+        cpu_decision_runs.produce_decision_run,
+        "delay",
+        lambda *args, **kwargs: pytest.fail("producer queued on stale data"),
     )
     expected = {"skipped": "evidence_stale", "stale": {"ohlcv": "2026-09-24T00:00:00Z"}, "as_of": AS_OF}
-    assert cpu_tasks.freeze_market_manifest.run("tw_stock", "1d", AS_OF) == expected
-    assert cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", AS_OF) == expected
+    assert cpu_decision_runs.freeze_market_manifest.run("tw_stock", "1d", AS_OF) == expected
+    assert cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", AS_OF) == expected
     assert db.query(DataManifest).count() == 0
 
 
 def test_freeze_task_freezes_fresh_required_evidence(monkeypatch, db):
     from poseidon.models.data_manifest import DataManifest
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import decision_runs as cpu_decision_runs
 
     _activate(db, make_version(db))
-    monkeypatch.setattr(cpu_tasks, "settings", _shadow_market_settings())
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: Session(db.get_bind()))
-    monkeypatch.setattr(
-        cpu_tasks, "_frozen_ohlcv_evidence", lambda market, interval, symbol, as_of: ohlcv_evidence(symbol)
+    patch_cpu_tasks(monkeypatch, "settings", _shadow_market_settings())
+    patch_cpu_tasks(monkeypatch, "SessionLocal", lambda: Session(db.get_bind()))
+    patch_cpu_tasks(
+        monkeypatch, "_frozen_ohlcv_evidence", lambda market, interval, symbol, as_of: ohlcv_evidence(symbol)
     )
-    result = cpu_tasks.freeze_market_manifest.run("tw_stock", "1d", AS_OF)
+    result = cpu_decision_runs.freeze_market_manifest.run("tw_stock", "1d", AS_OF)
     assert set(result) == {"manifest_id", "content_sha256", "as_of"}
     assert db.query(DataManifest).count() == 1
 
 
 def test_freeze_task_still_fails_closed_without_any_evidence(monkeypatch, db):
     from poseidon.core.errors import ValidationError
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import decision_runs as cpu_decision_runs
 
     _activate(db, make_version(db))
-    monkeypatch.setattr(cpu_tasks, "settings", _shadow_market_settings())
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: Session(db.get_bind()))
-    monkeypatch.setattr(cpu_tasks, "_frozen_ohlcv_evidence", lambda market, interval, symbol, as_of: None)
+    patch_cpu_tasks(monkeypatch, "settings", _shadow_market_settings())
+    patch_cpu_tasks(monkeypatch, "SessionLocal", lambda: Session(db.get_bind()))
+    patch_cpu_tasks(monkeypatch, "_frozen_ohlcv_evidence", lambda market, interval, symbol, as_of: None)
     # No bars at all is not "stale": the manifest service still refuses an empty evidence list.
     with pytest.raises(ValidationError, match="manifest evidence must be a non-empty list"):
-        cpu_tasks.freeze_market_manifest.run("tw_stock", "1d", AS_OF)
+        cpu_decision_runs.freeze_market_manifest.run("tw_stock", "1d", AS_OF)
 
 
 def test_stale_required_evidence_reports_only_kinds_past_max_age():
-    from poseidon.workers.cpu_tasks import _stale_required_evidence
+    from poseidon.workers.cpu_tasks.decision_runs import _stale_required_evidence
 
     fresh = ohlcv_evidence("2330")
     stale = ohlcv_evidence("0050", last_bar=LAST_BAR - timedelta(days=3))
@@ -915,17 +918,17 @@ def test_stale_required_evidence_reports_only_kinds_past_max_age():
 
 
 def _producer_task_env(monkeypatch, db, evidence):
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import decision_runs as cpu_decision_runs
 
-    monkeypatch.setattr(cpu_tasks, "settings", _shadow_market_settings())
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: Session(db.get_bind()))
-    monkeypatch.setattr(cpu_tasks, "_decision_worker_principal", lambda: worker())
-    monkeypatch.setattr(cpu_tasks, "_frozen_ohlcv_evidence", evidence)
+    patch_cpu_tasks(monkeypatch, "settings", _shadow_market_settings())
+    patch_cpu_tasks(monkeypatch, "SessionLocal", lambda: Session(db.get_bind()))
+    patch_cpu_tasks(monkeypatch, "_decision_worker_principal", lambda: worker())
+    patch_cpu_tasks(monkeypatch, "_frozen_ohlcv_evidence", evidence)
     enqueued = []
     monkeypatch.setattr(
-        cpu_tasks.produce_decision_run, "delay", lambda *args, **kwargs: enqueued.append((args, kwargs))
+        cpu_decision_runs.produce_decision_run, "delay", lambda *args, **kwargs: enqueued.append((args, kwargs))
     )
-    return cpu_tasks, enqueued
+    return cpu_decision_runs, enqueued
 
 
 def test_produce_task_skips_when_the_day_already_has_a_complete_run(monkeypatch, db):
@@ -944,9 +947,9 @@ def test_produce_task_skips_when_the_day_already_has_a_complete_run(monkeypatch,
     def evidence(market, interval, symbol, as_of):
         pytest.fail("retry slot froze evidence although the day was already produced")
 
-    cpu_tasks, enqueued = _producer_task_env(monkeypatch, db, evidence)
+    cpu_decision_runs, enqueued = _producer_task_env(monkeypatch, db, evidence)
     retry_as_of = "2026-09-26T12:15:00Z"
-    assert cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of) == {
+    assert cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of) == {
         "skipped": "already_produced",
         "as_of": retry_as_of,
         "runs": [run_id],
@@ -962,16 +965,16 @@ def test_produce_task_retry_slot_freezes_once_evidence_turns_fresh(monkeypatch, 
     version = make_version(db)
     _activate(db, version)
     bars = {"last_bar": LAST_BAR - timedelta(days=3)}
-    cpu_tasks, enqueued = _producer_task_env(
+    cpu_decision_runs, enqueued = _producer_task_env(
         monkeypatch, db, lambda market, interval, symbol, as_of: ohlcv_evidence(symbol, last_bar=bars["last_bar"])
     )
-    first = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", AS_OF)
+    first = cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", AS_OF)
     assert first["skipped"] == "evidence_stale"
     assert enqueued == [] and db.query(DataManifest).count() == 0
 
     bars["last_bar"] = LAST_BAR
     retry_as_of = "2026-09-26T12:15:00Z"
-    second = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of)
+    second = cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of)
     assert second["as_of"] == retry_as_of and second["enqueued"] == 1
     assert db.query(DataManifest).count() == 1
     assert enqueued == [((str(version.id), second["manifest_id"], retry_as_of), {})]
@@ -986,18 +989,18 @@ def test_produce_task_guard_ignores_runs_from_other_days(monkeypatch, db):
     ProducerService(db).produce(version.id, manifest.id, decision_as_of=AS_OF, principal=worker(), mode="shadow")
     db.commit()
     next_day_bar = LAST_BAR + timedelta(days=1)
-    cpu_tasks, enqueued = _producer_task_env(
+    cpu_decision_runs, enqueued = _producer_task_env(
         monkeypatch, db, lambda market, interval, symbol, as_of: ohlcv_evidence(symbol, last_bar=next_day_bar)
     )
     next_as_of = "2026-09-27T01:00:00Z"  # 3600 s after the 09-27 bar: fresh, unlike the 09-26 run
-    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", next_as_of)
+    result = cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", next_as_of)
     assert result["enqueued"] == 1 and result["as_of"] == next_as_of
     assert len(enqueued) == 1
     assert db.query(DataManifest).count() == 2
 
 
 def test_complete_runs_on_day_matches_only_complete_runs_of_the_versions(db):
-    from poseidon.workers.cpu_tasks import _complete_runs_on_day
+    from poseidon.workers.cpu_tasks.decision_runs import _complete_runs_on_day
 
     version = make_version(db)
     manifest = ManifestService(db).freeze(manifest_request())
@@ -1035,9 +1038,9 @@ def test_produce_task_skips_while_the_day_has_a_pending_run(monkeypatch, db):
     def evidence(market, interval, symbol, as_of):
         pytest.fail("retry slot froze evidence although a same-day run is still pending")
 
-    cpu_tasks, enqueued = _producer_task_env(monkeypatch, db, evidence)
+    cpu_decision_runs, enqueued = _producer_task_env(monkeypatch, db, evidence)
     retry_as_of = "2026-09-26T12:15:00Z"
-    assert cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of) == {
+    assert cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of) == {
         "skipped": "in_progress",
         "as_of": retry_as_of,
         "runs": [run_id],
@@ -1049,10 +1052,10 @@ def test_produce_task_skips_while_the_day_has_a_pending_run(monkeypatch, db):
 @pytest.mark.parametrize("status", ["running", "queued"])
 def test_produce_task_treats_unknown_statuses_as_in_progress(monkeypatch, db, status):
     _, run_id = _produced_run_with_status(db, status)
-    cpu_tasks, enqueued = _producer_task_env(
+    cpu_decision_runs, enqueued = _producer_task_env(
         monkeypatch, db, lambda market, interval, symbol, as_of: pytest.fail("froze on a non-terminal day")
     )
-    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", "2026-09-26T12:15:00Z")
+    result = cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", "2026-09-26T12:15:00Z")
     assert result["skipped"] == "in_progress" and result["runs"] == [run_id]
     assert enqueued == []
 
@@ -1061,11 +1064,11 @@ def test_produce_task_reproduces_a_day_whose_runs_all_failed(monkeypatch, db):
     from poseidon.models.data_manifest import DataManifest
 
     version, _ = _produced_run_with_status(db, "failed")
-    cpu_tasks, enqueued = _producer_task_env(
+    cpu_decision_runs, enqueued = _producer_task_env(
         monkeypatch, db, lambda market, interval, symbol, as_of: ohlcv_evidence(symbol)
     )
     retry_as_of = "2026-09-26T12:15:00Z"
-    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of)
+    result = cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of)
     assert result["as_of"] == retry_as_of and result["enqueued"] == 1
     assert db.query(DataManifest).count() == 2
     assert enqueued == [((str(version.id), result["manifest_id"], retry_as_of), {})]
@@ -1087,17 +1090,17 @@ def test_produce_task_prefers_already_produced_over_in_progress(monkeypatch, db)
         )
     )
     db.commit()
-    cpu_tasks, enqueued = _producer_task_env(
+    cpu_decision_runs, enqueued = _producer_task_env(
         monkeypatch, db, lambda market, interval, symbol, as_of: pytest.fail("froze on a produced day")
     )
     retry_as_of = "2026-09-26T12:15:00Z"
-    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of)
+    result = cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", retry_as_of)
     assert result == {"skipped": "already_produced", "as_of": retry_as_of, "runs": [complete_id]}
     assert enqueued == []
 
 
 def test_in_progress_runs_on_day_matches_only_non_terminal_runs_of_the_versions(db):
-    from poseidon.workers.cpu_tasks import _complete_runs_on_day, _in_progress_runs_on_day
+    from poseidon.workers.cpu_tasks.decision_runs import _complete_runs_on_day, _in_progress_runs_on_day
 
     version = make_version(db)
     manifest = ManifestService(db).freeze(manifest_request())
@@ -1128,11 +1131,11 @@ def test_produce_task_stuck_pending_run_skips_every_retry_slot(monkeypatch, db):
     from poseidon.models.data_manifest import DataManifest
 
     _, run_id = _produced_run_with_status(db, "pending")
-    cpu_tasks, enqueued = _producer_task_env(
+    cpu_decision_runs, enqueued = _producer_task_env(
         monkeypatch, db, lambda market, interval, symbol, as_of: pytest.fail("froze while a run is pending")
     )
     for slot in ("2026-09-26T06:55:00Z", "2026-09-26T07:10:00Z", "2026-09-26T07:25:00Z"):
-        assert cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", slot) == {
+        assert cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", slot) == {
             "skipped": "in_progress",
             "as_of": slot,
             "runs": [run_id],
@@ -1160,10 +1163,10 @@ def test_produce_task_skips_while_a_young_same_day_manifest_has_no_run(monkeypat
 
     _activate(db, make_version(db))
     manifest_id = _runless_manifest(db, created_at=datetime(2026, 9, 26, 12, 10, tzinfo=UTC))
-    cpu_tasks, enqueued = _producer_task_env(
+    cpu_decision_runs, enqueued = _producer_task_env(
         monkeypatch, db, lambda market, interval, symbol, as_of: pytest.fail("froze while a manifest is in flight")
     )
-    assert cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", RETRY_AS_OF) == {
+    assert cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", RETRY_AS_OF) == {
         "skipped": "in_progress",
         "as_of": RETRY_AS_OF,
         "manifest_id": manifest_id,
@@ -1179,10 +1182,10 @@ def test_produce_task_reproduces_once_a_runless_manifest_leaves_the_in_flight_wi
     version = make_version(db)
     _activate(db, version)
     stale_id = _runless_manifest(db, created_at=datetime(2026, 9, 26, 11, 45, tzinfo=UTC))
-    cpu_tasks, enqueued = _producer_task_env(
+    cpu_decision_runs, enqueued = _producer_task_env(
         monkeypatch, db, lambda market, interval, symbol, as_of: ohlcv_evidence(symbol)
     )
-    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", RETRY_AS_OF)
+    result = cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", RETRY_AS_OF)
     assert result["enqueued"] == 1 and result["manifest_id"] != stale_id
     assert db.query(DataManifest).count() == 2
     assert enqueued == [((str(version.id), result["manifest_id"], RETRY_AS_OF), {})]
@@ -1195,10 +1198,10 @@ def test_produce_task_in_flight_guard_ignores_previous_day_manifests(monkeypatch
     next_as_of = "2026-09-27T01:00:00Z"
     _runless_manifest(db, created_at=datetime(2026, 9, 27, 0, 55, tzinfo=UTC))  # young, but as_of is 09-26
     next_day_bar = LAST_BAR + timedelta(days=1)
-    cpu_tasks, enqueued = _producer_task_env(
+    cpu_decision_runs, enqueued = _producer_task_env(
         monkeypatch, db, lambda market, interval, symbol, as_of: ohlcv_evidence(symbol, last_bar=next_day_bar)
     )
-    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", next_as_of)
+    result = cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", next_as_of)
     assert result["enqueued"] == 1 and result["as_of"] == next_as_of
     assert len(enqueued) == 1
     assert db.query(DataManifest).count() == 2
@@ -1210,10 +1213,10 @@ def test_produce_task_in_flight_guard_ignores_other_account_scopes(monkeypatch, 
     _activate(db, make_version(db))
     other_scope = dict(manifest_request(), account_scope="paper:other")
     _runless_manifest(db, created_at=datetime(2026, 9, 26, 12, 10, tzinfo=UTC), request=other_scope)
-    cpu_tasks, enqueued = _producer_task_env(
+    cpu_decision_runs, enqueued = _producer_task_env(
         monkeypatch, db, lambda market, interval, symbol, as_of: ohlcv_evidence(symbol)
     )
-    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", RETRY_AS_OF)
+    result = cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", RETRY_AS_OF)
     assert result["enqueued"] == 1
     assert len(enqueued) == 1
     assert db.query(DataManifest).count() == 2
@@ -1222,7 +1225,7 @@ def test_produce_task_in_flight_guard_ignores_other_account_scopes(monkeypatch, 
 def test_in_flight_guard_does_not_hide_a_manifest_that_already_has_a_run(monkeypatch, db):
     """A manifest with a complete run is settled by already_produced first; the order is unchanged."""
     from poseidon.models.data_manifest import DataManifest
-    from poseidon.workers.cpu_tasks import _in_flight_manifest_on_day
+    from poseidon.workers.cpu_tasks.decision_runs import _in_flight_manifest_on_day
 
     version, run_id = _produced_run_with_status(db, "complete")
     run = db.get(EvaluationRun, uuid.UUID(run_id))
@@ -1231,10 +1234,10 @@ def test_in_flight_guard_does_not_hide_a_manifest_that_already_has_a_run(monkeyp
     )
     db.commit()
     assert _in_flight_manifest_on_day(db, "tw_stock", "1d", ACCOUNT, [version.id], RETRY_AS_OF) is None
-    cpu_tasks, enqueued = _producer_task_env(
+    cpu_decision_runs, enqueued = _producer_task_env(
         monkeypatch, db, lambda market, interval, symbol, as_of: pytest.fail("froze on a produced day")
     )
-    result = cpu_tasks.produce_decision_runs_for_market.run("tw_stock", "1d", RETRY_AS_OF)
+    result = cpu_decision_runs.produce_decision_runs_for_market.run("tw_stock", "1d", RETRY_AS_OF)
     assert result == {"skipped": "already_produced", "as_of": RETRY_AS_OF, "runs": [run_id]}
     assert enqueued == []
 
@@ -1256,14 +1259,14 @@ def test_produce_task_body_skips_a_version_whose_day_already_has_a_complete_run(
     db.commit()
     late = ManifestService(db).freeze(dict(manifest_request(), as_of=RETRY_AS_OF))
     db.commit()
-    cpu_tasks, _ = _producer_task_env(monkeypatch, db, lambda *args: pytest.fail("no freeze expected"))
+    cpu_decision_runs, _ = _producer_task_env(monkeypatch, db, lambda *args: pytest.fail("no freeze expected"))
     monkeypatch.setattr(
         ProducerService,
         "produce",
         lambda *args, **kwargs: pytest.fail("produce called although the day already has a complete run"),
     )
     for manifest_id, as_of in ((str(late.id), RETRY_AS_OF), (str(late.id), None)):
-        assert cpu_tasks.produce_decision_run.run(str(version.id), manifest_id, as_of) == {
+        assert cpu_decision_runs.produce_decision_run.run(str(version.id), manifest_id, as_of) == {
             "skipped": "already_produced",
             "run_id": run_id,
             "manifest_id": manifest_id,
@@ -1278,8 +1281,8 @@ def test_produce_task_body_produces_when_the_version_has_no_run_that_day(monkeyp
     manifest = ManifestService(db).freeze(manifest_request())
     ProducerService(db).produce(other.id, manifest.id, decision_as_of=AS_OF, principal=worker(), mode="shadow")
     db.commit()
-    cpu_tasks, _ = _producer_task_env(monkeypatch, db, lambda *args: pytest.fail("no freeze expected"))
-    result = cpu_tasks.produce_decision_run.run(str(version.id), str(manifest.id), AS_OF)
+    cpu_decision_runs, _ = _producer_task_env(monkeypatch, db, lambda *args: pytest.fail("no freeze expected"))
+    result = cpu_decision_runs.produce_decision_run.run(str(version.id), str(manifest.id), AS_OF)
     assert result["mode"] == "shadow" and "evaluation_run_id" in result
     assert db.query(EvaluationRun).filter(EvaluationRun.strategy_version_id == version.id).count() == 1
     assert db.query(EvaluationRun).count() == 2

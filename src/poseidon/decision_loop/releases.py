@@ -347,7 +347,7 @@ ExecutablePayload = RuleExecutablePayload | VotingExecutablePayload | DeferredEx
 class ProtectiveExitConfig(BaseModel):
     """Durable stop-loss for loop-opened tw_stock lots (Phase 101 D-23.12).
 
-    Read verbatim by ``workers.cpu_tasks._durable_protective_triggers`` from the
+    Read verbatim by ``workers.cpu_tasks.execution._durable_protective_triggers`` from the
     top level of ``StrategyVersion.config_json``.
     """
 

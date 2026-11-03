@@ -35,6 +35,7 @@ from poseidon.models.signal import SignalRecord
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
+from tests.cpu_tasks_support import patch_cpu_tasks
 from tests.test_decision_service import (
     executable_intent,
     manifest_request,
@@ -259,7 +260,7 @@ def test_claim_fails_closed_after_pointer_is_cleared(claim_seed):
 @pytest.mark.parametrize("mode", ["legacy", "shadow"])
 def test_pause_with_fresh_signal_cannot_reach_ordinary_legacy_writer(monkeypatch, claim_seed, mode):
     from poseidon.signals.repository import SignalRepository
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import portfolio as cpu_portfolio
 
     with Session(ENGINE) as session, session.begin():
         _pause(session, claim_seed, key=f"pause-fresh-signal-{mode}")
@@ -278,8 +279,8 @@ def test_pause_with_fresh_signal_cannot_reach_ordinary_legacy_writer(monkeypatch
             )
         )
 
-    monkeypatch.setattr(
-        cpu_tasks,
+    patch_cpu_tasks(
+        monkeypatch,
         "settings",
         SimpleNamespace(decision_loop_execution_mode=mode),
     )
@@ -291,7 +292,7 @@ def test_pause_with_fresh_signal_cannot_reach_ordinary_legacy_writer(monkeypatch
     with Session(ENGINE) as session:
         baseline_orders = session.query(OrderRecord).count()
 
-    result = cpu_tasks.portfolio_monthly_rebalance.run()
+    result = cpu_portfolio.portfolio_monthly_rebalance.run()
 
     assert result == {"skipped": "release_authority_required"}
     with Session(ENGINE) as session:

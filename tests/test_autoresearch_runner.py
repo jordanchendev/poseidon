@@ -283,7 +283,7 @@ class TestCeleryTaskRegistered:
     def test_celery_task_registered(self):
         """autoresearch_run is in celery_app.tasks."""
         # Force task module import to trigger registration
-        import poseidon.workers.cpu_tasks  # noqa: F401
+        import poseidon.workers.cpu_tasks.research  # noqa: F401
         from poseidon.workers.celery_app import celery_app
 
         assert "poseidon.workers.cpu_tasks.autoresearch_run" in celery_app.tasks

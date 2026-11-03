@@ -103,7 +103,7 @@ class LiquiditySweepStrategyFactory:
         """Build strategy from a config dict.
 
         Optional ``strategy_id`` mirrors the StrategyRecord-driven dispatch
-        pattern used by ``cpu_tasks.py`` (matches RuleStrategy/VotingStrategy
+        pattern used by ``workers/cpu_tasks`` (matches RuleStrategy/VotingStrategy
         instantiation in the same dispatch table).
         """
         if strategy_id is None:

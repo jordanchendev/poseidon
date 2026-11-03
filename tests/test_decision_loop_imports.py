@@ -9,9 +9,26 @@ import sys
 
 import pytest
 
+# Every CPU task module a worker imports at startup (celery_app ``imports``).
+CPU_TASK_MODULES = tuple(
+    f"poseidon.workers.cpu_tasks.{name}"
+    for name in (
+        "backtests",
+        "decision_runs",
+        "execution",
+        "outcomes",
+        "perp",
+        "portfolio",
+        "research",
+        "review",
+        "risk",
+        "signals",
+    )
+)
+
 IMPORT_ORDERS = [
-    ("poseidon.research.campaign", "poseidon.decision_loop.producer", "poseidon.workers.cpu_tasks"),
-    ("poseidon.workers.cpu_tasks", "poseidon.decision_loop.producer", "poseidon.research.campaign"),
+    ("poseidon.research.campaign", "poseidon.decision_loop.producer", *CPU_TASK_MODULES),
+    (*CPU_TASK_MODULES, "poseidon.decision_loop.producer", "poseidon.research.campaign"),
     ("poseidon.decision_loop.producer", "poseidon.research.campaign"),
     ("poseidon.decision_loop", "poseidon.research.campaign"),
     ("poseidon.decision_loop.releases", "poseidon.decision_loop.producer"),

@@ -140,7 +140,7 @@ def smoke_1_perp_rebalance() -> dict:
     """Mandatory: inject PASSED crypto_perp signal, fire perp_rebalance,
     assert OrderRecord with signal_id linkage and order_origin='signal'.
     """
-    from poseidon.workers import cpu_tasks  # imported here so logging is set first
+    from poseidon.workers.cpu_tasks import perp  # imported here so logging is set first
 
     result: dict = {"name": "Smoke-1", "passed": False, "details": {}}
     sig_id: uuid.UUID | None = None
@@ -166,7 +166,7 @@ def smoke_1_perp_rebalance() -> dict:
         # 2) Fire perp_rebalance synchronously (in-process, no Redis broker).
         logger.info("Smoke-1: firing perp_rebalance.apply()")
         try:
-            task_result = cpu_tasks.perp_rebalance.apply().get()
+            task_result = perp.perp_rebalance.apply().get()
         except Exception as exc:
             result["details"]["error"] = repr(exc)
             logger.exception("Smoke-1: perp_rebalance raised")
@@ -246,7 +246,7 @@ def smoke_2_tw_monthly() -> dict:
       - exception -> FAIL
     Smoke-2 does NOT gate the verdict; Smoke-1 is the structural gate.
     """
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import portfolio
 
     result: dict = {"name": "Smoke-2", "passed": False, "details": {}}
     sig_id: uuid.UUID | None = None
@@ -270,7 +270,7 @@ def smoke_2_tw_monthly() -> dict:
 
         logger.info("Smoke-2: firing portfolio_monthly_rebalance.apply()")
         try:
-            task_result = cpu_tasks.portfolio_monthly_rebalance.apply().get()
+            task_result = portfolio.portfolio_monthly_rebalance.apply().get()
         except Exception as exc:
             result["details"]["error"] = repr(exc)
             logger.exception("Smoke-2: portfolio_monthly_rebalance raised")

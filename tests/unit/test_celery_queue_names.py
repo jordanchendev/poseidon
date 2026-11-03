@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CELERY_APP_PATH = ROOT / "src" / "poseidon" / "workers" / "celery_app.py"
-CPU_TASKS_PATH = ROOT / "src" / "poseidon" / "workers" / "cpu_tasks.py"
+CPU_TASKS_PATH = ROOT / "src" / "poseidon" / "workers" / "cpu_tasks" / "research.py"
 QLIB_TASKS_PATH = ROOT / "src" / "poseidon" / "workers" / "qlib_tasks.py"
 COMPOSE_PATH = ROOT / "docker-compose.yml"
 FACTOR_ANALYSIS_API_PATH = ROOT / "src" / "poseidon" / "api" / "factor_analysis.py"

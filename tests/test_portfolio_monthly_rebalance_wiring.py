@@ -26,6 +26,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from poseidon.orders.schemas import Order
+from tests.cpu_tasks_support import cpu_task, patch_cpu_tasks
 
 
 def _make_signal(
@@ -61,7 +62,6 @@ def _make_signal(
 @pytest.fixture
 def patched_monthly_env(monkeypatch):
     """Patch all external surfaces portfolio_monthly_rebalance touches."""
-    from poseidon.workers import cpu_tasks
 
     state: dict = {
         "signals": [],
@@ -73,14 +73,14 @@ def patched_monthly_env(monkeypatch):
     fake_tracker = MagicMock()
     fake_tracker.current_holdings.return_value = {}
     fake_tracker.apply_orders.return_value = None
-    monkeypatch.setattr(cpu_tasks, "_build_position_tracker", lambda: fake_tracker)
+    patch_cpu_tasks(monkeypatch, "_build_position_tracker", lambda: fake_tracker)
 
     # 2. TW stock broker
     fake_broker = MagicMock()
-    monkeypatch.setattr(cpu_tasks, "_build_tw_stock_broker", lambda cfg: fake_broker)
+    patch_cpu_tasks(monkeypatch, "_build_tw_stock_broker", lambda cfg: fake_broker)
 
     # 3. Latest prices
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda syms: {s: state["prices"].get(s, 100.0) for s in syms})
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda syms: {s: state["prices"].get(s, 100.0) for s in syms})
 
     # 4. db_session — fake session whose SignalRepository returns state["signals"]
     class _FakeSession:
@@ -114,8 +114,8 @@ def patched_monthly_env(monkeypatch):
         def __exit__(self, *a):
             return False
 
-    monkeypatch.setattr(cpu_tasks, "db_session", lambda: _FakeDbSession())
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", lambda: _FakeSession())
+    patch_cpu_tasks(monkeypatch, "db_session", lambda: _FakeDbSession())
+    patch_cpu_tasks(monkeypatch, "SessionLocal", lambda: _FakeSession())
 
     # 5. Capture execute_rebalance kwargs at the OrderManager class
     from poseidon.orders.manager import OrderManager
@@ -175,7 +175,7 @@ class TestPortfolioMonthlyRebalanceWiring:
 
     def test_fresh_signals_cannot_dispatch_after_release_authority(self, patched_monthly_env):
         """Fresh legacy signals cannot bypass the release-authority writer fence."""
-        from poseidon.workers import cpu_tasks
+        from poseidon.workers.cpu_tasks import portfolio as cpu_portfolio
 
         sig_ids = {sym: uuid.uuid4() for sym in ("2330", "2454", "2317")}
         patched_monthly_env["signals"] = [
@@ -184,26 +184,26 @@ class TestPortfolioMonthlyRebalanceWiring:
             _make_signal(symbol="2317", action="long", quantity_pct=0.2, age_days=2, signal_id=sig_ids["2317"]),
         ]
 
-        result = cpu_tasks.portfolio_monthly_rebalance()
+        result = cpu_portfolio.portfolio_monthly_rebalance()
 
         assert result == {"skipped": "release_authority_required"}
         assert patched_monthly_env["captured"] == {}
 
     def test_only_stale_signals_remain_behind_release_authority(self, patched_monthly_env):
         """Stale legacy signals are never read after release authority applies."""
-        from poseidon.workers import cpu_tasks
+        from poseidon.workers.cpu_tasks import portfolio as cpu_portfolio
 
         # 13 frozen 2026-03-19 cluster — all >7d old
         patched_monthly_env["signals"] = []  # latest_passed(since=now-7d) → empty for stale
 
-        result = cpu_tasks.portfolio_monthly_rebalance()
+        result = cpu_portfolio.portfolio_monthly_rebalance()
 
         assert result == {"skipped": "release_authority_required"}
         assert patched_monthly_env["captured"] == {}
 
     def test_mixed_fresh_stale_signals_cannot_bypass_release_authority(self, patched_monthly_env):
         """Mixed legacy signals cannot reach the retired ordinary writer."""
-        from poseidon.workers import cpu_tasks
+        from poseidon.workers.cpu_tasks import portfolio as cpu_portfolio
 
         # The repository's `since` filter mechanically excludes stale; in this
         # test we only return what latest_passed would return (the fresh ones).
@@ -213,20 +213,20 @@ class TestPortfolioMonthlyRebalanceWiring:
             _make_signal(symbol="5678", action="long", quantity_pct=0.3, age_days=3, signal_id=sig_b),
         ]
 
-        result = cpu_tasks.portfolio_monthly_rebalance()
+        result = cpu_portfolio.portfolio_monthly_rebalance()
 
         assert result == {"skipped": "release_authority_required"}
         assert patched_monthly_env["captured"] == {}
 
     def test_legacy_order_origin_path_is_unreachable(self, patched_monthly_env):
         """The retired signal writer cannot create an order of any origin."""
-        from poseidon.workers import cpu_tasks
+        from poseidon.workers.cpu_tasks import portfolio as cpu_portfolio
 
         patched_monthly_env["signals"] = [
             _make_signal(symbol="2330", action="long", quantity_pct=0.25, age_days=1),
         ]
 
-        result = cpu_tasks.portfolio_monthly_rebalance()
+        result = cpu_portfolio.portfolio_monthly_rebalance()
 
         assert result == {"skipped": "release_authority_required"}
         assert patched_monthly_env["captured"] == {}
@@ -242,7 +242,6 @@ class TestPortfolioMonthlyRebalanceWiring:
 @pytest.mark.parametrize("mode", ["legacy", "shadow", "decision", "halted"])
 def test_ordinary_mode_matrix_single_writer(request, monkeypatch, task_name, fixture_name, market, mode):
     from poseidon.signals.repository import SignalRepository
-    from poseidon.workers import cpu_tasks
 
     env = request.getfixturevalue(fixture_name)
     env["signals"] = [_make_signal(symbol="2330") if market == "tw_stock" else _make_signal_record(symbol="ETHUSDT")]
@@ -253,17 +252,17 @@ def test_ordinary_mode_matrix_single_writer(request, monkeypatch, task_name, fix
         decision_loop_approved_market=market,
         decision_loop_approved_account_generation="generation-1",
     )
-    monkeypatch.setattr(cpu_tasks, "settings", config)
+    patch_cpu_tasks(monkeypatch, "settings", config)
     decisions, audits = [], []
-    monkeypatch.setattr(
-        cpu_tasks, "_execute_approved_decision", lambda m: decisions.append(m) or {"decision": True}, raising=False
+    patch_cpu_tasks(
+        monkeypatch, "_execute_approved_decision", lambda m: decisions.append(m) or {"decision": True}, raising=False
     )
-    monkeypatch.setattr(
-        cpu_tasks, "_record_shadow_parity", lambda m, orders: audits.append((m, list(orders))), raising=False
+    patch_cpu_tasks(
+        monkeypatch, "_record_shadow_parity", lambda m, orders: audits.append((m, list(orders))), raising=False
     )
     if mode in {"decision", "halted"}:
         monkeypatch.setattr(SignalRepository, "latest_passed", lambda *a, **k: pytest.fail("legacy signals touched"))
-    result = getattr(cpu_tasks, task_name).run()
+    result = cpu_task(task_name).run()
     assert bool(env["captured"]) is False
     assert env["captured"].get("call_count", 0) == 0
     assert decisions == ([market] if mode == "decision" else [])
@@ -284,7 +283,7 @@ def cutover_account(tmp_path, monkeypatch):
     from poseidon.core.config import Settings
     from poseidon.models.decision_event import DecisionEvent
     from poseidon.models.decision_record import DecisionRecord
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import execution as cpu_execution
     from tests.test_decision_order_wiring import NOW, _claimed, sessions
 
     generator = sessions.__wrapped__(tmp_path)
@@ -306,9 +305,9 @@ def cutover_account(tmp_path, monkeypatch):
         def now(cls, tz=None):
             return clock.now
 
-    monkeypatch.setattr(cpu_tasks, "datetime", FixedDatetime)
+    patch_cpu_tasks(monkeypatch, "datetime", FixedDatetime)
     monkeypatch.setattr("poseidon.decision_loop.execution.datetime", FixedDatetime)
-    monkeypatch.setattr(cpu_tasks, "SessionLocal", factory)
+    patch_cpu_tasks(monkeypatch, "SessionLocal", factory)
     config = Settings(
         _env_file=None,
         decision_loop_execution_mode="decision",
@@ -318,14 +317,14 @@ def cutover_account(tmp_path, monkeypatch):
         decision_loop_approved_market="tw_stock",
         decision_loop_approved_account_generation="generation-1",
     )
-    monkeypatch.setattr(cpu_tasks, "settings", config)
+    patch_cpu_tasks(monkeypatch, "settings", config)
     calls = []
     monkeypatch.setattr(
-        cpu_tasks.materialize_execution_claim,
+        cpu_execution.materialize_execution_claim,
         "run",
         lambda ident: calls.append(("materialize", ident)) or {"order_ids": [str(uuid.uuid4())]},
     )
-    monkeypatch.setattr(cpu_tasks.submit_decision_order, "run", lambda ident: calls.append(("submit", ident)) or {})
+    monkeypatch.setattr(cpu_execution.submit_decision_order, "run", lambda ident: calls.append(("submit", ident)) or {})
     yield SimpleNamespace(
         sessions=factory, decision_id=decision_id, version_id=version_id, config=config, calls=calls, clock=clock
     )
@@ -335,9 +334,9 @@ def cutover_account(tmp_path, monkeypatch):
 
 def test_decision_mode_claims_only_after_bootstrap_and_dispatches_uuid(cutover_account):
     from poseidon.models.decision_record import DecisionRecord
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import portfolio as cpu_portfolio
 
-    result = cpu_tasks.portfolio_monthly_rebalance.run()
+    result = cpu_portfolio.portfolio_monthly_rebalance.run()
     assert result["decision_id"] == str(cutover_account.decision_id)
     assert [call[0] for call in cutover_account.calls] == ["materialize", "submit"]
     assert all(str(uuid.UUID(call[1])) == call[1] for call in cutover_account.calls)
@@ -371,7 +370,7 @@ def test_decision_preflight_failure_never_claims_or_submits(cutover_account, mon
     from poseidon.broker.base import BrokerCapabilities
     from poseidon.models.account_reconciliation import AccountReconciliation
     from poseidon.models.decision_record import DecisionRecord
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import portfolio as cpu_portfolio
 
     with cutover_account.sessions() as session:
         rec = session.scalar(select(AccountReconciliation))
@@ -429,8 +428,8 @@ def test_decision_preflight_failure_never_claims_or_submits(cutover_account, mon
     if failure == "disabled":
         cutover_account.config.decision_loop_execution_enabled = False
     if failure == "unsupported_adapter":
-        monkeypatch.setattr(
-            cpu_tasks, "_decision_paper_adapter", lambda m: SimpleNamespace(capabilities=BrokerCapabilities())
+        patch_cpu_tasks(
+            monkeypatch, "_decision_paper_adapter", lambda m: SimpleNamespace(capabilities=BrokerCapabilities())
         )
     if failure == "live":
         import builtins
@@ -446,8 +445,8 @@ def test_decision_preflight_failure_never_claims_or_submits(cutover_account, mon
                 else original(path, *a, **k)
             ),
         )
-        monkeypatch.setattr(cpu_tasks, "_decision_paper_adapter", lambda m: pytest.fail("live adapter built"))
-    result = cpu_tasks.portfolio_monthly_rebalance.run()
+        patch_cpu_tasks(monkeypatch, "_decision_paper_adapter", lambda m: pytest.fail("live adapter built"))
+    result = cpu_portfolio.portfolio_monthly_rebalance.run()
     assert "skipped" in result
     assert cutover_account.calls == []
     with cutover_account.sessions() as session:
@@ -462,13 +461,13 @@ def test_shadow_parity_is_durable_stable_and_never_claims(cutover_account):
     from poseidon.models.decision_record import DecisionRecord
     from poseidon.models.order import OrderRecord
     from poseidon.strategies.portfolio.schemas import RebalanceOrder
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import execution as cpu_execution
 
     cutover_account.config.decision_loop_execution_mode = "shadow"
     cutover_account.config.decision_loop_execution_enabled = False
     orders = [RebalanceOrder(symbol="2330", action="buy", current_weight=0.0, target_weight=0.1, delta_weight=0.1)]
-    cpu_tasks._record_shadow_parity("tw_stock", orders)
-    cpu_tasks._record_shadow_parity("tw_stock", orders)
+    cpu_execution._record_shadow_parity("tw_stock", orders)
+    cpu_execution._record_shadow_parity("tw_stock", orders)
     with cutover_account.sessions() as session:
         events = [row for row in session.scalars(select(DecisionEvent)) if row.event_type.startswith("shadow")]
         assert len(events) == 1
@@ -486,11 +485,11 @@ def test_shadow_opposite_action_never_reports_matched(cutover_account):
 
     from poseidon.models.decision_event import DecisionEvent
     from poseidon.strategies.portfolio.schemas import RebalanceOrder
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import execution as cpu_execution
 
     cutover_account.config.decision_loop_execution_mode = "shadow"
     cutover_account.config.decision_loop_execution_enabled = False
-    cpu_tasks._record_shadow_parity(
+    cpu_execution._record_shadow_parity(
         "tw_stock",
         [RebalanceOrder(symbol="2330", action="sell", current_weight=0.2, target_weight=0.1, delta_weight=-0.1)],
     )
@@ -503,7 +502,7 @@ def test_shadow_opposite_action_never_reports_matched(cutover_account):
 def test_preflight_lock_wait_rechecks_current_time_before_claim(cutover_account, monkeypatch):
     from poseidon.decision_loop.execution import DecisionExecutionService
     from poseidon.models.decision_record import DecisionRecord
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import portfolio as cpu_portfolio
 
     original = DecisionExecutionService._lock_account
 
@@ -513,7 +512,7 @@ def test_preflight_lock_wait_rechecks_current_time_before_claim(cutover_account,
         return account
 
     monkeypatch.setattr(DecisionExecutionService, "_lock_account", delayed)
-    assert "skipped" in cpu_tasks.portfolio_monthly_rebalance.run()
+    assert "skipped" in cpu_portfolio.portfolio_monthly_rebalance.run()
     with cutover_account.sessions() as session:
         assert session.get(DecisionRecord, cutover_account.decision_id).status == "approved"
     assert cutover_account.calls == []
@@ -525,12 +524,12 @@ def test_shadow_task_cannot_submit_legacy_after_release_authority(patched_monthl
     from poseidon.models.decision_event import DecisionEvent
     from poseidon.models.decision_record import DecisionRecord
     from poseidon.models.order import OrderRecord
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import portfolio as cpu_portfolio
 
     cutover_account.config.decision_loop_execution_mode = "shadow"
     cutover_account.config.decision_loop_execution_enabled = False
     patched_monthly_env["signals"] = [_make_signal(symbol="2330", quantity_pct=0.1)]
-    result = cpu_tasks.portfolio_monthly_rebalance.run()
+    result = cpu_portfolio.portfolio_monthly_rebalance.run()
     assert result == {"skipped": "release_authority_required"}
     assert patched_monthly_env["captured"] == {}
     with cutover_account.sessions() as session:
@@ -545,7 +544,8 @@ def test_race_after_claim_materialization_freshness_prevents_submission(cutover_
 
     from poseidon.decision_loop.execution import DecisionExecutionService, ExecutionConflictError
     from poseidon.models.paper_broker_account import PaperBrokerAccount
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import execution as cpu_execution
+    from poseidon.workers.cpu_tasks import portfolio as cpu_portfolio
     from tests.test_decision_order_wiring import NOW, PRICE_2330
     from tests.test_decision_service import worker
 
@@ -559,9 +559,9 @@ def test_race_after_claim_materialization_freshness_prevents_submission(cutover_
                 uuid.UUID(ident), principal=worker(), account_nav=100000.0, prices=PRICE_2330, now=NOW
             )
 
-    monkeypatch.setattr(cpu_tasks.materialize_execution_claim, "run", materialize)
+    monkeypatch.setattr(cpu_execution.materialize_execution_claim, "run", materialize)
     with pytest.raises(ExecutionConflictError, match="watermark"):
-        cpu_tasks.portfolio_monthly_rebalance.run()
+        cpu_portfolio.portfolio_monthly_rebalance.run()
     assert cutover_account.calls == []
 
 
@@ -574,7 +574,7 @@ def test_perp_decision_selects_exact_market_scope_generation_without_legacy(cuto
     from poseidon.models.decision_event import DecisionEvent
     from poseidon.models.decision_record import DecisionRecord
     from poseidon.signals.repository import SignalRepository
-    from poseidon.workers import cpu_tasks
+    from poseidon.workers.cpu_tasks import perp as cpu_perp
     from tests.test_decision_order_wiring import _claimed
     from tests.test_decision_service import synthetic_reconciliation_policy
 
@@ -620,7 +620,7 @@ def test_perp_decision_selects_exact_market_scope_generation_without_legacy(cuto
         ),
     )
     monkeypatch.setattr(SignalRepository, "latest_passed", lambda *a, **k: pytest.fail("legacy signals touched"))
-    result = cpu_tasks.perp_rebalance.run()
+    result = cpu_perp.perp_rebalance.run()
     assert result["decision_id"] == str(decision_id)
     assert [call[0] for call in cutover_account.calls] == ["materialize", "submit"]
     with cutover_account.sessions() as session:

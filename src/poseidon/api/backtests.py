@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from poseidon.backtest.repository import BacktestRepository
 from poseidon.core.schemas import MessageResponse
 from poseidon.models.base import get_db
-from poseidon.workers.cpu_tasks import run_backtest_task, run_dual_mode_task, run_optimization_task
+from poseidon.workers.cpu_tasks.backtests import run_backtest_task, run_dual_mode_task, run_optimization_task
 
 router = APIRouter()
 

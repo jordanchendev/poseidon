@@ -7,7 +7,8 @@ import pytest
 from pydantic import ValidationError as PydanticValidationError
 
 from poseidon.decision_loop.releases import ExecutableStrategyConfig, ProtectiveExitConfig
-from poseidon.workers import cpu_tasks
+from poseidon.workers.cpu_tasks import execution as cpu_execution
+from tests.cpu_tasks_support import patch_cpu_tasks
 from tests.test_protective_execution import _exact_settings, _opening, _set_owner_protection
 from tests.test_protective_execution import protective_seed as protective_seed
 
@@ -99,9 +100,9 @@ def test_typed_protective_exit_resolves_in_durable_protective_trigger(monkeypatc
     _set_owner_protection(seed, decision_id, **stored_protective_exit)
     _exact_settings(monkeypatch, mode="decision", market="tw_stock", scope=seed.account)
     # 9% below the 100.0 unit cost breaches the 8% stop.
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": 91.0})
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda _symbols: {"2330": 91.0})
 
-    result = cpu_tasks._durable_protective_triggers("tw_stock")
+    result = cpu_execution._durable_protective_triggers("tw_stock")
 
     assert result["triggered"] == {("tw_stock", "2330", "spot", "long"): 91.0}
     assert "skipped" not in result
@@ -111,9 +112,9 @@ def test_typed_protective_exit_does_not_trigger_inside_the_stop(monkeypatch, see
     _lot_id, decision_id = _opening(seed, price=100)
     _set_owner_protection(seed, decision_id, stop_loss_pct=0.08)
     _exact_settings(monkeypatch, mode="decision", market="tw_stock", scope=seed.account)
-    monkeypatch.setattr(cpu_tasks, "_get_latest_prices", lambda _symbols: {"2330": 95.0})
+    patch_cpu_tasks(monkeypatch, "_get_latest_prices", lambda _symbols: {"2330": 95.0})
 
-    result = cpu_tasks._durable_protective_triggers("tw_stock")
+    result = cpu_execution._durable_protective_triggers("tw_stock")
 
     assert result["triggered"] == {}
     assert "skipped" not in result
