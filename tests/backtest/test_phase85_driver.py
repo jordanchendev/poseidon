@@ -6,6 +6,8 @@ walk-forward window count, and the WindowResult attribute surface.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from poseidon.backtest.liquidity_sweep_factory import PARAM_BOUNDS
@@ -691,6 +693,11 @@ class TestOptunaSmoke5Trials:
     """
 
     @pytest.mark.slow
+    @pytest.mark.skipif(
+        not os.environ.get("POSEIDON_THALASSA_BASE_URL"),
+        reason="needs the Thalassa REST API: the BTCUSDT backtest reads funding rates through RemoteDataRepository"
+        " (set POSEIDON_THALASSA_BASE_URL and POSEIDON_THALASSA_API_KEY)",
+    )
     def test_run_phase85_for_symbol_5_trials_smoke(self, fixture_feature_engine, fixture_risk_engine):
         from poseidon.backtest.phase85_driver import run_phase85_for_symbol
         from poseidon.backtest.walk_forward import WalkForwardConfig
