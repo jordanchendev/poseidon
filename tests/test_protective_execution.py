@@ -956,7 +956,7 @@ def test_legacy_holding_partial_cancel_releases_unfilled_remainder(seed):
 
     with seed.sessions() as session:
         order = session.get(OrderRecord, order_id)
-        ReconciliationService(session)._validate_durable_intent(order)
+        ReconciliationService(session).validate_durable_intent(order)
         holding = session.get(PortfolioHoldingRecord, holding_id)
         assert (order.reservation_status, holding.shares, holding.closed) == ("released", 3, False)
 
@@ -1643,7 +1643,7 @@ def test_partial_cancel_releases_only_the_unfilled_remainder_after_projection(se
 
     with seed.sessions() as session:
         order = session.get(OrderRecord, order_id)
-        ReconciliationService(session)._validate_durable_intent(order)
+        ReconciliationService(session).validate_durable_intent(order)
         lot = session.scalar(select(PositionLot).where(PositionLot.account_scope == seed.account))
         assert (order.reservation_status, lot.open_quantity, lot.reserved_close_quantity) == ("released", 3, 0)
 
@@ -1799,7 +1799,7 @@ def test_generic_broker_rejects_multiple_generation_predecessors(seed):
     changed = replace(order, protective_context_json=context)
 
     with pytest.raises(BrokerCapabilityError, match="exactly one predecessor"):
-        _MarkerAdapter(seed.sessions, second_id)._require_decision_submission(changed, changed.client_order_ref)
+        _MarkerAdapter(seed.sessions, second_id).require_decision_submission(changed, changed.client_order_ref)
 
 
 def test_paper_adapter_rejects_multiple_generation_predecessors(seed):
@@ -1885,7 +1885,7 @@ def test_rejected_zero_fill_releases_full_protective_reservation(seed):
         lot.reserved_close_quantity = 0
 
     with seed.sessions() as session:
-        ReconciliationService(session)._validate_durable_intent(session.get(OrderRecord, order_id))
+        ReconciliationService(session).validate_durable_intent(session.get(OrderRecord, order_id))
 
 
 def test_terminal_release_with_pending_projection_still_requires_reservation(seed):
@@ -1912,7 +1912,7 @@ def test_terminal_release_with_pending_projection_still_requires_reservation(see
         )
 
     with seed.sessions() as session, pytest.raises(ReconciliationConflictError, match="durable order intent"):
-        ReconciliationService(session)._validate_durable_intent(session.get(OrderRecord, order_id))
+        ReconciliationService(session).validate_durable_intent(session.get(OrderRecord, order_id))
 
 
 def test_same_trigger_with_a_new_lot_does_not_replay_a_closed_order(seed):
@@ -1980,8 +1980,8 @@ def test_prepare_attempt_takes_account_lock_before_order_row_lock(monkeypatch, s
     events = []
     with seed.sessions() as session, session.begin():
         service = ReconciliationService(session)
-        original_order = service._locked_order
-        original_account = service._locked_order_and_account
+        original_order = service.locked_order
+        original_account = service.locked_order_and_account
 
         def locked_order(value):
             events.append("order")
@@ -1991,8 +1991,8 @@ def test_prepare_attempt_takes_account_lock_before_order_row_lock(monkeypatch, s
             events.append("account")
             return original_account(value)
 
-        monkeypatch.setattr(service, "_locked_order", locked_order)
-        monkeypatch.setattr(service, "_locked_order_and_account", locked_account)
+        monkeypatch.setattr(service, "locked_order", locked_order)
+        monkeypatch.setattr(service, "locked_order_and_account", locked_account)
         service.prepare_attempt(order_id, _MarkerAdapter(seed.sessions, order_id), now=NOW)
 
     assert events[0] == "account"

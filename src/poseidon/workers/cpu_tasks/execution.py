@@ -203,7 +203,7 @@ def _durable_protective_triggers(market):
         service = ProtectiveExecutionService(session)
         for decision_id in sorted({lot.opening_decision_id for lot in lots}, key=str):
             try:
-                decision, _policy = service._policy(decision_id, scope, generation, market)
+                decision, _policy = service.source_decision_policy(decision_id, scope, generation, market)
             except ExecutionConflictError:
                 return {"checked": len(lots), "triggered": {}, "skipped": "protective_policy_unresolved"}
             version = session.get(StrategyVersion, decision.strategy_version_id)
@@ -394,7 +394,7 @@ def _record_shadow_parity(market, orders):
         if decision.status != "approved":
             return
         try:
-            _, _, intents = DecisionExecutionService(session)._policy_and_intents(decision)
+            _, _, intents = DecisionExecutionService(session).policy_and_intents(decision)
         except ExecutionConflictError:
             return
         legacy = sorted(
@@ -472,14 +472,14 @@ def materialize_execution_claim(decision_id: str) -> dict:
         decision = session.get(DecisionRecord, persisted_id)
         if decision is None:
             raise ValueError("decision does not exist")
-        _, policy, intents = DecisionExecutionService(session)._policy_and_intents(decision)
+        _, policy, intents = DecisionExecutionService(session).policy_and_intents(decision)
         account_scope = decision.account_scope
         reconciliation = policy.reconciliation
         if not _ordinary_execution_authorized(account_scope, policy.market, reconciliation.account_generation):
             return {"skipped": "ordinary_execution_not_authorized"}
         reservation_identities = {
             (order.market, order.symbol, order.instrument)
-            for order in DecisionExecutionService(session)._pending_orders(decision, reconciliation.account_generation)
+            for order in DecisionExecutionService(session).pending_orders(decision, reconciliation.account_generation)
         }
     adapter = _decision_paper_adapter(policy.market)
     snapshot = adapter.query_account_snapshot(account_scope, reconciliation.account_generation)

@@ -113,7 +113,7 @@ class ReconciliationService:
     def __init__(self, session):
         self.session = session
 
-    def _locked_order(self, order_id) -> OrderRecord:
+    def locked_order(self, order_id) -> OrderRecord:
         order = self.session.scalar(
             select(OrderRecord)
             .where(OrderRecord.id == order_id)
@@ -124,7 +124,7 @@ class ReconciliationService:
             raise ReconciliationConflictError("decision order does not exist")
         return order
 
-    def _validate_durable_intent(self, order: OrderRecord, *, lock_fills=True) -> None:
+    def validate_durable_intent(self, order: OrderRecord, *, lock_fills=True) -> None:
         if order.order_origin in PROTECTIVE_ORIGINS:
             try:
                 ProtectiveExecutionService(self.session).validate_order(order, lock_fills=lock_fills)
@@ -138,15 +138,15 @@ class ReconciliationService:
             raise ReconciliationConflictError("durable order intent changed after materialization")
         execution = DecisionExecutionService(self.session)
         try:
-            _, policy, intents = execution._policy_and_intents(decision)
+            _, policy, intents = execution.policy_and_intents(decision)
             reconciliation = policy.reconciliation
-            replay = execution._replay(decision, intents, reconciliation.account_generation)
+            replay = execution.replay(decision, intents, reconciliation.account_generation)
         except ExecutionConflictError as error:
             raise ReconciliationConflictError("durable order intent changed after materialization") from error
         if replay is None or str(order.id) not in replay["order_ids"]:
             raise ReconciliationConflictError("durable order intent changed after materialization")
 
-    def _locked_order_and_account(self, order_id) -> OrderRecord:
+    def locked_order_and_account(self, order_id) -> OrderRecord:
         probe = self.session.get(OrderRecord, order_id)
         if probe is None or not probe.account_scope or not probe.account_generation:
             raise ReconciliationConflictError("decision order has incomplete account identity")
@@ -162,7 +162,7 @@ class ReconciliationService:
         )
         if account is None:
             raise ReconciliationConflictError("approved paper account generation does not exist")
-        order = self._locked_order(order_id)
+        order = self.locked_order(order_id)
         if (order.account_scope, order.account_generation) != identity:
             raise ReconciliationConflictError("decision order account identity changed while locking")
         return order
@@ -174,12 +174,12 @@ class ReconciliationService:
         probe = self.session.get(OrderRecord, order_id)
         if probe is None:
             raise ReconciliationConflictError("decision order does not exist")
-        self._validate_durable_intent(probe, lock_fills=False)
-        order = self._locked_order_and_account(order_id)
-        self._validate_durable_intent(order)
+        self.validate_durable_intent(probe, lock_fills=False)
+        order = self.locked_order_and_account(order_id)
+        self.validate_durable_intent(order)
         dto = _order_dto(order)
         try:
-            adapter._require_decision_submission(dto, order.client_order_ref)
+            adapter.require_decision_submission(dto, order.client_order_ref)
         except BrokerCapabilityError as error:
             raise ReconciliationConflictError(str(error)) from error
         if order.submit_attempted_at is not None:
@@ -196,7 +196,7 @@ class ReconciliationService:
 
     def mark_lookup_unknown(self, order_id, *, now=None):
         """Persist missing broker lookup without resetting a legal terminal status."""
-        order = self._locked_order(order_id)
+        order = self.locked_order(order_id)
         if order.submit_attempted_at is None:
             raise ReconciliationConflictError("never-attempted order cannot have an unknown lookup")
         if order.reconciliation_status != "required":
@@ -352,7 +352,7 @@ class ReconciliationService:
         """Import one normalized broker result and exact-replay-safe fills."""
         if not isinstance(snapshot, BrokerOrderSnapshot):
             raise ReconciliationConflictError("adapter did not return a normalized broker order")
-        order = self._locked_order_and_account(order_id)
+        order = self.locked_order_and_account(order_id)
         imported_at = timestamp(now if now is not None else datetime.now(UTC), "now")
         before = (order.broker_order_id, order.status, order.reconciliation_status, order.reservation_status)
         self._validate_snapshot(order, snapshot)

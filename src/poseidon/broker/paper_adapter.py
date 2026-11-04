@@ -984,7 +984,7 @@ class PaperBrokerAdapter(BrokerAdapter):
         if durable and client_order_ref is None:
             raise BrokerCapabilityError("durable execution requires the stored client reference")
         if client_order_ref is not None:
-            self._require_decision_submission(order, client_order_ref)
+            self.require_decision_submission(order, client_order_ref)
             if order.market != "tw_stock" or order.instrument != "spot":
                 raise BrokerCapabilityError("stock paper execution requires tw_stock/spot")
             if _legacy_context(order) is None:

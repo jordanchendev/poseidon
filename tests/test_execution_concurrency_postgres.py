@@ -14,11 +14,11 @@ from sqlalchemy.orm import Session
 
 from poseidon.core.authz import AuthPrincipal
 from poseidon.core.canonical import content_sha256
-from poseidon.decision_loop.decisions import DecisionConflictError, DecisionService
+from poseidon.decision_loop.decisions import DecisionConflictError, DecisionService, require_active_pointer
 from poseidon.decision_loop.evaluation import EvaluationService
 from poseidon.decision_loop.execution import internal_state_watermark
 from poseidon.decision_loop.manifest import ManifestService
-from poseidon.decision_loop.releases import ReleaseService, require_active_pointer
+from poseidon.decision_loop.releases import ReleaseService
 from poseidon.decision_loop.reservations import ExecutionConflictError
 from poseidon.decision_loop.transactions import materialize_order_intents
 from poseidon.models.account_reconciliation import AccountReconciliation
@@ -480,7 +480,7 @@ def test_materialization_wins_strategy_lock_then_pause_blocks_replay(monkeypatch
             finally:
                 session.connection().info.pop("phase100_pause_waiter", None)
 
-    monkeypatch.setattr("poseidon.decision_loop.releases.require_active_pointer", hold_materialize_lock)
+    monkeypatch.setattr("poseidon.decision_loop.execution.require_active_pointer", hold_materialize_lock)
     event.listen(ENGINE, "before_cursor_execute", observe_pause_lock)
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:

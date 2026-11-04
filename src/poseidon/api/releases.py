@@ -510,8 +510,8 @@ def list_rollback_targets(
         return []
     service = ReleaseService(db)
     evaluator = ReleaseGateEvaluator(db)
-    authority_version = service._current_or_paused_authority_version(strategy)
-    source_policy = service._policy_for_version(authority_version, strategy, principal)
+    authority_version = service.current_or_paused_authority_version(strategy)
+    source_policy = service.policy_for_version(authority_version, strategy, principal)
     reconciliation = db.get(AccountReconciliation, reconciliation_id)
     targets = []
     seen = set()

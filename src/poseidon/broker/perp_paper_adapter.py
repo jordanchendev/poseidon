@@ -130,7 +130,7 @@ class PerpPaperAdapter(BrokerAdapter):
         if durable and client_order_ref is None:
             raise BrokerCapabilityError("durable execution requires the stored client reference")
         if client_order_ref is not None:
-            self._require_decision_submission(order, client_order_ref)
+            self.require_decision_submission(order, client_order_ref)
             if order.market != "crypto_perp":
                 raise BrokerCapabilityError("perpetual paper execution requires crypto_perp")
 

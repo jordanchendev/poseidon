@@ -159,6 +159,20 @@ def _decision_response(decision):
     }
 
 
+def require_active_pointer(session, decision, *, lock: bool, error_type):
+    """Require a decision's immutable version to remain the active authority."""
+    version = session.get(StrategyVersion, decision.strategy_version_id)
+    if version is None:
+        raise error_type("decision active pointer is unavailable")
+    query = session.query(StrategyRecord).filter(StrategyRecord.id == version.strategy_id)
+    if lock:
+        query = query.with_for_update()
+    strategy = query.populate_existing().one_or_none()
+    if strategy is None or strategy.active_version_id != decision.strategy_version_id:
+        raise error_type("decision active pointer changed")
+    return strategy
+
+
 class DecisionService:
     def __init__(self, session):
         self.session = session
@@ -595,8 +609,6 @@ class DecisionService:
         return response
 
     def claim_execution(self, decision_id, expected_revision, *, principal, now=None):
-        from poseidon.decision_loop.releases import require_active_pointer
-
         principal.require_role("decision-worker")
         if type(expected_revision) is not int or expected_revision <= 0:
             raise DecisionConflictError("expected revision is invalid")
@@ -630,8 +642,6 @@ class DecisionService:
         )
 
     def claim_next_approved(self, account_scope, *, principal, now=None):
-        from poseidon.decision_loop.releases import require_active_pointer
-
         principal.require_role("decision-worker")
         principal.require_account_scope(account_scope)
         current_time = timestamp(now if now is not None else datetime.now(UTC), "now")

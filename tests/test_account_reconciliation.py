@@ -691,7 +691,7 @@ def test_freshness_exposure_gate_invalidates_match_on_new_broker_watermark(accou
         session.get(AccountReconciliation, uuid.UUID(result["reconciliation_id"])).as_of = gate_now
         decision = session.get(DecisionRecord, account.decision_id)
         execution = DecisionExecutionService(session)
-        _, policy, _ = execution._policy_and_intents(decision)
+        _, policy, _ = execution.policy_and_intents(decision)
         broker_account = session.get(PaperBrokerAccount, account.id)
         execution._require_reconciled(decision, policy.reconciliation, broker_account, gate_now)
         broker_account.state_version += 1
@@ -796,7 +796,7 @@ def test_freshness_internal_fill_economic_corruption_invalidates_existing_gate(a
     with account.sessions() as session:
         execution = DecisionExecutionService(session)
         decision = session.get(DecisionRecord, account.decision_id)
-        _, policy, _ = execution._policy_and_intents(decision)
+        _, policy, _ = execution.policy_and_intents(decision)
         with pytest.raises(ExecutionConflictError):
             execution._require_reconciled(
                 decision, policy.reconciliation, session.get(PaperBrokerAccount, account.id), NOW
@@ -908,7 +908,7 @@ def test_freshness_owner_max_age_and_policy_digest_block_exposure(account):
     with account.sessions() as session:
         execution = DecisionExecutionService(session)
         decision = session.get(DecisionRecord, account.decision_id)
-        _, policy, _ = execution._policy_and_intents(decision)
+        _, policy, _ = execution.policy_and_intents(decision)
         broker_account = session.get(PaperBrokerAccount, account.id)
         with pytest.raises(ExecutionConflictError, match="stale"):
             execution._require_reconciled(decision, policy.reconciliation, broker_account, NOW + timedelta(seconds=301))

@@ -13,7 +13,12 @@ from poseidon.core.canonical import canonical_json, content_sha256
 from poseidon.core.errors import ValidationError
 from poseidon.core.locks import lock_account
 from poseidon.core.timeutil import as_utc, stored_iso_time, stored_timestamp, timestamp
-from poseidon.decision_loop.decisions import _validate_order_intents, _validate_selection
+from poseidon.decision_loop.decisions import (
+    DecisionService,
+    _validate_order_intents,
+    _validate_selection,
+    require_active_pointer,
+)
 from poseidon.decision_loop.evaluation import verify_complete_run
 from poseidon.decision_loop.policy import DecisionPolicy
 from poseidon.decision_loop.protective_execution import ProtectiveExecutionService
@@ -100,7 +105,7 @@ class DecisionExecutionService:
             "client_order_refs": [order.client_order_ref for order in orders],
         }
 
-    def _replay(self, decision, intents, account_generation):
+    def replay(self, decision, intents, account_generation):
         orders = self.session.scalars(
             select(OrderRecord)
             .where(
@@ -157,7 +162,7 @@ class DecisionExecutionService:
                 raise ExecutionConflictError("stored order executable content changed")
         return self._response(decision, orders)
 
-    def _policy_and_intents(self, decision):
+    def policy_and_intents(self, decision):
         version = self.session.get(StrategyVersion, decision.strategy_version_id)
         if version is None:
             raise ExecutionConflictError("decision strategy version does not exist")
@@ -214,8 +219,6 @@ class DecisionExecutionService:
     def preflight_approved(self, decision, *, principal, market, account_generation, adapter, now=None):
         """Validate the ordinary cutover gate before a caller claims the decision."""
         from poseidon.broker.base import BrokerCapabilities
-        from poseidon.decision_loop.decisions import DecisionService
-        from poseidon.decision_loop.releases import require_active_pointer
 
         principal.require_role("decision-worker")
         principal.require_account_scope(decision.account_scope)
@@ -228,7 +231,7 @@ class DecisionExecutionService:
         capabilities = adapter.capabilities
         if not isinstance(capabilities, BrokerCapabilities) or not capabilities.supports_reconciliation:
             raise ExecutionConflictError("paper adapter lacks full reconciliation capability")
-        _, policy, intents = self._policy_and_intents(decision)
+        _, policy, intents = self.policy_and_intents(decision)
         if policy.market != market or policy.reconciliation.account_generation != account_generation:
             raise ExecutionConflictError("approved execution identity changed")
         if any(intent.market != market for intent in intents):
@@ -354,7 +357,7 @@ class DecisionExecutionService:
         ):
             raise ExecutionConflictError("account reconciliation predates outstanding state")
 
-    def _pending_orders(self, decision, account_generation):
+    def pending_orders(self, decision, account_generation):
         return self.session.scalars(
             select(OrderRecord).where(
                 OrderRecord.account_scope == decision.account_scope,
@@ -440,8 +443,6 @@ class DecisionExecutionService:
         now=None,
         expected_account_state_version=None,
     ):
-        from poseidon.decision_loop.releases import require_active_pointer
-
         principal.require_role("decision-worker")
         current_time = timestamp(now if now is not None else datetime.now(UTC), "now")
         nav = _finite_positive(account_nav, "account_nav")
@@ -456,7 +457,7 @@ class DecisionExecutionService:
             lock=True,
             error_type=ExecutionConflictError,
         )
-        _, policy, intents = self._policy_and_intents(decision)
+        _, policy, intents = self.policy_and_intents(decision)
         reconciliation = policy.reconciliation
         account = self._lock_account(decision, policy)
         if expected_account_state_version is not None and account.state_version != expected_account_state_version:
@@ -470,12 +471,12 @@ class DecisionExecutionService:
             lock=False,
             error_type=ExecutionConflictError,
         )
-        _, locked_policy, locked_intents = self._policy_and_intents(decision)
+        _, locked_policy, locked_intents = self.policy_and_intents(decision)
         if locked_policy.reconciliation.account_generation != reconciliation.account_generation:
             raise ExecutionConflictError("owner account generation changed while locking")
         policy, intents, reconciliation = locked_policy, locked_intents, locked_policy.reconciliation
 
-        replay = self._replay(decision, intents, reconciliation.account_generation)
+        replay = self.replay(decision, intents, reconciliation.account_generation)
         if replay is not None:
             return replay
         if decision.status == "risk_blocked":
@@ -491,7 +492,7 @@ class DecisionExecutionService:
         if any(intent.action in {"enter", "add"} for intent in intents):
             self._require_reconciled(decision, reconciliation, account, current_time)
 
-        pending = self._pending_orders(decision, reconciliation.account_generation)
+        pending = self.pending_orders(decision, reconciliation.account_generation)
         reservations = {
             order.id: outstanding_reservation(self.session, order, reconciliation.currency) for order in pending
         }

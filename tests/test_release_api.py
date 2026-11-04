@@ -155,10 +155,10 @@ class StubReleaseService:
         self.replays[replay_key] = (request, response)
         return response
 
-    def _current_or_paused_authority_version(self, _strategy):
+    def current_or_paused_authority_version(self, _strategy):
         return next(iter(self.strategy_session.versions.values()))
 
-    def _policy_for_version(self, version, _strategy, principal):
+    def policy_for_version(self, version, _strategy, principal):
         principal.require_account_scope(version.policy_json["account_scope"])
         return SimpleNamespace(
             account_scope=version.policy_json["account_scope"],

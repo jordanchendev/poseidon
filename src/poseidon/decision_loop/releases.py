@@ -40,20 +40,6 @@ from poseidon.models.strategy_release_event import StrategyReleaseEvent
 from poseidon.models.strategy_version import StrategyVersion
 
 
-def require_active_pointer(session, decision, *, lock: bool, error_type):
-    """Require a decision's immutable version to remain the active authority."""
-    version = session.get(StrategyVersion, decision.strategy_version_id)
-    if version is None:
-        raise error_type("decision active pointer is unavailable")
-    query = session.query(StrategyRecord).filter(StrategyRecord.id == version.strategy_id)
-    if lock:
-        query = query.with_for_update()
-    strategy = query.populate_existing().one_or_none()
-    if strategy is None or strategy.active_version_id != decision.strategy_version_id:
-        raise error_type("decision active pointer changed")
-    return strategy
-
-
 class ReleaseService:
     """Read exact release evidence without owning the caller's transaction."""
 
@@ -129,7 +115,7 @@ class ReleaseService:
             return
         lock_account(self.session, policy.account_scope, policy.reconciliation.account_generation)
 
-    def _current_or_paused_authority_version(self, strategy):
+    def current_or_paused_authority_version(self, strategy):
         if strategy.active_version_id is not None:
             return self.session.get(StrategyVersion, strategy.active_version_id)
         event = self.session.scalar(
@@ -154,7 +140,7 @@ class ReleaseService:
             raise DecisionConflictError("strategy active pointer changed")
 
     @staticmethod
-    def _policy_for_version(version, strategy, principal):
+    def policy_for_version(version, strategy, principal):
         if version is None or version.strategy_id != strategy.id:
             raise DecisionConflictError("strategy version does not belong to the strategy")
         try:
@@ -314,7 +300,7 @@ class ReleaseService:
         if replay is not None:
             return replay
         candidate = self.session.get(StrategyVersion, candidate_version_id)
-        policy = self._policy_for_version(candidate, strategy, principal)
+        policy = self.policy_for_version(candidate, strategy, principal)
         self._lock_reconciliation_authority(policy)
         gate = self.gate.evaluate(
             strategy_id,
@@ -378,7 +364,7 @@ class ReleaseService:
         if authority_version_id is None:
             raise DecisionConflictError("pause requires a current active version")
         version = self.session.get(StrategyVersion, authority_version_id)
-        policy = self._policy_for_version(version, strategy, principal)
+        policy = self.policy_for_version(version, strategy, principal)
         predicates = (
             _predicate(
                 "candidate_identity" if operation == "reject" else "incumbent_pointer",
@@ -588,7 +574,7 @@ class ReleaseService:
         if replay is not None:
             return replay
         candidate = self.session.get(StrategyVersion, candidate_version_id)
-        policy = self._policy_for_version(candidate, strategy, principal)
+        policy = self.policy_for_version(candidate, strategy, principal)
         self._lock_reconciliation_authority(policy)
         gate = ReleaseGateResult(
             (
@@ -654,9 +640,9 @@ class ReleaseService:
         target = self.session.get(StrategyVersion, target_version_id)
         if target is None:
             raise DecisionConflictError("rollback target does not exist")
-        target_policy = self._policy_for_version(target, strategy, principal)
-        source_version = self._current_or_paused_authority_version(strategy)
-        source_policy = self._policy_for_version(source_version, strategy, principal)
+        target_policy = self.policy_for_version(target, strategy, principal)
+        source_version = self.current_or_paused_authority_version(strategy)
+        source_policy = self.policy_for_version(source_version, strategy, principal)
         if self.gate.account_identity(target_policy) == self.gate.account_identity(source_policy):
             self._lock_reconciliation_authority(target_policy)
         reconciliation = self.session.get(AccountReconciliation, reconciliation_id)
@@ -741,7 +727,7 @@ class ReleaseService:
             if strategy.active_version_id is None
             else self.session.get(StrategyVersion, strategy.active_version_id)
         )
-        authority = self._current_or_paused_authority_version(strategy)
+        authority = self.current_or_paused_authority_version(strategy)
         latest_event = self.session.scalar(
             select(StrategyReleaseEvent)
             .where(StrategyReleaseEvent.strategy_id == strategy.id)

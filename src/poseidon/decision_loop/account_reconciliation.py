@@ -39,6 +39,7 @@ from poseidon.models.paper_cash_movement import PaperCashMovement
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_version import StrategyVersion
+from poseidon.positions.lots import FillProjectionService
 
 
 def paper_liquidation_nav(snapshot, policy, prices, ledger, *, position_economics=None):
@@ -251,7 +252,7 @@ class AccountReconciliationService:
             ):
                 owner, frozen = decision, candidate
                 try:
-                    _, full_policy, _ = execution._policy_and_intents(decision)
+                    _, full_policy, _ = execution.policy_and_intents(decision)
                     policy = full_policy.reconciliation
                     if policy is None:
                         raise ExecutionConflictError("missing owner reconciliation policy")
@@ -438,9 +439,7 @@ class AccountReconciliationService:
                 key = _position_key(scope, generation, lot.market, lot.symbol, lot.instrument, lot.side)
                 if amount:
                     internal["positions"][key] = internal["positions"].get(key, 0.0) + float(amount)
-                from poseidon.positions.lots import FillProjectionService
-
-                FillProjectionService(self.session)._validate_lot(
+                FillProjectionService(self.session).validate_lot(
                     lot,
                     {
                         field: getattr(lot, field)
@@ -455,8 +454,6 @@ class AccountReconciliationService:
                         "within_tolerance": False,
                     }
                 )
-        from poseidon.positions.lots import FillProjectionService
-
         for fill in fills:
             if fill.projection_status == "applied":
                 try:
@@ -491,7 +488,7 @@ class AccountReconciliationService:
                             not is_open and isinstance(context, dict) and context.get("legacy_exception") is True
                         )
                         if legacy_close:
-                            ReconciliationService(self.session)._validate_durable_intent(order)
+                            ReconciliationService(self.session).validate_durable_intent(order)
                             remaining = amount
                             entry_notional = Decimal("0")
                             for holding_id in context["source_holding_ids"]:
@@ -664,8 +661,8 @@ class AccountReconciliationService:
                 if decision.status != "execution_claimed":
                     continue
                 try:
-                    _, _, intents = execution._policy_and_intents(decision)
-                    canonical = execution._replay(decision, intents, generation)
+                    _, _, intents = execution.policy_and_intents(decision)
+                    canonical = execution.replay(decision, intents, generation)
                 except ExecutionConflictError:
                     continue
                 canonical_ids = (

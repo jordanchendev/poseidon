@@ -120,10 +120,10 @@ class BrokerAdapter(ABC):
 
     def place_decision_order(self, order: Order, *, client_order_ref: str) -> BrokerOrderSnapshot:
         """Capability-gated decision submission; legacy callers use ``place_order``."""
-        self._require_decision_submission(order, client_order_ref)
+        self.require_decision_submission(order, client_order_ref)
         return self.place_order(order, client_order_ref=client_order_ref)
 
-    def _require_decision_submission(self, order: Order, client_order_ref: str) -> None:
+    def require_decision_submission(self, order: Order, client_order_ref: str) -> None:
         if not self.supports_reconciliation:
             missing = ", ".join(self.capabilities.missing_contract)
             raise BrokerCapabilityError(f"missing reconciliation contract: {missing}")

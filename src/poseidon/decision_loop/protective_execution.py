@@ -48,7 +48,7 @@ class ProtectiveExecutionService:
             "client_order_refs": [order.client_order_ref],
         }
 
-    def _policy(self, decision_id, account_scope, account_generation, market):
+    def source_decision_policy(self, decision_id, account_scope, account_generation, market):
         decision = self.session.get(DecisionRecord, decision_id)
         version = None if decision is None else self.session.get(StrategyVersion, decision.strategy_version_id)
         try:
@@ -359,7 +359,7 @@ class ProtectiveExecutionService:
         ):
             raise ExecutionConflictError("protective source lot ownership changed")
         policies = [
-            self._policy(decision_id, order.account_scope, order.account_generation, order.market)
+            self.source_decision_policy(decision_id, order.account_scope, order.account_generation, order.market)
             for decision_id in source_decision_ids
         ]
         currency = policies[0][1].reconciliation.currency
@@ -816,7 +816,7 @@ class ProtectiveExecutionService:
             return {"status": "no_open_lots", "execution_key": None, "order_ids": [], "client_order_refs": []}
         source_decision_ids = sorted({str(lot.opening_decision_id) for lot in lots})
         policies = [
-            self._policy(uuid.UUID(decision_id), account_scope, account_generation, market)
+            self.source_decision_policy(uuid.UUID(decision_id), account_scope, account_generation, market)
             for decision_id in source_decision_ids
         ]
         currency = policies[0][1].reconciliation.currency

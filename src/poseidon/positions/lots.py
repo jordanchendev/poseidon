@@ -59,7 +59,7 @@ class FillProjectionService:
         ):
             raise FillProjectionConflictError("fill lacks canonical decision/client/order identity")
         try:
-            ReconciliationService(self.session)._validate_durable_intent(order)
+            ReconciliationService(self.session).validate_durable_intent(order)
         except ReconciliationConflictError as error:
             raise FillProjectionConflictError(str(error)) from error
         action = order.intent_json["frozen_intent"]["action"]
@@ -111,7 +111,7 @@ class FillProjectionService:
             raise FillProjectionConflictError("fill cost must be finite")
         return opening, quantity, cost
 
-    def _validate_lot(self, lot, identity, account):
+    def validate_lot(self, lot, identity, account):
         if lot is None or any(getattr(lot, field) != value for field, value in identity.items()):
             raise FillProjectionConflictError("lot identity changed")
         opening_fill = self.session.get(OrderFillRecord, lot.opening_fill_id)
@@ -152,7 +152,7 @@ class FillProjectionService:
                 and sibling.protective_context_json.get("legacy_exception") is True
             ):
                 try:
-                    ReconciliationService(self.session)._validate_durable_intent(sibling)
+                    ReconciliationService(self.session).validate_durable_intent(sibling)
                 except ReconciliationConflictError as error:
                     raise FillProjectionConflictError(str(error)) from error
                 continue
@@ -224,7 +224,7 @@ class FillProjectionService:
         source_ids = set()
         for legacy_order in legacy_orders:
             try:
-                reconciliation._validate_durable_intent(legacy_order)
+                reconciliation.validate_durable_intent(legacy_order)
                 source_ids.update(
                     uuid.UUID(value) for value in legacy_order.protective_context_json["source_holding_ids"]
                 )
@@ -373,7 +373,7 @@ class FillProjectionService:
             raise FillProjectionConflictError("persisted fill does not exist")
         order_id = probe.order_id
         try:
-            order = ReconciliationService(self.session)._locked_order_and_account(order_id)
+            order = ReconciliationService(self.session).locked_order_and_account(order_id)
         except ReconciliationConflictError as error:
             raise FillProjectionConflictError(str(error)) from error
         fill = self.session.scalar(
@@ -438,14 +438,14 @@ class FillProjectionService:
             if opening:
                 if own_lot is None or allocations:
                     raise FillProjectionConflictError("applied opening projection is missing or conflicting")
-                self._validate_lot(own_lot, identity, account)
+                self.validate_lot(own_lot, identity, account)
                 return self._response(fill, [own_lot], [])
             if own_lot is not None or not allocations:
                 raise FillProjectionConflictError("applied closing projection is missing or conflicting")
             replay_lots = []
             for allocation in allocations:
                 lot = self.session.get(PositionLot, allocation.position_lot_id)
-                self._validate_lot(lot, identity, account)
+                self.validate_lot(lot, identity, account)
                 amount = _number(allocation.quantity)
                 if (
                     amount <= 0
@@ -460,7 +460,7 @@ class FillProjectionService:
         if own_lot is not None or allocations:
             raise FillProjectionConflictError("pending fill already has a conflicting projection")
         for lot in lots:
-            self._validate_lot(lot, identity, account)
+            self.validate_lot(lot, identity, account)
         changes = {lot.id: _number(lot.open_quantity) for lot in lots}
         projected_lots, planned_allocations = [], []
         if opening:
@@ -569,10 +569,10 @@ def apply_fill_projection(session_factory, fill_id):
                 if fill is not None:
                     reconciliation = ReconciliationService(session)
                     try:
-                        order = reconciliation._locked_order_and_account(fill.order_id)
+                        order = reconciliation.locked_order_and_account(fill.order_id)
                     except ReconciliationConflictError:
                         # A missing account cannot prevent recording an order-only gap.
-                        order = reconciliation._locked_order(fill.order_id)
+                        order = reconciliation.locked_order(fill.order_id)
                     order.reconciliation_status = "required"
                     order.updated_at = datetime.now(UTC)
         except ReconciliationConflictError as marker_error:
