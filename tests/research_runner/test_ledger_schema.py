@@ -1,14 +1,14 @@
 """ledger_schema: migration 1 is the live ledger exactly, migrating is idempotent and atomic, a stale shape is refused."""
 
+import json
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
-from sqlalchemy.dialects import sqlite
-from sqlalchemy.schema import CreateIndex, CreateTable
 
-from poseidon.models.base import Base
-from poseidon.research_runner import ledger_schema, research_theme  # noqa: F401  (research_theme registers JSONB -> JSON for SQLite)
+from poseidon.research_runner import ledger_schema
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "live_ledger_schema_20261104.sql"
 
@@ -112,12 +112,33 @@ def test_a_ledger_from_a_newer_code_version_is_refused(tmp_path):
         ledger_schema.connect(path)
 
 
+# Rendered in a fresh interpreter that imports what the runner imports: SQLite-backed API test modules register
+# process-wide @compiles(PG_UUID, "sqlite") hooks (UUID -> VARCHAR(36)) that the runner never loads, so rendering in
+# the pytest process depends on which modules were collected before this one.
+RENDER_AS_THE_RUNNER = """
+import json, sys
+from sqlalchemy.dialects import sqlite
+from sqlalchemy.schema import CreateIndex, CreateTable
+from poseidon.models.base import Base
+from poseidon.research_runner import research_theme  # noqa: F401  (registers JSONB -> JSON for SQLite)
+ddl = {}
+for name in sys.argv[1:]:
+    table = Base.metadata.tables[name]
+    ddl[name] = str(CreateTable(table).compile(dialect=sqlite.dialect()))
+    ddl.update({i.name: str(CreateIndex(i).compile(dialect=sqlite.dialect())) for i in table.indexes})
+print(json.dumps(ddl))
+"""
+
+
 def test_the_orm_tables_are_what_sqlalchemy_renders():
     """research_theme writes data_manifests and research_revisions through the ORM; the ledger's DDL must stay what it renders."""
-    mem = ledger_schema.connect(":memory:")
+    tables = ("data_manifests", "research_revisions")
+    done = subprocess.run(
+        [sys.executable, "-c", RENDER_AS_THE_RUNNER, *tables], capture_output=True, text=True, check=True
+    )
+    rendered = json.loads(done.stdout.splitlines()[-1])
+    ledger = objects(ledger_schema.connect(":memory:"))
     norm = lambda sql: " ".join(str(sql).split())  # noqa: E731
-    for name in ("data_manifests", "research_revisions"):
-        table = Base.metadata.tables[name]
-        assert norm(CreateTable(table).compile(dialect=sqlite.dialect())) == norm(objects(mem)[name][1])
-        for index in table.indexes:
-            assert norm(CreateIndex(index).compile(dialect=sqlite.dialect())) == norm(objects(mem)[index.name][1])
+    assert set(tables) <= rendered.keys()
+    for name, sql in rendered.items():
+        assert norm(sql) == norm(ledger[name][1])
