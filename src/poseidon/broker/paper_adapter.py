@@ -24,6 +24,7 @@ from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.paper_broker_fill import PaperBrokerFill
 from poseidon.models.paper_broker_order import PaperBrokerOrder
 from poseidon.models.paper_cash_movement import PaperCashMovement
+from poseidon.orders.protective_context import ProtectiveContext, ProtectiveContextError
 from poseidon.orders.schemas import DURABLE_PROTECTIVE_ORIGINS, Fill, Order
 
 PAPER_RECONCILIATION_CAPABILITIES = BrokerCapabilities(
@@ -393,82 +394,19 @@ def _ensure_legacy_baselines(
     context = _legacy_context(order)
     if context is None:
         return
-    expected_context = {
-        "account_scope",
-        "account_generation",
-        "identity",
-        "origin",
-        "trigger_generation",
-        "source_lot_ids",
-        "source_decision_ids",
-        "source_holding_ids",
-        "source_holding_quantities",
-        "source_holding_risk",
-        "legacy_context_sha256",
-        "legacy_exception",
-        "dedupe_sha256",
-    }
-    generation_context = {"predecessor_order_ids", "remaining_source_quantities"}
-    generation_keys = set(context) & generation_context
-    if generation_keys:
-        expected_context |= generation_context
-    source_ids = context.get("source_holding_ids")
-    quantities = context.get("source_holding_quantities")
-    risks = context.get("source_holding_risk")
     try:
-        valid_ids = (
-            isinstance(source_ids, list)
-            and bool(source_ids)
-            and source_ids == sorted(source_ids)
-            and len(source_ids) == len(set(source_ids))
-            and all(str(uuid.UUID(value)) == value for value in source_ids)
-        )
-        valid_maps = (
-            isinstance(quantities, dict)
-            and set(quantities) == set(source_ids or ())
-            and isinstance(risks, dict)
-            and set(risks) == set(source_ids or ())
-        )
-        total = Decimal("0")
-        if valid_maps:
-            for holding_id in source_ids:
-                quantity = quantities[holding_id]
-                risk = risks[holding_id]
-                if (
-                    isinstance(quantity, bool)
-                    or not isinstance(quantity, (int, float))
-                    or not math.isfinite(quantity)
-                    or quantity <= 0
-                    or not isinstance(risk, dict)
-                    or set(risk) != {"entry_price", "stop_loss_pct"}
-                    or any(
-                        isinstance(value, bool)
-                        or not isinstance(value, (int, float))
-                        or not math.isfinite(value)
-                        or value <= 0
-                        for value in risk.values()
-                    )
-                ):
-                    valid_maps = False
-                    break
-                total += Decimal(str(quantity))
-    except (TypeError, ValueError):
-        valid_ids = valid_maps = False
-        total = Decimal("0")
+        parsed = ProtectiveContext.parse(context)
+    except ProtectiveContextError as error:
+        if error.generation:
+            raise BrokerCapabilityError("protective successor requires exactly one predecessor UUID") from error
+        raise BrokerCapabilityError("legacy protective context requires exact positive full-close sources") from error
+    source_ids = context["source_holding_ids"]
+    quantities = context["source_holding_quantities"]
+    risks = context["source_holding_risk"]
+    total = sum((Decimal(str(quantities[holding_id])) for holding_id in source_ids), Decimal("0"))
     predecessors = context.get("predecessor_order_ids")
     remaining_sources = context.get("remaining_source_quantities")
-    try:
-        valid_predecessor = (
-            generation_keys == generation_context
-            and isinstance(predecessors, list)
-            and len(predecessors) == 1
-            and str(uuid.UUID(predecessors[0])) == predecessors[0]
-        )
-    except (TypeError, ValueError):
-        valid_predecessor = False
-    if generation_keys and not valid_predecessor:
-        raise BrokerCapabilityError("protective successor requires exactly one predecessor UUID")
-    valid_generation = generation_keys == set() or remaining_sources == quantities
+    valid_generation = not parsed.successor or remaining_sources == quantities
     try:
         legacy_context_sha256 = content_sha256({"source_holding_quantities": quantities, "source_holding_risk": risks})
         dedupe_input = {
@@ -479,7 +417,7 @@ def _ensure_legacy_baselines(
             "trigger_generation": context.get("trigger_generation"),
             "legacy_context_sha256": legacy_context_sha256,
         }
-        if generation_keys:
+        if parsed.successor:
             dedupe_input.update(
                 predecessor_order_ids=predecessors,
                 remaining_source_quantities=remaining_sources,
@@ -488,12 +426,7 @@ def _ensure_legacy_baselines(
     except (TypeError, ValueError) as error:
         raise BrokerCapabilityError("legacy protective context is not canonical") from error
     if (
-        set(context) != expected_context
-        or not valid_ids
-        or not valid_maps
-        or not valid_generation
-        or context["source_lot_ids"] != []
-        or context["source_decision_ids"] != []
+        not valid_generation
         or Decimal(str(order.quantity)) != total
         or context["legacy_context_sha256"] != legacy_context_sha256
         or (order.intent_json or {}).get("economics", {}).get("legacy_context_sha256") != legacy_context_sha256

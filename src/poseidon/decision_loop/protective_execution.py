@@ -29,6 +29,7 @@ from poseidon.models.paper_broker_account import PaperBrokerAccount
 from poseidon.models.portfolio_holding import PortfolioHoldingRecord
 from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy_version import StrategyVersion
+from poseidon.orders.protective_context import ProtectiveContext, ProtectiveContextError
 
 
 class ProtectiveExecutionService:
@@ -36,8 +37,6 @@ class ProtectiveExecutionService:
 
     def __init__(self, session):
         self.session = session
-
-    _GENERATION_CONTEXT_KEYS = {"predecessor_order_ids", "remaining_source_quantities"}
 
     @staticmethod
     def _response_for(order):
@@ -178,39 +177,21 @@ class ProtectiveExecutionService:
         if order.broker_mode != "paper" or order.signal_id is not None:
             raise ExecutionConflictError("protective order must be paper and non-signal")
         intent = order.intent_json
-        context = order.protective_context_json
-        legacy = isinstance(context, dict) and context.get("legacy_exception") is True
-        generation_keys = set() if not isinstance(context, dict) else set(context) & self._GENERATION_CONTEXT_KEYS
-        expected_context = {
-            "account_scope",
-            "account_generation",
-            "identity",
-            "origin",
-            "trigger_generation",
-            "source_lot_ids",
-            "source_decision_ids",
-            "dedupe_sha256",
-        }
-        if legacy:
-            expected_context |= {
-                "legacy_exception",
-                "source_holding_ids",
-                "source_holding_quantities",
-                "source_holding_risk",
-                "legacy_context_sha256",
-            }
-        if generation_keys:
-            expected_context |= self._GENERATION_CONTEXT_KEYS
         if (
             not isinstance(intent, dict)
             or order.intent_sha256 != content_sha256(intent)
             or not isinstance(intent.get("frozen_intent"), dict)
             or not isinstance(intent.get("economics"), dict)
-            or not isinstance(context, dict)
-            or generation_keys not in (set(), self._GENERATION_CONTEXT_KEYS)
-            or set(context) != expected_context
         ):
             raise ExecutionConflictError("protective durable content is invalid")
+        context = order.protective_context_json
+        try:
+            parsed = ProtectiveContext.parse(context)
+        except ProtectiveContextError as error:
+            if error.generation:
+                raise ExecutionConflictError("protective generation provenance is invalid") from error
+            raise ExecutionConflictError("protective durable content is invalid") from error
+        legacy = parsed.legacy
         frozen = intent["frozen_intent"]
         identity = {
             "market": order.market,
@@ -231,9 +212,6 @@ class ProtectiveExecutionService:
             or context["account_scope"] != order.account_scope
             or context["account_generation"] != order.account_generation
             or context["origin"] != order.order_origin
-            or not isinstance(context["trigger_generation"], str)
-            or not context["trigger_generation"]
-            or context["trigger_generation"] != context["trigger_generation"].strip()
         ):
             raise ExecutionConflictError("protective intent is not reduction-only or changed identity")
         digest = content_sha256(self._dedupe_input(order.order_origin, context))
@@ -247,34 +225,9 @@ class ProtectiveExecutionService:
         ):
             raise ExecutionConflictError("protective deterministic identity changed")
         source_field = "source_holding_ids" if legacy else "source_lot_ids"
-        if generation_keys:
-            predecessors = context["predecessor_order_ids"]
-            remaining = context["remaining_source_quantities"]
-            try:
-                predecessor_id = (
-                    uuid.UUID(predecessors[0]) if isinstance(predecessors, list) and len(predecessors) == 1 else None
-                )
-                valid_remaining = (
-                    isinstance(remaining, dict)
-                    and set(remaining) == set(context[source_field])
-                    and all(
-                        not isinstance(value, bool)
-                        and isinstance(value, (int, float))
-                        and math.isfinite(value)
-                        and value >= 0
-                        for value in remaining.values()
-                    )
-                    and sum((Decimal(str(value)) for value in remaining.values()), Decimal(0)) > 0
-                )
-            except (TypeError, ValueError):
-                predecessor_id = None
-                valid_remaining = False
-            if (
-                predecessor_id is None
-                or predecessors != [str(predecessor_id)]
-                or order.id == predecessor_id
-                or not valid_remaining
-            ):
+        if parsed.successor:
+            predecessor_id = uuid.UUID(parsed.predecessor_order_ids[0])
+            if order.id == predecessor_id:
                 raise ExecutionConflictError("protective generation provenance is invalid")
             predecessor_orders = self.session.scalars(select(OrderRecord).where(OrderRecord.id == predecessor_id)).all()
             if [row.id for row in predecessor_orders] != [predecessor_id]:
@@ -315,18 +268,9 @@ class ProtectiveExecutionService:
         if legacy:
             self._validate_legacy_order(order, context, lock_fills=lock_fills)
             return
-        try:
-            source_lot_ids = [uuid.UUID(value) for value in context["source_lot_ids"]]
-            source_decision_ids = [uuid.UUID(value) for value in context["source_decision_ids"]]
-        except (TypeError, ValueError) as error:
-            raise ExecutionConflictError("protective source provenance is invalid") from error
-        if (
-            not source_lot_ids
-            or len(set(source_lot_ids)) != len(source_lot_ids)
-            or not source_decision_ids
-            or context["source_decision_ids"] != sorted(context["source_decision_ids"])
-            or order.decision_id != min(source_decision_ids, key=str)
-        ):
+        source_lot_ids = [uuid.UUID(value) for value in parsed.source_lot_ids]
+        source_decision_ids = [uuid.UUID(value) for value in parsed.source_decision_ids]
+        if order.decision_id != min(source_decision_ids, key=str):
             raise ExecutionConflictError("protective source provenance is invalid")
         lots = self.session.scalars(
             select(PositionLot)
@@ -401,7 +345,7 @@ class ProtectiveExecutionService:
             "source_lot_ids": context["source_lot_ids"],
             "source_decision_ids": context["source_decision_ids"],
         }
-        if generation_keys:
+        if parsed.successor:
             expected_event_payload.update(
                 predecessor_order_ids=context["predecessor_order_ids"],
                 remaining_source_quantities=context["remaining_source_quantities"],
@@ -410,24 +354,12 @@ class ProtectiveExecutionService:
             raise ExecutionConflictError("protective audit event is missing or changed")
 
     def _validate_legacy_order(self, order, context, *, lock_fills):
-        try:
-            source_ids = [uuid.UUID(value) for value in context["source_holding_ids"]]
-        except (TypeError, ValueError) as error:
-            raise ExecutionConflictError("protective legacy source provenance is invalid") from error
+        source_ids = [uuid.UUID(value) for value in context["source_holding_ids"]]
         quantities = context["source_holding_quantities"]
         risk = context["source_holding_risk"]
         legacy_context_sha256 = content_sha256({"source_holding_quantities": quantities, "source_holding_risk": risk})
         if (
-            not source_ids
-            or len(set(source_ids)) != len(source_ids)
-            or context["source_holding_ids"] != sorted(context["source_holding_ids"])
-            or context["source_lot_ids"] != []
-            or context["source_decision_ids"] != []
-            or order.decision_id is not None
-            or not isinstance(quantities, dict)
-            or set(quantities) != set(context["source_holding_ids"])
-            or not isinstance(risk, dict)
-            or set(risk) != set(context["source_holding_ids"])
+            order.decision_id is not None
             or context["legacy_context_sha256"] != legacy_context_sha256
             or order.intent_json["economics"].get("legacy_context_sha256") != legacy_context_sha256
         ):
@@ -448,12 +380,10 @@ class ProtectiveExecutionService:
         original = Decimal("0")
         remaining = Decimal("0")
         for holding in holdings:
-            amount = _finite_positive(quantities[str(holding.id)], "protective legacy source quantity")
+            amount = float(quantities[str(holding.id)])
             frozen_risk = risk[str(holding.id)]
-            if not isinstance(frozen_risk, dict) or set(frozen_risk) != {"entry_price", "stop_loss_pct"}:
-                raise ExecutionConflictError("protective legacy source risk is invalid")
-            entry_price = _finite_positive(frozen_risk["entry_price"], "protective legacy entry price")
-            stop_loss_pct = _finite_positive(frozen_risk["stop_loss_pct"], "protective legacy stop loss")
+            entry_price = float(frozen_risk["entry_price"])
+            stop_loss_pct = float(frozen_risk["stop_loss_pct"])
             shares = Decimal(str(holding.shares)) if holding.shares is not None else Decimal("-1")
             if (
                 holding.strategy_name.startswith("decision-lots:")
