@@ -35,7 +35,10 @@ from poseidon.models.position_lot import PositionLot
 from poseidon.models.strategy import StrategyRecord
 from poseidon.models.strategy_version import StrategyVersion, strategy_version_digest
 from tests import test_position_lot_allocation as lot_tests
+from tests.account_reconciliation_characterization import pinned_reconciliation  # noqa: F401 (fixture)
 from tests.cpu_tasks_support import patch_cpu_tasks
+
+pytestmark = pytest.mark.usefixtures("pinned_reconciliation")
 
 NOW = lot_tests.NOW + timedelta(days=2)
 
