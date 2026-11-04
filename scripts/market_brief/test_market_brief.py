@@ -232,7 +232,7 @@ class TestUSParsers(unittest.TestCase):
         self.assertTrue(any("日經 225 報價屬 2026-10-22" in g for g in c.gaps))
         labelled = render._quote_rows(c.us_rows(insts, got, expect_date="2026-10-21"))
         self.assertEqual(labelled[1][0], "日經 225（2026-10-22 報價）")
-        self.assertEqual(render._quote_rows(rows)[1], ["日經 225（2026-10-22 報價）", "63,139.59", "—", "—"])
+        self.assertEqual(render._quote_rows(rows)[1], ["日經 225（2026-10-22 報價）", "63,139.59", "未取得", "未取得"])
 
     def test_yahoo(self):
         q = us.parse_yahoo_chart(fx("yahoo_gspc.json"))
@@ -331,20 +331,67 @@ class TestCalendarAndSlots(unittest.TestCase):
         self.assertEqual(self.due(tpe(2026, 10, 22, 19, 15)), {})  # window is [slot, slot + 90 min)
         self.assertEqual(self.due(tpe(2026, 10, 26, 17, 50)), {("tw-postmarket", "2026-10-26"): False})  # holiday
 
-    def test_us_slots_follow_new_york_dst(self):
-        # EDT (UTC-4): pre 08:45 ET = 20:45 TPE, post 17:15 ET = 05:15 TPE next day
+    def test_us_slots_are_fixed_taipei_times_all_year(self):
+        # same Taipei clock before and after US DST ends (2026-11-01) and starts (2027-03-14)
         self.assertEqual(self.due(tpe(2026, 10, 30, 20, 50)), {("us-premarket", "2026-10-30"): True})
         self.assertEqual(self.due(tpe(2026, 10, 31, 5, 20)), {("us-postmarket", "2026-10-30"): True})  # Sat in TPE
-        # DST ends 2026-11-01: EST (UTC-5): pre = 21:45 TPE, post = 06:15 TPE
-        self.assertEqual(self.due(tpe(2026, 11, 2, 20, 50)), {})
-        self.assertEqual(self.due(tpe(2026, 11, 2, 21, 50)), {("us-premarket", "2026-11-02"): True})
-        self.assertEqual(self.due(tpe(2026, 11, 3, 5, 20)), {})
-        self.assertEqual(self.due(tpe(2026, 11, 3, 6, 20)), {("us-postmarket", "2026-11-02"): True})
-        # DST starts 2027-03-14: Fri 03-12 still EST (21:45 TPE), Mon 03-15 EDT (20:45 TPE)
-        self.assertEqual(self.due(tpe(2027, 3, 12, 21, 46)), {("us-premarket", "2027-03-12"): True})
+        self.assertEqual(self.due(tpe(2026, 11, 2, 20, 50)), {("us-premarket", "2026-11-02"): True})
+        self.assertEqual(self.due(tpe(2026, 11, 2, 20, 44)), {})  # not before the slot (the old winter slot was 21:45)
+        self.assertEqual(self.due(tpe(2026, 11, 3, 5, 20)), {("us-postmarket", "2026-11-02"): True})
+        self.assertEqual(self.due(tpe(2026, 11, 3, 6, 20)), {("us-postmarket", "2026-11-02"): True})  # inside 90 min
+        self.assertEqual(self.due(tpe(2026, 11, 3, 6, 46)), {})
+        self.assertEqual(self.due(tpe(2027, 3, 12, 20, 46)), {("us-premarket", "2027-03-12"): True})
         self.assertEqual(self.due(tpe(2027, 3, 15, 20, 46)), {("us-premarket", "2027-03-15"): True})
-        # NYSE holiday -> returned as closed
-        self.assertEqual(self.due(tpe(2026, 11, 26, 21, 50)), {("us-premarket", "2026-11-26"): False})
+        # NYSE holiday -> returned as closed (Thanksgiving Thu 11-26 NY: no pre, and Fri 05:15 reports the holiday)
+        self.assertEqual(self.due(tpe(2026, 11, 26, 20, 50)), {("us-premarket", "2026-11-26"): False})
+        self.assertEqual(self.due(tpe(2026, 11, 26, 5, 20)), {("us-postmarket", "2026-11-25"): True})  # Wed's close
+        self.assertEqual(self.due(tpe(2026, 11, 27, 5, 20)), {("us-postmarket", "2026-11-26"): False})
+
+    def test_us_session_mapping_summer_and_winter(self):
+        ny = ZoneInfo("America/New_York")
+        pre, post = self.slots["us-premarket"], self.slots["us-postmarket"]
+
+        def both(t):  # the slot instant on the Taipei and the New York clock
+            return t.astimezone(TPE).strftime("%a %H:%M"), t.astimezone(ny).strftime("%a %H:%M")
+
+        # July (EDT): Wed 07-08 20:45 Taipei is 08:45 New York Wed; Thu 07-09 05:15 Taipei is 17:15 New York Wed
+        a = tradingcal.slot_datetime(pre, dt.date(2026, 7, 8))
+        self.assertEqual(both(a), ("Wed 20:45", "Wed 08:45"))
+        b = tradingcal.slot_datetime(post, dt.date(2026, 7, 8))
+        self.assertEqual(both(b), ("Thu 05:15", "Wed 17:15"))
+        self.assertEqual(self.due(tpe(2026, 7, 8, 20, 45)), {("us-premarket", "2026-07-08"): True})
+        self.assertEqual(self.due(tpe(2026, 7, 9, 5, 15)), {("us-postmarket", "2026-07-08"): True})
+        # December (EST): the Taipei clock is the same but New York is an hour earlier: 07:45 and 16:15 (15 min after the close)
+        a = tradingcal.slot_datetime(pre, dt.date(2026, 12, 7))
+        self.assertEqual(both(a), ("Mon 20:45", "Mon 07:45"))
+        b = tradingcal.slot_datetime(post, dt.date(2026, 12, 7))
+        self.assertEqual(both(b), ("Tue 05:15", "Mon 16:15"))
+        self.assertEqual(
+            self.due(tpe(2026, 12, 7, 20, 45)), {("us-premarket", "2026-12-07"): True}
+        )  # Taipei Monday = US Monday
+        self.assertEqual(self.due(tpe(2026, 12, 8, 5, 15)), {("us-postmarket", "2026-12-07"): True})
+        # weekends and holidays follow New York, not Taipei
+        self.assertEqual(
+            self.due(tpe(2026, 12, 12, 5, 15)), {("us-postmarket", "2026-12-11"): True}
+        )  # Sat: Fri's close
+        self.assertEqual(self.due(tpe(2026, 12, 13, 5, 15)), {("us-postmarket", "2026-12-12"): False})  # Sun: NY Sat
+        self.assertEqual(self.due(tpe(2026, 12, 14, 5, 15)), {("us-postmarket", "2026-12-13"): False})  # Mon: NY Sun
+        self.assertEqual(self.due(tpe(2026, 12, 14, 20, 45)), {("us-premarket", "2026-12-14"): True})  # Mon eve: NY Mon
+        self.assertEqual(self.due(tpe(2026, 12, 25, 20, 45)), {("us-premarket", "2026-12-25"): False})  # Christmas
+        self.assertEqual(self.due(tpe(2026, 7, 3, 20, 45)), {("us-premarket", "2026-07-03"): False})  # July 3 observed
+        self.assertEqual(self.due(tpe(2026, 7, 4, 5, 15)), {("us-postmarket", "2026-07-03"): False})
+        # the default date of a manual run is the session date too
+        self.assertEqual(tpe(2026, 12, 8, 5, 20).astimezone(tradingcal.session_zone(post)).date(), dt.date(2026, 12, 7))
+        self.assertEqual(tradingcal.session_zone(self.slots["tw-premarket"]).key, "Asia/Taipei")
+
+    def test_sweep_uses_the_us_session_slot_instant(self):
+        # a waiting us-postmarket 2026-12-07 (slot Tue 05:15 Taipei) expires 90 min after that instant, not after Mon 05:15
+        state, outbox_notes = {"us-postmarket:2026-12-07": {"status": "waiting", "reason": "x"}}, []
+        with tempfile.TemporaryDirectory() as tmp:
+            for now, expired in ((tpe(2026, 12, 8, 6, 44), False), (tpe(2026, 12, 8, 6, 45), True)):
+                state["us-postmarket:2026-12-07"] = {"status": "waiting", "reason": "x"}
+                run.sweep_expired(state, Path(tmp), self.slots, 90, now, outbox_notes.append)
+                self.assertEqual(state["us-postmarket:2026-12-07"]["status"] == "failed", expired)
 
     def test_state_makes_slots_idempotent(self):
         now = tpe(2026, 10, 22, 17, 50)
@@ -671,7 +718,7 @@ class TestCollectRender(unittest.TestCase):
         self.assertIn("VIX 漲跌未取得（資料源回報不變或缺值）", facts["gaps"])
         md, _ = render.render(facts, None, None, cfg())
         self.assertIn("## 類股 ETF", md)
-        self.assertIn("| VIX | 16.68 | — | — |", md)
+        self.assertIn("| VIX | 16.68 | 未取得 | 未取得 |", md)
         self.assertNotIn("0.00%", md.split("## 指數")[1].split("## 利率")[0])
         self.assertIn(f"| SMH | 半導體 | 556.70 | {U('+10.34')} | {U('+1.89%')} |", md)
         self.assertIn(f"| TSM | 431.89 | {U('+6.81')} | {U('+1.60%')} | 426.50 | {D('-1.25%')} |", md)  # 盤後% too
@@ -1103,6 +1150,175 @@ class TestDueRunner(unittest.TestCase):
                 "RESEARCH_DRAFT_OPENROUTER_KEY",
                 json.loads((ob / "2026-10-21-tw-postmarket.failed.json").read_text())["reason"],
             )
+
+
+def cnbc_unch(*symbols):
+    """CNBC route that reports the given symbols as UNCH with previous close == last (a change that is unknown)."""
+
+    def route(url, body):
+        doc = fx("cnbc_quotes.json")
+        for q in doc["FormattedQuoteResult"]["FormattedQuote"]:
+            if q["symbol"] in symbols:
+                q.update(change="UNCH", change_pct="UNCH", previous_day_closing=q["last"])
+        return 200, json.dumps(doc).encode()
+
+    return [("quote.cnbc.com", route), *[r for r in TW_ROUTES_21 if r[0] != "quote.cnbc.com"]]
+
+
+class TestCriticalAndOptionalData(unittest.TestCase):
+    """Critical data holds a brief back (retry_gaps); optional data is reported and renders 未取得 but never waits."""
+
+    def test_optional_fx_change_does_not_hold_tw_premarket(self):
+        facts = collect.collect("tw-premarket", D22, collector(cnbc_unch(".DXY")))
+        self.assertEqual(facts["status"], "ok")
+        self.assertTrue(any("美元指數 漲跌未取得" in g for g in facts["gaps"]))
+        self.assertEqual(facts["retry_gaps"], [])
+        md, _ = render.render(facts, None, None, cfg())
+        self.assertIn("| 美元指數 | 101.527 | 未取得 | 未取得 |", md)
+        self.assertIn("> **資料未齊**：", md)
+
+    def test_critical_change_holds_tw_premarket(self):
+        # SOX is part of the 一句話 (S&P 500 + 費半), so its missing change is waited for; DXY next to it is not
+        facts = collect.collect("tw-premarket", D22, collector(cnbc_unch(".SOX", ".DXY")))
+        self.assertEqual(facts["retry_gaps"], ["費城半導體 漲跌未取得（資料源回報不變或缺值）"])
+        self.assertTrue(any("美元指數 漲跌未取得" in g for g in facts["gaps"]))
+
+    def test_tw_premarket_critical_and_optional_sources(self):
+        no_night = [r for r in TW_ROUTES_21 if r[0] not in ("futDailyMarketReport", "mis.taifex")]
+        facts = collect.collect("tw-premarket", D22, collector(no_night))
+        self.assertIn("台指期夜盤（TAIFEX）未取得", facts["retry_gaps"])  # TX night session: critical
+        no_exdiv = [r for r in TW_ROUTES_21 if r[0] != "TWT48U"]
+        facts = collect.collect("tw-premarket", D22, collector(no_exdiv))
+        self.assertIn("除權息預告（TWT48U）未取得", facts["gaps"])  # ex-dividend calendar: optional
+        self.assertEqual(facts["retry_gaps"], [])
+
+    def test_us_postmarket_index_closes_critical_others_optional(self):
+        facts = collect.collect("us-postmarket", D21, collector(TW_ROUTES_21))
+        self.assertIn("VIX 漲跌未取得（資料源回報不變或缺值）", facts["gaps"])  # fixture: VIX UNCH
+        self.assertIn("XLU", " ".join(facts["gaps"]))
+        self.assertEqual(facts["retry_gaps"], [])
+        facts = collect.collect("us-postmarket", D21, collector(cnbc_unch(".DJI")))
+        self.assertEqual(facts["retry_gaps"], ["道瓊工業 漲跌未取得（資料源回報不變或缺值）"])
+
+    def test_missing_quote_classes(self):
+        c = collector(TW_ROUTES_21)
+        c.critical = collect.CRITICAL_QUOTES["us-premarket"]
+        c.gap_missing_quotes("缺：", ["YM", "ES", "N225"])
+        self.assertEqual(c.gaps, ["缺：ES", "缺：YM、N225"])
+        self.assertEqual(c.retry_gaps, ["缺：ES"])
+        self.assertEqual(collect.CRITICAL_QUOTES["tw-postmarket"], frozenset())
+        self.assertEqual(set(collect.CRITICAL_QUOTES), set(tradingcal.KINDS))
+
+    def test_postmarket_tables_name_the_gap_in_the_row(self):
+        rows = [
+            {"label": "美 10 年期公債殖利率", "last": 4.1, "kind": "yield", "chg_bp": None},
+            {"label": "WTI 原油", "last": 80.0, "chg": None, "pct": None},
+        ]
+        self.assertEqual(
+            render._quote_rows(rows),
+            [["美 10 年期公債殖利率", "4.100%", "未取得", "—"], ["WTI 原油", "80.00", "未取得", "未取得"]],
+        )
+
+    def test_due_tick_delivers_on_time_with_optional_gap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            helper = TestDueRunner()
+            cpath = helper._cfg(tmp)
+            self.assertEqual(helper._due(cpath, "2026-10-22T08:20:00+08:00", routes=cnbc_unch(".DXY")), 0)
+            self.assertEqual(helper._state(tmp)["tw-premarket:2026-10-22"]["status"], "queued")
+            md = json.loads((Path(tmp) / "outbox" / "2026-10-22-tw-premarket.json").read_text())["report_md"]
+            self.assertIn("| 美元指數 | 101.527 | 未取得 | 未取得 |", md)
+
+    def test_due_tick_still_waits_for_critical_data_then_delivers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            helper = TestDueRunner()
+            cpath = helper._cfg(tmp)
+            routes = cnbc_unch(".SOX")
+            helper._due(cpath, "2026-10-22T08:20:00+08:00", routes=routes)
+            self.assertEqual(helper._state(tmp)["tw-premarket:2026-10-22"]["status"], "waiting")
+            self.assertFalse(list((Path(tmp) / "outbox").glob("*.json")))
+            helper._due(cpath, "2026-10-22T09:16:00+08:00", routes=routes)  # complete_wait_minutes (60) is over
+            self.assertEqual(helper._state(tmp)["tw-premarket:2026-10-22"]["status"], "queued")
+
+
+class TestLLMCache(unittest.TestCase):
+    GOOD = {
+        "one_liner": "加權指數收 46,887.77。",
+        "interpretation": "投信買超 127.99 億。",
+        "watch_points": ["觀察成交量"],
+    }
+
+    def setUp(self):
+        self.calls = []
+
+    def transport(self, method, url, headers, body, timeout):
+        self.calls.append(1)
+        resp = {
+            "model": "m",
+            "id": "g",
+            "usage": {"cost": 0.002},
+            "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(self.GOOD, ensure_ascii=False)}}],
+        }
+        return 200, json.dumps(resp).encode()
+
+    def facts(self, routes=TW_ROUTES_21):
+        return collect.collect("tw-postmarket", D21, collector(routes))
+
+    def test_same_data_reuses_the_section_and_changed_data_calls_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            facts, lcfg = self.facts(), cfg()["llm"]
+            sec, meta = llm.interpret_cached(facts, "k", lcfg, tmp, transport=self.transport)
+            self.assertEqual((len(self.calls), meta["cost"], meta.get("cached")), (1, 0.002, None))
+            later = dict(facts, as_of="later tick, same data", generated_at="2026-10-21T18:05:00+08:00")
+            sec2, meta2 = llm.interpret_cached(later, "k", lcfg, tmp, transport=self.transport)
+            self.assertEqual(len(self.calls), 1)
+            self.assertEqual((sec2, meta2["cached"], meta2["cost"], meta2["cached_cost"]), (sec, True, 0.0, 0.002))
+            self.assertEqual(meta2["status"], "ok")
+            llm.interpret_cached(
+                dict(facts, gaps=[*facts["gaps"], "new gap"]), "k", lcfg, tmp, transport=self.transport
+            )
+            self.assertEqual(len(self.calls), 2)  # a data change misses
+            llm.interpret_cached(
+                dict(facts, gaps=[*facts["gaps"], "new gap"]), "k", lcfg, tmp, transport=self.transport
+            )
+            self.assertEqual(len(self.calls), 2)
+            other = dict(lcfg, model="other/model")
+            llm.interpret_cached(facts, "k", other, tmp, transport=self.transport)
+            self.assertEqual(len(self.calls), 3)  # a model change misses
+
+    def test_refused_output_is_not_cached(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = dict(self.GOOD, one_liner="加權指數收 47,000.12。")
+
+            def t(*a):
+                return self.transport(*a)[0], json.dumps(
+                    {"model": "m", "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(bad)}}]}
+                ).encode()
+
+            sec, _meta = llm.interpret_cached(self.facts(), "k", cfg()["llm"], tmp, transport=t)
+            self.assertIsNone(sec)
+            self.assertEqual(list(Path(tmp).glob("*.json")), [])
+
+    def test_old_cache_files_are_pruned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old = Path(tmp) / "2026-10-01-tw-postmarket.json"
+            old.write_text("{}")
+            os.utime(old, (1, 1))
+            llm.interpret_cached(self.facts(), "k", cfg()["llm"], tmp, transport=self.transport)
+            self.assertFalse(old.exists())
+            self.assertTrue((Path(tmp) / "2026-10-21-tw-postmarket.json").exists())
+
+    def test_build_does_not_call_the_model_while_waiting_for_critical_data(self):
+        routes = cnbc_unch(".SOX")
+        kw = dict(cfg=cfg(), calendar=calendar(), watchlist=WATCH, key="k", log=lambda m: None)
+        now = dt.datetime(2026, 10, 22, 0, 20, tzinfo=dt.UTC)
+        with tempfile.TemporaryDirectory() as tmp:
+            args = dict(fetcher=fetcher(routes), now_utc=now, llm_transport=self.transport, cache_dir=tmp)
+            facts, md, _s, meta = run.build("tw-premarket", D22, may_wait=True, **args, **kw)
+            self.assertEqual((facts["status"], md, meta, len(self.calls)), ("ok", None, None, 0))
+            # the wait is over: the same build now renders, with the model
+            facts, md, _s, meta = run.build("tw-premarket", D22, may_wait=False, **args, **kw)
+            self.assertGreaterEqual(len(self.calls), 1)
+            self.assertIsNotNone(md)
 
 
 class TestLLMContentRules(unittest.TestCase):

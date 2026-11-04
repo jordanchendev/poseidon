@@ -380,3 +380,48 @@ def _finish(meta):
             meta["cost"] += c["cost"]
     meta["cost"] = round(meta["cost"], 6)
     return meta
+
+
+# ------------------------------------------------------------------------------------------------ per-slot cache
+CACHE_KEEP_S = 3 * 86400
+
+
+def input_hash(facts, lcfg):
+    """Hash of everything the model is given except the wall-clock `as_of`: same hash = same prompt content, so the
+    validated section can be reused on the next retry tick instead of paying for another call."""
+    basis = {
+        "system": build_messages(facts)[0]["content"],
+        "model": lcfg["model"],
+        "max_tokens": lcfg.get("max_tokens", 6000),
+        "kind": facts["kind"],
+        "date": facts["date"],
+        "gaps": facts["gaps"],
+        "data": facts["data"],
+        "headlines": [[h["n"], h["title"], h["source"], h["published"]] for h in facts["headlines"]],
+    }
+    return hashlib.sha256(json.dumps(basis, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def interpret_cached(facts, key, lcfg, cache_dir, transport=None):
+    """interpret() with a one-entry cache per (date, kind) under cache_dir. Only a validated section is cached; a hit
+    returns the stored section with meta marked cached and cost 0. Files older than CACHE_KEEP_S are removed."""
+    cache_dir = Path(cache_dir)
+    path = cache_dir / f"{facts['date']}-{facts['kind']}.json"
+    h = input_hash(facts, lcfg)
+    try:
+        hit = json.loads(path.read_text(encoding="utf-8"))
+        if hit["hash"] == h and isinstance(hit["section"], dict):
+            return hit["section"], {**hit["meta"], "cached": True, "cached_cost": hit["meta"].get("cost"), "cost": 0.0}
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    section, meta = interpret(facts, key, lcfg, transport=transport)
+    if section is not None:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"hash": h, "section": section, "meta": meta}, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+        for old in cache_dir.glob("*.json"):
+            with contextlib.suppress(OSError):
+                if time.time() - old.stat().st_mtime > CACHE_KEEP_S:
+                    old.unlink()
+    return section, meta

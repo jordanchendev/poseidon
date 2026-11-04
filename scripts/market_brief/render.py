@@ -100,6 +100,14 @@ def pchg_cell(x):
     return _arw(x, fmt_signed_price(x))
 
 
+NOT_FETCHED = "未取得"
+
+
+def _or_na(cell, x, *args):
+    """A change cell, or 「未取得」 when the value is missing (a gap, not a flat or unknown-by-design "—")."""
+    return NOT_FETCHED if x is None else cell(x, *args)
+
+
 def _table(headers, aligns, rows, tg=None):
     """GFM table. aligns: 'l' | 'r'. tg: Telegram spec 'md header=Label; ...; last header' (see telegram_text)."""
     out = [f"<!-- tg: {tg} -->"] if tg else []
@@ -119,10 +127,11 @@ def _quote_rows(rows, label_note=True):
             out.append([label, "資料未取得", "—", "—"])
         elif r.get("kind") == "yield":
             bp = r.get("chg_bp")
-            out.append([label, f"{fmt(r['last'], 3)}%", _arw(bp, fmt_signed(bp, 1) + " bp"), "—"])
+            bp_cell = NOT_FETCHED if bp is None else _arw(bp, fmt_signed(bp, 1) + " bp")
+            out.append([label, f"{fmt(r['last'], 3)}%", bp_cell, "—"])
         else:
             nd = r.get("nd", 2)
-            out.append([label, fmt(r["last"], nd), chg_cell(r["chg"], nd), pct_cell(r["pct"])])
+            out.append([label, fmt(r["last"], nd), _or_na(chg_cell, r["chg"], nd), _or_na(pct_cell, r["pct"])])
     return out
 
 
@@ -178,8 +187,8 @@ def _us_watch_table(rows, ext_label):
             [
                 r["key"],
                 fmt(r["last"]),
-                chg_cell(r["chg"]),
-                pct_cell(r["pct"]),
+                _or_na(chg_cell, r["chg"]),
+                _or_na(pct_cell, r["pct"]),
                 fmt(e["last"]) if e else "—",
                 pct_cell(e.get("pct")) if e else "—",
             ]

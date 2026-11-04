@@ -41,6 +41,16 @@ TW_INDEX_PICK = [
 SECTOR_AGGREGATES = {"水泥窯製類指數", "塑膠化工類指數", "機電類指數", "化學生技醫療類指數"}
 COMMON_STOCK = re.compile(r"^[1-9]\d{3}$")
 
+# Quote keys whose absence (or missing change) makes a brief wrong rather than thinner: the run waits for them
+# (retry_gaps, up to complete_wait_minutes). Every other missing value is optional: it is listed in `gaps`, renders
+# 「未取得」 in its row and never delays delivery. The 一句話 and the model's interpretation are built from these.
+CRITICAL_QUOTES = {
+    "tw-premarket": frozenset({"SPX", "IXIC", "DJI", "SOX", "TSM", "USDTWD"}),  # US closes, TSMC ADR and its FX leg
+    "us-postmarket": frozenset({"SPX", "IXIC", "DJI", "SOX"}),  # the US closing prints
+    "us-premarket": frozenset({"ES", "NQ"}),  # index futures
+    "tw-postmarket": frozenset(),
+}
+
 
 def r2(x, nd=2):
     return None if x is None else round(float(x), nd)
@@ -62,6 +72,7 @@ class Collector:
         self.gaps = []
         self.retry_gaps = []  # gaps worth waiting for (data may still be published within the window)
         self.must_missing = []
+        self.critical = frozenset()  # quote keys worth waiting for, set per kind by collect()
         self._mi_cache = {}
         self.bfi_detail = {}
         self._tpex_q_cache = {}
@@ -71,7 +82,7 @@ class Collector:
         if not any(s["url"] == url for s in self.sources):
             self.sources.append({"name": name, "url": url})
 
-    def gap(self, msg, retry=True):
+    def gap(self, msg, retry=True):  # retry=False: optional data, listed but never waited for
         if msg not in self.gaps:
             self.gaps.append(msg)
             if retry:
@@ -193,7 +204,7 @@ class Collector:
             "watchlist": self.tw_watch_rows(d, mi),
         }
         if out["institutions_yi"] is None:
-            self.gap(f"{d.isoformat()} 三大法人（BFI82U）未取得")
+            self.gap(f"{d.isoformat()} 三大法人（BFI82U）未取得", retry=False)
         return out
 
     def us_rows(self, insts, got, *, with_ext=False, expect_date=None, strict=False):
@@ -214,9 +225,12 @@ class Collector:
                     note = f"{q['session_date']} 報價"
                     if strict:
                         chg = pct = None
-                        self.gap(f"{row['label']} 報價屬 {q['session_date']} 交易時段，非 {expect_date}，漲跌略過")
+                        self.gap(
+                            f"{row['label']} 報價屬 {q['session_date']} 交易時段，非 {expect_date}，漲跌略過",
+                            retry=i["key"] in self.critical,
+                        )
                 if chg is None and q.get("chg_missing"):
-                    self.gap(f"{row['label']} 漲跌未取得（資料源回報不變或缺值）")
+                    self.gap(f"{row['label']} 漲跌未取得（資料源回報不變或缺值）", retry=i["key"] in self.critical)
                 row.update(
                     last=r2(q["last"], nd),
                     chg=r2(chg, nd),
@@ -244,6 +258,13 @@ class Collector:
                     )
             rows.append(row)
         return rows
+
+    def gap_missing_quotes(self, prefix, missing):
+        """One gap per class so only the critical keys hold the run back (the optional ones are just reported)."""
+        for retry in (True, False):
+            keys = [k for k in missing if (k in self.critical) == retry]
+            if keys:
+                self.gap(prefix + "、".join(keys), retry=retry)
 
     def adr(self, got, tw_close, tw_date):
         a = self.cfg["adr"]
@@ -300,7 +321,9 @@ class Collector:
             self.src(f"TPEx 上櫃股票當日彙總 {d.isoformat()}", url)
         except (tw.NotReady, FetchError) as e:
             self.log(f"TPEx highlight {d} unavailable: {e}; falling back to index + quotes")
-            self.gap("TPEx 上櫃當日彙總尚未公布（櫃買指數取自指數表，上櫃漲跌家數依收盤行情普通股計算）")
+            self.gap(
+                "TPEx 上櫃當日彙總尚未公布（櫃買指數取自指數表，上櫃漲跌家數依收盤行情普通股計算）", retry=False
+            )  # the fallback below computes what the report needs
         stats = mi["stats"]
         turnover = {
             "stocks_yi": yi2((stats.get("1.一般股票") or {}).get("turnover")),
@@ -395,7 +418,7 @@ class Collector:
             }
         except (tw.NotReady, FetchError) as e:
             self.log(f"TPEx quotes {d} unavailable: {e}")
-            self.gap("上櫃個股行情（TPEx）未取得")
+            self.gap("上櫃個股行情（TPEx）未取得", retry=False)
         group_ranking, group_status = tw_groups.fetch(self.f, self.cfg, d, self.log)
         data = {
             "session_date": d.isoformat(),
@@ -476,7 +499,7 @@ class Collector:
             self.src("TWSE TWT48U 除權除息預告表", tw.twt48u_url())
         except (tw.NotReady, FetchError) as e:
             self.log(f"TWT48U unavailable: {e}")
-            self.gap("除權息預告（TWT48U）未取得")
+            self.gap("除權息預告（TWT48U）未取得", retry=False)
         credit, credit_status, credit_skip = tw_credit.fetch(
             self.f, self.cfg, prev_d or self.cal.prev_open("tw", d) or d - dt.timedelta(days=1), self.log
         )
@@ -492,8 +515,7 @@ class Collector:
             "exdiv_today": exdiv,
             "us_watchlist": self.us_rows([{"key": k, "label": k} for k in watch_keys], got, with_ext=True),
         }
-        if missing:
-            self.gap("部分美股報價未取得：" + "、".join(missing))
+        self.gap_missing_quotes("部分美股報價未取得：", missing)
         return {
             "status": "ok",
             "data": data,
@@ -515,7 +537,7 @@ class Collector:
         tw_d, tw_mi = self.latest_tw_session(d)
         tw_sum = self.tw_summary(tw_d, tw_mi) if tw_mi else None
         if tw_sum is None:
-            self.gap("台股收盤資料未取得")
+            self.gap("台股收盤資料未取得", retry=False)
         rows = self.us_rows([{"key": w["key"], "label": w["key"]} for w in watch], got, with_ext=True)
         live_pre = [
             r
@@ -528,7 +550,7 @@ class Collector:
             ):
                 r["ext"] = None  # stale after-hours quote from the previous session: not a pre-market quote
         if not live_pre:
-            self.gap("盤前個股報價（CNBC extended hours）未取得")
+            self.gap("盤前個股報價（CNBC extended hours）未取得", retry=False)
         tw_close = next(
             (w.get("close") for w in (tw_sum or {}).get("watchlist", []) if w["code"] == self.cfg["adr"]["tw"]), None
         )
@@ -546,8 +568,7 @@ class Collector:
             },
             "us_watchlist_pre": rows,
         }
-        if missing:
-            self.gap("部分報價未取得：" + "、".join(missing))
+        self.gap_missing_quotes("部分報價未取得：", missing)
         return {
             "status": "ok",
             "data": data,
@@ -584,8 +605,7 @@ class Collector:
             "adr": self.adr(got, tw_close, tw_d.isoformat() if tw_d else None),
             "breadth": None,
         }
-        if missing:
-            self.gap("部分報價未取得：" + "、".join(missing))
+        self.gap_missing_quotes("部分報價未取得：", missing)
         return {
             "status": "ok",
             "data": data,
@@ -606,6 +626,7 @@ def collect(kind, d, collector):
         "us-premarket": collector.us_premarket,
         "us-postmarket": collector.us_postmarket,
     }[kind]
+    collector.critical = CRITICAL_QUOTES[kind]
     res = fn(d)
     market, session = kind.split("-")
     return {

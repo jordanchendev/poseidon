@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Daily market briefs (TW + US, pre/post market) for stormtrooper host cron. Stdlib only, host python3.
 
-Slots (config.json, wall clock in each slot's tz): us-postmarket 17:15 America/New_York, tw-premarket 08:15
-Asia/Taipei, tw-postmarket 17:45 Asia/Taipei (TWSE revises the day's turnover totals after 16:30), us-premarket
-08:45 America/New_York; each slot has a 90-minute window.
+Slots (config.json, wall clock in each slot's tz, fixed Taipei times all year): us-postmarket 05:15 Asia/Taipei,
+tw-premarket 08:15, tw-postmarket 17:45 (TWSE revises the day's turnover totals after 16:30), us-premarket 20:45
+Asia/Taipei; each slot has a 90-minute window. The US slots carry session_tz America/New_York: the session date and
+the NYSE calendar are New York's (05:15 Taipei reports the US session that closed at 16:00 New York, 15 or 75 minutes
+earlier depending on DST; the completeness wait below holds the brief until the closing prints are in).
 
 Commands
   run.py due [--now ISO] [--no-llm] [--no-deliver] [--dry-run]
@@ -111,17 +113,26 @@ def get_key(cfg, no_llm):
     return llm.load_key(cfg["llm"]["key_file"], cfg["llm"]["key_var"])
 
 
-def build(kind, d, *, cfg, fetcher, calendar, watchlist, now_utc, key, log, llm_transport=None):
-    """-> (facts, md or None, summary or None, llm_meta or None)."""
+def build(
+    kind, d, *, cfg, fetcher, calendar, watchlist, now_utc, key, log, llm_transport=None, cache_dir=None, may_wait=False
+):
+    """-> (facts, md or None, summary or None, llm_meta or None).
+    may_wait: the slot is still inside complete_wait_minutes, so a build with retry_gaps is discarded by the caller
+    (retry next tick) and the model is not called for it.
+    cache_dir: reuse the validated model section while the data it was given is unchanged (see llm.interpret_cached)."""
     c = collect.Collector(fetcher, cfg, watchlist, calendar, now_utc, log=log)
     facts = collect.collect(kind, d, c)
-    if facts["status"] != "ok":
+    if facts["status"] != "ok" or (may_wait and facts["retry_gaps"]):
         return facts, None, None, None
     section, meta = None, None
     if key:
-        section, meta = llm.interpret(facts, key, cfg["llm"], transport=llm_transport)
+        if cache_dir:
+            section, meta = llm.interpret_cached(facts, key, cfg["llm"], cache_dir, transport=llm_transport)
+        else:
+            section, meta = llm.interpret(facts, key, cfg["llm"], transport=llm_transport)
+        cached = " (cached)" if meta.get("cached") else ""
         log(
-            f"{kind} {d} llm {meta['status']} model={meta['returned_model']} cost={meta['cost']} {'; '.join(meta['reasons'])[:300]}"
+            f"{kind} {d} llm {meta['status']}{cached} model={meta['returned_model']} cost={meta['cost']} {'; '.join(meta['reasons'])[:300]}"
         )
     md, summary = render.render(facts, section, meta, cfg)
     return facts, md, summary, meta
@@ -286,7 +297,17 @@ def cmd_due(a, cfg, state_dir, outbox, log):
             last_tick = age >= cfg["window_minutes"] - 6
             try:
                 facts, md, summary, meta = build(
-                    kind, d, cfg=cfg, fetcher=fetcher, calendar=cal, watchlist=watchlist, now_utc=now, key=key, log=log
+                    kind,
+                    d,
+                    cfg=cfg,
+                    fetcher=fetcher,
+                    calendar=cal,
+                    watchlist=watchlist,
+                    now_utc=now,
+                    key=key,
+                    log=log,
+                    cache_dir=state_dir / "llm-cache",
+                    may_wait=age < cfg["complete_wait_minutes"],
                 )
             except (
                 Exception
@@ -343,7 +364,7 @@ def cmd_due(a, cfg, state_dir, outbox, log):
 def cmd_run(a, cfg, state_dir, outbox, log):
     now = parse_now(a.now)
     slot = cfg["slots"][a.kind]
-    d = dt.date.fromisoformat(a.date) if a.date else now.astimezone(ZoneInfo(slot["tz"])).date()
+    d = dt.date.fromisoformat(a.date) if a.date else now.astimezone(tradingcal.session_zone(slot)).date()
     fetcher = Fetcher()
     cal = build_calendar(fetcher, cfg, state_dir, {d.year, now.astimezone(TPE).year}, log)
     if not cal.is_open(slot["market"], d):

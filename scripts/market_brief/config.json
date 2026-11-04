@@ -1,5 +1,5 @@
 {
-  "_comment": "market_brief config. Paths may start with ~. Slot times are local to each slot's tz; US slots follow America/New_York (DST-aware). tw-postmarket is 17:45 because TWSE revises the day's turnover totals after 16:30 (seen 2026-10-22).",
+  "_comment": "market_brief config. Paths may start with ~. Slot times are local to each slot's tz. US slots fire at fixed Asia/Taipei times all year (owner 2026-11-04); session_tz names the zone whose date and holidays the session follows. In winter 05:15 Taipei is 16:15 New York, so critical US closing data is waited for (complete_wait_minutes). tw-postmarket is 17:45 because TWSE revises the day's turnover totals after 16:30 (seen 2026-10-22).",
   "state_dir": "~/market-brief/state",
   "outbox_dir": "~/market-brief/outbox",
   "watchlist_file": "~/market-brief/watchlist.json",
@@ -7,10 +7,10 @@
   "window_minutes": 90,
   "complete_wait_minutes": 60,
   "slots": {
-    "us-postmarket": {"tz": "America/New_York", "time": "17:15", "market": "us"},
+    "us-postmarket": {"tz": "Asia/Taipei", "session_tz": "America/New_York", "time": "05:15", "market": "us"},
     "tw-premarket": {"tz": "Asia/Taipei", "time": "08:15", "market": "tw"},
     "tw-postmarket": {"tz": "Asia/Taipei", "time": "17:45", "market": "tw"},
-    "us-premarket": {"tz": "America/New_York", "time": "08:45", "market": "us"}
+    "us-premarket": {"tz": "Asia/Taipei", "session_tz": "America/New_York", "time": "20:45", "market": "us"}
   },
   "llm": {
     "key_file": "~/research-runner/secrets/research-draft-openrouter.env",
