@@ -43,15 +43,17 @@ ALLOWED_DSH_ARTIFACTS = {
     "tests/test_dsh_decision_poc.py",
     "tests/test_dsh_research.py",
     # The strategy pipeline's JEV evaluator, merged to main in B4 (2026-11-01).
-    "scripts/research/jev_eval_control_set.py",
+    "src/poseidon/research_runner/jev_eval_control_set.py",
     "tests/pipeline/jev_support.py",
     # The research runner's single JEV client (research runner W1, 2026-11-02); a script, no production path.
-    "scripts/research/jev_client.py",
+    "src/poseidon/research_runner/jev_client.py",
 }
 # Sanctioned production uses of the JEV/DeepSeek names: the strategy pipeline's JEV evaluator (B4 merge) and the
 # shared evaluation-key reader. DSH itself still has no production path; pyproject.toml keeps its dependency check.
 ALLOWED_PRODUCTION_JEV_FILES = frozenset({"src/poseidon/core/eval_key.py", "pyproject.toml"})
-ALLOWED_PRODUCTION_JEV_PREFIX = "src/poseidon/pipeline/"
+# The research runner (src/poseidon/research_runner, moved from scripts/research 2026-11-04) judges narrative claims with
+# the JEV client and runs the JEV control-set evaluators; it writes only to its own SQLite ledger and no authority path.
+ALLOWED_PRODUCTION_JEV_PREFIXES = ("src/poseidon/pipeline/", "src/poseidon/research_runner/")
 ALLOWED_ROOT_EVIDENCE = {
     "../.planning/workstreams/investment-decision-loop/phases/100-release-gate-kairos-and-dsh-gate/"
     "evidence/phase100-dsh-acceptance.py",
@@ -293,7 +295,7 @@ def scan_boundary(root: Path) -> list[str]:
     for path in dict.fromkeys(production_files):
         relative = path.relative_to(root).as_posix()
         text = path.read_text(encoding="utf-8", errors="replace")
-        jev_allowed = relative in ALLOWED_PRODUCTION_JEV_FILES or relative.startswith(ALLOWED_PRODUCTION_JEV_PREFIX)
+        jev_allowed = relative in ALLOWED_PRODUCTION_JEV_FILES or relative.startswith(ALLOWED_PRODUCTION_JEV_PREFIXES)
         for match in () if jev_allowed else PRODUCTION_DSH_PATTERN.finditer(text):
             issues.append(f"production DSH semantic {match.group(0)}: {relative}")
         if relative == "docker-compose.yml" and "dsh" in text.lower():

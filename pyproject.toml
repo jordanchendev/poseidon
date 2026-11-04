@@ -139,7 +139,10 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Offline research tooling ported as-is from aquarium local_dev (2026-10-21): keep its printf formatting and
 # compact helpers instead of a risky mechanical rewrite; new runner modules follow the full rule set.
-"scripts/research/{research_theme,consensus,guidance,kpi_series,claim_precheck,fetch_source,render_theme,jev_eval_control_set,settle_theme,project_vault,test_offline_tooling,test_consensus,test_project_vault,test_settlement,test_claim_precheck,test_vault_lint_graph}.py" = [
+"src/poseidon/research_runner/{research_theme,consensus,guidance,kpi_series,claim_precheck,fetch_source,render_theme,jev_eval_control_set,settle_theme,project_vault}.py" = [
+    "UP031", "E731", "RUF005", "SIM115", "E741", "B905", "B904", "RUF059", "SIM102", "SIM103", "B007",
+]
+"tests/research_runner/{test_offline_tooling,test_consensus,test_project_vault,test_settlement,test_claim_precheck,test_vault_lint_graph}.py" = [
     "UP031", "E731", "RUF005", "SIM115", "E741", "B905", "B904", "RUF059", "SIM102", "SIM103", "B007",
 ]
 
