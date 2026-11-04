@@ -17,15 +17,9 @@ from pytest import approx
 
 from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import shadow_paper_daily as spd
-from poseidon.pipeline.daily_stages import (
-    STOCK_UNDERLYING,
-    WindowStore,
-    instrument_kinds,
-    price_points,
-    scaled_costs,
-    underlying_daily,
-    underlying_product,
-)
+from poseidon.pipeline.daily_gates import underlying_daily, underlying_product
+from poseidon.pipeline.daily_stages import STOCK_UNDERLYING, WindowStore, instrument_kinds, scaled_costs
+from poseidon.pipeline.daily_validate import price_points
 from poseidon.pipeline.engine import BookView, Decision, EngineConfig, MarketView
 from poseidon.pipeline.refdata.datasets import CALENDAR, FUTURES, MARKET_CALENDAR, TAIEX
 from poseidon.pipeline.refdata.store import RefdataStore, frame_sha256

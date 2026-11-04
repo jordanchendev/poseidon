@@ -19,7 +19,8 @@ import pandas as pd
 import pytest
 
 from poseidon.core.canonical import canonical_json
-from poseidon.pipeline.daily_stages import DailyHoldoutStage, DailyWindow
+from poseidon.pipeline.daily_gates import DailyHoldoutStage
+from poseidon.pipeline.daily_stages import DailyWindow
 from poseidon.pipeline.family import MemoryFamily
 from poseidon.pipeline.gates import benchmark, holdout
 from poseidon.pipeline.gates.daily import DailyResult

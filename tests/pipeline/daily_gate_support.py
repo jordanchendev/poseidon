@@ -44,7 +44,7 @@ from poseidon.pipeline.gates import (
 from poseidon.pipeline.gates.daily import DailyResult, RerunRequest, choose_walk_forward, from_engine, moments, sharpe
 from poseidon.pipeline.optimization import ParamGrid
 from poseidon.pipeline.plan import class_settings
-from poseidon.pipeline.v3.components import round_units
+from poseidon.pipeline.v3.components_sizing import round_units
 from poseidon.strategies.dsl.v2.schema import ParamSpec
 
 TMF = ContractSpec(symbol="TMF", point_value=10.0, tick_size=1.0, commission_per_unit=20.0, tax_rate=2e-5)

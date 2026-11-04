@@ -7,7 +7,7 @@ from datetime import date
 
 import pytest
 
-from poseidon.pipeline.v3.components import round_units
+from poseidon.pipeline.v3.components_sizing import round_units
 from poseidon.pipeline.v3.instruments import INSTRUMENTS, REFERENCE_INDEX_LEVEL, ordered_frequencies
 from poseidon.pipeline.v3.registry import (
     PLANNED_COMPONENTS,

@@ -22,7 +22,7 @@ from typing import Annotated, Any, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from poseidon.pipeline.v3 import components as _components  # noqa: F401  (registers the components)
-from poseidon.pipeline.v3.components import SERIES_REF_PATTERN
+from poseidon.pipeline.v3.component_common import SERIES_REF_PATTERN
 from poseidon.pipeline.v3.describe import describe_spec
 from poseidon.pipeline.v3.examples import etf_rotation_00631l_0050, tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.instruments import (

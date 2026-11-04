@@ -5,7 +5,7 @@
 
 ``nulls`` runs strategies without timing skill on real TX (refdata at ``POSEIDON_PIPELINE_REFDATA_ROOT``, TMF on TX
 prices, 1M TWD, next open, run #19's train window) through the daily engine, then through the gate's own pieces:
-the HAC regression (alpha route), the beta-matched run (``daily_stages.beta_matched_run``) and the bootstrap
+the HAC regression (alpha route), the beta-matched run (``daily_gates.beta_matched_run``) and the bootstrap
 (``benchmark.calmar_difference``) for every block length in ``--blocks``, every confidence in ``--confidences``:
 
 * ``constant``: constant leverage 0.5 / 1 / 2 / 3, rebalanced daily or on the first trading day of a month;
@@ -31,19 +31,14 @@ import numpy as np
 import pandas as pd
 
 from poseidon.pipeline import optimization as opt
-from poseidon.pipeline.daily_stages import (
-    DailyBenchmarkStage,
-    SpecRunner,
-    WindowStore,
-    beta_matched_run,
-    beta_matched_spec,
-)
+from poseidon.pipeline.daily_gates import DailyBenchmarkStage, beta_matched_run, beta_matched_spec
+from poseidon.pipeline.daily_stages import SpecRunner, WindowStore
 from poseidon.pipeline.engine import Decision
 from poseidon.pipeline.gates import benchmark
 from poseidon.pipeline.gates.daily import from_engine
 from poseidon.pipeline.plan import DAILY_THRESHOLDS, effective_config
 from poseidon.pipeline.v3.compiler import compile_spec
-from poseidon.pipeline.v3.components import round_units
+from poseidon.pipeline.v3.components_sizing import round_units
 from poseidon.pipeline.v3.config import session_warmup, trading_calendar_record, warmup_record
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.instruments import INSTRUMENTS
@@ -79,7 +74,7 @@ def filter_spec(symbol: str = "TMF", capital: int = 1_000_000) -> dict:
 def runner() -> SpecRunner:
     global _runner, _underlying
     if _runner is None:
-        from poseidon.pipeline.daily_stages import underlying_daily
+        from poseidon.pipeline.daily_gates import underlying_daily
         from poseidon.pipeline.gates.daily import underlying_returns
         from poseidon.pipeline.refdata.store import RefdataStore
 

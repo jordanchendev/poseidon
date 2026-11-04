@@ -338,7 +338,7 @@ RISK_KEYS = (
     "benchmark_risk_min_beta",
     "benchmark_risk_min_tracking",  # missing: no tracking floor (a config frozen before 2026-10-29)
 )
-# The stage's rule, not the gate's (``daily_stages.beta_matched_run``): a futures matched run holding fewer contracts
+# The stage's rule, not the gate's (``daily_gates.beta_matched_run``): a futures matched run holding fewer contracts
 # is not applicable. Missing: no such rule (a config frozen before 2026-10-29).
 MIN_CONTRACTS_KEY = "benchmark_risk_min_contracts"
 RISK_SEED = 0

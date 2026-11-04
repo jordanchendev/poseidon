@@ -29,7 +29,7 @@ from poseidon.pipeline.shadow_paper_daily import (
     PaperInstrument,
 )
 from poseidon.pipeline.stage_api import StageContext, UpstreamResult
-from poseidon.pipeline.v3.components import round_units
+from poseidon.pipeline.v3.components_sizing import round_units
 from poseidon.pipeline.window import MARKET_TZ
 
 FIXTURES = Path(__file__).parent / "fixtures" / "refdata"

@@ -19,7 +19,7 @@ import pandas as pd
 import pytest
 
 from poseidon.core.canonical import canonical_json
-from poseidon.pipeline.daily_stages import DailyBenchmarkStage, beta_matched_run, beta_matched_spec, underlying_daily
+from poseidon.pipeline.daily_gates import DailyBenchmarkStage, beta_matched_run, beta_matched_spec, underlying_daily
 from poseidon.pipeline.gates import benchmark
 from poseidon.pipeline.gates.daily import DailyResult, underlying_returns
 from poseidon.pipeline.plan import DAILY_GATES, DAILY_THRESHOLDS, class_settings

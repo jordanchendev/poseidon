@@ -23,8 +23,8 @@ import pandas as pd
 import pytest
 
 from poseidon.pipeline import shadow_paper_daily as spd
-from poseidon.pipeline.daily_stages import compile_strategy
 from poseidon.pipeline.refdata.datasets import TAIEX, TAIEX_TR
+from poseidon.pipeline.registry import compile_strategy
 from poseidon.pipeline.stage_api import UpstreamResult
 from poseidon.pipeline.v3.compiler import AUX_DATASETS, compile_spec
 from poseidon.pipeline.v3.config import daily_run_config
@@ -69,7 +69,7 @@ def etf_store(stock_store):  # noqa: F811
 
 
 def _paper_strategy(resolved: dict, start: pd.Timestamp) -> spd.CompiledStrategy:
-    """``daily_stages.compile_strategy`` on a config frozen for ``resolved`` (window moved onto the synthetic store)."""
+    """``registry.compile_strategy`` on a config frozen for ``resolved`` (window moved onto the synthetic store)."""
 
     config = daily_run_config(
         resolved, as_of=AS_OF, brief_text="parity", refdata={name: "0" * 64 for name in ("twse_taiex_daily",)}

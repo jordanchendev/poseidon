@@ -17,7 +17,8 @@ from types import SimpleNamespace
 import pytest
 
 from poseidon.pipeline import optimization as opt
-from poseidon.pipeline.daily_stages import DailySpecValidateStage, SpecRunner
+from poseidon.pipeline.daily_stages import SpecRunner
+from poseidon.pipeline.daily_validate import DailySpecValidateStage
 from poseidon.pipeline.gate_stages import ParamStabilityStage
 from poseidon.pipeline.gates import param_stability as gate
 from poseidon.pipeline.plan import DAILY_THRESHOLDS, class_settings, effective_config
@@ -192,11 +193,11 @@ def _validate(tmp_path, config, spec):
 
 
 def test_spec_validate_surfaces_the_warning_only_for_runs_frozen_with_the_key(tmp_path, monkeypatch):
-    from poseidon.pipeline import daily_stages
+    from poseidon.pipeline import daily_validate
 
-    real = daily_stages.validate_spec_v3
-    monkeypatch.setattr(daily_stages, "validate_spec_v3", lambda spec, **kw: real(spec))  # no refdata here
-    monkeypatch.setattr(daily_stages, "price_points", lambda *args: None)
+    real = daily_validate.validate_spec_v3
+    monkeypatch.setattr(daily_validate, "validate_spec_v3", lambda spec, **kw: real(spec))  # no refdata here
+    monkeypatch.setattr(daily_validate, "price_points", lambda *args: None)
     spec = ladder_spec()
     base = {"strategy_class": "daily_equity", "data": {"start": "2015-01-01", "end": "2020-01-01"}}
     base["data"].update({"holdout_start": "2019-01-01"})

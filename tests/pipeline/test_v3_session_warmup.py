@@ -20,13 +20,14 @@ import pandas as pd
 import pytest
 
 from poseidon.core.canonical import content_sha256
-from poseidon.pipeline.daily_stages import DailyBacktestStage, WindowStore, compile_strategy, instrument_kinds
+from poseidon.pipeline.daily_stages import WindowStore, instrument_kinds
+from poseidon.pipeline.daily_validate import DailyBacktestStage
 from poseidon.pipeline.dispatcher import upstream_names
 from poseidon.pipeline.gates.daily import choose_walk_forward
 from poseidon.pipeline.plan import effective_config
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
-from poseidon.pipeline.registry import STAGE_REGISTRY
+from poseidon.pipeline.registry import STAGE_REGISTRY, compile_strategy
 from poseidon.pipeline.stage_api import StageContext, UpstreamResult
 from poseidon.pipeline.v3.compiler import NotCompilable, compile_spec
 from poseidon.pipeline.v3.config import (

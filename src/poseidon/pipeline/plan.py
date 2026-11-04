@@ -348,7 +348,7 @@ DAILY_THRESHOLDS: dict = {
     # much of 2001-2026) rounding alone moves the matched run's exposure by half or all of it (tracking up to 1.9):
     # constant nulls passed up to 5 % (train) and 18 % of the spec_validate-feasible ones (holdout). A futures
     # matched run holding fewer contracts at the window's first or highest close is not applicable
-    # (daily_stages.beta_matched_run): constant nulls <= 2.0 % on MTX / TX at 1-20M, switching nulls not higher,
+    # (daily_gates.beta_matched_run): constant nulls <= 2.0 % on MTX / TX at 1-20M, switching nulls not higher,
     # TMF verdicts unchanged (tests/pipeline/holdout_risk_calibration.py). Missing: no such rule.
     "benchmark_risk_min_contracts": 2,
     "cost_stress_multiplier": 2.0,

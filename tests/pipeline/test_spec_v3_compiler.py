@@ -329,7 +329,7 @@ def test_the_window_store_clips_the_chain_and_hashes_it_only_for_hedged_runs(hed
 def test_daily_shadow_paper_refuses_a_hedged_spec_frozen_without_the_option_chain_rule():
     from types import SimpleNamespace
 
-    from poseidon.pipeline.daily_stages import compile_strategy
+    from poseidon.pipeline.registry import compile_strategy
     from poseidon.pipeline.shadow_paper_daily import StrategyNotCompiled
 
     ctx = SimpleNamespace(

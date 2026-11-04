@@ -11,7 +11,7 @@
 own path unshifted (``filter_2x_0.5x``, the route's power on the timing it was built for). Each one runs with fresh capital over a random window of ``length`` trading days inside
 [2001-01-02, 2026-10-27] (refdata at ``POSEIDON_PIPELINE_REFDATA_ROOT``), as a holdout does, and is judged by the
 holdout's benchmark condition: holdout alpha > 0 (``benchmark.regress_daily`` on the window) and the risk route
-(``benchmark.calmar_draws`` against ``daily_stages.beta_matched_run`` on the window) for every block length in
+(``benchmark.calmar_draws`` against ``daily_gates.beta_matched_run`` on the window) for every block length in
 ``--blocks`` and confidence in ``--confidences`` (``pass``: lower bound > 0 and tracking >= the frozen
 ``benchmark_risk_min_tracking``; ``lower`` and ``tracking`` are kept raw). ``frozen`` is ``benchmark.risk_route``
 under the holdout keys (``HOLDOUT_THRESHOLDS``); ``frozen_train`` is the train route as frozen
@@ -40,21 +40,15 @@ from types import SimpleNamespace
 import numpy as np
 
 from poseidon.pipeline import optimization as opt
-from poseidon.pipeline.daily_stages import (
-    DailyHoldoutStage,
-    SpecRunner,
-    WindowStore,
-    beta_matched_run,
-    beta_matched_spec,
-    price_points,
-    underlying_daily,
-)
+from poseidon.pipeline.daily_gates import DailyHoldoutStage, beta_matched_run, beta_matched_spec, underlying_daily
+from poseidon.pipeline.daily_stages import SpecRunner, WindowStore
+from poseidon.pipeline.daily_validate import price_points
 from poseidon.pipeline.family import MemoryFamily
 from poseidon.pipeline.gates import benchmark, holdout
 from poseidon.pipeline.gates.daily import from_engine, underlying_returns
 from poseidon.pipeline.plan import DAILY_THRESHOLDS, effective_config
 from poseidon.pipeline.v3.compiler import compile_spec
-from poseidon.pipeline.v3.components import round_units
+from poseidon.pipeline.v3.components_sizing import round_units
 from poseidon.pipeline.v3.config import session_warmup, trading_calendar_record, warmup_record
 from poseidon.pipeline.v3.instruments import INSTRUMENTS
 from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
@@ -102,7 +96,7 @@ def window_runner(first: date, last: date, symbol: str = "TMF", capital: int = 1
 
 def feasible(r: SpecRunner, points: tuple[float, float], high: float, low: float) -> list[str]:
     """``spec_validate``'s errors on ``r``'s filter spec at ``high`` x, ``low`` x below the band (``ma_days`` the one
-    ``$param`` a spec needs), sized at the window's ``daily_stages.price_points``: a null it rejects never reaches
+    ``$param`` a spec needs), sized at the window's ``daily_validate.price_points``: a null it rejects never reaches
     the gate."""
 
     spec = copy.deepcopy(r.template)

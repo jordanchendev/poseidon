@@ -19,11 +19,11 @@ import pytest
 
 from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import shadow_paper_daily as spd
-from poseidon.pipeline.daily_stages import compile_strategy
 from poseidon.pipeline.engine import HedgePolicy, run
 from poseidon.pipeline.plan import effective_config
 from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
 from poseidon.pipeline.refdata.taifex_options import FSP_DATASET as OPTION_FINAL
+from poseidon.pipeline.registry import compile_strategy
 from poseidon.pipeline.stage_api import StageContext, UpstreamResult
 from poseidon.pipeline.v3.config import daily_run_config, idea_run_config, option_chain_record
 from tests.pipeline.daily_paper_support import (

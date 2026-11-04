@@ -7,7 +7,7 @@ PostgreSQL through every stage of ``plan.V3_DAILY_STAGE_PLAN`` with the real sta
 
 * planted edge -- the market drifts up only while it is "on" by the 200-day MA band rule; 3x TMF
   switched off below the band must pass every gate. The run is created on 2026-09-01 and the synthetic
-  refdata runs to 2026-10-21, so its daily shadow paper (``daily_stages.compile_strategy``) books the
+  refdata runs to 2026-10-21, so its daily shadow paper (``registry.compile_strategy``) books the
   ~35 trading days after the data window at its first wake-up, matches its replay and passes; the run
   parks in ``awaiting_release``;
 * static leverage -- always long at 2-4x on a structure-free drifting market: must fail

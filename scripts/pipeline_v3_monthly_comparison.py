@@ -5,7 +5,7 @@ spec_v3_run16_rotation.json``) at its best ``ma_days`` (175, optimize) and its d
 ``rebalance.on_signal_change`` on both sleeves (what the run tested) and with ``rebalance.monthly``
 (``last_trading_day``), over the run's train window. Each run is repeated with zero costs; cost drag is
 the CAGR lost to costs. Buy-and-hold lines: 0050 and 00631L total return from the first to the last
-session of the window (``daily_stages.stock_underlying_daily``, the benchmark gate's series), no costs.
+session of the window (``daily_gates.stock_underlying_daily``, the benchmark gate's series), no costs.
 
 Usage (stormtrooper container, refdata mounted read-only):
   POSEIDON_PIPELINE_REFDATA_ROOT=/refdata python scripts/pipeline_v3_monthly_comparison.py \\
@@ -25,7 +25,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from poseidon.pipeline.daily_stages import daily_metrics, scaled_costs, stock_underlying_daily
+from poseidon.pipeline.daily_gates import stock_underlying_daily
+from poseidon.pipeline.daily_stages import daily_metrics, scaled_costs
 from poseidon.pipeline.gates.daily import from_engine, moments
 from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.v3.compiler import compile_spec, resolve
