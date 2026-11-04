@@ -22,12 +22,8 @@ from poseidon.pipeline.refdata.taifex import MarketSchedule, official_last_tradi
 from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
 from poseidon.pipeline.refdata.taifex_options import FSP_DATASET as OPTION_FINAL
 from poseidon.pipeline.shadow_paper import ShadowPaperStage
-from poseidon.pipeline.shadow_paper_daily import (
-    DAILY_PAPER_THRESHOLDS,
-    DEFAULT_DAILY_SHADOW_PAPER,
-    CompiledStrategy,
-    PaperInstrument,
-)
+from poseidon.pipeline.shadow_paper_daily import DAILY_PAPER_THRESHOLDS, DEFAULT_DAILY_SHADOW_PAPER
+from poseidon.pipeline.shadow_paper_inputs import CompiledStrategy, PaperInstrument
 from poseidon.pipeline.stage_api import StageContext, UpstreamResult
 from poseidon.pipeline.v3.components_sizing import round_units
 from poseidon.pipeline.window import MARKET_TZ

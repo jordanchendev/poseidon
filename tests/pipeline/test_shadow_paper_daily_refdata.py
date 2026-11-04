@@ -22,6 +22,7 @@ import pandas as pd
 import pytest
 
 from poseidon.pipeline import shadow_paper_daily as spd
+from poseidon.pipeline import shadow_paper_inputs
 from poseidon.pipeline.engine import run
 from poseidon.pipeline.refdata.datasets import FUTURES, TAIEX
 from poseidon.pipeline.refdata.engine_input import day_session_dates, product_quotes
@@ -81,7 +82,9 @@ def test_ten_recorded_days_ledger_equals_the_backtest(store, recorded_days, tmp_
     driver.wake(morning_after(recorded_days[-1]) + pd.Timedelta(hours=3))
     assert {name: driver.file(name) for name in before} == before  # idempotent re-wake
 
-    inputs = spd.load_inputs(AsOf(store, recorded_days[-1]), strategy, spd.DEFAULT_DAILY_SHADOW_PAPER, first.date())
+    inputs = shadow_paper_inputs.load_inputs(
+        AsOf(store, recorded_days[-1]), strategy, spd.DEFAULT_DAILY_SHADOW_PAPER, first.date()
+    )
     config = dataclasses.replace(strategy.engine, end=recorded_days[-1])
     backtest = run(strategy.factory(), inputs.futures, config, aux=inputs.aux, calendar=inputs.calendar)
     expected = spd.day_rows(backtest, first.date())

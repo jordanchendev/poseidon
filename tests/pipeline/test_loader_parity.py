@@ -23,6 +23,7 @@ import pandas as pd
 import pytest
 
 from poseidon.pipeline import shadow_paper_daily as spd
+from poseidon.pipeline import shadow_paper_inputs
 from poseidon.pipeline.refdata.datasets import TAIEX, TAIEX_TR
 from poseidon.pipeline.registry import compile_strategy
 from poseidon.pipeline.stage_api import UpstreamResult
@@ -68,7 +69,7 @@ def etf_store(stock_store):  # noqa: F811
     return _with_total_return(stock_store)
 
 
-def _paper_strategy(resolved: dict, start: pd.Timestamp) -> spd.CompiledStrategy:
+def _paper_strategy(resolved: dict, start: pd.Timestamp) -> shadow_paper_inputs.CompiledStrategy:
     """``registry.compile_strategy`` on a config frozen for ``resolved`` (window moved onto the synthetic store)."""
 
     config = daily_run_config(
@@ -84,7 +85,7 @@ def _paper_strategy(resolved: dict, start: pd.Timestamp) -> spd.CompiledStrategy
 def _both(store, spec: dict, start: pd.Timestamp = START):
     resolved = validate_spec_v3(spec).resolved if spec["params"] else spec  # a spec with $params: defaults bound
     backtest = compile_spec(resolved, start=start, store=store)
-    paper = spd.load_inputs(
+    paper = shadow_paper_inputs.load_inputs(
         AsOf(store, LAST_DAY), _paper_strategy(resolved, start), spd.DEFAULT_DAILY_SHADOW_PAPER, PAPER_START
     )
     return backtest, paper

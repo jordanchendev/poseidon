@@ -17,6 +17,7 @@ from pytest import approx
 
 from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import shadow_paper_daily as spd
+from poseidon.pipeline import shadow_paper_inputs
 from poseidon.pipeline.daily_gates import underlying_daily, underlying_product
 from poseidon.pipeline.daily_stages import STOCK_UNDERLYING, WindowStore, instrument_kinds, scaled_costs
 from poseidon.pipeline.daily_validate import price_points
@@ -27,7 +28,7 @@ from poseidon.pipeline.refdata.tw_corporate_actions import ACTION_COLUMNS
 from poseidon.pipeline.refdata.tw_corporate_actions import DATASET as ACTIONS
 from poseidon.pipeline.refdata.tw_stocks import COLUMNS
 from poseidon.pipeline.refdata.tw_stocks import DATASET as STOCKS
-from poseidon.pipeline.shadow_paper_daily import CompiledStrategy, PaperInstrument
+from poseidon.pipeline.shadow_paper_inputs import CompiledStrategy, PaperInstrument
 from poseidon.pipeline.stage_api import UpstreamResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.v3.compiler import NotCompilable
@@ -209,7 +210,7 @@ def stock_strategy(aux=None) -> CompiledStrategy:
 
 def test_load_inputs_reads_stock_bars_and_books_the_split(stock_store):
     as_of = DAYS[DAYS <= "2026-09-10"][-1]
-    inputs = spd.load_inputs(
+    inputs = shadow_paper_inputs.load_inputs(
         AsOf(stock_store, as_of), stock_strategy({"taiex": TAIEX}), spd.DEFAULT_DAILY_SHADOW_PAPER, PAPER_START.date()
     )
     assert inputs.cutoff == as_of and len(inputs.closures) == 0
@@ -228,8 +229,10 @@ def test_load_inputs_reads_stock_bars_and_books_the_split(stock_store):
     assert (~booked["traded"]).sum() == 1 and not booked.loc[DAYS[200], "traded"]  # carried forward, no fill
     # the split is part of that day's input hash: a revised action is a revision of the day
     without = dataclasses.replace(lev, bars=lev.bars.assign(unit_ratio=1.0))
-    hashes, _history = spd.input_hashes({"lev": without, "base": inputs.futures["base"]}, inputs.aux, date(2026, 3, 1))
-    with_split, _ = spd.input_hashes(inputs.futures, inputs.aux, date(2026, 3, 1))
+    hashes, _history = shadow_paper_inputs.input_hashes(
+        {"lev": without, "base": inputs.futures["base"]}, inputs.aux, date(2026, 3, 1)
+    )
+    with_split, _ = shadow_paper_inputs.input_hashes(inputs.futures, inputs.aux, date(2026, 3, 1))
     differ = sorted(day for day in with_split if with_split[day] != hashes[day])
     assert differ == [SPLIT_DAY.date().isoformat()]
 
@@ -243,7 +246,7 @@ def test_the_cutoff_waits_for_the_slowest_stock(stock_store):
                 return frame[keep].reset_index(drop=True)
             return frame
 
-    inputs = spd.load_inputs(
+    inputs = shadow_paper_inputs.load_inputs(
         Late(stock_store, "2026-09-10"), stock_strategy(), spd.DEFAULT_DAILY_SHADOW_PAPER, PAPER_START.date()
     )
     assert inputs.cutoff == pd.Timestamp("2026-09-03")

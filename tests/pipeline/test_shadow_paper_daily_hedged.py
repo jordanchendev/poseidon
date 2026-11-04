@@ -19,6 +19,7 @@ import pytest
 
 from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import shadow_paper_daily as spd
+from poseidon.pipeline import shadow_paper_inputs
 from poseidon.pipeline.engine import HedgePolicy, run
 from poseidon.pipeline.plan import effective_config
 from poseidon.pipeline.refdata.taifex_options import DAILY_DATASET as OPTION_QUOTES
@@ -93,7 +94,7 @@ def test_put_legs_are_booked_from_the_txo_rows_of_each_wake_and_replay_matches(w
             assert put["close"] == _settlement(puts, day["trading_day"], put["contract"])  # marked at the day's row
     assert {"rebalance", "roll"} <= reasons
 
-    inputs = spd.load_inputs(
+    inputs = shadow_paper_inputs.load_inputs(
         AsOf(store, WAKES[-1]), driver.strategy, spd.DEFAULT_DAILY_SHADOW_PAPER, ledger_start(ledger)
     )
     config = dataclasses.replace(driver.strategy.engine, end=inputs.cutoff)
@@ -221,7 +222,7 @@ def test_run_17_keeps_its_hash_and_unsupported_paper_and_the_same_run_frozen_tod
     assert content_sha256(RUN17["config_json"]) == RUN17["config_sha256"]
     frozen = effective_config(RUN17["config_json"], RUN17["route"])
     assert "option_chain" not in frozen["data"]
-    with pytest.raises(spd.StrategyNotCompiled, match=r"data\.option_chain"):
+    with pytest.raises(shadow_paper_inputs.StrategyNotCompiled, match=r"data\.option_chain"):
         compile_strategy(_paper_context(frozen))
 
     new = copy.deepcopy(frozen)

@@ -21,7 +21,8 @@ import pytest
 
 from poseidon.pipeline.plan import effective_config
 from poseidon.pipeline.refdata.datasets import TAIEX, TAIEX_TR
-from poseidon.pipeline.shadow_paper_daily import DEFAULT_DAILY_SHADOW_PAPER, load_inputs
+from poseidon.pipeline.shadow_paper_daily import DEFAULT_DAILY_SHADOW_PAPER
+from poseidon.pipeline.shadow_paper_inputs import load_inputs
 from poseidon.pipeline.v3.compiler import compile_spec
 from poseidon.pipeline.v3.config import daily_run_config, trading_calendar_record
 from tests.pipeline.daily_paper_support import AsOf, build_store, compiled

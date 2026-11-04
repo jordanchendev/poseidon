@@ -137,7 +137,7 @@ def compile_strategy(ctx):
     older hedged run stays unsupported, as it was frozen.
     """
 
-    from poseidon.pipeline.shadow_paper_daily import CompiledStrategy, PaperInstrument, StrategyNotCompiled
+    from poseidon.pipeline.shadow_paper_inputs import CompiledStrategy, PaperInstrument, StrategyNotCompiled
     from poseidon.pipeline.v3.compiler import AUX_DATASETS, engine_config, hedge_policies, plan, strategy_factory
     from poseidon.pipeline.v3.validation import warmup_calendar_days
 

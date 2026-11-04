@@ -17,6 +17,7 @@ from pytest import approx
 
 from poseidon.core.config import settings
 from poseidon.pipeline import shadow_paper_daily as spd
+from poseidon.pipeline import shadow_paper_inputs
 from poseidon.pipeline.refdata import daily, taifex_options, tw_stocks
 from poseidon.pipeline.refdata import tw_corporate_actions as ca
 from poseidon.pipeline.refdata.datasets import TAIEX, TAIEX_TR
@@ -135,7 +136,7 @@ def booked_ratios(inputs, alias="lev"):
 
 def test_stale_actions_hold_the_cutoff_and_the_paper_waits(world, tmp_path):
     view = StaleActions(world, VIEW_DAY, SNAPSHOT_DAY)
-    inputs = spd.load_inputs(view, stock_strategy(), spd.DEFAULT_DAILY_SHADOW_PAPER, date(2026, 3, 25))
+    inputs = shadow_paper_inputs.load_inputs(view, stock_strategy(), spd.DEFAULT_DAILY_SHADOW_PAPER, date(2026, 3, 25))
     assert inputs.cutoff == SNAPSHOT_DAY  # the bars run on to 2026-04-02
     assert inputs.last_dates[f"{STOCKS}:0050"] == VIEW_DAY.date().isoformat()
     assert inputs.last_dates[f"{ca.DATASET}:complete_through"] == "2026-03-30"
@@ -157,7 +158,7 @@ def test_an_action_after_the_snapshot_is_booked_once_the_dataset_refreshes(world
     assert "waiting for tw_corporate_actions" in stale.report["summary"]
 
     refresh(world, VIEW_DAY)
-    inputs = spd.load_inputs(
+    inputs = shadow_paper_inputs.load_inputs(
         StaleActions(world, VIEW_DAY, VIEW_DAY), stock_strategy(), spd.DEFAULT_DAILY_SHADOW_PAPER, date(2026, 3, 25)
     )
     assert inputs.cutoff == VIEW_DAY
@@ -185,7 +186,9 @@ def test_the_manifest_meta_never_enters_a_hash(world, tmp_path):
         reader = StaleActions(world, VIEW_DAY, through)
         manifest = world.manifest(ca.DATASET)
         reader.manifest = lambda _dataset: {**manifest, "meta": {ca.COMPLETE_THROUGH: through.date().isoformat()}}
-        inputs = spd.load_inputs(reader, stock_strategy(), spd.DEFAULT_DAILY_SHADOW_PAPER, date(2026, 3, 25))
+        inputs = shadow_paper_inputs.load_inputs(
+            reader, stock_strategy(), spd.DEFAULT_DAILY_SHADOW_PAPER, date(2026, 3, 25)
+        )
         return inputs.day_hashes, inputs.history_sha256, inputs.sources
 
     early = hashes(pd.Timestamp("2026-03-20"))
@@ -196,7 +199,7 @@ def test_the_manifest_meta_never_enters_a_hash(world, tmp_path):
     class NoManifest(AsOf):
         manifest = None
 
-    futures_only = spd.load_inputs(
+    futures_only = shadow_paper_inputs.load_inputs(
         NoManifest(world, "2026-03-27"),
         compiled(),
         spd.DEFAULT_DAILY_SHADOW_PAPER,
@@ -218,7 +221,7 @@ def test_without_the_actions_dataset_the_stock_paper_waits_instead_of_booking_ra
     shutil.rmtree(Path(world.root) / ca.DATASET)  # 00631L's raw close falls to a quarter on the split day
     view = AsOf(world, VIEW_DAY)
     with pytest.raises(RefdataError, match=f"{ca.DATASET} is missing"):
-        spd.load_inputs(view, stock_strategy(), spd.DEFAULT_DAILY_SHADOW_PAPER, date(2026, 3, 25))
+        shadow_paper_inputs.load_inputs(view, stock_strategy(), spd.DEFAULT_DAILY_SHADOW_PAPER, date(2026, 3, 25))
 
     driver = DailyDriver(tmp_path / "run", view, strategy=stock_strategy(), started_at=PAPER_STARTED)
     result = driver.wake(morning_after(VIEW_DAY))
@@ -228,7 +231,7 @@ def test_without_the_actions_dataset_the_stock_paper_waits_instead_of_booking_ra
     assert driver.ledger()["days"] == [] and result.report["trading_days"] == 0  # no day booked from raw prices
 
     # a futures-only spec does not need the dataset
-    futures_only = spd.load_inputs(
+    futures_only = shadow_paper_inputs.load_inputs(
         AsOf(world, "2026-03-27"), compiled(), spd.DEFAULT_DAILY_SHADOW_PAPER, date(2026, 3, 25)
     )
     assert futures_only.futures and not any(key.startswith(ca.DATASET) for key in futures_only.sources)

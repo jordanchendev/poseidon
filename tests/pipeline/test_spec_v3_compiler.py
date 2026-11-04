@@ -330,7 +330,7 @@ def test_daily_shadow_paper_refuses_a_hedged_spec_frozen_without_the_option_chai
     from types import SimpleNamespace
 
     from poseidon.pipeline.registry import compile_strategy
-    from poseidon.pipeline.shadow_paper_daily import StrategyNotCompiled
+    from poseidon.pipeline.shadow_paper_inputs import StrategyNotCompiled
 
     ctx = SimpleNamespace(
         config={"components": {}}, upstream={"optimize": SimpleNamespace(report={"best_spec": _hedged()})}

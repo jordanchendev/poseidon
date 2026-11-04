@@ -27,6 +27,7 @@ from pathlib import Path
 import pandas as pd
 
 from poseidon.pipeline import shadow_paper_daily as spd
+from poseidon.pipeline import shadow_paper_inputs
 from poseidon.pipeline.engine import run
 from poseidon.pipeline.plan import effective_config
 from poseidon.pipeline.refdata import daily, taifex_options
@@ -182,7 +183,9 @@ def main() -> None:
         checks.append(row)
     evidence["appended_days"] = checks
 
-    inputs = spd.load_inputs(store, strategy, config["shadow_paper"], date.fromisoformat(ledger["paper_start_day"]))
+    inputs = shadow_paper_inputs.load_inputs(
+        store, strategy, config["shadow_paper"], date.fromisoformat(ledger["paper_start_day"])
+    )
     engine = dataclasses.replace(strategy.engine, end=inputs.cutoff)
     full = run(
         strategy.factory(),

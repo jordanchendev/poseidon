@@ -14,6 +14,7 @@ import pytest
 
 from poseidon.core.canonical import content_sha256
 from poseidon.pipeline import shadow_paper_daily as spd
+from poseidon.pipeline import shadow_paper_inputs
 from poseidon.pipeline.engine import run
 from poseidon.pipeline.plan import default_config
 from poseidon.pipeline.refdata.datasets import FUTURES, TAIEX
@@ -75,7 +76,9 @@ def test_cutoff_is_the_last_day_session_and_a_night_only_date_is_not_a_trading_d
     quotes = reader.read(FUTURES)
     assert set(quotes.loc[quotes["trade_date"] > "2026-10-22", "session"]) == {"night"}
     assert set(quotes.loc[quotes["trade_date"] > "2026-10-22", "trade_date"]) == {pd.Timestamp("2026-10-27")}
-    inputs = spd.load_inputs(reader, compiled(), spd.DEFAULT_DAILY_SHADOW_PAPER, pd.Timestamp("2026-09-01").date())
+    inputs = shadow_paper_inputs.load_inputs(
+        reader, compiled(), spd.DEFAULT_DAILY_SHADOW_PAPER, pd.Timestamp("2026-09-01").date()
+    )
     assert inputs.cutoff == pd.Timestamp("2026-10-22")
     assert list(inputs.closures.strftime("%Y-%m-%d")) == ["2026-10-23"]  # night session booked into 10-27
     assert inputs.futures["core"].bars["date"].max() == pd.Timestamp("2026-10-22")
@@ -110,7 +113,9 @@ def test_each_wake_books_the_new_day_and_the_ledger_equals_a_backtest(store, tmp
     assert report["consistency"]["ratio"] == 1.0 and report["consistency"]["compared"] == 8
     assert report["summary"].startswith("shadow_paper ⏳ day 8/20 · target match 100%")
     # the same strategy backtested once over the whole span books exactly the same days
-    inputs = spd.load_inputs(AsOf(store, days[-1]), driver.strategy, spd.DEFAULT_DAILY_SHADOW_PAPER, days[0].date())
+    inputs = shadow_paper_inputs.load_inputs(
+        AsOf(store, days[-1]), driver.strategy, spd.DEFAULT_DAILY_SHADOW_PAPER, days[0].date()
+    )
     config = dataclasses.replace(driver.strategy.engine, end=days[-1])
     backtest = run(driver.strategy.factory(), inputs.futures, config, calendar=inputs.calendar)
     expected = spd.day_rows(backtest, days[0].date())
@@ -326,11 +331,11 @@ def test_aux_series_bound_the_cutoff(store):
             frame = super().read(dataset, start, end)
             return frame[frame["trade_date"] <= "2026-10-20"] if dataset == TAIEX else frame
 
-    assert spd.load_inputs(
+    assert shadow_paper_inputs.load_inputs(
         reader, strategy, spd.DEFAULT_DAILY_SHADOW_PAPER, PAPER_DAYS[0].date()
     ).cutoff == pd.Timestamp("2026-10-21")
     lagging = LaggingTaiex(store, "2026-10-21")
-    assert spd.load_inputs(
+    assert shadow_paper_inputs.load_inputs(
         lagging, strategy, spd.DEFAULT_DAILY_SHADOW_PAPER, PAPER_DAYS[0].date()
     ).cutoff == pd.Timestamp("2026-10-20")
 
