@@ -2,126 +2,38 @@
 
 from __future__ import annotations
 
-import uuid
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-
-class _ExecutableConditionModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-
-class IndicatorParameters(_ExecutableConditionModel):
-    period: Annotated[int, Field(strict=True, gt=0)] | None = None
-    fast_period: Annotated[int, Field(strict=True, gt=0)] | None = None
-    slow_period: Annotated[int, Field(strict=True, gt=0)] | None = None
-    signal_period: Annotated[int, Field(strict=True, gt=0)] | None = None
-
-
-class CrossParameters(_ExecutableConditionModel):
-    fast: Annotated[int, Field(strict=True, gt=0)]
-    slow: Annotated[int, Field(strict=True, gt=0)]
+from poseidon.strategies.dsl.conditions import (
+    CONDITION_SCHEMAS,
+    BollingerCondition,
+    ConditionModel,
+    FeatureThresholdCondition,
+    IndicatorComparisonCondition,
+    IndicatorCrossesCondition,
+    IndicatorThresholdCondition,
+    ModelPredictionCondition,
+    PriceChangeCondition,
+    PriceCrossesCondition,
+    VolumeSpikeCondition,
+)
 
 
-class ComparisonParameters(_ExecutableConditionModel):
-    period_a: Annotated[int, Field(strict=True, gt=0)]
-    period_b: Annotated[int, Field(strict=True, gt=0)]
-
-
-class VolumeParameters(_ExecutableConditionModel):
-    period: Annotated[int, Field(strict=True, gt=0)] = 20
-    multiplier: Annotated[int | float, Field(gt=0)] = 2.0
-
-
-class BollingerParameters(_ExecutableConditionModel):
-    period: Annotated[int, Field(strict=True, gt=0)] = 20
-    lookback: Annotated[int, Field(strict=True, gt=1)] = 168
-
-
-class IndicatorThresholdCondition(_ExecutableConditionModel):
-    type: Literal["indicator_above", "indicator_below"]
-    indicator: Annotated[str, Field(min_length=1)]
-    params: IndicatorParameters = Field(default_factory=IndicatorParameters)
-    threshold: int | float
-
-
-class PriceCrossesCondition(_ExecutableConditionModel):
-    type: Literal["price_crosses"]
-    indicator: Annotated[str, Field(min_length=1)]
-    params: IndicatorParameters = Field(default_factory=IndicatorParameters)
-    direction: Literal["up", "down"] = "up"
-
-
-class IndicatorCrossesCondition(_ExecutableConditionModel):
-    type: Literal["indicator_crosses"]
-    indicator: Annotated[str, Field(min_length=1)] = "sma"
-    params: CrossParameters
-    direction: Literal["up", "down"] = "up"
-
-
-class PriceChangeCondition(_ExecutableConditionModel):
-    type: Literal["price_change_pct"]
-    threshold: int | float
-    direction: Literal["up", "down", "absolute"] = "up"
-
-
-class VolumeSpikeCondition(_ExecutableConditionModel):
-    type: Literal["volume_spike"]
-    params: VolumeParameters = Field(default_factory=VolumeParameters)
-
-
-class BollingerCondition(_ExecutableConditionModel):
-    type: Literal["bollinger_width_percentile"]
-    params: BollingerParameters = Field(default_factory=BollingerParameters)
-    threshold: Annotated[int | float, Field(ge=0, le=1)] = 0.85
-
-
-class IndicatorComparisonCondition(_ExecutableConditionModel):
-    type: Literal["indicator_comparison"]
-    indicator_a: Annotated[str, Field(min_length=1)]
-    indicator_b: Annotated[str, Field(min_length=1)]
-    params: ComparisonParameters
-    direction: Literal["above", "below"] = "above"
-
-
-class FeatureThresholdCondition(_ExecutableConditionModel):
-    type: Literal["feature_above", "feature_below"]
-    column: Annotated[str, Field(min_length=1)]
-    threshold: int | float
-
-
-class ModelPredictionCondition(_ExecutableConditionModel):
-    type: Literal["ml_prediction"]
-    model_version_id: Annotated[str, Field(min_length=36, max_length=36)]
-    threshold: Annotated[int | float, Field(ge=0)] = 0.5
-    direction: Literal["long", "short"] = "long"
-
-    @field_validator("model_version_id")
-    @classmethod
-    def require_canonical_model_version_id(cls, value):
-        try:
-            canonical = str(uuid.UUID(value))
-        except (TypeError, ValueError, AttributeError) as exc:
-            raise ValueError("model_version_id must be a canonical UUID") from exc
-        if value != canonical:
-            raise ValueError("model_version_id must be a canonical UUID")
-        return value
-
-
-class AllCondition(_ExecutableConditionModel):
+class AllCondition(ConditionModel):
     all: Annotated[list[ExecutableCondition], Field(min_length=1)]
 
 
-class AnyCondition(_ExecutableConditionModel):
+class AnyCondition(ConditionModel):
     any: Annotated[list[ExecutableCondition], Field(min_length=1)]
 
 
-class NoneCondition(_ExecutableConditionModel):
+class NoneCondition(ConditionModel):
     none: Annotated[list[ExecutableCondition], Field(min_length=1)]
 
 
-class VoteConditionBody(_ExecutableConditionModel):
+class VoteConditionBody(ConditionModel):
     conditions: Annotated[list[ExecutableCondition], Field(min_length=1)]
     min_votes: Annotated[int, Field(strict=True, ge=1)] = 4
 
@@ -132,25 +44,14 @@ class VoteConditionBody(_ExecutableConditionModel):
         return self
 
 
-class VoteCondition(_ExecutableConditionModel):
+class VoteCondition(ConditionModel):
     vote: VoteConditionBody
 
 
-ExecutableCondition = (
-    AllCondition
-    | AnyCondition
-    | NoneCondition
-    | VoteCondition
-    | IndicatorThresholdCondition
-    | PriceCrossesCondition
-    | IndicatorCrossesCondition
-    | PriceChangeCondition
-    | VolumeSpikeCondition
-    | BollingerCondition
-    | IndicatorComparisonCondition
-    | FeatureThresholdCondition
-    | ModelPredictionCondition
-)
+# Composite nodes, then every registered leaf schema in registration order.
+ExecutableCondition = Union[
+    (AllCondition, AnyCondition, NoneCondition, VoteCondition, *dict.fromkeys(CONDITION_SCHEMAS.values()))
+]
 
 for _recursive_model in (AllCondition, AnyCondition, NoneCondition, VoteConditionBody, VoteCondition):
     _recursive_model.model_rebuild(_types_namespace={"ExecutableCondition": ExecutableCondition})

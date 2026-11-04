@@ -1,13 +1,21 @@
 """Leaf condition evaluator functions and registry.
 
-Each evaluator: (condition: dict, features: pd.DataFrame, row_idx: int) -> bool
+Each evaluator: (condition: dict, features: pd.DataFrame, row_idx: int) -> bool. Each is registered together with
+the strict schema of the condition it evaluates, so the executable-config schema of a released strategy version
+(``decision_loop.strategy_config``) is derived from this registry instead of listed by hand.
 """
 
+from __future__ import annotations
+
+import uuid
 from collections.abc import Callable
+from typing import Annotated, Literal, get_args
 
 import pandas as pd
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 CONDITION_REGISTRY: dict[str, Callable] = {}
+CONDITION_SCHEMAS: dict[str, type[BaseModel]] = {}
 
 # Alias mapping for indicator names
 _INDICATOR_ALIASES = {"ma": "sma"}
@@ -20,11 +28,14 @@ _DIRECT_COLUMN_MAP = {
 }
 
 
-def register_condition(name: str):
-    """Decorator to register a condition evaluator."""
+def register_condition(name: str, *, schema: type[BaseModel]):
+    """Register a condition evaluator with the schema whose ``type`` literal names it."""
+    if name not in get_args(schema.model_fields["type"].annotation):
+        raise ValueError(f"condition schema {schema.__name__} does not accept type {name!r}")
 
     def decorator(fn):
         CONDITION_REGISTRY[name] = fn
+        CONDITION_SCHEMAS[name] = schema
         return fn
 
     return decorator
@@ -61,7 +72,110 @@ def resolve_column_name(indicator: str, params: dict) -> str:
     return indicator
 
 
-@register_condition("indicator_above")
+class ConditionModel(BaseModel):
+    """Frozen strict base of the condition schemas: what a released strategy version may contain."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+
+class IndicatorParameters(ConditionModel):
+    period: Annotated[int, Field(strict=True, gt=0)] | None = None
+    fast_period: Annotated[int, Field(strict=True, gt=0)] | None = None
+    slow_period: Annotated[int, Field(strict=True, gt=0)] | None = None
+    signal_period: Annotated[int, Field(strict=True, gt=0)] | None = None
+
+
+class CrossParameters(ConditionModel):
+    fast: Annotated[int, Field(strict=True, gt=0)]
+    slow: Annotated[int, Field(strict=True, gt=0)]
+
+
+class ComparisonParameters(ConditionModel):
+    period_a: Annotated[int, Field(strict=True, gt=0)]
+    period_b: Annotated[int, Field(strict=True, gt=0)]
+
+
+class VolumeParameters(ConditionModel):
+    period: Annotated[int, Field(strict=True, gt=0)] = 20
+    multiplier: Annotated[int | float, Field(gt=0)] = 2.0
+
+
+class BollingerParameters(ConditionModel):
+    period: Annotated[int, Field(strict=True, gt=0)] = 20
+    lookback: Annotated[int, Field(strict=True, gt=1)] = 168
+
+
+class IndicatorThresholdCondition(ConditionModel):
+    type: Literal["indicator_above", "indicator_below"]
+    indicator: Annotated[str, Field(min_length=1)]
+    params: IndicatorParameters = Field(default_factory=IndicatorParameters)
+    threshold: int | float
+
+
+class PriceCrossesCondition(ConditionModel):
+    type: Literal["price_crosses"]
+    indicator: Annotated[str, Field(min_length=1)]
+    params: IndicatorParameters = Field(default_factory=IndicatorParameters)
+    direction: Literal["up", "down"] = "up"
+
+
+class IndicatorCrossesCondition(ConditionModel):
+    type: Literal["indicator_crosses"]
+    indicator: Annotated[str, Field(min_length=1)] = "sma"
+    params: CrossParameters
+    direction: Literal["up", "down"] = "up"
+
+
+class PriceChangeCondition(ConditionModel):
+    type: Literal["price_change_pct"]
+    threshold: int | float
+    direction: Literal["up", "down", "absolute"] = "up"
+
+
+class VolumeSpikeCondition(ConditionModel):
+    type: Literal["volume_spike"]
+    params: VolumeParameters = Field(default_factory=VolumeParameters)
+
+
+class BollingerCondition(ConditionModel):
+    type: Literal["bollinger_width_percentile"]
+    params: BollingerParameters = Field(default_factory=BollingerParameters)
+    threshold: Annotated[int | float, Field(ge=0, le=1)] = 0.85
+
+
+class IndicatorComparisonCondition(ConditionModel):
+    type: Literal["indicator_comparison"]
+    indicator_a: Annotated[str, Field(min_length=1)]
+    indicator_b: Annotated[str, Field(min_length=1)]
+    params: ComparisonParameters
+    direction: Literal["above", "below"] = "above"
+
+
+class FeatureThresholdCondition(ConditionModel):
+    type: Literal["feature_above", "feature_below"]
+    column: Annotated[str, Field(min_length=1)]
+    threshold: int | float
+
+
+class ModelPredictionCondition(ConditionModel):
+    type: Literal["ml_prediction"]
+    model_version_id: Annotated[str, Field(min_length=36, max_length=36)]
+    threshold: Annotated[int | float, Field(ge=0)] = 0.5
+    direction: Literal["long", "short"] = "long"
+
+    @field_validator("model_version_id")
+    @classmethod
+    def require_canonical_model_version_id(cls, value):
+        try:
+            canonical = str(uuid.UUID(value))
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise ValueError("model_version_id must be a canonical UUID") from exc
+        if value != canonical:
+            raise ValueError("model_version_id must be a canonical UUID")
+        return value
+
+
+@register_condition("indicator_above", schema=IndicatorThresholdCondition)
 def eval_indicator_above(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
     """Check if indicator value > threshold."""
     indicator = condition.get("indicator", "")
@@ -79,7 +193,7 @@ def eval_indicator_above(condition: dict, features: pd.DataFrame, row_idx: int) 
     return float(features.iloc[row_idx][col]) > threshold
 
 
-@register_condition("indicator_below")
+@register_condition("indicator_below", schema=IndicatorThresholdCondition)
 def eval_indicator_below(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
     """Check if indicator value < threshold."""
     indicator = condition.get("indicator", "")
@@ -96,7 +210,7 @@ def eval_indicator_below(condition: dict, features: pd.DataFrame, row_idx: int) 
     return float(features.iloc[row_idx][col]) < threshold
 
 
-@register_condition("price_crosses")
+@register_condition("price_crosses", schema=PriceCrossesCondition)
 def eval_price_crosses(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
     """Check if price crosses an indicator value."""
     if row_idx < 1:
@@ -119,7 +233,7 @@ def eval_price_crosses(condition: dict, features: pd.DataFrame, row_idx: int) ->
     return False
 
 
-@register_condition("indicator_crosses")
+@register_condition("indicator_crosses", schema=IndicatorCrossesCondition)
 def eval_indicator_crosses(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
     """Check if fast indicator crosses slow indicator."""
     if row_idx < 1:
@@ -146,7 +260,7 @@ def eval_indicator_crosses(condition: dict, features: pd.DataFrame, row_idx: int
     return False
 
 
-@register_condition("price_change_pct")
+@register_condition("price_change_pct", schema=PriceChangeCondition)
 def eval_price_change_pct(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
     """Check if return exceeds threshold."""
     threshold = condition["threshold"]
@@ -160,7 +274,7 @@ def eval_price_change_pct(condition: dict, features: pd.DataFrame, row_idx: int)
     return abs(ret) > threshold
 
 
-@register_condition("volume_spike")
+@register_condition("volume_spike", schema=VolumeSpikeCondition)
 def eval_volume_spike(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
     """Check if volume exceeds multiplier * average."""
     params = condition.get("params", {})
@@ -176,7 +290,7 @@ def eval_volume_spike(condition: dict, features: pd.DataFrame, row_idx: int) -> 
     return curr_vol > multiplier * avg_vol
 
 
-@register_condition("bollinger_width_percentile")
+@register_condition("bollinger_width_percentile", schema=BollingerCondition)
 def eval_bollinger_width_percentile(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
     """Check if Bollinger Band width is in a squeeze (below percentile threshold).
 
@@ -203,7 +317,7 @@ def eval_bollinger_width_percentile(condition: dict, features: pd.DataFrame, row
     return percentile < threshold
 
 
-@register_condition("indicator_comparison")
+@register_condition("indicator_comparison", schema=IndicatorComparisonCondition)
 def eval_indicator_comparison(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
     """Compare two indicator values: indicator_a vs indicator_b.
 
@@ -227,7 +341,7 @@ def eval_indicator_comparison(condition: dict, features: pd.DataFrame, row_idx: 
     return val_a < val_b
 
 
-@register_condition("feature_above")
+@register_condition("feature_above", schema=FeatureThresholdCondition)
 def eval_feature_above(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
     """Check if a named feature column value > threshold.
 
@@ -245,7 +359,7 @@ def eval_feature_above(condition: dict, features: pd.DataFrame, row_idx: int) ->
     return float(val) > threshold
 
 
-@register_condition("feature_below")
+@register_condition("feature_below", schema=FeatureThresholdCondition)
 def eval_feature_below(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
     """Check if a named feature column value < threshold.
 
@@ -261,7 +375,7 @@ def eval_feature_below(condition: dict, features: pd.DataFrame, row_idx: int) ->
     return float(val) < threshold
 
 
-@register_condition("ml_prediction")
+@register_condition("ml_prediction", schema=ModelPredictionCondition)
 def eval_ml_prediction(condition: dict, features: pd.DataFrame, row_idx: int) -> bool:
     """Evaluate ML model prediction as a vote.
 
