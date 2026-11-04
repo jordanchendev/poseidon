@@ -1,8 +1,8 @@
 """Deterministic claim prechecks for the research contract (SEED-002 C2).
 
 Ported from local_dev/scripts/research/claim_precheck.py (offline stopgap tooling); stdlib only. The tokenizer and
-lexicons it shares with scripts/research/claim_precheck.py live in ``claim_quantities`` (one copy). The rules and
-blind spots below are the stopgap's, unchanged. ``ResearchService.complete_human_research`` runs
+lexicons it shares with ``poseidon.research_runner.claim_precheck`` live in ``claim_quantities`` (one
+copy). The rules and blind spots below are the stopgap's, unchanged. ``ResearchService.complete_human_research`` runs
 ``lint_atomic`` on every claim and ``check_numbers`` against the cited evidence excerpts
 (see ``poseidon.decision_loop.research.precheck_claims``).
 

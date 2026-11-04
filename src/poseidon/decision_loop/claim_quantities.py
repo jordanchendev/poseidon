@@ -1,7 +1,7 @@
 """Numeric/unit tokenizer and clause lexicon shared by the claim checks (one copy).
 
-``poseidon.decision_loop.claim_lint`` (the server's completion gate) and ``scripts/research/claim_precheck.py`` (the
-research runner's gates) both build on these: the lexicons, ``Quantity``, the raw/word tokenizers, ``_annotate``
+``poseidon.decision_loop.claim_lint`` (the server's completion gate) and ``poseidon.research_runner.claim_precheck``
+(the research runner's gates) both build on these: the lexicons, ``Quantity``, the raw/word tokenizers, ``_annotate``
 (qualifier, sign, growth period, table unit), the matching helpers and the atomic-lint split lexicon. What differs
 between the two (the X ± Y merge, the derivation search, the inference rules) stays in each module; see their
 docstrings. Stdlib only.
