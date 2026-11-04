@@ -18,7 +18,8 @@ from poseidon.pipeline.v3.instruments import INSTRUMENTS, contract_spec, declare
 from poseidon.pipeline.v3.registry import REGISTRY, CheckContext, DescribeContext
 from poseidon.pipeline.v3.runtime import AllocationView, Conventions, Series
 from poseidon.pipeline.v3.spec import strategy_class, substitute
-from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation_types import FeasibilityContext
 
 ETF_0050 = INSTRUMENTS["0050"]
 

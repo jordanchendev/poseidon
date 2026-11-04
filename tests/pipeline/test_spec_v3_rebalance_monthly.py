@@ -22,7 +22,8 @@ from poseidon.pipeline.v3.instruments import INSTRUMENTS, contract_spec
 from poseidon.pipeline.v3.registry import REGISTRY, DescribeContext
 from poseidon.pipeline.v3.runtime import Conventions, RebalanceContext
 from poseidon.pipeline.v3.spec import substitute
-from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation_types import FeasibilityContext
 
 from .engine.support import FAR, TMF_PLAIN, flat_bars
 from .spec_support import resolved_spec

@@ -43,7 +43,8 @@ from poseidon.pipeline.spec_llm import _err
 from poseidon.pipeline.stage_api import BaseStage, StageResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.v3.describe import describe_spec
-from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation_types import FeasibilityContext
 
 STAGE = "spec_faithfulness"
 FAITHFULNESS_VERSION = 1  # report layout + clause split rules (part of the input hash)

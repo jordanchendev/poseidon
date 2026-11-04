@@ -45,7 +45,8 @@ from poseidon.pipeline.v3.config import (
     warmup_record,
 )
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
-from poseidon.pipeline.v3.validation import WARMUP_MARGIN_SESSIONS, FeasibilityContext, validate_spec_v3
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation_types import WARMUP_MARGIN_SESSIONS, FeasibilityContext
 from tests.pipeline.conftest import Clock, Harness, tx_spec
 from tests.pipeline.v3_wiring_support import (
     CLOCK_START,

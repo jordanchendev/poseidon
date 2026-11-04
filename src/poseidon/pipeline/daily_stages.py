@@ -55,7 +55,8 @@ from poseidon.pipeline.v3.compiler import OPTION_DATASETS, ROW_FILTERS, NotCompi
 from poseidon.pipeline.v3.config import ENGINE, session_warmup, used_index_datasets
 from poseidon.pipeline.v3.runtime import Conventions
 from poseidon.pipeline.v3.spec import substitute
-from poseidon.pipeline.v3.validation import FeasibilityContext, SessionWarmup, validate_spec_v3
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation_types import FeasibilityContext, SessionWarmup
 
 V3_WIRING_VERSION = 1  # part of every v3 stage's input hash
 # clipped at the window's last day; calendars stay whole

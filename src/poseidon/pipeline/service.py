@@ -379,7 +379,8 @@ class PipelineService:
             warmup_record,
         )
         from poseidon.pipeline.v3.instruments import INSTRUMENTS
-        from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
+        from poseidon.pipeline.v3.validation import validate_spec_v3
+        from poseidon.pipeline.v3.validation_types import FeasibilityContext
 
         try:
             store = self.refdata()

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from poseidon.pipeline.v3.spec import PARAM_REF_KEY, component_slots
-from poseidon.pipeline.v3.validation import LEVERAGE_CAP
+from poseidon.pipeline.v3.validation_types import LEVERAGE_CAP
 
 PRECHECK_VERSION = 3  # 2: 做空間 (space planning) is not 做空; 3: ladder rungs and take_profit_multiple are spec values
 DECIDING_KINDS: dict[str, frozenset[str]] = {

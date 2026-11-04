@@ -36,7 +36,8 @@ from poseidon.pipeline.stage_api import StageResult
 from poseidon.pipeline.state import Verdict
 from poseidon.pipeline.trials import MemoryTrialLedger
 from poseidon.pipeline.v3.config import ENGINE, SPEC_VALIDATOR, session_warmup
-from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation_types import FeasibilityContext
 
 
 def price_points(store, row, first: date, last: date) -> tuple[float, float] | None:

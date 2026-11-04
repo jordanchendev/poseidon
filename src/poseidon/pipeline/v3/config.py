@@ -57,7 +57,7 @@ from poseidon.pipeline.v3.instruments import (
 )
 from poseidon.pipeline.v3.registry import REGISTRY_VERSION, component_fingerprints
 from poseidon.pipeline.v3.spec import SPEC_VERSION, component_slots, strategy_class
-from poseidon.pipeline.v3.validation import SESSION_CALENDAR, WARMUP_MARGIN_SESSIONS, SessionWarmup, WindowStart
+from poseidon.pipeline.v3.validation_types import SESSION_CALENDAR, WARMUP_MARGIN_SESSIONS, SessionWarmup, WindowStart
 
 ENGINE = "target_v1"
 SPEC_VALIDATOR = "spec_v3"

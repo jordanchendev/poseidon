@@ -7,11 +7,12 @@ from datetime import date, timedelta
 import pytest
 
 from poseidon.pipeline.spec_validation import get_spec_validator
-from poseidon.pipeline.v3 import validation
+from poseidon.pipeline.v3 import validation, validation_types
 from poseidon.pipeline.v3.describe import describe_spec, narrative
 from poseidon.pipeline.v3.dsl_bridge import v2_to_v3
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x, tmf_dynamic_leverage_3x_put
-from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation_types import FeasibilityContext
 from poseidon.strategies.dsl.v2.examples import tx_atr_squeeze_breakout
 
 # Design §3.2, the describe() rendering of the acceptance spec, with the signal series named
@@ -594,11 +595,11 @@ def test_a_series_that_starts_late_moves_the_chosen_start_by_its_warm_up():
     window = result.window
     # ma_days up to 250 (the largest grid value) plus the execution_timing scenario's one-row signal lag
     bars = validation._history_bars(result.template, result.params)
-    assert window.warmup_bars == bars + validation.SIGNAL_LAG_WARMUP_BARS
+    assert window.warmup_bars == bars + validation_types.SIGNAL_LAG_WARMUP_BARS
     assert window.warmup_calendar_days == validation.warmup_calendar_days(window.warmup_bars, "1d")
     assert window.start == date(2003, 1, 2) + timedelta(days=window.warmup_calendar_days)
     assert window.moved and window.binding == "twse_taiex_total_return"
-    assert window.default_start == validation.DAILY_WINDOW_START == date(2001, 1, 2)
+    assert window.default_start == validation_types.DAILY_WINDOW_START == date(2001, 1, 2)
     assert window.series_since == {
         "taifex_futures_daily/TX": date(1998, 7, 21),
         "twse_taiex_total_return": date(2003, 1, 2),
@@ -647,7 +648,7 @@ def test_the_warm_up_leaves_room_for_the_execution_timing_signal_lag():
     from poseidon.pipeline.gates.execution_timing import scenarios_for
 
     lags = [request.signal_lag_extra for request in scenarios_for({}, base_execution="next_open").values()]
-    assert max(lags) == validation.SIGNAL_LAG_WARMUP_BARS
+    assert max(lags) == validation_types.SIGNAL_LAG_WARMUP_BARS
 
 
 # --------------------------------------------------------------------------- the protective put (M4)

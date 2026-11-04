@@ -22,7 +22,8 @@ from poseidon.pipeline.refdata.store import RefdataStore
 from poseidon.pipeline.v3.compiler import compile_spec, resolve
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.runtime import Conventions
-from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation_types import FeasibilityContext
 
 WINDOWS = {
     "2014-11..now": ("2014-11-03", None),

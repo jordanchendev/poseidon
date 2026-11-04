@@ -38,7 +38,7 @@ from poseidon.pipeline.refdata.taifex import official_last_trading_day
 from poseidon.pipeline.registry import build_default_registry
 from poseidon.pipeline.stage_api import StageResult
 from poseidon.pipeline.state import Verdict
-from poseidon.pipeline.v3.validation import SESSION_CALENDAR
+from poseidon.pipeline.v3.validation_types import SESSION_CALENDAR
 from tests.pipeline.daily_paper_support import SCHEDULE, _by_month, market_calendar_frame, trading_days, write_futures
 
 FIRST_DAY = "1999-01-04"

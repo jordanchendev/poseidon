@@ -57,12 +57,12 @@ from poseidon.pipeline.v3.spec import (
     SPEC_VERSION,
     Capital,
 )
-from poseidon.pipeline.v3.validation import (
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation_types import (
     DAILY_WINDOW_START,
     LEVERAGE_CAP,
     MAX_ROUNDING_ERROR,
     FeasibilityContext,
-    validate_spec_v3,
 )
 from poseidon.strategies.dsl.v2.schema import NAME_PATTERN, PARAM_NAME_PATTERN, ParamSpec
 

@@ -95,13 +95,8 @@ from poseidon.pipeline.v3.runtime import (
     parse_bound,
 )
 from poseidon.pipeline.v3.spec import DEFAULT_INITIAL_CAPITAL_TWD, is_param_ref, substitute, walk
-from poseidon.pipeline.v3.validation import (
-    LEVERAGE_CAP,
-    FeasibilityContext,
-    SessionWarmup,
-    validate_spec_v3,
-    warmup_calendar_days,
-)
+from poseidon.pipeline.v3.validation import validate_spec_v3, warmup_calendar_days
+from poseidon.pipeline.v3.validation_types import LEVERAGE_CAP, FeasibilityContext, SessionWarmup
 
 AUX_DATASETS = {name: index.dataset for name, index in SIGNAL_INDICES.items()}
 ALWAYS_ATTACHED = tuple(name for name, index in SIGNAL_INDICES.items() if index.always_attached)

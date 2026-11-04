@@ -51,7 +51,8 @@ from poseidon.pipeline.v3.compiler import compile_spec
 from poseidon.pipeline.v3.components_sizing import round_units
 from poseidon.pipeline.v3.config import session_warmup, trading_calendar_record, warmup_record
 from poseidon.pipeline.v3.instruments import INSTRUMENTS
-from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation_types import FeasibilityContext
 from tests.pipeline.benchmark_risk_calibration import (
     LEVELS,
     PathLeverage,

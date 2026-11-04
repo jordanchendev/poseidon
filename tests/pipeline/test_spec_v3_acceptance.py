@@ -16,7 +16,8 @@ from poseidon.pipeline.v3.compiler import compile_spec, resolve
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.registry import REGISTRY
 from poseidon.pipeline.v3.runtime import RollCalendar
-from poseidon.pipeline.v3.validation import FeasibilityContext, validate_spec_v3
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation_types import FeasibilityContext
 
 STORE = RefdataStore()
 pytestmark = pytest.mark.skipif(not STORE.exists(FUTURES), reason="refdata store not available")

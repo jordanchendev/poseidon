@@ -37,13 +37,8 @@ from poseidon.pipeline.v3.config import (
     warmup_record,
 )
 from poseidon.pipeline.v3.spec import substitute
-from poseidon.pipeline.v3.validation import (
-    WARMUP_MARGIN_SESSIONS,
-    FeasibilityContext,
-    SessionWarmup,
-    validate_spec_v3,
-    warmup_calendar_days,
-)
+from poseidon.pipeline.v3.validation import validate_spec_v3, warmup_calendar_days
+from poseidon.pipeline.v3.validation_types import WARMUP_MARGIN_SESSIONS, FeasibilityContext, SessionWarmup
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TERMINAL = json.loads((FIXTURES / "v3_terminal_runs.json").read_text())["runs"]

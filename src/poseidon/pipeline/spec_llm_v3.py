@@ -66,7 +66,8 @@ from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.instruments import SIGNAL_INDICES
 from poseidon.pipeline.v3.registry import REGISTRY, REGISTRY_VERSION, SLOTS
 from poseidon.pipeline.v3.spec import MAX_PARAMS, MIN_PARAMS, component_slots
-from poseidon.pipeline.v3.validation import FeasibilityContext, SessionWarmup, WindowStart, validate_spec_v3
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation_types import FeasibilityContext, SessionWarmup, WindowStart
 
 PROMPT_VERSION_V3 = 8  # design §3.6: the v3 prompt versions start at 7 (DSL prompts are <= 6); 8: null for an
 # approximated clause, in the prompt and in every repair message

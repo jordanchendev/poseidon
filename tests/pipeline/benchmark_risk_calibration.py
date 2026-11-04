@@ -42,7 +42,7 @@ from poseidon.pipeline.v3.components_sizing import round_units
 from poseidon.pipeline.v3.config import session_warmup, trading_calendar_record, warmup_record
 from poseidon.pipeline.v3.examples import tmf_dynamic_leverage_3x
 from poseidon.pipeline.v3.instruments import INSTRUMENTS
-from poseidon.pipeline.v3.validation import FeasibilityContext
+from poseidon.pipeline.v3.validation_types import FeasibilityContext
 
 START, TRAIN_LAST = date(2001, 1, 2), date(2021, 8, 27)  # run #19's train window
 ALPHA_T_MIN = DAILY_THRESHOLDS["benchmark_alpha_t_min"]

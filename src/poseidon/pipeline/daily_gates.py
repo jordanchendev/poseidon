@@ -192,7 +192,7 @@ def beta_matched_spec(template: dict, symbol: str, leverage: float) -> dict | be
     """
 
     from poseidon.pipeline.v3.instruments import INSTRUMENTS, MAX_MARGIN_UTILISATION
-    from poseidon.pipeline.v3.validation import LEVERAGE_CAP
+    from poseidon.pipeline.v3.validation_types import LEVERAGE_CAP
 
     declared = template["instruments"]
     if symbol == STOCK_UNDERLYING:

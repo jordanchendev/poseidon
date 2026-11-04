@@ -7,7 +7,8 @@ from poseidon.pipeline.v3 import components  # noqa: F401  (registers the compon
 from poseidon.pipeline.v3.dsl_bridge import NotAFastPathSpec, v2_to_v3, v3_to_v2
 from poseidon.pipeline.v3.instruments import INSTRUMENTS, Instrument
 from poseidon.pipeline.v3.registry import REGISTRY, REGISTRY_VERSION, component_fingerprints
-from poseidon.pipeline.v3.validation import FeasibilityContext, SpecIssue, V3Validation, validate_spec_v3
+from poseidon.pipeline.v3.validation import validate_spec_v3
+from poseidon.pipeline.v3.validation_types import FeasibilityContext, SpecIssue, V3Validation
 
 __all__ = [
     "INSTRUMENTS",
