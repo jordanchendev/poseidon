@@ -36,6 +36,7 @@ MARGIN_FROM = "2018-01-01"
 US_FROM = "2001-01-02"
 YAHOO = {"GSPC": "spx_pct", "IXIC": "ixic_pct", "SOX": "sox_pct"}
 PERCENTILES = (0.5, 1, 2, 5)
+DAY_FILE = "[0-9]" * 8 + ".json"  # YYYYMMDD.json (skips stray files such as macOS ._ copies)
 
 
 def _day(path):
@@ -46,7 +47,7 @@ def _day(path):
 def parse_twse(twse_dir, log):
     """{iso: {up, down, foreign_yi, total_yi}} from the saved BFI82U and MI_INDEX type=MS bodies."""
     rows = {}
-    for path in sorted((Path(twse_dir) / "bfi82u").glob("*.json")):
+    for path in sorted((Path(twse_dir) / "bfi82u").glob(DAY_FILE)):
         d = _day(path)
         try:
             n = tw.parse_bfi82u(json.loads(path.read_text(encoding="utf-8")), d)
@@ -59,7 +60,7 @@ def parse_twse(twse_dir, log):
         row["total_yi"] = round(n["total"]["net"] / 1e8, 2)
         if "foreign" in n:
             row["foreign_yi"] = round(n["foreign"]["net"] / 1e8, 2)
-    for path in sorted((Path(twse_dir) / "mi_ms").glob("*.json")):
+    for path in sorted((Path(twse_dir) / "mi_ms").glob(DAY_FILE)):
         d = _day(path)
         try:
             b = tw.parse_breadth(json.loads(path.read_text(encoding="utf-8")), d)
