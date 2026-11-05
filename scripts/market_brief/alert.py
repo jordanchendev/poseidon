@@ -17,11 +17,13 @@ History
   TX volume       Thalassa GET /api/v1/refdata/taifex-futures-daily?product=TX, last TX_LOOKBACK_DAYS (SEED-007 shape).
   上市融資金額     Thalassa GET /api/v1/tw/credit/market, last CREDIT_LOOKBACK_DAYS, over the seed (2018-01 on). Margin
                   posts around 22:00 Taipei, after the 17:45 brief, so alert D uses the session before D.
-  breadth, 三大法人, S&P 500 / Nasdaq / SOX: no Thalassa endpoint serves them. The seed alert_seed/{tw,us}.csv (built by
-                  alert_seed.py from TWSE MI_INDEX type=MS + BFI82U from 2021-01 and Yahoo closes from 2001) plus what
-                  the runner appends to <state>/alert-history.json. TW sessions after the seed that are still missing are
-                  fetched from TWSE (at most FILL_MAX per evaluation); US days cannot be refetched (Yahoo throttles
-                  stormtrooper), so a missed US day only lowers N.
+  breadth, 三大法人, S&P 500 / Nasdaq / SOX: no Thalassa endpoint serves them (/nonprice/institutional is per stock and
+                  in shares, /tw/market-daily has no previous close to count 漲跌 with, and Thalassa holds no US index).
+                  The seed alert_seed/{tw,us}.csv (built by alert_seed.py from TWSE MI_INDEX type=MS + BFI82U for every
+                  session 2021-01-04..2026-11-04 and Yahoo closes from 2001) plus what the runner appends to
+                  <state>/alert-history.json. TW sessions after the seed that are still missing are fetched from TWSE
+                  (at most FILL_MAX per evaluation); US days cannot be refetched (Yahoo throttles stormtrooper), so a
+                  missed US day only lowers N.
 """
 
 from __future__ import annotations
