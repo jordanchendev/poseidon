@@ -2375,6 +2375,7 @@ class TestAlert(unittest.TestCase):
         self.assertIn("- 加權指數收盤漲跌 -4.17%（門檻 ≤ -3%）：2026 年以來 24 個交易日中第 1 次", text)
         self.assertIn("上市股票下跌家數／上漲家數 17.2 倍（門檻 ≥ 10 倍；1,000 家跌、58 家漲）", text)
         self.assertIn(f"上市融資金額單日增減（{ALERT_DAYS[-2]}） -250.0 億元（門檻 ≤ -200 億元）", text)
+        self.assertIn("三大法人合計買賣超 -1,300.0 億元（門檻 ≤ -1,170 億元）", text)
         self.assertEqual(lines[-1], "僅描述市場數據，不含任何買賣建議。")
         self.assertNotIn("投降日", text)  # closed in the lower part of the range
         self.assertNotIn("買進", text)

@@ -415,10 +415,6 @@ def evaluate(market, d, facts, *, cfg, fetcher, state_dir, log, persist=True):
 
 
 # ------------------------------------------------------------------------------------------------ message
-def _g(x):
-    return f"{x:g}"
-
-
 def fmt_value(r):
     if r.unit == "%":
         return fmt_pct(r.value)
@@ -429,7 +425,7 @@ def fmt_value(r):
 
 def fmt_threshold(r):
     unit = {"%": "%", "億": " 億元", "倍": " 倍"}[r.unit]
-    return f"門檻 {'≤' if r.op == '<=' else '≥'} {_g(r.threshold)}{unit}"
+    return f"門檻 {'≤' if r.op == '<=' else '≥'} {r.threshold:,g}{unit}"
 
 
 def _label(r, d):
