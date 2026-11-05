@@ -16,6 +16,9 @@ Commands
       Closed market (calendar or exchange "no data") -> state closed (logged once, no notice). Giving up (window over
       with required data missing, an unhandled error while building, or a missing LLM key) queues ONE failure notice
       per kind/date (bridge `brief-failed`), recorded as notice_queued in state. --dry-run only lists due slots.
+      After that delivery, the 市場警示 (alert.py) of each tw-postmarket / us-postmarket brief queued in the tick is
+      evaluated once (state alert:<tw|us>:<date>: queued, quiet or error), queued as its own outbox entry when a
+      condition fired, and delivered; an alert error is logged and never touches the brief.
   run.py run KIND [--date YYYY-MM-DD] [--no-llm] [--dry-run] [--out DIR]
       One report now, ignoring the slot window. --dry-run writes <out>/<file>.md, the outbox JSON and run record to
       --out (default <state>/dry-run) and touches neither state nor outbox; without it the brief is queued.
@@ -24,9 +27,14 @@ Commands
   run.py resend KIND --date YYYY-MM-DD [--dry-run]
       Re-send the phone-format text of an already delivered brief (bridge `brief-resend`, text only). Source: the
       delivered markdown in outbox/sent/<date>-<kind>.json, else a fresh no-LLM build. --dry-run prints the text.
+  run.py alert tw|us [--date YYYY-MM-DD] [--dry-run] [--out DIR]
+      The alert of one session from a fresh no-LLM build of its trigger brief. --dry-run prints the text and writes it
+      with the evaluation to --out (default <state>/dry-run); nothing is queued and the alert history is not written.
+      Without it the alert is queued (bridge `brief-alert`) unless one is already queued for that session.
 
 Files (config.json; paths may use ~): state_dir/state.json, state_dir/market-brief.log, state_dir/runs/<date>-<kind>.json,
-state_dir/cache/tw-holidays-<year>.json, outbox_dir/<date>-<kind>.json (+ sent/, refused/).
+state_dir/cache/tw-holidays-<year>.json, state_dir/alert-history.json, outbox_dir/<date>-<kind>.json and
+outbox_dir/<date>-alert-<tw|us>.json (+ sent/, refused/).
 LLM key: config llm.key_file / llm.key_var, read from that file only (see llm.py); unless --no-llm a missing key exits
 3 before any report data is fetched or queued.
 Exit codes: 0 ok / nothing due / lock busy, 1 report failed, 3 key file, 4 delivery failed.
@@ -47,6 +55,7 @@ from zoneinfo import ZoneInfo
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import alert  # noqa: E402
 import collect  # noqa: E402
 import deliver  # noqa: E402
 import llm  # noqa: E402
@@ -219,6 +228,76 @@ def maybe_mirror_sync(cfg, state_dir, outbox, sent_before, now, log):
     save_json(state_dir / "state.json", state)
 
 
+def run_alerts(built, state, *, cfg, fetcher, state_dir, outbox, now, log):
+    """The 市場警示 of each (market, session) whose trigger brief was queued in this tick, once (state key
+    alert:<market>:<date>, any status is final). Never raises. -> True when state changed."""
+    if "alert" not in cfg:
+        return False
+    changed = False
+    for kind, d, facts in built:
+        market = alert.TRIGGERS.get(kind)
+        k = f"alert:{market}:{d}"
+        if market is None or k in state:
+            continue
+        changed = True
+        try:
+            res = alert.evaluate(market, str(d), facts, cfg=cfg, fetcher=fetcher, state_dir=state_dir, log=log)
+            text = alert.render(res, cfg)
+        except Exception as e:  # an alert bug must never fail the brief run: logged, recorded, not retried
+            log(f"alert {market} {d}: internal error {type(e).__name__}: {e}\n{traceback.format_exc()}")
+            state[k] = {"status": "error", "reason": f"{type(e).__name__}: {e}"[:300], "at": now.isoformat()}
+            continue
+        if text:
+            save_json(outbox / alert.outbox_name(market, d), alert.outbox_entry(market, str(d), text))
+        state[k] = {"status": "queued" if text else "quiet", "summary": alert.summary(res)[:400], "at": now.isoformat()}
+        log(f"alert {market} {d}: {state[k]['status']} ({state[k]['summary']})")
+    return changed
+
+
+def cmd_alert(a, cfg, state_dir, outbox, log):
+    """One alert now from a fresh no-LLM build of its trigger brief. --dry-run prints the text and writes it with the
+    evaluation to --out (state, history and outbox untouched); without it the alert is queued unless already queued."""
+    now = parse_now(a.now)
+    kind = next(k for k, m in alert.TRIGGERS.items() if m == a.market)
+    slot = cfg["slots"][kind]
+    d = dt.date.fromisoformat(a.date) if a.date else now.astimezone(tradingcal.session_zone(slot)).date()
+    fetcher = Fetcher()
+    cal = build_calendar(fetcher, cfg, state_dir, {d.year, now.astimezone(TPE).year}, log)
+    watchlist, _ = load_watchlist(cfg)
+    facts, *_ = build(
+        kind, d, cfg=cfg, fetcher=fetcher, calendar=cal, watchlist=watchlist, now_utc=now, key=None, log=log
+    )
+    if facts["status"] != "ok":
+        log(f"alert {a.market} {d}: {kind} facts {facts['status']} {facts['must_missing']}")
+        return 1
+    k = f"alert:{a.market}:{d}"
+    if not a.dry_run and (load_state(state_dir).get(k) or {}).get("status") == "queued":
+        log(f"alert {a.market} {d}: already queued; nothing to do")
+        return 0
+    res = alert.evaluate(
+        a.market, str(d), facts, cfg=cfg, fetcher=fetcher, state_dir=state_dir, log=log, persist=not a.dry_run
+    )
+    text = alert.render(res, cfg)
+    if a.dry_run:
+        out = expand(a.out) if a.out else state_dir / "dry-run"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / f"{d}-alert-{a.market}.txt").write_text(text or "", encoding="utf-8")
+        save_json(out / f"{d}-alert-{a.market}.eval.json", alert.record(res))
+        print(text or f"(no alert {a.market} {d}: {alert.summary(res)})")
+        return 0
+    with Lock(state_dir / "run.lock") as lock:
+        if not lock.acquired:
+            log("lock busy; try again")
+            return 0
+        state = load_state(state_dir)
+        if text:
+            save_json(outbox / alert.outbox_name(a.market, d), alert.outbox_entry(a.market, str(d), text))
+        state[k] = {"status": "queued" if text else "quiet", "manual": True, "summary": alert.summary(res)[:400]}
+        save_json(state_dir / "state.json", state)
+    log(f"alert {a.market} {d}: {state[k]['status']} (manual; {state[k]['summary']})")
+    return 0
+
+
 class Lock:
     def __init__(self, path):
         self.path = path
@@ -290,6 +369,7 @@ def cmd_due(a, cfg, state_dir, outbox, log):
                 deliver.deliver_outbox(outbox, cfg["bridge"], log=log)
             raise
         watchlist, _ = load_watchlist(cfg)
+        built = []  # (kind, session date, facts) queued in this tick: their alerts run after delivery
         for kind, d, _sdt, age, _open in work:
             k = f"{kind}:{d}"
             entry = state.get(k) or {}
@@ -352,10 +432,15 @@ def cmd_due(a, cfg, state_dir, outbox, log):
                 "at": now.isoformat(timespec="seconds"),
             }
             log(f"{kind} {d}: queued ({len(md)} chars, gaps={len(facts['gaps'])})")
+            built.append((kind, d, facts))
         sweep_expired(state, outbox, cfg["slots"], cfg["window_minutes"], now, log)
         save_json(state_dir / "state.json", state)
         if not a.no_deliver and deliver.deliver_outbox(outbox, cfg["bridge"], log=log):
             rc = 4
+        if run_alerts(built, state, cfg=cfg, fetcher=fetcher, state_dir=state_dir, outbox=outbox, now=now, log=log):
+            save_json(state_dir / "state.json", state)
+            if not a.no_deliver and deliver.deliver_outbox(outbox, cfg["bridge"], log=log):
+                rc = 4
         if not a.no_deliver:
             maybe_mirror_sync(cfg, state_dir, outbox, sent_before, now, log)
         return rc
@@ -447,6 +532,12 @@ def main(argv=None):
     p_resend.add_argument("--date", required=True)
     p_resend.add_argument("--dry-run", action="store_true")
     p_resend.add_argument("--now", help=argparse.SUPPRESS)
+    p_alert = sub.add_parser("alert")
+    p_alert.add_argument("market", choices=sorted(set(alert.TRIGGERS.values())))
+    p_alert.add_argument("--date")
+    p_alert.add_argument("--out")
+    p_alert.add_argument("--dry-run", action="store_true")
+    p_alert.add_argument("--now", help="ISO time; naive = Asia/Taipei")
     for p in (p_due, p_run):
         p.add_argument("--now", help="ISO time (tests/backfill); naive = Asia/Taipei")
         p.add_argument("--no-llm", action="store_true")
@@ -465,6 +556,8 @@ def main(argv=None):
             return cmd_run(a, cfg, state_dir, outbox, log)
         if a.cmd == "resend":
             return cmd_resend(a, cfg, state_dir, outbox, log)
+        if a.cmd == "alert":
+            return cmd_alert(a, cfg, state_dir, outbox, log)
         with Lock(state_dir / "run.lock") as lock:
             if not lock.acquired:
                 return 0

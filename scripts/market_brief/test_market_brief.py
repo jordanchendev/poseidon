@@ -6,6 +6,7 @@ Fixtures in fixtures/ are trimmed copies of real responses captured from stormtr
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import importlib.machinery
 import importlib.util
@@ -23,6 +24,8 @@ from zoneinfo import ZoneInfo
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import alert  # noqa: E402
+import alert_seed  # noqa: E402
 import collect  # noqa: E402
 import deliver  # noqa: E402
 import llm  # noqa: E402
@@ -2241,6 +2244,486 @@ class TestColours(unittest.TestCase):
             for block in tg.split("```")[1::2]:
                 rows = [r for r in block.strip("\n").split("\n")]
                 self.assertFalse(rows[0].endswith(("🔴", "🟢")), rows[0])  # header row
+
+
+# ================================================================================================ 市場警示
+def _weekdays(start, n):
+    out, d = [], start
+    while len(out) < n:
+        if d.weekday() < 5:
+            out.append(d.isoformat())
+        d += dt.timedelta(days=1)
+    return out
+
+
+ALERT_DAYS = _weekdays(date(2026, 10, 5), 25)  # D = ALERT_DAYS[-1] = 2026-11-06 (Fri)
+ALERT_D = ALERT_DAYS[-1]
+
+
+def taiex_rows(last=(920.0, 965.0, 910.0)):
+    """Flat 1000, then 990 .. 960 over the four sessions before D, D = (close, high, low)."""
+    closes = [1000.0] * 20 + [990.0, 980.0, 970.0, 960.0]
+    rows = [
+        {"trade_date": d, "open": c, "high": c, "low": c, "close": c}
+        for d, c in zip(ALERT_DAYS[:-1], closes, strict=True)
+    ]
+    c, h, low = last
+    rows.append({"trade_date": ALERT_D, "open": 960.0, "high": h, "low": low, "close": c})
+    return rows
+
+
+def tx_rows(vol_d, prev=100000, saturday=None):
+    rows = []
+    for d in ALERT_DAYS[-6:]:
+        v = vol_d if d == ALERT_D else prev
+        rows += [
+            {"trade_date": d, "product": "TX", "contract_month": "202611", "session": "day", "volume": v - 1000},
+            {"trade_date": d, "product": "TX", "contract_month": "202612", "session": "day", "volume": 1000},
+            {"trade_date": d, "product": "TX", "contract_month": "202611W2", "session": "day", "volume": 77777},
+            {"trade_date": d, "product": "TX", "contract_month": "202611", "session": "night", "volume": 55555},
+        ]
+    if saturday:
+        rows.append(
+            {"trade_date": saturday, "product": "TX", "contract_month": "202611", "session": "day", "volume": 10}
+        )
+    return rows
+
+
+def credit_rows(chg_prev_yi):
+    prev = ALERT_DAYS[-2]
+    return [
+        {"date": prev, "market": "twse", "margin_amount_change": int(chg_prev_yi * 1e8)},
+        {"date": prev, "market": "tpex", "margin_amount_change": -1},
+        {"date": ALERT_DAYS[-3], "market": "twse", "margin_amount_change": -5_000_000_000},
+    ]
+
+
+def tw_facts(close=920.0, pct=-4.17, up=58, down=1000, foreign=-600.0, total=-800.0):
+    return {
+        "data": {
+            "indices": [{"name": "加權指數", "close": close, "chg": None, "pct": pct}],
+            "breadth": {"twse_stocks": {"up": up, "down": down}},
+            "institutions_yi": {"foreign": foreign, "total": total},
+        }
+    }
+
+
+def write_seed(tmp, tw_rows, us_rows):
+    seed = Path(tmp) / "seed"
+    seed.mkdir()
+    lines = ["date,up,down,foreign_yi,total_yi,margin_chg_yi", *tw_rows]
+    (seed / "tw.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (seed / "us.csv").write_text("\n".join(["date,spx_pct,ixic_pct,sox_pct", *us_rows]) + "\n", encoding="utf-8")
+    return seed
+
+
+class TestAlert(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        t = Path(self.tmp.name)
+        key = t / "thalassa.env"
+        key.write_text("MARKET_BRIEF_THALASSA_API_KEY=test-key\n")
+        key.chmod(0o600)
+        self.cfg = cfg()
+        self.cfg["thalassa"]["key_file"] = str(key)
+        self.state = t / "state"
+        # seed: breadth/三大法人 for the sessions before D (one earlier sell-off day), margin for D-3
+        tw_seed = [f"{d},500,400,10,20," for d in ALERT_DAYS[:-1]]
+        tw_seed[3] = f"{ALERT_DAYS[3]},50,900,-700,-900,"
+        us_seed = ["2026-11-02,-0.5,-1.0,-4.5", "2026-11-03,0.2,0.3,0.4"]
+        self.seed = write_seed(self.tmp.name, tw_seed, us_seed)
+        p = mock.patch.object(alert, "SEED_DIR", self.seed)
+        p.start()
+        self.addCleanup(p.stop)
+        self.logs = []
+
+    def routes(self, taiex=None, tx=None, credit=None):
+        out = []
+        for needle, doc in (("refdata/index-daily", taiex), ("taifex-futures-daily", tx), ("tw/credit/market", credit)):
+            if doc is not None:
+                out.append((needle, (200, json.dumps(doc).encode())))
+        return out
+
+    def evaluate(self, market, facts, routes, d=ALERT_D, persist=True):
+        f = fetcher(routes)
+        res = alert.evaluate(
+            market, d, facts, cfg=self.cfg, fetcher=f, state_dir=self.state, log=self.logs.append, persist=persist
+        )
+        return res, f
+
+    def test_tw_fired_lines_value_threshold_rarity(self):
+        res, f = self.evaluate("tw", tw_facts(), self.routes(taiex_rows(), tx_rows(150000), credit_rows(-250)))
+        by = {r.key: r for r in res.readings}
+        self.assertEqual(
+            sorted(r.key for r in res.fired),
+            ["breadth_ratio", "foreign_yi", "margin_chg_yi", "taiex_5d_pct", "taiex_low_pct", "taiex_pct", "total_yi"],
+        )
+        self.assertAlmostEqual(by["taiex_pct"].value, -4.1667, places=3)
+        self.assertAlmostEqual(by["taiex_5d_pct"].value, -8.0, places=6)  # 920 vs 1000 five sessions earlier
+        self.assertAlmostEqual(by["taiex_low_pct"].value, (910 / 960 - 1) * 100)
+        self.assertEqual((by["taiex_pct"].days, by["taiex_pct"].hits, by["taiex_pct"].first), (24, 1, ALERT_DAYS[1]))
+        # breadth: today's facts plus the seed; the seeded sell-off day counts as an earlier hit
+        self.assertEqual((by["breadth_ratio"].days, by["breadth_ratio"].hits), (25, 2))
+        self.assertEqual((by["foreign_yi"].hits, by["total_yi"].hits), (2, 2))
+        # margin posts after the brief: alert D reads the session before D
+        self.assertEqual((by["margin_chg_yi"].at, by["margin_chg_yi"].value), (ALERT_DAYS[-2], -250.0))
+        text = alert.render(res, self.cfg)
+        lines = text.splitlines()
+        self.assertEqual(lines[0], f"**市場警示 {ALERT_D}**")
+        self.assertEqual(lines[1], f"台股 {ALERT_D}（五）收盤，觸發 7 項條件：")
+        self.assertIn("- 加權指數收盤漲跌 -4.17%（門檻 ≤ -3%）：2026 年以來 24 個交易日中第 1 次", text)
+        self.assertIn("上市股票下跌家數／上漲家數 17.2 倍（門檻 ≥ 10 倍；1,000 家跌、58 家漲）", text)
+        self.assertIn(f"上市融資金額單日增減（{ALERT_DAYS[-2]}） -250.0 億元（門檻 ≤ -200 億元）", text)
+        self.assertEqual(lines[-1], "僅描述市場數據，不含任何買賣建議。")
+        self.assertNotIn("投降日", text)  # closed in the lower part of the range
+        self.assertNotIn("買進", text)
+        self.assertNotIn("賣出", text)
+        # the key goes in the header, never in the URL
+        self.assertTrue(all("test-key" not in url for _m, url in f.transport.calls))
+        hist = json.loads((self.state / "alert-history.json").read_text())
+        self.assertEqual(hist["up"][ALERT_D], 58.0)
+        self.assertEqual(hist["margin_chg_yi"][ALERT_DAYS[-2]], -250.0)
+
+    def test_capitulation_line_uses_seed007_shape(self):
+        rows = taiex_rows(last=(945.0, 960.0, 920.0))  # low -4.17%, close at 62.5% of the range
+        res, _ = self.evaluate("tw", tw_facts(close=945.0), self.routes(rows, tx_rows(150000), credit_rows(0)))
+        self.assertTrue(res.cap["holds"])
+        self.assertAlmostEqual(res.cap["vr"], 1.5)  # weekly and night contracts are not counted
+        text = alert.render(res, self.cfg)
+        self.assertIn(
+            "投降日型態成立（盤中最低較前收跌 4.17%、收在當日區間 62% 處、台指期日盤量為前 5 日均量 1.50 倍", text
+        )
+        self.assertIn("此型態已檢驗並否決（SEED-007 H1／H2 否決：歷史上此型態之後的報酬沒有比較好）", text)
+        # weekend sessions never enter the volume baseline: with the Saturday counted vr would be 1.375
+        res, _ = self.evaluate(
+            "tw", tw_facts(close=945.0), self.routes(rows, tx_rows(110000, saturday="2026-10-31"), credit_rows(0))
+        )
+        self.assertAlmostEqual(res.cap["vr"], 1.1)
+        self.assertFalse(res.cap["holds"])
+        self.assertNotIn("投降日", alert.render(res, self.cfg))
+        # no TX volume: the line says it cannot tell
+        res, _ = self.evaluate("tw", tw_facts(close=945.0), self.routes(rows, [], credit_rows(0)))
+        self.assertIn("台指期量能未取得，無法判斷是否符合 SEED-007 型態", alert.render(res, self.cfg))
+
+    def test_quiet_day_sends_nothing(self):
+        flat = taiex_rows(last=(958.0, 962.0, 955.0))
+        res, _ = self.evaluate(
+            "tw", tw_facts(close=958.0, up=500, down=400, foreign=5, total=8), self.routes(flat, [], credit_rows(-10))
+        )
+        self.assertEqual(res.fired, [])
+        self.assertIsNone(alert.render(res, self.cfg))
+
+    def test_thalassa_down_still_reads_the_brief_values(self):
+        res, _ = self.evaluate("tw", tw_facts(), [])  # every Thalassa read fails (404)
+        by = {r.key: r for r in res.readings}
+        self.assertEqual((by["taiex_pct"].value, by["taiex_pct"].fired), (-4.17, True))  # the brief's own change
+        self.assertTrue(by["breadth_ratio"].fired)
+        self.assertEqual(by["margin_chg_yi"].note, "前一交易日融資資料未取得")
+        text = alert.render(res, self.cfg)
+        self.assertIn("- 加權指數收盤漲跌 -4.17%（門檻 ≤ -3%）：歷史資料未取得（Thalassa 讀取失敗）", text)
+        self.assertIn("無法判斷：加權指數近 5 個交易日漲跌（歷史資料未取得（Thalassa 讀取失敗））", text)
+        self.assertTrue(any("TAIEX history" in p for p in res.problems))
+        self.assertNotIn("test-key", alert.summary(res))
+
+    def test_today_close_from_the_brief_when_thalassa_lags(self):
+        rows = taiex_rows()[:-1]  # Thalassa has not ingested D yet
+        res, _ = self.evaluate("tw", tw_facts(close=920.0), self.routes(rows, [], credit_rows(0)))
+        by = {r.key: r for r in res.readings}
+        self.assertTrue(by["taiex_pct"].fired)
+        self.assertIsNone(by["taiex_low_pct"].value)  # no OHLC from the brief
+        self.assertIsNone(res.cap)
+
+    def test_missing_tw_sessions_after_the_seed_are_fetched_once(self):
+        # the seed ends three sessions before D: the two sessions in between come from TWSE and are kept
+        tw_seed = [f"{d},500,400,10,20," for d in ALERT_DAYS[:-3]]
+        (self.seed / "tw.csv").write_text(
+            "date,up,down,foreign_yi,total_yi,margin_chg_yi\n" + "\n".join(tw_seed) + "\n"
+        )
+
+        def ms(url, body):
+            ymd = re.search(r"date=(\d{8})", url).group(1)
+            doc = {
+                "stat": "OK",
+                "date": ymd,
+                "tables": [
+                    {
+                        "title": "漲跌證券數合計",
+                        "fields": [],
+                        "data": [["上漲(漲停)", "1(0)", "10(0)"], ["下跌(跌停)", "1(0)", "20(0)"]],
+                    }
+                ],
+            }
+            return 200, json.dumps(doc).encode()
+
+        def bfi(url, body):
+            ymd = re.search(r"dayDate=(\d{8})", url).group(1)
+            doc = {
+                "stat": "OK",
+                "date": ymd,
+                "data": [
+                    ["外資及陸資(不含外資自營商)", "1", "2", "-30,000,000,000"],
+                    ["合計", "1", "2", "-40,000,000,000"],
+                ],
+            }
+            return 200, json.dumps(doc).encode()
+
+        routes = [("type=MS", ms), ("BFI82U", bfi), *self.routes(taiex_rows(), [], credit_rows(0))]
+        self.evaluate("tw", tw_facts(), routes)
+        hist = json.loads((self.state / "alert-history.json").read_text())
+        self.assertEqual(hist["down"][ALERT_DAYS[-2]], 20.0)
+        self.assertEqual(hist["foreign_yi"][ALERT_DAYS[-3]], -300.0)
+        _res, f = self.evaluate("tw", tw_facts(), routes)
+        self.assertFalse([u for _m, u in f.transport.calls if "twse.com.tw" in u])  # filled: not fetched again
+
+    def test_dry_run_writes_no_history(self):
+        self.evaluate("tw", tw_facts(), self.routes(taiex_rows(), [], credit_rows(0)), persist=False)
+        self.assertFalse((self.state / "alert-history.json").exists())
+
+    def test_us(self):
+        facts = {
+            "data": {
+                "indices": [
+                    {"key": "SPX", "label": "S&P 500", "pct": -1.2},
+                    {"key": "IXIC", "label": "那斯達克", "pct": -3.1},
+                    {"key": "SOX", "label": "費城半導體", "missing": True},
+                ],
+                "adr": {"adr_pct": -5.12},
+            }
+        }
+        res, _ = self.evaluate("us", facts, [], d="2026-11-04")
+        text = alert.render(res, self.cfg)
+        self.assertEqual(
+            text.splitlines()[:2], ["**市場警示 2026-11-04**", "美股 2026-11-04（三）收盤，觸發 1 項條件："]
+        )
+        self.assertIn("- 那斯達克收盤漲跌 -3.10%（門檻 ≤ -3%）：2026 年以來 3 個交易日中第 1 次", text)
+        self.assertIn("未觸發：S&P 500 收盤漲跌 -1.20%（門檻 ≤ -2.5%）", text)
+        self.assertIn("無法判斷：費城半導體收盤漲跌（當日資料未取得）", text)
+        self.assertIn("台積電 ADR 收盤 -5.12%（不設門檻）。", text)
+
+    def test_rarity_text(self):
+        r = alert.Reading(
+            key="taiex_pct",
+            label="x",
+            op="<=",
+            threshold=-3,
+            unit="%",
+            at="2026-11-03",
+            value=-3.59,
+            fired=True,
+            days=6358,
+            hits=67,
+            first="2001-01-02",
+            streak=1,
+        )
+        self.assertEqual(alert.rarity_text(r), "2001 年以來 6,358 個交易日中第 67 次，約每年 2.6 次")
+        self.assertIn("；連續第 3 個交易日", alert.rarity_text(dataclasses.replace(r, streak=3)))
+        self.assertEqual(alert.fmt_value(dataclasses.replace(r, unit="倍", value=float("inf"))), "無上漲家數")
+
+    def test_breadth_parser_on_a_real_ms_body(self):
+        b = tw.parse_breadth(fx("mi_index_ms_20261103.json"), date(2026, 11, 3))
+        self.assertEqual((b["up"], b["down"], b["down_limit"]), (58, 1000, 33))
+        with self.assertRaises(tw.NotReady):
+            tw.parse_breadth(fx("mi_index_ms_20261103.json"), date(2026, 11, 4))
+
+    def test_seed_parsers(self):
+        doc = {
+            "chart": {
+                "result": [
+                    {
+                        "timestamp": [1793716200, 1793802600, 1793889000],
+                        "indicators": {"quote": [{"close": [100.0, None, 97.0]}]},
+                    }
+                ]
+            }
+        }
+        # 2026-11-03, -04 (null close: skipped, the next change is against the last close), -05 14:30Z = New York dates
+        self.assertEqual(alert_seed.parse_yahoo(doc, "2001-01-02"), {"2026-11-05": -3.0})
+
+
+class TestAlertRunner(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.t = Path(self.tmp.name)
+        self.outbox, self.state_dir = self.t / "outbox", self.t / "state"
+        self.outbox.mkdir()
+        self.logs = []
+
+    def fired(self, market="tw", d="2026-11-03"):
+        r = alert.Reading(
+            key="taiex_pct",
+            label="加權指數收盤漲跌",
+            op="<=",
+            threshold=-3,
+            unit="%",
+            at=d,
+            value=-3.59,
+            fired=True,
+            days=10,
+            hits=2,
+            first="2026-10-01",
+            streak=1,
+        )
+        return alert.Result(market, d, readings=[r])
+
+    def run_alerts(self, built, state, evaluate):
+        with mock.patch.object(run.alert, "evaluate", evaluate):
+            return run.run_alerts(
+                built,
+                state,
+                cfg=cfg(),
+                fetcher=None,
+                state_dir=self.state_dir,
+                outbox=self.outbox,
+                now=dt.datetime(2026, 11, 3, 9, 50, tzinfo=dt.UTC),
+                log=self.logs.append,
+            )
+
+    def test_once_per_market_and_session(self):
+        state, calls = {}, []
+
+        def evaluate(market, d, facts, **kw):
+            calls.append((market, d))
+            return self.fired(market, d)
+
+        built = [("tw-postmarket", date(2026, 11, 3), {}), ("tw-premarket", date(2026, 11, 3), {})]
+        self.assertTrue(self.run_alerts(built, state, evaluate))
+        self.assertEqual(calls, [("tw", "2026-11-03")])  # only the post-market brief triggers
+        self.assertEqual(state["alert:tw:2026-11-03"]["status"], "queued")
+        entry = json.loads((self.outbox / "2026-11-03-alert-tw.json").read_text())
+        self.assertEqual((entry["verb"], entry["market"], entry["date"]), ("brief-alert", "tw", "2026-11-03"))
+        self.assertTrue(entry["text"].startswith("**市場警示 2026-11-03**\n"))
+        self.assertTrue(deliver.valid(entry))
+        (self.outbox / "2026-11-03-alert-tw.json").unlink()  # delivered
+        self.assertFalse(self.run_alerts(built, state, evaluate))  # a rerun of the tick: nothing
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(list(self.outbox.glob("*.json")))
+
+    def test_error_is_recorded_not_raised(self):
+        state = {}
+
+        def boom(*a, **kw):
+            raise RuntimeError("bug")
+
+        self.assertTrue(self.run_alerts([("us-postmarket", date(2026, 11, 4), {})], state, boom))
+        self.assertEqual(state["alert:us:2026-11-04"]["status"], "error")
+        self.assertFalse(list(self.outbox.glob("*.json")))
+        self.assertTrue(any("internal error RuntimeError" in m for m in self.logs))
+
+    def test_quiet(self):
+        state = {}
+        quiet = alert.Result("tw", "2026-11-03", readings=[])
+        self.run_alerts([("tw-postmarket", date(2026, 11, 3), {})], state, lambda *a, **kw: quiet)
+        self.assertEqual(state["alert:tw:2026-11-03"]["status"], "quiet")
+        self.assertFalse(list(self.outbox.glob("*.json")))
+
+    def test_due_tick_queues_brief_then_alert_after_delivery(self):
+        c = cfg()
+        c["state_dir"], c["outbox_dir"], c["watchlist_file"] = str(self.state_dir), str(self.outbox), f"{self.t}/x.json"
+        c["bridge"] = "/bin/false"
+        cpath = self.t / "config.json"
+        cpath.write_text(json.dumps(c, ensure_ascii=False))
+        order = []
+
+        def deliver_outbox(ob, br, log=None):
+            order.append(sorted(p.name for p in Path(ob).glob("*.json")))
+            return 0
+
+        def evaluate(market, d, facts, **kw):
+            order.append(("evaluate", market, d, facts["kind"]))
+            return self.fired(market, d)
+
+        with (
+            mock.patch.object(run, "Fetcher", lambda: fetcher(TW_ROUTES_21)),
+            mock.patch.object(run.deliver, "deliver_outbox", deliver_outbox),
+            mock.patch.object(run.alert, "evaluate", evaluate),
+        ):
+            self.assertEqual(
+                run.main(["--config", str(cpath), "due", "--now", "2026-10-21T18:50:00+08:00", "--no-llm"]), 0
+            )
+            run.main(["--config", str(cpath), "due", "--now", "2026-10-21T18:55:00+08:00", "--no-llm"])
+        # deliver (nothing), build + queue the brief, deliver it, then the alert, then deliver the alert
+        self.assertEqual(order[1], ["2026-10-21-tw-postmarket.json"])
+        self.assertEqual(order[2], ("evaluate", "tw", "2026-10-21", "tw-postmarket"))
+        self.assertIn("2026-10-21-alert-tw.json", order[3])
+        self.assertEqual(sum(1 for x in order if x[0] == "evaluate"), 1)  # the next tick does not re-evaluate
+        st = json.loads((self.state_dir / "state.json").read_text())
+        self.assertEqual(st["alert:tw:2026-10-21"]["status"], "queued")
+
+    def test_alert_command_dry_run(self):
+        c = cfg()
+        c["state_dir"], c["outbox_dir"] = str(self.state_dir), str(self.outbox)
+        c["bridge"] = "/bin/false"
+        cpath = self.t / "config.json"
+        cpath.write_text(json.dumps(c, ensure_ascii=False))
+        facts = {"kind": "tw-postmarket", "status": "ok", "must_missing": [], "data": {}}
+        out = io.StringIO()
+        with (
+            mock.patch.object(run, "Fetcher", lambda: fetcher(TW_ROUTES_21)),
+            mock.patch.object(run, "build", lambda *a, **kw: (facts, None, None, None)),
+            mock.patch.object(run.alert, "evaluate", lambda *a, **kw: self.fired("tw", "2026-11-03")),
+            mock.patch.object(sys, "stdout", out),
+        ):
+            rc = run.main(
+                [
+                    "--config",
+                    str(cpath),
+                    "alert",
+                    "tw",
+                    "--date",
+                    "2026-11-03",
+                    "--dry-run",
+                    "--out",
+                    str(self.t / "dry"),
+                ]
+            )
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.getvalue().startswith("**市場警示 2026-11-03**"))
+        self.assertEqual((self.t / "dry" / "2026-11-03-alert-tw.txt").read_text(), out.getvalue().rstrip("\n"))
+        self.assertFalse(list(self.outbox.glob("*.json")))
+        self.assertNotIn("alert:tw:2026-11-03", run.load_state(self.state_dir))
+
+
+class TestDeliverAlert(unittest.TestCase):
+    def test_brief_alert_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ob = Path(tmp)
+            text = "**市場警示 2026-11-03**\n台股 ..."
+            (ob / "2026-11-03-alert-tw.json").write_text(json.dumps(alert.outbox_entry("tw", "2026-11-03", text)))
+            bad = alert.outbox_entry("tw", "2026-11-03", "**市場警示 2026-11-04**")  # title for another day
+            (ob / "2026-11-03-alert-us.json").write_text(json.dumps({**bad, "market": "us"}))
+            seen = []
+
+            def runner(cmd, input, **kw):
+                seen.append((cmd, input))
+                return mock.Mock(returncode=0, stdout="{}", stderr="")
+
+            self.assertEqual(deliver.deliver_outbox(ob, "ssh research-bridge", log=lambda m: None, runner=runner), 1)
+            self.assertEqual(seen, [(["ssh", "research-bridge", "brief-alert", "tw", "2026-11-03"], text)])
+            self.assertTrue((ob / "sent" / "2026-11-03-alert-tw.json").is_file())
+            self.assertTrue((ob / "2026-11-03-alert-us.json").is_file())  # malformed: never sent
+            self.assertFalse(deliver.valid({**alert.outbox_entry("jp", "2026-11-03", text)}))
+
+
+class TestAlertReading(unittest.TestCase):
+    def test_counts_and_streak_through_the_value_day_only(self):
+        cond = {"key": "taiex_pct", "label": "x", "op": "<=", "threshold": -3}
+        s = {
+            "2000-12-29": -9.0,
+            "2001-01-02": -5.0,
+            "2001-01-03": -1.0,
+            "2001-01-04": -4.0,
+            "2001-01-05": -6.0,
+            "2001-01-08": -7.0,
+        }
+        r = alert.reading(cond, s, "2001-01-05", "2001-01-01")
+        self.assertEqual((r.value, r.fired, r.days, r.hits, r.first, r.streak), (-6.0, True, 4, 3, "2001-01-02", 2))
+        self.assertIsNone(alert.reading(cond, s, "2001-01-09", "2001-01-01").value)
+        self.assertEqual(
+            alert.breadth_ratio({"a": 0, "b": 0, "c": 4}, {"a": 5, "b": 0, "c": 40}),
+            {"a": float("inf"), "b": 0.0, "c": 10.0},
+        )
 
 
 if __name__ == "__main__":

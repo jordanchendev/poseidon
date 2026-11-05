@@ -3,7 +3,7 @@
 Endpoints (all public, no key):
   TWSE MI_INDEX   https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=YYYYMMDD&type=ALLBUT0999&response=json
                   (價格指數 incl. 類股指數, 大盤統計, 漲跌證券數, 每日收盤行情; type=IND carries the same index tables,
-                  so one ALLBUT0999 call is enough)
+                  so one ALLBUT0999 call is enough; type=MS carries only 大盤統計 and 漲跌證券數, for the alert history)
   TWSE BFI82U     https://www.twse.com.tw/rwd/zh/fund/BFI82U?type=day&dayDate=YYYYMMDD&response=json
   TWSE FMTQIK     https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date=YYYYMMDD&response=json   (month table)
   TWSE TWT48U     https://www.twse.com.tw/rwd/zh/exRight/TWT48U?response=json                    (除權除息預告表)
@@ -119,6 +119,39 @@ def _breadth_cell(s):
     return int(m.group(1).replace(",", "")), (int(m.group(2).replace(",", "")) if m.group(2) else None)
 
 
+BREADTH_ROWS = {"上漲(漲停)": "up", "下跌(跌停)": "down", "持平": "flat", "未成交": "untraded", "無比價": "nocompare"}
+
+
+def _breadth(doc):
+    """漲跌證券數合計 -> {"all": {...}, "stocks": {...}} (columns 整體市場 / 股票); {} when the table is absent."""
+    breadth = {}
+    t = _table(doc, "漲跌證券數合計")
+    for row in (t or {}).get("data") or []:
+        key = BREADTH_ROWS.get(strip_html(row[0]))
+        if not key:
+            continue
+        for col, market in ((1, "all"), (2, "stocks")):
+            n, limit = _breadth_cell(row[col])
+            breadth.setdefault(market, {})[key] = n
+            if key in ("up", "down"):
+                breadth[market][key + "_limit"] = limit
+    return breadth
+
+
+def mi_index_ms_url(d):
+    """MI_INDEX type=MS: 大盤統計 and 漲跌證券數 only (about 2 KB; the market alert's history)."""
+    return f"{TWSE}/afterTrading/MI_INDEX?date={ymd(d)}&type=MS&response=json"
+
+
+def parse_breadth(doc, d):
+    """MI_INDEX (any type carrying 漲跌證券數合計) -> the 股票 column {up, down, ...}. Raises MarketClosed / NotReady."""
+    _check_twse(doc, d)
+    stocks = _breadth(doc).get("stocks") or {}
+    if stocks.get("up") is None or stocks.get("down") is None:
+        raise NotReady("MI_INDEX without 漲跌證券數合計")
+    return stocks
+
+
 def parse_mi_index(doc, d):
     """MI_INDEX ALLBUT0999 -> {indices, stats, breadth, stocks}. Raises MarketClosed / NotReady."""
     _check_twse(doc, d)
@@ -134,24 +167,7 @@ def parse_mi_index(doc, d):
     t = _table(doc, "大盤統計資訊")
     for row in (t or {}).get("data") or []:
         stats[strip_html(row[0])] = {"turnover": num(row[1]), "shares": num(row[2]), "trades": num(row[3])}
-    breadth = {}
-    t = _table(doc, "漲跌證券數合計")
-    for row in (t or {}).get("data") or []:
-        label = strip_html(row[0])
-        key = {
-            "上漲(漲停)": "up",
-            "下跌(跌停)": "down",
-            "持平": "flat",
-            "未成交": "untraded",
-            "無比價": "nocompare",
-        }.get(label)
-        if not key:
-            continue
-        for col, market in ((1, "all"), (2, "stocks")):
-            n, limit = _breadth_cell(row[col])
-            breadth.setdefault(market, {})[key] = n
-            if key in ("up", "down"):
-                breadth[market][key + "_limit"] = limit
+    breadth = _breadth(doc)
     stocks = []
     t = _table(doc, "每日收盤行情")
     if t is not None:

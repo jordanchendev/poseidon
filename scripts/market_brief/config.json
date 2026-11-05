@@ -84,6 +84,25 @@
     "key_file": "~/market-brief/secrets/thalassa.env",
     "key_var": "MARKET_BRIEF_THALASSA_API_KEY"
   },
+  "alert": {
+    "_comment": "市場警示 (alert.py): evaluated once after the tw-postmarket / us-postmarket brief of a session; any condition that fires sends one message listing every condition that fired. Remove this block to turn alerts off; drop an entry to drop a condition; thresholds are in each entry's unit (% / 億元 / 倍). op is <= or >=. Keys are fixed (alert.UNITS). since = first session counted in the rarity line (a series that starts later counts from its own first day). capitulation = SEED-007 G0 frozen values (PREREG §8 Gate G0): dd_i 95th percentile, clv 0.5, vr (TX day volume) 80th percentile.",
+    "since": "2001-01-01",
+    "tw": [
+      {"key": "taiex_pct", "label": "加權指數收盤漲跌", "op": "<=", "threshold": -3.0},
+      {"key": "taiex_5d_pct", "label": "加權指數近 5 個交易日漲跌", "op": "<=", "threshold": -7.0},
+      {"key": "taiex_low_pct", "label": "盤中最低較前一日收盤", "op": "<=", "threshold": -4.0},
+      {"key": "breadth_ratio", "label": "上市股票下跌家數／上漲家數", "op": ">=", "threshold": 10},
+      {"key": "margin_chg_yi", "label": "上市融資金額單日增減", "op": "<=", "threshold": -200},
+      {"key": "foreign_yi", "label": "外資買賣超", "op": "<=", "threshold": -500},
+      {"key": "total_yi", "label": "三大法人合計買賣超", "op": "<=", "threshold": -700}
+    ],
+    "us": [
+      {"key": "spx_pct", "label": "S&P 500 收盤漲跌", "op": "<=", "threshold": -2.5},
+      {"key": "ixic_pct", "label": "那斯達克收盤漲跌", "op": "<=", "threshold": -3.0},
+      {"key": "sox_pct", "label": "費城半導體收盤漲跌", "op": "<=", "threshold": -4.0}
+    ],
+    "capitulation": {"dd_i_min": 0.0244552976, "clv_min": 0.5, "vr_min": 1.2075581006}
+  },
   "tw": {
     "big_turnover_yi": 10,
     "otc_big_turnover_yi": 5,
