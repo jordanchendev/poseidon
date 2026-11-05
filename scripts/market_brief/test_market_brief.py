@@ -2647,7 +2647,7 @@ class TestAlertRunner(unittest.TestCase):
         self.assertEqual(order[1], ["2026-10-21-tw-postmarket.json"])
         self.assertEqual(order[2], ("evaluate", "tw", "2026-10-21", "tw-postmarket"))
         self.assertIn("2026-10-21-alert-tw.json", order[3])
-        self.assertEqual(sum(1 for x in order if x[0] == "evaluate"), 1)  # the next tick does not re-evaluate
+        self.assertEqual(sum(1 for x in order if isinstance(x, tuple)), 1)  # the next tick does not re-evaluate
         st = json.loads((self.state_dir / "state.json").read_text())
         self.assertEqual(st["alert:tw:2026-10-21"]["status"], "queued")
 
