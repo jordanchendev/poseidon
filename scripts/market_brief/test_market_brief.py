@@ -2298,7 +2298,7 @@ def credit_rows(chg_prev_yi):
     ]
 
 
-def tw_facts(close=920.0, pct=-4.17, up=58, down=1000, foreign=-600.0, total=-800.0):
+def tw_facts(close=920.0, pct=-4.17, up=58, down=1000, foreign=-1100.0, total=-1300.0):
     return {
         "data": {
             "indices": [{"name": "加權指數", "close": close, "chg": None, "pct": pct}],
@@ -2330,7 +2330,7 @@ class TestAlert(unittest.TestCase):
         self.state = t / "state"
         # seed: breadth/三大法人 for the sessions before D (one earlier sell-off day), margin for D-3
         tw_seed = [f"{d},500,400,10,20," for d in ALERT_DAYS[:-1]]
-        tw_seed[3] = f"{ALERT_DAYS[3]},50,900,-700,-900,"
+        tw_seed[3] = f"{ALERT_DAYS[3]},50,900,-1000,-1200,"
         us_seed = ["2026-11-02,-0.5,-1.0,-4.5", "2026-11-03,0.2,0.3,0.4"]
         self.seed = write_seed(self.tmp.name, tw_seed, us_seed)
         p = mock.patch.object(alert, "SEED_DIR", self.seed)
