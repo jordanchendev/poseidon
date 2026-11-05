@@ -348,7 +348,7 @@ def evaluate_tw(d, facts, *, cfg, fetcher, hist, log):
     hist.add("foreign_yi", d, inst.get("foreign"))
     hist.add("total_yi", d, inst.get("total"))
     days = sorted({r["date"] for r in rows} | set(hist.series("up")))
-    after_seed = max(hist.seed_last("up"), hist.seed_last("foreign_yi"))
+    after_seed = min(hist.seed_last("up"), hist.seed_last("foreign_yi"))
     gaps = [x for x in days if after_seed < x < d and not all(x in hist.series(s) for s in ("up", "foreign_yi"))]
     if gaps:
         log(f"alert tw {d}: filling {len(gaps[-FILL_MAX:])} of {len(gaps)} missing session(s) from TWSE")
