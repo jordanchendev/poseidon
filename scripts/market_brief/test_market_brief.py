@@ -186,8 +186,53 @@ class TestTWParsers(unittest.TestCase):
             tw.parse_taifex_night_html(html, D21)
         with self.assertRaises(tw.NotReady):
             tw.parse_taifex_night_html("<p>查無資料</p>", D22)
-        self.assertEqual(tw._signed_arrow("<span>▼1.25%</span>"), -1.25)
         self.assertIn(b"queryDate=2026%2F10%2F22", tw.taifex_night_form(D22))
+
+    def test_taifex_night_report_down(self):
+        """11-06 night fell 7.03%: TAIFEX writes "▼-2946" / "▼-7.03%"; ref is the 11-05 day settlement 41,882."""
+        html = (FIX / "taifex_night_20261106.html").read_bytes()
+        tx = tw.parse_taifex_night_html(html, date(2026, 11, 6))
+        self.assertEqual(
+            (tx["symbol"], tx["last"], tx["chg"], tx["ref"], tx["pct"]), ("TX 202611", 38936.0, -2946.0, 41882.0, -7.03)
+        )
+        self.assertEqual((tx["open"], tx["high"], tx["low"], tx["volume"]), (41990.0, 42298.0, 38799.0, 89296.0))
+        facts = collect.collect("tw-premarket", D22, collector(TW_ROUTES_21))
+        facts["data"]["tx_night"] = tx
+        md, _ = render.render(facts, None, None, cfg())
+        night = md.split("## 台指期夜盤（近月）")[1].split("## 前一交易日台股")[0]
+        self.assertIn(f"| 38,936 | {D('-2,946')} | {D('-7.03%')} |", night)
+        self.assertIn("參考價 41,882", night)
+        self.assertIn("台指期夜盤 38,936（-2,946）", md)
+
+    def test_taifex_change_cell_sign(self):
+        cases = {
+            '<span class="green">▼-2,946</span>': -2946.0,
+            '<span class="green">▼-7.03%</span>': -7.03,
+            "<span>▼1.25%</span>": -1.25,
+            '<span class="red">▲+580</span>': 580.0,
+            '<span class="red">▲469</span>': 469.0,
+            "-12": -12.0,
+            "+12": 12.0,
+            "0": 0.0,
+            "0.00%": 0.0,
+            "-": None,
+        }
+        for cell, want in cases.items():
+            with self.subTest(cell=cell):
+                self.assertEqual(tw._signed_arrow(cell), want)
+        for cell in ("▲-5", "▼+5", "▲▼5"):
+            with self.subTest(cell=cell), self.assertRaises(tw.NotReady):
+                tw._signed_arrow(cell)
+
+    def test_taifex_night_contradiction_falls_back_to_mis(self):
+        """A report whose arrow and sign disagree is unusable: the brief takes MIS instead of guessing a sign."""
+        bad = (FIX / "taifex_night_20261022.html").read_bytes().replace("▲469".encode(), "▲-469".encode())
+        with self.assertRaises(tw.NotReady):
+            tw.parse_taifex_night_html(bad, D22)
+        routes = [("futDailyMarketReport", (200, bad)) if r[0] == "futDailyMarketReport" else r for r in TW_ROUTES_21]
+        facts = collect.collect("tw-premarket", D22, collector(routes))
+        self.assertEqual(facts["data"]["tx_night"]["source"], "TAIFEX MIS 盤後行情")
+        self.assertEqual(facts["data"]["tx_night"]["chg"], -741.0)
 
     def test_mis(self):
         tx = tw.parse_mis_tx(fx("mis_day.json"))

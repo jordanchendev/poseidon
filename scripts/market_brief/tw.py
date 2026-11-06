@@ -405,11 +405,19 @@ def taifex_night_form(d):
 
 
 def _signed_arrow(s):
+    """TAIFEX 漲跌 cell -> signed float. The arrow gives the sign and the number the magnitude: TAIFEX writes "▲469"
+    up and "▼-2946" / "▼-7.03%" down, so a down cell carries both the arrow and a minus. A cell without an arrow keeps
+    its own sign ("0", "-5"). An arrow that disagrees with an explicit sign ("▲-5", "▼+5", "▲▼5") raises NotReady:
+    neither sign can be trusted, so the report is treated as unusable."""
     t = strip_html(s).replace(",", "").replace("%", "").strip()
-    sign = -1 if "▼" in t else 1
+    up, down = "▲" in t, "▼" in t
     t = t.replace("▲", "").replace("▼", "").strip()
     v = num(t)
-    return None if v is None else sign * v
+    if v is None or not (up or down):
+        return v
+    if (up and down) or (up and t.startswith("-")) or (down and t.startswith("+")):
+        raise NotReady(f"TAIFEX change cell {strip_html(s)!r}: arrow and sign disagree")
+    return abs(v) if up else -abs(v)
 
 
 def parse_taifex_night_html(html, d):
