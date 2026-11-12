@@ -6,6 +6,10 @@ The fixture ``tests/fixtures/dsl_v1_golden_trades.json`` was captured at
 regenerated once when notional sizing started to count point_value (2026-11): the
 same signals, entry/exit times and prices, on a 50M account so a 10-20 % slice
 still buys whole contracts; quantities, fees and PnL changed, crypto did not.
+The crypto scenario was regenerated once when fixed_pct started sizing off
+equity instead of cash (2026-11): its second short had been sized off cash
+inflated by the first short's proceeds; same signals, times and prices, TX
+unchanged.
 """
 
 from __future__ import annotations

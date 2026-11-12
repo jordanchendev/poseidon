@@ -17,9 +17,9 @@
    "entry_time": "2025-06-03T02:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 109.99,
+   "fees": 99.99,
    "pnl": null,
-   "quantity": 2.36555,
+   "quantity": 2.15048,
    "symbol": "BTCUSDT"
   },
   {
@@ -28,9 +28,9 @@
    "entry_time": "2025-06-03T02:00:00+00:00",
    "exit_price": 46352.188647,
    "exit_time": "2025-06-04T11:00:00+00:00",
-   "fees": 219.638418,
-   "pnl": 121.943914,
-   "quantity": 2.36555,
+   "fees": 199.669473,
+   "pnl": 110.857095,
+   "quantity": 2.15048,
    "symbol": "BTCUSDT"
   },
   {
@@ -39,9 +39,9 @@
    "entry_time": "2025-06-04T19:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 110.002194,
+   "fees": 110.001086,
    "pnl": null,
-   "quantity": 2.376471,
+   "quantity": 2.376447,
    "symbol": "BTCUSDT"
   },
   {
@@ -50,9 +50,9 @@
    "entry_time": "2025-06-04T19:00:00+00:00",
    "exit_price": 45966.408196,
    "exit_time": "2025-06-04T20:00:00+00:00",
-   "fees": 219.240026,
-   "pnl": 545.122503,
-   "quantity": 2.376471,
+   "fees": 219.237817,
+   "pnl": 545.117008,
+   "quantity": 2.376447,
    "symbol": "BTCUSDT"
   },
   {
@@ -61,9 +61,9 @@
    "entry_time": "2025-06-04T23:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 110.056707,
+   "fees": 110.055597,
    "pnl": null,
-   "quantity": 2.427876,
+   "quantity": 2.427851,
    "symbol": "BTCUSDT"
   },
   {
@@ -72,9 +72,9 @@
    "entry_time": "2025-06-05T07:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 242.102743,
+   "fees": 220.089184,
    "pnl": null,
-   "quantity": 5.273478,
+   "quantity": 4.793979,
    "symbol": "BTCUSDT"
   },
   {
@@ -83,9 +83,9 @@
    "entry_time": "2025-06-05T10:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 193.633774,
+   "fees": 242.056285,
    "pnl": null,
-   "quantity": 4.227363,
+   "quantity": 5.284511,
    "symbol": "BTCUSDT"
   },
   {
@@ -94,9 +94,9 @@
    "entry_time": "2025-06-05T16:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 154.868292,
+   "fees": 197.990037,
    "pnl": null,
-   "quantity": 3.395879,
+   "quantity": 4.341433,
    "symbol": "BTCUSDT"
   },
   {
@@ -105,9 +105,9 @@
    "entry_time": "2025-06-05T16:00:00+00:00",
    "exit_price": 44984.966962,
    "exit_time": "2025-06-06T03:00:00+00:00",
-   "fees": 307.631809,
-   "pnl": -2412.407888,
-   "quantity": 3.395879,
+   "fees": 393.289242,
+   "pnl": -3084.122128,
+   "quantity": 4.341433,
    "symbol": "BTCUSDT"
   },
   {
@@ -116,9 +116,9 @@
    "entry_time": "2025-06-07T03:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 77.192905,
+   "fees": 74.480978,
    "pnl": null,
-   "quantity": 1.74657,
+   "quantity": 1.68521,
    "symbol": "BTCUSDT"
   },
   {
@@ -127,9 +127,9 @@
    "entry_time": "2025-06-07T06:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 84.904477,
+   "fees": 74.47353,
    "pnl": null,
-   "quantity": 1.954948,
+   "quantity": 1.714773,
    "symbol": "BTCUSDT"
   },
   {
@@ -138,9 +138,9 @@
    "entry_time": "2025-06-07T08:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 93.386434,
+   "fees": 81.91418,
    "pnl": null,
-   "quantity": 2.162031,
+   "quantity": 1.896432,
    "symbol": "BTCUSDT"
   },
   {
@@ -149,9 +149,9 @@
    "entry_time": "2025-06-08T22:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 102.715739,
+   "fees": 89.353342,
    "pnl": null,
-   "quantity": 2.472895,
+   "quantity": 2.151194,
    "symbol": "BTCUSDT"
   },
   {
@@ -160,9 +160,9 @@
    "entry_time": "2025-06-09T18:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 225.954082,
+   "fees": 195.071649,
    "pnl": null,
-   "quantity": 5.468287,
+   "quantity": 4.720905,
    "symbol": "BTCUSDT"
   },
   {
@@ -171,9 +171,9 @@
    "entry_time": "2025-06-09T23:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 180.718075,
+   "fees": 212.903303,
    "pnl": null,
-   "quantity": 4.372071,
+   "quantity": 5.15072,
    "symbol": "BTCUSDT"
   },
   {
@@ -182,9 +182,9 @@
    "entry_time": "2025-06-09T23:00:00+00:00",
    "exit_price": 41827.857866,
    "exit_time": "2025-06-10T03:00:00+00:00",
-   "fees": 363.59242,
-   "pnl": 1792.67767,
-   "quantity": 4.372071,
+   "fees": 428.3469,
+   "pnl": 2111.947008,
+   "quantity": 5.15072,
    "symbol": "BTCUSDT"
   },
   {
@@ -193,9 +193,9 @@
    "entry_time": "2025-06-10T15:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 90.538305,
+   "fees": 87.155681,
    "pnl": null,
-   "quantity": 2.109762,
+   "quantity": 2.030938,
    "symbol": "BTCUSDT"
   },
   {
@@ -204,9 +204,9 @@
    "entry_time": "2025-06-10T15:00:00+00:00",
    "exit_price": 43167.476832,
    "exit_time": "2025-06-10T16:00:00+00:00",
-   "fees": 181.611396,
-   "pnl": -716.397479,
-   "quantity": 2.109762,
+   "fees": 174.826168,
+   "pnl": -689.631977,
+   "quantity": 2.030938,
    "symbol": "BTCUSDT"
   },
   {
@@ -215,9 +215,9 @@
    "entry_time": "2025-06-12T07:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 90.466665,
+   "fees": 87.086718,
    "pnl": null,
-   "quantity": 2.265182,
+   "quantity": 2.180552,
    "symbol": "BTCUSDT"
   },
   {
@@ -226,9 +226,9 @@
    "entry_time": "2025-06-12T09:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 99.504285,
+   "fees": 87.078009,
    "pnl": null,
-   "quantity": 2.531769,
+   "quantity": 2.215597,
    "symbol": "BTCUSDT"
   },
   {
@@ -237,9 +237,9 @@
    "entry_time": "2025-06-12T10:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 109.444763,
+   "fees": 95.777973,
    "pnl": null,
-   "quantity": 2.8401,
+   "quantity": 2.485445,
    "symbol": "BTCUSDT"
   },
   {
@@ -248,9 +248,9 @@
    "entry_time": "2025-06-13T03:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 240.75659,
+   "fees": 208.952393,
    "pnl": null,
-   "quantity": 6.186188,
+   "quantity": 5.368986,
    "symbol": "BTCUSDT"
   },
   {
@@ -259,9 +259,9 @@
    "entry_time": "2025-06-13T08:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 192.557121,
+   "fees": 228.066197,
    "pnl": null,
-   "quantity": 4.978616,
+   "quantity": 5.896713,
    "symbol": "BTCUSDT"
   },
   {
@@ -270,9 +270,9 @@
    "entry_time": "2025-06-13T23:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 154.007185,
+   "fees": 186.230106,
    "pnl": null,
-   "quantity": 3.951388,
+   "quantity": 4.778137,
    "symbol": "BTCUSDT"
   },
   {
@@ -281,9 +281,9 @@
    "entry_time": "2025-06-14T03:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 123.174947,
+   "fees": 140.57962,
    "pnl": null,
-   "quantity": 3.183367,
+   "quantity": 3.633178,
    "symbol": "BTCUSDT"
   },
   {
@@ -292,9 +292,9 @@
    "entry_time": "2025-06-14T03:00:00+00:00",
    "exit_price": 39274.97576,
    "exit_time": "2025-06-14T07:00:00+00:00",
-   "fees": 248.201613,
-   "pnl": 1603.517315,
-   "quantity": 3.183367,
+   "fees": 283.272608,
+   "pnl": 1830.095004,
+   "quantity": 3.633178,
    "symbol": "BTCUSDT"
   },
   {
@@ -303,9 +303,9 @@
    "entry_time": "2025-06-15T03:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 123.49565,
+   "fees": 103.699618,
    "pnl": null,
-   "quantity": 3.115338,
+   "quantity": 2.615958,
    "symbol": "BTCUSDT"
   },
   {
@@ -314,9 +314,9 @@
    "entry_time": "2025-06-15T03:00:00+00:00",
    "exit_price": 38992.53976,
    "exit_time": "2025-06-15T08:00:00+00:00",
-   "fees": 244.970606,
-   "pnl": -2265.665531,
-   "quantity": 3.115338,
+   "fees": 205.702453,
+   "pnl": -1902.485223,
+   "quantity": 2.615958,
    "symbol": "BTCUSDT"
   },
   {
@@ -325,9 +325,9 @@
    "entry_time": "2025-06-15T17:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 123.042517,
+   "fees": 103.319121,
    "pnl": null,
-   "quantity": 3.099247,
+   "quantity": 2.602446,
    "symbol": "BTCUSDT"
   },
   {
@@ -336,9 +336,9 @@
    "entry_time": "2025-06-15T21:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 98.409405,
+   "fees": 103.298457,
    "pnl": null,
-   "quantity": 2.496551,
+   "quantity": 2.620581,
    "symbol": "BTCUSDT"
   },
   {
@@ -347,9 +347,9 @@
    "entry_time": "2025-06-15T21:00:00+00:00",
    "exit_price": 39084.123786,
    "exit_time": "2025-06-15T22:00:00+00:00",
-   "fees": 195.984901,
-   "pnl": -1029.894341,
-   "quantity": 2.496551,
+   "fees": 205.721576,
+   "pnl": -1081.060251,
+   "quantity": 2.620581,
    "symbol": "BTCUSDT"
   },
   {
@@ -358,9 +358,9 @@
    "entry_time": "2025-06-16T03:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 98.203426,
+   "fees": 82.418421,
    "pnl": null,
-   "quantity": 2.482375,
+   "quantity": 2.083363,
    "symbol": "BTCUSDT"
   },
   {
@@ -369,9 +369,9 @@
    "entry_time": "2025-06-16T03:00:00+00:00",
    "exit_price": 40256.422589,
    "exit_time": "2025-06-16T12:00:00+00:00",
-   "fees": 198.134946,
-   "pnl": 1529.958495,
-   "quantity": 2.482375,
+   "fees": 166.287165,
+   "pnl": 1284.036288,
+   "quantity": 2.083363,
    "symbol": "BTCUSDT"
   },
   {
@@ -380,9 +380,9 @@
    "entry_time": "2025-06-17T11:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 49.254709,
+   "fees": 41.337614,
    "pnl": null,
-   "quantity": 1.252558,
+   "quantity": 1.051224,
    "symbol": "BTCUSDT"
   },
   {
@@ -391,9 +391,9 @@
    "entry_time": "2025-06-17T16:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 108.350509,
+   "fees": 82.666961,
    "pnl": null,
-   "quantity": 2.719086,
+   "quantity": 2.07455,
    "symbol": "BTCUSDT"
   },
   {
@@ -402,9 +402,9 @@
    "entry_time": "2025-06-18T14:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 43.329369,
+   "fees": 45.458975,
    "pnl": null,
-   "quantity": 1.119158,
+   "quantity": 1.174164,
    "symbol": "BTCUSDT"
   },
   {
@@ -413,9 +413,9 @@
    "entry_time": "2025-06-19T01:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 47.657972,
+   "fees": 37.187733,
    "pnl": null,
-   "quantity": 1.24698,
+   "quantity": 0.973024,
    "symbol": "BTCUSDT"
   },
   {
@@ -424,9 +424,9 @@
    "entry_time": "2025-06-19T04:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 104.838008,
+   "fees": 83.459824,
    "pnl": null,
-   "quantity": 2.687006,
+   "quantity": 2.139082,
    "symbol": "BTCUSDT"
   },
   {
@@ -435,9 +435,9 @@
    "entry_time": "2025-06-19T04:00:00+00:00",
    "exit_price": 38671.292431,
    "exit_time": "2025-06-19T21:00:00+00:00",
-   "fees": 208.748015,
-   "pnl": -1136.748802,
-   "quantity": 2.687006,
+   "fees": 166.180881,
+   "pnl": -904.947131,
+   "quantity": 2.139082,
    "symbol": "BTCUSDT"
   },
   {
@@ -446,9 +446,9 @@
    "entry_time": "2025-06-21T00:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 104.610658,
+   "fees": 90.716381,
    "pnl": null,
-   "quantity": 2.786885,
+   "quantity": 2.416734,
    "symbol": "BTCUSDT"
   },
   {
@@ -457,9 +457,9 @@
    "entry_time": "2025-06-21T03:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 41.833802,
+   "fees": 45.349119,
    "pnl": null,
-   "quantity": 1.133667,
+   "quantity": 1.228929,
    "symbol": "BTCUSDT"
   },
   {
@@ -468,9 +468,9 @@
    "entry_time": "2025-06-21T06:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 46.012999,
+   "fees": 36.272946,
    "pnl": null,
-   "quantity": 1.263875,
+   "quantity": 0.996338,
    "symbol": "BTCUSDT"
   },
   {
@@ -479,9 +479,9 @@
    "entry_time": "2025-06-21T21:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 50.609698,
+   "fees": 40.80423,
    "pnl": null,
-   "quantity": 1.461917,
+   "quantity": 1.178675,
    "symbol": "BTCUSDT"
   },
   {
@@ -490,9 +490,9 @@
    "entry_time": "2025-06-22T04:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 111.331213,
+   "fees": 88.854889,
    "pnl": null,
-   "quantity": 3.139348,
+   "quantity": 2.505555,
    "symbol": "BTCUSDT"
   },
   {
@@ -501,9 +501,9 @@
    "entry_time": "2025-06-22T15:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 44.521352,
+   "fees": 48.498982,
    "pnl": null,
-   "quantity": 1.315094,
+   "quantity": 1.432587,
    "symbol": "BTCUSDT"
   },
   {
@@ -512,9 +512,9 @@
    "entry_time": "2025-06-23T03:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 48.969035,
+   "fees": 39.608643,
    "pnl": null,
-   "quantity": 1.484787,
+   "quantity": 1.200971,
    "symbol": "BTCUSDT"
   },
   {
@@ -523,9 +523,9 @@
    "entry_time": "2025-06-23T12:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 107.722083,
+   "fees": 88.909161,
    "pnl": null,
-   "quantity": 3.237452,
+   "quantity": 2.672054,
    "symbol": "BTCUSDT"
   },
   {
@@ -534,9 +534,9 @@
    "entry_time": "2025-06-24T11:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 43.078061,
+   "fees": 48.406554,
    "pnl": null,
-   "quantity": 1.382274,
+   "quantity": 1.553252,
    "symbol": "BTCUSDT"
   },
   {
@@ -545,9 +545,9 @@
    "entry_time": "2025-06-25T12:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 94.763119,
+   "fees": 79.021594,
    "pnl": null,
-   "quantity": 3.097169,
+   "quantity": 2.582684,
    "symbol": "BTCUSDT"
   },
   {
@@ -556,9 +556,9 @@
    "entry_time": "2025-06-25T15:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 75.791542,
+   "fees": 88.687101,
    "pnl": null,
-   "quantity": 2.474425,
+   "quantity": 2.895436,
    "symbol": "BTCUSDT"
   },
   {
@@ -567,9 +567,9 @@
    "entry_time": "2025-06-25T15:00:00+00:00",
    "exit_price": 30827.923092,
    "exit_time": "2025-06-25T17:00:00+00:00",
-   "fees": 152.072913,
-   "pnl": 337.755091,
-   "quantity": 2.474425,
+   "fees": 177.947372,
+   "pnl": 395.22246,
+   "quantity": 2.895436,
    "symbol": "BTCUSDT"
   },
   {
@@ -578,9 +578,9 @@
    "entry_time": "2025-06-26T06:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 75.859093,
+   "fees": 72.961826,
    "pnl": null,
-   "quantity": 2.486326,
+   "quantity": 2.391367,
    "symbol": "BTCUSDT"
   }
  ],
