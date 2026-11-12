@@ -152,7 +152,7 @@ class TestSizingConfig:
 
 
 class TestSizingBase:
-    def test_fixed_pct_uses_current_cash(self):
+    def test_fixed_pct_uses_current_equity(self):
         cfg = SizingConfig(mode=SizingMode.FIXED_PCT)
         cost = get_cost_model("us_stock")
         portfolio = BacktestPortfolio(1_000_000, cost, sizing_config=cfg)
@@ -356,7 +356,7 @@ class TestSizingEndToEnd:
             assert max_q / min_q < 1.3, f"Fixed notional quantities should be stable: {quantities}"
 
     def test_fixed_pct_allows_compounding(self):
-        """With fixed_pct, trade sizes grow as cash grows."""
+        """With fixed_pct, trade sizes grow as equity grows."""
         ohlcv = _make_ohlcv(30)
         strategy = AlternatingStrategy(start_bar=5)
         feature_engine = FeatureEngine()

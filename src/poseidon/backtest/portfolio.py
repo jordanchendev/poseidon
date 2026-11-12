@@ -34,7 +34,7 @@ class SizingConfig:
     Attributes:
         mode: Sizing strategy to use.
         notional_pct: Fraction of initial capital per trade (fixed_notional mode).
-        quantity_pct: Fraction of current cash per trade (fixed_pct mode).
+        quantity_pct: Fraction of current equity per trade (fixed_pct mode).
         target_vol: Annualized target volatility (vol_target mode).
         vol_lookback: Lookback bars for realized volatility (vol_target mode).
         max_position_pct: Hard cap on position size as fraction of capital (vol_target mode).
@@ -198,11 +198,14 @@ class BacktestPortfolio:
     def _sizing_base(self) -> float:
         """Return the capital base for quantity calculation.
 
-        fixed_pct uses current cash (compounding). All other modes use
-        initial capital to avoid compounding distortion.
+        fixed_pct uses current equity (compounding), not cash: a fully funded
+        short's proceeds sit in cash and a long's cost has left it. Positions
+        are marked at entry price because only the entering symbol's fill
+        price is known here. All other modes use initial capital to avoid
+        compounding distortion.
         """
         if self.sizing_config.mode == SizingMode.FIXED_PCT:
-            return self.cash
+            return self.equity
         return self.initial_capital
 
     def _is_crypto_market(self, signal: Signal) -> bool:

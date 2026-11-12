@@ -192,7 +192,7 @@ def test_notional_sizing_below_one_contract_opens_nothing():
     assert portfolio.positions == {}
 
 
-def test_fixed_pct_sizes_from_cash_in_currency_notional():
+def test_fixed_pct_sizes_from_equity_in_currency_notional():
     capital = 10_000_000.0
     portfolio = BacktestPortfolio(capital, TX, SizingConfig(mode=SizingMode.FIXED_PCT, quantity_pct=0.5))
     trade = portfolio.execute_fill(tx_signal(quantity_pct=0.5), bar(PRICE))
