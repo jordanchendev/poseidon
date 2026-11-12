@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from poseidon.backtest.cost_model import get_cost_model
+from poseidon.backtest.cost_model import CostModel, get_cost_model
 from poseidon.backtest.portfolio import (
     BacktestPortfolio,
     SizingConfig,
@@ -173,6 +173,51 @@ class TestSizingBase:
         portfolio = BacktestPortfolio(1_000_000, cost, sizing_config=cfg)
         portfolio.cash = 800_000
         assert portfolio._sizing_base() == 1_000_000
+
+
+def _fixed_pct_portfolio() -> BacktestPortfolio:
+    free = CostModel(
+        market="crypto_spot",
+        buy_commission_rate=0.0,
+        sell_commission_rate=0.0,
+        tax_rate=0.0,
+        slippage_pct=0.0,
+        slippage_ticks=0,
+    )
+    return BacktestPortfolio(100_000, free, sizing_config=SizingConfig(mode=SizingMode.FIXED_PCT))
+
+
+def _crypto_entry(symbol: str, action: SignalAction) -> Signal:
+    return Signal(
+        id=uuid4(),
+        symbol=symbol,
+        market="crypto_spot",
+        instrument=InstrumentType.SPOT,
+        action=action,
+        confidence=0.9,
+        quantity_pct=0.5,
+        signal_time=datetime(2025, 1, 15, 9, 0, tzinfo=UTC),
+    )
+
+
+class TestFixedPctSizesOffEquity:
+    def test_entry_after_funded_short_ignores_short_proceeds(self):
+        portfolio = _fixed_pct_portfolio()
+        portfolio.execute_fill(_crypto_entry("ETHUSDT", SignalAction.SHORT), _make_bar(100.0))
+        assert portfolio.cash == 150_000  # proceeds of 500 @ 100 sit in cash
+
+        trade = portfolio.execute_fill(_crypto_entry("BTCUSDT", SignalAction.LONG), _make_bar(200.0))
+
+        assert trade.quantity == pytest.approx(0.5 * 100_000 / 200)
+
+    def test_entry_after_long_counts_the_held_position(self):
+        portfolio = _fixed_pct_portfolio()
+        portfolio.execute_fill(_crypto_entry("ETHUSDT", SignalAction.LONG), _make_bar(100.0))
+        assert portfolio.cash == 50_000
+
+        trade = portfolio.execute_fill(_crypto_entry("BTCUSDT", SignalAction.LONG), _make_bar(100.0))
+
+        assert trade.quantity == pytest.approx(0.5 * 100_000 / 100)
 
 
 # ===========================================================================
