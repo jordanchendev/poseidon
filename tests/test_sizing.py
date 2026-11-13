@@ -187,11 +187,11 @@ def _fixed_pct_portfolio() -> BacktestPortfolio:
     return BacktestPortfolio(100_000, free, sizing_config=SizingConfig(mode=SizingMode.FIXED_PCT))
 
 
-def _crypto_entry(symbol: str, action: SignalAction) -> Signal:
+def _entry(symbol: str, action: SignalAction, market: str = "crypto_spot") -> Signal:
     return Signal(
         id=uuid4(),
         symbol=symbol,
-        market="crypto_spot",
+        market=market,
         instrument=InstrumentType.SPOT,
         action=action,
         confidence=0.9,
@@ -203,21 +203,47 @@ def _crypto_entry(symbol: str, action: SignalAction) -> Signal:
 class TestFixedPctSizesOffEquity:
     def test_entry_after_funded_short_ignores_short_proceeds(self):
         portfolio = _fixed_pct_portfolio()
-        portfolio.execute_fill(_crypto_entry("ETHUSDT", SignalAction.SHORT), _make_bar(100.0))
+        portfolio.execute_fill(_entry("ETHUSDT", SignalAction.SHORT), _make_bar(100.0))
         assert portfolio.cash == 150_000  # proceeds of 500 @ 100 sit in cash
 
-        trade = portfolio.execute_fill(_crypto_entry("BTCUSDT", SignalAction.LONG), _make_bar(200.0))
+        trade = portfolio.execute_fill(_entry("BTCUSDT", SignalAction.LONG), _make_bar(200.0))
 
         assert trade.quantity == pytest.approx(0.5 * 100_000 / 200)
 
     def test_entry_after_long_counts_the_held_position(self):
         portfolio = _fixed_pct_portfolio()
-        portfolio.execute_fill(_crypto_entry("ETHUSDT", SignalAction.LONG), _make_bar(100.0))
+        portfolio.execute_fill(_entry("ETHUSDT", SignalAction.LONG), _make_bar(100.0))
         assert portfolio.cash == 50_000
 
-        trade = portfolio.execute_fill(_crypto_entry("BTCUSDT", SignalAction.LONG), _make_bar(100.0))
+        trade = portfolio.execute_fill(_entry("BTCUSDT", SignalAction.LONG), _make_bar(100.0))
 
         assert trade.quantity == pytest.approx(0.5 * 100_000 / 100)
+
+    def test_long_beyond_cash_fills_at_what_cash_pays_for(self):
+        portfolio = BacktestPortfolio(
+            100_000, get_cost_model("crypto_spot"), sizing_config=SizingConfig(mode=SizingMode.FIXED_PCT)
+        )
+        portfolio.execute_fill(_entry("ETHUSDT", SignalAction.LONG), _make_bar(100.0))
+        cash_before = portfolio.cash
+        assert 0.5 * portfolio.equity > cash_before
+
+        trade = portfolio.execute_fill(_entry("BTCUSDT", SignalAction.LONG), _make_bar(200.0))
+
+        assert trade is not None
+        assert trade.quantity * trade.entry_price + trade.fees == pytest.approx(cash_before)
+        assert portfolio.cash >= 0
+
+    def test_whole_unit_long_beyond_cash_fills_the_most_units_cash_pays_for(self):
+        cost_model = get_cost_model("tw_stock")
+        portfolio = BacktestPortfolio(1_000_000, cost_model, sizing_config=SizingConfig(mode=SizingMode.FIXED_PCT))
+        portfolio.execute_fill(_entry("2330", SignalAction.LONG, market="tw_stock"), _make_bar(100.0))
+
+        trade = portfolio.execute_fill(_entry("2317", SignalAction.LONG, market="tw_stock"), _make_bar(100.0))
+
+        assert trade is not None
+        assert trade.quantity == int(trade.quantity)
+        unit_cost = trade.entry_price * (1 + cost_model.buy_commission_rate)
+        assert 0 <= portfolio.cash < unit_cost
 
 
 # ===========================================================================
