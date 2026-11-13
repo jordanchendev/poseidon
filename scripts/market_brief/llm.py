@@ -15,6 +15,7 @@ digits written). One repair round; still failing -> the section is dropped and t
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import hashlib
 import json
 import os
@@ -139,7 +140,10 @@ Rules (a validator enforces them; violations are refused):
    9,267.33 億). Stock codes and years stay plain (2330, 2026). Percentages keep 2 decimals (-1.81%). Prices are
    written exactly as in DATA (2,385 not 2,385.0).
 7. Only reference quantities that are present in DATA. Never mention moving averages (季線, 月線, 年線, 均線, MA),
-   technical levels (支撐, 壓力區, 頸線, 關卡) or indicators (KD, RSI, MACD, K 線) — DATA has none of them."""
+   technical levels (支撐, 壓力區, 頸線, 關卡) or indicators (KD, RSI, MACD, K 線) — DATA has none of them.
+8. The night session in DATA (tx_night) is named by the date it started: write it as 「MM-DD 夜盤」 from
+   tx_night.start_date (2026-10-21 -> 10-21 夜盤). Write 昨晚 or 昨夜 for it only when tx_night.start_date is the
+   calendar day before the report date; after a weekend or holiday it started earlier, so use the date label."""
 
 
 def build_messages(facts):
@@ -177,6 +181,7 @@ TECH_TERMS = re.compile(
     r"季線|月線|年線|半年線|週線|均線|移動平均|(?<![A-Za-z])MA\d*(?![A-Za-z])|支撐|壓力區|壓力位|壓力線|上檔壓力|頸線|"
     r"(?:整數|萬點)?關卡|K\s?線|黃金交叉|死亡交叉|RSI|MACD|(?<![A-Za-z])KD(?![A-Za-z])|超買|超賣|布林"
 )
+_NIGHT_LAST_NIGHT = re.compile(r"昨[晚夜]的?(?:臺股期貨|台指期|期貨|夜盤)|(?:台指期|期貨|夜盤)[在於]?昨[晚夜]")
 _SENT_SPLIT = re.compile(r"(?<=[。！？；!?;])")
 _PCT = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?%")
 _ZERO_DEC_PRICE = re.compile(r"(\d[\d,]*)\.0+(?=\s*元)")
@@ -248,6 +253,14 @@ def validate(obj, facts, check_terms=True):
     bad = sorted(set(b for t in texts for b in unknown_numbers(t, allowed)))
     if bad:
         reasons.append("numbers not found in DATA: " + ", ".join(bad[:15]))
+    start = ((facts.get("data") or {}).get("tx_night") or {}).get("start_date")
+    if (
+        facts.get("kind") == "tw-premarket"
+        and start
+        and start != (dt.date.fromisoformat(facts["date"]) - dt.timedelta(days=1)).isoformat()
+        and any(_NIGHT_LAST_NIGHT.search(t) for t in texts)
+    ):
+        reasons.append(f"the night session started {start}, not the previous calendar day: do not call it 昨晚/昨夜")
     terms = sorted(set(t for x in texts for t in tech_terms(x)))
     if check_terms and terms:
         reasons.append("technical terms not supported by DATA (remove them): " + ", ".join(terms))

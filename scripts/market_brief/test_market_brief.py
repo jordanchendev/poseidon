@@ -197,12 +197,83 @@ class TestTWParsers(unittest.TestCase):
         )
         self.assertEqual((tx["open"], tx["high"], tx["low"], tx["volume"]), (41990.0, 42298.0, 38799.0, 89296.0))
         facts = collect.collect("tw-premarket", D22, collector(TW_ROUTES_21))
-        facts["data"]["tx_night"] = tx
+        facts["data"]["tx_night"] = {**tx, "start_date": "2026-11-05"}
         md, _ = render.render(facts, None, None, cfg())
         night = md.split("## 台指期夜盤（近月）")[1].split("## 前一交易日台股")[0]
         self.assertIn(f"| 38,936 | {D('-2,946')} | {D('-7.03%')} |", night)
         self.assertIn("參考價 41,882", night)
-        self.assertIn("台指期夜盤 38,936（-2,946）", md)
+        self.assertIn("台指期 11-05 夜盤 38,936（-2,946）", md)
+
+    def night_brief(self, d, report, now, cal=None):
+        routes = [(k, report) if k == "futDailyMarketReport" else (k, v) for k, v in TW_ROUTES_21]
+        c = collector(routes, now=now)
+        if cal:
+            c.cal = cal
+        facts = collect.collect("tw-premarket", d, c)
+        md, _ = render.render(facts, None, None, cfg())
+        return facts, md
+
+    @staticmethod
+    def narrative(text):
+        return {"one_liner": text, "interpretation": text, "watch_points": [text]}
+
+    def test_night_label_previous_calendar_day(self):
+        """Thursday 10-22 brief: the night session started Wednesday 10-21 evening, so 昨晚 is true."""
+        facts, md = self.night_brief(D22, "taifex_night_20261022.html", dt.datetime(2026, 10, 22, 8, 30, tzinfo=dt.UTC))
+        self.assertEqual(facts["data"]["tx_night"]["start_date"], "2026-10-21")
+        self.assertIn("| 10-21 夜盤 臺股期貨 202611", md)
+        self.assertIn("台指期 10-21 夜盤 47,482", md)
+        _sec, reasons = llm.validate(self.narrative("昨晚台指期夜盤走強，留意開盤。"), facts)
+        self.assertEqual(reasons, [])
+
+    def test_night_label_after_weekend_and_holiday(self):
+        """Tuesday 10-27 brief: 10-26 is a TWSE holiday, so the night session started Friday 10-23, not yesterday."""
+        facts, md = self.night_brief(
+            dt.date(2026, 10, 27), "taifex_night_20261027.html", dt.datetime(2026, 10, 27, 8, 30, tzinfo=dt.UTC)
+        )
+        self.assertEqual(facts["data"]["tx_night"]["start_date"], "2026-10-23")
+        self.assertIn("| 10-23 夜盤 臺股期貨 202611", md)
+        self.assertIn("台指期 10-23 夜盤 47,482", md)
+        self.assertNotIn("昨晚", md)
+        sec, reasons = llm.validate(self.narrative("昨晚台指期夜盤走強，留意開盤。"), facts)
+        self.assertIsNone(sec)
+        self.assertTrue(any("昨晚" in r for r in reasons), reasons)
+        sec, reasons = llm.validate(self.narrative("10-23 夜盤走強；美股昨晚收高，留意開盤。"), facts)
+        self.assertEqual(reasons, [])
+
+    def test_night_label_uses_report_date_without_holiday_schedule(self):
+        """The year's holiday schedule is unavailable (weekdays assumed open): the report header still says 10-23."""
+        cal = tradingcal.Calendar({2026: None}, cfg()["nyse_holidays"])
+        self.assertTrue(cal.tw_open(dt.date(2026, 10, 26)))
+        facts, md = self.night_brief(
+            dt.date(2026, 10, 27),
+            "taifex_night_20261027.html",
+            dt.datetime(2026, 10, 27, 8, 30, tzinfo=dt.UTC),
+            cal,
+        )
+        self.assertEqual(facts["data"]["tx_night"]["start_date"], "2026-10-23")
+        self.assertIn("| 10-23 夜盤 臺股期貨 202611", md)
+        self.assertNotIn("10-26 夜盤", md)
+
+    def test_night_validator_only_refuses_night_session_called_last_night(self):
+        facts, _ = self.night_brief(
+            dt.date(2026, 10, 27), "taifex_night_20261027.html", dt.datetime(2026, 10, 27, 8, 30, tzinfo=dt.UTC)
+        )
+        for ok in ("美股昨晚收高，台指期 10-23 夜盤同步走強。", "昨晚美股下跌，留意台指期開盤。"):
+            _sec, reasons = llm.validate(self.narrative(ok), facts)
+            self.assertEqual(reasons, [], ok)
+        for bad in ("昨晚台指期走強，留意開盤。", "台指期夜盤昨晚走強。", "昨夜夜盤收高。"):
+            sec, reasons = llm.validate(self.narrative(bad), facts)
+            self.assertIsNone(sec, bad)
+            self.assertTrue(any("昨晚" in r for r in reasons), reasons)
+
+    def test_night_validator_skips_without_night_data(self):
+        facts, _ = self.night_brief(
+            dt.date(2026, 10, 27), "taifex_night_20261027.html", dt.datetime(2026, 10, 27, 8, 30, tzinfo=dt.UTC)
+        )
+        facts["data"]["tx_night"] = None
+        _sec, reasons = llm.validate(self.narrative("昨晚台指期夜盤走強，留意開盤。"), facts)
+        self.assertEqual(reasons, [])
 
     def test_taifex_change_cell_sign(self):
         cases = {
