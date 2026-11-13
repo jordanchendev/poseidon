@@ -6,6 +6,7 @@ It tracks cash, positions, completed trades, and an equity curve (per bar).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -15,6 +16,8 @@ import pandas as pd
 from poseidon.backtest.cost_model import CostModel
 from poseidon.backtest.pending_orders import FillEvent
 from poseidon.signals.schemas import Signal, SignalAction
+
+logger = logging.getLogger(__name__)
 
 
 class SizingMode(StrEnum):
@@ -153,7 +156,9 @@ class BacktestPortfolio:
     def execute_fill(self, signal: Signal, bar: pd.Series) -> TradeRecord | None:
         """Execute a simulated fill with fees and slippage.
 
-        For LONG: opens a new position, deducts cash.
+        For LONG/SHORT: opens a new position. One position per key, no pyramiding:
+        an entry on the side already held is dropped; an opposite-side entry closes
+        the open position first (a reversal).
         For CLOSE: closes an existing position, adds cash, computes PnL.
 
         Args:
@@ -166,13 +171,29 @@ class BacktestPortfolio:
         price = float(bar["close"])
         key = f"{signal.market}:{signal.symbol}"
 
+        if signal.action == SignalAction.CLOSE:
+            return self._execute_close(signal, price, key)
+        if signal.action not in (SignalAction.LONG, SignalAction.SHORT) or self._holds_side(signal, key):
+            return None
+        if key in self.positions:
+            self._execute_close(signal, price, key)
         if signal.action == SignalAction.LONG:
             return self._execute_long(signal, price, key)
-        elif signal.action == SignalAction.CLOSE:
-            return self._execute_close(signal, price, key)
-        elif signal.action == SignalAction.SHORT:
-            return self._execute_short(signal, price, key)
-        return None
+        return self._execute_short(signal, price, key)
+
+    def _holds_side(self, signal: Signal, key: str) -> bool:
+        """True (and logged) when ``key`` already holds the side this entry would open."""
+        pos = self.positions.get(key)
+        if pos is None or pos["side"] != signal.action.value:
+            return False
+        logger.info(
+            "Dropping %s entry on %s at %s: a %s position is already open",
+            signal.action.value,
+            key,
+            signal.signal_time,
+            pos["side"],
+        )
+        return True
 
     def _apply_slippage(self, price: float, is_buy: bool) -> float:
         """Apply slippage to fill price.
@@ -302,10 +323,10 @@ class BacktestPortfolio:
         self.trades.append(trade)
         return trade
 
-    def _execute_close(self, signal: Signal, price: float, key: str) -> TradeRecord | None:
+    def _execute_close(self, signal: Signal, price: float, key: str, slippage: bool = True) -> TradeRecord | None:
         """Close an existing position.
 
-        Slippage direction depends on position side:
+        Slippage direction depends on position side (a limit fill passes ``slippage=False``):
         - Long close = selling → slippage moves price down (is_buy=False)
         - Short close = buying to cover → slippage moves price up (is_buy=True)
 
@@ -320,7 +341,7 @@ class BacktestPortfolio:
 
         # Slippage direction: closing long = sell, closing short = buy
         is_buy = pos["side"] == "short"
-        fill_price = self._apply_slippage(price, is_buy=is_buy)
+        fill_price = self._apply_slippage(price, is_buy=is_buy) if slippage else price
 
         total_fees, pnl = self._settle_close(pos, fill_price)
 
@@ -420,7 +441,8 @@ class BacktestPortfolio:
     ) -> TradeRecord | None:
         """Execute a limit order fill using maker fee rate with no slippage.
 
-        Fill price comes from the FillEvent (= order's limit price).
+        Fill price comes from the FillEvent (= order's limit price). Same-key entries
+        follow execute_fill: same side dropped, opposite side closes at the limit price first.
         Uses buy_commission_rate (maker rate 0.0002 for crypto_perp) for BOTH
         buy and sell sides, since limit orders are always maker fills.
 
@@ -435,6 +457,11 @@ class BacktestPortfolio:
         fill_price = fill_event.fill_price  # No slippage
         key = f"{signal.market}:{signal.symbol}"
         fee_rate = self.cost_model.buy_commission_rate  # Maker rate
+
+        if signal.action not in (SignalAction.LONG, SignalAction.SHORT) or self._holds_side(signal, key):
+            return None
+        if key in self.positions:
+            self._execute_close(signal, fill_price, key, slippage=False)
 
         if signal.action == SignalAction.LONG:
             quantity = self._resolve_quantity(signal, fill_price)
@@ -470,7 +497,7 @@ class BacktestPortfolio:
             self.trades.append(trade)
             return trade
 
-        elif signal.action == SignalAction.SHORT:
+        else:
             quantity = self._resolve_quantity(signal, fill_price)
             if quantity <= 0:
                 return None
@@ -500,9 +527,6 @@ class BacktestPortfolio:
             )
             self.trades.append(trade)
             return trade
-
-        # CLOSE action is not expected from limit fills
-        return None
 
     def record_equity_point(self, time: datetime, current_price: float) -> None:
         """Record mark-to-market equity and drawdown at a given time.
