@@ -429,6 +429,7 @@ def parse_taifex_night_html(html, d):
         raise NotReady("TAIFEX report: no data")
     if m.group(1) != d.strftime("%Y/%m/%d"):
         raise NotReady(f"TAIFEX report date {m.group(1)}")
+    started = re.search(r"(\d{4})/(\d{2})/(\d{2})(?:&nbsp;|\s)*15:00~次日05:00", html)
     body = html[m.end() :]
     end = body.find("</table>")
     body = body if end < 0 else body[:end]
@@ -453,6 +454,7 @@ def parse_taifex_night_html(html, d):
             "volume": num(cells[8]),
             "cdate": d.strftime("%Y%m%d"),
             "ctime": None,
+            "start_date": started and "-".join(started.groups()),
             "source": "TAIFEX 期貨每日交易行情（盤後交易時段）",
         }
     raise NotReady("TAIFEX report: no TX contract row")

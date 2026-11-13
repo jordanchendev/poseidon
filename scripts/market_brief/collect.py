@@ -493,9 +493,10 @@ class Collector:
             night = {k: (r2(v) if isinstance(v, float) else v) for k, v in night.items()}
             taiex_prev = prev["taiex"]["close"] if prev else None
             night["basis_vs_taiex"] = None if taiex_prev is None else r2(night["last"] - taiex_prev)
-            # The night session filed under d opens the evening of the previous trading day, not of d - 1.
-            start = self.cal.prev_open("tw", d)
-            night["start_date"] = start.isoformat() if start else None
+            if not night.get("start_date"):
+                # MIS has no header: the session filed under d opens the evening of the previous trading day.
+                start = self.cal.prev_open("tw", d)
+                night["start_date"] = start.isoformat() if start else None
         exdiv = None
         try:
             exdiv = tw.parse_twt48u(self.f.get_json(tw.twt48u_url()), d)

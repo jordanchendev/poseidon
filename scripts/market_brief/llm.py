@@ -181,8 +181,7 @@ TECH_TERMS = re.compile(
     r"季線|月線|年線|半年線|週線|均線|移動平均|(?<![A-Za-z])MA\d*(?![A-Za-z])|支撐|壓力區|壓力位|壓力線|上檔壓力|頸線|"
     r"(?:整數|萬點)?關卡|K\s?線|黃金交叉|死亡交叉|RSI|MACD|(?<![A-Za-z])KD(?![A-Za-z])|超買|超賣|布林"
 )
-_LAST_NIGHT = re.compile(r"昨[晚夜]")
-_NIGHT_SESSION = re.compile(r"夜盤|台指期|期貨")
+_NIGHT_LAST_NIGHT = re.compile(r"昨[晚夜]的?(?:臺股期貨|台指期|期貨|夜盤)|(?:台指期|期貨|夜盤)[在於]?昨[晚夜]")
 _SENT_SPLIT = re.compile(r"(?<=[。！？；!?;])")
 _PCT = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?%")
 _ZERO_DEC_PRICE = re.compile(r"(\d[\d,]*)\.0+(?=\s*元)")
@@ -254,14 +253,14 @@ def validate(obj, facts, check_terms=True):
     bad = sorted(set(b for t in texts for b in unknown_numbers(t, allowed)))
     if bad:
         reasons.append("numbers not found in DATA: " + ", ".join(bad[:15]))
-    if facts.get("kind") == "tw-premarket":
-        start = (facts["data"].get("tx_night") or {}).get("start_date")
-        if start != (dt.date.fromisoformat(facts["date"]) - dt.timedelta(days=1)).isoformat() and any(
-            _LAST_NIGHT.search(s) and _NIGHT_SESSION.search(s) for t in texts for s in _SENT_SPLIT.split(t)
-        ):
-            reasons.append(
-                f"the night session started {start}, not the previous calendar day: do not call it 昨晚/昨夜"
-            )
+    start = ((facts.get("data") or {}).get("tx_night") or {}).get("start_date")
+    if (
+        facts.get("kind") == "tw-premarket"
+        and start
+        and start != (dt.date.fromisoformat(facts["date"]) - dt.timedelta(days=1)).isoformat()
+        and any(_NIGHT_LAST_NIGHT.search(t) for t in texts)
+    ):
+        reasons.append(f"the night session started {start}, not the previous calendar day: do not call it 昨晚/昨夜")
     terms = sorted(set(t for x in texts for t in tech_terms(x)))
     if check_terms and terms:
         reasons.append("technical terms not supported by DATA (remove them): " + ", ".join(terms))
