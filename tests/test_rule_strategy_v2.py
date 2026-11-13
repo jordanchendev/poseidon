@@ -92,7 +92,7 @@ def test_non_position_aware_strategy_gets_no_hook():
     assert calls == []
 
 
-def test_v2_holds_one_position_where_v1_overwrites():
+def test_v2_and_v1_hold_one_position():
     ohlcv = random_walk_bars(DAYS, seed=1)
     result, _, _ = run_v2(
         _doc([{"id": "go", "action": "long", "condition": ALWAYS}], {"close_on_session_change": False}), ohlcv
@@ -108,7 +108,7 @@ def test_v2_holds_one_position_where_v1_overwrites():
         }
     )
     v1_result = make_runner(v1).run(ohlcv, feature_specs=[])
-    assert v1_result.trade_count > 100  # v1 re-enters every bar, overwriting the position
+    assert v1_result.trade_count == 1  # v1 re-fires every bar; the portfolio drops same-side re-entries
 
 
 def test_first_matching_entry_rule_wins():
