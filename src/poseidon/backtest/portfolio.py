@@ -34,7 +34,8 @@ class SizingConfig:
     Attributes:
         mode: Sizing strategy to use.
         notional_pct: Fraction of initial capital per trade (fixed_notional mode).
-        quantity_pct: Fraction of current equity per trade (fixed_pct mode).
+        quantity_pct: Fraction of current equity per trade (fixed_pct mode); a fully
+            funded long is capped at what cash pays for.
         target_vol: Annualized target volatility (vol_target mode).
         vol_lookback: Lookback bars for realized volatility (vol_target mode).
         max_position_pct: Hard cap on position size as fraction of capital (vol_target mode).
@@ -217,11 +218,19 @@ class BacktestPortfolio:
 
         ``quantity_pct`` is a fraction of the sizing base in currency notional, so a unit
         costs ``fill_price * point_value`` (one TX contract at 20,000 points is 4M TWD).
+
+        A fixed_pct long in a fully funded market is capped at what cash pays for,
+        entry fees included: its equity base counts held longs that cash cannot spend.
         """
         if self.sizing_config.mode == SizingMode.FIXED_CONTRACTS:
             return float(self.sizing_config.contracts)
         quantity_pct = signal.quantity_pct or 0.1
         raw_quantity = self._sizing_base() * quantity_pct / (fill_price * self.point_value)
+        funded_long = signal.action == SignalAction.LONG and not self.is_margined
+        if self.sizing_config.mode == SizingMode.FIXED_PCT and funded_long:
+            unit_cost = fill_price + self._entry_fees(fill_price, 1.0, self.cost_model.buy_commission_rate)
+            # Shaved so float rounding in the caller's notional + fees cannot land above cash.
+            raw_quantity = min(raw_quantity, self.cash / unit_cost * (1 - 1e-9))
         return raw_quantity if self._is_crypto_market(signal) else int(raw_quantity)
 
     def _execute_long(self, signal: Signal, price: float, key: str) -> TradeRecord | None:
