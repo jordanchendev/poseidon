@@ -108,6 +108,11 @@ def _or_na(cell, x, *args):
     return NOT_FETCHED if x is None else cell(x, *args)
 
 
+def night_label(n):
+    """ "10-21 夜盤": the date the night session started, so a Monday brief does not read as last night's."""
+    return f"{n['start_date'][5:]} 夜盤" if n.get("start_date") else "夜盤"
+
+
 def _table(headers, aligns, rows, tg=None):
     """GFM table. aligns: 'l' | 'r'. tg: Telegram spec 'md header=Label; ...; last header' (see telegram_text)."""
     out = [f"<!-- tg: {tg} -->"] if tg else []
@@ -382,7 +387,7 @@ def _deterministic_one_liner(facts):
         sox = next((r for r in d["us_indices"] if r["key"] == "SOX"), {})
         s = f"美股 {d['us_session_date']} S&P 500 {fmt_pct(spx.get('pct'))}、費半 {fmt_pct(sox.get('pct'))}"
         if d.get("tx_night"):
-            s += f"；台指期夜盤 {fmt(d['tx_night']['last'], 0)}（{fmt_signed(d['tx_night']['chg'], 0)}）"
+            s += f"；台指期 {night_label(d['tx_night'])} {fmt(d['tx_night']['last'], 0)}（{fmt_signed(d['tx_night']['chg'], 0)}）"
         if d.get("adr"):
             s += f"；TSM ADR {fmt_pct(d['adr']['adr_pct'])}"
         return s + "。"
@@ -521,7 +526,7 @@ def _body_tw_pre(d, credit=None):
             ["l", "r", "r", "r", "r", "r", "r"],
             [
                 [
-                    n["name"],
+                    f"{night_label(n)} {n['name']}",
                     fmt(n["last"], 0),
                     chg_cell(n["chg"], 0),
                     pct_cell(n["pct"]),
