@@ -12,25 +12,14 @@
    "symbol": "BTCUSDT"
   },
   {
-   "action": "short",
-   "entry_price": 46496.587344,
-   "entry_time": "2025-06-03T02:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 99.99,
-   "pnl": null,
-   "quantity": 2.15048,
-   "symbol": "BTCUSDT"
-  },
-  {
    "action": "close",
-   "entry_price": 46496.587344,
-   "entry_time": "2025-06-03T02:00:00+00:00",
+   "entry_price": 47569.691443,
+   "entry_time": "2025-06-02T20:00:00+00:00",
    "exit_price": 46352.188647,
    "exit_time": "2025-06-04T11:00:00+00:00",
-   "fees": 199.669473,
-   "pnl": 110.857095,
-   "quantity": 2.15048,
+   "fees": 197.440591,
+   "pnl": 2361.968056,
+   "quantity": 2.102179,
    "symbol": "BTCUSDT"
   },
   {
@@ -39,9 +28,9 @@
    "entry_time": "2025-06-04T19:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 110.001086,
+   "fees": 100.236197,
    "pnl": null,
-   "quantity": 2.376447,
+   "quantity": 2.165488,
    "symbol": "BTCUSDT"
   },
   {
@@ -50,9 +39,9 @@
    "entry_time": "2025-06-04T19:00:00+00:00",
    "exit_price": 45966.408196,
    "exit_time": "2025-06-04T20:00:00+00:00",
-   "fees": 219.237817,
-   "pnl": 545.117008,
-   "quantity": 2.376447,
+   "fees": 199.775891,
+   "pnl": 496.726513,
+   "quantity": 2.165488,
    "symbol": "BTCUSDT"
   },
   {
@@ -61,9 +50,20 @@
    "entry_time": "2025-06-04T23:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 110.055597,
+   "fees": 100.285869,
    "pnl": null,
-   "quantity": 2.427851,
+   "quantity": 2.212329,
+   "symbol": "BTCUSDT"
+  },
+  {
+   "action": "close",
+   "entry_price": 45330.449226,
+   "entry_time": "2025-06-04T23:00:00+00:00",
+   "exit_price": 45909.502034,
+   "exit_time": "2025-06-05T07:00:00+00:00",
+   "fees": 201.852794,
+   "pnl": -1482.908141,
+   "quantity": 2.212329,
    "symbol": "BTCUSDT"
   },
   {
@@ -72,42 +72,20 @@
    "entry_time": "2025-06-05T07:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 220.089184,
+   "fees": 200.275157,
    "pnl": null,
-   "quantity": 4.793979,
-   "symbol": "BTCUSDT"
-  },
-  {
-   "action": "long",
-   "entry_price": 45804.86069,
-   "entry_time": "2025-06-05T10:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 242.056285,
-   "pnl": null,
-   "quantity": 5.284511,
-   "symbol": "BTCUSDT"
-  },
-  {
-   "action": "long",
-   "entry_price": 45604.76994,
-   "entry_time": "2025-06-05T16:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 197.990037,
-   "pnl": null,
-   "quantity": 4.341433,
+   "quantity": 4.36239,
    "symbol": "BTCUSDT"
   },
   {
    "action": "close",
-   "entry_price": 45604.76994,
-   "entry_time": "2025-06-05T16:00:00+00:00",
+   "entry_price": 45909.502034,
+   "entry_time": "2025-06-05T07:00:00+00:00",
    "exit_price": 44984.966962,
    "exit_time": "2025-06-06T03:00:00+00:00",
-   "fees": 393.289242,
-   "pnl": -3084.122128,
-   "quantity": 4.341433,
+   "fees": 396.517132,
+   "pnl": -4429.699779,
+   "quantity": 4.36239,
    "symbol": "BTCUSDT"
   },
   {
@@ -116,42 +94,20 @@
    "entry_time": "2025-06-07T03:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 74.480978,
+   "fees": 99.694609,
    "pnl": null,
-   "quantity": 1.68521,
+   "quantity": 2.255694,
    "symbol": "BTCUSDT"
   },
   {
-   "action": "short",
-   "entry_price": 43430.552014,
-   "entry_time": "2025-06-07T06:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 74.47353,
-   "pnl": null,
-   "quantity": 1.714773,
-   "symbol": "BTCUSDT"
-  },
-  {
-   "action": "short",
-   "entry_price": 43193.849204,
-   "entry_time": "2025-06-07T08:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 81.91418,
-   "pnl": null,
-   "quantity": 1.896432,
-   "symbol": "BTCUSDT"
-  },
-  {
-   "action": "short",
-   "entry_price": 41536.627396,
-   "entry_time": "2025-06-08T22:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 89.353342,
-   "pnl": null,
-   "quantity": 2.151194,
+   "action": "close",
+   "entry_price": 44196.859443,
+   "entry_time": "2025-06-07T03:00:00+00:00",
+   "exit_price": 41320.812976,
+   "exit_time": "2025-06-09T18:00:00+00:00",
+   "fees": 192.901735,
+   "pnl": 6294.580197,
+   "quantity": 2.255694,
    "symbol": "BTCUSDT"
   },
   {
@@ -160,31 +116,20 @@
    "entry_time": "2025-06-09T18:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 195.071649,
+   "fees": 200.648133,
    "pnl": null,
-   "quantity": 4.720905,
-   "symbol": "BTCUSDT"
-  },
-  {
-   "action": "long",
-   "entry_price": 41334.665894,
-   "entry_time": "2025-06-09T23:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 212.903303,
-   "pnl": null,
-   "quantity": 5.15072,
+   "quantity": 4.855861,
    "symbol": "BTCUSDT"
   },
   {
    "action": "close",
-   "entry_price": 41334.665894,
-   "entry_time": "2025-06-09T23:00:00+00:00",
+   "entry_price": 41320.812976,
+   "entry_time": "2025-06-09T18:00:00+00:00",
    "exit_price": 41827.857866,
    "exit_time": "2025-06-10T03:00:00+00:00",
-   "fees": 428.3469,
-   "pnl": 2111.947008,
-   "quantity": 5.15072,
+   "fees": 403.758406,
+   "pnl": 2058.381214,
+   "quantity": 4.855861,
    "symbol": "BTCUSDT"
   },
   {
@@ -193,9 +138,9 @@
    "entry_time": "2025-06-10T15:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 87.155681,
+   "fees": 100.529905,
    "pnl": null,
-   "quantity": 2.030938,
+   "quantity": 2.34259,
    "symbol": "BTCUSDT"
   },
   {
@@ -204,9 +149,9 @@
    "entry_time": "2025-06-10T15:00:00+00:00",
    "exit_price": 43167.476832,
    "exit_time": "2025-06-10T16:00:00+00:00",
-   "fees": 174.826168,
-   "pnl": -689.631977,
-   "quantity": 2.030938,
+   "fees": 201.653613,
+   "pnl": -795.457462,
+   "quantity": 2.34259,
    "symbol": "BTCUSDT"
   },
   {
@@ -215,31 +160,20 @@
    "entry_time": "2025-06-12T07:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 87.086718,
+   "fees": 100.450359,
    "pnl": null,
-   "quantity": 2.180552,
+   "quantity": 2.515162,
    "symbol": "BTCUSDT"
   },
   {
-   "action": "short",
-   "entry_price": 39302.269494,
-   "entry_time": "2025-06-12T09:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 87.078009,
-   "pnl": null,
-   "quantity": 2.215597,
-   "symbol": "BTCUSDT"
-  },
-  {
-   "action": "short",
-   "entry_price": 38535.536041,
-   "entry_time": "2025-06-12T10:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 95.777973,
-   "pnl": null,
-   "quantity": 2.485445,
+   "action": "close",
+   "entry_price": 39937.928073,
+   "entry_time": "2025-06-12T07:00:00+00:00",
+   "exit_price": 38918.410981,
+   "exit_time": "2025-06-13T03:00:00+00:00",
+   "fees": 198.336467,
+   "pnl": 2365.914181,
+   "quantity": 2.515162,
    "symbol": "BTCUSDT"
   },
   {
@@ -248,53 +182,20 @@
    "entry_time": "2025-06-13T03:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 208.952393,
+   "fees": 201.373901,
    "pnl": null,
-   "quantity": 5.368986,
-   "symbol": "BTCUSDT"
-  },
-  {
-   "action": "long",
-   "entry_price": 38676.836176,
-   "entry_time": "2025-06-13T08:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 228.066197,
-   "pnl": null,
-   "quantity": 5.896713,
-   "symbol": "BTCUSDT"
-  },
-  {
-   "action": "long",
-   "entry_price": 38975.465206,
-   "entry_time": "2025-06-13T23:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 186.230106,
-   "pnl": null,
-   "quantity": 4.778137,
-   "symbol": "BTCUSDT"
-  },
-  {
-   "action": "long",
-   "entry_price": 38693.290121,
-   "entry_time": "2025-06-14T03:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 140.57962,
-   "pnl": null,
-   "quantity": 3.633178,
+   "quantity": 5.174258,
    "symbol": "BTCUSDT"
   },
   {
    "action": "close",
-   "entry_price": 38693.290121,
-   "entry_time": "2025-06-14T03:00:00+00:00",
+   "entry_price": 38918.410981,
+   "entry_time": "2025-06-13T03:00:00+00:00",
    "exit_price": 39274.97576,
    "exit_time": "2025-06-14T07:00:00+00:00",
-   "fees": 283.272608,
-   "pnl": 1830.095004,
-   "quantity": 3.633178,
+   "fees": 404.59276,
+   "pnl": 1440.365416,
+   "quantity": 5.174258,
    "symbol": "BTCUSDT"
   },
   {
@@ -303,9 +204,9 @@
    "entry_time": "2025-06-15T03:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 103.699618,
+   "fees": 201.661974,
    "pnl": null,
-   "quantity": 2.615958,
+   "quantity": 5.087186,
    "symbol": "BTCUSDT"
   },
   {
@@ -314,9 +215,9 @@
    "entry_time": "2025-06-15T03:00:00+00:00",
    "exit_price": 38992.53976,
    "exit_time": "2025-06-15T08:00:00+00:00",
-   "fees": 205.702453,
-   "pnl": -1902.485223,
-   "quantity": 2.615958,
+   "fees": 400.024258,
+   "pnl": -3699.713974,
+   "quantity": 5.087186,
    "symbol": "BTCUSDT"
   },
   {
@@ -325,31 +226,20 @@
    "entry_time": "2025-06-15T17:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 103.319121,
+   "fees": 200.922031,
    "pnl": null,
-   "quantity": 2.602446,
-   "symbol": "BTCUSDT"
-  },
-  {
-   "action": "long",
-   "entry_price": 39418.148425,
-   "entry_time": "2025-06-15T21:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 103.298457,
-   "pnl": null,
-   "quantity": 2.620581,
+   "quantity": 5.060909,
    "symbol": "BTCUSDT"
   },
   {
    "action": "close",
-   "entry_price": 39418.148425,
-   "entry_time": "2025-06-15T21:00:00+00:00",
+   "entry_price": 39700.779786,
+   "entry_time": "2025-06-15T17:00:00+00:00",
    "exit_price": 39084.123786,
    "exit_time": "2025-06-15T22:00:00+00:00",
-   "fees": 205.721576,
-   "pnl": -1081.060251,
-   "quantity": 2.620581,
+   "fees": 398.723223,
+   "pnl": -3519.563082,
+   "quantity": 5.060909,
    "symbol": "BTCUSDT"
   },
   {
@@ -358,9 +248,9 @@
    "entry_time": "2025-06-16T03:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 82.418421,
+   "fees": 200.218119,
    "pnl": null,
-   "quantity": 2.083363,
+   "quantity": 5.06109,
    "symbol": "BTCUSDT"
   },
   {
@@ -369,9 +259,9 @@
    "entry_time": "2025-06-16T03:00:00+00:00",
    "exit_price": 40256.422589,
    "exit_time": "2025-06-16T12:00:00+00:00",
-   "fees": 166.287165,
-   "pnl": 1284.036288,
-   "quantity": 2.083363,
+   "fees": 403.959491,
+   "pnl": 3119.294535,
+   "quantity": 5.06109,
    "symbol": "BTCUSDT"
   },
   {
@@ -380,9 +270,20 @@
    "entry_time": "2025-06-17T11:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 41.337614,
+   "fees": 100.420989,
    "pnl": null,
-   "quantity": 1.051224,
+   "quantity": 2.553728,
+   "symbol": "BTCUSDT"
+  },
+  {
+   "action": "close",
+   "entry_price": 39323.298328,
+   "entry_time": "2025-06-17T11:00:00+00:00",
+   "exit_price": 39848.14302,
+   "exit_time": "2025-06-17T16:00:00+00:00",
+   "fees": 202.182288,
+   "pnl": -1542.492618,
+   "quantity": 2.553728,
    "symbol": "BTCUSDT"
   },
   {
@@ -391,9 +292,20 @@
    "entry_time": "2025-06-17T16:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 82.666961,
+   "fees": 200.533479,
    "pnl": null,
-   "quantity": 2.07455,
+   "quantity": 5.032442,
+   "symbol": "BTCUSDT"
+  },
+  {
+   "action": "close",
+   "entry_price": 39848.14302,
+   "entry_time": "2025-06-17T16:00:00+00:00",
+   "exit_price": 38716.042561,
+   "exit_time": "2025-06-18T14:00:00+00:00",
+   "fees": 395.369728,
+   "pnl": -6092.599925,
+   "quantity": 5.032442,
    "symbol": "BTCUSDT"
   },
   {
@@ -402,20 +314,20 @@
    "entry_time": "2025-06-18T14:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 45.458975,
+   "fees": 99.65748,
    "pnl": null,
-   "quantity": 1.174164,
+   "quantity": 2.574062,
    "symbol": "BTCUSDT"
   },
   {
-   "action": "short",
-   "entry_price": 38218.72013,
-   "entry_time": "2025-06-19T01:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 37.187733,
-   "pnl": null,
-   "quantity": 0.973024,
+   "action": "close",
+   "entry_price": 38716.042561,
+   "entry_time": "2025-06-18T14:00:00+00:00",
+   "exit_price": 39016.658492,
+   "exit_time": "2025-06-19T04:00:00+00:00",
+   "fees": 200.088763,
+   "pnl": -973.892697,
+   "quantity": 2.574062,
    "symbol": "BTCUSDT"
   },
   {
@@ -424,9 +336,9 @@
    "entry_time": "2025-06-19T04:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 83.459824,
+   "fees": 199.12018,
    "pnl": null,
-   "quantity": 2.139082,
+   "quantity": 5.103466,
    "symbol": "BTCUSDT"
   },
   {
@@ -435,9 +347,9 @@
    "entry_time": "2025-06-19T04:00:00+00:00",
    "exit_price": 38671.292431,
    "exit_time": "2025-06-19T21:00:00+00:00",
-   "fees": 166.180881,
-   "pnl": -904.947131,
-   "quantity": 2.139082,
+   "fees": 396.477797,
+   "pnl": -2159.041662,
+   "quantity": 5.103466,
    "symbol": "BTCUSDT"
   },
   {
@@ -446,9 +358,20 @@
    "entry_time": "2025-06-21T00:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 90.716381,
+   "fees": 198.688372,
    "pnl": null,
-   "quantity": 2.416734,
+   "quantity": 5.293168,
+   "symbol": "BTCUSDT"
+  },
+  {
+   "action": "close",
+   "entry_price": 37536.762317,
+   "entry_time": "2025-06-21T00:00:00+00:00",
+   "exit_price": 36901.319606,
+   "exit_time": "2025-06-21T03:00:00+00:00",
+   "fees": 394.01324,
+   "pnl": -3757.517979,
+   "quantity": 5.293168,
    "symbol": "BTCUSDT"
   },
   {
@@ -457,31 +380,20 @@
    "entry_time": "2025-06-21T03:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 45.349119,
+   "fees": 98.968434,
    "pnl": null,
-   "quantity": 1.228929,
+   "quantity": 2.681975,
    "symbol": "BTCUSDT"
   },
   {
-   "action": "short",
-   "entry_price": 36406.28011,
-   "entry_time": "2025-06-21T06:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 36.272946,
-   "pnl": null,
-   "quantity": 0.996338,
-   "symbol": "BTCUSDT"
-  },
-  {
-   "action": "short",
-   "entry_price": 34618.723573,
-   "entry_time": "2025-06-21T21:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 40.80423,
-   "pnl": null,
-   "quantity": 1.178675,
+   "action": "close",
+   "entry_price": 36901.319606,
+   "entry_time": "2025-06-21T03:00:00+00:00",
+   "exit_price": 35463.161589,
+   "exit_time": "2025-06-22T04:00:00+00:00",
+   "fees": 194.079764,
+   "pnl": 3663.02477,
+   "quantity": 2.681975,
    "symbol": "BTCUSDT"
   },
   {
@@ -490,9 +402,20 @@
    "entry_time": "2025-06-22T04:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 88.854889,
+   "fees": 198.669474,
    "pnl": null,
-   "quantity": 2.505555,
+   "quantity": 5.602137,
+   "symbol": "BTCUSDT"
+  },
+  {
+   "action": "close",
+   "entry_price": 35463.161589,
+   "entry_time": "2025-06-22T04:00:00+00:00",
+   "exit_price": 33854.115555,
+   "exit_time": "2025-06-22T15:00:00+00:00",
+   "fees": 388.324851,
+   "pnl": -9402.420438,
+   "quantity": 5.602137,
    "symbol": "BTCUSDT"
   },
   {
@@ -501,20 +424,20 @@
    "entry_time": "2025-06-22T15:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 48.498982,
+   "fees": 98.394495,
    "pnl": null,
-   "quantity": 1.432587,
+   "quantity": 2.906426,
    "symbol": "BTCUSDT"
   },
   {
-   "action": "short",
-   "entry_price": 32980.522102,
-   "entry_time": "2025-06-23T03:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 39.608643,
-   "pnl": null,
-   "quantity": 1.200971,
+   "action": "close",
+   "entry_price": 33854.115555,
+   "entry_time": "2025-06-22T15:00:00+00:00",
+   "exit_price": 33273.720093,
+   "exit_time": "2025-06-23T12:00:00+00:00",
+   "fees": 195.102113,
+   "pnl": 1491.774573,
+   "quantity": 2.906426,
    "symbol": "BTCUSDT"
   },
   {
@@ -523,9 +446,20 @@
    "entry_time": "2025-06-23T12:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 88.909161,
+   "fees": 197.087344,
    "pnl": null,
-   "quantity": 2.672054,
+   "quantity": 5.923213,
+   "symbol": "BTCUSDT"
+  },
+  {
+   "action": "close",
+   "entry_price": 33273.720093,
+   "entry_time": "2025-06-23T12:00:00+00:00",
+   "exit_price": 31164.641081,
+   "exit_time": "2025-06-24T11:00:00+00:00",
+   "fees": 381.682164,
+   "pnl": -12874.207201,
+   "quantity": 5.923213,
    "symbol": "BTCUSDT"
   },
   {
@@ -534,9 +468,20 @@
    "entry_time": "2025-06-24T11:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 48.406554,
+   "fees": 97.256251,
    "pnl": null,
-   "quantity": 1.553252,
+   "quantity": 3.120724,
+   "symbol": "BTCUSDT"
+  },
+  {
+   "action": "close",
+   "entry_price": 31164.641081,
+   "entry_time": "2025-06-24T11:00:00+00:00",
+   "exit_price": 30596.690126,
+   "exit_time": "2025-06-25T12:00:00+00:00",
+   "fees": 192.740085,
+   "pnl": 1579.678241,
+   "quantity": 3.120724,
    "symbol": "BTCUSDT"
   },
   {
@@ -545,31 +490,20 @@
    "entry_time": "2025-06-25T12:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 79.021594,
+   "fees": 194.828439,
    "pnl": null,
-   "quantity": 2.582684,
-   "symbol": "BTCUSDT"
-  },
-  {
-   "action": "long",
-   "entry_price": 30629.966763,
-   "entry_time": "2025-06-25T15:00:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 88.687101,
-   "pnl": null,
-   "quantity": 2.895436,
+   "quantity": 6.367631,
    "symbol": "BTCUSDT"
   },
   {
    "action": "close",
-   "entry_price": 30629.966763,
-   "entry_time": "2025-06-25T15:00:00+00:00",
+   "entry_price": 30596.690126,
+   "entry_time": "2025-06-25T12:00:00+00:00",
    "exit_price": 30827.923092,
    "exit_time": "2025-06-25T17:00:00+00:00",
-   "fees": 177.947372,
-   "pnl": 395.22246,
-   "quantity": 2.895436,
+   "fees": 391.129283,
+   "pnl": 1081.276964,
+   "quantity": 6.367631,
    "symbol": "BTCUSDT"
   },
   {
@@ -578,9 +512,9 @@
    "entry_time": "2025-06-26T06:00:00+00:00",
    "exit_price": null,
    "exit_time": null,
-   "fees": 72.961826,
+   "fees": 195.044694,
    "pnl": null,
-   "quantity": 2.391367,
+   "quantity": 6.392704,
    "symbol": "BTCUSDT"
   }
  ],
@@ -619,6 +553,17 @@
    "symbol": "TX"
   },
   {
+   "action": "close",
+   "entry_price": 22158.401784,
+   "entry_time": "2025-06-02T03:50:00+00:00",
+   "exit_price": 22527.570949,
+   "exit_time": "2025-06-02T04:20:00+00:00",
+   "fees": 90.110284,
+   "pnl": -73923.943285,
+   "quantity": 1,
+   "symbol": "TX"
+  },
+  {
    "action": "long",
    "entry_price": 22527.570949,
    "entry_time": "2025-06-02T04:20:00+00:00",
@@ -630,46 +575,13 @@
    "symbol": "TX"
   },
   {
-   "action": "long",
-   "entry_price": 22500.667801,
-   "entry_time": "2025-06-02T04:55:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 0.0,
-   "pnl": null,
-   "quantity": 2,
-   "symbol": "TX"
-  },
-  {
-   "action": "long",
-   "entry_price": 22518.582865,
-   "entry_time": "2025-06-02T05:30:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 0.0,
-   "pnl": null,
-   "quantity": 2,
-   "symbol": "TX"
-  },
-  {
-   "action": "long",
-   "entry_price": 22646.862245,
-   "entry_time": "2025-06-02T05:50:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 0.0,
-   "pnl": null,
-   "quantity": 2,
-   "symbol": "TX"
-  },
-  {
    "action": "close",
-   "entry_price": 22646.862245,
-   "entry_time": "2025-06-02T05:50:00+00:00",
+   "entry_price": 22527.570949,
+   "entry_time": "2025-06-02T04:20:00+00:00",
    "exit_price": 22961.162387,
    "exit_time": "2025-06-02T06:10:00+00:00",
    "fees": 183.689299,
-   "pnl": 125536.367376,
+   "pnl": 173252.886027,
    "quantity": 2,
    "symbol": "TX"
   },
@@ -685,6 +597,17 @@
    "symbol": "TX"
   },
   {
+   "action": "close",
+   "entry_price": 23076.102679,
+   "entry_time": "2025-06-02T07:25:00+00:00",
+   "exit_price": 23105.095251,
+   "exit_time": "2025-06-02T07:35:00+00:00",
+   "fees": 184.840762,
+   "pnl": 11412.188064,
+   "quantity": 2,
+   "symbol": "TX"
+  },
+  {
    "action": "short",
    "entry_price": 23105.095251,
    "entry_time": "2025-06-02T07:35:00+00:00",
@@ -692,6 +615,17 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
+   "quantity": 1,
+   "symbol": "TX"
+  },
+  {
+   "action": "close",
+   "entry_price": 23105.095251,
+   "entry_time": "2025-06-02T07:35:00+00:00",
+   "exit_price": 23124.586898,
+   "exit_time": "2025-06-02T07:45:00+00:00",
+   "fees": 92.498348,
+   "pnl": -3990.82787,
    "quantity": 1,
    "symbol": "TX"
   },
@@ -707,35 +641,13 @@
    "symbol": "TX"
   },
   {
-   "action": "long",
-   "entry_price": 23427.888073,
-   "entry_time": "2025-06-02T09:40:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 0.0,
-   "pnl": null,
-   "quantity": 2,
-   "symbol": "TX"
-  },
-  {
-   "action": "long",
-   "entry_price": 23622.783669,
-   "entry_time": "2025-06-02T11:20:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 0.0,
-   "pnl": null,
-   "quantity": 2,
-   "symbol": "TX"
-  },
-  {
    "action": "close",
-   "entry_price": 23622.783669,
-   "entry_time": "2025-06-02T11:20:00+00:00",
+   "entry_price": 23124.586898,
+   "entry_time": "2025-06-02T07:45:00+00:00",
    "exit_price": 23376.465847,
    "exit_time": "2025-06-02T12:10:00+00:00",
    "fees": 187.011727,
-   "pnl": -98714.140602,
+   "pnl": 100564.567864,
    "quantity": 2,
    "symbol": "TX"
   },
@@ -751,6 +663,17 @@
    "symbol": "TX"
   },
   {
+   "action": "close",
+   "entry_price": 23059.655064,
+   "entry_time": "2025-06-02T12:20:00+00:00",
+   "exit_price": 23507.859033,
+   "exit_time": "2025-06-02T13:00:00+00:00",
+   "fees": 94.031436,
+   "pnl": -89734.825276,
+   "quantity": 1,
+   "symbol": "TX"
+  },
+  {
    "action": "long",
    "entry_price": 23507.859033,
    "entry_time": "2025-06-02T13:00:00+00:00",
@@ -758,6 +681,17 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
+   "quantity": 2,
+   "symbol": "TX"
+  },
+  {
+   "action": "close",
+   "entry_price": 23507.859033,
+   "entry_time": "2025-06-02T13:00:00+00:00",
+   "exit_price": 23764.16742,
+   "exit_time": "2025-06-02T13:05:00+00:00",
+   "fees": 190.113339,
+   "pnl": 102333.24124,
    "quantity": 2,
    "symbol": "TX"
   },
@@ -813,6 +747,17 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
+   "quantity": 1,
+   "symbol": "TX"
+  },
+  {
+   "action": "close",
+   "entry_price": 23039.687858,
+   "entry_time": "2025-06-02T19:35:00+00:00",
+   "exit_price": 23125.562288,
+   "exit_time": "2025-06-02T20:35:00+00:00",
+   "fees": 92.502249,
+   "pnl": -17267.388314,
    "quantity": 1,
    "symbol": "TX"
   },
@@ -894,24 +839,13 @@
    "symbol": "TX"
   },
   {
-   "action": "long",
-   "entry_price": 24097.422141,
-   "entry_time": "2025-06-03T01:25:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 0.0,
-   "pnl": null,
-   "quantity": 2,
-   "symbol": "TX"
-  },
-  {
-   "action": "long",
-   "entry_price": 24080.293974,
-   "entry_time": "2025-06-03T01:35:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 0.0,
-   "pnl": null,
+   "action": "close",
+   "entry_price": 24234.614902,
+   "entry_time": "2025-06-03T01:15:00+00:00",
+   "exit_price": 23816.53148,
+   "exit_time": "2025-06-03T01:40:00+00:00",
+   "fees": 190.532252,
+   "pnl": -167423.901252,
    "quantity": 2,
    "symbol": "TX"
   },
@@ -923,6 +857,17 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
+   "quantity": 1,
+   "symbol": "TX"
+  },
+  {
+   "action": "close",
+   "entry_price": 23816.53148,
+   "entry_time": "2025-06-03T01:40:00+00:00",
+   "exit_price": 23946.469683,
+   "exit_time": "2025-06-03T02:00:00+00:00",
+   "fees": 95.785879,
+   "pnl": -26083.426577,
    "quantity": 1,
    "symbol": "TX"
   },
@@ -960,6 +905,17 @@
    "symbol": "TX"
   },
   {
+   "action": "close",
+   "entry_price": 24920.805363,
+   "entry_time": "2025-06-03T05:15:00+00:00",
+   "exit_price": 24603.51301,
+   "exit_time": "2025-06-03T05:25:00+00:00",
+   "fees": 196.828104,
+   "pnl": -127113.769339,
+   "quantity": 2,
+   "symbol": "TX"
+  },
+  {
    "action": "short",
    "entry_price": 24603.51301,
    "entry_time": "2025-06-03T05:25:00+00:00",
@@ -971,6 +927,17 @@
    "symbol": "TX"
   },
   {
+   "action": "close",
+   "entry_price": 24603.51301,
+   "entry_time": "2025-06-03T05:25:00+00:00",
+   "exit_price": 25162.420504,
+   "exit_time": "2025-06-03T05:45:00+00:00",
+   "fees": 100.649682,
+   "pnl": -111882.148467,
+   "quantity": 1,
+   "symbol": "TX"
+  },
+  {
    "action": "long",
    "entry_price": 25162.420504,
    "entry_time": "2025-06-03T05:45:00+00:00",
@@ -978,29 +945,18 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 2,
-   "symbol": "TX"
-  },
-  {
-   "action": "long",
-   "entry_price": 25011.289882,
-   "entry_time": "2025-06-03T06:50:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 0.0,
-   "pnl": null,
-   "quantity": 2,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
    "action": "close",
-   "entry_price": 25011.289882,
-   "entry_time": "2025-06-03T06:50:00+00:00",
+   "entry_price": 25162.420504,
+   "entry_time": "2025-06-03T05:45:00+00:00",
    "exit_price": 25452.699228,
    "exit_time": "2025-06-03T07:40:00+00:00",
-   "fees": 203.621594,
-   "pnl": 176360.116657,
-   "quantity": 2,
+   "fees": 101.810797,
+   "pnl": 57953.933865,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -1033,7 +989,7 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
-   "quantity": 2,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -1042,9 +998,9 @@
    "entry_time": "2025-06-03T09:05:00+00:00",
    "exit_price": 25855.616752,
    "exit_time": "2025-06-03T10:20:00+00:00",
-   "fees": 206.844934,
-   "pnl": 216338.893887,
-   "quantity": 2,
+   "fees": 103.422467,
+   "pnl": 108169.446944,
+   "quantity": 1,
    "symbol": "TX"
   },
   {
@@ -1055,6 +1011,17 @@
    "exit_time": null,
    "fees": 0.0,
    "pnl": null,
+   "quantity": 1,
+   "symbol": "TX"
+  },
+  {
+   "action": "close",
+   "entry_price": 24711.859807,
+   "entry_time": "2025-06-03T12:55:00+00:00",
+   "exit_price": 24974.931177,
+   "exit_time": "2025-06-03T13:45:00+00:00",
+   "fees": 99.899725,
+   "pnl": -52714.173611,
    "quantity": 1,
    "symbol": "TX"
   },
@@ -1114,24 +1081,13 @@
    "symbol": "TX"
   },
   {
-   "action": "long",
-   "entry_price": 24890.147636,
-   "entry_time": "2025-06-03T18:25:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 0.0,
-   "pnl": null,
-   "quantity": 2,
-   "symbol": "TX"
-  },
-  {
    "action": "close",
-   "entry_price": 24890.147636,
-   "entry_time": "2025-06-03T18:25:00+00:00",
+   "entry_price": 25082.856995,
+   "entry_time": "2025-06-03T17:40:00+00:00",
    "exit_price": 25192.690875,
    "exit_time": "2025-06-03T19:05:00+00:00",
    "fees": 201.541527,
-   "pnl": 120815.753839,
+   "pnl": 43732.010266,
    "quantity": 2,
    "symbol": "TX"
   },
@@ -1169,24 +1125,13 @@
    "symbol": "TX"
   },
   {
-   "action": "long",
-   "entry_price": 25000.865567,
-   "entry_time": "2025-06-03T21:35:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 0.0,
-   "pnl": null,
-   "quantity": 2,
-   "symbol": "TX"
-  },
-  {
    "action": "close",
-   "entry_price": 25000.865567,
-   "entry_time": "2025-06-03T21:35:00+00:00",
+   "entry_price": 25073.099466,
+   "entry_time": "2025-06-03T20:55:00+00:00",
    "exit_price": 25270.344028,
    "exit_time": "2025-06-03T22:25:00+00:00",
    "fees": 202.162752,
-   "pnl": 107589.22151,
+   "pnl": 78695.662176,
    "quantity": 2,
    "symbol": "TX"
   },
@@ -1194,28 +1139,6 @@
    "action": "short",
    "entry_price": 24334.142803,
    "entry_time": "2025-06-04T00:30:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 0.0,
-   "pnl": null,
-   "quantity": 1,
-   "symbol": "TX"
-  },
-  {
-   "action": "short",
-   "entry_price": 24040.466328,
-   "entry_time": "2025-06-04T01:15:00+00:00",
-   "exit_price": null,
-   "exit_time": null,
-   "fees": 0.0,
-   "pnl": null,
-   "quantity": 1,
-   "symbol": "TX"
-  },
-  {
-   "action": "short",
-   "entry_price": 23660.677965,
-   "entry_time": "2025-06-04T01:20:00+00:00",
    "exit_price": null,
    "exit_time": null,
    "fees": 0.0,

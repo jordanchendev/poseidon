@@ -9,7 +9,10 @@ still buys whole contracts; quantities, fees and PnL changed, crypto did not.
 The crypto scenario was regenerated once when fixed_pct started sizing off
 equity instead of cash (2026-11): its second short had been sized off cash
 inflated by the first short's proceeds; same signals, times and prices, TX
-unchanged.
+unchanged. Both scenarios were regenerated once when an entry on a key that
+already holds a position stopped overwriting it (2026-11): a same-side entry is
+dropped and an opposite-side entry closes the open position first, so the
+stateless v1 strategy's repeated entries drop out and reversals add a close.
 """
 
 from __future__ import annotations
